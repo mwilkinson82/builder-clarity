@@ -74,18 +74,60 @@ export function OutcomeWaterfall(props: {
                 const isLess = r.kind === "less";
                 const isTotal = r.kind === "total";
                 const isResult = r.kind === "result";
+
+                if (isResult) {
+                  return (
+                    <div
+                      key={r.label}
+                      className="mt-4 rounded-lg border-2 border-accent/60 bg-gradient-to-br from-accent/10 via-card to-card p-6 shadow-card"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block h-px w-6 bg-accent" />
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-accent">
+                          Conclusion of Review
+                        </span>
+                        {r.tooltip && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button className="text-muted-foreground/70 hover:text-foreground">
+                                <Info className="h-3 w-3" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">{r.tooltip}</TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
+                      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <div className="font-serif text-2xl text-foreground">{r.label}</div>
+                          <div className="mt-1 text-sm text-muted-foreground">
+                            What the project is now expected to actually earn.
+                          </div>
+                        </div>
+                        <div className="font-serif text-5xl tabular leading-none text-accent">
+                          {fmtUSD(r.value)}
+                        </div>
+                      </div>
+                      <div className="mt-4 relative h-2 overflow-hidden rounded-full bg-secondary">
+                        <div
+                          className="absolute left-0 top-0 h-full rounded-full bg-accent"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div key={r.label} className="grid grid-cols-12 items-center gap-4 py-3">
                     <div className="col-span-5 flex items-center gap-1.5">
                       <span
                         className={`text-sm ${
-                          isResult
-                            ? "font-serif text-lg text-foreground"
-                            : isTotal
-                              ? "font-medium text-foreground"
-                              : isLess
-                                ? "text-muted-foreground"
-                                : "text-foreground/85"
+                          isTotal
+                            ? "font-medium text-foreground"
+                            : isLess
+                              ? "text-muted-foreground"
+                              : "text-foreground/85"
                         }`}
                       >
                         {r.label}
@@ -105,13 +147,11 @@ export function OutcomeWaterfall(props: {
                       <div className="relative h-2 overflow-hidden rounded-full bg-secondary">
                         <div
                           className={`absolute left-0 top-0 h-full rounded-full ${
-                            isResult
-                              ? "bg-accent"
-                              : isLess
-                                ? "bg-warning/70"
-                                : isTotal
-                                  ? "bg-foreground"
-                                  : "bg-foreground/40"
+                            isLess
+                              ? "bg-warning/70"
+                              : isTotal
+                                ? "bg-foreground"
+                                : "bg-foreground/40"
                           }`}
                           style={{ width: `${pct}%` }}
                         />
@@ -119,13 +159,11 @@ export function OutcomeWaterfall(props: {
                     </div>
                     <div
                       className={`col-span-2 text-right tabular ${
-                        isResult
-                          ? "font-serif text-xl text-foreground"
-                          : isTotal
-                            ? "font-medium text-foreground"
-                            : isLess
-                              ? "text-warning"
-                              : "text-foreground/85"
+                        isTotal
+                          ? "font-medium text-foreground"
+                          : isLess
+                            ? "text-warning"
+                            : "text-foreground/85"
                       }`}
                     >
                       {isLess ? `−${fmtUSD(r.value).replace("−", "")}` : fmtUSD(r.value)}
