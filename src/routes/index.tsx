@@ -9,7 +9,7 @@ import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/outcome/ScheduleRisk";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { initialHolds, project, type Hold } from "@/components/outcome/data";
-import { fmtUSD } from "@/lib/format";
+import { fmtUSD, fmtPct } from "@/lib/format";
 
 export const Route = createFileRoute("/")({
   head: () => ({
