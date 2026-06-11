@@ -448,7 +448,18 @@ function ProjectPage() {
           </TabsContent>
 
           <TabsContent value="buckets">
-            <SectionHeader title="Cost Buckets" subtitle="Actual-to-date plus forecast-to-complete per bucket. These roll up into Forecasted Final Cost." />
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="font-serif text-3xl text-foreground">Cost Buckets</h2>
+                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                  Actual-to-date plus forecast-to-complete per bucket. Import your existing schedule of values from QuickBooks or Excel — we'll map the columns for you.
+                </p>
+              </div>
+              <ImportSOVSheet
+                onImport={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
+                pending={bucketImport.isPending}
+              />
+            </div>
             <CostBucketsTable
               buckets={buckets}
               onUpdate={(id, patch) => bucketUpdate.mutate({ id, patch })}
@@ -471,43 +482,34 @@ function ProjectPage() {
           </TabsContent>
 
           <TabsContent value="reviews">
-            <SectionHeader title="Project Truth Reviews" subtitle="What changed since the last review." />
-            <div className="overflow-hidden rounded-lg border border-hairline bg-card">
-              {reviews.length === 0 ? (
-                <p className="p-8 text-center text-sm text-muted-foreground">
-                  No reviews yet. Run the first Project Truth Review to log what's changed.
-                </p>
-              ) : (
-                <ul className="divide-y divide-hairline">
-                  {reviews.map((r) => (
-                    <li key={r.id} className="px-5 py-4">
-                      <div className="flex items-baseline justify-between gap-3">
-                        <div className="text-sm font-medium text-foreground">
-                          {new Date(r.reviewed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}
-                        </div>
-                        <div className="text-xs text-muted-foreground">{r.reviewer || "—"}</div>
-                      </div>
-                      {(r.forecast_completion_date_before || r.forecast_completion_date_after) && (
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          Forecast completion:{" "}
-                          {r.forecast_completion_date_before
-                            ? new Date(r.forecast_completion_date_before).toLocaleDateString()
-                            : "—"}
-                          {" → "}
-                          {r.forecast_completion_date_after
-                            ? new Date(r.forecast_completion_date_after).toLocaleDateString()
-                            : "—"}
-                        </div>
-                      )}
-                      {r.summary_notes && (
-                        <pre className="mt-2 whitespace-pre-wrap font-sans text-sm text-foreground/85">{r.summary_notes}</pre>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            <SectionHeader title="Project Truth Reviews" subtitle="Each review is an editable, downloadable, emailable IOR Report — ready for the next L10 or project meeting." />
+            <ReviewsTab
+              reviews={reviews}
+              project={project}
+              buildPdfInput={buildPdfInputForReview}
+              onUpdate={(id, patch) => reviewUpdate.mutate({ id, patch })}
+              pending={reviewUpdate.isPending}
+            />
           </TabsContent>
+        </Tabs>
+      </main>
+    </div>
+  );
+}
+
+function DownloadReportMenu({ onDownload }: { onDownload: (style: IorPdfStyle) => void | Promise<void> }) {
+  return (
+    <div className="flex items-center gap-1 rounded-md border border-hairline bg-card p-0.5">
+      <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => onDownload("executive")}>
+        <Download className="h-3.5 w-3.5" /> One-pager PDF
+      </Button>
+      <span className="text-hairline">·</span>
+      <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => onDownload("structured")}>
+        Multi-page PDF
+      </Button>
+    </div>
+  );
+}
         </Tabs>
       </main>
     </div>
