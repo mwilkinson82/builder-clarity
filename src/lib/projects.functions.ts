@@ -101,6 +101,11 @@ export interface ReviewRow {
   forecast_completion_date_before: string | null;
   forecast_completion_date_after: string | null;
   summary_notes: string;
+  body_markdown: string;
+  status: string;
+  email_recipients: string[];
+  pdf_style: string;
+  kpi_snapshot: Record<string, unknown>;
 }
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
@@ -314,6 +319,11 @@ export const getProject = createServerFn({ method: "GET" })
         forecast_completion_date_before: (o.forecast_completion_date_before as string | null) ?? null,
         forecast_completion_date_after: (o.forecast_completion_date_after as string | null) ?? null,
         summary_notes: str(o.summary_notes),
+        body_markdown: str(o.body_markdown),
+        status: str(o.status, "published"),
+        email_recipients: Array.isArray(o.email_recipients) ? (o.email_recipients as string[]) : [],
+        pdf_style: str(o.pdf_style, "executive"),
+        kpi_snapshot: (o.kpi_snapshot as Record<string, unknown>) ?? {},
       };
     });
 
@@ -603,6 +613,10 @@ const submitReviewInput = z.object({
   forecast_completion_date_before: z.string().nullable().optional(),
   forecast_completion_date_after: z.string().nullable().optional(),
   summary_notes: z.string().max(4000).default(""),
+  body_markdown: z.string().max(20000).default(""),
+  pdf_style: z.enum(["executive", "structured"]).default("executive"),
+  email_recipients: z.array(z.string().email().max(254)).max(20).default([]),
+  kpi_snapshot: z.record(z.string(), z.unknown()).default({}),
 });
 
 export const submitReview = createServerFn({ method: "POST" })
@@ -611,13 +625,18 @@ export const submitReview = createServerFn({ method: "POST" })
     submitReviewInput.parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase.from("reviews").insert({
+    const { data: inserted, error } = await context.supabase.from("reviews").insert({
       project_id: data.projectId,
       reviewer: data.reviewer,
       forecast_completion_date_before: data.forecast_completion_date_before ?? null,
       forecast_completion_date_after: data.forecast_completion_date_after ?? null,
       summary_notes: data.summary_notes,
-    });
+      body_markdown: data.body_markdown,
+      pdf_style: data.pdf_style,
+      email_recipients: data.email_recipients,
+      kpi_snapshot: data.kpi_snapshot,
+      status: "published",
+    }).select("id").single();
     if (error) throw new Error(error.message);
 
     const patch: {
@@ -637,7 +656,83 @@ export const submitReview = createServerFn({ method: "POST" })
       .eq("id", data.projectId);
     if (pErr) throw new Error(pErr.message);
 
+    return { ok: true, reviewId: inserted.id };
+  });
+
+const updateReviewInput = z.object({
+  id: z.string().uuid(),
+  patch: z.object({
+    body_markdown: z.string().max(20000).optional(),
+    status: z.enum(["draft", "published"]).optional(),
+    email_recipients: z.array(z.string().email().max(254)).max(20).optional(),
+    pdf_style: z.enum(["executive", "structured"]).optional(),
+  }),
+});
+
+export const updateReview = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof updateReviewInput>) =>
+    updateReviewInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("reviews")
+      .update(data.patch)
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+// ---------------- SOV IMPORT ----------------
+
+const importBucketRow = z.object({
+  bucket: z.string().min(1).max(200),
+  original_budget: z.number().min(0),
+  actual_to_date: z.number().min(0),
+  ftc: z.number().min(0),
+  sort_order: z.number().int().min(0),
+});
+
+const importInput = z.object({
+  projectId: z.string().uuid(),
+  mode: z.enum(["replace", "append"]).default("replace"),
+  rows: z.array(importBucketRow).min(1).max(500),
+});
+
+export const importCostBuckets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof importInput>) => importInput.parse(input))
+  .handler(async ({ data, context }) => {
+    if (data.mode === "replace") {
+      const { error: delErr } = await context.supabase
+        .from("cost_buckets")
+        .delete()
+        .eq("project_id", data.projectId);
+      if (delErr) throw new Error(delErr.message);
+    }
+    const baseOrder =
+      data.mode === "append"
+        ? await context.supabase
+            .from("cost_buckets")
+            .select("sort_order")
+            .eq("project_id", data.projectId)
+            .order("sort_order", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+            .then((res) => (res.data?.sort_order ?? 0) as number)
+        : 0;
+
+    const insertRows = data.rows.map((r, i) => ({
+      project_id: data.projectId,
+      bucket: r.bucket,
+      original_budget: r.original_budget,
+      actual_to_date: r.actual_to_date,
+      ftc: r.ftc,
+      sort_order: baseOrder + i + 1,
+    }));
+    const { error } = await context.supabase.from("cost_buckets").insert(insertRows);
+    if (error) throw new Error(error.message);
+    return { ok: true, inserted: insertRows.length };
   });
 
 // ---------------- DEMO SEED (no-op if any project exists) ----------------
