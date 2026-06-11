@@ -69,9 +69,10 @@ export function ReviewsTab({
                     {new Date(r.reviewed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {r.reviewer || "—"} · {(r.pdf_style as IorPdfStyle) ?? "executive"} style
+                    {r.reviewer || "—"}
                     {r.status === "draft" && <span className="ml-2 rounded-sm bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-warning">draft</span>}
                   </div>
+
                 </div>
                 <div className="flex items-center gap-1">
                   <Button size="sm" variant="ghost" onClick={() => setEditing(r)} className="gap-1.5">
@@ -141,20 +142,15 @@ function EditReviewDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>Report style</Label>
-              <select value={style} onChange={(e) => setStyle(e.target.value as IorPdfStyle)} className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm">
-                <option value="executive">Executive one-pager + appendix</option>
-                <option value="structured">Multi-page structured</option>
-              </select>
-            </div>
-            <div className="space-y-1.5">
               <Label>Status</Label>
               <select value={status} onChange={(e) => setStatus(e.target.value)} className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm">
                 <option value="published">Published</option>
                 <option value="draft">Draft</option>
               </select>
             </div>
+            <div />
           </div>
+
           <div className="space-y-1.5">
             <Label>Default email recipients <span className="text-muted-foreground">(comma-separated)</span></Label>
             <Input value={emails} onChange={(e) => setEmails(e.target.value)} placeholder="owner@example.com, super@example.com" />

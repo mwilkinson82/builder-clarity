@@ -59,6 +59,15 @@ export interface ExposureRow {
   notes: string;
 }
 
+export type COType =
+  | "owner_change"
+  | "design_error"
+  | "design_omission"
+  | "unforeseen_condition"
+  | "missed_scope"
+  | "sub_issued"
+  | "other";
+
 export interface ChangeOrderRow {
   id: string;
   project_id: string;
@@ -70,7 +79,9 @@ export interface ChangeOrderRow {
   probability: number;
   owner: string;
   notes: string;
+  co_type: COType;
 }
+
 
 export interface BucketRow {
   id: string;
@@ -283,8 +294,10 @@ export const getProject = createServerFn({ method: "GET" })
         probability: num(o.probability),
         owner: str(o.owner),
         notes: str(o.notes),
+        co_type: (str(o.co_type, "other") as COType),
       };
     });
+
     const buckets: BucketRow[] = (bRes.data ?? []).map((b) => {
       const o = b as Record<string, unknown>;
       return {
@@ -489,6 +502,11 @@ export const deleteExposure = createServerFn({ method: "POST" })
 
 // ---------------- CHANGE ORDERS ----------------
 
+const CO_TYPES = [
+  "owner_change","design_error","design_omission","unforeseen_condition",
+  "missed_scope","sub_issued","other",
+] as const;
+
 const coInput = z.object({
   number: z.string().max(50).default(""),
   description: z.string().min(1).max(500),
@@ -498,7 +516,9 @@ const coInput = z.object({
   probability: z.number().min(0).max(100).default(100),
   owner: z.string().max(200).default(""),
   notes: z.string().max(2000).default(""),
+  co_type: z.enum(CO_TYPES).default("other"),
 });
+
 
 export const createChangeOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

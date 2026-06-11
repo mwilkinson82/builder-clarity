@@ -11,12 +11,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
-import type { ChangeOrderRow, COStatus } from "@/lib/projects.functions";
+import type { ChangeOrderRow, COStatus, COType } from "@/lib/projects.functions";
 
 const statusStyles: Record<COStatus, string> = {
   Approved: "bg-success/15 text-success border-success/30",
   Pending: "bg-warning/15 text-warning border-warning/30",
   Denied: "bg-danger/15 text-danger border-danger/30",
+};
+
+const CO_TYPE_LABELS: Record<COType, string> = {
+  owner_change: "Owner change",
+  design_error: "Design error",
+  design_omission: "Design omission",
+  unforeseen_condition: "Unforeseen field condition",
+  missed_scope: "Missed scope (our side)",
+  sub_issued: "Issued to sub",
+  other: "Other",
 };
 
 type Draft = {
@@ -28,6 +38,7 @@ type Draft = {
   probability: number;
   owner: string;
   notes: string;
+  co_type: COType;
 };
 
 const empty: Draft = {
@@ -39,7 +50,9 @@ const empty: Draft = {
   probability: 100,
   owner: "",
   notes: "",
+  co_type: "owner_change",
 };
+
 
 export function ChangeOrdersTable({
   changeOrders,
@@ -63,8 +76,9 @@ export function ChangeOrdersTable({
       number: c.number, description: c.description,
       contract_amount: c.contract_amount, cost_amount: c.cost_amount,
       status: c.status, probability: c.probability,
-      owner: c.owner, notes: c.notes,
+      owner: c.owner, notes: c.notes, co_type: c.co_type,
     });
+
     setOpen(true);
   };
   const save = () => {
@@ -110,6 +124,7 @@ export function ChangeOrdersTable({
             <TableRow className="bg-surface">
               <TableHead className="w-[90px]">CO #</TableHead>
               <TableHead>Description</TableHead>
+              <TableHead className="hidden lg:table-cell">Type</TableHead>
               <TableHead className="text-right">Contract</TableHead>
               <TableHead className="text-right">Cost</TableHead>
               <TableHead>Status</TableHead>
@@ -123,6 +138,7 @@ export function ChangeOrdersTable({
               <TableRow key={c.id}>
                 <TableCell className="font-mono text-xs text-muted-foreground">{c.number}</TableCell>
                 <TableCell className="font-medium">{c.description}</TableCell>
+                <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{CO_TYPE_LABELS[c.co_type] ?? "—"}</TableCell>
                 <TableCell className="text-right tabular">{fmtUSD(c.contract_amount)}</TableCell>
                 <TableCell className="text-right tabular text-foreground/80">{fmtUSD(c.cost_amount)}</TableCell>
                 <TableCell>
@@ -134,6 +150,7 @@ export function ChangeOrdersTable({
                   {c.status === "Pending" ? `${c.probability}%` : "—"}
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-sm">{c.owner}</TableCell>
+
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(c)}>
@@ -148,11 +165,12 @@ export function ChangeOrdersTable({
             ))}
             {changeOrders.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
                   No change orders yet. Add approved and pending COs to roll into the forecasted final contract.
                 </TableCell>
               </TableRow>
             )}
+
           </TableBody>
         </Table>
       </div>
@@ -196,6 +214,21 @@ export function ChangeOrdersTable({
               <Label>Description</Label>
               <Input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
             </div>
+            <div className="space-y-1.5">
+              <Label>Change order type</Label>
+              <Select value={draft.co_type} onValueChange={(v) => setDraft({ ...draft, co_type: v as COType })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(CO_TYPE_LABELS) as COType[]).map((k) => (
+                    <SelectItem key={k} value={k}>{CO_TYPE_LABELS[k]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                What caused this CO? Used to spot patterns (design errors vs. owner adds vs. field conditions) across the portfolio.
+              </p>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Contract amount (USD)</Label>

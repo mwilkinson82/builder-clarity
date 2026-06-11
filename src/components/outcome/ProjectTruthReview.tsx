@@ -452,16 +452,8 @@ export function ProjectTruthReview({
                 onChange={(e) => setNarrative(e.target.value)}
                 placeholder="Project remains on budget despite a 3-week schedule slip driven by window delivery. Lighting selections still trending 30% over allowance — owner decision required by Friday to recover."
               />
-              <div className="space-y-1.5">
-                <Label className="text-xs">Report style</Label>
-                <Select value={pdfStyle} onValueChange={(v) => setPdfStyle(v as IorPdfStyle)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="executive">Executive one-pager + appendix</SelectItem>
-                    <SelectItem value="structured">Multi-page structured report</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              
+
               <div className="space-y-1.5">
                 <Label className="text-xs">Reviewer</Label>
                 <Input value={reviewer} onChange={(e) => setReviewer(e.target.value)} />
