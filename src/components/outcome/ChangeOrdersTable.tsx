@@ -214,6 +214,21 @@ export function ChangeOrdersTable({
               <Label>Description</Label>
               <Input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
             </div>
+            <div className="space-y-1.5">
+              <Label>Change order type</Label>
+              <Select value={draft.co_type} onValueChange={(v) => setDraft({ ...draft, co_type: v as COType })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(CO_TYPE_LABELS) as COType[]).map((k) => (
+                    <SelectItem key={k} value={k}>{CO_TYPE_LABELS[k]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                What caused this CO? Used to spot patterns (design errors vs. owner adds vs. field conditions) across the portfolio.
+              </p>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Contract amount (USD)</Label>
