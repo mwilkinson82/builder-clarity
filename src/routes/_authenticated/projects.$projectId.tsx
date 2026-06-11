@@ -35,6 +35,7 @@ import {
   importCostBuckets,
   type ProjectRow, type ReviewRow,
 } from "@/lib/projects.functions";
+import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import type { Phase, ExposureCategory } from "@/lib/ior";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
@@ -201,9 +202,18 @@ function ProjectPage() {
     // PDF was already downloaded by the wizard itself.
   };
 
+  const listScheduleFn = useServerFn(listSchedule);
+  const { data: scheduleData } = useQuery({
+    queryKey: ["schedule", projectId],
+    queryFn: () => listScheduleFn({ data: { projectId } }),
+  });
+  const milestones = scheduleData?.milestones ?? [];
+  const scheduleRisks = scheduleData?.risks ?? [];
+
   const downloadCurrentReport = async (style: IorPdfStyle) => {
     const bytes = await generateIorPdf({
       project, rollup, exposures, changeOrders, buckets, decisions, reviews,
+      milestones, scheduleRisks,
       narrative: project.last_review_summary,
       generatedAt: new Date(),
     }, style);
@@ -212,6 +222,7 @@ function ProjectPage() {
 
   const buildPdfInputForReview = (r: ReviewRow | null) => ({
     project, rollup, exposures, changeOrders, buckets, decisions, reviews,
+    milestones, scheduleRisks,
     narrative: r?.body_markdown || r?.summary_notes,
     generatedAt: r ? new Date(r.reviewed_at) : new Date(),
   });

@@ -1,4 +1,7 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { listSchedule } from "@/lib/schedule.functions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -104,6 +107,12 @@ export function ProjectTruthReview({
   const [pdfStyle, setPdfStyle] = useState<IorPdfStyle>("executive");
   const [narrative, setNarrative] = useState("");
 
+  const listScheduleFn = useServerFn(listSchedule);
+  const { data: scheduleData } = useQuery({
+    queryKey: ["schedule", project.id],
+    queryFn: () => listScheduleFn({ data: { projectId: project.id } }),
+  });
+
   // New exposures captured in step 2
   const [newExposures, setNewExposures] = useState<NewExposure[]>([]);
   const [draftExp, setDraftExp] = useState<NewExposure>({
@@ -201,6 +210,8 @@ export function ProjectTruthReview({
       project: { ...project, forecast_completion_date: forecastDate || project.forecast_completion_date },
       rollup, exposures, changeOrders, buckets, decisions,
       reviews: [],
+      milestones: scheduleData?.milestones ?? [],
+      scheduleRisks: scheduleData?.risks ?? [],
       narrative,
       generatedAt: new Date(),
     }, pdfStyle);

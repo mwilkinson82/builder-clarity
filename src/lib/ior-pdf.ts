@@ -10,6 +10,9 @@ import type {
   ProjectRow, ExposureRow, ChangeOrderRow, BucketRow,
   DecisionRow, ReviewRow,
 } from "@/lib/projects.functions";
+import type {
+  MilestoneRow, ScheduleRiskRow, MilestoneStatus, ScheduleRiskKind,
+} from "@/lib/schedule.functions";
 
 export type IorPdfStyle = "executive" | "structured";
 
@@ -21,9 +24,20 @@ export interface IorPdfInput {
   buckets: BucketRow[];
   decisions: DecisionRow[];
   reviews: ReviewRow[];
+  milestones?: MilestoneRow[];
+  scheduleRisks?: ScheduleRiskRow[];
   narrative?: string;
   generatedAt?: Date;
 }
+
+const MILESTONE_STATUS_LABEL: Record<MilestoneStatus, string> = {
+  on_track: "On track", at_risk: "At risk", delayed: "Delayed", complete: "Complete",
+};
+const RISK_KIND_LABEL: Record<ScheduleRiskKind, string> = {
+  critical_decision: "Critical delayed decisions",
+  procurement: "Procurement risks",
+  trade_performance: "Trade performance risks",
+};
 
 const PAGE_W = 612;
 const PAGE_H = 792;
@@ -358,7 +372,78 @@ function drawFooter(c: Ctx, page: number, total: number, project: ProjectRow) {
 
 // ---------------- Public API ----------------
 
+function drawSchedule(c: Ctx, milestones: MilestoneRow[], risks: ScheduleRiskRow[], project: ProjectRow) {
+  // Completion summary line
+  ensure(c, 16);
+  text(
+    c,
+    `Baseline ${fmtDate(project.baseline_completion_date)}   ->   Forecast ${fmtDate(project.forecast_completion_date)}   ·   Variance ${project.schedule_variance_weeks > 0 ? "+" : ""}${project.schedule_variance_weeks} wk`,
+    M, c.y, { font: c.sansB, size: 9, color: project.schedule_variance_weeks > 0 ? DANGER : SUCCESS },
+  );
+  c.y -= 14;
+
+  // Interim milestones table
+  if (milestones.length > 0) {
+    ensure(c, 16);
+    text(c, "INTERIM MILESTONES", M, c.y, { font: c.sansB, size: 7.5, color: MUTED });
+    c.y -= 8; rule(c, c.y); c.y -= 10;
+    const cols = [
+      { label: "Milestone", x: M, w: 160 },
+      { label: "Baseline", x: M + 164, w: 70 },
+      { label: "Forecast", x: M + 238, w: 70 },
+      { label: "Status",   x: M + 312, w: 70 },
+      { label: "Owner",    x: M + 386, w: 120 },
+    ];
+    cols.forEach((col) => text(c, col.label.toUpperCase(), col.x, c.y, { font: c.sansB, size: 7, color: MUTED }));
+    c.y -= 10;
+    for (const m of milestones) {
+      ensure(c, 14);
+      const statusColor =
+        m.status === "delayed" ? DANGER :
+        m.status === "at_risk" ? ACCENT :
+        m.status === "complete" ? MUTED : SUCCESS;
+      text(c, splitToWidth(c.sansB, 8.5, m.name, cols[0].w)[0], cols[0].x, c.y, { font: c.sansB, size: 8.5 });
+      text(c, fmtDate(m.baseline_date), cols[1].x, c.y, { size: 8.5, color: MUTED });
+      text(c, fmtDate(m.forecast_date), cols[2].x, c.y, { size: 8.5 });
+      text(c, MILESTONE_STATUS_LABEL[m.status], cols[3].x, c.y, { font: c.sansB, size: 8, color: statusColor });
+      text(c, splitToWidth(c.sans, 8.5, m.owner || "—", cols[4].w)[0], cols[4].x, c.y, { size: 8.5, color: MUTED });
+      c.y -= 11;
+      if ((m.status === "at_risk" || m.status === "delayed") && m.delay_reason) {
+        const lines = splitToWidth(c.sans, 8, `Reason: ${m.delay_reason}`, PAGE_W - 2 * M);
+        for (const ln of lines.slice(0, 3)) {
+          ensure(c, 10);
+          text(c, ln, M, c.y, { size: 8, color: INK });
+          c.y -= 9;
+        }
+      }
+      c.y -= 3;
+    }
+    c.y -= 4;
+  }
+
+  // Risk groups
+  const kinds: ScheduleRiskKind[] = ["critical_decision", "procurement", "trade_performance"];
+  for (const kind of kinds) {
+    const items = risks.filter((r) => r.kind === kind);
+    if (items.length === 0) continue;
+    ensure(c, 18);
+    text(c, RISK_KIND_LABEL[kind].toUpperCase(), M, c.y, { font: c.sansB, size: 7.5, color: ACCENT });
+    c.y -= 8; rule(c, c.y); c.y -= 10;
+    for (const r of items) {
+      ensure(c, 16);
+      text(c, r.title, M, c.y, { font: c.sansB, size: 9 });
+      c.y -= 11;
+      if (r.detail) {
+        wrap(c, r.detail, M, PAGE_W - 2 * M, { size: 8.5, color: INK, lineHeight: 11 });
+      }
+      c.y -= 4;
+    }
+    c.y -= 2;
+  }
+}
+
 export async function generateIorPdf(
+
   input: IorPdfInput,
   style: IorPdfStyle = "executive",
 ): Promise<Uint8Array> {
@@ -382,6 +467,8 @@ export async function generateIorPdf(
 
     // Appendix
     newPage(c);
+    sectionTitle(c, "Schedule — milestones & risk");
+    drawSchedule(c, input.milestones ?? [], input.scheduleRisks ?? [], input.project);
     sectionTitle(c, "Exposure register — by treatment path");
     drawExposuresTable(c, input.exposures.filter((e) => e.status !== "released"), { groupByPath: true });
     sectionTitle(c, "Cost buckets");
@@ -436,10 +523,13 @@ export async function generateIorPdf(
     // Decisions + COs + schedule
     newPage(c);
     drawHeader(c, input.project, weekLabel, generatedAt);
+    sectionTitle(c, "Schedule — milestones & risk");
+    drawSchedule(c, input.milestones ?? [], input.scheduleRisks ?? [], input.project);
     sectionTitle(c, "Decisions required");
     drawDecisions(c, input.decisions);
     sectionTitle(c, "Change orders");
     drawCOs(c, input.changeOrders);
+
 
     // Review log
     newPage(c);
