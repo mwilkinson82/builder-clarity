@@ -31,7 +31,7 @@ import {
   createDecision, updateDecision, deleteDecision,
   getProject, listProjects,
   updateProjectFinancials, createChangeOrder, updateChangeOrder,
-  deleteChangeOrder, updateBucket, submitReview, updateReview,
+  deleteChangeOrder, updateBucket, createBucket, deleteBucket, submitReview, updateReview,
   importCostBuckets,
   type ProjectRow, type ReviewRow,
 } from "@/lib/projects.functions";
