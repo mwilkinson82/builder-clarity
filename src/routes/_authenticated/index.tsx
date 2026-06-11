@@ -45,10 +45,21 @@ function statusFor(originalPct: number, indicatedPct: number) {
 
 function PortfolioPage() {
   const list = useServerFn(listProjects);
+  const seed = useServerFn(seedDemoIfEmpty);
+  const qc = useQueryClient();
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["projects"],
     queryFn: () => list(),
   });
+
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (isLoading || seededRef.current || projects.length > 0) return;
+    seededRef.current = true;
+    seed().then((r) => {
+      if (r.seeded) qc.invalidateQueries({ queryKey: ["projects"] });
+    }).catch(() => { seededRef.current = false; });
+  }, [isLoading, projects.length, seed, qc]);
 
   const navigate = useNavigate();
   const router = useRouter();
