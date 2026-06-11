@@ -389,13 +389,14 @@ function RiskItem({
               Detail — owner, impact, mitigation, dates
             </Label>
             <Textarea
-              rows={5}
-              className="min-h-[110px]"
+              rows={12}
+              className="min-h-[280px] text-sm leading-relaxed"
               placeholder={detailPlaceholder}
               value={local.detail}
               onChange={(e) => setLocal({ ...local, detail: e.target.value })}
               onBlur={() => row.detail !== local.detail && onPatch({ detail: local.detail })}
             />
+
           </div>
         </div>
         <Button
