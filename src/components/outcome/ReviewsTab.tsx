@@ -69,9 +69,10 @@ export function ReviewsTab({
                     {new Date(r.reviewed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {r.reviewer || "—"} · {(r.pdf_style as IorPdfStyle) ?? "executive"} style
+                    {r.reviewer || "—"}
                     {r.status === "draft" && <span className="ml-2 rounded-sm bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-warning">draft</span>}
                   </div>
+
                 </div>
                 <div className="flex items-center gap-1">
                   <Button size="sm" variant="ghost" onClick={() => setEditing(r)} className="gap-1.5">
