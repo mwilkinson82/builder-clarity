@@ -3,6 +3,25 @@
 
 export type Phase = "Early" | "Middle" | "Late";
 export type COStatus = "Approved" | "Pending" | "Denied";
+export type ExposureCategory =
+  | "owner_decision"
+  | "design_drift"
+  | "trade_performance"
+  | "procurement"
+  | "schedule_compression"
+  | "allowance_overrun"
+  | "field_change"
+  | "closeout_punch"
+  | "other";
+export type ResponsePath = "eliminate" | "recover" | "offset" | "accept";
+export type HoldClass = "E-Hold" | "C-Hold" | "Both" | "None";
+export type ExposureStatus =
+  | "active"
+  | "escalated"
+  | "recovered"
+  | "eliminated"
+  | "accepted"
+  | "released";
 
 export interface BucketLite {
   bucket: string;
@@ -15,13 +34,18 @@ export interface ChangeOrderLite {
   contract_amount: number;
   cost_amount: number;
   status: COStatus;
-  probability: number; // 0-100
+  probability: number;
 }
 
-export interface HoldLite {
-  type: "E-Hold" | "C-Hold";
-  amount: number;
-  status: "Active" | "Released" | "Escalated";
+export interface ExposureLite {
+  category: ExposureCategory;
+  dollar_exposure: number;
+  probability: number;
+  hold_class: HoldClass;
+  status: ExposureStatus;
+  response_path: ResponsePath;
+  opened_at?: string | null;
+  next_review_at?: string | null;
 }
 
 export interface ProjectLite {
@@ -30,22 +54,21 @@ export interface ProjectLite {
   phase: Phase;
   percent_complete: number;
   schedule_variance_weeks: number;
+  forecast_completion_date?: string | null;
+  baseline_completion_date?: string | null;
 }
 
 export interface Rollup {
-  // Revenue
   originalContract: number;
   approvedCOContract: number;
   weightedPendingCOContract: number;
-  pendingCOContract: number; // raw, unweighted (for KPI Pending COs)
+  pendingCOContract: number;
   forecastedFinalContract: number;
-  // Cost
   actualToDate: number;
   ftc: number;
   approvedCOCost: number;
   weightedPendingCOCost: number;
   forecastedFinalCost: number;
-  // Outcome
   exposureHolds: number;
   contingencyHold: number;
   forecastedGPBeforeHolds: number;
@@ -57,11 +80,19 @@ export interface Rollup {
   remainingCost: number;
 }
 
+function expWeighted(e: ExposureLite) {
+  return e.dollar_exposure * (e.probability / 100);
+}
+
+function isActive(e: ExposureLite) {
+  return e.status === "active" || e.status === "escalated";
+}
+
 export function computeRollup(
   project: ProjectLite,
   buckets: BucketLite[],
   cos: ChangeOrderLite[],
-  holds: HoldLite[],
+  exposures: ExposureLite[],
 ): Rollup {
   const approved = cos.filter((c) => c.status === "Approved");
   const pending = cos.filter((c) => c.status === "Pending");
@@ -81,9 +112,6 @@ export function computeRollup(
   const actualToDate = buckets.reduce((s, b) => s + b.actual_to_date, 0);
   const ftc = buckets.reduce((s, b) => s + b.ftc, 0);
 
-  // Safety fallback: if no cost buckets exist yet, use the original cost budget
-  // as the cost baseline. Without this, FFCost = $0 and the project looks
-  // wildly profitable. Once buckets are added the real rollup takes over.
   const bucketCostBase =
     buckets.length === 0 ? project.original_cost_budget : actualToDate + ftc;
 
@@ -92,13 +120,13 @@ export function computeRollup(
   const forecastedFinalCost =
     bucketCostBase + approvedCOCost + weightedPendingCOCost;
 
-  const active = holds.filter((h) => h.status !== "Released");
+  const active = exposures.filter(isActive);
   const exposureHolds = active
-    .filter((h) => h.type === "E-Hold")
-    .reduce((s, h) => s + h.amount, 0);
+    .filter((e) => e.hold_class === "E-Hold" || e.hold_class === "Both")
+    .reduce((s, e) => s + expWeighted(e), 0);
   const contingencyHold = active
-    .filter((h) => h.type === "C-Hold")
-    .reduce((s, h) => s + h.amount, 0);
+    .filter((e) => e.hold_class === "C-Hold" || e.hold_class === "Both")
+    .reduce((s, e) => s + expWeighted(e), 0);
 
   const forecastedGPBeforeHolds = forecastedFinalContract - forecastedFinalCost;
   const indicatedGP = forecastedGPBeforeHolds - exposureHolds - contingencyHold;
@@ -133,7 +161,6 @@ export function computeRollup(
   };
 }
 
-// Conservative phase-sensitive hold guidance, expressed as % of remaining cost.
 export function holdGuidance(phase: Phase): { ePct: number; cPct: number } {
   switch (phase) {
     case "Early":
@@ -166,6 +193,7 @@ export function evaluateWarnings(
   project: ProjectLite,
   buckets: BucketLite[],
   cos: ChangeOrderLite[],
+  exposures: ExposureLite[],
   rollup: Rollup,
 ): Warning[] {
   const warnings: Warning[] = [];
@@ -184,7 +212,7 @@ export function evaluateWarnings(
     });
   }
 
-  // 2. Late phase AND any finish bucket has FTC > 0 AND C-Hold below target
+  // 2. Late phase finish FTC without C-Hold
   if (project.phase === "Late") {
     const finishFtc = buckets
       .filter((b) => /finish|millwork/i.test(b.bucket))
@@ -199,20 +227,63 @@ export function evaluateWarnings(
     }
   }
 
-  // 3. Schedule slipping AND GC/OH FTC > 0 (proxy for "rising") AND no exposure
-  if (project.schedule_variance_weeks > 0) {
-    const gcoh = buckets.find((b) => /gc\/?oh|general/i.test(b.bucket));
-    if (gcoh && gcoh.ftc > 0 && rollup.exposureHolds === 0) {
+  // 3. Schedule slipping with no schedule-category exposure logged
+  const baseline = project.baseline_completion_date
+    ? new Date(project.baseline_completion_date)
+    : null;
+  const forecast = project.forecast_completion_date
+    ? new Date(project.forecast_completion_date)
+    : null;
+  const slipping =
+    (baseline && forecast && forecast > baseline) ||
+    project.schedule_variance_weeks > 0;
+  if (slipping) {
+    const hasSchedExp = exposures.some(
+      (e) =>
+        isActive(e) &&
+        (e.category === "schedule_compression" ||
+          e.category === "procurement" ||
+          e.category === "owner_decision"),
+    );
+    if (!hasSchedExp) {
       warnings.push({
         id: "schedule-no-exposure",
         severity: "medium",
-        title: "Schedule slipped but no exposure reserved",
-        detail: `+${project.schedule_variance_weeks} weeks of slip with active GC/OH FTC and zero E-Holds against schedule risk.`,
+        title: "Schedule slipped but no schedule-related exposure logged",
+        detail: `Completion forecast has moved past baseline. Log an exposure (schedule, procurement, or owner decision) with dollar impact.`,
       });
     }
   }
 
-  // 4. Bucket "savings" > 50% complete with no justification
+  // 4. Stale active exposures (>30 days, no next_review_at)
+  const now = Date.now();
+  for (const e of exposures.filter(isActive)) {
+    if (!e.opened_at) continue;
+    const ageDays = (now - new Date(e.opened_at).getTime()) / 86400000;
+    if (ageDays > 30 && !e.next_review_at) {
+      warnings.push({
+        id: `stale-${e.category}-${Math.round(e.dollar_exposure)}`,
+        severity: "medium",
+        title: "Stale exposure with no next review date",
+        detail: `An active ${e.category.replace(/_/g, " ")} exposure (${fmt(e.dollar_exposure)}) is ${Math.round(ageDays)} days old without a scheduled next review.`,
+      });
+    }
+  }
+
+  // 5. Accepted exposures > 1% of original contract
+  const accepted = exposures
+    .filter((e) => e.response_path === "accept" && isActive(e))
+    .reduce((s, e) => s + e.dollar_exposure, 0);
+  if (accepted > project.original_contract * 0.01) {
+    warnings.push({
+      id: "accept-too-much",
+      severity: "medium",
+      title: "Accepted exposures exceed 1% of contract",
+      detail: `${fmt(accepted)} in active exposures has response path 'accept'. Confirm these cannot be eliminated, recovered, or offset.`,
+    });
+  }
+
+  // 6. Bucket "savings" > 50% complete with no justification
   if (project.percent_complete > 50) {
     const suspicious = buckets.filter(
       (b) =>
@@ -230,6 +301,37 @@ export function evaluateWarnings(
   }
 
   return warnings;
+}
+
+export function exposureByCategory(
+  exposures: ExposureLite[],
+): { category: ExposureCategory; total: number; count: number }[] {
+  const map = new Map<ExposureCategory, { total: number; count: number }>();
+  for (const e of exposures) {
+    if (!isActive(e)) continue;
+    const cur = map.get(e.category) ?? { total: 0, count: 0 };
+    cur.total += expWeighted(e);
+    cur.count += 1;
+    map.set(e.category, cur);
+  }
+  return Array.from(map.entries())
+    .map(([category, v]) => ({ category, ...v }))
+    .sort((a, b) => b.total - a.total);
+}
+
+export function exposureAging(
+  exposures: ExposureLite[],
+  now: number = Date.now(),
+): { fresh: number; recent: number; stale: number } {
+  const buckets = { fresh: 0, recent: 0, stale: 0 };
+  for (const e of exposures) {
+    if (!isActive(e) || !e.opened_at) continue;
+    const days = (now - new Date(e.opened_at).getTime()) / 86400000;
+    if (days < 7) buckets.fresh += 1;
+    else if (days < 30) buckets.recent += 1;
+    else buckets.stale += 1;
+  }
+  return buckets;
 }
 
 function fmt(n: number) {

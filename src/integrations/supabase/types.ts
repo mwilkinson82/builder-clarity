@@ -111,49 +111,143 @@ export type Database = {
           },
         ]
       }
-      holds: {
+      decisions: {
         Row: {
-          amount: number
           created_at: string
-          description: string
+          decision: string
+          due_date: string | null
           id: string
+          impact: string
+          linked_co_id: string | null
+          linked_exposure_id: string | null
+          notes: string
           owner: string
           project_id: string
-          reason: string
-          release_condition: string
-          status: string
-          type: string
+          status: Database["public"]["Enums"]["decision_status"]
           updated_at: string
         }
         Insert: {
-          amount?: number
           created_at?: string
-          description?: string
+          decision?: string
+          due_date?: string | null
           id?: string
+          impact?: string
+          linked_co_id?: string | null
+          linked_exposure_id?: string | null
+          notes?: string
           owner?: string
           project_id: string
-          reason?: string
-          release_condition?: string
-          status?: string
-          type: string
+          status?: Database["public"]["Enums"]["decision_status"]
           updated_at?: string
         }
         Update: {
-          amount?: number
           created_at?: string
-          description?: string
+          decision?: string
+          due_date?: string | null
           id?: string
+          impact?: string
+          linked_co_id?: string | null
+          linked_exposure_id?: string | null
+          notes?: string
           owner?: string
           project_id?: string
-          reason?: string
-          release_condition?: string
-          status?: string
-          type?: string
+          status?: Database["public"]["Enums"]["decision_status"]
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "holds_project_id_fkey"
+            foreignKeyName: "decisions_linked_co_id_fkey"
+            columns: ["linked_co_id"]
+            isOneToOne: false
+            referencedRelation: "change_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decisions_linked_exposure_id_fkey"
+            columns: ["linked_exposure_id"]
+            isOneToOne: false
+            referencedRelation: "exposures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decisions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exposures: {
+        Row: {
+          category: Database["public"]["Enums"]["exposure_category"]
+          created_at: string
+          description: string
+          dollar_exposure: number
+          due_date: string | null
+          hold_class: Database["public"]["Enums"]["hold_class"]
+          id: string
+          next_review_at: string | null
+          notes: string
+          opened_at: string
+          owner: string
+          probability: number
+          project_id: string
+          release_condition: string
+          resolved_at: string | null
+          response_path: Database["public"]["Enums"]["response_path"]
+          schedule_impact_weeks: number | null
+          status: Database["public"]["Enums"]["exposure_status"]
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          category?: Database["public"]["Enums"]["exposure_category"]
+          created_at?: string
+          description?: string
+          dollar_exposure?: number
+          due_date?: string | null
+          hold_class?: Database["public"]["Enums"]["hold_class"]
+          id?: string
+          next_review_at?: string | null
+          notes?: string
+          opened_at?: string
+          owner?: string
+          probability?: number
+          project_id: string
+          release_condition?: string
+          resolved_at?: string | null
+          response_path?: Database["public"]["Enums"]["response_path"]
+          schedule_impact_weeks?: number | null
+          status?: Database["public"]["Enums"]["exposure_status"]
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          category?: Database["public"]["Enums"]["exposure_category"]
+          created_at?: string
+          description?: string
+          dollar_exposure?: number
+          due_date?: string | null
+          hold_class?: Database["public"]["Enums"]["hold_class"]
+          id?: string
+          next_review_at?: string | null
+          notes?: string
+          opened_at?: string
+          owner?: string
+          probability?: number
+          project_id?: string
+          release_condition?: string
+          resolved_at?: string | null
+          response_path?: Database["public"]["Enums"]["response_path"]
+          schedule_impact_weeks?: number | null
+          status?: Database["public"]["Enums"]["exposure_status"]
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exposures_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -163,10 +257,13 @@ export type Database = {
       }
       projects: {
         Row: {
+          baseline_completion_date: string | null
           client: string
           created_at: string
+          forecast_completion_date: string | null
           hold_variance_note: string
           id: string
+          last_review_summary: string
           last_reviewed_at: string | null
           name: string
           next_review_at: string | null
@@ -179,10 +276,13 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          baseline_completion_date?: string | null
           client?: string
           created_at?: string
+          forecast_completion_date?: string | null
           hold_variance_note?: string
           id?: string
+          last_review_summary?: string
           last_reviewed_at?: string | null
           name: string
           next_review_at?: string | null
@@ -195,10 +295,13 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          baseline_completion_date?: string | null
           client?: string
           created_at?: string
+          forecast_completion_date?: string | null
           hold_variance_note?: string
           id?: string
+          last_review_summary?: string
           last_reviewed_at?: string | null
           name?: string
           next_review_at?: string | null
@@ -212,6 +315,50 @@ export type Database = {
         }
         Relationships: []
       }
+      reviews: {
+        Row: {
+          created_at: string
+          forecast_completion_date_after: string | null
+          forecast_completion_date_before: string | null
+          id: string
+          project_id: string
+          reviewed_at: string
+          reviewer: string
+          rollup_snapshot: Json
+          summary_notes: string
+        }
+        Insert: {
+          created_at?: string
+          forecast_completion_date_after?: string | null
+          forecast_completion_date_before?: string | null
+          id?: string
+          project_id: string
+          reviewed_at?: string
+          reviewer?: string
+          rollup_snapshot?: Json
+          summary_notes?: string
+        }
+        Update: {
+          created_at?: string
+          forecast_completion_date_after?: string | null
+          forecast_completion_date_before?: string | null
+          id?: string
+          project_id?: string
+          reviewed_at?: string
+          reviewer?: string
+          rollup_snapshot?: Json
+          summary_notes?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reviews_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -220,7 +367,27 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      decision_status: "open" | "in_progress" | "resolved" | "overdue"
+      exposure_category:
+        | "owner_decision"
+        | "design_drift"
+        | "trade_performance"
+        | "procurement"
+        | "schedule_compression"
+        | "allowance_overrun"
+        | "field_change"
+        | "closeout_punch"
+        | "other"
+      exposure_status:
+        | "active"
+        | "escalated"
+        | "recovered"
+        | "eliminated"
+        | "accepted"
+        | "released"
+      hold_class: "E-Hold" | "C-Hold" | "Both" | "None"
       project_phase: "Early" | "Middle" | "Late"
+      response_path: "eliminate" | "recover" | "offset" | "accept"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -348,7 +515,29 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      decision_status: ["open", "in_progress", "resolved", "overdue"],
+      exposure_category: [
+        "owner_decision",
+        "design_drift",
+        "trade_performance",
+        "procurement",
+        "schedule_compression",
+        "allowance_overrun",
+        "field_change",
+        "closeout_punch",
+        "other",
+      ],
+      exposure_status: [
+        "active",
+        "escalated",
+        "recovered",
+        "eliminated",
+        "accepted",
+        "released",
+      ],
+      hold_class: ["E-Hold", "C-Hold", "Both", "None"],
       project_phase: ["Early", "Middle", "Late"],
+      response_path: ["eliminate", "recover", "offset", "accept"],
     },
   },
 } as const
