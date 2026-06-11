@@ -497,6 +497,12 @@ function ProjectPage() {
   );
 }
 
+        </Tabs>
+      </main>
+    </div>
+  );
+}
+
 function DownloadReportMenu({ onDownload }: { onDownload: (style: IorPdfStyle) => void | Promise<void> }) {
   return (
     <div className="flex items-center gap-1 rounded-md border border-hairline bg-card p-0.5">
@@ -507,11 +513,6 @@ function DownloadReportMenu({ onDownload }: { onDownload: (style: IorPdfStyle) =
       <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => onDownload("structured")}>
         Multi-page PDF
       </Button>
-    </div>
-  );
-}
-        </Tabs>
-      </main>
     </div>
   );
 }
