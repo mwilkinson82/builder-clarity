@@ -14,7 +14,110 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      holds: {
+        Row: {
+          amount: number
+          created_at: string
+          description: string
+          id: string
+          owner: string
+          project_id: string
+          reason: string
+          release_condition: string
+          status: string
+          type: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          created_at?: string
+          description?: string
+          id?: string
+          owner?: string
+          project_id: string
+          reason?: string
+          release_condition?: string
+          status?: string
+          type: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          description?: string
+          id?: string
+          owner?: string
+          project_id?: string
+          reason?: string
+          release_condition?: string
+          status?: string
+          type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "holds_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      projects: {
+        Row: {
+          approved_cos: number
+          client: string
+          created_at: string
+          forecasted_final_contract: number
+          forecasted_final_cost: number
+          id: string
+          last_reviewed_at: string | null
+          name: string
+          next_review_at: string | null
+          original_contract: number
+          original_cost_budget: number
+          owner_id: string
+          pending_cos: number
+          schedule_variance_weeks: number
+          updated_at: string
+        }
+        Insert: {
+          approved_cos?: number
+          client?: string
+          created_at?: string
+          forecasted_final_contract?: number
+          forecasted_final_cost?: number
+          id?: string
+          last_reviewed_at?: string | null
+          name: string
+          next_review_at?: string | null
+          original_contract?: number
+          original_cost_budget?: number
+          owner_id: string
+          pending_cos?: number
+          schedule_variance_weeks?: number
+          updated_at?: string
+        }
+        Update: {
+          approved_cos?: number
+          client?: string
+          created_at?: string
+          forecasted_final_contract?: number
+          forecasted_final_cost?: number
+          id?: string
+          last_reviewed_at?: string | null
+          name?: string
+          next_review_at?: string | null
+          original_contract?: number
+          original_cost_budget?: number
+          owner_id?: string
+          pending_cos?: number
+          schedule_variance_weeks?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
