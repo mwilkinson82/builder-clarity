@@ -81,10 +81,16 @@ export function computeRollup(
   const actualToDate = buckets.reduce((s, b) => s + b.actual_to_date, 0);
   const ftc = buckets.reduce((s, b) => s + b.ftc, 0);
 
+  // Safety fallback: if no cost buckets exist yet, use the original cost budget
+  // as the cost baseline. Without this, FFCost = $0 and the project looks
+  // wildly profitable. Once buckets are added the real rollup takes over.
+  const bucketCostBase =
+    buckets.length === 0 ? project.original_cost_budget : actualToDate + ftc;
+
   const forecastedFinalContract =
     project.original_contract + approvedCOContract + weightedPendingCOContract;
   const forecastedFinalCost =
-    actualToDate + ftc + approvedCOCost + weightedPendingCOCost;
+    bucketCostBase + approvedCOCost + weightedPendingCOCost;
 
   const active = holds.filter((h) => h.status !== "Released");
   const exposureHolds = active
