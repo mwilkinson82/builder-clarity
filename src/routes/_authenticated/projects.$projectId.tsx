@@ -277,10 +277,14 @@ function ProjectPage() {
                   pending={finUpdate.isPending}
                 />
               </div>
-              <dl className="grid grid-cols-3 gap-x-8 gap-y-1 text-sm">
+              <dl className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm md:grid-cols-4">
                 <div>
                   <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Client</dt>
                   <dd className="mt-0.5 text-foreground">{project.client || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Project Manager</dt>
+                  <dd className="mt-0.5 text-foreground">{project.project_manager || "—"}</dd>
                 </div>
                 <div>
                   <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Original Contract</dt>
@@ -560,6 +564,7 @@ function GuidanceRow({ label, actual, target, pct }: { label: string; actual: nu
 type EditableProject = {
   name: string;
   client: string;
+  project_manager: string;
   original_contract: number;
   original_cost_budget: number;
   schedule_variance_weeks: number;
@@ -583,6 +588,7 @@ function EditFinancialsDialog({
   const init = (): EditableProject => ({
     name: project.name,
     client: project.client,
+    project_manager: project.project_manager,
     original_contract: project.original_contract,
     original_cost_budget: project.original_cost_budget,
     schedule_variance_weeks: project.schedule_variance_weeks,
@@ -615,6 +621,10 @@ function EditFinancialsDialog({
               <Label>Client</Label>
               <Input value={form.client} onChange={(e) => setForm({ ...form, client: e.target.value })} />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Project manager</Label>
+            <Input value={form.project_manager} onChange={(e) => setForm({ ...form, project_manager: e.target.value })} placeholder="e.g. Marshall Wilkinson" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">

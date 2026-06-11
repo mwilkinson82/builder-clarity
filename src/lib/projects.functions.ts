@@ -35,6 +35,7 @@ export interface ProjectRow {
   forecast_completion_date: string | null;
   baseline_completion_date: string | null;
   last_review_summary: string;
+  project_manager: string;
 }
 
 export interface ExposureRow {
@@ -127,6 +128,7 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   forecast_completion_date: (p.forecast_completion_date as string | null) ?? null,
   baseline_completion_date: (p.baseline_completion_date as string | null) ?? null,
   last_review_summary: str(p.last_review_summary),
+  project_manager: str(p.project_manager),
 });
 
 const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
@@ -407,6 +409,7 @@ const updateFinancialsInput = z.object({
     forecast_completion_date: z.string().optional().nullable(),
     baseline_completion_date: z.string().optional().nullable(),
     last_review_summary: z.string().max(4000).optional(),
+    project_manager: z.string().max(200).optional(),
   }),
 });
 
