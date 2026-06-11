@@ -145,34 +145,50 @@ function drawKpiStrip(c: Ctx, r: Rollup, project: ProjectRow) {
   c.y -= boxH + 14;
 }
 
-// ---------------- Waterfall (simplified bar chart) ----------------
+// ---------------- Bar chart (each bar a single magnitude; color = sign) ----------------
 function drawWaterfall(c: Ctx, r: Rollup, project: ProjectRow) {
-  ensure(c, 120);
+  ensure(c, 150);
+  // Add breathing room between the section title and the chart
+  c.y -= 6;
   const top = c.y;
   const h = 90;
   const left = M;
   const right = PAGE_W - M;
-  const bars: { label: string; v: number; color: RGB }[] = [
+  type Bar = { label: string; v: number; color: RGB; neg?: boolean };
+  const bars: Bar[] = [
     { label: "Original Contract", v: project.original_contract, color: rgb(0.7, 0.72, 0.78) },
     { label: "Approved COs", v: r.approvedCOContract, color: rgb(0.45, 0.55, 0.7) },
     { label: "Pending (wtd)", v: r.weightedPendingCOContract, color: rgb(0.55, 0.6, 0.72) },
     { label: "Forecasted Final", v: r.forecastedFinalContract, color: ACCENT },
-    { label: "Forecasted Cost", v: -r.forecastedFinalCost, color: rgb(0.55, 0.4, 0.4) },
-    { label: "Exposure Holds", v: -r.exposureHolds, color: DANGER },
-    { label: "C-Hold", v: -r.contingencyHold, color: rgb(0.6, 0.4, 0.4) },
-    { label: "Indicated GP", v: r.indicatedGP, color: r.indicatedGP > 0 ? SUCCESS : DANGER },
+    { label: "Forecasted Cost", v: r.forecastedFinalCost, color: rgb(0.55, 0.4, 0.4), neg: true },
+    { label: "Exposure Holds", v: r.exposureHolds, color: DANGER, neg: true },
+    { label: "C-Hold", v: r.contingencyHold, color: rgb(0.6, 0.4, 0.4), neg: true },
+    { label: "Indicated GP", v: r.indicatedGP, color: r.indicatedGP >= 0 ? SUCCESS : DANGER },
   ];
   const maxAbs = Math.max(...bars.map((b) => Math.abs(b.v)), 1);
-  const bw = (right - left) / bars.length - 6;
+  const slot = (right - left) / bars.length;
+  const bw = slot - 8;
+  // baseline
+  c.page.drawLine({ start: { x: left, y: top - h }, end: { x: right, y: top - h }, thickness: 0.5, color: HAIR });
   bars.forEach((b, i) => {
-    const x = left + i * ((right - left) / bars.length) + 3;
+    const x = left + i * slot + 4;
     const barH = (Math.abs(b.v) / maxAbs) * h;
-    const y = b.v >= 0 ? top - h + (h - barH) : top - h;
-    c.page.drawRectangle({ x, y, width: bw, height: barH, color: b.color });
-    text(c, b.label, x, top - h - 10, { font: c.sansB, size: 6, color: MUTED });
-    text(c, fmtUSD(b.v), x, top - h - 20, { font: c.sans, size: 7, color: INK });
+    // All bars grow upward from shared baseline; negative magnitudes shown via muted/red color + label prefix.
+    c.page.drawRectangle({ x, y: top - h, width: bw, height: barH, color: b.color });
   });
-  c.y = top - h - 36;
+  // Two-line labels under the baseline to prevent overlap
+  bars.forEach((b, i) => {
+    const x = left + i * slot + 4;
+    const lines = splitToWidth(c.sansB, 6.5, b.label, slot - 4);
+    let ly = top - h - 10;
+    for (const ln of lines.slice(0, 2)) {
+      text(c, ln, x, ly, { font: c.sansB, size: 6.5, color: MUTED });
+      ly -= 8;
+    }
+    const valStr = b.neg ? `(${fmtUSD(Math.abs(b.v))})` : fmtUSD(b.v);
+    text(c, valStr, x, ly - 1, { font: c.sans, size: 7, color: INK });
+  });
+  c.y = top - h - 46;
 }
 
 // ---------------- Header / Cover ----------------
