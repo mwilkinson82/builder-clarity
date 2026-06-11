@@ -210,6 +210,8 @@ export function ProjectTruthReview({
       project: { ...project, forecast_completion_date: forecastDate || project.forecast_completion_date },
       rollup, exposures, changeOrders, buckets, decisions,
       reviews: [],
+      milestones: scheduleData?.milestones ?? [],
+      scheduleRisks: scheduleData?.risks ?? [],
       narrative,
       generatedAt: new Date(),
     }, pdfStyle);
