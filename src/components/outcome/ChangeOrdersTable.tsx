@@ -124,6 +124,7 @@ export function ChangeOrdersTable({
             <TableRow className="bg-surface">
               <TableHead className="w-[90px]">CO #</TableHead>
               <TableHead>Description</TableHead>
+              <TableHead className="hidden lg:table-cell">Type</TableHead>
               <TableHead className="text-right">Contract</TableHead>
               <TableHead className="text-right">Cost</TableHead>
               <TableHead>Status</TableHead>
@@ -137,6 +138,7 @@ export function ChangeOrdersTable({
               <TableRow key={c.id}>
                 <TableCell className="font-mono text-xs text-muted-foreground">{c.number}</TableCell>
                 <TableCell className="font-medium">{c.description}</TableCell>
+                <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{CO_TYPE_LABELS[c.co_type] ?? "—"}</TableCell>
                 <TableCell className="text-right tabular">{fmtUSD(c.contract_amount)}</TableCell>
                 <TableCell className="text-right tabular text-foreground/80">{fmtUSD(c.cost_amount)}</TableCell>
                 <TableCell>
@@ -148,6 +150,7 @@ export function ChangeOrdersTable({
                   {c.status === "Pending" ? `${c.probability}%` : "—"}
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-sm">{c.owner}</TableCell>
+
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(c)}>
