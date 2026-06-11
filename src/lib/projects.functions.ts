@@ -635,7 +635,7 @@ export const submitReview = createServerFn({ method: "POST" })
       body_markdown: data.body_markdown,
       pdf_style: data.pdf_style,
       email_recipients: data.email_recipients,
-      kpi_snapshot: data.kpi_snapshot,
+      kpi_snapshot: data.kpi_snapshot as Json,
       status: "published",
     }).select("id").single();
     if (error) throw new Error(error.message);
