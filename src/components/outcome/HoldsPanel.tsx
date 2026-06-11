@@ -80,12 +80,16 @@ const empty: Draft = {
 
 export function HoldsPanel({
   holds,
+  guidance,
+  phase,
   onCreate,
   onUpdate,
   onDelete,
   pending,
 }: {
   holds: HoldRow[];
+  guidance?: { ePct: number; cPct: number; eTarget: number; cTarget: number };
+  phase?: "Early" | "Middle" | "Late";
   onCreate: (draft: Draft) => void;
   onUpdate: (id: string, patch: Partial<Draft>) => void;
   onDelete: (id: string) => void;
