@@ -35,6 +35,7 @@ import {
   importCostBuckets,
   type ProjectRow, type ReviewRow,
 } from "@/lib/projects.functions";
+import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import type { Phase, ExposureCategory } from "@/lib/ior";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
