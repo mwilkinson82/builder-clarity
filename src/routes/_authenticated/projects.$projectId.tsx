@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MoneyInput } from "@/components/ui/money-input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -23,17 +24,21 @@ import { ScheduleRisk } from "@/components/outcome/ScheduleRisk";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { RiskWarnings } from "@/components/outcome/RiskWarnings";
 import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
+import { ImportSOVSheet } from "@/components/outcome/ImportSOVSheet";
+import { ReviewsTab } from "@/components/outcome/ReviewsTab";
 import {
   createExposure, updateExposure, deleteExposure,
   createDecision, updateDecision, deleteDecision,
   getProject, listProjects,
   updateProjectFinancials, createChangeOrder, updateChangeOrder,
-  deleteChangeOrder, updateBucket, submitReview,
-  type ProjectRow,
+  deleteChangeOrder, updateBucket, submitReview, updateReview,
+  importCostBuckets,
+  type ProjectRow, type ReviewRow,
 } from "@/lib/projects.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import type { Phase, ExposureCategory } from "@/lib/ior";
-import { LogOut, Pencil } from "lucide-react";
+import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
+import { LogOut, Pencil, Download } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   head: () => ({ meta: [{ title: "Project Outcome Review" }] }),
@@ -79,6 +84,8 @@ function ProjectPage() {
   const deleteCoFn = useServerFn(deleteChangeOrder);
   const updateBucketFn = useServerFn(updateBucket);
   const submitReviewFn = useServerFn(submitReview);
+  const updateReviewFn = useServerFn(updateReview);
+  const importBucketsFn = useServerFn(importCostBuckets);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", projectId] });
@@ -99,6 +106,8 @@ function ProjectPage() {
   const coDelete = mk<{ id: string }>(deleteCoFn);
   const bucketUpdate = mk<Record<string, unknown>>(updateBucketFn as never);
   const reviewSubmit = mk<Record<string, unknown>>(submitReviewFn as never);
+  const reviewUpdate = mk<Record<string, unknown>>(updateReviewFn as never);
+  const bucketImport = mk<Record<string, unknown>>(importBucketsFn as never);
 
   const navigate = useNavigate();
   const router = useRouter();
@@ -123,9 +132,85 @@ function ProjectPage() {
     rollup, guidance, warnings, byCategory, aging,
   } = data;
 
-  const lastReviewDays = project.last_reviewed_at
+  // Last-reviewed chip is gated by hydration to avoid SSR/CSR text mismatch
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => { setHydrated(true); }, []);
+  const lastReviewDays = hydrated && project.last_reviewed_at
     ? Math.floor((Date.now() - new Date(project.last_reviewed_at).getTime()) / 86400000)
     : null;
+
+  const handleSubmitReview = async (input: {
+    reviewer: string;
+    forecast_completion_date_before: string | null;
+    forecast_completion_date_after: string | null;
+    summary_notes: string;
+    body_markdown: string;
+    pdf_style: IorPdfStyle;
+    kpi_snapshot: Record<string, number | string>;
+    newExposures: Array<{
+      title: string; description: string; category: ExposureCategory;
+      dollar_exposure: number; probability: number; owner: string;
+      response_path: import("@/lib/ior").ResponsePath | null;
+      hold_class: import("@/lib/ior").HoldClass;
+    }>;
+    resolutionUpdates: Array<{ id: string; status: import("@/lib/ior").ExposureStatus; note: string }>;
+    pdfBytes: Uint8Array;
+  }) => {
+    // Create new exposures
+    for (const e of input.newExposures) {
+      if (!e.response_path) continue;
+      expCreate.mutate({
+        projectId,
+        title: e.title,
+        description: e.description,
+        category: e.category,
+        dollar_exposure: e.dollar_exposure,
+        probability: e.probability,
+        owner: e.owner,
+        response_path: e.response_path,
+        hold_class: e.hold_class,
+        status: "active",
+        release_condition: "",
+      });
+    }
+    // Apply resolutions
+    for (const r of input.resolutionUpdates) {
+      const patch: Record<string, unknown> = { status: r.status };
+      if (r.note) patch.notes = r.note;
+      if (r.status === "recovered" || r.status === "eliminated" || r.status === "released") {
+        patch.resolved_at = new Date().toISOString();
+      }
+      expUpdate.mutate({ id: r.id, ...patch });
+    }
+    // Submit the review row
+    reviewSubmit.mutate({
+      projectId,
+      reviewer: input.reviewer,
+      forecast_completion_date_before: input.forecast_completion_date_before,
+      forecast_completion_date_after: input.forecast_completion_date_after,
+      summary_notes: input.summary_notes,
+      body_markdown: input.body_markdown,
+      pdf_style: input.pdf_style,
+      kpi_snapshot: input.kpi_snapshot,
+      email_recipients: [],
+    });
+    // PDF was already downloaded by the wizard itself.
+  };
+
+  const downloadCurrentReport = async (style: IorPdfStyle) => {
+    const bytes = await generateIorPdf({
+      project, rollup, exposures, changeOrders, buckets, decisions, reviews,
+      narrative: project.last_review_summary,
+      generatedAt: new Date(),
+    }, style);
+    downloadPdfBytes(bytes, `IOR_${project.name.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0,10)}.pdf`);
+  };
+
+  const buildPdfInputForReview = (r: ReviewRow | null) => ({
+    project, rollup, exposures, changeOrders, buckets, decisions, reviews,
+    narrative: r?.body_markdown || r?.summary_notes,
+    generatedAt: r ? new Date(r.reviewed_at) : new Date(),
+  });
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -170,12 +255,18 @@ function ProjectPage() {
               </p>
             </div>
             <div className="flex flex-col items-end gap-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <ProjectTruthReview
                   project={project}
-                  onSubmit={(input) => reviewSubmit.mutate({ projectId, ...input })}
+                  exposures={exposures}
+                  changeOrders={changeOrders}
+                  buckets={buckets}
+                  decisions={decisions}
+                  rollup={rollup}
+                  onSubmit={handleSubmitReview}
                   pending={reviewSubmit.isPending}
                 />
+                <DownloadReportMenu onDownload={downloadCurrentReport} />
                 <EditFinancialsDialog
                   project={project}
                   onSave={(patch) => finUpdate.mutate({ projectId, patch })}
@@ -357,7 +448,18 @@ function ProjectPage() {
           </TabsContent>
 
           <TabsContent value="buckets">
-            <SectionHeader title="Cost Buckets" subtitle="Actual-to-date plus forecast-to-complete per bucket. These roll up into Forecasted Final Cost." />
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="font-serif text-3xl text-foreground">Cost Buckets</h2>
+                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                  Actual-to-date plus forecast-to-complete per bucket. Import your existing schedule of values from QuickBooks or Excel — we'll map the columns for you.
+                </p>
+              </div>
+              <ImportSOVSheet
+                onImport={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
+                pending={bucketImport.isPending}
+              />
+            </div>
             <CostBucketsTable
               buckets={buckets}
               onUpdate={(id, patch) => bucketUpdate.mutate({ id, patch })}
@@ -380,45 +482,33 @@ function ProjectPage() {
           </TabsContent>
 
           <TabsContent value="reviews">
-            <SectionHeader title="Project Truth Reviews" subtitle="What changed since the last review." />
-            <div className="overflow-hidden rounded-lg border border-hairline bg-card">
-              {reviews.length === 0 ? (
-                <p className="p-8 text-center text-sm text-muted-foreground">
-                  No reviews yet. Run the first Project Truth Review to log what's changed.
-                </p>
-              ) : (
-                <ul className="divide-y divide-hairline">
-                  {reviews.map((r) => (
-                    <li key={r.id} className="px-5 py-4">
-                      <div className="flex items-baseline justify-between gap-3">
-                        <div className="text-sm font-medium text-foreground">
-                          {new Date(r.reviewed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}
-                        </div>
-                        <div className="text-xs text-muted-foreground">{r.reviewer || "—"}</div>
-                      </div>
-                      {(r.forecast_completion_date_before || r.forecast_completion_date_after) && (
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          Forecast completion:{" "}
-                          {r.forecast_completion_date_before
-                            ? new Date(r.forecast_completion_date_before).toLocaleDateString()
-                            : "—"}
-                          {" → "}
-                          {r.forecast_completion_date_after
-                            ? new Date(r.forecast_completion_date_after).toLocaleDateString()
-                            : "—"}
-                        </div>
-                      )}
-                      {r.summary_notes && (
-                        <pre className="mt-2 whitespace-pre-wrap font-sans text-sm text-foreground/85">{r.summary_notes}</pre>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            <SectionHeader title="Project Truth Reviews" subtitle="Each review is an editable, downloadable, emailable IOR Report — ready for the next L10 or project meeting." />
+            <ReviewsTab
+              reviews={reviews}
+              project={project}
+              buildPdfInput={buildPdfInputForReview}
+              onUpdate={(id, patch) => reviewUpdate.mutate({ id, patch })}
+              pending={reviewUpdate.isPending}
+            />
           </TabsContent>
         </Tabs>
       </main>
+    </div>
+  );
+}
+
+
+
+function DownloadReportMenu({ onDownload }: { onDownload: (style: IorPdfStyle) => void | Promise<void> }) {
+  return (
+    <div className="flex items-center gap-1 rounded-md border border-hairline bg-card p-0.5">
+      <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => onDownload("executive")}>
+        <Download className="h-3.5 w-3.5" /> One-pager PDF
+      </Button>
+      <span className="text-hairline">·</span>
+      <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => onDownload("structured")}>
+        Multi-page PDF
+      </Button>
     </div>
   );
 }
@@ -523,11 +613,11 @@ function EditFinancialsDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Original contract</Label>
-              <Input type="number" value={form.original_contract} onChange={(e) => setForm({ ...form, original_contract: Number(e.target.value) })} />
+              <MoneyInput value={form.original_contract} onValueChange={(v) => setForm({ ...form, original_contract: v })} />
             </div>
             <div className="space-y-1.5">
               <Label>Original cost budget</Label>
-              <Input type="number" value={form.original_cost_budget} onChange={(e) => setForm({ ...form, original_cost_budget: Number(e.target.value) })} />
+              <MoneyInput value={form.original_cost_budget} onValueChange={(v) => setForm({ ...form, original_cost_budget: v })} />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">

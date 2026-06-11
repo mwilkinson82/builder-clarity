@@ -317,36 +317,51 @@ export type Database = {
       }
       reviews: {
         Row: {
+          body_markdown: string
           created_at: string
+          email_recipients: string[]
           forecast_completion_date_after: string | null
           forecast_completion_date_before: string | null
           id: string
+          kpi_snapshot: Json
+          pdf_style: string
           project_id: string
           reviewed_at: string
           reviewer: string
           rollup_snapshot: Json
+          status: string
           summary_notes: string
         }
         Insert: {
+          body_markdown?: string
           created_at?: string
+          email_recipients?: string[]
           forecast_completion_date_after?: string | null
           forecast_completion_date_before?: string | null
           id?: string
+          kpi_snapshot?: Json
+          pdf_style?: string
           project_id: string
           reviewed_at?: string
           reviewer?: string
           rollup_snapshot?: Json
+          status?: string
           summary_notes?: string
         }
         Update: {
+          body_markdown?: string
           created_at?: string
+          email_recipients?: string[]
           forecast_completion_date_after?: string | null
           forecast_completion_date_before?: string | null
           id?: string
+          kpi_snapshot?: Json
+          pdf_style?: string
           project_id?: string
           reviewed_at?: string
           reviewer?: string
           rollup_snapshot?: Json
+          status?: string
           summary_notes?: string
         }
         Relationships: [

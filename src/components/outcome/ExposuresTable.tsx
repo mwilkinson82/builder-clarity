@@ -13,6 +13,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Plus, Pencil, Trash2 } from "lucide-react";
+import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
 import type {
   ExposureCategory, ExposureStatus, HoldClass, ResponsePath,
@@ -239,7 +240,7 @@ export function ExposuresTable({
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-danger">Dollar exposure *</Label>
-                <Input type="number" value={draft.dollar_exposure} onChange={(e) => setDraft({ ...draft, dollar_exposure: Number(e.target.value) })} />
+                <MoneyInput value={draft.dollar_exposure} onValueChange={(v) => setDraft({ ...draft, dollar_exposure: v })} />
                 {errors.dollar && <p className="text-xs text-danger">{errors.dollar}</p>}
               </div>
               <div className="space-y-1.5">
