@@ -1,9 +1,9 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
-import { createProject, listProjects } from "@/lib/projects.functions";
+import { createProject, listProjects, seedDemoIfEmpty } from "@/lib/projects.functions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -45,10 +45,21 @@ function statusFor(originalPct: number, indicatedPct: number) {
 
 function PortfolioPage() {
   const list = useServerFn(listProjects);
+  const seed = useServerFn(seedDemoIfEmpty);
+  const qc = useQueryClient();
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ["projects"],
     queryFn: () => list(),
   });
+
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (isLoading || seededRef.current || projects.length > 0) return;
+    seededRef.current = true;
+    seed().then((r) => {
+      if (r.seeded) qc.invalidateQueries({ queryKey: ["projects"] });
+    }).catch(() => { seededRef.current = false; });
+  }, [isLoading, projects.length, seed, qc]);
 
   const navigate = useNavigate();
   const router = useRouter();
