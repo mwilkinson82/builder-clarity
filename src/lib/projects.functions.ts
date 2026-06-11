@@ -294,8 +294,10 @@ export const getProject = createServerFn({ method: "GET" })
         probability: num(o.probability),
         owner: str(o.owner),
         notes: str(o.notes),
+        co_type: (str(o.co_type, "other") as COType),
       };
     });
+
     const buckets: BucketRow[] = (bRes.data ?? []).map((b) => {
       const o = b as Record<string, unknown>;
       return {
