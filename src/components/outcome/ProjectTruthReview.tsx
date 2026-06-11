@@ -452,7 +452,7 @@ export function ProjectTruthReview({
                 onChange={(e) => setNarrative(e.target.value)}
                 placeholder="Project remains on budget despite a 3-week schedule slip driven by window delivery. Lighting selections still trending 30% over allowance — owner decision required by Friday to recover."
               />
-              <input type="hidden" value={pdfStyle} onChange={() => setPdfStyle("executive")} />
+              
 
               <div className="space-y-1.5">
                 <Label className="text-xs">Reviewer</Label>
