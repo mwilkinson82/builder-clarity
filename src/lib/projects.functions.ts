@@ -556,6 +556,47 @@ export const updateBucket = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const createBucketInput = z.object({
+  projectId: z.string().uuid(),
+  bucket: z.string().min(1).max(100),
+  original_budget: z.number().min(0).default(0),
+  actual_to_date: z.number().min(0).default(0),
+  ftc: z.number().min(0).default(0),
+});
+
+export const createBucket = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof createBucketInput>) => createBucketInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { data: last } = await context.supabase
+      .from("cost_buckets")
+      .select("sort_order")
+      .eq("project_id", data.projectId)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const sort_order = ((last?.sort_order as number | undefined) ?? 0) + 1;
+    const { error } = await context.supabase.from("cost_buckets").insert({
+      project_id: data.projectId,
+      bucket: data.bucket,
+      original_budget: data.original_budget,
+      actual_to_date: data.actual_to_date,
+      ftc: data.ftc,
+      sort_order,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteBucket = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("cost_buckets").delete().eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 // ---------------- DECISIONS ----------------
 
 const DECISION_STATUSES = ["open", "in_progress", "resolved", "overdue"] as const;
