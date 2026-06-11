@@ -1,162 +1,93 @@
+## Goal
+Turn the IOR app from a dashboard into a true risk-to-margin operating system: PMs import their existing SOV, log dollarized risks with a treatment path, and generate a polished weekly PDF report ready for an L10 / PM meeting. Ship as one coherent release.
 
-# Phase 3: Exposure Register + Project Truth Review
+## 1. Comma-formatted dollar inputs (`MoneyInput`)
+- New `src/components/ui/money-input.tsx`: type-as-you-go thousands separators, returns clean number, accepts decimals, blocks letters.
+- Replace raw `<Input type="number">` in: project edit (Original Contract, Original Cost Budget), Cost Buckets table, Change Orders table, Exposures table. Reads stay formatted with `fmtUSD`.
 
-Reframe the app from "another cost report" into a risk-to-margin operating system. The schedule of values gives the cost structure; the **exposure register** becomes the heart of the product, and a guided **Project Truth Review** is how PMs feed it.
+## 2. Schedule of Values ingestion — three paths
+Single sheet `ImportSOVSheet.tsx` on the Cost Buckets tab with tabs:
+- **CSV** — drag-drop or pick `.csv`, parsed with `papaparse`.
+- **Excel (.xlsx)** — same drop zone, parsed with `xlsx` (sheetjs). Worker-safe.
+- **Paste from spreadsheet** — large textarea; pastes tab-separated cells from Excel/QuickBooks into an editable grid.
 
-## Guiding product sentence
-The IOR tool is not a budget report. It is a project truth system that starts from the SOV, captures emerging risk, assigns dollar exposure, and converts that exposure into management decisions that protect margin.
+All three converge on the same mapping UI:
+- Column picker: which column is Bucket Name / Original Budget / Actual to Date / FTC / Sort Order.
+- Live preview grid (first 25 rows) with per-row valid/invalid badges. Bad rows are flagged, not silently dropped.
+- Mode: **Replace all buckets** or **Append**.
+- "Help me copy from Excel" inline tip with the exact columns to copy.
 
-## Six modules (target end state)
-1. Project setup (exists, light additions)
-2. Cost forecast / SOV buckets (exists)
-3. Change orders (exists)
-4. **Exposure register** — replaces the current `holds` table as the primary risk object (NEW)
-5. **Schedule risk** — date movement + blocked decisions tied to dollars (light NEW)
-6. **Required decisions** — exposures and CO calls converted into owned actions (NEW)
+Backend: new `importCostBuckets` server fn — accepts validated rows, runs as one transaction.
 
-Plus a cross-cutting **Project Truth Review** wizard that drives weekly/monthly updates.
+## 3. Treatment path woven into Truth Review wizard
+The wizard becomes the weekly IOR generator, not a notes box.
+- Step 2 (New exposure) and step 5 (Resolutions) both REQUIRE a treatment path on every active exposure surfaced — `eliminate | recover | offset | accept`. Cannot advance without one selected for each.
+- Each path renders with a one-line meaning so the PM picks deliberately:
+  - **Eliminate** — remove the risk (scope cut, design change).
+  - **Recover** — earn it back (CO, schedule recovery).
+  - **Offset** — fund it from another bucket / contingency.
+  - **Accept** — book the loss; protect the rest.
+- Wizard submit writes the `reviews` row AND triggers PDF generation; the PDF is attached to the review.
 
----
+## 4. Reviews become real artifacts (editable + downloadable + emailable)
+- `reviews` table additions: `pdf_url`, `email_recipients text[]`, `status` (`draft | published`), `body_markdown` (editable narrative).
+- New Reviews tab UI: list of past reviews; each row has **View PDF**, **Edit**, **Download**, **Email** (mailto: with PDF link prefilled).
+- Edit screen lets PM rewrite the narrative, add executive summary, then "Re-publish" regenerates PDF.
 
-## 1. Data model
+## 5. IOR PDF Report — two samples first, you pick
+Server route `/api/reports/ior` (server fn returning a PDF blob), generated with `pdf-lib` (Worker-safe, no native deps).
+Both styles will be generated for Harbor Residence so you can pick:
 
-### New table: `exposures` (the heart of the system)
-Supersedes `holds` as the primary capture object. We keep `holds` as a derived/legacy concept — every active exposure with a dollar amount rolls into E-Hold or C-Hold totals based on its `hold_class`.
+**Style A — Executive one-pager + appendix**
+- Page 1: header (project, client, "Week of [date]"), KPI strip, outcome waterfall sketch, top 5 exposures table, required decisions, schedule chip.
+- Page 2+: full exposure register grouped by treatment path, CO log, cost bucket detail, review narrative.
 
-Fields:
-- `project_id`, `title`, `description`
-- `category` enum: `owner_decision | design_drift | trade_performance | procurement | schedule_compression | allowance_overrun | field_change | closeout_punch | other`
-- `dollar_exposure` numeric
-- `probability` numeric (0-100)
-- `schedule_impact_weeks` numeric (nullable)
-- `owner` text
-- `response_path` enum: `eliminate | recover | offset | accept`
-- `release_condition` text
-- `hold_class` enum: `E-Hold | C-Hold | Both | None` (drives rollup into the guidance engine)
-- `status` enum: `active | escalated | recovered | eliminated | accepted | released`
-- `due_date`, `next_review_at`, `opened_at`, `resolved_at`
-- `notes`
+**Style B — Multi-page structured report**
+- Cover page (project, reviewer, date, status pill).
+- Executive summary (narrative + 3 KPI callouts).
+- Financial Outcome (waterfall, original→indicated).
+- Exposure Register grouped by **treatment path** (Eliminate / Recover / Offset / Accept) with rollup per group.
+- Decisions Required.
+- Schedule Risk (baseline vs forecast, schedule-category exposures).
+- Review Log (last 3 reviews diff).
 
-### New table: `decisions`
-- `project_id`, `decision`, `impact` (dollars or qualitative), `owner`, `due_date`
-- `status` enum: `open | in_progress | resolved | overdue`
-- `linked_exposure_id` (nullable FK)
-- `linked_co_id` (nullable FK)
+A "Download IOR Report" button appears at the top of the project page AND after wizard submit. Style picker stays in the UI after we decide.
 
-### New table: `reviews` (the "what changed since last review" log)
-- `project_id`, `reviewed_at`, `reviewer`
-- `forecast_completion_date_before`, `forecast_completion_date_after`
-- `summary_notes`
-- JSON snapshot of KPI rollup at review time (for trending later)
+## 6. Comma input + small fixes
+- Fix React #418 hydration error surfaced in runtime errors (likely date formatting differing SSR/client).
 
-### `projects` additions
-- `forecast_completion_date` date
-- `baseline_completion_date` date
-- `last_review_summary` text
-
-### Migration path for `holds`
-- Backfill: each existing hold becomes an exposure with `hold_class` = its current type, `response_path = 'accept'` as default, status mapped 1:1.
-- The Holds panel keeps showing E/C totals — but those totals are now computed from `exposures` where `hold_class in ('E-Hold','Both')` etc., not from a separate `holds` table. We can drop `holds` after backfill.
-
-RLS: owner-via-project on all three new tables, mirroring existing pattern. GRANTs to authenticated + service_role.
-
-`seed_demo_project` rewritten to create 6 exposures (mix of categories, statuses, response paths), 4 decisions (2 open, 1 in_progress, 1 overdue), and one historical review row.
-
----
-
-## 2. IOR engine updates (`src/lib/ior.ts`)
-
-- `computeRollup` now takes `exposures` instead of `holds`.
-  - `exposureHolds` = Σ `dollar_exposure × probability/100` where `status ∈ active|escalated` AND `hold_class ∈ E-Hold|Both`.
-  - `contingencyHold` = same, for C-Hold|Both.
-- New: `exposureByCategory(exposures)` for the executive view's "margin at risk by category" chart.
-- New: `exposureAging(exposures, now)` — days since `opened_at` for active items; surfaces stale risks.
-- `evaluateWarnings` gains:
-  - Any exposure `active` > 30 days with no `next_review_at` set.
-  - Any `response_path = 'accept'` totaling > 1% of original contract without a written note.
-  - Forecast completion date later than baseline AND no schedule-category exposure logged.
+## Out of scope this pass
+- Email-send via server (mailto: only for now; SMTP integration is a separate ask).
+- Branded logo upload for PDF header (uses project name only).
+- Per-line-item SOV (we stay at bucket-level rollup, but importer supports up to a few hundred rows mapped into buckets).
 
 ---
 
-## 3. UI — three-layer workflow
+## Technical notes
 
-### Layer 1 — Project Truth Review wizard (NEW, top-level CTA on project page)
-A 6-step guided modal/sheet. Each step is one screen, one question, fast keyboard flow:
+**New deps:** `papaparse`, `xlsx`, `pdf-lib` — all Worker-compatible.
 
-1. **Schedule** — Did forecast completion move? (date picker + reason)
-2. **New exposure?** — Inline form: title, category, dollar, probability, response path, owner, release condition. Repeatable.
-3. **CO updates** — Quick-edit list of pending COs (status, probability).
-4. **Bucket forecast changes** — Only buckets where actual+FTC moved >5% since last review surface here; PM confirms or edits.
-5. **Resolutions** — Active exposures listed; one-tap mark recovered/eliminated/released with note.
-6. **Required decisions** — Add/confirm top 3 decisions needed to protect margin.
+**Migration:**
+- `reviews`: add `pdf_url text`, `email_recipients text[]`, `status text default 'published'`, `body_markdown text`.
+- No new tables.
 
-On submit: writes a `reviews` row with before/after snapshot and a summary.
+**Files (new):**
+- `src/components/ui/money-input.tsx`
+- `src/components/outcome/ImportSOVSheet.tsx`
+- `src/components/outcome/ReviewsTab.tsx`
+- `src/lib/sov-import.ts` (CSV/XLSX/paste parsers + column mapping)
+- `src/lib/ior-pdf.ts` (pdf-lib report generators, two styles)
+- `src/lib/reports.functions.ts` (`generateIorReport`, `importCostBuckets`, `updateReview`)
 
-The PM should never need to navigate raw tables during a normal review cycle.
+**Files (edited):**
+- `src/components/outcome/ProjectTruthReview.tsx` — enforce treatment path per active exposure, trigger PDF on submit.
+- `src/components/outcome/{CostBucketsTable,ChangeOrdersTable,ExposuresTable}.tsx` — use `MoneyInput`.
+- `src/routes/_authenticated/projects.$projectId.tsx` — Download Report button, Reviews tab, Import SOV button on Cost Buckets, project-edit dialog uses `MoneyInput`.
 
-### Layer 2 — Register tabs (replaces today's tabs)
-- **Cost Buckets** (exists)
-- **Change Orders** (exists)
-- **Exposures** (NEW) — full table with filters by category, status, response path; inline edit; "Convert to Decision" action.
-- **Decisions** (NEW, replaces placeholder `DecisionsTable`) — live table backed by `decisions` table.
-- **Reviews** (NEW, small) — chronological list of past reviews with diff summary.
-
-### Layer 3 — Executive Outcome screen (current dashboard, refined)
-Keep the KPI strip, Waterfall, Holds panel. Additions:
-- **Margin at risk by category** — horizontal bar chart from `exposureByCategory`.
-- **Exposure aging strip** — count of active exposures bucketed by age (<7d, 7-30d, 30+d).
-- "Last reviewed X days ago" header chip linking to the wizard.
-
-### Strong UX rules baked in
-- Every exposure form **requires** `dollar_exposure` and `response_path` — cannot save without both. This is the "what is the probable dollar consequence" + "what is the treatment" enforcement.
-- When a PM lowers a hold below guidance, a `hold_variance_note` is required (already partially there — make it blocking).
-- When schedule slips with no new schedule-category exposure, the wizard step 1 forces a confirmation.
-
----
-
-## 4. Portfolio view
-Project cards already show warning count. Add:
-- Days since last review (red if > 30).
-- Top exposure category for that project.
-
----
-
-## 5. Out of scope for this pass
-- SOV import from CSV / Procore / Buildertrend (manual bucket entry stays).
-- Trending charts across reviews (we capture snapshots; visualization comes later).
-- Role-based permissions (PM vs owner views).
-- Notifications / email digests when reviews are overdue.
-
----
-
-## Technical section
-
-**Migration order (single migration):**
-1. Create `exposures`, `decisions`, `reviews` with GRANTs, RLS, owner-via-project policies, `updated_at` triggers.
-2. Add `forecast_completion_date`, `baseline_completion_date`, `last_review_summary` to `projects`.
-3. Backfill: `INSERT INTO exposures SELECT ... FROM holds` mapping fields.
-4. Rewrite `seed_demo_project` trigger to populate the new tables.
-5. Drop `holds` table (after verifying backfill in dev).
-
-**File changes:**
-- `src/lib/ior.ts` — swap `HoldLite` for `ExposureLite`; add `exposureByCategory`, `exposureAging`; update warnings.
-- `src/lib/projects.functions.ts` — replace hold CRUD with exposure CRUD; add `listExposures`, `upsertExposure`, `listDecisions`, `upsertDecision`, `submitReview`.
-- `src/components/outcome/HoldsPanel.tsx` → `ExposureSummary.tsx` (keeps E/C totals header but pulls from exposures).
-- `src/components/outcome/ExposuresTable.tsx` — NEW.
-- `src/components/outcome/DecisionsTable.tsx` — wire to live data (currently static).
-- `src/components/outcome/ReviewsLog.tsx` — NEW.
-- `src/components/outcome/ProjectTruthReview.tsx` — NEW, the wizard.
-- `src/components/outcome/ExposureByCategoryChart.tsx` — NEW.
-- `src/components/outcome/RiskWarnings.tsx` — extend with stale/aging warnings.
-- `src/routes/_authenticated/projects.$projectId.tsx` — add "Start Review" button, new tabs, new sections.
-- `src/routes/_authenticated/index.tsx` — add last-reviewed + top-category chips on cards.
-
-**Order of work (one PR per step is ideal but we'll batch):**
-1. Migration + seed rewrite.
-2. IOR engine update + server fns.
-3. Exposures + Decisions tables (read/write).
-4. Project Truth Review wizard.
-5. Executive dashboard additions (category chart, aging, last-reviewed chip).
-6. Portfolio card updates.
-
-The visual identity of the executive screen stays — what changes is what feeds it and how the PM gets data in.
+**Build order I'll execute:**
+1. Migration for reviews additions.
+2. `MoneyInput` + swap into all tables/dialogs.
+3. SOV importer (parsers + sheet UI + server fn).
+4. PDF generator with both styles + Download button — render Harbor Residence sample so you can compare.
+5. Truth Review wizard rework: treatment-path enforcement + auto-PDF on submit.
+6. Reviews tab (edit / download / mailto email).
