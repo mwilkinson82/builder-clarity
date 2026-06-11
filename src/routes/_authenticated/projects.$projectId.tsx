@@ -467,6 +467,8 @@ function ProjectPage() {
             <CostBucketsTable
               buckets={buckets}
               onUpdate={(id, patch) => bucketUpdate.mutate({ id, patch })}
+              onCreate={(name) => bucketCreate.mutate({ projectId, bucket: name })}
+              onDelete={(id) => bucketDelete.mutate({ id })}
             />
           </TabsContent>
 
