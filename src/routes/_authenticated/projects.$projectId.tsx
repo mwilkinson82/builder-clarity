@@ -107,6 +107,8 @@ function ProjectPage() {
   const coUpdate = mk<Record<string, unknown>>(updateCoFn as never);
   const coDelete = mk<{ id: string }>(deleteCoFn);
   const bucketUpdate = mk<Record<string, unknown>>(updateBucketFn as never);
+  const bucketCreate = mk<Record<string, unknown>>(createBucketFn as never);
+  const bucketDelete = mk<{ id: string }>(deleteBucketFn);
   const reviewSubmit = mk<Record<string, unknown>>(submitReviewFn as never);
   const reviewUpdate = mk<Record<string, unknown>>(updateReviewFn as never);
   const bucketImport = mk<Record<string, unknown>>(importBucketsFn as never);
