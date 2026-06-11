@@ -128,9 +128,21 @@ function PortfolioPage() {
                                 {p.warning_count}
                               </span>
                             )}
+                            {p.days_since_review !== null && p.days_since_review > 30 && (
+                              <span
+                                title="Project has not been reviewed in over 30 days"
+                                className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold text-warning"
+                              >
+                                Review {p.days_since_review}d
+                              </span>
+                            )}
                           </div>
-                          <div className="text-xs text-muted-foreground">{p.client} · {p.phase}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {p.client} · {p.phase}
+                            {p.top_category && <> · Top risk: {p.top_category.replace(/_/g, " ")}</>}
+                          </div>
                         </Link>
+
                       </TableCell>
                       <TableCell className="text-right tabular">{fmtUSD(p.original_contract)}</TableCell>
                       <TableCell className="text-right tabular">{fmtUSD(p.forecasted_final_contract)}</TableCell>
