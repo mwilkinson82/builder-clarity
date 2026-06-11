@@ -620,7 +620,11 @@ export const submitReview = createServerFn({ method: "POST" })
     });
     if (error) throw new Error(error.message);
 
-    const patch: Record<string, unknown> = {
+    const patch: {
+      last_reviewed_at: string;
+      last_review_summary: string;
+      forecast_completion_date?: string;
+    } = {
       last_reviewed_at: new Date().toISOString(),
       last_review_summary: data.summary_notes,
     };
