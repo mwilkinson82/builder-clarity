@@ -10,6 +10,9 @@ import type {
   ProjectRow, ExposureRow, ChangeOrderRow, BucketRow,
   DecisionRow, ReviewRow,
 } from "@/lib/projects.functions";
+import type {
+  MilestoneRow, ScheduleRiskRow, MilestoneStatus, ScheduleRiskKind,
+} from "@/lib/schedule.functions";
 
 export type IorPdfStyle = "executive" | "structured";
 
@@ -21,9 +24,20 @@ export interface IorPdfInput {
   buckets: BucketRow[];
   decisions: DecisionRow[];
   reviews: ReviewRow[];
+  milestones?: MilestoneRow[];
+  scheduleRisks?: ScheduleRiskRow[];
   narrative?: string;
   generatedAt?: Date;
 }
+
+const MILESTONE_STATUS_LABEL: Record<MilestoneStatus, string> = {
+  on_track: "On track", at_risk: "At risk", delayed: "Delayed", complete: "Complete",
+};
+const RISK_KIND_LABEL: Record<ScheduleRiskKind, string> = {
+  critical_decision: "Critical delayed decisions",
+  procurement: "Procurement risks",
+  trade_performance: "Trade performance risks",
+};
 
 const PAGE_W = 612;
 const PAGE_H = 792;
