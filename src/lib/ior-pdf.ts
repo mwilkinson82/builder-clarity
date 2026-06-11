@@ -110,34 +110,39 @@ function wrap(c: Ctx, s: string, x: number, maxWidth: number, opts: { font?: PDF
   }
 }
 function sectionTitle(c: Ctx, label: string) {
-  ensure(c, 32);
-  c.y -= 12;
+  ensure(c, 36);
+  c.y -= 14;
   text(c, label.toUpperCase(), M, c.y, { font: c.sansB, size: 8, color: MUTED });
   c.y -= 8;
   rule(c, c.y);
-  c.y -= 14;
+  c.y -= 18;
 }
 
 // ---------------- KPI strip ----------------
 function drawKpiStrip(c: Ctx, r: Rollup, project: ProjectRow) {
-  const cells: { label: string; value: string; color?: RGB }[] = [
-    { label: "Original GP", value: `${fmtUSD(r.originalGP)}  ·  ${fmtPct(r.originalGPpct)}` },
-    { label: "Indicated GP", value: `${fmtUSD(r.indicatedGP)}  ·  ${fmtPct(r.indicatedGPpct)}`, color: ACCENT },
-    { label: "GP at Risk", value: fmtUSD(r.gpAtRisk), color: r.gpAtRisk > 0 ? DANGER : SUCCESS },
-    { label: "E-Hold", value: fmtUSD(r.exposureHolds) },
-    { label: "C-Hold", value: fmtUSD(r.contingencyHold) },
-    { label: "Schedule", value: project.schedule_variance_weeks > 0 ? `+${project.schedule_variance_weeks}w` : "On time", color: project.schedule_variance_weeks > 0 ? DANGER : SUCCESS },
+  const cells: { label: string; value: string; sub?: string; color?: RGB }[] = [
+    { label: "Original GP", value: fmtUSD(r.originalGP), sub: fmtPct(r.originalGPpct) },
+    { label: "Indicated GP", value: fmtUSD(r.indicatedGP), sub: fmtPct(r.indicatedGPpct), color: ACCENT },
+    { label: "GP at Risk", value: fmtUSD(r.gpAtRisk), sub: "Orig − Indicated", color: r.gpAtRisk > 0 ? DANGER : SUCCESS },
+    { label: "E-Hold", value: fmtUSD(r.exposureHolds), sub: "Specific risks" },
+    { label: "C-Hold", value: fmtUSD(r.contingencyHold), sub: "Uncertainty" },
+    { label: "Schedule", value: project.schedule_variance_weeks > 0 ? `+${project.schedule_variance_weeks}w` : "On time", sub: "vs baseline", color: project.schedule_variance_weeks > 0 ? DANGER : SUCCESS },
   ];
   const w = (PAGE_W - 2 * M) / cells.length;
-  ensure(c, 56);
+  ensure(c, 70);
   const top = c.y;
-  c.page.drawRectangle({ x: M, y: top - 50, width: PAGE_W - 2 * M, height: 50, color: SURFACE, borderColor: HAIR, borderWidth: 0.5 });
+  const boxH = 64;
+  c.page.drawRectangle({ x: M, y: top - boxH, width: PAGE_W - 2 * M, height: boxH, color: SURFACE, borderColor: HAIR, borderWidth: 0.5 });
   cells.forEach((cell, i) => {
     const cx = M + i * w + 8;
-    text(c, cell.label.toUpperCase(), cx, top - 14, { font: c.sansB, size: 7, color: MUTED });
-    text(c, cell.value, cx, top - 32, { font: c.serif, size: 12, color: cell.color ?? INK });
+    if (i > 0) {
+      c.page.drawLine({ start: { x: M + i * w, y: top - 8 }, end: { x: M + i * w, y: top - boxH + 8 }, thickness: 0.4, color: HAIR });
+    }
+    text(c, cell.label.toUpperCase(), cx, top - 14, { font: c.sansB, size: 6.5, color: MUTED });
+    text(c, cell.value, cx, top - 34, { font: c.serif, size: 12, color: cell.color ?? INK });
+    if (cell.sub) text(c, cell.sub, cx, top - 50, { size: 7, color: MUTED });
   });
-  c.y -= 64;
+  c.y -= boxH + 14;
 }
 
 // ---------------- Waterfall (simplified bar chart) ----------------
