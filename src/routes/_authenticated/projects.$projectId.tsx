@@ -618,6 +618,10 @@ function EditFinancialsDialog({
               <Input value={form.client} onChange={(e) => setForm({ ...form, client: e.target.value })} />
             </div>
           </div>
+          <div className="space-y-1.5">
+            <Label>Project manager</Label>
+            <Input value={form.project_manager} onChange={(e) => setForm({ ...form, project_manager: e.target.value })} placeholder="e.g. Marshall Wilkinson" />
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Original contract</Label>
