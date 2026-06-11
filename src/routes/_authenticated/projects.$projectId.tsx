@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MoneyInput } from "@/components/ui/money-input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -23,17 +24,21 @@ import { ScheduleRisk } from "@/components/outcome/ScheduleRisk";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { RiskWarnings } from "@/components/outcome/RiskWarnings";
 import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
+import { ImportSOVSheet } from "@/components/outcome/ImportSOVSheet";
+import { ReviewsTab } from "@/components/outcome/ReviewsTab";
 import {
   createExposure, updateExposure, deleteExposure,
   createDecision, updateDecision, deleteDecision,
   getProject, listProjects,
   updateProjectFinancials, createChangeOrder, updateChangeOrder,
-  deleteChangeOrder, updateBucket, submitReview,
-  type ProjectRow,
+  deleteChangeOrder, updateBucket, submitReview, updateReview,
+  importCostBuckets,
+  type ProjectRow, type ReviewRow,
 } from "@/lib/projects.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import type { Phase, ExposureCategory } from "@/lib/ior";
-import { LogOut, Pencil } from "lucide-react";
+import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
+import { LogOut, Pencil, Download } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   head: () => ({ meta: [{ title: "Project Outcome Review" }] }),
