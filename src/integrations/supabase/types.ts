@@ -16,6 +16,7 @@ export type Database = {
     Tables: {
       change_orders: {
         Row: {
+          co_type: string
           contract_amount: number
           cost_amount: number
           created_at: string
@@ -30,6 +31,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          co_type?: string
           contract_amount?: number
           cost_amount?: number
           created_at?: string
@@ -44,6 +46,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          co_type?: string
           contract_amount?: number
           cost_amount?: number
           created_at?: string
@@ -370,6 +373,97 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "reviews_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      schedule_milestones: {
+        Row: {
+          baseline_date: string | null
+          created_at: string
+          delay_reason: string
+          forecast_date: string | null
+          id: string
+          name: string
+          owner: string
+          project_id: string
+          sort_order: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          baseline_date?: string | null
+          created_at?: string
+          delay_reason?: string
+          forecast_date?: string | null
+          id?: string
+          name: string
+          owner?: string
+          project_id: string
+          sort_order?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          baseline_date?: string | null
+          created_at?: string
+          delay_reason?: string
+          forecast_date?: string | null
+          id?: string
+          name?: string
+          owner?: string
+          project_id?: string
+          sort_order?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_milestones_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      schedule_risks: {
+        Row: {
+          created_at: string
+          detail: string
+          id: string
+          kind: string
+          project_id: string
+          sort_order: number
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          detail?: string
+          id?: string
+          kind: string
+          project_id: string
+          sort_order?: number
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          detail?: string
+          id?: string
+          kind?: string
+          project_id?: string
+          sort_order?: number
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_risks_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
