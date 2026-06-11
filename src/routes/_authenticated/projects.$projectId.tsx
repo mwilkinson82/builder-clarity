@@ -277,10 +277,14 @@ function ProjectPage() {
                   pending={finUpdate.isPending}
                 />
               </div>
-              <dl className="grid grid-cols-3 gap-x-8 gap-y-1 text-sm">
+              <dl className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm md:grid-cols-4">
                 <div>
                   <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Client</dt>
                   <dd className="mt-0.5 text-foreground">{project.client || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Project Manager</dt>
+                  <dd className="mt-0.5 text-foreground">{project.project_manager || "—"}</dd>
                 </div>
                 <div>
                   <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Original Contract</dt>
