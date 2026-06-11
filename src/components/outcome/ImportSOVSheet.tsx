@@ -125,11 +125,11 @@ export function ImportSOVSheet({
                 rows={10}
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
-                placeholder={"In Excel: select your bucket / budget / actual / FTC columns including the header row, copy (Ctrl+C / ⌘+C), then paste here.\n\nExample:\nDivision\tBudget\tActual\tFTC\nSitework\t220,000\t215,000\t8,000\nStructure\t540,000\t520,000\t35,000"}
+                placeholder={"In Excel: select your bucket / budget / actual / FTC columns including the header row, copy (Ctrl+C / ⌘+C), then paste here.\n\nIf you're starting the job, you'll only have budgets — leave Actual and FTC as 0.\n\nExample at job start (no actuals yet):\nDivision\tBudget\tActual\tFTC\nSitework\t220,000\t0\t0\nStructure\t540,000\t0\t0\nEnvelope\t430,000\t0\t0\n\nExample mid-job:\nSitework\t220,000\t215,000\t8,000\nStructure\t540,000\t520,000\t35,000"}
                 className="font-mono text-xs"
               />
               <Button onClick={handlePaste} variant="outline">Parse pasted rows</Button>
-              <Tip>Tip: copy from Excel including the header row. We'll guess which column is which.</Tip>
+              <Tip>You can paste with just two columns (bucket + budget) at job start — we'll set Actual and FTC to 0 automatically.</Tip>
             </TabsContent>
           </Tabs>
         ) : (
