@@ -523,10 +523,13 @@ export async function generateIorPdf(
     // Decisions + COs + schedule
     newPage(c);
     drawHeader(c, input.project, weekLabel, generatedAt);
+    sectionTitle(c, "Schedule — milestones & risk");
+    drawSchedule(c, input.milestones ?? [], input.scheduleRisks ?? [], input.project);
     sectionTitle(c, "Decisions required");
     drawDecisions(c, input.decisions);
     sectionTitle(c, "Change orders");
     drawCOs(c, input.changeOrders);
+
 
     // Review log
     newPage(c);
