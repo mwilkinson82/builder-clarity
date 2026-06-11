@@ -59,6 +59,15 @@ export interface ExposureRow {
   notes: string;
 }
 
+export type COType =
+  | "owner_change"
+  | "design_error"
+  | "design_omission"
+  | "unforeseen_condition"
+  | "missed_scope"
+  | "sub_issued"
+  | "other";
+
 export interface ChangeOrderRow {
   id: string;
   project_id: string;
@@ -70,7 +79,9 @@ export interface ChangeOrderRow {
   probability: number;
   owner: string;
   notes: string;
+  co_type: COType;
 }
+
 
 export interface BucketRow {
   id: string;
