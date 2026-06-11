@@ -221,3 +221,46 @@ export const deleteHold = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
+export const seedDemoIfEmpty = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { count, error: cErr } = await context.supabase
+      .from("projects")
+      .select("id", { count: "exact", head: true });
+    if (cErr) throw new Error(cErr.message);
+    if ((count ?? 0) > 0) return { seeded: false as const };
+
+    const { data: project, error: pErr } = await context.supabase
+      .from("projects")
+      .insert({
+        owner_id: context.userId,
+        name: "Harbor Residence",
+        client: "Private Luxury Residence",
+        original_contract: 3200000,
+        original_cost_budget: 2720000,
+        forecasted_final_contract: 3545000,
+        forecasted_final_cost: 3140000,
+        approved_cos: 210000,
+        pending_cos: 135000,
+        schedule_variance_weeks: 6,
+      })
+      .select("id")
+      .single();
+    if (pErr) throw new Error(pErr.message);
+
+    const pid = project.id;
+    const holds = [
+      { type: "E-Hold", description: "Window delivery delay", amount: 18000, reason: "Manufacturer pushed ship date 5 weeks; risk of acceleration cost.", owner: "K. Alvarez", release_condition: "Windows delivered and inspected on site", status: "Active" },
+      { type: "E-Hold", description: "Lighting allowance overrun", amount: 22000, reason: "Owner selections trending 30% over allowance.", owner: "M. Chen", release_condition: "Final lighting package signed and POs issued", status: "Active" },
+      { type: "E-Hold", description: "Unapproved electrical changes", amount: 9500, reason: "Field changes not yet captured in COs.", owner: "J. Patel", release_condition: "CO package submitted and approved", status: "Escalated" },
+      { type: "E-Hold", description: "Weak drywall subcontractor", amount: 15000, reason: "Quality issues may require supplemental crew.", owner: "R. Singh", release_condition: "Punchlist cleared on level 2 hangs", status: "Active" },
+      { type: "E-Hold", description: "Late appliance selection", amount: 12000, reason: "Selection delay threatens MEP rough-in sequence.", owner: "K. Alvarez", release_condition: "Appliance package locked & released", status: "Active" },
+      { type: "C-Hold", description: "Remaining finish-phase uncertainty", amount: 65000, reason: "General contingency for trim, paint, and closeout variability.", owner: "PM", release_condition: "Substantial completion + punch", status: "Active" },
+    ].map((h) => ({ ...h, project_id: pid }));
+
+    const { error: hErr } = await context.supabase.from("holds").insert(holds);
+    if (hErr) throw new Error(hErr.message);
+
+    return { seeded: true as const, projectId: pid };
+  });
