@@ -83,6 +83,8 @@ function ProjectPage() {
   const updateCoFn = useServerFn(updateChangeOrder);
   const deleteCoFn = useServerFn(deleteChangeOrder);
   const updateBucketFn = useServerFn(updateBucket);
+  const createBucketFn = useServerFn(createBucket);
+  const deleteBucketFn = useServerFn(deleteBucket);
   const submitReviewFn = useServerFn(submitReview);
   const updateReviewFn = useServerFn(updateReview);
   const importBucketsFn = useServerFn(importCostBuckets);
