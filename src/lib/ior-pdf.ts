@@ -467,6 +467,8 @@ export async function generateIorPdf(
 
     // Appendix
     newPage(c);
+    sectionTitle(c, "Schedule — milestones & risk");
+    drawSchedule(c, input.milestones ?? [], input.scheduleRisks ?? [], input.project);
     sectionTitle(c, "Exposure register — by treatment path");
     drawExposuresTable(c, input.exposures.filter((e) => e.status !== "released"), { groupByPath: true });
     sectionTitle(c, "Cost buckets");
