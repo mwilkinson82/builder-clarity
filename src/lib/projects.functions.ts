@@ -502,6 +502,11 @@ export const deleteExposure = createServerFn({ method: "POST" })
 
 // ---------------- CHANGE ORDERS ----------------
 
+const CO_TYPES = [
+  "owner_change","design_error","design_omission","unforeseen_condition",
+  "missed_scope","sub_issued","other",
+] as const;
+
 const coInput = z.object({
   number: z.string().max(50).default(""),
   description: z.string().min(1).max(500),
@@ -511,7 +516,9 @@ const coInput = z.object({
   probability: z.number().min(0).max(100).default(100),
   owner: z.string().max(200).default(""),
   notes: z.string().max(2000).default(""),
+  co_type: z.enum(CO_TYPES).default("other"),
 });
+
 
 export const createChangeOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
