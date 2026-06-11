@@ -409,6 +409,7 @@ const updateFinancialsInput = z.object({
     forecast_completion_date: z.string().optional().nullable(),
     baseline_completion_date: z.string().optional().nullable(),
     last_review_summary: z.string().max(4000).optional(),
+    project_manager: z.string().max(200).optional(),
   }),
 });
 
