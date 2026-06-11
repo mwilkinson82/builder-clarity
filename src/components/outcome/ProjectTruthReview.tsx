@@ -107,6 +107,12 @@ export function ProjectTruthReview({
   const [pdfStyle, setPdfStyle] = useState<IorPdfStyle>("executive");
   const [narrative, setNarrative] = useState("");
 
+  const listScheduleFn = useServerFn(listSchedule);
+  const { data: scheduleData } = useQuery({
+    queryKey: ["schedule", project.id],
+    queryFn: () => listScheduleFn({ data: { projectId: project.id } }),
+  });
+
   // New exposures captured in step 2
   const [newExposures, setNewExposures] = useState<NewExposure[]>([]);
   const [draftExp, setDraftExp] = useState<NewExposure>({
