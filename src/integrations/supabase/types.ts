@@ -272,6 +272,7 @@ export type Database = {
           owner_id: string
           percent_complete: number
           phase: Database["public"]["Enums"]["project_phase"]
+          project_manager: string
           schedule_variance_weeks: number
           updated_at: string
         }
@@ -291,6 +292,7 @@ export type Database = {
           owner_id: string
           percent_complete?: number
           phase?: Database["public"]["Enums"]["project_phase"]
+          project_manager?: string
           schedule_variance_weeks?: number
           updated_at?: string
         }
@@ -310,6 +312,7 @@ export type Database = {
           owner_id?: string
           percent_complete?: number
           phase?: Database["public"]["Enums"]["project_phase"]
+          project_manager?: string
           schedule_variance_weeks?: number
           updated_at?: string
         }
