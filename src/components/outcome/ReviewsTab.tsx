@@ -141,20 +141,15 @@ function EditReviewDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>Report style</Label>
-              <select value={style} onChange={(e) => setStyle(e.target.value as IorPdfStyle)} className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm">
-                <option value="executive">Executive one-pager + appendix</option>
-                <option value="structured">Multi-page structured</option>
-              </select>
-            </div>
-            <div className="space-y-1.5">
               <Label>Status</Label>
               <select value={status} onChange={(e) => setStatus(e.target.value)} className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm">
                 <option value="published">Published</option>
                 <option value="draft">Draft</option>
               </select>
             </div>
+            <div />
           </div>
+
           <div className="space-y-1.5">
             <Label>Default email recipients <span className="text-muted-foreground">(comma-separated)</span></Label>
             <Input value={emails} onChange={(e) => setEmails(e.target.value)} placeholder="owner@example.com, super@example.com" />
