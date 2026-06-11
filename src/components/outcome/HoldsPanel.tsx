@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Hold, HoldStatus, HoldType } from "./data";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
 import { fmtUSD } from "@/lib/format";
 import {
   Table,
@@ -31,6 +30,7 @@ import {
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Info } from "lucide-react";
+import type { HoldRow, HoldStatus, HoldType } from "@/lib/projects.functions";
 
 function StatusBadge({ status }: { status: HoldStatus }) {
   const map: Record<HoldStatus, string> = {
@@ -58,49 +58,57 @@ function TypePill({ type }: { type: HoldType }) {
   );
 }
 
-const empty: Omit<Hold, "id"> = {
+type Draft = {
+  type: HoldType;
+  description: string;
+  amount: number;
+  reason: string;
+  owner: string;
+  release_condition: string;
+  status: HoldStatus;
+};
+
+const empty: Draft = {
   type: "E-Hold",
   description: "",
   amount: 0,
   reason: "",
   owner: "",
-  releaseCondition: "",
+  release_condition: "",
   status: "Active",
 };
 
 export function HoldsPanel({
   holds,
-  setHolds,
+  onCreate,
+  onUpdate,
+  onDelete,
+  pending,
 }: {
-  holds: Hold[];
-  setHolds: (h: Hold[]) => void;
+  holds: HoldRow[];
+  onCreate: (draft: Draft) => void;
+  onUpdate: (id: string, patch: Partial<Draft>) => void;
+  onDelete: (id: string) => void;
+  pending?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<Hold | null>(null);
-  const [draft, setDraft] = useState<Omit<Hold, "id">>(empty);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft>(empty);
 
-  const openNew = () => {
-    setEditing(null);
-    setDraft(empty);
-    setOpen(true);
-  };
-  const openEdit = (h: Hold) => {
-    setEditing(h);
-    const { id: _id, ...rest } = h;
-    setDraft(rest);
+  const openNew = () => { setEditingId(null); setDraft(empty); setOpen(true); };
+  const openEdit = (h: HoldRow) => {
+    setEditingId(h.id);
+    setDraft({
+      type: h.type, description: h.description, amount: h.amount, reason: h.reason,
+      owner: h.owner, release_condition: h.release_condition, status: h.status,
+    });
     setOpen(true);
   };
   const save = () => {
     if (!draft.description.trim()) return;
-    if (editing) {
-      setHolds(holds.map((h) => (h.id === editing.id ? { ...editing, ...draft } : h)));
-    } else {
-      setHolds([...holds, { ...draft, id: `h${Date.now()}` }]);
-    }
+    if (editingId) onUpdate(editingId, draft);
+    else onCreate(draft);
     setOpen(false);
-  };
-  const setStatus = (id: string, status: HoldStatus) => {
-    setHolds(holds.map((h) => (h.id === id ? { ...h, status } : h)));
   };
 
   const eHolds = holds.filter((h) => h.type === "E-Hold");
@@ -120,7 +128,7 @@ export function HoldsPanel({
                   <button className="text-muted-foreground/70 hover:text-foreground"><Info className="h-3 w-3" /></button>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  Exposure Holds reserve margin against specific, named risks (e.g. a delayed window package).
+                  Exposure Holds reserve margin against specific, named risks.
                 </TooltipContent>
               </Tooltip>
             </div>
@@ -147,7 +155,7 @@ export function HoldsPanel({
               <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Total Held</div>
               <div className="mt-1 font-serif text-2xl tabular text-accent">{fmtUSD(eTotal + cTotal)}</div>
             </div>
-            <Button onClick={openNew} size="sm" className="gap-1.5">
+            <Button onClick={openNew} size="sm" className="gap-1.5" disabled={pending}>
               <Plus className="h-3.5 w-3.5" /> Add hold
             </Button>
           </div>
@@ -164,7 +172,7 @@ export function HoldsPanel({
                 <TableHead className="hidden md:table-cell">Owner</TableHead>
                 <TableHead className="hidden xl:table-cell">Release Condition</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead className="w-[180px] text-right">Actions</TableHead>
+                <TableHead className="w-[200px] text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -175,11 +183,11 @@ export function HoldsPanel({
                   <TableCell className="text-right tabular">{fmtUSD(h.amount)}</TableCell>
                   <TableCell className="hidden lg:table-cell text-sm text-muted-foreground max-w-xs">{h.reason}</TableCell>
                   <TableCell className="hidden md:table-cell text-sm">{h.owner}</TableCell>
-                  <TableCell className="hidden xl:table-cell text-sm text-muted-foreground max-w-xs">{h.releaseCondition}</TableCell>
+                  <TableCell className="hidden xl:table-cell text-sm text-muted-foreground max-w-xs">{h.release_condition}</TableCell>
                   <TableCell><StatusBadge status={h.status} /></TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      <Select value={h.status} onValueChange={(v) => setStatus(h.id, v as HoldStatus)}>
+                      <Select value={h.status} onValueChange={(v) => onUpdate(h.id, { status: v as HoldStatus })}>
                         <SelectTrigger className="h-7 w-[110px] text-xs"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Active">Active</SelectItem>
@@ -190,10 +198,20 @@ export function HoldsPanel({
                       <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(h)}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
+                      <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onDelete(h.id)}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
               ))}
+              {holds.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                    No holds yet. Add an exposure or contingency hold to begin reserving margin.
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </div>
@@ -203,7 +221,7 @@ export function HoldsPanel({
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle className="font-serif text-2xl">
-                {editing ? "Edit hold" : "Add hold"}
+                {editingId ? "Edit hold" : "Add hold"}
               </DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-2">
@@ -254,12 +272,12 @@ export function HoldsPanel({
               </div>
               <div className="space-y-1.5">
                 <Label>Release condition</Label>
-                <Input value={draft.releaseCondition} onChange={(e) => setDraft({ ...draft, releaseCondition: e.target.value })} />
+                <Input value={draft.release_condition} onChange={(e) => setDraft({ ...draft, release_condition: e.target.value })} />
               </div>
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={save}>{editing ? "Save changes" : "Add hold"}</Button>
+              <Button onClick={save}>{editingId ? "Save changes" : "Add hold"}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

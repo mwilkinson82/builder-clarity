@@ -1,3 +1,6 @@
+// Demo seed data for the Buyout / Change Orders / Decisions / Schedule tabs.
+// Project + hold data now lives in Lovable Cloud; these tabs are wired in a later phase.
+
 export const project = {
   name: "Harbor Residence",
   client: "Private Luxury Residence",
@@ -11,29 +14,6 @@ export const project = {
   originalCompletion: "Mar 14, 2026",
   forecastCompletion: "Apr 25, 2026",
 };
-
-export type HoldStatus = "Active" | "Released" | "Escalated";
-export type HoldType = "E-Hold" | "C-Hold";
-
-export type Hold = {
-  id: string;
-  type: HoldType;
-  description: string;
-  amount: number;
-  reason: string;
-  owner: string;
-  releaseCondition: string;
-  status: HoldStatus;
-};
-
-export const initialHolds: Hold[] = [
-  { id: "h1", type: "E-Hold", description: "Window delivery delay", amount: 18_000, reason: "Manufacturer pushed ship date 5 weeks; risk of acceleration cost.", owner: "K. Alvarez", releaseCondition: "Windows delivered and inspected on site", status: "Active" },
-  { id: "h2", type: "E-Hold", description: "Lighting allowance overrun", amount: 22_000, reason: "Owner selections trending 30% over allowance.", owner: "M. Chen", releaseCondition: "Final lighting package signed and POs issued", status: "Active" },
-  { id: "h3", type: "E-Hold", description: "Unapproved electrical changes", amount: 9_500, reason: "Field changes not yet captured in COs.", owner: "J. Patel", releaseCondition: "CO package submitted and approved", status: "Escalated" },
-  { id: "h4", type: "E-Hold", description: "Weak drywall subcontractor", amount: 15_000, reason: "Quality issues may require supplemental crew.", owner: "R. Singh", releaseCondition: "Punchlist cleared on level 2 hangs", status: "Active" },
-  { id: "h5", type: "E-Hold", description: "Late appliance selection", amount: 12_000, reason: "Selection delay threatens MEP rough-in sequence.", owner: "K. Alvarez", releaseCondition: "Appliance package locked & released", status: "Active" },
-  { id: "h6", type: "C-Hold", description: "Remaining finish-phase uncertainty", amount: 65_000, reason: "General contingency for trim, paint, and closeout variability.", owner: "PM", releaseCondition: "Substantial completion + punch", status: "Active" },
-];
 
 export type Buyout = {
   scope: string;
