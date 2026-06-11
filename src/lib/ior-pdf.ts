@@ -382,7 +382,7 @@ export async function generateIorPdf(
     c.y -= 14;
     text(c, `Phase: ${input.project.phase}   ·   ${input.project.percent_complete}% complete`, M, c.y, { size: 10, color: MUTED });
     c.y -= 14;
-    text(c, `Baseline: ${fmtDate(input.project.baseline_completion_date)}   →   Forecast: ${fmtDate(input.project.forecast_completion_date)}`, M, c.y, { size: 10, color: MUTED });
+    text(c, `Baseline: ${fmtDate(input.project.baseline_completion_date)}   ->   Forecast: ${fmtDate(input.project.forecast_completion_date)}`, M, c.y, { size: 10, color: MUTED });
     c.y -= 60;
     chip(c, input.rollup.gpAtRisk > 0 ? "MARGIN AT RISK" : "ON PLAN", M, c.y, input.rollup.gpAtRisk > 0 ? DANGER : SUCCESS);
 
