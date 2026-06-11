@@ -1,6 +1,5 @@
-import { useState } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
 import type { BucketRow } from "@/lib/projects.functions";
 
@@ -51,7 +50,7 @@ export function CostBucketsTable({
           {buckets.length === 0 && (
             <TableRow>
               <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
-                No cost buckets yet.
+                No cost buckets yet. Use “Import SOV” to bring in your existing schedule of values from Excel or QuickBooks.
               </TableCell>
             </TableRow>
           )}
@@ -62,18 +61,12 @@ export function CostBucketsTable({
 }
 
 function NumCell({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
-  const [local, setLocal] = useState(String(value));
   return (
-    <Input
-      type="number"
-      className="h-8 w-28 ml-auto text-right tabular"
-      value={local}
-      onFocus={() => setLocal(String(value))}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={() => {
-        const n = Number(local);
-        if (!Number.isNaN(n) && n !== value) onCommit(n);
-      }}
+    <MoneyInput
+      value={value}
+      onValueChange={(v) => { if (v !== value) onCommit(v); }}
+      align="right"
+      className="ml-auto h-8 w-32"
     />
   );
 }

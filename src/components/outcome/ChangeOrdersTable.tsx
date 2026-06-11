@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Pencil, Trash2 } from "lucide-react";
+import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
 import type { ChangeOrderRow, COStatus } from "@/lib/projects.functions";
 
@@ -198,11 +199,11 @@ export function ChangeOrdersTable({
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Contract amount (USD)</Label>
-                <Input type="number" value={draft.contract_amount} onChange={(e) => setDraft({ ...draft, contract_amount: Number(e.target.value) })} />
+                <MoneyInput value={draft.contract_amount} onValueChange={(v) => setDraft({ ...draft, contract_amount: v })} />
               </div>
               <div className="space-y-1.5">
                 <Label>Cost amount (USD)</Label>
-                <Input type="number" value={draft.cost_amount} onChange={(e) => setDraft({ ...draft, cost_amount: Number(e.target.value) })} />
+                <MoneyInput value={draft.cost_amount} onValueChange={(v) => setDraft({ ...draft, cost_amount: v })} />
               </div>
             </div>
             <div className="space-y-1.5">
