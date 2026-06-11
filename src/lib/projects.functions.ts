@@ -35,6 +35,7 @@ export interface ProjectRow {
   forecast_completion_date: string | null;
   baseline_completion_date: string | null;
   last_review_summary: string;
+  project_manager: string;
 }
 
 export interface ExposureRow {
