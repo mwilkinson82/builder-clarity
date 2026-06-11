@@ -180,7 +180,7 @@ function drawHeader(c: Ctx, project: ProjectRow, label: string, date: Date) {
   c.y -= 18;
   text(c, `${project.client || "—"}  ·  ${label}  ·  ${date.toLocaleDateString("en-US", { dateStyle: "long" })}`, M, c.y, { size: 9, color: MUTED });
   c.y -= 12;
-  text(c, `${project.phase} phase  ·  ${project.percent_complete}% complete  ·  Baseline ${fmtDate(project.baseline_completion_date)}  →  Forecast ${fmtDate(project.forecast_completion_date)}`, M, c.y, { size: 9, color: MUTED });
+  text(c, `${project.phase} phase  -  ${project.percent_complete}% complete  -  Baseline ${fmtDate(project.baseline_completion_date)}  ->  Forecast ${fmtDate(project.forecast_completion_date)}`, M, c.y, { size: 9, color: MUTED });
   c.y -= 14;
   rule(c, c.y);
   c.y -= 14;
@@ -382,7 +382,7 @@ export async function generateIorPdf(
     c.y -= 14;
     text(c, `Phase: ${input.project.phase}   ·   ${input.project.percent_complete}% complete`, M, c.y, { size: 10, color: MUTED });
     c.y -= 14;
-    text(c, `Baseline: ${fmtDate(input.project.baseline_completion_date)}   →   Forecast: ${fmtDate(input.project.forecast_completion_date)}`, M, c.y, { size: 10, color: MUTED });
+    text(c, `Baseline: ${fmtDate(input.project.baseline_completion_date)}   ->   Forecast: ${fmtDate(input.project.forecast_completion_date)}`, M, c.y, { size: 10, color: MUTED });
     c.y -= 60;
     chip(c, input.rollup.gpAtRisk > 0 ? "MARGIN AT RISK" : "ON PLAN", M, c.y, input.rollup.gpAtRisk > 0 ? DANGER : SUCCESS);
 
