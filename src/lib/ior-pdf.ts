@@ -123,7 +123,7 @@ function drawKpiStrip(c: Ctx, r: Rollup, project: ProjectRow) {
   const cells: { label: string; value: string; sub?: string; color?: RGB }[] = [
     { label: "Original GP", value: fmtUSD(r.originalGP), sub: fmtPct(r.originalGPpct) },
     { label: "Indicated GP", value: fmtUSD(r.indicatedGP), sub: fmtPct(r.indicatedGPpct), color: ACCENT },
-    { label: "GP at Risk", value: fmtUSD(r.gpAtRisk), sub: "Orig − Indicated", color: r.gpAtRisk > 0 ? DANGER : SUCCESS },
+    { label: "GP at Risk", value: fmtUSD(r.gpAtRisk), sub: "Orig - Indicated", color: r.gpAtRisk > 0 ? DANGER : SUCCESS },
     { label: "E-Hold", value: fmtUSD(r.exposureHolds), sub: "Specific risks" },
     { label: "C-Hold", value: fmtUSD(r.contingencyHold), sub: "Uncertainty" },
     { label: "Schedule", value: project.schedule_variance_weeks > 0 ? `+${project.schedule_variance_weeks}w` : "On time", sub: "vs baseline", color: project.schedule_variance_weeks > 0 ? DANGER : SUCCESS },
