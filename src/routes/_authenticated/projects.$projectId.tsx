@@ -255,12 +255,18 @@ function ProjectPage() {
               </p>
             </div>
             <div className="flex flex-col items-end gap-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <ProjectTruthReview
                   project={project}
-                  onSubmit={(input) => reviewSubmit.mutate({ projectId, ...input })}
+                  exposures={exposures}
+                  changeOrders={changeOrders}
+                  buckets={buckets}
+                  decisions={decisions}
+                  rollup={rollup}
+                  onSubmit={handleSubmitReview}
                   pending={reviewSubmit.isPending}
                 />
+                <DownloadReportMenu onDownload={downloadCurrentReport} />
                 <EditFinancialsDialog
                   project={project}
                   onSave={(patch) => finUpdate.mutate({ projectId, patch })}
