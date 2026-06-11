@@ -560,6 +560,7 @@ function GuidanceRow({ label, actual, target, pct }: { label: string; actual: nu
 type EditableProject = {
   name: string;
   client: string;
+  project_manager: string;
   original_contract: number;
   original_cost_budget: number;
   schedule_variance_weeks: number;
@@ -583,6 +584,7 @@ function EditFinancialsDialog({
   const init = (): EditableProject => ({
     name: project.name,
     client: project.client,
+    project_manager: project.project_manager,
     original_contract: project.original_contract,
     original_cost_budget: project.original_cost_budget,
     schedule_variance_weeks: project.schedule_variance_weeks,
