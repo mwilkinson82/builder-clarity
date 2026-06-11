@@ -73,13 +73,11 @@ function ProjectPage() {
   };
 
   const holdCreate = useMutation({
-    mutationFn: (input: Parameters<typeof createHoldFn>[0]["data"]) =>
-      createHoldFn({ data: input }),
+    mutationFn: (input: Record<string, unknown>) => createHoldFn({ data: input as never }),
     onSuccess: invalidate,
   });
   const holdUpdate = useMutation({
-    mutationFn: (input: Parameters<typeof updateHoldFn>[0]["data"]) =>
-      updateHoldFn({ data: input }),
+    mutationFn: (input: Record<string, unknown>) => updateHoldFn({ data: input as never }),
     onSuccess: invalidate,
   });
   const holdDelete = useMutation({
@@ -87,8 +85,7 @@ function ProjectPage() {
     onSuccess: invalidate,
   });
   const finUpdate = useMutation({
-    mutationFn: (input: Parameters<typeof updateFinFn>[0]["data"]) =>
-      updateFinFn({ data: input }),
+    mutationFn: (input: Record<string, unknown>) => updateFinFn({ data: input as never }),
     onSuccess: invalidate,
   });
 
