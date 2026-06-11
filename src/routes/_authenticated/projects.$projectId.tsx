@@ -613,11 +613,11 @@ function EditFinancialsDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Original contract</Label>
-              <Input type="number" value={form.original_contract} onChange={(e) => setForm({ ...form, original_contract: Number(e.target.value) })} />
+              <MoneyInput value={form.original_contract} onValueChange={(v) => setForm({ ...form, original_contract: v })} />
             </div>
             <div className="space-y-1.5">
               <Label>Original cost budget</Label>
-              <Input type="number" value={form.original_cost_budget} onChange={(e) => setForm({ ...form, original_cost_budget: Number(e.target.value) })} />
+              <MoneyInput value={form.original_cost_budget} onValueChange={(v) => setForm({ ...form, original_cost_budget: v })} />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
