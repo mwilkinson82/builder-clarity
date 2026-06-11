@@ -165,11 +165,12 @@ export function ChangeOrdersTable({
             ))}
             {changeOrders.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
                   No change orders yet. Add approved and pending COs to roll into the forecasted final contract.
                 </TableCell>
               </TableRow>
             )}
+
           </TableBody>
         </Table>
       </div>
