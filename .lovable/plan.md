@@ -1,104 +1,162 @@
-# Phase 2: True IOR Model + Hold Guidance Engine
 
-Move from typed forecast totals to a computed rollup driven by change orders and cost buckets, with conservative phase-sensitive hold guidance and a warning engine.
+# Phase 3: Exposure Register + Project Truth Review
 
-## Core philosophy (institutionalized in the app)
-- Default posture is margin-protective.
-- Forecasted Final Contract and Forecasted Final Cost are **derived**, never typed.
-- Holds sit **below the line** against GP; they do not inflate Forecasted Final Cost.
-- If the job is still exposed, the app assumes discipline before optimism.
+Reframe the app from "another cost report" into a risk-to-margin operating system. The schedule of values gives the cost structure; the **exposure register** becomes the heart of the product, and a guided **Project Truth Review** is how PMs feed it.
 
-## 1. Data model changes (one migration)
+## Guiding product sentence
+The IOR tool is not a budget report. It is a project truth system that starts from the SOV, captures emerging risk, assigns dollar exposure, and converts that exposure into management decisions that protect margin.
 
-**`projects` table — remove typed totals, add phase**
-- Drop: `forecasted_final_contract`, `forecasted_final_cost`, `approved_cos`, `pending_cos`
-- Keep: `original_contract`, `original_cost_budget`, `schedule_variance_weeks`, review dates
-- Add: `phase` enum (`Early` | `Middle` | `Late`), default `Early`
-- Add: `percent_complete` numeric (PM-entered, used by guidance warnings)
+## Six modules (target end state)
+1. Project setup (exists, light additions)
+2. Cost forecast / SOV buckets (exists)
+3. Change orders (exists)
+4. **Exposure register** — replaces the current `holds` table as the primary risk object (NEW)
+5. **Schedule risk** — date movement + blocked decisions tied to dollars (light NEW)
+6. **Required decisions** — exposures and CO calls converted into owned actions (NEW)
 
-**New table `change_orders`**
-- `project_id`, `number` (text), `description`, `contract_amount`, `cost_amount`, `status` (`Approved`|`Pending`|`Denied`), `probability` (0–100, default 100), `owner`, `notes`
+Plus a cross-cutting **Project Truth Review** wizard that drives weekly/monthly updates.
 
-**New table `cost_buckets`** (six seeded per project: Sitework, Structure, MEP, Envelope, Finishes, GC/OH)
-- `project_id`, `bucket` (text), `original_budget`, `actual_to_date`, `ftc`, `sort_order`
+---
 
-RLS: owner-via-project on both new tables, mirroring `holds`. Update `seed_demo_project` trigger and `seedDemoIfEmpty` server fn to populate buckets + COs for Harbor Residence.
+## 1. Data model
 
-## 2. Computed rollup (server-side in `getProject` / `listProjects`)
+### New table: `exposures` (the heart of the system)
+Supersedes `holds` as the primary capture object. We keep `holds` as a derived/legacy concept — every active exposure with a dollar amount rolls into E-Hold or C-Hold totals based on its `hold_class`.
 
-```
-Forecasted Final Contract =
-  Original Contract
-  + Σ Approved CO contract_amount
-  + Σ (Pending CO contract_amount × probability)
+Fields:
+- `project_id`, `title`, `description`
+- `category` enum: `owner_decision | design_drift | trade_performance | procurement | schedule_compression | allowance_overrun | field_change | closeout_punch | other`
+- `dollar_exposure` numeric
+- `probability` numeric (0-100)
+- `schedule_impact_weeks` numeric (nullable)
+- `owner` text
+- `response_path` enum: `eliminate | recover | offset | accept`
+- `release_condition` text
+- `hold_class` enum: `E-Hold | C-Hold | Both | None` (drives rollup into the guidance engine)
+- `status` enum: `active | escalated | recovered | eliminated | accepted | released`
+- `due_date`, `next_review_at`, `opened_at`, `resolved_at`
+- `notes`
 
-Forecasted Final Cost (before holds) =
-  Σ bucket.actual_to_date
-  + Σ bucket.ftc
-  + Σ Approved CO cost_amount
-  + Σ (Pending CO cost_amount × probability)
+### New table: `decisions`
+- `project_id`, `decision`, `impact` (dollars or qualitative), `owner`, `due_date`
+- `status` enum: `open | in_progress | resolved | overdue`
+- `linked_exposure_id` (nullable FK)
+- `linked_co_id` (nullable FK)
 
-Forecasted GP Before Holds = FFContract − FFCost
-Indicated GP = Forecasted GP Before Holds − ΣE-Holds − ΣC-Hold
-```
+### New table: `reviews` (the "what changed since last review" log)
+- `project_id`, `reviewed_at`, `reviewer`
+- `forecast_completion_date_before`, `forecast_completion_date_after`
+- `summary_notes`
+- JSON snapshot of KPI rollup at review time (for trending later)
 
-KPI strip and Waterfall read these computed values; each line gets a tooltip showing the components.
+### `projects` additions
+- `forecast_completion_date` date
+- `baseline_completion_date` date
+- `last_review_summary` text
 
-## 3. Hold guidance engine (Conservative defaults)
+### Migration path for `holds`
+- Backfill: each existing hold becomes an exposure with `hold_class` = its current type, `response_path = 'accept'` as default, status mapped 1:1.
+- The Holds panel keeps showing E/C totals — but those totals are now computed from `exposures` where `hold_class in ('E-Hold','Both')` etc., not from a separate `holds` table. We can drop `holds` after backfill.
 
-Targets are % of **remaining cost** (= FFCost − Σ actual_to_date):
-- Early phase: E 4% / C 3%
-- Middle phase: E 3% / C 2.5% (only after buyout substantially complete + key selections locked — PM must advance phase manually)
-- Late phase: E 2% / C 1.5% (only after finishes/millwork/long-leads resolved)
+RLS: owner-via-project on all three new tables, mirroring existing pattern. GRANTs to authenticated + service_role.
 
-Each project shows guidance vs. actual. If actual < guidance, render warning chip and require a written justification on the project (`hold_variance_note` field on `projects`).
+`seed_demo_project` rewritten to create 6 exposures (mix of categories, statuses, response paths), 4 decisions (2 open, 1 in_progress, 1 overdue), and one historical review row.
 
-## 4. Warning engine (beyond percentages)
+---
 
-Surface a "Risks the system sees" panel on the project page when any of these fire:
-1. Σ Pending CO cost_amount > $25k AND E-Holds < guidance target
-2. Phase = Late AND any Finishes/Millwork bucket has `ftc > 0` AND C-Hold < guidance
-3. `schedule_variance_weeks > 0` AND GC/OH bucket `ftc` increased since last review AND no new E-Hold added
-4. Any bucket where `actual_to_date + ftc < original_budget × 0.95` AND `percent_complete > 50` (suspicious "savings" without justification)
+## 2. IOR engine updates (`src/lib/ior.ts`)
 
-Each warning is dismissible only with a note (stored in `risk_notes` table; out of scope for v1 — for now, just display).
+- `computeRollup` now takes `exposures` instead of `holds`.
+  - `exposureHolds` = Σ `dollar_exposure × probability/100` where `status ∈ active|escalated` AND `hold_class ∈ E-Hold|Both`.
+  - `contingencyHold` = same, for C-Hold|Both.
+- New: `exposureByCategory(exposures)` for the executive view's "margin at risk by category" chart.
+- New: `exposureAging(exposures, now)` — days since `opened_at` for active items; surfaces stale risks.
+- `evaluateWarnings` gains:
+  - Any exposure `active` > 30 days with no `next_review_at` set.
+  - Any `response_path = 'accept'` totaling > 1% of original contract without a written note.
+  - Forecast completion date later than baseline AND no schedule-category exposure logged.
 
-## 5. UI changes
+---
 
-- **New tab: Change Orders** — table with inline add/edit/delete, status badges, probability slider for Pending.
-- **New tab: Cost Buckets** — 6-row table, inline-edit `actual_to_date` and `ftc`, shows derived FAC and variance per bucket.
-- **Edit Financials dialog** — strip to `name`, `client`, `original_contract`, `original_cost_budget`, `schedule_variance_weeks`, `phase`, `percent_complete`. Remove typed forecast fields.
-- **KPI strip + Waterfall** — unchanged visual, but values come from rollup; tooltips expand "how this is calculated" with the component breakdown.
-- **Holds panel** — add guidance vs. actual header with conservative target chips and warning state.
-- **Portfolio cards** — show a small warning dot when any rule fires.
+## 3. UI — three-layer workflow
 
-## 6. Demo seed update
+### Layer 1 — Project Truth Review wizard (NEW, top-level CTA on project page)
+A 6-step guided modal/sheet. Each step is one screen, one question, fast keyboard flow:
 
-Rewrite `seed_demo_project` and `seedDemoIfEmpty` so Harbor Residence seeds:
-- 6 cost buckets summing to the original $2.72M budget with realistic FTC + actuals at ~60% complete
-- 4 change orders (2 approved totaling $210k contract / $180k cost; 2 pending with probabilities)
-- Same 6 holds as today
-- `phase = Middle`, `percent_complete = 60`
+1. **Schedule** — Did forecast completion move? (date picker + reason)
+2. **New exposure?** — Inline form: title, category, dollar, probability, response path, owner, release condition. Repeatable.
+3. **CO updates** — Quick-edit list of pending COs (status, probability).
+4. **Bucket forecast changes** — Only buckets where actual+FTC moved >5% since last review surface here; PM confirms or edits.
+5. **Resolutions** — Active exposures listed; one-tap mark recovered/eliminated/released with note.
+6. **Required decisions** — Add/confirm top 3 decisions needed to protect margin.
 
-Resulting computed FFContract / FFCost should land near the previous hardcoded $3.545M / $3.14M so the visuals stay recognizable.
+On submit: writes a `reviews` row with before/after snapshot and a summary.
 
-## Out of scope for this pass
-- Risk-note persistence and dismissal workflow (display-only warnings for now)
-- Review history / PDF export (Phase 3)
-- Multi-user roles / admin (later phase)
+The PM should never need to navigate raw tables during a normal review cycle.
+
+### Layer 2 — Register tabs (replaces today's tabs)
+- **Cost Buckets** (exists)
+- **Change Orders** (exists)
+- **Exposures** (NEW) — full table with filters by category, status, response path; inline edit; "Convert to Decision" action.
+- **Decisions** (NEW, replaces placeholder `DecisionsTable`) — live table backed by `decisions` table.
+- **Reviews** (NEW, small) — chronological list of past reviews with diff summary.
+
+### Layer 3 — Executive Outcome screen (current dashboard, refined)
+Keep the KPI strip, Waterfall, Holds panel. Additions:
+- **Margin at risk by category** — horizontal bar chart from `exposureByCategory`.
+- **Exposure aging strip** — count of active exposures bucketed by age (<7d, 7-30d, 30+d).
+- "Last reviewed X days ago" header chip linking to the wizard.
+
+### Strong UX rules baked in
+- Every exposure form **requires** `dollar_exposure` and `response_path` — cannot save without both. This is the "what is the probable dollar consequence" + "what is the treatment" enforcement.
+- When a PM lowers a hold below guidance, a `hold_variance_note` is required (already partially there — make it blocking).
+- When schedule slips with no new schedule-category exposure, the wizard step 1 forces a confirmation.
+
+---
+
+## 4. Portfolio view
+Project cards already show warning count. Add:
+- Days since last review (red if > 30).
+- Top exposure category for that project.
+
+---
+
+## 5. Out of scope for this pass
+- SOV import from CSV / Procore / Buildertrend (manual bucket entry stays).
+- Trending charts across reviews (we capture snapshots; visualization comes later).
+- Role-based permissions (PM vs owner views).
+- Notifications / email digests when reviews are overdue.
 
 ---
 
 ## Technical section
 
-**Migration order:** add new tables + columns + grants + RLS first, backfill any existing project's buckets (single Harbor row, regenerate via trigger rewrite), then drop the obsolete columns.
+**Migration order (single migration):**
+1. Create `exposures`, `decisions`, `reviews` with GRANTs, RLS, owner-via-project policies, `updated_at` triggers.
+2. Add `forecast_completion_date`, `baseline_completion_date`, `last_review_summary` to `projects`.
+3. Backfill: `INSERT INTO exposures SELECT ... FROM holds` mapping fields.
+4. Rewrite `seed_demo_project` trigger to populate the new tables.
+5. Drop `holds` table (after verifying backfill in dev).
 
 **File changes:**
-- `src/lib/projects.functions.ts` — extend `getProject` return shape; add `listChangeOrders`, `upsertChangeOrder`, `deleteChangeOrder`, `listBuckets`, `updateBucket`, `setProjectPhase`. Move rollup math into a shared `lib/ior.ts` pure helper so it can run both server-side and in the UI tooltips.
-- `src/lib/ior.ts` — new pure module: `computeRollup({project, buckets, changeOrders, holds})`, `computeGuidance(phase, remainingCost)`, `evaluateWarnings(...)`.
-- `src/components/outcome/ChangeOrdersTable.tsx` — replace placeholder with live editable table.
-- `src/components/outcome/BuyoutTable.tsx` — repurpose into `CostBucketsTable.tsx` (live editable).
-- `src/components/outcome/KpiStrip.tsx` + `OutcomeWaterfall.tsx` — accept new computed props + component breakdown for tooltips.
-- `src/components/outcome/HoldsPanel.tsx` — add guidance header + warning chips.
-- `src/routes/_authenticated/projects.$projectId.tsx` — wire new tabs, pass computed rollup down, render warnings panel.
-- `src/routes/_authenticated/index.tsx` — show warning dot on cards.
+- `src/lib/ior.ts` — swap `HoldLite` for `ExposureLite`; add `exposureByCategory`, `exposureAging`; update warnings.
+- `src/lib/projects.functions.ts` — replace hold CRUD with exposure CRUD; add `listExposures`, `upsertExposure`, `listDecisions`, `upsertDecision`, `submitReview`.
+- `src/components/outcome/HoldsPanel.tsx` → `ExposureSummary.tsx` (keeps E/C totals header but pulls from exposures).
+- `src/components/outcome/ExposuresTable.tsx` — NEW.
+- `src/components/outcome/DecisionsTable.tsx` — wire to live data (currently static).
+- `src/components/outcome/ReviewsLog.tsx` — NEW.
+- `src/components/outcome/ProjectTruthReview.tsx` — NEW, the wizard.
+- `src/components/outcome/ExposureByCategoryChart.tsx` — NEW.
+- `src/components/outcome/RiskWarnings.tsx` — extend with stale/aging warnings.
+- `src/routes/_authenticated/projects.$projectId.tsx` — add "Start Review" button, new tabs, new sections.
+- `src/routes/_authenticated/index.tsx` — add last-reviewed + top-category chips on cards.
+
+**Order of work (one PR per step is ideal but we'll batch):**
+1. Migration + seed rewrite.
+2. IOR engine update + server fns.
+3. Exposures + Decisions tables (read/write).
+4. Project Truth Review wizard.
+5. Executive dashboard additions (category chart, aging, last-reviewed chip).
+6. Portfolio card updates.
+
+The visual identity of the executive screen stays — what changes is what feeds it and how the PM gets data in.
