@@ -193,7 +193,7 @@ function drawWaterfall(c: Ctx, r: Rollup, project: ProjectRow) {
 
 // ---------------- Header / Cover ----------------
 function drawHeader(c: Ctx, project: ProjectRow, label: string, date: Date) {
-  ensure(c, 80);
+  ensure(c, 92);
   const top = c.y;
   text(c, "INDICATED OUTCOME REPORT", M, top, { font: c.sansB, size: 8, color: ACCENT });
   c.y = top - 18;
@@ -201,10 +201,12 @@ function drawHeader(c: Ctx, project: ProjectRow, label: string, date: Date) {
   c.y -= 18;
   text(c, `${project.client || "—"}  ·  ${label}  ·  ${date.toLocaleDateString("en-US", { dateStyle: "long" })}`, M, c.y, { size: 9, color: MUTED });
   c.y -= 12;
+  text(c, `Project Manager: ${project.project_manager || "—"}`, M, c.y, { font: c.sansB, size: 9, color: INK });
+  c.y -= 12;
   text(c, `${project.phase} phase  -  ${project.percent_complete}% complete  -  Baseline ${fmtDate(project.baseline_completion_date)}  ->  Forecast ${fmtDate(project.forecast_completion_date)}`, M, c.y, { size: 9, color: MUTED });
   c.y -= 14;
   rule(c, c.y);
-  c.y -= 14;
+  c.y -= 16;
 }
 
 // ---------------- Exposure tables ----------------
