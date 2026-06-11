@@ -76,8 +76,9 @@ export function ChangeOrdersTable({
       number: c.number, description: c.description,
       contract_amount: c.contract_amount, cost_amount: c.cost_amount,
       status: c.status, probability: c.probability,
-      owner: c.owner, notes: c.notes,
+      owner: c.owner, notes: c.notes, co_type: c.co_type,
     });
+
     setOpen(true);
   };
   const save = () => {
