@@ -5,14 +5,19 @@ import {
   computeRollup,
   evaluateWarnings,
   guidanceTargets,
+  exposureByCategory,
+  exposureAging,
   type Phase,
   type Rollup,
   type Warning,
+  type ExposureCategory,
+  type ResponsePath,
+  type HoldClass,
+  type ExposureStatus,
 } from "@/lib/ior";
 
-export type HoldStatus = "Active" | "Released" | "Escalated";
-export type HoldType = "E-Hold" | "C-Hold";
 export type COStatus = "Approved" | "Pending" | "Denied";
+export type DecisionStatus = "open" | "in_progress" | "resolved" | "overdue";
 
 export interface ProjectRow {
   id: string;
@@ -26,18 +31,30 @@ export interface ProjectRow {
   hold_variance_note: string;
   last_reviewed_at: string | null;
   next_review_at: string | null;
+  forecast_completion_date: string | null;
+  baseline_completion_date: string | null;
+  last_review_summary: string;
 }
 
-export interface HoldRow {
+export interface ExposureRow {
   id: string;
   project_id: string;
-  type: HoldType;
+  title: string;
   description: string;
-  amount: number;
-  reason: string;
+  category: ExposureCategory;
+  dollar_exposure: number;
+  probability: number;
+  schedule_impact_weeks: number | null;
   owner: string;
+  response_path: ResponsePath;
   release_condition: string;
-  status: HoldStatus;
+  hold_class: HoldClass;
+  status: ExposureStatus;
+  due_date: string | null;
+  next_review_at: string | null;
+  opened_at: string;
+  resolved_at: string | null;
+  notes: string;
 }
 
 export interface ChangeOrderRow {
@@ -63,20 +80,68 @@ export interface BucketRow {
   sort_order: number;
 }
 
+export interface DecisionRow {
+  id: string;
+  project_id: string;
+  decision: string;
+  impact: string;
+  owner: string;
+  due_date: string | null;
+  status: DecisionStatus;
+  linked_exposure_id: string | null;
+  linked_co_id: string | null;
+  notes: string;
+}
+
+export interface ReviewRow {
+  id: string;
+  project_id: string;
+  reviewed_at: string;
+  reviewer: string;
+  forecast_completion_date_before: string | null;
+  forecast_completion_date_after: string | null;
+  summary_notes: string;
+}
+
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
+const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 
 const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   id: p.id as string,
   name: p.name as string,
-  client: (p.client as string) ?? "",
+  client: str(p.client),
   original_contract: num(p.original_contract),
   original_cost_budget: num(p.original_cost_budget),
   schedule_variance_weeks: num(p.schedule_variance_weeks),
   phase: (p.phase as Phase) ?? "Early",
   percent_complete: num(p.percent_complete),
-  hold_variance_note: (p.hold_variance_note as string) ?? "",
+  hold_variance_note: str(p.hold_variance_note),
   last_reviewed_at: (p.last_reviewed_at as string | null) ?? null,
   next_review_at: (p.next_review_at as string | null) ?? null,
+  forecast_completion_date: (p.forecast_completion_date as string | null) ?? null,
+  baseline_completion_date: (p.baseline_completion_date as string | null) ?? null,
+  last_review_summary: str(p.last_review_summary),
+});
+
+const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
+  id: e.id as string,
+  project_id: e.project_id as string,
+  title: str(e.title),
+  description: str(e.description),
+  category: (e.category as ExposureCategory) ?? "other",
+  dollar_exposure: num(e.dollar_exposure),
+  probability: num(e.probability),
+  schedule_impact_weeks: e.schedule_impact_weeks == null ? null : num(e.schedule_impact_weeks),
+  owner: str(e.owner),
+  response_path: (e.response_path as ResponsePath) ?? "accept",
+  release_condition: str(e.release_condition),
+  hold_class: (e.hold_class as HoldClass) ?? "E-Hold",
+  status: (e.status as ExposureStatus) ?? "active",
+  due_date: (e.due_date as string | null) ?? null,
+  next_review_at: (e.next_review_at as string | null) ?? null,
+  opened_at: str(e.opened_at, new Date().toISOString()),
+  resolved_at: (e.resolved_at as string | null) ?? null,
+  notes: str(e.notes),
 });
 
 // ---------------- LIST + GET ----------------
@@ -94,8 +159,11 @@ export const listProjects = createServerFn({ method: "GET" })
     const ids = projects.map((p) => p.id);
     if (ids.length === 0) return [];
 
-    const [holdsRes, cosRes, bucketsRes] = await Promise.all([
-      context.supabase.from("holds").select("project_id,type,amount,status").in("project_id", ids),
+    const [expRes, cosRes, bucketsRes] = await Promise.all([
+      context.supabase
+        .from("exposures")
+        .select("project_id,category,dollar_exposure,probability,hold_class,status,response_path,opened_at,next_review_at")
+        .in("project_id", ids),
       context.supabase
         .from("change_orders")
         .select("project_id,contract_amount,cost_amount,status,probability")
@@ -105,39 +173,50 @@ export const listProjects = createServerFn({ method: "GET" })
         .select("project_id,bucket,original_budget,actual_to_date,ftc")
         .in("project_id", ids),
     ]);
-    if (holdsRes.error) throw new Error(holdsRes.error.message);
+    if (expRes.error) throw new Error(expRes.error.message);
     if (cosRes.error) throw new Error(cosRes.error.message);
     if (bucketsRes.error) throw new Error(bucketsRes.error.message);
 
-    const groupBy = <T extends { project_id: string }>(rows: T[]) => {
+    type Keyed = { project_id: string };
+    const groupBy = <T extends Keyed>(rows: readonly unknown[]): Record<string, T[]> => {
       const m: Record<string, T[]> = {};
-      for (const r of rows) (m[r.project_id] ||= []).push(r);
+      for (const r of rows as T[]) (m[r.project_id] ||= []).push(r);
       return m;
     };
-    const hByP = groupBy(holdsRes.data ?? []);
-    const cByP = groupBy(cosRes.data ?? []);
-    const bByP = groupBy(bucketsRes.data ?? []);
+    const eByP = groupBy<{ project_id: string } & Record<string, unknown>>(expRes.data ?? []);
+    const cByP = groupBy<{ project_id: string } & Record<string, unknown>>(cosRes.data ?? []);
+    const bByP = groupBy<{ project_id: string } & Record<string, unknown>>(bucketsRes.data ?? []);
 
     return projects.map((p) => {
-      const holds = (hByP[p.id] ?? []).map((h) => ({
-        type: h.type as HoldType,
-        amount: num(h.amount),
-        status: h.status as HoldStatus,
+      const exposures = (eByP[p.id] ?? []).map((e) => ({
+        category: (e.category as ExposureCategory) ?? "other",
+        dollar_exposure: num(e.dollar_exposure),
+        probability: num(e.probability),
+        hold_class: (e.hold_class as HoldClass) ?? "E-Hold",
+        status: (e.status as ExposureStatus) ?? "active",
+        response_path: (e.response_path as ResponsePath) ?? "accept",
+        opened_at: (e.opened_at as string | null) ?? null,
+        next_review_at: (e.next_review_at as string | null) ?? null,
       }));
       const cos = (cByP[p.id] ?? []).map((c) => ({
         contract_amount: num(c.contract_amount),
         cost_amount: num(c.cost_amount),
-        status: c.status as COStatus,
+        status: (c.status as COStatus) ?? "Pending",
         probability: num(c.probability),
       }));
       const buckets = (bByP[p.id] ?? []).map((b) => ({
-        bucket: b.bucket as string,
+        bucket: str(b.bucket),
         original_budget: num(b.original_budget),
         actual_to_date: num(b.actual_to_date),
         ftc: num(b.ftc),
       }));
-      const r = computeRollup(p, buckets, cos, holds);
-      const warnings = evaluateWarnings(p, buckets, cos, r);
+      const r = computeRollup(p, buckets, cos, exposures);
+      const warnings = evaluateWarnings(p, buckets, cos, exposures, r);
+      const lastReview = p.last_reviewed_at ? new Date(p.last_reviewed_at).getTime() : null;
+      const daysSinceReview = lastReview
+        ? Math.floor((Date.now() - lastReview) / 86400000)
+        : null;
+      const topCat = exposureByCategory(exposures)[0]?.category ?? null;
       return {
         id: p.id,
         name: p.name,
@@ -150,6 +229,8 @@ export const listProjects = createServerFn({ method: "GET" })
         original_gp_pct: r.originalGPpct,
         gp_at_risk: r.gpAtRisk,
         warning_count: warnings.length,
+        days_since_review: daysSinceReview,
+        top_category: topCat,
       };
     });
   });
@@ -161,54 +242,105 @@ export const getProject = createServerFn({ method: "GET" })
   )
   .handler(async ({ data, context }) => {
     const pid = data.projectId;
-    const [pRes, hRes, cRes, bRes] = await Promise.all([
+    const [pRes, eRes, cRes, bRes, dRes, rRes] = await Promise.all([
       context.supabase.from("projects").select("*").eq("id", pid).maybeSingle(),
-      context.supabase.from("holds").select("*").eq("project_id", pid).order("created_at"),
+      context.supabase.from("exposures").select("*").eq("project_id", pid).order("opened_at", { ascending: false }),
       context.supabase.from("change_orders").select("*").eq("project_id", pid).order("number"),
       context.supabase.from("cost_buckets").select("*").eq("project_id", pid).order("sort_order"),
+      context.supabase.from("decisions").select("*").eq("project_id", pid).order("due_date", { ascending: true, nullsFirst: false }),
+      context.supabase.from("reviews").select("*").eq("project_id", pid).order("reviewed_at", { ascending: false }).limit(10),
     ]);
     if (pRes.error) throw new Error(pRes.error.message);
     if (!pRes.data) throw new Error("Project not found");
-    if (hRes.error) throw new Error(hRes.error.message);
+    if (eRes.error) throw new Error(eRes.error.message);
     if (cRes.error) throw new Error(cRes.error.message);
     if (bRes.error) throw new Error(bRes.error.message);
+    if (dRes.error) throw new Error(dRes.error.message);
+    if (rRes.error) throw new Error(rRes.error.message);
 
-    const project = normalizeProject(pRes.data);
-    const holds: HoldRow[] = (hRes.data ?? []).map((h) => ({
-      ...(h as Record<string, unknown>),
-      amount: num((h as Record<string, unknown>).amount),
-    })) as unknown as HoldRow[];
-    const changeOrders: ChangeOrderRow[] = (cRes.data ?? []).map((c) => ({
-      ...(c as Record<string, unknown>),
-      contract_amount: num((c as Record<string, unknown>).contract_amount),
-      cost_amount: num((c as Record<string, unknown>).cost_amount),
-      probability: num((c as Record<string, unknown>).probability),
-    })) as unknown as ChangeOrderRow[];
-    const buckets: BucketRow[] = (bRes.data ?? []).map((b) => ({
-      ...(b as Record<string, unknown>),
-      original_budget: num((b as Record<string, unknown>).original_budget),
-      actual_to_date: num((b as Record<string, unknown>).actual_to_date),
-      ftc: num((b as Record<string, unknown>).ftc),
-      sort_order: num((b as Record<string, unknown>).sort_order),
-    })) as unknown as BucketRow[];
+    const project = normalizeProject(pRes.data as Record<string, unknown>);
+    const exposures: ExposureRow[] = (eRes.data ?? []).map((r) =>
+      normalizeExposure(r as Record<string, unknown>),
+    );
+    const changeOrders: ChangeOrderRow[] = (cRes.data ?? []).map((c) => {
+      const o = c as Record<string, unknown>;
+      return {
+        id: o.id as string,
+        project_id: o.project_id as string,
+        number: str(o.number),
+        description: str(o.description),
+        contract_amount: num(o.contract_amount),
+        cost_amount: num(o.cost_amount),
+        status: (o.status as COStatus) ?? "Pending",
+        probability: num(o.probability),
+        owner: str(o.owner),
+        notes: str(o.notes),
+      };
+    });
+    const buckets: BucketRow[] = (bRes.data ?? []).map((b) => {
+      const o = b as Record<string, unknown>;
+      return {
+        id: o.id as string,
+        project_id: o.project_id as string,
+        bucket: str(o.bucket),
+        original_budget: num(o.original_budget),
+        actual_to_date: num(o.actual_to_date),
+        ftc: num(o.ftc),
+        sort_order: num(o.sort_order),
+      };
+    });
+    const decisions: DecisionRow[] = (dRes.data ?? []).map((d) => {
+      const o = d as Record<string, unknown>;
+      return {
+        id: o.id as string,
+        project_id: o.project_id as string,
+        decision: str(o.decision),
+        impact: str(o.impact),
+        owner: str(o.owner),
+        due_date: (o.due_date as string | null) ?? null,
+        status: (o.status as DecisionStatus) ?? "open",
+        linked_exposure_id: (o.linked_exposure_id as string | null) ?? null,
+        linked_co_id: (o.linked_co_id as string | null) ?? null,
+        notes: str(o.notes),
+      };
+    });
+    const reviews: ReviewRow[] = (rRes.data ?? []).map((r) => {
+      const o = r as Record<string, unknown>;
+      return {
+        id: o.id as string,
+        project_id: o.project_id as string,
+        reviewed_at: str(o.reviewed_at),
+        reviewer: str(o.reviewer),
+        forecast_completion_date_before: (o.forecast_completion_date_before as string | null) ?? null,
+        forecast_completion_date_after: (o.forecast_completion_date_after as string | null) ?? null,
+        summary_notes: str(o.summary_notes),
+      };
+    });
 
-    const rollup: Rollup = computeRollup(project, buckets, changeOrders, holds);
+    const rollup: Rollup = computeRollup(project, buckets, changeOrders, exposures);
     const guidance = guidanceTargets(project.phase, rollup.remainingCost);
-    const warnings: Warning[] = evaluateWarnings(project, buckets, changeOrders, rollup);
+    const warnings: Warning[] = evaluateWarnings(project, buckets, changeOrders, exposures, rollup);
+    const byCategory = exposureByCategory(exposures);
+    const aging = exposureAging(exposures);
 
-    return { project, holds, changeOrders, buckets, rollup, guidance, warnings };
+    return {
+      project,
+      exposures,
+      changeOrders,
+      buckets,
+      decisions,
+      reviews,
+      rollup,
+      guidance,
+      warnings,
+      byCategory,
+      aging,
+    };
   });
 
 // ---------------- PROJECT CRUD ----------------
 
-const DEFAULT_BUCKETS = [
-  "Sitework",
-  "Structure",
-  "Envelope",
-  "MEP",
-  "Finishes",
-  "GC/OH",
-];
+const DEFAULT_BUCKETS = ["Sitework", "Structure", "Envelope", "MEP", "Finishes", "GC/OH"];
 
 const createProjectInput = z.object({
   name: z.string().min(1).max(200),
@@ -234,7 +366,6 @@ export const createProject = createServerFn({ method: "POST" })
       .single();
     if (error) throw new Error(error.message);
 
-    // Seed six empty buckets, distributing original_cost_budget evenly
     const per = data.original_cost_budget / DEFAULT_BUCKETS.length;
     const { error: bErr } = await context.supabase.from("cost_buckets").insert(
       DEFAULT_BUCKETS.map((bucket, i) => ({
@@ -262,6 +393,9 @@ const updateFinancialsInput = z.object({
     phase: z.enum(["Early", "Middle", "Late"]).optional(),
     percent_complete: z.number().min(0).max(100).optional(),
     hold_variance_note: z.string().max(2000).optional(),
+    forecast_completion_date: z.string().optional().nullable(),
+    baseline_completion_date: z.string().optional().nullable(),
+    last_review_summary: z.string().max(4000).optional(),
   }),
 });
 
@@ -277,49 +411,64 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-// ---------------- HOLDS ----------------
+// ---------------- EXPOSURES ----------------
 
-const holdInput = z.object({
-  type: z.enum(["E-Hold", "C-Hold"]),
-  description: z.string().min(1).max(500),
-  amount: z.number().min(0),
-  reason: z.string().max(2000).default(""),
+const EXPOSURE_CATEGORIES = [
+  "owner_decision","design_drift","trade_performance","procurement",
+  "schedule_compression","allowance_overrun","field_change","closeout_punch","other",
+] as const;
+const RESPONSE_PATHS = ["eliminate", "recover", "offset", "accept"] as const;
+const HOLD_CLASSES = ["E-Hold", "C-Hold", "Both", "None"] as const;
+const EXPOSURE_STATUSES = ["active","escalated","recovered","eliminated","accepted","released"] as const;
+
+const exposureInput = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(2000).default(""),
+  category: z.enum(EXPOSURE_CATEGORIES).default("other"),
+  dollar_exposure: z.number().min(0),
+  probability: z.number().min(0).max(100).default(100),
+  schedule_impact_weeks: z.number().nullable().optional(),
   owner: z.string().max(200).default(""),
+  response_path: z.enum(RESPONSE_PATHS),
   release_condition: z.string().max(500).default(""),
-  status: z.enum(["Active", "Released", "Escalated"]).default("Active"),
+  hold_class: z.enum(HOLD_CLASSES).default("E-Hold"),
+  status: z.enum(EXPOSURE_STATUSES).default("active"),
+  due_date: z.string().nullable().optional(),
+  next_review_at: z.string().nullable().optional(),
+  notes: z.string().max(2000).default(""),
 });
 
-export const createHold = createServerFn({ method: "POST" })
+export const createExposure = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { projectId: string } & z.input<typeof holdInput>) =>
-    z.object({ projectId: z.string().uuid() }).merge(holdInput).parse(input),
+  .inputValidator((input: { projectId: string } & z.input<typeof exposureInput>) =>
+    z.object({ projectId: z.string().uuid() }).merge(exposureInput).parse(input),
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
     const { error } = await context.supabase
-      .from("holds")
+      .from("exposures")
       .insert({ project_id: projectId, ...rest });
     if (error) throw new Error(error.message);
     return { ok: true };
   });
 
-export const updateHold = createServerFn({ method: "POST" })
+export const updateExposure = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string } & Partial<z.input<typeof holdInput>>) =>
-    z.object({ id: z.string().uuid() }).merge(holdInput.partial()).parse(input),
+  .inputValidator((input: { id: string } & Partial<z.input<typeof exposureInput>>) =>
+    z.object({ id: z.string().uuid() }).merge(exposureInput.partial()).parse(input),
   )
   .handler(async ({ data, context }) => {
     const { id, ...patch } = data;
-    const { error } = await context.supabase.from("holds").update(patch).eq("id", id);
+    const { error } = await context.supabase.from("exposures").update(patch).eq("id", id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });
 
-export const deleteHold = createServerFn({ method: "POST" })
+export const deleteExposure = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase.from("holds").delete().eq("id", data.id);
+    const { error } = await context.supabase.from("exposures").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -396,7 +545,100 @@ export const updateBucket = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-// ---------------- DEMO SEED ----------------
+// ---------------- DECISIONS ----------------
+
+const DECISION_STATUSES = ["open", "in_progress", "resolved", "overdue"] as const;
+
+const decisionInput = z.object({
+  decision: z.string().min(1).max(500),
+  impact: z.string().max(500).default(""),
+  owner: z.string().max(200).default(""),
+  due_date: z.string().nullable().optional(),
+  status: z.enum(DECISION_STATUSES).default("open"),
+  linked_exposure_id: z.string().uuid().nullable().optional(),
+  linked_co_id: z.string().uuid().nullable().optional(),
+  notes: z.string().max(2000).default(""),
+});
+
+export const createDecision = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string } & z.input<typeof decisionInput>) =>
+    z.object({ projectId: z.string().uuid() }).merge(decisionInput).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { projectId, ...rest } = data;
+    const { error } = await context.supabase
+      .from("decisions")
+      .insert({ project_id: projectId, ...rest });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const updateDecision = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string } & Partial<z.input<typeof decisionInput>>) =>
+    z.object({ id: z.string().uuid() }).merge(decisionInput.partial()).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { id, ...patch } = data;
+    const { error } = await context.supabase.from("decisions").update(patch).eq("id", id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteDecision = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("decisions").delete().eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ---------------- REVIEWS ----------------
+
+const submitReviewInput = z.object({
+  projectId: z.string().uuid(),
+  reviewer: z.string().max(200).default(""),
+  forecast_completion_date_before: z.string().nullable().optional(),
+  forecast_completion_date_after: z.string().nullable().optional(),
+  summary_notes: z.string().max(4000).default(""),
+});
+
+export const submitReview = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof submitReviewInput>) =>
+    submitReviewInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("reviews").insert({
+      project_id: data.projectId,
+      reviewer: data.reviewer,
+      forecast_completion_date_before: data.forecast_completion_date_before ?? null,
+      forecast_completion_date_after: data.forecast_completion_date_after ?? null,
+      summary_notes: data.summary_notes,
+    });
+    if (error) throw new Error(error.message);
+
+    const patch: Record<string, unknown> = {
+      last_reviewed_at: new Date().toISOString(),
+      last_review_summary: data.summary_notes,
+    };
+    if (data.forecast_completion_date_after) {
+      patch.forecast_completion_date = data.forecast_completion_date_after;
+    }
+    const { error: pErr } = await context.supabase
+      .from("projects")
+      .update(patch)
+      .eq("id", data.projectId);
+    if (pErr) throw new Error(pErr.message);
+
+    return { ok: true };
+  });
+
+// ---------------- DEMO SEED (no-op if any project exists) ----------------
+// The DB trigger seeds a demo project on user creation; this fn is kept
+// for parity with old call sites and just reports state.
 
 export const seedDemoIfEmpty = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -405,56 +647,5 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       .from("projects")
       .select("id", { count: "exact", head: true });
     if (cErr) throw new Error(cErr.message);
-    if ((count ?? 0) > 0) return { seeded: false as const };
-
-    const { data: project, error: pErr } = await context.supabase
-      .from("projects")
-      .insert({
-        owner_id: context.userId,
-        name: "Harbor Residence",
-        client: "Private Luxury Residence",
-        original_contract: 3200000,
-        original_cost_budget: 2720000,
-        schedule_variance_weeks: 6,
-        phase: "Middle",
-        percent_complete: 60,
-      })
-      .select("id")
-      .single();
-    if (pErr) throw new Error(pErr.message);
-
-    const pid = project.id;
-
-    const buckets = [
-      { bucket: "Sitework", original_budget: 220000, actual_to_date: 215000, ftc: 8000, sort_order: 1 },
-      { bucket: "Structure", original_budget: 540000, actual_to_date: 520000, ftc: 35000, sort_order: 2 },
-      { bucket: "Envelope", original_budget: 430000, actual_to_date: 300000, ftc: 160000, sort_order: 3 },
-      { bucket: "MEP", original_budget: 480000, actual_to_date: 260000, ftc: 240000, sort_order: 4 },
-      { bucket: "Finishes", original_budget: 780000, actual_to_date: 180000, ftc: 690000, sort_order: 5 },
-      { bucket: "GC/OH", original_budget: 270000, actual_to_date: 150000, ftc: 142000, sort_order: 6 },
-    ].map((b) => ({ ...b, project_id: pid }));
-    const { error: bErr } = await context.supabase.from("cost_buckets").insert(buckets);
-    if (bErr) throw new Error(bErr.message);
-
-    const cos = [
-      { number: "CO-001", description: "Owner-requested wine room expansion", contract_amount: 145000, cost_amount: 122000, status: "Approved", probability: 100, owner: "PM" },
-      { number: "CO-002", description: "Upgraded primary bath stone package", contract_amount: 65000, cost_amount: 58000, status: "Approved", probability: 100, owner: "PM" },
-      { number: "CO-003", description: "Pool equipment relocation", contract_amount: 85000, cost_amount: 72000, status: "Pending", probability: 75, owner: "PM" },
-      { number: "CO-004", description: "Outdoor kitchen scope add", contract_amount: 120000, cost_amount: 98000, status: "Pending", probability: 50, owner: "PM" },
-    ].map((c) => ({ ...c, project_id: pid }));
-    const { error: coErr } = await context.supabase.from("change_orders").insert(cos);
-    if (coErr) throw new Error(coErr.message);
-
-    const holds = [
-      { type: "E-Hold", description: "Window delivery delay", amount: 18000, reason: "Manufacturer pushed ship date 5 weeks; risk of acceleration cost.", owner: "K. Alvarez", release_condition: "Windows delivered and inspected on site", status: "Active" },
-      { type: "E-Hold", description: "Lighting allowance overrun", amount: 22000, reason: "Owner selections trending 30% over allowance.", owner: "M. Chen", release_condition: "Final lighting package signed and POs issued", status: "Active" },
-      { type: "E-Hold", description: "Unapproved electrical changes", amount: 9500, reason: "Field changes not yet captured in COs.", owner: "J. Patel", release_condition: "CO package submitted and approved", status: "Escalated" },
-      { type: "E-Hold", description: "Weak drywall subcontractor", amount: 15000, reason: "Quality issues may require supplemental crew.", owner: "R. Singh", release_condition: "Punchlist cleared on level 2 hangs", status: "Active" },
-      { type: "E-Hold", description: "Late appliance selection", amount: 12000, reason: "Selection delay threatens MEP rough-in sequence.", owner: "K. Alvarez", release_condition: "Appliance package locked & released", status: "Active" },
-      { type: "C-Hold", description: "Remaining finish-phase uncertainty", amount: 65000, reason: "General contingency for trim, paint, and closeout variability.", owner: "PM", release_condition: "Substantial completion + punch", status: "Active" },
-    ].map((h) => ({ ...h, project_id: pid }));
-    const { error: hErr } = await context.supabase.from("holds").insert(holds);
-    if (hErr) throw new Error(hErr.message);
-
-    return { seeded: true as const, projectId: pid };
+    return { seeded: false as const, exists: (count ?? 0) > 0 };
   });
