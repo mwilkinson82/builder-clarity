@@ -300,12 +300,14 @@ function MilestoneRowEditor({
             <AlertTriangle className="h-3 w-3 text-warning" /> Reason for delay / risk
           </Label>
           <Textarea
-            rows={3}
+            rows={6}
+            className="min-h-[140px] text-sm leading-relaxed"
             value={local.delay_reason}
             onChange={(e) => setLocal({ ...local, delay_reason: e.target.value })}
             onBlur={() => row.delay_reason !== local.delay_reason && commit({ delay_reason: local.delay_reason })}
             placeholder="What's causing the slip? Long-lead procurement, owner decision, weather, trade manpower…"
           />
+
         </div>
       )}
       <div className="mt-2 flex justify-end">
