@@ -84,6 +84,8 @@ function ProjectPage() {
   const deleteCoFn = useServerFn(deleteChangeOrder);
   const updateBucketFn = useServerFn(updateBucket);
   const submitReviewFn = useServerFn(submitReview);
+  const updateReviewFn = useServerFn(updateReview);
+  const importBucketsFn = useServerFn(importCostBuckets);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", projectId] });
@@ -104,6 +106,8 @@ function ProjectPage() {
   const coDelete = mk<{ id: string }>(deleteCoFn);
   const bucketUpdate = mk<Record<string, unknown>>(updateBucketFn as never);
   const reviewSubmit = mk<Record<string, unknown>>(submitReviewFn as never);
+  const reviewUpdate = mk<Record<string, unknown>>(updateReviewFn as never);
+  const bucketImport = mk<Record<string, unknown>>(importBucketsFn as never);
 
   const navigate = useNavigate();
   const router = useRouter();
@@ -128,9 +132,85 @@ function ProjectPage() {
     rollup, guidance, warnings, byCategory, aging,
   } = data;
 
-  const lastReviewDays = project.last_reviewed_at
+  // Last-reviewed chip is gated by hydration to avoid SSR/CSR text mismatch
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => { setHydrated(true); }, []);
+  const lastReviewDays = hydrated && project.last_reviewed_at
     ? Math.floor((Date.now() - new Date(project.last_reviewed_at).getTime()) / 86400000)
     : null;
+
+  const handleSubmitReview = async (input: {
+    reviewer: string;
+    forecast_completion_date_before: string | null;
+    forecast_completion_date_after: string | null;
+    summary_notes: string;
+    body_markdown: string;
+    pdf_style: IorPdfStyle;
+    kpi_snapshot: Record<string, number | string>;
+    newExposures: Array<{
+      title: string; description: string; category: ExposureCategory;
+      dollar_exposure: number; probability: number; owner: string;
+      response_path: import("@/lib/ior").ResponsePath | null;
+      hold_class: import("@/lib/ior").HoldClass;
+    }>;
+    resolutionUpdates: Array<{ id: string; status: import("@/lib/ior").ExposureStatus; note: string }>;
+    pdfBytes: Uint8Array;
+  }) => {
+    // Create new exposures
+    for (const e of input.newExposures) {
+      if (!e.response_path) continue;
+      expCreate.mutate({
+        projectId,
+        title: e.title,
+        description: e.description,
+        category: e.category,
+        dollar_exposure: e.dollar_exposure,
+        probability: e.probability,
+        owner: e.owner,
+        response_path: e.response_path,
+        hold_class: e.hold_class,
+        status: "active",
+        release_condition: "",
+      });
+    }
+    // Apply resolutions
+    for (const r of input.resolutionUpdates) {
+      const patch: Record<string, unknown> = { status: r.status };
+      if (r.note) patch.notes = r.note;
+      if (r.status === "recovered" || r.status === "eliminated" || r.status === "released") {
+        patch.resolved_at = new Date().toISOString();
+      }
+      expUpdate.mutate({ id: r.id, ...patch });
+    }
+    // Submit the review row
+    reviewSubmit.mutate({
+      projectId,
+      reviewer: input.reviewer,
+      forecast_completion_date_before: input.forecast_completion_date_before,
+      forecast_completion_date_after: input.forecast_completion_date_after,
+      summary_notes: input.summary_notes,
+      body_markdown: input.body_markdown,
+      pdf_style: input.pdf_style,
+      kpi_snapshot: input.kpi_snapshot,
+      email_recipients: [],
+    });
+    // PDF was already downloaded by the wizard itself.
+  };
+
+  const downloadCurrentReport = async (style: IorPdfStyle) => {
+    const bytes = await generateIorPdf({
+      project, rollup, exposures, changeOrders, buckets, decisions, reviews,
+      narrative: project.last_review_summary,
+      generatedAt: new Date(),
+    }, style);
+    downloadPdfBytes(bytes, `IOR_${project.name.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0,10)}.pdf`);
+  };
+
+  const buildPdfInputForReview = (r: ReviewRow | null) => ({
+    project, rollup, exposures, changeOrders, buckets, decisions, reviews,
+    narrative: r?.body_markdown || r?.summary_notes,
+    generatedAt: r ? new Date(r.reviewed_at) : new Date(),
+  });
 
   return (
     <div className="min-h-screen bg-background text-foreground">
