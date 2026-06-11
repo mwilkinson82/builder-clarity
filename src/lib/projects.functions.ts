@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { Json } from "@/integrations/supabase/types";
 import {
   computeRollup,
   evaluateWarnings,
@@ -105,7 +106,7 @@ export interface ReviewRow {
   status: string;
   email_recipients: string[];
   pdf_style: string;
-  kpi_snapshot: Record<string, unknown>;
+  kpi_snapshot: Json;
 }
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
@@ -323,7 +324,7 @@ export const getProject = createServerFn({ method: "GET" })
         status: str(o.status, "published"),
         email_recipients: Array.isArray(o.email_recipients) ? (o.email_recipients as string[]) : [],
         pdf_style: str(o.pdf_style, "executive"),
-        kpi_snapshot: (o.kpi_snapshot as Record<string, unknown>) ?? {},
+        kpi_snapshot: (o.kpi_snapshot ?? {}) as Json,
       };
     });
 
