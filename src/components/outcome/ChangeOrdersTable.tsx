@@ -11,12 +11,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
-import type { ChangeOrderRow, COStatus } from "@/lib/projects.functions";
+import type { ChangeOrderRow, COStatus, COType } from "@/lib/projects.functions";
 
 const statusStyles: Record<COStatus, string> = {
   Approved: "bg-success/15 text-success border-success/30",
   Pending: "bg-warning/15 text-warning border-warning/30",
   Denied: "bg-danger/15 text-danger border-danger/30",
+};
+
+const CO_TYPE_LABELS: Record<COType, string> = {
+  owner_change: "Owner change",
+  design_error: "Design error",
+  design_omission: "Design omission",
+  unforeseen_condition: "Unforeseen field condition",
+  missed_scope: "Missed scope (our side)",
+  sub_issued: "Issued to sub",
+  other: "Other",
 };
 
 type Draft = {
@@ -28,6 +38,7 @@ type Draft = {
   probability: number;
   owner: string;
   notes: string;
+  co_type: COType;
 };
 
 const empty: Draft = {
@@ -39,7 +50,9 @@ const empty: Draft = {
   probability: 100,
   owner: "",
   notes: "",
+  co_type: "owner_change",
 };
+
 
 export function ChangeOrdersTable({
   changeOrders,
