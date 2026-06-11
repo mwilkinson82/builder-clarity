@@ -16,26 +16,41 @@ import {
 } from "@/components/ui/select";
 import { KpiStrip } from "@/components/outcome/KpiStrip";
 import { OutcomeWaterfall } from "@/components/outcome/OutcomeWaterfall";
-import { HoldsPanel } from "@/components/outcome/HoldsPanel";
+import { ExposuresTable } from "@/components/outcome/ExposuresTable";
 import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/outcome/ScheduleRisk";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { RiskWarnings } from "@/components/outcome/RiskWarnings";
+import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
 import {
-  createHold, deleteHold, getProject, listProjects, updateHold,
+  createExposure, updateExposure, deleteExposure,
+  createDecision, updateDecision, deleteDecision,
+  getProject, listProjects,
   updateProjectFinancials, createChangeOrder, updateChangeOrder,
-  deleteChangeOrder, updateBucket,
+  deleteChangeOrder, updateBucket, submitReview,
   type ProjectRow,
 } from "@/lib/projects.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
-import type { Phase } from "@/lib/ior";
+import type { Phase, ExposureCategory } from "@/lib/ior";
 import { LogOut, Pencil } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   head: () => ({ meta: [{ title: "Project Outcome Review" }] }),
   component: ProjectPage,
 });
+
+const CATEGORY_LABELS: Record<ExposureCategory, string> = {
+  owner_decision: "Owner decision",
+  design_drift: "Design drift",
+  trade_performance: "Trade performance",
+  procurement: "Procurement",
+  schedule_compression: "Schedule compression",
+  allowance_overrun: "Allowance overrun",
+  field_change: "Field change",
+  closeout_punch: "Closeout / punch",
+  other: "Other",
+};
 
 function ProjectPage() {
   const { projectId } = Route.useParams();
@@ -52,14 +67,18 @@ function ProjectPage() {
     queryFn: () => list(),
   });
 
-  const createHoldFn = useServerFn(createHold);
-  const updateHoldFn = useServerFn(updateHold);
-  const deleteHoldFn = useServerFn(deleteHold);
+  const createExposureFn = useServerFn(createExposure);
+  const updateExposureFn = useServerFn(updateExposure);
+  const deleteExposureFn = useServerFn(deleteExposure);
+  const createDecisionFn = useServerFn(createDecision);
+  const updateDecisionFn = useServerFn(updateDecision);
+  const deleteDecisionFn = useServerFn(deleteDecision);
   const updateFinFn = useServerFn(updateProjectFinancials);
   const createCoFn = useServerFn(createChangeOrder);
   const updateCoFn = useServerFn(updateChangeOrder);
   const deleteCoFn = useServerFn(deleteChangeOrder);
   const updateBucketFn = useServerFn(updateBucket);
+  const submitReviewFn = useServerFn(submitReview);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", projectId] });
@@ -68,14 +87,18 @@ function ProjectPage() {
   const mk = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
     useMutation({ mutationFn: (input: I) => fn({ data: input }), onSuccess: invalidate });
 
-  const holdCreate = mk<Record<string, unknown>>(createHoldFn as never);
-  const holdUpdate = mk<Record<string, unknown>>(updateHoldFn as never);
-  const holdDelete = mk<{ id: string }>(deleteHoldFn);
+  const expCreate = mk<Record<string, unknown>>(createExposureFn as never);
+  const expUpdate = mk<Record<string, unknown>>(updateExposureFn as never);
+  const expDelete = mk<{ id: string }>(deleteExposureFn);
+  const decCreate = mk<Record<string, unknown>>(createDecisionFn as never);
+  const decUpdate = mk<Record<string, unknown>>(updateDecisionFn as never);
+  const decDelete = mk<{ id: string }>(deleteDecisionFn);
   const finUpdate = mk<Record<string, unknown>>(updateFinFn as never);
   const coCreate = mk<Record<string, unknown>>(createCoFn as never);
   const coUpdate = mk<Record<string, unknown>>(updateCoFn as never);
   const coDelete = mk<{ id: string }>(deleteCoFn);
   const bucketUpdate = mk<Record<string, unknown>>(updateBucketFn as never);
+  const reviewSubmit = mk<Record<string, unknown>>(submitReviewFn as never);
 
   const navigate = useNavigate();
   const router = useRouter();
@@ -95,7 +118,14 @@ function ProjectPage() {
     );
   }
 
-  const { project, holds, changeOrders, buckets, rollup, guidance, warnings } = data;
+  const {
+    project, exposures, changeOrders, buckets, decisions, reviews,
+    rollup, guidance, warnings, byCategory, aging,
+  } = data;
+
+  const lastReviewDays = project.last_reviewed_at
+    ? Math.floor((Date.now() - new Date(project.last_reviewed_at).getTime()) / 86400000)
+    : null;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -125,17 +155,34 @@ function ProjectPage() {
             <div>
               <div className="flex items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                 <span className="inline-block h-px w-8 bg-accent" />
-                Project Outcome Review · {project.phase} Phase · {project.percent_complete}% complete
+                Project Truth · {project.phase} Phase · {project.percent_complete}% complete
+                {lastReviewDays !== null && (
+                  <span className={lastReviewDays > 30 ? "text-danger" : ""}>
+                    · Last reviewed {lastReviewDays}d ago
+                  </span>
+                )}
               </div>
               <h1 className="mt-3 font-serif text-5xl leading-[1.05] text-foreground lg:text-6xl">
                 {project.name}
               </h1>
               <p className="mt-3 max-w-2xl text-base text-muted-foreground">
-                Forecast-to-finish control for margin, risk, schedule, and owner decisions.
+                A project truth system, not a budget report. Start from the SOV, capture exposure, convert it to managed decisions.
               </p>
             </div>
-            <div className="flex items-start gap-6">
-              <dl className="grid grid-cols-2 gap-x-10 gap-y-3 text-sm sm:grid-cols-3">
+            <div className="flex flex-col items-end gap-3">
+              <div className="flex items-center gap-2">
+                <ProjectTruthReview
+                  project={project}
+                  onSubmit={(input) => reviewSubmit.mutate({ projectId, ...input })}
+                  pending={reviewSubmit.isPending}
+                />
+                <EditFinancialsDialog
+                  project={project}
+                  onSave={(patch) => finUpdate.mutate({ projectId, patch })}
+                  pending={finUpdate.isPending}
+                />
+              </div>
+              <dl className="grid grid-cols-3 gap-x-8 gap-y-1 text-sm">
                 <div>
                   <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Client</dt>
                   <dd className="mt-0.5 text-foreground">{project.client || "—"}</dd>
@@ -149,11 +196,6 @@ function ProjectPage() {
                   <dd className="mt-0.5 tabular text-foreground">{fmtUSD(rollup.forecastedFinalContract)}</dd>
                 </div>
               </dl>
-              <EditFinancialsDialog
-                project={project}
-                onSave={(patch) => finUpdate.mutate({ projectId, patch })}
-                pending={finUpdate.isPending}
-              />
             </div>
           </div>
         </div>
@@ -175,25 +217,16 @@ function ProjectPage() {
 
         <RiskWarnings warnings={warnings} />
 
-        <div className="flex items-start gap-3 rounded-lg border border-hairline bg-surface px-5 py-4">
-          <span className="mt-1.5 inline-block h-px w-6 shrink-0 bg-accent" />
-          <p className="text-sm text-foreground/85">
-            <span className="font-semibold text-foreground">How this rolls up:</span>{" "}
-            Forecasted Final Contract = Original + Approved COs + (Pending COs × probability).
-            Forecasted Final Cost = Actual-to-Date + FTC across buckets + cost-side CO impacts.
-            Holds sit below the line and reduce Indicated GP — they do not inflate cost.
-          </p>
-        </div>
-
         <Tabs defaultValue="outcome" className="space-y-6">
           <TabsList className="h-auto w-full justify-start gap-1 rounded-lg border border-hairline bg-card p-1">
             {[
               ["outcome", "Outcome"],
+              ["exposures", `Exposures (${exposures.filter(e => e.status === "active" || e.status === "escalated").length})`],
+              ["decisions", `Decisions (${decisions.filter(d => d.status !== "resolved").length})`],
               ["buckets", "Cost Buckets"],
               ["change-orders", "Change Orders"],
-              ["holds", "Holds"],
-              ["schedule", "Schedule Risk"],
-              ["decisions", "Required Decisions"],
+              ["schedule", "Schedule"],
+              ["reviews", `Reviews (${reviews.length})`],
             ].map(([v, label]) => (
               <TabsTrigger
                 key={v}
@@ -211,7 +244,7 @@ function ProjectPage() {
                 <div className="mb-6">
                   <h2 className="font-serif text-3xl text-foreground">Financial Outcome</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    From original contract through indicated gross profit — all figures derived from change orders, cost buckets, and holds.
+                    Computed from change orders, cost buckets, and the exposure register.
                   </p>
                 </div>
                 <OutcomeWaterfall
@@ -235,7 +268,7 @@ function ProjectPage() {
                   <p className="mt-3 font-serif text-xl leading-snug text-foreground">
                     This project began as a{" "}
                     <span className="tabular">{fmtPct(rollup.originalGPpct)}</span> GP job.
-                    Based on current holds and forecasted final cost, it is now indicating{" "}
+                    Based on current exposures and forecasted final cost, it is now indicating{" "}
                     <span className="tabular text-accent">{fmtPct(rollup.indicatedGPpct)}</span>.
                     The company has{" "}
                     <span className="tabular text-danger">{fmtUSD(rollup.gpAtRisk)}</span>{" "}
@@ -244,36 +277,83 @@ function ProjectPage() {
                 </div>
               </div>
 
-              <aside className="rounded-lg border border-hairline bg-card p-6 shadow-card lg:p-7">
-                <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  <span className="inline-block h-px w-6 bg-accent" />
-                  Next Required Decisions
-                </div>
-                <h3 className="mt-3 font-serif text-2xl text-foreground">
-                  Three moves that protect margin
-                </h3>
-                <ol className="mt-5 space-y-4">
-                  {[
-                    { n: "01", t: "Submit electrical change order package", s: "Releases the E-Hold against unapproved field changes.", owner: "J. Patel" },
-                    { n: "02", t: "Escalate appliance selection deadline to owner", s: "Unblocks MEP rough-in and protects two weeks of schedule.", owner: "K. Alvarez" },
-                    { n: "03", t: "Hold contingency until millwork buyout is complete", s: "Preserves the C-Hold through finish-phase variability.", owner: "Executive" },
-                  ].map((d) => (
-                    <li key={d.n} className="border-t border-hairline pt-4 first:border-t-0 first:pt-0">
-                      <div className="flex items-baseline gap-3">
-                        <span className="font-mono text-[10px] tracking-widest text-accent">{d.n}</span>
-                        <div className="flex-1">
-                          <div className="text-sm font-medium text-foreground">{d.t}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">{d.s}</div>
-                          <div className="mt-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">
-                            Owner · {d.owner}
+              <aside className="space-y-6">
+                <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                    Margin at risk by category
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {byCategory.length === 0 && (
+                      <p className="text-sm text-muted-foreground">No active exposures.</p>
+                    )}
+                    {byCategory.map((c) => {
+                      const max = byCategory[0].total || 1;
+                      const pct = (c.total / max) * 100;
+                      return (
+                        <div key={c.category}>
+                          <div className="flex items-baseline justify-between text-xs">
+                            <span className="text-foreground">{CATEGORY_LABELS[c.category]}</span>
+                            <span className="tabular text-muted-foreground">{fmtUSD(c.total)}</span>
+                          </div>
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-secondary">
+                            <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
                           </div>
                         </div>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                    Exposure aging (active)
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-3">
+                    <AgingCell label="< 7 days" value={aging.fresh} />
+                    <AgingCell label="7–30 days" value={aging.recent} />
+                    <AgingCell label="> 30 days" value={aging.stale} danger />
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+                  <div className="flex items-baseline justify-between">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                      Hold guidance · {project.phase}
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    <GuidanceRow label="E-Hold" actual={rollup.exposureHolds} target={guidance.eTarget} pct={guidance.ePct} />
+                    <GuidanceRow label="C-Hold" actual={rollup.contingencyHold} target={guidance.cTarget} pct={guidance.cPct} />
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Targets are % of remaining cost. If actual is below target, capture a written justification.
+                  </p>
+                </div>
               </aside>
             </div>
+          </TabsContent>
+
+          <TabsContent value="exposures">
+            <SectionHeader
+              title="Exposure Register"
+              subtitle="Every emerging problem becomes a dollarized exposure with an owner and a treatment path. This is the heart of the system."
+            />
+            <ExposuresTable
+              exposures={exposures}
+              onCreate={(d) => expCreate.mutate({ projectId, ...d })}
+              onUpdate={(id, patch) => expUpdate.mutate({ id, ...patch })}
+              onDelete={(id) => expDelete.mutate({ id })}
+            />
+          </TabsContent>
+
+          <TabsContent value="decisions">
+            <SectionHeader title="Required Decisions" subtitle="Convert exposures and pending COs into owned actions with due dates." />
+            <DecisionsTable
+              decisions={decisions}
+              onCreate={(d) => decCreate.mutate({ projectId, ...d })}
+              onUpdate={(id, patch) => decUpdate.mutate({ id, ...patch })}
+              onDelete={(id) => decDelete.mutate({ id })}
+            />
           </TabsContent>
 
           <TabsContent value="buckets">
@@ -294,47 +374,50 @@ function ProjectPage() {
             />
           </TabsContent>
 
-          <TabsContent value="holds">
-            <SectionHeader title="Holds" subtitle="Reserved margin against specific exposures (E-Holds) and general remaining uncertainty (C-Hold)." />
-            <HoldsPanel
-              holds={holds}
-              guidance={guidance}
-              phase={project.phase}
-              onCreate={(d) => holdCreate.mutate({ projectId, ...d })}
-              onUpdate={(id, patch) => holdUpdate.mutate({ id, ...patch })}
-              onDelete={(id) => holdDelete.mutate({ id })}
-              pending={holdCreate.isPending || holdUpdate.isPending || holdDelete.isPending}
-            />
-          </TabsContent>
-
           <TabsContent value="schedule">
             <SectionHeader title="Schedule Risk" subtitle="Completion forecast, decision bottlenecks, procurement and trade performance risks." />
             <ScheduleRisk />
           </TabsContent>
 
-          <TabsContent value="decisions">
-            <SectionHeader title="Required Decisions" subtitle="The owner-level moves that will protect — or erode — indicated gross profit." />
-            <DecisionsTable />
+          <TabsContent value="reviews">
+            <SectionHeader title="Project Truth Reviews" subtitle="What changed since the last review." />
+            <div className="overflow-hidden rounded-lg border border-hairline bg-card">
+              {reviews.length === 0 ? (
+                <p className="p-8 text-center text-sm text-muted-foreground">
+                  No reviews yet. Run the first Project Truth Review to log what's changed.
+                </p>
+              ) : (
+                <ul className="divide-y divide-hairline">
+                  {reviews.map((r) => (
+                    <li key={r.id} className="px-5 py-4">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <div className="text-sm font-medium text-foreground">
+                          {new Date(r.reviewed_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}
+                        </div>
+                        <div className="text-xs text-muted-foreground">{r.reviewer || "—"}</div>
+                      </div>
+                      {(r.forecast_completion_date_before || r.forecast_completion_date_after) && (
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Forecast completion:{" "}
+                          {r.forecast_completion_date_before
+                            ? new Date(r.forecast_completion_date_before).toLocaleDateString()
+                            : "—"}
+                          {" → "}
+                          {r.forecast_completion_date_after
+                            ? new Date(r.forecast_completion_date_after).toLocaleDateString()
+                            : "—"}
+                        </div>
+                      )}
+                      {r.summary_notes && (
+                        <pre className="mt-2 whitespace-pre-wrap font-sans text-sm text-foreground/85">{r.summary_notes}</pre>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </TabsContent>
         </Tabs>
-
-        <footer className="grid gap-4 border-t border-hairline pt-6 text-xs text-muted-foreground sm:grid-cols-3">
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em]">Last reviewed</div>
-            <div className="mt-1 text-foreground tabular">
-              {new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })} · Project Executive
-            </div>
-          </div>
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em]">Next review date</div>
-            <div className="mt-1 text-foreground tabular">
-              {new Date(Date.now() + 14 * 86400000).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })} · Bi-weekly cadence
-            </div>
-          </div>
-          <div className="sm:text-right">
-            Indicated GP recalculates as buckets, COs, and holds change.
-          </div>
-        </footer>
       </main>
     </div>
   );
@@ -349,11 +432,47 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
   );
 }
 
-type EditableProject = Pick<
-  ProjectRow,
-  "name" | "client" | "original_contract" | "original_cost_budget" |
-  "schedule_variance_weeks" | "phase" | "percent_complete" | "hold_variance_note"
->;
+function AgingCell({ label, value, danger }: { label: string; value: number; danger?: boolean }) {
+  return (
+    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
+      <div className={`mt-0.5 font-serif text-2xl tabular ${danger && value > 0 ? "text-danger" : "text-foreground"}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function GuidanceRow({ label, actual, target, pct }: { label: string; actual: number; target: number; pct: number }) {
+  const below = actual < target;
+  const ratio = target > 0 ? Math.min(100, (actual / target) * 100) : 100;
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-xs">
+        <span className="text-foreground">{label} <span className="text-muted-foreground">· {pct}%</span></span>
+        <span className={`tabular ${below ? "text-danger" : "text-success"}`}>
+          {fmtUSD(actual)} <span className="text-muted-foreground">/ {fmtUSD(target)}</span>
+        </span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-secondary">
+        <div className={`h-full rounded-full ${below ? "bg-danger" : "bg-success"}`} style={{ width: `${ratio}%` }} />
+      </div>
+    </div>
+  );
+}
+
+type EditableProject = {
+  name: string;
+  client: string;
+  original_contract: number;
+  original_cost_budget: number;
+  schedule_variance_weeks: number;
+  phase: Phase;
+  percent_complete: number;
+  hold_variance_note: string;
+  forecast_completion_date: string | null;
+  baseline_completion_date: string | null;
+};
 
 function EditFinancialsDialog({
   project,
@@ -374,6 +493,8 @@ function EditFinancialsDialog({
     phase: project.phase,
     percent_complete: project.percent_complete,
     hold_variance_note: project.hold_variance_note,
+    forecast_completion_date: project.forecast_completion_date,
+    baseline_completion_date: project.baseline_completion_date,
   });
   const [form, setForm] = useState<EditableProject>(init);
 
@@ -428,6 +549,16 @@ function EditFinancialsDialog({
             <div className="space-y-1.5">
               <Label>Schedule variance (wk)</Label>
               <Input type="number" value={form.schedule_variance_weeks} onChange={(e) => setForm({ ...form, schedule_variance_weeks: Number(e.target.value) })} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Baseline completion</Label>
+              <Input type="date" value={form.baseline_completion_date ?? ""} onChange={(e) => setForm({ ...form, baseline_completion_date: e.target.value || null })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Forecast completion</Label>
+              <Input type="date" value={form.forecast_completion_date ?? ""} onChange={(e) => setForm({ ...form, forecast_completion_date: e.target.value || null })} />
             </div>
           </div>
           <div className="space-y-1.5">
