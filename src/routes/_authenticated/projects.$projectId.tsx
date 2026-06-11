@@ -512,17 +512,12 @@ function ProjectPage() {
 
 function DownloadReportMenu({ onDownload }: { onDownload: (style: IorPdfStyle) => void | Promise<void> }) {
   return (
-    <div className="flex items-center gap-1 rounded-md border border-hairline bg-card p-0.5">
-      <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => onDownload("executive")}>
-        <Download className="h-3.5 w-3.5" /> One-pager PDF
-      </Button>
-      <span className="text-hairline">·</span>
-      <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => onDownload("structured")}>
-        Multi-page PDF
-      </Button>
-    </div>
+    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => onDownload("executive")}>
+      <Download className="h-3.5 w-3.5" /> Download IOR PDF
+    </Button>
   );
 }
+
 
 function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
