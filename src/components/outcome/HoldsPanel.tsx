@@ -123,6 +123,21 @@ export function HoldsPanel({
   return (
     <TooltipProvider delayDuration={150}>
       <div className="space-y-6">
+        {guidance && (
+          <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              <span className="inline-block h-px w-6 bg-accent" />
+              Conservative Guidance · {phase ?? "—"} Phase
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <GuidanceCard label="E-Hold target" targetPct={guidance.ePct} target={guidance.eTarget} actual={eTotal} />
+              <GuidanceCard label="C-Hold target" targetPct={guidance.cPct} target={guidance.cTarget} actual={cTotal} />
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Targets are a percentage of remaining cost. If actual holds are below target, capture a written justification in the project edit dialog.
+            </p>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-hairline bg-hairline md:grid-cols-3">
           <div className="bg-card px-5 py-4">
             <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
