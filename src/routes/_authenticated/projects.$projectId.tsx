@@ -497,11 +497,7 @@ function ProjectPage() {
   );
 }
 
-        </Tabs>
-      </main>
-    </div>
-  );
-}
+
 
 function DownloadReportMenu({ onDownload }: { onDownload: (style: IorPdfStyle) => void | Promise<void> }) {
   return (
