@@ -1,79 +1,104 @@
+# Phase 2: True IOR Model + Hold Guidance Engine
 
-# Phase 1 — Make Project Outcome Review a real tool
+Move from typed forecast totals to a computed rollup driven by change orders and cost buckets, with conservative phase-sensitive hold guidance and a warning engine.
 
-Goal: turn the single-project demo into a persistent, multi-project system a builder's team can actually log into and use. This phase delivers the foundation that every later feature (review history, PDF export, CO workflow, notifications) builds on.
+## Core philosophy (institutionalized in the app)
+- Default posture is margin-protective.
+- Forecasted Final Contract and Forecasted Final Cost are **derived**, never typed.
+- Holds sit **below the line** against GP; they do not inflate Forecasted Final Cost.
+- If the job is still exposed, the app assumes discipline before optimism.
 
-## What the user will get
+## 1. Data model changes (one migration)
 
-1. **Login** — email/password sign-in. One account = one builder company.
-2. **Portfolio landing page** — replaces the current single-project home. Shows every project in one table with Original Contract, Forecasted Final, Indicated GP $, Indicated GP %, GP At Risk, and a status pill (Healthy / Watch / At Risk based on GP erosion thresholds). Sortable; click a row to open that project.
-3. **Project switcher** — header dropdown to jump between projects without going back to the portfolio.
-4. **"New Project" flow** — modal capturing name, client, original contract, original cost budget. Creates the project and drops the user into its Outcome Review.
-5. **Persistent edits** — Holds (add/edit/release) save to the database instead of resetting on refresh. Indicated GP is computed from saved holds on every load.
-6. **Editable project header** — original contract, forecasted final contract, forecasted final cost, approved/pending COs become editable fields (inline or via an "Edit project financials" dialog) and persist.
+**`projects` table — remove typed totals, add phase**
+- Drop: `forecasted_final_contract`, `forecasted_final_cost`, `approved_cos`, `pending_cos`
+- Keep: `original_contract`, `original_cost_budget`, `schedule_variance_weeks`, review dates
+- Add: `phase` enum (`Early` | `Middle` | `Late`), default `Early`
+- Add: `percent_complete` numeric (PM-entered, used by guidance warnings)
 
-Out of scope for Phase 1 (queued for Phase 2/3): review history & sign-off, PDF export, CO approval workflow, hold aging, CSV import, roles/permissions, notifications, schedule import. Buyout / Change Orders / Decisions / Schedule tabs stay on demo data this phase and get wired to the DB in Phase 3.
+**New table `change_orders`**
+- `project_id`, `number` (text), `description`, `contract_amount`, `cost_amount`, `status` (`Approved`|`Pending`|`Denied`), `probability` (0–100, default 100), `owner`, `notes`
 
-## Data model
+**New table `cost_buckets`** (six seeded per project: Sitework, Structure, MEP, Envelope, Finishes, GC/OH)
+- `project_id`, `bucket` (text), `original_budget`, `actual_to_date`, `ftc`, `sort_order`
 
-Lovable Cloud (Postgres + Auth + RLS). All tables scoped by `owner_id = auth.uid()` so each account only sees its own projects.
+RLS: owner-via-project on both new tables, mirroring `holds`. Update `seed_demo_project` trigger and `seedDemoIfEmpty` server fn to populate buckets + COs for Harbor Residence.
 
-```text
-projects
-  id, owner_id, name, client, status,
-  original_contract, original_cost_budget,
-  forecasted_final_contract, forecasted_final_cost,
-  approved_cos, pending_cos,
-  schedule_variance_weeks,
-  last_reviewed_at, next_review_at,
-  created_at, updated_at
+## 2. Computed rollup (server-side in `getProject` / `listProjects`)
 
-holds
-  id, project_id, type ('E-Hold'|'C-Hold'),
-  amount, reason, owner, release_condition,
-  status ('Active'|'Monitoring'|'Released'),
-  created_at, updated_at
+```
+Forecasted Final Contract =
+  Original Contract
+  + Σ Approved CO contract_amount
+  + Σ (Pending CO contract_amount × probability)
+
+Forecasted Final Cost (before holds) =
+  Σ bucket.actual_to_date
+  + Σ bucket.ftc
+  + Σ Approved CO cost_amount
+  + Σ (Pending CO cost_amount × probability)
+
+Forecasted GP Before Holds = FFContract − FFCost
+Indicated GP = Forecasted GP Before Holds − ΣE-Holds − ΣC-Hold
 ```
 
-RLS: owner-only select/insert/update/delete on both tables, joined through `projects.owner_id` for holds. Standard grants to `authenticated` + `service_role`.
+KPI strip and Waterfall read these computed values; each line gets a tooltip showing the components.
 
-Indicated GP, GP At Risk, Forecasted GP Before Holds remain **computed in the client** from these stored fields — same formulas as today, just sourced from the DB instead of `data.ts`.
+## 3. Hold guidance engine (Conservative defaults)
 
-## Routes
+Targets are % of **remaining cost** (= FFCost − Σ actual_to_date):
+- Early phase: E 4% / C 3%
+- Middle phase: E 3% / C 2.5% (only after buyout substantially complete + key selections locked — PM must advance phase manually)
+- Late phase: E 2% / C 1.5% (only after finishes/millwork/long-leads resolved)
 
-- `/auth` — sign in / sign up (public).
-- `/_authenticated/` — protected subtree (managed gate).
-  - `/` — Portfolio (replaces current index).
-  - `/projects/new` — handled as a modal on the portfolio, not a separate page.
-  - `/projects/$projectId` — the existing Outcome Review dashboard, now reading one project from the DB.
+Each project shows guidance vs. actual. If actual < guidance, render warning chip and require a written justification on the project (`hold_variance_note` field on `projects`).
 
-The current `src/routes/index.tsx` becomes `src/routes/_authenticated/projects/$projectId.tsx` with minimal changes — its props come from a loader instead of `data.ts` constants. A new `src/routes/_authenticated/index.tsx` is the portfolio.
+## 4. Warning engine (beyond percentages)
 
-## Server functions
+Surface a "Risks the system sees" panel on the project page when any of these fire:
+1. Σ Pending CO cost_amount > $25k AND E-Holds < guidance target
+2. Phase = Late AND any Finishes/Millwork bucket has `ftc > 0` AND C-Hold < guidance
+3. `schedule_variance_weeks > 0` AND GC/OH bucket `ftc` increased since last review AND no new E-Hold added
+4. Any bucket where `actual_to_date + ftc < original_budget × 0.95` AND `percent_complete > 50` (suspicious "savings" without justification)
 
-- `listProjects` — portfolio rows + computed indicators.
-- `getProject(id)` — project + holds for the dashboard.
-- `createProject(input)` — returns new id; redirect to it.
-- `updateProjectFinancials(id, patch)` — header edits.
-- `createHold / updateHold / releaseHold / deleteHold` — drive the Holds tab.
+Each warning is dismissible only with a note (stored in `risk_notes` table; out of scope for v1 — for now, just display).
 
-All use `requireSupabaseAuth`; RLS enforces ownership.
+## 5. UI changes
 
-## UI changes
+- **New tab: Change Orders** — table with inline add/edit/delete, status badges, probability slider for Pending.
+- **New tab: Cost Buckets** — 6-row table, inline-edit `actual_to_date` and `ftc`, shows derived FAC and variance per bucket.
+- **Edit Financials dialog** — strip to `name`, `client`, `original_contract`, `original_cost_budget`, `schedule_variance_weeks`, `phase`, `percent_complete`. Remove typed forecast fields.
+- **KPI strip + Waterfall** — unchanged visual, but values come from rollup; tooltips expand "how this is calculated" with the component breakdown.
+- **Holds panel** — add guidance vs. actual header with conservative target chips and warning state.
+- **Portfolio cards** — show a small warning dot when any rule fires.
 
-- New `PortfolioTable` component with status pills using existing color tokens (`accent`, `danger`, `muted`) — no new visual language.
-- Header gets a project switcher (shadcn `Select`) and a "Portfolio" link.
-- `HoldsPanel` swapped from local `useState` to server-fn mutations + query invalidation; UI stays identical.
-- Project header values become editable via a single "Edit financials" dialog to keep the executive aesthetic intact.
-- Empty states: portfolio with zero projects shows a calm prompt to create the first one.
+## 6. Demo seed update
 
-## Aesthetic guardrails
+Rewrite `seed_demo_project` and `seedDemoIfEmpty` so Harbor Residence seeds:
+- 6 cost buckets summing to the original $2.72M budget with realistic FTC + actuals at ~60% complete
+- 4 change orders (2 approved totaling $210k contract / $180k cost; 2 pending with probabilities)
+- Same 6 holds as today
+- `phase = Middle`, `percent_complete = 60`
 
-Keep the current serif/off-white/charcoal system. No new colors, no new fonts, no dashboard chrome. Portfolio table reuses the same hairline borders and tabular numbers as the existing tables.
+Resulting computed FFContract / FFCost should land near the previous hardcoded $3.545M / $3.14M so the visuals stay recognizable.
 
-## What I'll ask you before building
+## Out of scope for this pass
+- Risk-note persistence and dismissal workflow (display-only warnings for now)
+- Review history / PDF export (Phase 3)
+- Multi-user roles / admin (later phase)
 
-1. Sign-up: open (anyone can register) or invite-only for now?
-2. Should the demo "Harbor Residence" data seed automatically into a new account so the dashboard isn't empty on first login?
+---
 
-Approve this and I'll enable Lovable Cloud, run the migration, and ship Phase 1.
+## Technical section
+
+**Migration order:** add new tables + columns + grants + RLS first, backfill any existing project's buckets (single Harbor row, regenerate via trigger rewrite), then drop the obsolete columns.
+
+**File changes:**
+- `src/lib/projects.functions.ts` — extend `getProject` return shape; add `listChangeOrders`, `upsertChangeOrder`, `deleteChangeOrder`, `listBuckets`, `updateBucket`, `setProjectPhase`. Move rollup math into a shared `lib/ior.ts` pure helper so it can run both server-side and in the UI tooltips.
+- `src/lib/ior.ts` — new pure module: `computeRollup({project, buckets, changeOrders, holds})`, `computeGuidance(phase, remainingCost)`, `evaluateWarnings(...)`.
+- `src/components/outcome/ChangeOrdersTable.tsx` — replace placeholder with live editable table.
+- `src/components/outcome/BuyoutTable.tsx` — repurpose into `CostBucketsTable.tsx` (live editable).
+- `src/components/outcome/KpiStrip.tsx` + `OutcomeWaterfall.tsx` — accept new computed props + component breakdown for tooltips.
+- `src/components/outcome/HoldsPanel.tsx` — add guidance header + warning chips.
+- `src/routes/_authenticated/projects.$projectId.tsx` — wire new tabs, pass computed rollup down, render warnings panel.
+- `src/routes/_authenticated/index.tsx` — show warning dot on cards.

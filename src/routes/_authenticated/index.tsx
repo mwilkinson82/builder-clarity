@@ -118,8 +118,18 @@ function PortfolioPage() {
                           params={{ projectId: p.id }}
                           className="block"
                         >
-                          <div className="font-serif text-lg text-foreground">{p.name}</div>
-                          <div className="text-xs text-muted-foreground">{p.client}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="font-serif text-lg text-foreground">{p.name}</div>
+                            {p.warning_count > 0 && (
+                              <span
+                                title={`${p.warning_count} system risk${p.warning_count === 1 ? "" : "s"} detected`}
+                                className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-danger/15 px-1.5 text-[10px] font-semibold text-danger"
+                              >
+                                {p.warning_count}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground">{p.client} · {p.phase}</div>
                         </Link>
                       </TableCell>
                       <TableCell className="text-right tabular">{fmtUSD(p.original_contract)}</TableCell>

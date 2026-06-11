@@ -1,49 +1,39 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { KpiStrip } from "@/components/outcome/KpiStrip";
 import { OutcomeWaterfall } from "@/components/outcome/OutcomeWaterfall";
 import { HoldsPanel } from "@/components/outcome/HoldsPanel";
-import { BuyoutTable } from "@/components/outcome/BuyoutTable";
+import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/outcome/ScheduleRisk";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
+import { RiskWarnings } from "@/components/outcome/RiskWarnings";
 import {
-  createHold,
-  deleteHold,
-  getProject,
-  listProjects,
-  updateHold,
-  updateProjectFinancials,
+  createHold, deleteHold, getProject, listProjects, updateHold,
+  updateProjectFinancials, createChangeOrder, updateChangeOrder,
+  deleteChangeOrder, updateBucket,
+  type ProjectRow,
 } from "@/lib/projects.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
+import type { Phase } from "@/lib/ior";
 import { LogOut, Pencil } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
-  head: () => ({
-    meta: [{ title: "Project Outcome Review" }],
-  }),
+  head: () => ({ meta: [{ title: "Project Outcome Review" }] }),
   component: ProjectPage,
 });
 
@@ -66,28 +56,26 @@ function ProjectPage() {
   const updateHoldFn = useServerFn(updateHold);
   const deleteHoldFn = useServerFn(deleteHold);
   const updateFinFn = useServerFn(updateProjectFinancials);
+  const createCoFn = useServerFn(createChangeOrder);
+  const updateCoFn = useServerFn(updateChangeOrder);
+  const deleteCoFn = useServerFn(deleteChangeOrder);
+  const updateBucketFn = useServerFn(updateBucket);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", projectId] });
     qc.invalidateQueries({ queryKey: ["projects"] });
   };
+  const mk = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
+    useMutation({ mutationFn: (input: I) => fn({ data: input }), onSuccess: invalidate });
 
-  const holdCreate = useMutation({
-    mutationFn: (input: Record<string, unknown>) => createHoldFn({ data: input as never }),
-    onSuccess: invalidate,
-  });
-  const holdUpdate = useMutation({
-    mutationFn: (input: Record<string, unknown>) => updateHoldFn({ data: input as never }),
-    onSuccess: invalidate,
-  });
-  const holdDelete = useMutation({
-    mutationFn: (id: string) => deleteHoldFn({ data: { id } }),
-    onSuccess: invalidate,
-  });
-  const finUpdate = useMutation({
-    mutationFn: (input: Record<string, unknown>) => updateFinFn({ data: input as never }),
-    onSuccess: invalidate,
-  });
+  const holdCreate = mk<Record<string, unknown>>(createHoldFn as never);
+  const holdUpdate = mk<Record<string, unknown>>(updateHoldFn as never);
+  const holdDelete = mk<{ id: string }>(deleteHoldFn);
+  const finUpdate = mk<Record<string, unknown>>(updateFinFn as never);
+  const coCreate = mk<Record<string, unknown>>(createCoFn as never);
+  const coUpdate = mk<Record<string, unknown>>(updateCoFn as never);
+  const coDelete = mk<{ id: string }>(deleteCoFn);
+  const bucketUpdate = mk<Record<string, unknown>>(updateBucketFn as never);
 
   const navigate = useNavigate();
   const router = useRouter();
@@ -97,25 +85,8 @@ function ProjectPage() {
     navigate({ to: "/auth" });
   };
 
-  const figures = useMemo(() => {
-    if (!data) return null;
-    const { project, holds } = data;
-    const active = holds.filter((h) => h.status !== "Released");
-    const exposureHolds = active.filter((h) => h.type === "E-Hold").reduce((s, h) => s + h.amount, 0);
-    const contingencyHold = active.filter((h) => h.type === "C-Hold").reduce((s, h) => s + h.amount, 0);
-    const forecastedGPBeforeHolds = project.forecasted_final_contract - project.forecasted_final_cost;
-    const indicatedGP = forecastedGPBeforeHolds - exposureHolds - contingencyHold;
-    const originalGP = project.original_contract - project.original_cost_budget;
-    const indicatedGPpct = project.forecasted_final_contract > 0
-      ? (indicatedGP / project.forecasted_final_contract) * 100 : 0;
-    const originalGPpct = project.original_contract > 0
-      ? (originalGP / project.original_contract) * 100 : 0;
-    const gpAtRisk = originalGP - indicatedGP;
-    return { exposureHolds, contingencyHold, forecastedGPBeforeHolds, indicatedGP, originalGP, indicatedGPpct, originalGPpct, gpAtRisk };
-  }, [data]);
-
   if (isLoading) return <div className="p-10 text-muted-foreground">Loading…</div>;
-  if (error || !data || !figures) {
+  if (error || !data) {
     return (
       <div className="p-10">
         <p className="text-sm text-danger">Could not load project.</p>
@@ -124,7 +95,7 @@ function ProjectPage() {
     );
   }
 
-  const { project, holds } = data;
+  const { project, holds, changeOrders, buckets, rollup, guidance, warnings } = data;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -154,7 +125,7 @@ function ProjectPage() {
             <div>
               <div className="flex items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                 <span className="inline-block h-px w-8 bg-accent" />
-                Project Outcome Review
+                Project Outcome Review · {project.phase} Phase · {project.percent_complete}% complete
               </div>
               <h1 className="mt-3 font-serif text-5xl leading-[1.05] text-foreground lg:text-6xl">
                 {project.name}
@@ -175,7 +146,7 @@ function ProjectPage() {
                 </div>
                 <div>
                   <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Forecasted Final</dt>
-                  <dd className="mt-0.5 tabular text-foreground">{fmtUSD(project.forecasted_final_contract)}</dd>
+                  <dd className="mt-0.5 tabular text-foreground">{fmtUSD(rollup.forecastedFinalContract)}</dd>
                 </div>
               </dl>
               <EditFinancialsDialog
@@ -190,25 +161,27 @@ function ProjectPage() {
 
       <main className="mx-auto max-w-[1400px] space-y-8 px-6 py-10 lg:px-10">
         <KpiStrip
-          originalGP={figures.originalGP}
-          originalGPpct={figures.originalGPpct}
-          forecastedGP={figures.forecastedGPBeforeHolds}
-          indicatedGP={figures.indicatedGP}
-          indicatedGPpct={figures.indicatedGPpct}
-          gpAtRisk={figures.gpAtRisk}
-          exposureHolds={figures.exposureHolds}
-          contingencyHold={figures.contingencyHold}
-          pendingCOs={project.pending_cos}
+          originalGP={rollup.originalGP}
+          originalGPpct={rollup.originalGPpct}
+          forecastedGP={rollup.forecastedGPBeforeHolds}
+          indicatedGP={rollup.indicatedGP}
+          indicatedGPpct={rollup.indicatedGPpct}
+          gpAtRisk={rollup.gpAtRisk}
+          exposureHolds={rollup.exposureHolds}
+          contingencyHold={rollup.contingencyHold}
+          pendingCOs={rollup.pendingCOContract}
           scheduleWeeks={project.schedule_variance_weeks}
         />
+
+        <RiskWarnings warnings={warnings} />
 
         <div className="flex items-start gap-3 rounded-lg border border-hairline bg-surface px-5 py-4">
           <span className="mt-1.5 inline-block h-px w-6 shrink-0 bg-accent" />
           <p className="text-sm text-foreground/85">
-            <span className="font-semibold text-foreground">How to read this:</span>{" "}
-            <span className="font-serif italic">Indicated GP</span> = Forecasted GP Before Holds
-            <span className="text-muted-foreground"> − </span>Exposure Holds
-            <span className="text-muted-foreground"> − </span>Contingency Hold.
+            <span className="font-semibold text-foreground">How this rolls up:</span>{" "}
+            Forecasted Final Contract = Original + Approved COs + (Pending COs × probability).
+            Forecasted Final Cost = Actual-to-Date + FTC across buckets + cost-side CO impacts.
+            Holds sit below the line and reduce Indicated GP — they do not inflate cost.
           </p>
         </div>
 
@@ -216,9 +189,9 @@ function ProjectPage() {
           <TabsList className="h-auto w-full justify-start gap-1 rounded-lg border border-hairline bg-card p-1">
             {[
               ["outcome", "Outcome"],
-              ["buyout", "Buyout"],
-              ["holds", "Holds"],
+              ["buckets", "Cost Buckets"],
               ["change-orders", "Change Orders"],
+              ["holds", "Holds"],
               ["schedule", "Schedule Risk"],
               ["decisions", "Required Decisions"],
             ].map(([v, label]) => (
@@ -238,21 +211,21 @@ function ProjectPage() {
                 <div className="mb-6">
                   <h2 className="font-serif text-3xl text-foreground">Financial Outcome</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    From original contract through indicated gross profit.
+                    From original contract through indicated gross profit — all figures derived from change orders, cost buckets, and holds.
                   </p>
                 </div>
                 <OutcomeWaterfall
                   originalContract={project.original_contract}
-                  approvedCOs={project.approved_cos}
-                  pendingCOs={project.pending_cos}
-                  forecastedFinalContract={project.forecasted_final_contract}
+                  approvedCOs={rollup.approvedCOContract}
+                  pendingCOs={rollup.weightedPendingCOContract}
+                  forecastedFinalContract={rollup.forecastedFinalContract}
                   originalCostBudget={project.original_cost_budget}
-                  forecastedFinalCost={project.forecasted_final_cost}
-                  forecastedGPBeforeHolds={figures.forecastedGPBeforeHolds}
-                  exposureHolds={figures.exposureHolds}
-                  contingencyHold={figures.contingencyHold}
-                  indicatedGP={figures.indicatedGP}
-                  indicatedGPpct={figures.indicatedGPpct}
+                  forecastedFinalCost={rollup.forecastedFinalCost}
+                  forecastedGPBeforeHolds={rollup.forecastedGPBeforeHolds}
+                  exposureHolds={rollup.exposureHolds}
+                  contingencyHold={rollup.contingencyHold}
+                  indicatedGP={rollup.indicatedGP}
+                  indicatedGPpct={rollup.indicatedGPpct}
                 />
                 <div className="mt-8 rounded-lg border border-hairline bg-surface p-6">
                   <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
@@ -261,11 +234,11 @@ function ProjectPage() {
                   </div>
                   <p className="mt-3 font-serif text-xl leading-snug text-foreground">
                     This project began as a{" "}
-                    <span className="tabular">{fmtPct(figures.originalGPpct)}</span> GP job.
+                    <span className="tabular">{fmtPct(rollup.originalGPpct)}</span> GP job.
                     Based on current holds and forecasted final cost, it is now indicating{" "}
-                    <span className="tabular text-accent">{fmtPct(figures.indicatedGPpct)}</span>.
+                    <span className="tabular text-accent">{fmtPct(rollup.indicatedGPpct)}</span>.
                     The company has{" "}
-                    <span className="tabular text-danger">{fmtUSD(figures.gpAtRisk)}</span>{" "}
+                    <span className="tabular text-danger">{fmtUSD(rollup.gpAtRisk)}</span>{" "}
                     of original expected profit at risk.
                   </p>
                 </div>
@@ -303,25 +276,35 @@ function ProjectPage() {
             </div>
           </TabsContent>
 
-          <TabsContent value="buyout">
-            <SectionHeader title="Buyout Status" subtitle="Scope-by-scope view of budget, commitments, and projected remaining cost." />
-            <BuyoutTable />
+          <TabsContent value="buckets">
+            <SectionHeader title="Cost Buckets" subtitle="Actual-to-date plus forecast-to-complete per bucket. These roll up into Forecasted Final Cost." />
+            <CostBucketsTable
+              buckets={buckets}
+              onUpdate={(id, patch) => bucketUpdate.mutate({ id, patch })}
+            />
+          </TabsContent>
+
+          <TabsContent value="change-orders">
+            <SectionHeader title="Change Orders" subtitle="Approved COs add to both sides. Pending COs are probability-weighted into the rollup." />
+            <ChangeOrdersTable
+              changeOrders={changeOrders}
+              onCreate={(d) => coCreate.mutate({ projectId, ...d })}
+              onUpdate={(id, patch) => coUpdate.mutate({ id, ...patch })}
+              onDelete={(id) => coDelete.mutate({ id })}
+            />
           </TabsContent>
 
           <TabsContent value="holds">
             <SectionHeader title="Holds" subtitle="Reserved margin against specific exposures (E-Holds) and general remaining uncertainty (C-Hold)." />
             <HoldsPanel
               holds={holds}
+              guidance={guidance}
+              phase={project.phase}
               onCreate={(d) => holdCreate.mutate({ projectId, ...d })}
               onUpdate={(id, patch) => holdUpdate.mutate({ id, ...patch })}
-              onDelete={(id) => holdDelete.mutate(id)}
+              onDelete={(id) => holdDelete.mutate({ id })}
               pending={holdCreate.isPending || holdUpdate.isPending || holdDelete.isPending}
             />
-          </TabsContent>
-
-          <TabsContent value="change-orders">
-            <SectionHeader title="Change Orders" subtitle="Approved, pending, unpriced, submitted, and disputed changes affecting contract value." />
-            <ChangeOrdersTable />
           </TabsContent>
 
           <TabsContent value="schedule">
@@ -349,7 +332,7 @@ function ProjectPage() {
             </div>
           </div>
           <div className="sm:text-right">
-            Indicated GP recalculates as holds are added, released, or escalated.
+            Indicated GP recalculates as buckets, COs, and holds change.
           </div>
         </footer>
       </main>
@@ -366,43 +349,36 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
   );
 }
 
-type Project = {
-  name: string;
-  client: string;
-  original_contract: number;
-  original_cost_budget: number;
-  forecasted_final_contract: number;
-  forecasted_final_cost: number;
-  approved_cos: number;
-  pending_cos: number;
-  schedule_variance_weeks: number;
-};
+type EditableProject = Pick<
+  ProjectRow,
+  "name" | "client" | "original_contract" | "original_cost_budget" |
+  "schedule_variance_weeks" | "phase" | "percent_complete" | "hold_variance_note"
+>;
 
 function EditFinancialsDialog({
   project,
   onSave,
   pending,
 }: {
-  project: Project;
-  onSave: (patch: Partial<Project>) => void;
+  project: ProjectRow;
+  onSave: (patch: Partial<EditableProject>) => void;
   pending: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState(project);
-
-  const numField = (key: keyof Project, label: string) => (
-    <div className="space-y-1.5">
-      <Label>{label}</Label>
-      <Input
-        type="number"
-        value={form[key] as number}
-        onChange={(e) => setForm({ ...form, [key]: Number(e.target.value) })}
-      />
-    </div>
-  );
+  const init = (): EditableProject => ({
+    name: project.name,
+    client: project.client,
+    original_contract: project.original_contract,
+    original_cost_budget: project.original_cost_budget,
+    schedule_variance_weeks: project.schedule_variance_weeks,
+    phase: project.phase,
+    percent_complete: project.percent_complete,
+    hold_variance_note: project.hold_variance_note,
+  });
+  const [form, setForm] = useState<EditableProject>(init);
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (o) setForm(project); }}>
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (o) setForm(init()); }}>
       <DialogTrigger asChild>
         <Button size="sm" variant="ghost" className="gap-1.5">
           <Pencil className="h-3.5 w-3.5" /> Edit
@@ -410,7 +386,7 @@ function EditFinancialsDialog({
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="font-serif text-2xl">Edit project financials</DialogTitle>
+          <DialogTitle className="font-serif text-2xl">Edit project</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid grid-cols-2 gap-3">
@@ -424,13 +400,39 @@ function EditFinancialsDialog({
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            {numField("original_contract", "Original contract")}
-            {numField("original_cost_budget", "Original cost budget")}
-            {numField("forecasted_final_contract", "Forecasted final contract")}
-            {numField("forecasted_final_cost", "Forecasted final cost")}
-            {numField("approved_cos", "Approved COs")}
-            {numField("pending_cos", "Pending COs")}
-            {numField("schedule_variance_weeks", "Schedule variance (weeks)")}
+            <div className="space-y-1.5">
+              <Label>Original contract</Label>
+              <Input type="number" value={form.original_contract} onChange={(e) => setForm({ ...form, original_contract: Number(e.target.value) })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Original cost budget</Label>
+              <Input type="number" value={form.original_cost_budget} onChange={(e) => setForm({ ...form, original_cost_budget: Number(e.target.value) })} />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label>Phase</Label>
+              <Select value={form.phase} onValueChange={(v) => setForm({ ...form, phase: v as Phase })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Early">Early</SelectItem>
+                  <SelectItem value="Middle">Middle</SelectItem>
+                  <SelectItem value="Late">Late</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>% complete</Label>
+              <Input type="number" min={0} max={100} value={form.percent_complete} onChange={(e) => setForm({ ...form, percent_complete: Number(e.target.value) })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Schedule variance (wk)</Label>
+              <Input type="number" value={form.schedule_variance_weeks} onChange={(e) => setForm({ ...form, schedule_variance_weeks: Number(e.target.value) })} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Hold variance note <span className="text-muted-foreground">(required if holds are below guidance)</span></Label>
+            <Textarea rows={2} value={form.hold_variance_note} onChange={(e) => setForm({ ...form, hold_variance_note: e.target.value })} />
           </div>
         </div>
         <DialogFooter>

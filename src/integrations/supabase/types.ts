@@ -14,6 +14,103 @@ export type Database = {
   }
   public: {
     Tables: {
+      change_orders: {
+        Row: {
+          contract_amount: number
+          cost_amount: number
+          created_at: string
+          description: string
+          id: string
+          notes: string
+          number: string
+          owner: string
+          probability: number
+          project_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          contract_amount?: number
+          cost_amount?: number
+          created_at?: string
+          description?: string
+          id?: string
+          notes?: string
+          number?: string
+          owner?: string
+          probability?: number
+          project_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          contract_amount?: number
+          cost_amount?: number
+          created_at?: string
+          description?: string
+          id?: string
+          notes?: string
+          number?: string
+          owner?: string
+          probability?: number
+          project_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "change_orders_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cost_buckets: {
+        Row: {
+          actual_to_date: number
+          bucket: string
+          created_at: string
+          ftc: number
+          id: string
+          original_budget: number
+          project_id: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          actual_to_date?: number
+          bucket: string
+          created_at?: string
+          ftc?: number
+          id?: string
+          original_budget?: number
+          project_id: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          actual_to_date?: number
+          bucket?: string
+          created_at?: string
+          ftc?: number
+          id?: string
+          original_budget?: number
+          project_id?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cost_buckets_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       holds: {
         Row: {
           amount: number
@@ -66,11 +163,9 @@ export type Database = {
       }
       projects: {
         Row: {
-          approved_cos: number
           client: string
           created_at: string
-          forecasted_final_contract: number
-          forecasted_final_cost: number
+          hold_variance_note: string
           id: string
           last_reviewed_at: string | null
           name: string
@@ -78,16 +173,15 @@ export type Database = {
           original_contract: number
           original_cost_budget: number
           owner_id: string
-          pending_cos: number
+          percent_complete: number
+          phase: Database["public"]["Enums"]["project_phase"]
           schedule_variance_weeks: number
           updated_at: string
         }
         Insert: {
-          approved_cos?: number
           client?: string
           created_at?: string
-          forecasted_final_contract?: number
-          forecasted_final_cost?: number
+          hold_variance_note?: string
           id?: string
           last_reviewed_at?: string | null
           name: string
@@ -95,16 +189,15 @@ export type Database = {
           original_contract?: number
           original_cost_budget?: number
           owner_id: string
-          pending_cos?: number
+          percent_complete?: number
+          phase?: Database["public"]["Enums"]["project_phase"]
           schedule_variance_weeks?: number
           updated_at?: string
         }
         Update: {
-          approved_cos?: number
           client?: string
           created_at?: string
-          forecasted_final_contract?: number
-          forecasted_final_cost?: number
+          hold_variance_note?: string
           id?: string
           last_reviewed_at?: string | null
           name?: string
@@ -112,7 +205,8 @@ export type Database = {
           original_contract?: number
           original_cost_budget?: number
           owner_id?: string
-          pending_cos?: number
+          percent_complete?: number
+          phase?: Database["public"]["Enums"]["project_phase"]
           schedule_variance_weeks?: number
           updated_at?: string
         }
@@ -126,7 +220,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      project_phase: "Early" | "Middle" | "Late"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -253,6 +347,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      project_phase: ["Early", "Middle", "Late"],
+    },
   },
 } as const

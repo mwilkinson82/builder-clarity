@@ -80,12 +80,16 @@ const empty: Draft = {
 
 export function HoldsPanel({
   holds,
+  guidance,
+  phase,
   onCreate,
   onUpdate,
   onDelete,
   pending,
 }: {
   holds: HoldRow[];
+  guidance?: { ePct: number; cPct: number; eTarget: number; cTarget: number };
+  phase?: "Early" | "Middle" | "Late";
   onCreate: (draft: Draft) => void;
   onUpdate: (id: string, patch: Partial<Draft>) => void;
   onDelete: (id: string) => void;
@@ -119,6 +123,21 @@ export function HoldsPanel({
   return (
     <TooltipProvider delayDuration={150}>
       <div className="space-y-6">
+        {guidance && (
+          <div className="rounded-lg border border-hairline bg-surface px-5 py-4">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              <span className="inline-block h-px w-6 bg-accent" />
+              Conservative Guidance · {phase ?? "—"} Phase
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <GuidanceCard label="E-Hold target" targetPct={guidance.ePct} target={guidance.eTarget} actual={eTotal} />
+              <GuidanceCard label="C-Hold target" targetPct={guidance.cPct} target={guidance.cTarget} actual={cTotal} />
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Targets are a percentage of remaining cost. If actual holds are below target, capture a written justification in the project edit dialog.
+            </p>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-hairline bg-hairline md:grid-cols-3">
           <div className="bg-card px-5 py-4">
             <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
@@ -283,5 +302,46 @@ export function HoldsPanel({
         </Dialog>
       </div>
     </TooltipProvider>
+  );
+}
+
+function GuidanceCard({
+  label,
+  targetPct,
+  target,
+  actual,
+}: {
+  label: string;
+  targetPct: number;
+  target: number;
+  actual: number;
+}) {
+  const below = actual < target;
+  const pctOfTarget = target > 0 ? Math.min(100, (actual / target) * 100) : 100;
+  return (
+    <div className="rounded-md border border-hairline bg-card px-4 py-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          {label} · {targetPct}% of remaining cost
+        </div>
+        <span
+          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+            below ? "border-danger/40 bg-danger/10 text-danger" : "border-success/40 bg-success/10 text-success"
+          }`}
+        >
+          {below ? "Below target" : "At or above target"}
+        </span>
+      </div>
+      <div className="mt-2 flex items-baseline justify-between gap-3">
+        <div className="font-serif text-xl tabular text-foreground">{fmtUSD(actual)}</div>
+        <div className="text-xs text-muted-foreground">Target {fmtUSD(target)}</div>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
+        <div
+          className={`h-full rounded-full ${below ? "bg-danger" : "bg-success"}`}
+          style={{ width: `${pctOfTarget}%` }}
+        />
+      </div>
+    </div>
   );
 }
