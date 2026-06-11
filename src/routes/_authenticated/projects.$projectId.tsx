@@ -487,9 +487,10 @@ function ProjectPage() {
           </TabsContent>
 
           <TabsContent value="schedule">
-            <SectionHeader title="Schedule Risk" subtitle="Completion forecast, decision bottlenecks, procurement and trade performance risks." />
-            <ScheduleRisk />
+            <SectionHeader title="Schedule Risk" subtitle="Completion forecast, milestones with delay reasons, and decision / procurement / trade-performance risks. Everything here is editable and feeds the IOR report." />
+            <ScheduleRisk project={project} />
           </TabsContent>
+
 
           <TabsContent value="reviews">
             <SectionHeader title="Project Truth Reviews" subtitle="Each review is an editable, downloadable, emailable IOR Report — ready for the next L10 or project meeting." />
