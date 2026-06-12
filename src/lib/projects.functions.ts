@@ -799,15 +799,17 @@ export const importCostBuckets = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
 
     // Treat the imported SOV as the source of truth for the project's
-    // Original Cost Budget so Day-1 GP At Risk is $0 instead of comparing
-    // a stale bid number against the freshly imported forecast.
+    // Original Cost Budget so Day-1 GP At Risk is $0. We use forecasted cost
+    // (actual + FTC), not scheduled value, because forecasted cost is what
+    // rolls into Indicated GP — anchoring Original to the same number means
+    // any future drift shows up as real margin erosion.
     const { data: allBuckets, error: sumErr } = await context.supabase
       .from("cost_buckets")
-      .select("original_budget")
+      .select("actual_to_date, ftc")
       .eq("project_id", data.projectId);
     if (sumErr) throw new Error(sumErr.message);
     const total = (allBuckets ?? []).reduce(
-      (s, b) => s + Number(b.original_budget ?? 0),
+      (s, b) => s + Number(b.actual_to_date ?? 0) + Number(b.ftc ?? 0),
       0,
     );
     const { error: updErr } = await context.supabase
