@@ -71,6 +71,86 @@ export function parsePaste(text: string): ParsedSheet {
   return { matrix, hasHeader: matrix[0] ? looksLikeHeader(matrix[0]) : false, source: "paste" };
 }
 
+// ---------------- PDF parsing ----------------
+// Extracts text items with x/y coordinates, clusters them into rows by y,
+// then splits each row into columns by detecting x-gaps. Works for digital
+// (text-based) PDFs like AIA G702/G703 SOVs and most QuickBooks/Excel exports.
+// Scanned/image-only PDFs will return an empty matrix.
+
+export async function parsePdf(file: File): Promise<ParsedSheet> {
+  const pdfjs = await import("pdfjs-dist");
+  // Vite-friendly worker: import as URL
+  const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+  (pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }).GlobalWorkerOptions.workerSrc = workerUrl;
+
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: buf }).promise;
+
+  type Item = { x: number; y: number; w: number; text: string };
+  const allRows: string[][] = [];
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const items: Item[] = [];
+    for (const it of content.items as Array<{ str: string; transform: number[]; width: number }>) {
+      const text = (it.str ?? "").trim();
+      if (!text) continue;
+      items.push({ x: it.transform[4], y: it.transform[5], w: it.width ?? 0, text });
+    }
+    if (items.length === 0) continue;
+
+    // Cluster into rows by y (descending — PDF origin is bottom-left)
+    items.sort((a, b) => b.y - a.y || a.x - b.x);
+    const rowTol = 3; // y-coordinate tolerance
+    const rows: Item[][] = [];
+    for (const it of items) {
+      const last = rows[rows.length - 1];
+      if (last && Math.abs(last[0].y - it.y) <= rowTol) last.push(it);
+      else rows.push([it]);
+    }
+
+    // For each row, sort by x and split into cells by gap
+    const gapThreshold = 12; // px gap that signals a new column
+    for (const r of rows) {
+      r.sort((a, b) => a.x - b.x);
+      const cells: string[] = [];
+      let cur = r[0].text;
+      let prevEnd = r[0].x + r[0].w;
+      for (let i = 1; i < r.length; i++) {
+        const it = r[i];
+        if (it.x - prevEnd > gapThreshold) {
+          cells.push(cur);
+          cur = it.text;
+        } else {
+          cur += " " + it.text;
+        }
+        prevEnd = it.x + it.w;
+      }
+      cells.push(cur);
+      const cleaned = cells.map((c) => c.trim()).filter((_, i, arr) => arr.length > 0);
+      if (cleaned.some((c) => c !== "")) allRows.push(cleaned);
+    }
+  }
+
+  // Keep only rows that look like SOV line items: at least one text cell + one numeric cell.
+  // Drop short header/footer banners by requiring at least 2 cells.
+  const matrix = allRows.filter((row) => {
+    if (row.length < 2) return false;
+    const hasText = row.some((c) => /[A-Za-z]/.test(c) && parseNumber(c) === null);
+    const hasNum = row.some((c) => parseNumber(c) !== null);
+    return hasText && hasNum;
+  });
+
+  return {
+    matrix,
+    hasHeader: matrix[0] ? looksLikeHeader(matrix[0]) : false,
+    source: "pdf",
+  };
+}
+
+
+
 // ---------------- Column mapping ----------------
 
 export type FieldKey = "bucket" | "original_budget" | "actual_to_date" | "ftc" | "sort_order" | "ignore";
