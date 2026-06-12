@@ -797,7 +797,26 @@ export const importCostBuckets = createServerFn({ method: "POST" })
     }));
     const { error } = await context.supabase.from("cost_buckets").insert(insertRows);
     if (error) throw new Error(error.message);
-    return { ok: true, inserted: insertRows.length };
+
+    // Treat the imported SOV as the source of truth for the project's
+    // Original Cost Budget so Day-1 GP At Risk is $0 instead of comparing
+    // a stale bid number against the freshly imported forecast.
+    const { data: allBuckets, error: sumErr } = await context.supabase
+      .from("cost_buckets")
+      .select("original_budget")
+      .eq("project_id", data.projectId);
+    if (sumErr) throw new Error(sumErr.message);
+    const total = (allBuckets ?? []).reduce(
+      (s, b) => s + Number(b.original_budget ?? 0),
+      0,
+    );
+    const { error: updErr } = await context.supabase
+      .from("projects")
+      .update({ original_cost_budget: total })
+      .eq("id", data.projectId);
+    if (updErr) throw new Error(updErr.message);
+
+    return { ok: true, inserted: insertRows.length, originalCostBudget: total };
   });
 
 // ---------------- DEMO SEED (no-op if any project exists) ----------------
