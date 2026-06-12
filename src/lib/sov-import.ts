@@ -11,9 +11,10 @@ export type Matrix = string[][];
 export interface ParsedSheet {
   matrix: Matrix;
   hasHeader: boolean;
-  source: "csv" | "xlsx" | "paste";
+  source: "csv" | "xlsx" | "paste" | "pdf";
   sheetName?: string;
 }
+
 
 const stringify = (v: unknown): string => {
   if (v == null) return "";
