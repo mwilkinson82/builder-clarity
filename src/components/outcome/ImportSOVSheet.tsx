@@ -50,14 +50,23 @@ export function ImportSOVSheet({
     setError(null);
     try {
       const ext = file.name.toLowerCase().split(".").pop();
-      const p = ext === "xlsx" || ext === "xls" ? await parseXlsx(file) : await parseCsv(file);
+      const p =
+        ext === "pdf"
+          ? await parsePdf(file)
+          : ext === "xlsx" || ext === "xls"
+            ? await parseXlsx(file)
+            : await parseCsv(file);
       setParsed(p);
       setHasHeader(p.hasHeader);
       setMap(guessColumnMap(p.matrix, p.hasHeader));
+      if (p.matrix.length === 0) {
+        setError("No tabular rows detected. If this is a scanned PDF, export it as CSV/XLSX or paste the rows manually.");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to parse file.");
     }
   };
+
 
   const handlePaste = () => {
     setError(null);
