@@ -111,10 +111,11 @@ export function ImportSOVSheet({
 
         {!parsed ? (
           <Tabs defaultValue="csv" className="mt-6">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="csv">CSV</TabsTrigger>
               <TabsTrigger value="xlsx">Excel (.xlsx)</TabsTrigger>
-              <TabsTrigger value="paste">Paste from spreadsheet</TabsTrigger>
+              <TabsTrigger value="pdf">PDF</TabsTrigger>
+              <TabsTrigger value="paste">Paste</TabsTrigger>
             </TabsList>
 
             <TabsContent value="csv" className="space-y-3 pt-5">
@@ -128,6 +129,13 @@ export function ImportSOVSheet({
               <Input ref={fileRef} type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
               <Tip>We read the first sheet only. If your SOV is on a tab named differently, move it to the first tab before exporting.</Tip>
             </TabsContent>
+
+            <TabsContent value="pdf" className="space-y-3 pt-5">
+              <Label>Choose a .pdf file (AIA G702/G703, pay app, or SOV)</Label>
+              <Input ref={fileRef} type="file" accept=".pdf,application/pdf" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+              <Tip>Works on text-based PDFs (most pay apps and exports). Scanned/image PDFs won't extract — export as CSV/XLSX or paste instead. After parsing, review the column mapping carefully; PDF tables are messier than spreadsheets.</Tip>
+            </TabsContent>
+
 
             <TabsContent value="paste" className="space-y-3 pt-5">
               <Label>Paste the rows from Excel or your SOV worksheet</Label>
