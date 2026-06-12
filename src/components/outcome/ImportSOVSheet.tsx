@@ -15,7 +15,8 @@ import {
 } from "@/components/ui/table";
 import { Upload, Check, AlertTriangle, FileSpreadsheet } from "lucide-react";
 import {
-  parseCsv, parseXlsx, parsePaste, guessColumnMap, applyMapping,
+  parseCsv, parseXlsx, parsePaste, parsePdf, guessColumnMap, applyMapping,
+
   type Matrix, type ParsedSheet, type ColumnMap, type FieldKey, type BucketImportRow,
 } from "@/lib/sov-import";
 import { fmtUSD } from "@/lib/format";
