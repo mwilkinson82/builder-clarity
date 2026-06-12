@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -110,6 +110,29 @@ export function CostBucketsTable({
             </TableRow>
           )}
         </TableBody>
+        {buckets.length > 0 && (() => {
+          const tBudget = buckets.reduce((s, b) => s + b.original_budget, 0);
+          const tActual = buckets.reduce((s, b) => s + b.actual_to_date, 0);
+          const tFtc = buckets.reduce((s, b) => s + b.ftc, 0);
+          const tFac = tActual + tFtc;
+          const tVar = tBudget - tFac;
+          const neg = tVar < 0;
+          return (
+            <TableFooter>
+              <TableRow className="bg-surface font-semibold">
+                <TableCell>Total</TableCell>
+                <TableCell className="text-right tabular">{fmtUSD(tBudget)}</TableCell>
+                <TableCell className="text-right tabular">{fmtUSD(tActual)}</TableCell>
+                <TableCell className="text-right tabular">{fmtUSD(tFtc)}</TableCell>
+                <TableCell className="text-right tabular">{fmtUSD(tFac)}</TableCell>
+                <TableCell className={`text-right tabular ${neg ? "text-danger" : "text-success"}`}>
+                  {neg ? `−${fmtUSD(Math.abs(tVar)).replace("−", "")}` : fmtUSD(tVar)}
+                </TableCell>
+                <TableCell />
+              </TableRow>
+            </TableFooter>
+          );
+        })()}
       </Table>
     </div>
   );
