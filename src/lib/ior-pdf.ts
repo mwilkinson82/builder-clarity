@@ -316,27 +316,33 @@ function drawDecisions(c: Ctx, decisions: DecisionRow[]) {
 
 function drawBuckets(c: Ctx, buckets: BucketRow[]) {
   const cols = [
-    { label: "Bucket", x: M, w: 130 },
-    { label: "Original", x: M + 134, w: 70 },
-    { label: "Actual", x: M + 208, w: 70 },
-    { label: "FTC", x: M + 282, w: 70 },
-    { label: "Forecast", x: M + 356, w: 70 },
-    { label: "Variance", x: M + 430, w: 80 },
+    { label: "Bucket", x: M, w: 175 },
+    { label: "Original", x: M + 185, w: 64 },
+    { label: "Actual", x: M + 253, w: 64 },
+    { label: "FTC", x: M + 321, w: 64 },
+    { label: "Forecast", x: M + 389, w: 64 },
+    { label: "Variance", x: M + 457, w: 64 },
   ];
   ensure(c, 16);
   cols.forEach((col) => text(c, col.label.toUpperCase(), col.x, c.y, { font: c.sansB, size: 7, color: MUTED }));
   c.y -= 8; rule(c, c.y); c.y -= 10;
   for (const b of buckets) {
-    ensure(c, 14);
+    const nameLines = splitToWidth(c.sansB, 8.5, b.bucket, cols[0].w).slice(0, 2);
+    const rowH = Math.max(14, 4 + nameLines.length * 11);
+    ensure(c, rowH);
     const fac = b.actual_to_date + b.ftc;
     const variance = b.original_budget - fac;
-    text(c, b.bucket, cols[0].x, c.y, { font: c.sansB, size: 8.5 });
+    let ny = c.y;
+    for (const ln of nameLines) {
+      text(c, ln, cols[0].x, ny, { font: c.sansB, size: 8.5 });
+      ny -= 11;
+    }
     text(c, fmtUSD(b.original_budget), cols[1].x, c.y, { size: 8.5, color: MUTED });
     text(c, fmtUSD(b.actual_to_date), cols[2].x, c.y, { size: 8.5 });
     text(c, fmtUSD(b.ftc), cols[3].x, c.y, { size: 8.5 });
     text(c, fmtUSD(fac), cols[4].x, c.y, { font: c.sansB, size: 8.5 });
     text(c, fmtUSD(variance), cols[5].x, c.y, { size: 8.5, color: variance < 0 ? DANGER : SUCCESS });
-    c.y -= 12;
+    c.y -= rowH;
   }
 }
 
