@@ -79,7 +79,6 @@ export function parsePaste(text: string): ParsedSheet {
 
 export async function parsePdf(file: File): Promise<ParsedSheet> {
   const pdfjs = await import("pdfjs-dist");
-  // Vite-friendly worker: import as URL
   const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
   (pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }).GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -87,7 +86,8 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
   const pdf = await pdfjs.getDocument({ data: buf }).promise;
 
   type Item = { x: number; y: number; w: number; text: string };
-  const allRows: string[][] = [];
+  type PageData = { rowsRich: Item[][]; rowsCells: string[][] };
+  const pages: PageData[] = [];
 
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
@@ -98,55 +98,129 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
       if (!text) continue;
       items.push({ x: it.transform[4], y: it.transform[5], w: it.width ?? 0, text });
     }
-    if (items.length === 0) continue;
+    if (items.length === 0) { pages.push({ rowsRich: [], rowsCells: [] }); continue; }
 
-    // Cluster into rows by y (descending — PDF origin is bottom-left)
     items.sort((a, b) => b.y - a.y || a.x - b.x);
-    const rowTol = 3; // y-coordinate tolerance
-    const rows: Item[][] = [];
+    const rowTol = 3;
+    const rowsRich: Item[][] = [];
     for (const it of items) {
-      const last = rows[rows.length - 1];
+      const last = rowsRich[rowsRich.length - 1];
       if (last && Math.abs(last[0].y - it.y) <= rowTol) last.push(it);
-      else rows.push([it]);
+      else rowsRich.push([it]);
     }
+    for (const r of rowsRich) r.sort((a, b) => a.x - b.x);
 
-    // For each row, sort by x and split into cells by gap
-    const gapThreshold = 12; // px gap that signals a new column
-    for (const r of rows) {
-      r.sort((a, b) => a.x - b.x);
+    const gapThreshold = 12;
+    const rowsCells: string[][] = [];
+    for (const r of rowsRich) {
       const cells: string[] = [];
       let cur = r[0].text;
       let prevEnd = r[0].x + r[0].w;
       for (let i = 1; i < r.length; i++) {
         const it = r[i];
-        if (it.x - prevEnd > gapThreshold) {
-          cells.push(cur);
-          cur = it.text;
-        } else {
-          cur += " " + it.text;
-        }
+        if (it.x - prevEnd > gapThreshold) { cells.push(cur); cur = it.text; }
+        else { cur += " " + it.text; }
         prevEnd = it.x + it.w;
       }
       cells.push(cur);
-      const cleaned = cells.map((c) => c.trim()).filter((_, i, arr) => arr.length > 0);
-      if (cleaned.some((c) => c !== "")) allRows.push(cleaned);
+      rowsCells.push(cells.map((c) => c.trim()));
+    }
+    pages.push({ rowsRich, rowsCells });
+  }
+
+  // -------- AIA G703 detection --------
+  // Header row(s) on a continuation sheet contain "SCHEDULED VALUE" plus
+  // "BALANCE TO FINISH" or "COMPLETED AND STORED". When found, parse only
+  // those pages using header x-positions as column anchors. The cover page
+  // (G702 summary block) is ignored.
+  const aiaRows: string[][] = [];
+  let isAia = false;
+  const HEADER_LABELS = [
+    { key: "item", re: /ITEM\s*NO/i },
+    { key: "desc", re: /DESCRIPTION\s*OF\s*WORK|BUDGET\s*CODE/i },
+    { key: "sched", re: /SCHEDULED\s*VALUE/i },
+    { key: "g", re: /COMPLETED\s*AND\s*STORED|TOTAL\s*COMPLETED/i },
+    { key: "h", re: /BALANCE\s*TO\s*FINISH/i },
+  ] as const;
+
+  for (const { rowsRich } of pages) {
+    let headerStartIdx = -1;
+    for (let i = 0; i < rowsRich.length; i++) {
+      const window = rowsRich.slice(i, Math.min(i + 4, rowsRich.length))
+        .map((r) => r.map((it) => it.text).join(" ")).join(" ");
+      if (/SCHEDULED\s*VALUE/i.test(window) && /(BALANCE\s*TO\s*FINISH|COMPLETED\s*AND\s*STORED)/i.test(window)) {
+        headerStartIdx = i;
+        break;
+      }
+    }
+    if (headerStartIdx === -1) continue;
+    isAia = true;
+
+    const headerItems = rowsRich.slice(headerStartIdx, Math.min(headerStartIdx + 4, rowsRich.length)).flat();
+    const findAnchor = (re: RegExp): number | null => {
+      for (let i = 0; i < headerItems.length; i++) {
+        let phrase = headerItems[i].text;
+        const xStart = headerItems[i].x;
+        let xEnd = headerItems[i].x + headerItems[i].w;
+        if (re.test(phrase)) return (xStart + xEnd) / 2;
+        for (let j = i + 1; j < Math.min(i + 6, headerItems.length); j++) {
+          phrase += " " + headerItems[j].text;
+          xEnd = headerItems[j].x + headerItems[j].w;
+          if (re.test(phrase)) return (xStart + xEnd) / 2;
+        }
+      }
+      return null;
+    };
+    const anchors: Record<string, number | null> = {};
+    for (const { key, re } of HEADER_LABELS) anchors[key] = findAnchor(re);
+    if (anchors.sched == null || anchors.desc == null || anchors.g == null) continue;
+
+    const headerEndIdx = Math.min(headerStartIdx + 3, rowsRich.length - 1);
+    const headerY = rowsRich[headerStartIdx][0].y;
+    for (let i = headerEndIdx + 1; i < rowsRich.length; i++) {
+      const r = rowsRich[i];
+      if (!r.length) continue;
+      if (r[0].y >= headerY - 2) continue;
+
+      const cols: Record<string, string[]> = { item: [], desc: [], sched: [], g: [], h: [] };
+      for (const it of r) {
+        let best = "desc"; let bestDist = Infinity;
+        for (const k of Object.keys(anchors)) {
+          const a = anchors[k];
+          if (a == null) continue;
+          const d = Math.abs(it.x + it.w / 2 - a);
+          if (d < bestDist) { bestDist = d; best = k; }
+        }
+        cols[best].push(it.text);
+      }
+      const desc = cols.desc.join(" ").trim();
+      const sched = cols.sched.join(" ").trim();
+      const gVal = cols.g.join(" ").trim();
+      const hVal = cols.h.join(" ").trim();
+
+      if (!desc) continue;
+      if (/^(GRAND\s*)?TOTALS?:?$/i.test(desc)) continue;
+      if (parseNumber(sched) == null) continue;
+
+      aiaRows.push([desc, sched, gVal, hVal]);
     }
   }
 
-  // Keep only rows that look like SOV line items: at least one text cell + one numeric cell.
-  // Drop short header/footer banners by requiring at least 2 cells.
+  if (isAia && aiaRows.length > 0) {
+    const header = ["Description", "Scheduled Value", "Completed & Stored to Date", "Balance to Finish"];
+    return { matrix: [header, ...aiaRows], hasHeader: true, source: "pdf" };
+  }
+
+  // -------- Generic fallback (non-AIA PDFs) --------
+  const allRows: string[][] = [];
+  for (const pg of pages) for (const r of pg.rowsCells) if (r.some((c) => c !== "")) allRows.push(r);
   const matrix = allRows.filter((row) => {
     if (row.length < 2) return false;
     const hasText = row.some((c) => /[A-Za-z]/.test(c) && parseNumber(c) === null);
     const hasNum = row.some((c) => parseNumber(c) !== null);
     return hasText && hasNum;
   });
-
-  return {
-    matrix,
-    hasHeader: matrix[0] ? looksLikeHeader(matrix[0]) : false,
-    source: "pdf",
-  };
+  return { matrix, hasHeader: matrix[0] ? looksLikeHeader(matrix[0]) : false, source: "pdf" };
 }
 
 
