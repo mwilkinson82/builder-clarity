@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
