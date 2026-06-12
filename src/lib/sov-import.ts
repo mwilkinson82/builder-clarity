@@ -234,11 +234,11 @@ export interface ColumnMap {
 }
 
 const HEADER_HINTS: Record<Exclude<FieldKey, "ignore">, RegExp[]> = {
-  bucket: [/bucket/i, /category/i, /division/i, /trade/i, /scope/i, /description/i, /item/i, /^name$/i],
-  original_budget: [/original/i, /^budget$/i, /contract\s*amount/i, /sov\s*amount/i, /amount/i, /total/i],
-  actual_to_date: [/actual/i, /to[\s_-]?date/i, /spent/i, /paid/i, /billed/i, /incurred/i],
-  ftc: [/ftc/i, /forecast\s*to\s*complete/i, /remaining/i, /etc\b/i, /to\s*complete/i],
-  sort_order: [/^#$/i, /^order$/i, /sort/i, /^no\.?$/i, /line/i],
+  bucket: [/bucket/i, /category/i, /division/i, /trade/i, /scope/i, /description/i, /^item$/i, /^name$/i],
+  original_budget: [/scheduled\s*value/i, /original/i, /^budget$/i, /contract\s*amount/i, /sov\s*amount/i, /amount/i, /total/i],
+  actual_to_date: [/completed\s*and\s*stored/i, /actual/i, /to[\s_-]?date/i, /spent/i, /paid/i, /billed/i, /incurred/i],
+  ftc: [/balance\s*to\s*finish/i, /ftc/i, /forecast\s*to\s*complete/i, /remaining/i, /etc\b/i, /to\s*complete/i],
+  sort_order: [/^#$/i, /^order$/i, /sort/i, /^no\.?$/i, /^item\s*no/i, /line/i],
 };
 
 export function guessColumnMap(matrix: Matrix, hasHeader: boolean): ColumnMap {
