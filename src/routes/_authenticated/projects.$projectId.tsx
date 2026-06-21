@@ -93,6 +93,117 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   component: ProjectPage,
 });
 
+const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
+const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
+
+function isBillingStatus(value: unknown): value is BillingApplicationRow["status"] {
+  return typeof value === "string" && BILLING_STATUS_VALUES.includes(value as never);
+}
+
+function isMissingBillingApplicationsTableError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /billing_applications|schema cache/i.test(message);
+}
+
+function makeLocalBillingId() {
+  const randomId =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${LOCAL_BILLING_ID_PREFIX}${randomId}`;
+}
+
+function billingString(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function billingNumber(value: unknown) {
+  return typeof value === "number" ? value : Number(value ?? 0);
+}
+
+function billingDate(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function sortBillingApplications(apps: BillingApplicationRow[]) {
+  return [...apps].sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id));
+}
+
+function makeLocalBillingApplication(
+  projectId: string,
+  input: BillingDraft,
+): BillingApplicationRow {
+  return {
+    id: makeLocalBillingId(),
+    project_id: projectId,
+    application_number: input.application_number,
+    invoice_number: input.invoice_number,
+    submitted_date: input.submitted_date || null,
+    due_date: input.due_date || null,
+    billing_period: input.billing_period,
+    contract_amount: input.contract_amount,
+    change_order_amount: input.change_order_amount,
+    amount_billed: input.amount_billed,
+    paid_to_date: input.paid_to_date,
+    retainage: input.retainage,
+    status: input.status,
+    notes: input.notes,
+    sort_order: input.sort_order,
+  };
+}
+
+function normalizeStoredBillingApplication(
+  projectId: string,
+  raw: unknown,
+): BillingApplicationRow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const id = billingString(record.id);
+  return {
+    id: id.startsWith(LOCAL_BILLING_ID_PREFIX) ? id : makeLocalBillingId(),
+    project_id: projectId,
+    application_number: billingString(record.application_number, "Pay App"),
+    invoice_number: billingString(record.invoice_number),
+    submitted_date: billingDate(record.submitted_date),
+    due_date: billingDate(record.due_date),
+    billing_period: billingString(record.billing_period),
+    contract_amount: billingNumber(record.contract_amount),
+    change_order_amount: billingNumber(record.change_order_amount),
+    amount_billed: billingNumber(record.amount_billed),
+    paid_to_date: billingNumber(record.paid_to_date),
+    retainage: billingNumber(record.retainage),
+    status: isBillingStatus(record.status) ? record.status : "draft",
+    notes: billingString(record.notes),
+    sort_order: billingNumber(record.sort_order),
+  };
+}
+
+function localBillingStorageKey(projectId: string) {
+  return `ior:billing-applications:${projectId}`;
+}
+
+function readLocalBillingApplications(projectId: string) {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(localBillingStorageKey(projectId)) ?? "[]",
+    );
+    if (!Array.isArray(parsed)) return [];
+    return sortBillingApplications(
+      parsed
+        .map((app) => normalizeStoredBillingApplication(projectId, app))
+        .filter((app): app is BillingApplicationRow => Boolean(app)),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalBillingApplications(projectId: string, apps: BillingApplicationRow[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(localBillingStorageKey(projectId), JSON.stringify(apps));
+}
+
 function ProjectPage() {
   const { projectId } = Route.useParams();
   const get = useServerFn(getProject);
@@ -193,6 +304,21 @@ function ProjectPage() {
   useEffect(() => {
     setHydrated(true);
   }, []);
+  const [localBillingApplications, setLocalBillingApplications] = useState<BillingApplicationRow[]>(
+    [],
+  );
+  useEffect(() => {
+    setLocalBillingApplications(readLocalBillingApplications(projectId));
+  }, [projectId]);
+  const storeLocalBillingApplications = (
+    updater: (current: BillingApplicationRow[]) => BillingApplicationRow[],
+  ) => {
+    setLocalBillingApplications((current) => {
+      const next = sortBillingApplications(updater(current));
+      writeLocalBillingApplications(projectId, next);
+      return next;
+    });
+  };
 
   const navigate = useNavigate();
   const router = useRouter();
@@ -226,6 +352,13 @@ function ProjectPage() {
     guidance,
     warnings,
   } = data;
+  const billingApplicationIds = new Set(billingApplications.map((app) => app.id));
+  const visibleBillingApplications = sortBillingApplications([
+    ...billingApplications,
+    ...localBillingApplications.filter(
+      (app) => app.project_id === projectId && !billingApplicationIds.has(app.id),
+    ),
+  ]);
 
   const lastReviewDays =
     hydrated && project.last_reviewed_at
@@ -335,6 +468,72 @@ function ProjectPage() {
         },
         onError: (err) => {
           toast.error("Linked to-do did not save", {
+            description: err instanceof Error ? err.message : "Try again.",
+          });
+        },
+      },
+    );
+  };
+
+  const createLocalPayApp = (input: BillingDraft) => {
+    const localPayApp = makeLocalBillingApplication(projectId, input);
+    storeLocalBillingApplications((current) => [...current, localPayApp]);
+    toast.success("Pay app added locally", {
+      description: "Supabase billing is not live yet, so this browser is holding it for the demo.",
+    });
+  };
+
+  const handleCreatePayApp = (input: BillingDraft) => {
+    billingCreate.mutate(
+      { projectId, ...input },
+      {
+        onSuccess: () => {
+          toast.success("Pay app added", {
+            description: `${input.application_number || "Pay application"} is now in the billing ledger.`,
+          });
+        },
+        onError: (err) => {
+          if (isMissingBillingApplicationsTableError(err)) {
+            createLocalPayApp(input);
+            return;
+          }
+          toast.error("Pay app did not save", {
+            description: err instanceof Error ? err.message : "Try again.",
+          });
+        },
+      },
+    );
+  };
+
+  const handleUpdatePayApp = (id: string, patch: Partial<BillingApplicationRow>) => {
+    if (id.startsWith(LOCAL_BILLING_ID_PREFIX)) {
+      storeLocalBillingApplications((current) =>
+        current.map((app) => (app.id === id ? { ...app, ...patch } : app)),
+      );
+      return;
+    }
+    billingUpdate.mutate(
+      { id, patch },
+      {
+        onError: (err) => {
+          toast.error("Pay app did not update", {
+            description: err instanceof Error ? err.message : "Try again.",
+          });
+        },
+      },
+    );
+  };
+
+  const handleDeletePayApp = (id: string) => {
+    if (id.startsWith(LOCAL_BILLING_ID_PREFIX)) {
+      storeLocalBillingApplications((current) => current.filter((app) => app.id !== id));
+      return;
+    }
+    billingDelete.mutate(
+      { id },
+      {
+        onError: (err) => {
+          toast.error("Pay app did not delete", {
             description: err instanceof Error ? err.message : "Try again.",
           });
         },
@@ -699,27 +898,11 @@ function ProjectPage() {
                 project={project}
                 rollup={rollup}
                 changeOrders={changeOrders}
-                billingApplications={billingApplications}
+                billingApplications={visibleBillingApplications}
                 savingPayApp={billingCreate.isPending}
-                onCreate={(input) =>
-                  billingCreate.mutate(
-                    { projectId, ...input },
-                    {
-                      onSuccess: () => {
-                        toast.success("Pay app added", {
-                          description: `${input.application_number || "Pay application"} is now in the billing ledger.`,
-                        });
-                      },
-                      onError: (err) => {
-                        toast.error("Pay app did not save", {
-                          description: err instanceof Error ? err.message : "Try again.",
-                        });
-                      },
-                    },
-                  )
-                }
-                onUpdate={(id, patch) => billingUpdate.mutate({ id, patch })}
-                onDelete={(id) => billingDelete.mutate({ id })}
+                onCreate={handleCreatePayApp}
+                onUpdate={handleUpdatePayApp}
+                onDelete={handleDeletePayApp}
               />
             </TabsContent>
 
