@@ -66,6 +66,7 @@ import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import type { Phase, ExposureCategory, Rollup } from "@/lib/ior";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
+import { toast } from "sonner";
 import {
   CalendarClock,
   ClipboardList,
@@ -276,21 +277,35 @@ function ProjectPage() {
   const openTodoCount = decisions.filter((d) => d.status !== "resolved").length;
 
   const createTodoForRisk = (exposure: ExposureRow) => {
-    decisionCreate.mutate({
-      projectId,
-      decision: `${responseAction(exposure.response_path)}: ${exposure.title}`,
-      impact:
-        exposure.notes ||
-        exposure.release_condition ||
-        exposure.description ||
-        `Own the ${exposure.response_path} path for ${fmtUSD(exposure.dollar_exposure)} exposure.`,
-      owner: exposure.owner,
-      due_date: exposure.next_review_at,
-      status: "open",
-      linked_exposure_id: exposure.id,
-      linked_co_id: null,
-      notes: "",
-    });
+    decisionCreate.mutate(
+      {
+        projectId,
+        decision: `${responseAction(exposure.response_path)}: ${exposure.title}`,
+        impact:
+          exposure.notes ||
+          exposure.release_condition ||
+          exposure.description ||
+          `Own the ${exposure.response_path} path for ${fmtUSD(exposure.dollar_exposure)} exposure.`,
+        owner: exposure.owner,
+        due_date: exposure.next_review_at,
+        status: "open",
+        linked_exposure_id: exposure.id,
+        linked_co_id: null,
+        notes: "",
+      },
+      {
+        onSuccess: () => {
+          toast.success("Linked to-do created", {
+            description: `${exposure.title} is now on the To-Dos tab.`,
+          });
+        },
+        onError: (err) => {
+          toast.error("Linked to-do did not save", {
+            description: err instanceof Error ? err.message : "Try again.",
+          });
+        },
+      },
+    );
   };
 
   const downloadCurrentReport = async (style: IorPdfStyle) => {
@@ -620,7 +635,24 @@ function ProjectPage() {
                 rollup={rollup}
                 changeOrders={changeOrders}
                 billingApplications={billingApplications}
-                onCreate={(input) => billingCreate.mutate({ projectId, ...input })}
+                savingPayApp={billingCreate.isPending}
+                onCreate={(input) =>
+                  billingCreate.mutate(
+                    { projectId, ...input },
+                    {
+                      onSuccess: () => {
+                        toast.success("Pay app added", {
+                          description: `${input.application_number || "Pay application"} is now in the billing ledger.`,
+                        });
+                      },
+                      onError: (err) => {
+                        toast.error("Pay app did not save", {
+                          description: err instanceof Error ? err.message : "Try again.",
+                        });
+                      },
+                    },
+                  )
+                }
                 onUpdate={(id, patch) => billingUpdate.mutate({ id, patch })}
                 onDelete={(id) => billingDelete.mutate({ id })}
               />
@@ -737,11 +769,14 @@ function responseAction(path: import("@/lib/ior").ResponsePath) {
   return "Accept";
 }
 
+type BillingDraft = Omit<BillingApplicationRow, "id" | "project_id">;
+
 function BillingWorkspace({
   project,
   rollup,
   changeOrders,
   billingApplications,
+  savingPayApp,
   onCreate,
   onUpdate,
   onDelete,
@@ -750,19 +785,20 @@ function BillingWorkspace({
   rollup: Rollup;
   changeOrders: ChangeOrderRow[];
   billingApplications: BillingApplicationRow[];
-  onCreate: (input: Omit<BillingApplicationRow, "id" | "project_id">) => void;
+  savingPayApp?: boolean;
+  onCreate: (input: BillingDraft) => void;
   onUpdate: (id: string, patch: Partial<BillingApplicationRow>) => void;
   onDelete: (id: string) => void;
 }) {
   const earnedToDate = rollup.forecastedFinalContract * (project.percent_complete / 100);
-  const contractRemaining = Math.max(0, rollup.forecastedFinalContract - earnedToDate);
-  const pending = changeOrders.filter((co) => co.status === "Pending");
-  const weightedPending = pending.reduce(
+  const pendingCOs = changeOrders.filter((co) => co.status === "Pending");
+  const weightedPending = pendingCOs.reduce(
     (sum, co) => sum + co.contract_amount * (co.probability / 100),
     0,
   );
   const holds = rollup.exposureHolds + rollup.contingencyHold;
   const totalBilled = billingApplications.reduce((sum, app) => sum + app.amount_billed, 0);
+  const contractRemaining = Math.max(0, rollup.forecastedFinalContract - totalBilled);
   const paidToDate = billingApplications.reduce((sum, app) => sum + app.paid_to_date, 0);
   const retainage = billingApplications.reduce((sum, app) => sum + app.retainage, 0);
   const outstanding = billingApplications.reduce(
@@ -771,9 +807,9 @@ function BillingWorkspace({
   );
   const today = new Date().toISOString().slice(0, 10);
 
-  const addPayApplication = () => {
+  const buildDraft = (): BillingDraft => {
     const nextNumber = String(billingApplications.length + 1).padStart(3, "0");
-    onCreate({
+    return {
       application_number: `Pay App ${nextNumber}`,
       invoice_number: project.job_number
         ? `${project.job_number}-${nextNumber}`
@@ -789,7 +825,20 @@ function BillingWorkspace({
       status: "draft",
       notes: "",
       sort_order: billingApplications.length + 1,
-    });
+    };
+  };
+  const [payAppOpen, setPayAppOpen] = useState(false);
+  const [draft, setDraft] = useState<BillingDraft>(() => buildDraft());
+  const draftOutstanding = Math.max(0, draft.amount_billed - draft.paid_to_date - draft.retainage);
+
+  const openPayAppDialog = () => {
+    setDraft(buildDraft());
+    setPayAppOpen(true);
+  };
+
+  const savePayApplication = () => {
+    onCreate(draft);
+    setPayAppOpen(false);
   };
 
   return (
@@ -801,14 +850,162 @@ function BillingWorkspace({
             subtitle="Pay applications, invoice status, paid-to-date, retainage, outstanding balances, and pending COs."
             compact
           />
-          <Button size="sm" onClick={addPayApplication} className="gap-1.5">
-            <Plus className="h-3.5 w-3.5" /> Add pay app
-          </Button>
+          <Dialog open={payAppOpen} onOpenChange={setPayAppOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" onClick={openPayAppDialog} className="gap-1.5">
+                <Plus className="h-3.5 w-3.5" /> Add pay app
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-3xl">
+              <DialogHeader>
+                <DialogTitle className="font-serif text-2xl">Add pay application</DialogTitle>
+              </DialogHeader>
+              <div className="grid gap-4 py-2">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-1.5">
+                    <Label>Pay app</Label>
+                    <Input
+                      value={draft.application_number}
+                      onChange={(e) => setDraft({ ...draft, application_number: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Invoice #</Label>
+                    <Input
+                      value={draft.invoice_number}
+                      onChange={(e) => setDraft({ ...draft, invoice_number: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Status</Label>
+                    <Select
+                      value={draft.status}
+                      onValueChange={(status) =>
+                        setDraft({ ...draft, status: status as BillingApplicationRow["status"] })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="draft">Draft</SelectItem>
+                        <SelectItem value="submitted">Submitted</SelectItem>
+                        <SelectItem value="partial">Partial</SelectItem>
+                        <SelectItem value="paid">Paid</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-1.5">
+                    <Label>Billing period</Label>
+                    <Input
+                      value={draft.billing_period}
+                      onChange={(e) => setDraft({ ...draft, billing_period: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Submitted date</Label>
+                    <Input
+                      type="date"
+                      value={draft.submitted_date ?? ""}
+                      onChange={(e) =>
+                        setDraft({ ...draft, submitted_date: e.target.value || null })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Due date</Label>
+                    <Input
+                      type="date"
+                      value={draft.due_date ?? ""}
+                      onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })}
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-5">
+                  <div className="space-y-1.5">
+                    <Label>Contract</Label>
+                    <MoneyInput
+                      value={draft.contract_amount}
+                      onValueChange={(contract_amount) => setDraft({ ...draft, contract_amount })}
+                      align="right"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Change orders</Label>
+                    <MoneyInput
+                      value={draft.change_order_amount}
+                      onValueChange={(change_order_amount) =>
+                        setDraft({ ...draft, change_order_amount })
+                      }
+                      align="right"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Amount billed</Label>
+                    <MoneyInput
+                      value={draft.amount_billed}
+                      onValueChange={(amount_billed) => setDraft({ ...draft, amount_billed })}
+                      align="right"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Paid to date</Label>
+                    <MoneyInput
+                      value={draft.paid_to_date}
+                      onValueChange={(paid_to_date) => setDraft({ ...draft, paid_to_date })}
+                      align="right"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Retainage</Label>
+                    <MoneyInput
+                      value={draft.retainage}
+                      onValueChange={(retainage) => setDraft({ ...draft, retainage })}
+                      align="right"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-[1fr_180px]">
+                  <div className="space-y-1.5">
+                    <Label>Notes</Label>
+                    <Textarea
+                      rows={3}
+                      value={draft.notes}
+                      placeholder="Billing narrative, exclusions, retainage notes, or collection issue."
+                      onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+                    />
+                  </div>
+                  <div className="rounded-md border border-hairline bg-surface p-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Open balance
+                    </div>
+                    <div className="mt-2 text-2xl font-medium tabular text-foreground">
+                      {fmtUSD(draftOutstanding)}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Billed less paid and retainage.
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setPayAppOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={savePayApplication} disabled={savingPayApp}>
+                  {savingPayApp ? "Saving..." : "Save pay app"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           <SovMetric label="Forecasted contract" value={fmtUSD(rollup.forecastedFinalContract)} />
           <SovMetric label="Earned to date" value={fmtUSD(earnedToDate)} />
-          <SovMetric label="Billed to date" value={fmtUSD(totalBilled || earnedToDate)} />
+          <SovMetric label="Billed to date" value={fmtUSD(totalBilled)} />
           <SovMetric label="Paid to date" value={fmtUSD(paidToDate)} />
           <SovMetric label="Outstanding" value={fmtUSD(outstanding)} />
           <SovMetric label="Retainage" value={fmtUSD(retainage)} />
@@ -880,7 +1077,7 @@ function BillingWorkspace({
           <div className="mt-1 text-sm tabular text-muted-foreground">
             Raw {fmtUSD(rollup.pendingCOContract)} · likely {fmtUSD(weightedPending)}
           </div>
-          {pending.length === 0 ? (
+          {pendingCOs.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">No pending change orders.</p>
           ) : (
             <div className="mt-4 overflow-hidden rounded-md border border-hairline">
@@ -894,7 +1091,7 @@ function BillingWorkspace({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-hairline">
-                  {pending.map((co) => (
+                  {pendingCOs.map((co) => (
                     <tr key={co.number}>
                       <td className="px-3 py-2">
                         <div className="font-medium text-foreground">{co.number}</div>

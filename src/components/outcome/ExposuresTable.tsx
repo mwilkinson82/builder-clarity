@@ -181,10 +181,12 @@ export function ExposuresTable({
   const live = exposures
     .filter((e) => e.status === "active" || e.status === "escalated")
     .sort((a, b) => likelyValue(b) - likelyValue(a));
-  const topRiskId = live[0]?.id ?? null;
   const eHolds = live.filter((e) => e.hold_class === "E-Hold" || e.hold_class === "Both");
   const cHolds = live.filter((e) => e.hold_class === "C-Hold");
   const unclassifiedLive = live.filter((e) => e.hold_class === "None");
+  const topEHoldId = eHolds[0]?.id ?? null;
+  const topCHoldId = cHolds[0]?.id ?? null;
+  const topUnclassifiedId = unclassifiedLive[0]?.id ?? null;
   const closed = exposures
     .filter((e) => e.status !== "active" && e.status !== "escalated")
     .sort((a, b) => likelyValue(b) - likelyValue(a));
@@ -219,7 +221,7 @@ export function ExposuresTable({
               <RiskRow
                 key={e.id}
                 exposure={e}
-                highlighted={e.id === topRiskId}
+                highlightLabel={e.id === topEHoldId ? "Top E-Hold" : undefined}
                 onEdit={openEdit}
                 onDelete={onDelete}
                 onCreateTodo={onCreateTodo}
@@ -234,7 +236,7 @@ export function ExposuresTable({
               <RiskRow
                 key={e.id}
                 exposure={e}
-                highlighted={e.id === topRiskId}
+                highlightLabel={e.id === topCHoldId ? "Top C-Hold" : undefined}
                 onEdit={openEdit}
                 onDelete={onDelete}
                 onCreateTodo={onCreateTodo}
@@ -251,7 +253,7 @@ export function ExposuresTable({
               <RiskRow
                 key={e.id}
                 exposure={e}
-                highlighted={e.id === topRiskId}
+                highlightLabel={e.id === topUnclassifiedId ? "Top risk" : undefined}
                 onEdit={openEdit}
                 onDelete={onDelete}
                 onCreateTodo={onCreateTodo}
@@ -268,7 +270,6 @@ export function ExposuresTable({
               <RiskRow
                 key={e.id}
                 exposure={e}
-                highlighted={false}
                 onEdit={openEdit}
                 onDelete={onDelete}
                 onCreateTodo={onCreateTodo}
@@ -500,18 +501,19 @@ function RiskGroupRow({ label, detail, count }: { label: string; detail: string;
 
 function RiskRow({
   exposure,
-  highlighted,
+  highlightLabel,
   onEdit,
   onDelete,
   onCreateTodo,
 }: {
   exposure: ExposureRow;
-  highlighted: boolean;
+  highlightLabel?: string;
   onEdit: (exposure: ExposureRow) => void;
   onDelete: (id: string) => void;
   onCreateTodo?: (exposure: ExposureRow) => void;
 }) {
   const closed = exposure.status !== "active" && exposure.status !== "escalated";
+  const highlighted = Boolean(highlightLabel);
   return (
     <TableRow
       onDoubleClick={() => onEdit(exposure)}
@@ -525,9 +527,9 @@ function RiskRow({
       <TableCell className="min-w-[290px]">
         <div className="flex items-center gap-2">
           <div className="font-medium text-foreground">{exposure.title}</div>
-          {highlighted && (
+          {highlightLabel && (
             <span className="rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-danger">
-              Top risk
+              {highlightLabel}
             </span>
           )}
         </div>
@@ -573,7 +575,11 @@ function RiskRow({
               variant="ghost"
               className="h-7 w-7"
               title="Create linked to-do"
-              onClick={() => onCreateTodo(exposure)}
+              aria-label={`Create linked to-do for ${exposure.title}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onCreateTodo(exposure);
+              }}
             >
               <ListChecks className="h-3.5 w-3.5" />
             </Button>
