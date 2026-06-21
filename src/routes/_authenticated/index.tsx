@@ -241,40 +241,44 @@ function PortfolioPage() {
                     const schedule = scheduleFor(p.schedule_variance_weeks, p.schedule_risk_count);
                     const jobNumber = p.job_number || `ID ${p.id.slice(0, 8).toUpperCase()}`;
                     return (
-                      <TableRow key={p.id} className="cursor-pointer">
+                      <TableRow
+                        key={p.id}
+                        className="cursor-pointer hover:bg-surface/60"
+                        onClick={() =>
+                          navigate({
+                            to: "/projects/$projectId",
+                            params: { projectId: p.id },
+                          })
+                        }
+                      >
                         <TableCell>
-                          <Link
-                            to="/projects/$projectId"
-                            params={{ projectId: p.id }}
-                            className="block"
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="font-serif text-lg text-foreground">{p.name}</div>
-                              {p.warning_count > 0 && (
-                                <span
-                                  title={`${p.warning_count} system risk${p.warning_count === 1 ? "" : "s"} detected`}
-                                  className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-danger/15 px-1.5 text-[10px] font-semibold text-danger"
-                                >
-                                  {p.warning_count}
-                                </span>
-                              )}
-                              {p.days_since_review !== null && p.days_since_review > 30 && (
-                                <span
-                                  title="Project has not been reviewed in over 30 days"
-                                  className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold text-warning"
-                                >
-                                  Review {p.days_since_review}d
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {p.client} · {p.phase} · {p.percent_complete}% complete
-                              {p.top_category && (
-                                <> · Top risk: {p.top_category.replace(/_/g, " ")}</>
-                              )}
-                            </div>
-                          </Link>
+                          <div className="flex items-center gap-2">
+                            <div className="font-serif text-lg text-foreground">{p.name}</div>
+                            {p.warning_count > 0 && (
+                              <span
+                                title={`${p.warning_count} system risk${p.warning_count === 1 ? "" : "s"} detected`}
+                                className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-danger/15 px-1.5 text-[10px] font-semibold text-danger"
+                              >
+                                {p.warning_count}
+                              </span>
+                            )}
+                            {p.days_since_review !== null && p.days_since_review > 30 && (
+                              <span
+                                title="Project has not been reviewed in over 30 days"
+                                className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold text-warning"
+                              >
+                                Review {p.days_since_review}d
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {p.client} · {p.phase} · {p.percent_complete}% complete
+                            {p.top_category && (
+                              <> · Top risk: {p.top_category.replace(/_/g, " ")}</>
+                            )}
+                          </div>
                         </TableCell>
+
                         <TableCell className="whitespace-nowrap text-sm tabular text-foreground">
                           {jobNumber}
                         </TableCell>
