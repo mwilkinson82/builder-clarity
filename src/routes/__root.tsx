@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 
+import { Toaster } from "@/components/ui/sonner";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
@@ -78,17 +79,37 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Lovable App" },
-      { name: "description", content: "Forecast project outcomes for luxury custom home builders with a premium financial and risk management dashboard." },
+      {
+        name: "description",
+        content:
+          "Forecast project outcomes for luxury custom home builders with a premium financial and risk management dashboard.",
+      },
       { name: "author", content: "Lovable" },
       { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Forecast project outcomes for luxury custom home builders with a premium financial and risk management dashboard." },
+      {
+        property: "og:description",
+        content:
+          "Forecast project outcomes for luxury custom home builders with a premium financial and risk management dashboard.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
       { name: "twitter:title", content: "Lovable App" },
-      { name: "twitter:description", content: "Forecast project outcomes for luxury custom home builders with a premium financial and risk management dashboard." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1cebaa4f-3a59-4c5f-b0bc-80f79c91f70d/id-preview-8573b11a--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1781239420130.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1cebaa4f-3a59-4c5f-b0bc-80f79c91f70d/id-preview-8573b11a--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1781239420130.png" },
+      {
+        name: "twitter:description",
+        content:
+          "Forecast project outcomes for luxury custom home builders with a premium financial and risk management dashboard.",
+      },
+      {
+        property: "og:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1cebaa4f-3a59-4c5f-b0bc-80f79c91f70d/id-preview-8573b11a--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1781239420130.png",
+      },
+      {
+        name: "twitter:image",
+        content:
+          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1cebaa4f-3a59-4c5f-b0bc-80f79c91f70d/id-preview-8573b11a--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1781239420130.png",
+      },
     ],
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -130,6 +151,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
+      <Toaster position="top-right" />
     </QueryClientProvider>
   );
 }

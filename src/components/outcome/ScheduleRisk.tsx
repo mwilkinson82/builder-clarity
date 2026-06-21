@@ -21,7 +21,10 @@ import {
   Users,
   ClipboardList,
   Clock,
+  Pencil,
+  CheckCircle2,
 } from "lucide-react";
+import { toast } from "sonner";
 import {
   listSchedule,
   createMilestone,
@@ -36,6 +39,7 @@ import {
   type ScheduleRiskRow,
 } from "@/lib/schedule.functions";
 import { createExposure, updateProjectFinancials, type ProjectRow } from "@/lib/projects.functions";
+import { fmtUSD } from "@/lib/format";
 import type { ExposureCategory, HoldClass, ResponsePath } from "@/lib/ior";
 
 const STATUS_LABEL: Record<MilestoneStatus, string> = {
@@ -96,6 +100,7 @@ export function ScheduleRisk({
 }) {
   const qc = useQueryClient();
   const projectId = project.id;
+  const [linkedExposureIds, setLinkedExposureIds] = useState<Record<string, string>>({});
   const listFn = useServerFn(listSchedule);
   const createMs = useServerFn(createMilestone);
   const updateMs = useServerFn(updateMilestone);
@@ -111,10 +116,11 @@ export function ScheduleRisk({
     queryFn: () => listFn({ data: { projectId } }),
   });
   const invalidateSchedule = () => qc.invalidateQueries({ queryKey: ["schedule", projectId] });
-  const invalidateProject = () => {
-    qc.invalidateQueries({ queryKey: ["project", projectId] });
-    qc.invalidateQueries({ queryKey: ["projects"] });
-  };
+  const invalidateProject = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ["project", projectId] }),
+      qc.invalidateQueries({ queryKey: ["projects"] }),
+    ]);
   const useScheduleMutation = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
     useMutation({ mutationFn: (i: I) => fn({ data: i }), onSuccess: invalidateSchedule });
 
@@ -150,7 +156,9 @@ export function ScheduleRisk({
           due_date: risk.due_date,
           next_review_at: risk.due_date,
           release_condition: `Schedule risk resolved: ${risk.title}`,
-          notes: "Created from the Schedule tab.",
+          notes: risk.detail
+            ? `Schedule action plan: ${risk.detail}`
+            : "Created from the Schedule tab. Add the recovery, offset, elimination, or acceptance plan in the Risk Tally.",
         },
       });
       if (result.id) {
@@ -158,9 +166,20 @@ export function ScheduleRisk({
       }
       return result;
     },
-    onSuccess: () => {
-      invalidateSchedule();
-      invalidateProject();
+    onSuccess: async (result, risk) => {
+      if (result.id) {
+        setLinkedExposureIds((current) => ({ ...current, [risk.id]: result.id }));
+      }
+      await Promise.all([invalidateSchedule(), invalidateProject()]);
+      await qc.refetchQueries({ queryKey: ["project", projectId] });
+      toast.success("Risk allocation created", {
+        description: `${risk.title} is now linked into the open risk tally.`,
+      });
+    },
+    onError: (error) => {
+      toast.error("Risk allocation did not save", {
+        description: error instanceof Error ? error.message : "Check the risk and try again.",
+      });
     },
   });
 
@@ -253,7 +272,8 @@ export function ScheduleRisk({
             onPatch={(id, patch) => rUpdate.mutate({ id, patch })}
             onDelete={(id) => rDelete.mutate({ id })}
             onCreateExposure={(risk) => exposureCreate.mutate(risk)}
-            creatingExposure={exposureCreate.isPending}
+            pendingExposureId={exposureCreate.variables?.id ?? null}
+            linkedExposureIds={linkedExposureIds}
           />
         ))}
       </div>
@@ -379,6 +399,23 @@ function NumberField({
   );
 }
 
+function shortDate(value?: string | null) {
+  if (!value) return "Not set";
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) return value;
+  return `${month}/${day}/${year}`;
+}
+
+function isBareMilestone(row: MilestoneRow) {
+  return (
+    !row.baseline_date &&
+    !row.forecast_date &&
+    !row.owner &&
+    !row.delay_reason &&
+    row.status === "on_track"
+  );
+}
+
 function MilestoneRowEditor({
   row,
   onPatch,
@@ -389,6 +426,7 @@ function MilestoneRowEditor({
   onDelete: () => void;
 }) {
   const [local, setLocal] = useState(row);
+  const [editing, setEditing] = useState(() => isBareMilestone(row));
   useEffect(() => {
     setLocal(row);
   }, [row]);
@@ -396,6 +434,68 @@ function MilestoneRowEditor({
     setLocal((s) => ({ ...s, ...patch }));
     onPatch(patch);
   };
+  const changedFields = () => {
+    const patch: Partial<MilestoneRow> = {};
+    if (row.name !== local.name) patch.name = local.name;
+    if (row.baseline_date !== local.baseline_date) patch.baseline_date = local.baseline_date;
+    if (row.forecast_date !== local.forecast_date) patch.forecast_date = local.forecast_date;
+    if (row.status !== local.status) patch.status = local.status;
+    if (row.owner !== local.owner) patch.owner = local.owner;
+    if (row.delay_reason !== local.delay_reason) patch.delay_reason = local.delay_reason;
+    return patch;
+  };
+  const finishEditing = () => {
+    const patch = changedFields();
+    if (Object.keys(patch).length > 0) onPatch(patch);
+    setEditing(false);
+  };
+
+  if (!editing) {
+    const needsReason = local.status === "at_risk" || local.status === "delayed";
+    return (
+      <div className="rounded-md border border-hairline bg-surface p-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="font-medium text-foreground">{local.name}</div>
+              <span
+                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_STYLES[local.status]}`}
+              >
+                {STATUS_LABEL[local.status]}
+              </span>
+            </div>
+            {needsReason && local.delay_reason && (
+              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{local.delay_reason}</p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs md:min-w-[440px] md:grid-cols-4">
+            <CompactField label="Baseline" value={shortDate(local.baseline_date)} />
+            <CompactField label="Forecast" value={shortDate(local.forecast_date)} />
+            <CompactField label="Owner" value={local.owner || "Unassigned"} />
+            <div className="flex items-center justify-end gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1"
+                onClick={() => setEditing(true)}
+              >
+                <Pencil className="h-3.5 w-3.5" /> Edit
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={onDelete}
+                aria-label="Delete milestone"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-md border border-hairline bg-surface p-3">
@@ -485,13 +585,25 @@ function MilestoneRowEditor({
           />
         </div>
       )}
-      <div className="mt-2 flex justify-end">
+      <div className="mt-3 flex items-center justify-between gap-3">
         <span
           className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_STYLES[local.status]}`}
         >
           {STATUS_LABEL[local.status]}
         </span>
+        <Button size="sm" className="gap-1.5" onClick={finishEditing}>
+          <CheckCircle2 className="h-3.5 w-3.5" /> Done
+        </Button>
       </div>
+    </div>
+  );
+}
+
+function CompactField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-hairline bg-card px-2 py-1.5">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="mt-0.5 truncate font-medium text-foreground">{value}</div>
     </div>
   );
 }
@@ -503,7 +615,8 @@ function RiskGroup({
   onPatch,
   onDelete,
   onCreateExposure,
-  creatingExposure,
+  pendingExposureId,
+  linkedExposureIds,
 }: {
   kind: ScheduleRiskKind;
   items: ScheduleRiskRow[];
@@ -511,7 +624,8 @@ function RiskGroup({
   onPatch: (id: string, patch: Partial<ScheduleRiskRow>) => void;
   onDelete: (id: string) => void;
   onCreateExposure: (risk: ScheduleRiskRow) => void;
-  creatingExposure: boolean;
+  pendingExposureId: string | null;
+  linkedExposureIds: Record<string, string>;
 }) {
   const meta = RISK_META[kind];
   const Icon = meta.icon;
@@ -544,12 +658,28 @@ function RiskGroup({
             onPatch={(p) => onPatch(r.id, p)}
             onDelete={() => onDelete(r.id)}
             onCreateExposure={onCreateExposure}
-            creatingExposure={creatingExposure}
+            creatingExposure={pendingExposureId === r.id}
+            linkedExposureId={linkedExposureIds[r.id] ?? r.linked_exposure_id}
           />
         ))}
       </div>
     </div>
   );
+}
+
+const RESPONSE_LABEL: Record<ResponsePath, string> = {
+  eliminate: "Eliminate",
+  recover: "Recover",
+  offset: "Offset",
+  accept: "Accept",
+};
+
+function likelyRiskValue(row: ScheduleRiskRow) {
+  return row.dollar_exposure * (row.probability / 100);
+}
+
+function isBareRisk(row: ScheduleRiskRow) {
+  return !row.detail && row.dollar_exposure === 0 && !row.owner && !row.due_date;
 }
 
 function RiskItem({
@@ -559,6 +689,7 @@ function RiskItem({
   onDelete,
   onCreateExposure,
   creatingExposure,
+  linkedExposureId,
 }: {
   row: ScheduleRiskRow;
   detailPlaceholder: string;
@@ -566,11 +697,125 @@ function RiskItem({
   onDelete: () => void;
   onCreateExposure: (risk: ScheduleRiskRow) => void;
   creatingExposure: boolean;
+  linkedExposureId: string | null;
 }) {
   const [local, setLocal] = useState(row);
+  const [editing, setEditing] = useState(() => isBareRisk(row));
   useEffect(() => {
     setLocal(row);
   }, [row]);
+
+  const isLinked = Boolean(linkedExposureId);
+  const changedFields = () => {
+    const patch: Partial<ScheduleRiskRow> = {};
+    if (row.title !== local.title) patch.title = local.title;
+    if (row.detail !== local.detail) patch.detail = local.detail;
+    if (row.dollar_exposure !== local.dollar_exposure) {
+      patch.dollar_exposure = local.dollar_exposure;
+    }
+    if (row.probability !== local.probability) patch.probability = local.probability;
+    if (row.schedule_impact_weeks !== local.schedule_impact_weeks) {
+      patch.schedule_impact_weeks = local.schedule_impact_weeks;
+    }
+    if (row.owner !== local.owner) patch.owner = local.owner;
+    if (row.due_date !== local.due_date) patch.due_date = local.due_date;
+    if (row.response_path !== local.response_path) patch.response_path = local.response_path;
+    if (row.hold_class !== local.hold_class) patch.hold_class = local.hold_class;
+    return patch;
+  };
+  const saveDraft = () => {
+    const patch = changedFields();
+    if (Object.keys(patch).length > 0) onPatch(patch);
+  };
+  const finishEditing = () => {
+    saveDraft();
+    setEditing(false);
+  };
+  const createLinkedExposure = () => {
+    saveDraft();
+    onCreateExposure(local);
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <div
+        className="rounded-md border border-hairline bg-surface p-3"
+        onDoubleClick={() => setEditing(true)}
+      >
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="font-medium text-foreground">{local.title}</div>
+              <span className="inline-flex items-center rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[10px]">
+                {local.hold_class}
+              </span>
+              {isLinked && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-success">
+                  <CheckCircle2 className="h-3 w-3" /> Linked
+                </span>
+              )}
+            </div>
+            {local.detail && (
+              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{local.detail}</p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs md:min-w-[560px] md:grid-cols-5">
+            <CompactField label="Dollar risk" value={fmtUSD(local.dollar_exposure)} />
+            <CompactField label="Likely risk" value={fmtUSD(likelyRiskValue(local))} />
+            <CompactField
+              label="Schedule"
+              value={
+                local.schedule_impact_weeks == null
+                  ? "No impact"
+                  : `${local.schedule_impact_weeks} wk`
+              }
+            />
+            <CompactField label="Owner" value={local.owner || "Unassigned"} />
+            <CompactField label="Due" value={shortDate(local.due_date)} />
+          </div>
+        </div>
+        <div className="mt-3 flex flex-col gap-2 border-t border-hairline pt-3 md:flex-row md:items-center md:justify-between">
+          <div className="text-xs text-muted-foreground">
+            Treatment:{" "}
+            <span className="font-medium text-foreground">
+              {RESPONSE_LABEL[local.response_path]}
+            </span>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            {!isLinked && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={creatingExposure}
+                onClick={createLinkedExposure}
+              >
+                {creatingExposure ? "Creating..." : "Create risk allocation"}
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1"
+              onClick={() => setEditing(true)}
+            >
+              <Pencil className="h-3.5 w-3.5" /> Edit
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={onDelete}
+              aria-label="Delete risk"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="group rounded-md border border-hairline bg-surface p-4">
       <div className="flex items-start justify-between gap-3">
@@ -720,15 +965,27 @@ function RiskItem({
               </Select>
             </div>
           </div>
-          <div className="flex justify-end">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {isLinked && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-success/30 bg-success/10 px-2 py-1 text-xs font-medium text-success">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Linked to Risk Tally
+              </span>
+            )}
             <Button
               type="button"
               size="sm"
-              variant={local.linked_exposure_id ? "outline" : "default"}
-              disabled={creatingExposure || Boolean(local.linked_exposure_id)}
-              onClick={() => onCreateExposure(local)}
+              variant={isLinked ? "outline" : "default"}
+              disabled={creatingExposure || isLinked}
+              onClick={createLinkedExposure}
             >
-              {local.linked_exposure_id ? "Linked to Risk Tally" : "Create risk allocation"}
+              {isLinked
+                ? "Linked to Risk Tally"
+                : creatingExposure
+                  ? "Creating..."
+                  : "Create risk allocation"}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={finishEditing}>
+              Done
             </Button>
           </div>
         </div>

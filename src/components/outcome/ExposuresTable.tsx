@@ -184,6 +184,7 @@ export function ExposuresTable({
   const topRiskId = live[0]?.id ?? null;
   const eHolds = live.filter((e) => e.hold_class === "E-Hold" || e.hold_class === "Both");
   const cHolds = live.filter((e) => e.hold_class === "C-Hold");
+  const unclassifiedLive = live.filter((e) => e.hold_class === "None");
   const closed = exposures
     .filter((e) => e.status !== "active" && e.status !== "escalated")
     .sort((a, b) => likelyValue(b) - likelyValue(a));
@@ -230,6 +231,23 @@ export function ExposuresTable({
               count={cHolds.length}
             />
             {cHolds.map((e) => (
+              <RiskRow
+                key={e.id}
+                exposure={e}
+                highlighted={e.id === topRiskId}
+                onEdit={openEdit}
+                onDelete={onDelete}
+                onCreateTodo={onCreateTodo}
+              />
+            ))}
+            {unclassifiedLive.length > 0 && (
+              <RiskGroupRow
+                label="Unclassified live risk"
+                detail="Still active but not assigned to E-Hold or C-Hold"
+                count={unclassifiedLive.length}
+              />
+            )}
+            {unclassifiedLive.map((e) => (
               <RiskRow
                 key={e.id}
                 exposure={e}
