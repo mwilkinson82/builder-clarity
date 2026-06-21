@@ -15,17 +15,16 @@ import { MoneyInput } from "@/components/ui/money-input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { KpiStrip } from "@/components/outcome/KpiStrip";
 import { OutcomeWaterfall } from "@/components/outcome/OutcomeWaterfall";
 import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/outcome/ScheduleRisk";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
-import { RiskWarnings } from "@/components/outcome/RiskWarnings";
 import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
 import { ImportSOVSheet } from "@/components/outcome/ImportSOVSheet";
 import { ReviewsTab } from "@/components/outcome/ReviewsTab";
 import { RiskAllocationWorkbench } from "@/components/outcome/RiskAllocationWorkbench";
+import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import {
   createExposure, updateExposure, deleteExposure,
   createDecision, updateDecision, deleteDecision,
@@ -209,6 +208,7 @@ function ProjectPage() {
 
   const milestones = scheduleData?.milestones ?? [];
   const scheduleRisks = scheduleData?.risks ?? [];
+  const liveExposureCount = exposures.filter((e) => e.status === "active" || e.status === "escalated").length;
 
   const downloadCurrentReport = async (style: IorPdfStyle) => {
     const bytes = await generateIorPdf({
@@ -312,46 +312,23 @@ function ProjectPage() {
       </header>
 
       <main className="mx-auto max-w-[1400px] space-y-8 px-6 py-10 lg:px-10">
-        <KpiStrip
-          originalGP={rollup.originalGP}
-          originalGPpct={rollup.originalGPpct}
-          forecastedGP={rollup.forecastedGPBeforeHolds}
-          indicatedGP={rollup.indicatedGP}
-          indicatedGPpct={rollup.indicatedGPpct}
-          gpAtRisk={rollup.gpAtRisk}
-          exposureHolds={rollup.exposureHolds}
-          contingencyHold={rollup.contingencyHold}
-          pendingCOs={rollup.pendingCOContract}
-          scheduleWeeks={project.schedule_variance_weeks}
-        />
-
-        <RiskWarnings warnings={warnings} />
-
-        <RiskAllocationWorkbench
+        <ProjectDashboard
           project={project}
           exposures={exposures}
-          buckets={buckets}
           rollup={rollup}
-          guidance={guidance}
           warnings={warnings}
-          onCreateExposure={(d) => expCreate.mutate({ projectId, ...d })}
-          onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
-          onDeleteExposure={(id) => expDelete.mutate({ id })}
-          onUpdateProject={(patch) => finUpdate.mutate({ projectId, patch })}
-          projectUpdatePending={finUpdate.isPending}
-          onImportBuckets={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
-          importPending={bucketImport.isPending}
+          scheduleRiskCount={scheduleRisks.length}
         />
 
-        <Tabs defaultValue="outcome" className="space-y-6">
-          <TabsList className="h-auto w-full justify-start gap-1 rounded-lg border border-hairline bg-card p-1">
+        <Tabs defaultValue="schedule" className="space-y-6">
+          <TabsList className="h-auto w-full flex-wrap justify-start gap-1 rounded-lg border border-hairline bg-card p-1">
             {[
-              ["outcome", "Outcome"],
-              ["decisions", `Decisions (${decisions.filter(d => d.status !== "resolved").length})`],
+              ["schedule", "Schedule"],
+              ["risk-tally", `Risk Tally (${liveExposureCount})`],
+              ["sov-billing", "SOV / Billing"],
               ["buckets", "Cost Buckets"],
               ["change-orders", "Change Orders"],
-              ["schedule", "Schedule"],
-              ["reviews", `Reviews (${reviews.length})`],
+              ["ior-report", `IOR Report (${reviews.length})`],
             ].map(([v, label]) => (
               <TabsTrigger
                 key={v}
@@ -363,13 +340,62 @@ function ProjectPage() {
             ))}
           </TabsList>
 
-          <TabsContent value="outcome" className="space-y-6">
+          <TabsContent value="schedule">
+            <SectionHeader title="Schedule" subtitle="Completion forecast, interim milestones, critical path movement, and schedule-linked risk. Work this first so every other exposure has the right context." />
+            <ScheduleRisk project={project} />
+          </TabsContent>
+
+          <TabsContent value="risk-tally" className="space-y-6">
+            <RiskAllocationWorkbench
+              exposures={exposures}
+              rollup={rollup}
+              guidance={guidance}
+              onCreateExposure={(d) => expCreate.mutate({ projectId, ...d })}
+              onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
+              onDeleteExposure={(id) => expDelete.mutate({ id })}
+            />
+
+            <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+              <SectionHeader title="Decision Log" subtitle="Owner, trade, procurement, and internal choices that need a next action or close-out." />
+              <DecisionsTable
+                decisions={decisions}
+                onCreate={(d) => decCreate.mutate({ projectId, ...d })}
+                onUpdate={(id, patch) => decUpdate.mutate({ id, ...patch })}
+                onDelete={(id) => decDelete.mutate({ id })}
+              />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="sov-billing" className="space-y-6">
+            <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <h2 className="font-serif text-3xl text-foreground">SOV / Billing</h2>
+                  <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                    Load the schedule of values first, then manage billing and cost movement against that baseline.
+                  </p>
+                </div>
+                <ImportSOVSheet
+                  onImport={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
+                  pending={bucketImport.isPending}
+                />
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-4">
+                <SovMetric label="Cost buckets loaded" value={String(buckets.length)} />
+                <SovMetric label="Original cost budget" value={fmtUSD(project.original_cost_budget)} />
+                <SovMetric label="Forecasted final cost" value={fmtUSD(rollup.forecastedFinalCost)} />
+                <SovMetric label="Pending COs" value={fmtUSD(rollup.pendingCOContract)} />
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="ior-report" className="space-y-6">
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
               <div className="rounded-lg border border-hairline bg-card p-6 lg:col-span-2 lg:p-10 shadow-card">
                 <div className="mb-6">
-                  <h2 className="font-serif text-3xl text-foreground">Financial Outcome</h2>
+                  <h2 className="font-serif text-3xl text-foreground">IOR Report</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Computed from change orders, cost buckets, and the exposure register.
+                    Financial outcome, hold posture, review history, and PDF-ready management narrative.
                   </p>
                 </div>
                 <OutcomeWaterfall
@@ -456,16 +482,16 @@ function ProjectPage() {
                 </div>
               </aside>
             </div>
-          </TabsContent>
-
-          <TabsContent value="decisions">
-            <SectionHeader title="Required Decisions" subtitle="Convert exposures and pending COs into owned actions with due dates." />
-            <DecisionsTable
-              decisions={decisions}
-              onCreate={(d) => decCreate.mutate({ projectId, ...d })}
-              onUpdate={(id, patch) => decUpdate.mutate({ id, ...patch })}
-              onDelete={(id) => decDelete.mutate({ id })}
-            />
+            <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+              <SectionHeader title="Project Truth Reviews" subtitle="Editable, downloadable IOR reports for project meetings and client-facing review." />
+              <ReviewsTab
+                reviews={reviews}
+                project={project}
+                buildPdfInput={buildPdfInputForReview}
+                onUpdate={(id, patch) => reviewUpdate.mutate({ id, patch })}
+                pending={reviewUpdate.isPending}
+              />
+            </div>
           </TabsContent>
 
           <TabsContent value="buckets">
@@ -498,23 +524,6 @@ function ProjectPage() {
               onDelete={(id) => coDelete.mutate({ id })}
             />
           </TabsContent>
-
-          <TabsContent value="schedule">
-            <SectionHeader title="Schedule Risk" subtitle="Completion forecast, milestones with delay reasons, and decision / procurement / trade-performance risks. Everything here is editable and feeds the IOR report." />
-            <ScheduleRisk project={project} />
-          </TabsContent>
-
-
-          <TabsContent value="reviews">
-            <SectionHeader title="Project Truth Reviews" subtitle="Each review is an editable, downloadable, emailable IOR Report — ready for the next L10 or project meeting." />
-            <ReviewsTab
-              reviews={reviews}
-              project={project}
-              buildPdfInput={buildPdfInputForReview}
-              onUpdate={(id, patch) => reviewUpdate.mutate({ id, patch })}
-              pending={reviewUpdate.isPending}
-            />
-          </TabsContent>
         </Tabs>
       </main>
     </div>
@@ -537,6 +546,15 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
     <div className="mb-5">
       <h2 className="font-serif text-3xl text-foreground">{title}</h2>
       <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{subtitle}</p>
+    </div>
+  );
+}
+
+function SovMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-lg font-medium tabular text-foreground">{value}</div>
     </div>
   );
 }
