@@ -236,17 +236,30 @@ export const listProjects = createServerFn({ method: "GET" })
         ? Math.floor((Date.now() - lastReview) / 86400000)
         : null;
       const topCat = exposureByCategory(exposures)[0]?.category ?? null;
+      const activeScheduleRiskCount = exposures.filter(
+        (e) =>
+          (e.status === "active" || e.status === "escalated") &&
+          (e.category === "schedule_compression" ||
+            e.category === "procurement" ||
+            e.category === "owner_decision"),
+      ).length;
       return {
         id: p.id,
         name: p.name,
         client: p.client,
         phase: p.phase,
+        percent_complete: p.percent_complete,
+        schedule_variance_weeks: p.schedule_variance_weeks,
         original_contract: p.original_contract,
         forecasted_final_contract: r.forecastedFinalContract,
         indicated_gp: r.indicatedGP,
         indicated_gp_pct: r.indicatedGPpct,
         original_gp_pct: r.originalGPpct,
         gp_at_risk: r.gpAtRisk,
+        exposure_holds: r.exposureHolds,
+        contingency_hold: r.contingencyHold,
+        risk_allocated: r.exposureHolds + r.contingencyHold,
+        schedule_risk_count: activeScheduleRiskCount,
         warning_count: warnings.length,
         days_since_review: daysSinceReview,
         top_category: topCat,

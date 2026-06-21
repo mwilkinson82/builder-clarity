@@ -43,6 +43,18 @@ function statusFor(originalPct: number, indicatedPct: number) {
   return { label: "Healthy", className: "border-success/40 bg-success/10 text-success" };
 }
 
+function scheduleFor(weeks: number, scheduleRiskCount: number) {
+  const slip = Math.max(0, weeks);
+  const score = Math.max(0, Math.min(100, 100 - slip * 8 - scheduleRiskCount * 6));
+  if (slip >= 4 || score < 65) {
+    return { label: "Slipped", score, className: "border-danger/40 bg-danger/10 text-danger" };
+  }
+  if (slip > 0 || scheduleRiskCount > 0) {
+    return { label: "Watch", score, className: "border-warning/40 bg-warning/10 text-warning" };
+  }
+  return { label: "On plan", score, className: "border-success/40 bg-success/10 text-success" };
+}
+
 function PortfolioPage() {
   const list = useServerFn(listProjects);
   const seed = useServerFn(seedDemoIfEmpty);
@@ -100,16 +112,18 @@ function PortfolioPage() {
                 <TableRow className="bg-surface">
                   <TableHead>Project</TableHead>
                   <TableHead className="text-right">Original Contract</TableHead>
-                  <TableHead className="text-right">Forecasted Final</TableHead>
-                  <TableHead className="text-right">Indicated GP</TableHead>
-                  <TableHead className="text-right">GP %</TableHead>
+                  <TableHead className="text-right">Plan GP %</TableHead>
+                  <TableHead className="text-right">Indicated GP %</TableHead>
                   <TableHead className="text-right">GP At Risk</TableHead>
+                  <TableHead className="text-right">Risk Allocated</TableHead>
+                  <TableHead>Schedule</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {projects.map((p) => {
                   const s = statusFor(p.original_gp_pct, p.indicated_gp_pct);
+                  const schedule = scheduleFor(p.schedule_variance_weeks, p.schedule_risk_count);
                   return (
                     <TableRow key={p.id} className="cursor-pointer">
                       <TableCell>
@@ -138,18 +152,26 @@ function PortfolioPage() {
                             )}
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {p.client} · {p.phase}
+                            {p.client} · {p.phase} · {p.percent_complete}% complete
                             {p.top_category && <> · Top risk: {p.top_category.replace(/_/g, " ")}</>}
                           </div>
                         </Link>
 
                       </TableCell>
                       <TableCell className="text-right tabular">{fmtUSD(p.original_contract)}</TableCell>
-                      <TableCell className="text-right tabular">{fmtUSD(p.forecasted_final_contract)}</TableCell>
-                      <TableCell className="text-right tabular">{fmtUSD(p.indicated_gp)}</TableCell>
+                      <TableCell className="text-right tabular">{fmtPct(p.original_gp_pct)}</TableCell>
                       <TableCell className="text-right tabular">{fmtPct(p.indicated_gp_pct)}</TableCell>
                       <TableCell className={`text-right tabular ${p.gp_at_risk > 0 ? "text-danger" : ""}`}>
                         {fmtUSD(p.gp_at_risk)}
+                      </TableCell>
+                      <TableCell className="text-right tabular">{fmtUSD(p.risk_allocated)}</TableCell>
+                      <TableCell>
+                        <div className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${schedule.className}`}>
+                          {schedule.label} · {Math.round(schedule.score)}%
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          {p.schedule_variance_weeks > 0 ? `+${p.schedule_variance_weeks} wk` : "No slip"} · {p.schedule_risk_count} risks
+                        </div>
                       </TableCell>
                       <TableCell>
                         <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${s.className}`}>

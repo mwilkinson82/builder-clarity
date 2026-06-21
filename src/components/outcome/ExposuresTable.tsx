@@ -140,7 +140,7 @@ export function ExposuresTable({
     <div className="space-y-4">
       <div className="flex justify-end">
         <Button onClick={openNew} size="sm" className="gap-1.5">
-          <Plus className="h-3.5 w-3.5" /> Log exposure
+          <Plus className="h-3.5 w-3.5" /> Add risk
         </Button>
       </div>
 
@@ -148,7 +148,7 @@ export function ExposuresTable({
         <Table>
           <TableHeader>
             <TableRow className="bg-surface">
-              <TableHead>Exposure</TableHead>
+              <TableHead>Risk / exposure</TableHead>
               <TableHead>Category</TableHead>
               <TableHead className="text-right">Dollar</TableHead>
               <TableHead className="text-right">Prob.</TableHead>
@@ -194,7 +194,7 @@ export function ExposuresTable({
             {exposures.length === 0 && (
               <TableRow>
                 <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
-                  No exposures yet. Every emerging problem has a dollar consequence — log the first one to begin protecting margin.
+                  No risk allocations yet. Every emerging problem has a dollar consequence - add the first one to begin protecting margin.
                 </TableCell>
               </TableRow>
             )}
@@ -207,7 +207,7 @@ export function ExposuresTable({
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle className="font-serif text-2xl">
-              {editingId ? "Edit exposure" : "Log exposure"}
+              {editingId ? "Edit risk allocation" : "Add risk allocation"}
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-2">
@@ -239,7 +239,7 @@ export function ExposuresTable({
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-danger">Dollar exposure *</Label>
+                <Label className="text-danger">Dollar risk *</Label>
                 <MoneyInput value={draft.dollar_exposure} onValueChange={(v) => setDraft({ ...draft, dollar_exposure: v })} />
                 {errors.dollar && <p className="text-xs text-danger">{errors.dollar}</p>}
               </div>
@@ -299,7 +299,7 @@ export function ExposuresTable({
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={save}>{editingId ? "Save changes" : "Log exposure"}</Button>
+            <Button onClick={save}>{editingId ? "Save changes" : "Add risk"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

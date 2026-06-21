@@ -74,15 +74,15 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
     qc.invalidateQueries({ queryKey: ["project", projectId] });
     qc.invalidateQueries({ queryKey: ["projects"] });
   };
-  const mk = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
+  const useScheduleMutation = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
     useMutation({ mutationFn: (i: I) => fn({ data: i }), onSuccess: invalidateSchedule });
 
-  const msCreate = mk<{ projectId: string; name: string }>(createMs);
-  const msUpdate = mk<{ id: string; patch: Partial<MilestoneRow> }>(updateMs as never);
-  const msDelete = mk<{ id: string }>(deleteMs);
-  const rCreate = mk<{ projectId: string; kind: ScheduleRiskKind; title: string }>(createRisk);
-  const rUpdate = mk<{ id: string; patch: Partial<ScheduleRiskRow> }>(updateRisk as never);
-  const rDelete = mk<{ id: string }>(deleteRisk);
+  const msCreate = useScheduleMutation<{ projectId: string; name: string }>(createMs);
+  const msUpdate = useScheduleMutation<{ id: string; patch: Partial<MilestoneRow> }>(updateMs as never);
+  const msDelete = useScheduleMutation<{ id: string }>(deleteMs);
+  const rCreate = useScheduleMutation<{ projectId: string; kind: ScheduleRiskKind; title: string }>(createRisk);
+  const rUpdate = useScheduleMutation<{ id: string; patch: Partial<ScheduleRiskRow> }>(updateRisk as never);
+  const rDelete = useScheduleMutation<{ id: string }>(deleteRisk);
 
   const finMut = useMutation({
     mutationFn: (patch: Record<string, unknown>) => updateFin({ data: { projectId, patch } }),

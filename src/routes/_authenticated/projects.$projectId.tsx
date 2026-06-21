@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/select";
 import { KpiStrip } from "@/components/outcome/KpiStrip";
 import { OutcomeWaterfall } from "@/components/outcome/OutcomeWaterfall";
-import { ExposuresTable } from "@/components/outcome/ExposuresTable";
 import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/outcome/ScheduleRisk";
@@ -26,6 +25,7 @@ import { RiskWarnings } from "@/components/outcome/RiskWarnings";
 import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
 import { ImportSOVSheet } from "@/components/outcome/ImportSOVSheet";
 import { ReviewsTab } from "@/components/outcome/ReviewsTab";
+import { RiskAllocationWorkbench } from "@/components/outcome/RiskAllocationWorkbench";
 import {
   createExposure, updateExposure, deleteExposure,
   createDecision, updateDecision, deleteDecision,
@@ -94,25 +94,33 @@ function ProjectPage() {
     qc.invalidateQueries({ queryKey: ["project", projectId] });
     qc.invalidateQueries({ queryKey: ["projects"] });
   };
-  const mk = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
+  const useServerMutation = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
     useMutation({ mutationFn: (input: I) => fn({ data: input }), onSuccess: invalidate });
 
-  const expCreate = mk<Record<string, unknown>>(createExposureFn as never);
-  const expUpdate = mk<Record<string, unknown>>(updateExposureFn as never);
-  const expDelete = mk<{ id: string }>(deleteExposureFn);
-  const decCreate = mk<Record<string, unknown>>(createDecisionFn as never);
-  const decUpdate = mk<Record<string, unknown>>(updateDecisionFn as never);
-  const decDelete = mk<{ id: string }>(deleteDecisionFn);
-  const finUpdate = mk<Record<string, unknown>>(updateFinFn as never);
-  const coCreate = mk<Record<string, unknown>>(createCoFn as never);
-  const coUpdate = mk<Record<string, unknown>>(updateCoFn as never);
-  const coDelete = mk<{ id: string }>(deleteCoFn);
-  const bucketUpdate = mk<Record<string, unknown>>(updateBucketFn as never);
-  const bucketCreate = mk<Record<string, unknown>>(createBucketFn as never);
-  const bucketDelete = mk<{ id: string }>(deleteBucketFn);
-  const reviewSubmit = mk<Record<string, unknown>>(submitReviewFn as never);
-  const reviewUpdate = mk<Record<string, unknown>>(updateReviewFn as never);
-  const bucketImport = mk<Record<string, unknown>>(importBucketsFn as never);
+  const expCreate = useServerMutation<Record<string, unknown>>(createExposureFn as never);
+  const expUpdate = useServerMutation<Record<string, unknown>>(updateExposureFn as never);
+  const expDelete = useServerMutation<{ id: string }>(deleteExposureFn);
+  const decCreate = useServerMutation<Record<string, unknown>>(createDecisionFn as never);
+  const decUpdate = useServerMutation<Record<string, unknown>>(updateDecisionFn as never);
+  const decDelete = useServerMutation<{ id: string }>(deleteDecisionFn);
+  const finUpdate = useServerMutation<Record<string, unknown>>(updateFinFn as never);
+  const coCreate = useServerMutation<Record<string, unknown>>(createCoFn as never);
+  const coUpdate = useServerMutation<Record<string, unknown>>(updateCoFn as never);
+  const coDelete = useServerMutation<{ id: string }>(deleteCoFn);
+  const bucketUpdate = useServerMutation<Record<string, unknown>>(updateBucketFn as never);
+  const bucketCreate = useServerMutation<Record<string, unknown>>(createBucketFn as never);
+  const bucketDelete = useServerMutation<{ id: string }>(deleteBucketFn);
+  const reviewSubmit = useServerMutation<Record<string, unknown>>(submitReviewFn as never);
+  const reviewUpdate = useServerMutation<Record<string, unknown>>(updateReviewFn as never);
+  const bucketImport = useServerMutation<Record<string, unknown>>(importBucketsFn as never);
+  const listScheduleFn = useServerFn(listSchedule);
+  const { data: scheduleData } = useQuery({
+    queryKey: ["schedule", projectId],
+    queryFn: () => listScheduleFn({ data: { projectId } }),
+  });
+  // Last-reviewed chip is gated by hydration to avoid SSR/CSR text mismatch
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => { setHydrated(true); }, []);
 
   const navigate = useNavigate();
   const router = useRouter();
@@ -137,9 +145,6 @@ function ProjectPage() {
     rollup, guidance, warnings, byCategory, aging,
   } = data;
 
-  // Last-reviewed chip is gated by hydration to avoid SSR/CSR text mismatch
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => { setHydrated(true); }, []);
   const lastReviewDays = hydrated && project.last_reviewed_at
     ? Math.floor((Date.now() - new Date(project.last_reviewed_at).getTime()) / 86400000)
     : null;
@@ -202,11 +207,6 @@ function ProjectPage() {
     // PDF was already downloaded by the wizard itself.
   };
 
-  const listScheduleFn = useServerFn(listSchedule);
-  const { data: scheduleData } = useQuery({
-    queryKey: ["schedule", projectId],
-    queryFn: () => listScheduleFn({ data: { projectId } }),
-  });
   const milestones = scheduleData?.milestones ?? [];
   const scheduleRisks = scheduleData?.risks ?? [];
 
@@ -327,11 +327,26 @@ function ProjectPage() {
 
         <RiskWarnings warnings={warnings} />
 
+        <RiskAllocationWorkbench
+          project={project}
+          exposures={exposures}
+          buckets={buckets}
+          rollup={rollup}
+          guidance={guidance}
+          warnings={warnings}
+          onCreateExposure={(d) => expCreate.mutate({ projectId, ...d })}
+          onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
+          onDeleteExposure={(id) => expDelete.mutate({ id })}
+          onUpdateProject={(patch) => finUpdate.mutate({ projectId, patch })}
+          projectUpdatePending={finUpdate.isPending}
+          onImportBuckets={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
+          importPending={bucketImport.isPending}
+        />
+
         <Tabs defaultValue="outcome" className="space-y-6">
           <TabsList className="h-auto w-full justify-start gap-1 rounded-lg border border-hairline bg-card p-1">
             {[
               ["outcome", "Outcome"],
-              ["exposures", `Exposures (${exposures.filter(e => e.status === "active" || e.status === "escalated").length})`],
               ["decisions", `Decisions (${decisions.filter(d => d.status !== "resolved").length})`],
               ["buckets", "Cost Buckets"],
               ["change-orders", "Change Orders"],
@@ -441,19 +456,6 @@ function ProjectPage() {
                 </div>
               </aside>
             </div>
-          </TabsContent>
-
-          <TabsContent value="exposures">
-            <SectionHeader
-              title="Exposure Register"
-              subtitle="Every emerging problem becomes a dollarized exposure with an owner and a treatment path. This is the heart of the system."
-            />
-            <ExposuresTable
-              exposures={exposures}
-              onCreate={(d) => expCreate.mutate({ projectId, ...d })}
-              onUpdate={(id, patch) => expUpdate.mutate({ id, ...patch })}
-              onDelete={(id) => expDelete.mutate({ id })}
-            />
           </TabsContent>
 
           <TabsContent value="decisions">
