@@ -148,6 +148,9 @@ export interface ReviewRow {
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 
+const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) =>
+  error?.code === "PGRST204" && (error.message ?? "").includes(`'${column}' column`);
+
 const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   id: p.id as string,
   job_number: str(p.job_number),
@@ -473,21 +476,31 @@ export const createProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => createProjectInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { data: row, error } = await context.supabase
-      .from("projects")
-      .insert({
-        owner_id: context.userId,
-        name: data.name,
-        job_number: data.job_number,
-        client: data.client,
-        project_manager: data.project_manager,
-        phase: data.phase,
-        original_contract: data.original_contract,
-        original_cost_budget: data.original_cost_budget,
-      })
-      .select("id")
-      .single();
+    const baseInsert = {
+      owner_id: context.userId,
+      name: data.name,
+      client: data.client,
+      project_manager: data.project_manager,
+      phase: data.phase,
+      original_contract: data.original_contract,
+      original_cost_budget: data.original_cost_budget,
+    };
+    const insertProject = (includeJobNumber: boolean) =>
+      context.supabase
+        .from("projects")
+        .insert({
+          ...baseInsert,
+          ...(includeJobNumber ? { job_number: data.job_number } : {}),
+        })
+        .select("id")
+        .single();
+
+    let { data: row, error } = await insertProject(Boolean(data.job_number.trim()));
+    if (isMissingRestColumn(error, "job_number")) {
+      ({ data: row, error } = await insertProject(false));
+    }
     if (error) throw new Error(error.message);
+    if (!row) throw new Error("Project did not save.");
 
     const per = data.original_cost_budget / DEFAULT_BUCKETS.length;
     const { error: bErr } = await context.supabase.from("cost_buckets").insert(
@@ -549,15 +562,29 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
       patch.schedule_variance_weeks = computeScheduleVarianceWeeks(baseline, forecast) ?? 0;
     }
 
-    const { data: updated, error } = await context.supabase
-      .from("projects")
-      .update(patch)
-      .eq("id", data.projectId)
-      .eq("owner_id", context.userId)
-      .select("*")
-      .single();
+    const savePatch = (nextPatch: typeof patch) =>
+      context.supabase
+        .from("projects")
+        .update(nextPatch)
+        .eq("id", data.projectId)
+        .eq("owner_id", context.userId)
+        .select("*")
+        .single();
+
+    let jobNumberSkipped = false;
+    let { data: updated, error } = await savePatch(patch);
+    if (isMissingRestColumn(error, "job_number") && "job_number" in patch) {
+      const retryPatch = { ...patch };
+      delete retryPatch.job_number;
+      jobNumberSkipped = true;
+      ({ data: updated, error } = await savePatch(retryPatch));
+    }
     if (error) throw new Error(error.message);
-    return { ok: true, project: normalizeProject(updated as Record<string, unknown>) };
+    return {
+      ok: true,
+      jobNumberSkipped,
+      project: normalizeProject(updated as Record<string, unknown>),
+    };
   });
 
 // ---------------- EXPOSURES ----------------

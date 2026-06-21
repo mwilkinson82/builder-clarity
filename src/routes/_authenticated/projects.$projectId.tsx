@@ -141,6 +141,7 @@ function ProjectPage() {
         updateFinFn as (i: { data: Record<string, unknown> }) => Promise<{
           ok: boolean;
           project?: ProjectRow;
+          jobNumberSkipped?: boolean;
         }>
       )({ data: input }),
     onSuccess: (result) => {
@@ -152,7 +153,9 @@ function ProjectPage() {
       }
       invalidate();
       toast.success("Project updated", {
-        description: "The dashboard is using the saved project info.",
+        description: result.jobNumberSkipped
+          ? "Saved project info. Job number needs the Supabase column migration before it can persist."
+          : "The dashboard is using the saved project info.",
       });
     },
     onError: (err) => {
