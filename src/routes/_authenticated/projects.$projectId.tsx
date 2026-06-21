@@ -6,40 +6,57 @@ import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { MoneyInput } from "@/components/ui/money-input";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
-import { OutcomeWaterfall } from "@/components/outcome/OutcomeWaterfall";
 import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/outcome/ScheduleRisk";
-import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
 import { ImportSOVSheet } from "@/components/outcome/ImportSOVSheet";
 import { ReviewsTab } from "@/components/outcome/ReviewsTab";
 import { RiskAllocationWorkbench } from "@/components/outcome/RiskAllocationWorkbench";
 import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import {
-  createExposure, updateExposure, deleteExposure,
-  createDecision, updateDecision, deleteDecision,
-  getProject, listProjects,
-  updateProjectFinancials, createChangeOrder, updateChangeOrder,
-  deleteChangeOrder, updateBucket, createBucket, deleteBucket, submitReview, updateReview,
+  createExposure,
+  updateExposure,
+  deleteExposure,
+  getProject,
+  listProjects,
+  updateProjectFinancials,
+  createChangeOrder,
+  updateChangeOrder,
+  deleteChangeOrder,
+  updateBucket,
+  createBucket,
+  deleteBucket,
+  submitReview,
+  updateReview,
   importCostBuckets,
-  type ProjectRow, type ReviewRow, type ChangeOrderRow,
+  type ProjectRow,
+  type ReviewRow,
+  type ChangeOrderRow,
 } from "@/lib/projects.functions";
 import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import type { Phase, ExposureCategory, Rollup } from "@/lib/ior";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
 import {
-  Boxes,
   CalendarClock,
   ClipboardList,
   Download,
@@ -55,18 +72,6 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   head: () => ({ meta: [{ title: "Project Outcome Review" }] }),
   component: ProjectPage,
 });
-
-const CATEGORY_LABELS: Record<ExposureCategory, string> = {
-  owner_decision: "Owner decision",
-  design_drift: "Design drift",
-  trade_performance: "Trade performance",
-  procurement: "Procurement",
-  schedule_compression: "Schedule compression",
-  allowance_overrun: "Allowance overrun",
-  field_change: "Field change",
-  closeout_punch: "Closeout / punch",
-  other: "Other",
-};
 
 function ProjectPage() {
   const { projectId } = Route.useParams();
@@ -86,9 +91,6 @@ function ProjectPage() {
   const createExposureFn = useServerFn(createExposure);
   const updateExposureFn = useServerFn(updateExposure);
   const deleteExposureFn = useServerFn(deleteExposure);
-  const createDecisionFn = useServerFn(createDecision);
-  const updateDecisionFn = useServerFn(updateDecision);
-  const deleteDecisionFn = useServerFn(deleteDecision);
   const updateFinFn = useServerFn(updateProjectFinancials);
   const createCoFn = useServerFn(createChangeOrder);
   const updateCoFn = useServerFn(updateChangeOrder);
@@ -110,9 +112,6 @@ function ProjectPage() {
   const expCreate = useServerMutation<Record<string, unknown>>(createExposureFn as never);
   const expUpdate = useServerMutation<Record<string, unknown>>(updateExposureFn as never);
   const expDelete = useServerMutation<{ id: string }>(deleteExposureFn);
-  const decCreate = useServerMutation<Record<string, unknown>>(createDecisionFn as never);
-  const decUpdate = useServerMutation<Record<string, unknown>>(updateDecisionFn as never);
-  const decDelete = useServerMutation<{ id: string }>(deleteDecisionFn);
   const finUpdate = useServerMutation<Record<string, unknown>>(updateFinFn as never);
   const coCreate = useServerMutation<Record<string, unknown>>(createCoFn as never);
   const coUpdate = useServerMutation<Record<string, unknown>>(updateCoFn as never);
@@ -130,7 +129,9 @@ function ProjectPage() {
   });
   // Last-reviewed chip is gated by hydration to avoid SSR/CSR text mismatch
   const [hydrated, setHydrated] = useState(false);
-  useEffect(() => { setHydrated(true); }, []);
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   const navigate = useNavigate();
   const router = useRouter();
@@ -145,19 +146,29 @@ function ProjectPage() {
     return (
       <div className="p-10">
         <p className="text-sm text-danger">Could not load project.</p>
-        <Link to="/" className="mt-4 inline-block text-sm underline">← Back to portfolio</Link>
+        <Link to="/" className="mt-4 inline-block text-sm underline">
+          ← Back to portfolio
+        </Link>
       </div>
     );
   }
 
   const {
-    project, exposures, changeOrders, buckets, decisions, reviews,
-    rollup, guidance, warnings, byCategory, aging,
+    project,
+    exposures,
+    changeOrders,
+    buckets,
+    decisions,
+    reviews,
+    rollup,
+    guidance,
+    warnings,
   } = data;
 
-  const lastReviewDays = hydrated && project.last_reviewed_at
-    ? Math.floor((Date.now() - new Date(project.last_reviewed_at).getTime()) / 86400000)
-    : null;
+  const lastReviewDays =
+    hydrated && project.last_reviewed_at
+      ? Math.floor((Date.now() - new Date(project.last_reviewed_at).getTime()) / 86400000)
+      : null;
 
   const handleSubmitReview = async (input: {
     reviewer: string;
@@ -168,12 +179,20 @@ function ProjectPage() {
     pdf_style: IorPdfStyle;
     kpi_snapshot: Record<string, number | string>;
     newExposures: Array<{
-      title: string; description: string; category: ExposureCategory;
-      dollar_exposure: number; probability: number; owner: string;
+      title: string;
+      description: string;
+      category: ExposureCategory;
+      dollar_exposure: number;
+      probability: number;
+      owner: string;
       response_path: import("@/lib/ior").ResponsePath | null;
       hold_class: import("@/lib/ior").HoldClass;
     }>;
-    resolutionUpdates: Array<{ id: string; status: import("@/lib/ior").ExposureStatus; note: string }>;
+    resolutionUpdates: Array<{
+      id: string;
+      status: import("@/lib/ior").ExposureStatus;
+      note: string;
+    }>;
     pdfBytes: Uint8Array;
   }) => {
     // Create new exposures
@@ -219,34 +238,85 @@ function ProjectPage() {
 
   const milestones = scheduleData?.milestones ?? [];
   const scheduleRisks = scheduleData?.risks ?? [];
-  const liveExposureCount = exposures.filter((e) => e.status === "active" || e.status === "escalated").length;
+  const liveExposureCount = exposures.filter(
+    (e) => e.status === "active" || e.status === "escalated",
+  ).length;
 
   const downloadCurrentReport = async (style: IorPdfStyle) => {
-    const bytes = await generateIorPdf({
-      project, rollup, exposures, changeOrders, buckets, decisions, reviews,
-      milestones, scheduleRisks,
-      narrative: project.last_review_summary,
-      generatedAt: new Date(),
-    }, style);
-    downloadPdfBytes(bytes, `IOR_${project.name.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0,10)}.pdf`);
+    const bytes = await generateIorPdf(
+      {
+        project,
+        rollup,
+        exposures,
+        changeOrders,
+        buckets,
+        decisions,
+        reviews,
+        milestones,
+        scheduleRisks,
+        narrative: project.last_review_summary,
+        generatedAt: new Date(),
+      },
+      style,
+    );
+    downloadPdfBytes(
+      bytes,
+      `IOR_${project.name.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0, 10)}.pdf`,
+    );
   };
 
   const buildPdfInputForReview = (r: ReviewRow | null) => ({
-    project, rollup, exposures, changeOrders, buckets, decisions, reviews,
-    milestones, scheduleRisks,
+    project,
+    rollup,
+    exposures,
+    changeOrders,
+    buckets,
+    decisions,
+    reviews,
+    milestones,
+    scheduleRisks,
     narrative: r?.body_markdown || r?.summary_notes,
     generatedAt: r ? new Date(r.reviewed_at) : new Date(),
   });
 
   const projectNavItems = [
-    { value: "dashboard", label: "Dashboard", detail: "Project pulse", icon: LayoutDashboard },
-    { value: "schedule", label: "Schedule", detail: `${project.schedule_variance_weeks > 0 ? `+${project.schedule_variance_weeks} wk` : "On plan"}`, icon: CalendarClock },
-    { value: "risk-tally", label: "Risk Tally", detail: `${liveExposureCount} live`, icon: ShieldAlert },
-    { value: "sov", label: "SOV", detail: `${buckets.length} buckets`, icon: FileSpreadsheet },
-    { value: "billing", label: "Billing", detail: `${project.percent_complete}% complete`, icon: ReceiptText },
-    { value: "buckets", label: "Cost Buckets", detail: fmtUSD(rollup.forecastedFinalCost), icon: Boxes },
-    { value: "change-orders", label: "Change Orders", detail: fmtUSD(rollup.pendingCOContract), icon: ClipboardList },
-    { value: "ior-report", label: "IOR Report", detail: `${reviews.length} saved`, icon: Download },
+    { value: "dashboard", label: "Dashboard", detail: "Financial IOR", icon: LayoutDashboard },
+    {
+      value: "schedule",
+      label: "Schedule",
+      detail: `${project.schedule_variance_weeks > 0 ? `+${project.schedule_variance_weeks} wk` : "On plan"}`,
+      icon: CalendarClock,
+    },
+    {
+      value: "risk-tally",
+      label: "Risk Tally",
+      detail: `${liveExposureCount} live`,
+      icon: ShieldAlert,
+    },
+    {
+      value: "sov",
+      label: "SOV / Costs",
+      detail: `${buckets.length} buckets`,
+      icon: FileSpreadsheet,
+    },
+    {
+      value: "billing",
+      label: "Billing",
+      detail: `${project.percent_complete}% complete`,
+      icon: ReceiptText,
+    },
+    {
+      value: "change-orders",
+      label: "Change Orders",
+      detail: fmtUSD(rollup.pendingCOContract),
+      icon: ClipboardList,
+    },
+    {
+      value: "ior-report",
+      label: "IOR Reports",
+      detail: `${reviews.length} saved`,
+      icon: Download,
+    },
   ];
 
   return (
@@ -256,14 +326,26 @@ function ProjectPage() {
         <div className="relative mx-auto max-w-[1400px] px-6 py-8 lg:px-10 lg:py-10">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-4">
-              <Link to="/" className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground hover:text-foreground">
+              <Link
+                to="/"
+                className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground hover:text-foreground"
+              >
                 ← Portfolio
               </Link>
-              <Select value={projectId} onValueChange={(v) => navigate({ to: "/projects/$projectId", params: { projectId: v } })}>
-                <SelectTrigger className="h-8 w-[260px] text-sm"><SelectValue /></SelectTrigger>
+              <Select
+                value={projectId}
+                onValueChange={(v) =>
+                  navigate({ to: "/projects/$projectId", params: { projectId: v } })
+                }
+              >
+                <SelectTrigger className="h-8 w-[260px] text-sm">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   {portfolio.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -288,7 +370,8 @@ function ProjectPage() {
                 {project.name}
               </h1>
               <p className="mt-3 max-w-2xl text-base text-muted-foreground">
-                An IOR operating record, not a budget report. Start from the SOV, work the schedule, then price the exposure.
+                An IOR operating record, not a budget report. Start from the SOV, work the schedule,
+                then price the exposure.
               </p>
             </div>
             <div className="flex flex-col items-end gap-3">
@@ -312,20 +395,32 @@ function ProjectPage() {
               </div>
               <dl className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm md:grid-cols-4">
                 <div>
-                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Client</dt>
+                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    Client
+                  </dt>
                   <dd className="mt-0.5 text-foreground">{project.client || "—"}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Project Manager</dt>
+                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    Project Manager
+                  </dt>
                   <dd className="mt-0.5 text-foreground">{project.project_manager || "—"}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Original Contract</dt>
-                  <dd className="mt-0.5 tabular text-foreground">{fmtUSD(project.original_contract)}</dd>
+                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    Original Contract
+                  </dt>
+                  <dd className="mt-0.5 tabular text-foreground">
+                    {fmtUSD(project.original_contract)}
+                  </dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Forecasted Final</dt>
-                  <dd className="mt-0.5 tabular text-foreground">{fmtUSD(rollup.forecastedFinalContract)}</dd>
+                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    Forecasted Final
+                  </dt>
+                  <dd className="mt-0.5 tabular text-foreground">
+                    {fmtUSD(rollup.forecastedFinalContract)}
+                  </dd>
                 </div>
               </dl>
             </div>
@@ -334,7 +429,10 @@ function ProjectPage() {
       </header>
 
       <main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8">
-        <Tabs defaultValue="dashboard" className="grid gap-6 lg:grid-cols-[238px_minmax(0,1fr)] lg:items-start">
+        <Tabs
+          defaultValue="dashboard"
+          className="grid gap-6 lg:grid-cols-[238px_minmax(0,1fr)] lg:items-start"
+        >
           <aside className="lg:sticky lg:top-6">
             <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1 shadow-card lg:flex-col lg:items-stretch lg:overflow-visible">
               {projectNavItems.map((item) => {
@@ -348,7 +446,9 @@ function ProjectPage() {
                     <Icon className="mr-2 h-4 w-4 shrink-0" />
                     <span className="min-w-0">
                       <span className="block text-sm font-medium leading-tight">{item.label}</span>
-                      <span className="mt-0.5 block truncate text-[11px] font-normal opacity-70">{item.detail}</span>
+                      <span className="mt-0.5 block truncate text-[11px] font-normal opacity-70">
+                        {item.detail}
+                      </span>
                     </span>
                   </TabsTrigger>
                 );
@@ -384,22 +484,16 @@ function ProjectPage() {
                 onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
                 onDeleteExposure={(id) => expDelete.mutate({ id })}
               />
-
-              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-                <WorkspaceHeader title="Decision Log" subtitle="Owner, trade, procurement, and internal choices that need a next action or close-out." compact />
-                <DecisionsTable
-                  decisions={decisions}
-                  onCreate={(d) => decCreate.mutate({ projectId, ...d })}
-                  onUpdate={(id, patch) => decUpdate.mutate({ id, ...patch })}
-                  onDelete={(id) => decDelete.mutate({ id })}
-                />
-              </div>
             </TabsContent>
 
             <TabsContent value="sov" className="mt-0 space-y-6">
               <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
                 <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                  <WorkspaceHeader title="SOV" subtitle="Schedule of values baseline, imported cost buckets, and budget structure." compact />
+                  <WorkspaceHeader
+                    title="SOV / Costs"
+                    subtitle="Imported schedule of values, cost buckets, actual cost, and forecast-to-complete."
+                    compact
+                  />
                   <ImportSOVSheet
                     onImport={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
                     pending={bucketImport.isPending}
@@ -407,111 +501,61 @@ function ProjectPage() {
                 </div>
                 <div className="mt-5 grid gap-3 md:grid-cols-4">
                   <SovMetric label="Cost buckets loaded" value={String(buckets.length)} />
-                  <SovMetric label="Original cost budget" value={fmtUSD(project.original_cost_budget)} />
+                  <SovMetric
+                    label="Original cost budget"
+                    value={fmtUSD(project.original_cost_budget)}
+                  />
                   <SovMetric label="Actual to date" value={fmtUSD(rollup.actualToDate)} />
                   <SovMetric label="Forecast to complete" value={fmtUSD(rollup.ftc)} />
                 </div>
               </div>
-            </TabsContent>
-
-            <TabsContent value="billing" className="mt-0 space-y-6">
-              <BillingWorkspace
-                project={project}
-                rollup={rollup}
-                changeOrders={changeOrders}
+              <CostBucketsTable
+                buckets={buckets}
+                onUpdate={(id, patch) => bucketUpdate.mutate({ id, patch })}
+                onCreate={(name) => bucketCreate.mutate({ projectId, bucket: name })}
+                onDelete={(id) => bucketDelete.mutate({ id })}
               />
             </TabsContent>
 
+            <TabsContent value="billing" className="mt-0 space-y-6">
+              <BillingWorkspace project={project} rollup={rollup} changeOrders={changeOrders} />
+            </TabsContent>
+
             <TabsContent value="ior-report" className="mt-0 space-y-6">
-              <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-                <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2 xl:p-10">
-                  <WorkspaceHeader title="IOR Report" subtitle="Financial outcome, hold posture, review history, and PDF-ready management narrative." compact />
-                  <OutcomeWaterfall
-                    originalContract={project.original_contract}
-                    approvedCOs={rollup.approvedCOContract}
-                    pendingCOs={rollup.weightedPendingCOContract}
-                    forecastedFinalContract={rollup.forecastedFinalContract}
-                    originalCostBudget={project.original_cost_budget}
-                    forecastedFinalCost={rollup.forecastedFinalCost}
-                    forecastedGPBeforeHolds={rollup.forecastedGPBeforeHolds}
-                    exposureHolds={rollup.exposureHolds}
-                    contingencyHold={rollup.contingencyHold}
-                    indicatedGP={rollup.indicatedGP}
-                    indicatedGPpct={rollup.indicatedGPpct}
+              <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <WorkspaceHeader
+                    title="IOR Reports"
+                    subtitle="Create the current PDF and manage saved report cycles."
+                    compact
                   />
-                  <div className="mt-8 rounded-lg border border-hairline bg-surface p-6">
-                    <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                      <span className="inline-block h-px w-6 bg-foreground/50" />
-                      Management Interpretation
-                    </div>
-                    <p className="mt-3 font-serif text-xl leading-snug text-foreground">
-                      This project began as a{" "}
-                      <span className="tabular">{fmtPct(rollup.originalGPpct)}</span> GP job.
-                      Based on current exposures and forecasted final cost, it is now indicating{" "}
-                      <span className="tabular text-accent">{fmtPct(rollup.indicatedGPpct)}</span>.
-                      The company has{" "}
-                      <span className="tabular text-danger">{fmtUSD(rollup.gpAtRisk)}</span>{" "}
-                      of original expected profit at risk.
-                    </p>
+                  <div className="flex flex-wrap gap-2">
+                    <ProjectTruthReview
+                      project={project}
+                      exposures={exposures}
+                      changeOrders={changeOrders}
+                      buckets={buckets}
+                      decisions={decisions}
+                      rollup={rollup}
+                      onSubmit={handleSubmitReview}
+                      pending={reviewSubmit.isPending}
+                    />
+                    <DownloadReportMenu onDownload={downloadCurrentReport} />
                   </div>
                 </div>
-
-                <aside className="space-y-6">
-                  <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                      Margin at risk by category
-                    </div>
-                    <div className="mt-4 space-y-3">
-                      {byCategory.length === 0 && (
-                        <p className="text-sm text-muted-foreground">No active exposures.</p>
-                      )}
-                      {byCategory.map((c) => {
-                        const max = byCategory[0].total || 1;
-                        const pct = (c.total / max) * 100;
-                        return (
-                          <div key={c.category}>
-                            <div className="flex items-baseline justify-between text-xs">
-                              <span className="text-foreground">{CATEGORY_LABELS[c.category]}</span>
-                              <span className="tabular text-muted-foreground">{fmtUSD(c.total)}</span>
-                            </div>
-                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-secondary">
-                              <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                      Exposure aging (active)
-                    </div>
-                    <div className="mt-3 grid grid-cols-3 gap-3">
-                      <AgingCell label="< 7 days" value={aging.fresh} />
-                      <AgingCell label="7-30 days" value={aging.recent} />
-                      <AgingCell label="> 30 days" value={aging.stale} danger />
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-                    <div className="flex items-baseline justify-between">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                        Hold guidance - {project.phase}
-                      </div>
-                    </div>
-                    <div className="mt-3 space-y-3">
-                      <GuidanceRow label="E-Hold" actual={rollup.exposureHolds} target={guidance.eTarget} pct={guidance.ePct} />
-                      <GuidanceRow label="C-Hold" actual={rollup.contingencyHold} target={guidance.cTarget} pct={guidance.cPct} />
-                    </div>
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      Targets are % of remaining cost. If actual is below target, capture a written justification.
-                    </p>
-                  </div>
-                </aside>
+                <div className="mt-5 grid gap-3 md:grid-cols-4">
+                  <SovMetric label="Indicated GP" value={fmtUSD(rollup.indicatedGP)} />
+                  <SovMetric label="Indicated GP %" value={fmtPct(rollup.indicatedGPpct)} />
+                  <SovMetric label="GP at risk" value={fmtUSD(rollup.gpAtRisk)} />
+                  <SovMetric label="Saved reports" value={String(reviews.length)} />
+                </div>
               </div>
               <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-                <WorkspaceHeader title="IOR Reviews" subtitle="Saved IOR report narratives, PDFs, and email-ready summaries." compact />
+                <WorkspaceHeader
+                  title="Saved IOR Reports"
+                  subtitle="Historical narratives, PDFs, and email-ready summaries."
+                  compact
+                />
                 <ReviewsTab
                   reviews={reviews}
                   project={project}
@@ -522,24 +566,11 @@ function ProjectPage() {
               </div>
             </TabsContent>
 
-            <TabsContent value="buckets" className="mt-0">
-              <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-                <WorkspaceHeader title="Cost Buckets" subtitle="Actual-to-date plus forecast-to-complete per bucket." compact />
-                <ImportSOVSheet
-                  onImport={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
-                  pending={bucketImport.isPending}
-                />
-              </div>
-              <CostBucketsTable
-                buckets={buckets}
-                onUpdate={(id, patch) => bucketUpdate.mutate({ id, patch })}
-                onCreate={(name) => bucketCreate.mutate({ projectId, bucket: name })}
-                onDelete={(id) => bucketDelete.mutate({ id })}
-              />
-            </TabsContent>
-
             <TabsContent value="change-orders" className="mt-0">
-              <WorkspaceHeader title="Change Orders" subtitle="Approved COs add to both sides. Pending COs are probability-weighted into the rollup." />
+              <WorkspaceHeader
+                title="Change Orders"
+                subtitle="Approved COs add to both sides. Pending COs are probability-weighted into the rollup."
+              />
               <ChangeOrdersTable
                 changeOrders={changeOrders}
                 onCreate={(d) => coCreate.mutate({ projectId, ...d })}
@@ -554,9 +585,11 @@ function ProjectPage() {
   );
 }
 
-
-
-function DownloadReportMenu({ onDownload }: { onDownload: (style: IorPdfStyle) => void | Promise<void> }) {
+function DownloadReportMenu({
+  onDownload,
+}: {
+  onDownload: (style: IorPdfStyle) => void | Promise<void>;
+}) {
   return (
     <Button size="sm" variant="outline" className="gap-1.5" onClick={() => onDownload("executive")}>
       <Download className="h-3.5 w-3.5" /> Download IOR PDF
@@ -564,8 +597,15 @@ function DownloadReportMenu({ onDownload }: { onDownload: (style: IorPdfStyle) =
   );
 }
 
-
-function WorkspaceHeader({ title, subtitle, compact }: { title: string; subtitle: string; compact?: boolean }) {
+function WorkspaceHeader({
+  title,
+  subtitle,
+  compact,
+}: {
+  title: string;
+  subtitle: string;
+  compact?: boolean;
+}) {
   return (
     <div className={compact ? "" : "mb-5"}>
       <h2 className={`font-serif text-foreground ${compact ? "text-3xl" : "text-4xl"}`}>{title}</h2>
@@ -577,7 +617,9 @@ function WorkspaceHeader({ title, subtitle, compact }: { title: string; subtitle
 function SovMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
       <div className="mt-1 text-lg font-medium tabular text-foreground">{value}</div>
     </div>
   );
@@ -595,7 +637,10 @@ function BillingWorkspace({
   const earnedToDate = rollup.forecastedFinalContract * (project.percent_complete / 100);
   const contractRemaining = Math.max(0, rollup.forecastedFinalContract - earnedToDate);
   const pending = changeOrders.filter((co) => co.status === "Pending");
-  const weightedPending = pending.reduce((sum, co) => sum + co.contract_amount * (co.probability / 100), 0);
+  const weightedPending = pending.reduce(
+    (sum, co) => sum + co.contract_amount * (co.probability / 100),
+    0,
+  );
   const holds = rollup.exposureHolds + rollup.contingencyHold;
 
   return (
@@ -622,9 +667,17 @@ function BillingWorkspace({
           <div className="mt-4 space-y-3">
             <BillingLine label="Original contract" value={fmtUSD(project.original_contract)} />
             <BillingLine label="Approved COs" value={fmtUSD(rollup.approvedCOContract)} />
-            <BillingLine label="Pending COs" value={fmtUSD(rollup.pendingCOContract)} muted={`weighted ${fmtUSD(weightedPending)}`} />
+            <BillingLine
+              label="Pending COs"
+              value={fmtUSD(rollup.pendingCOContract)}
+              muted={`likely ${fmtUSD(weightedPending)}`}
+            />
             <BillingLine label="Percent complete" value={`${project.percent_complete}%`} />
-            <BillingLine label="Indicated GP" value={fmtUSD(rollup.indicatedGP)} danger={rollup.gpAtRisk > 0} />
+            <BillingLine
+              label="Indicated GP"
+              value={fmtUSD(rollup.indicatedGP)}
+              danger={rollup.gpAtRisk > 0}
+            />
           </div>
         </div>
 
@@ -642,7 +695,7 @@ function BillingWorkspace({
                     <th className="px-3 py-2 text-left">CO</th>
                     <th className="px-3 py-2 text-right">Contract</th>
                     <th className="px-3 py-2 text-right">Prob.</th>
-                    <th className="px-3 py-2 text-right">Weighted</th>
+                    <th className="px-3 py-2 text-right">Likely</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-hairline">
@@ -653,8 +706,12 @@ function BillingWorkspace({
                         <div className="text-xs text-muted-foreground">{co.description}</div>
                       </td>
                       <td className="px-3 py-2 text-right tabular">{fmtUSD(co.contract_amount)}</td>
-                      <td className="px-3 py-2 text-right tabular text-muted-foreground">{co.probability}%</td>
-                      <td className="px-3 py-2 text-right tabular">{fmtUSD(co.contract_amount * (co.probability / 100))}</td>
+                      <td className="px-3 py-2 text-right tabular text-muted-foreground">
+                        {co.probability}%
+                      </td>
+                      <td className="px-3 py-2 text-right tabular">
+                        {fmtUSD(co.contract_amount * (co.probability / 100))}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -667,42 +724,25 @@ function BillingWorkspace({
   );
 }
 
-function BillingLine({ label, value, muted, danger }: { label: string; value: string; muted?: string; danger?: boolean }) {
+function BillingLine({
+  label,
+  value,
+  muted,
+  danger,
+}: {
+  label: string;
+  value: string;
+  muted?: string;
+  danger?: boolean;
+}) {
   return (
     <div className="flex items-baseline justify-between gap-4 border-b border-hairline pb-2 last:border-0 last:pb-0">
       <div>
         <div className="text-sm text-muted-foreground">{label}</div>
         {muted && <div className="text-xs text-muted-foreground">{muted}</div>}
       </div>
-      <div className={`font-medium tabular ${danger ? "text-danger" : "text-foreground"}`}>{value}</div>
-    </div>
-  );
-}
-
-function AgingCell({ label, value, danger }: { label: string; value: number; danger?: boolean }) {
-  return (
-    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
-      <div className={`mt-0.5 font-serif text-2xl tabular ${danger && value > 0 ? "text-danger" : "text-foreground"}`}>
+      <div className={`font-medium tabular ${danger ? "text-danger" : "text-foreground"}`}>
         {value}
-      </div>
-    </div>
-  );
-}
-
-function GuidanceRow({ label, actual, target, pct }: { label: string; actual: number; target: number; pct: number }) {
-  const below = actual < target;
-  const ratio = target > 0 ? Math.min(100, (actual / target) * 100) : 100;
-  return (
-    <div>
-      <div className="flex items-baseline justify-between text-xs">
-        <span className="text-foreground">{label} <span className="text-muted-foreground">· {pct}%</span></span>
-        <span className={`tabular ${below ? "text-danger" : "text-success"}`}>
-          {fmtUSD(actual)} <span className="text-muted-foreground">/ {fmtUSD(target)}</span>
-        </span>
-      </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-secondary">
-        <div className={`h-full rounded-full ${below ? "bg-danger" : "bg-success"}`} style={{ width: `${ratio}%` }} />
       </div>
     </div>
   );
@@ -748,7 +788,13 @@ function EditFinancialsDialog({
   const [form, setForm] = useState<EditableProject>(init);
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (o) setForm(init()); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) setForm(init());
+      }}
+    >
       <DialogTrigger asChild>
         <Button size="sm" variant="ghost" className="gap-1.5">
           <Pencil className="h-3.5 w-3.5" /> Edit
@@ -762,32 +808,53 @@ function EditFinancialsDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Project name</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <Input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Client</Label>
-              <Input value={form.client} onChange={(e) => setForm({ ...form, client: e.target.value })} />
+              <Input
+                value={form.client}
+                onChange={(e) => setForm({ ...form, client: e.target.value })}
+              />
             </div>
           </div>
           <div className="space-y-1.5">
             <Label>Project manager</Label>
-            <Input value={form.project_manager} onChange={(e) => setForm({ ...form, project_manager: e.target.value })} placeholder="e.g. Marshall Wilkinson" />
+            <Input
+              value={form.project_manager}
+              onChange={(e) => setForm({ ...form, project_manager: e.target.value })}
+              placeholder="e.g. Marshall Wilkinson"
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Original contract</Label>
-              <MoneyInput value={form.original_contract} onValueChange={(v) => setForm({ ...form, original_contract: v })} />
+              <MoneyInput
+                value={form.original_contract}
+                onValueChange={(v) => setForm({ ...form, original_contract: v })}
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Original cost budget</Label>
-              <MoneyInput value={form.original_cost_budget} onValueChange={(v) => setForm({ ...form, original_cost_budget: v })} />
+              <MoneyInput
+                value={form.original_cost_budget}
+                onValueChange={(v) => setForm({ ...form, original_cost_budget: v })}
+              />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1.5">
               <Label>Phase</Label>
-              <Select value={form.phase} onValueChange={(v) => setForm({ ...form, phase: v as Phase })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select
+                value={form.phase}
+                onValueChange={(v) => setForm({ ...form, phase: v as Phase })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Early">Early</SelectItem>
                   <SelectItem value="Middle">Middle</SelectItem>
@@ -797,33 +864,69 @@ function EditFinancialsDialog({
             </div>
             <div className="space-y-1.5">
               <Label>% complete</Label>
-              <Input type="number" min={0} max={100} value={form.percent_complete} onChange={(e) => setForm({ ...form, percent_complete: Number(e.target.value) })} />
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={form.percent_complete}
+                onChange={(e) => setForm({ ...form, percent_complete: Number(e.target.value) })}
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Schedule variance (wk)</Label>
-              <Input type="number" value={form.schedule_variance_weeks} onChange={(e) => setForm({ ...form, schedule_variance_weeks: Number(e.target.value) })} />
+              <Input
+                type="number"
+                value={form.schedule_variance_weeks}
+                onChange={(e) =>
+                  setForm({ ...form, schedule_variance_weeks: Number(e.target.value) })
+                }
+              />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Baseline completion</Label>
-              <Input type="date" value={form.baseline_completion_date ?? ""} onChange={(e) => setForm({ ...form, baseline_completion_date: e.target.value || null })} />
+              <Input
+                type="date"
+                value={form.baseline_completion_date ?? ""}
+                onChange={(e) =>
+                  setForm({ ...form, baseline_completion_date: e.target.value || null })
+                }
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Forecast completion</Label>
-              <Input type="date" value={form.forecast_completion_date ?? ""} onChange={(e) => setForm({ ...form, forecast_completion_date: e.target.value || null })} />
+              <Input
+                type="date"
+                value={form.forecast_completion_date ?? ""}
+                onChange={(e) =>
+                  setForm({ ...form, forecast_completion_date: e.target.value || null })
+                }
+              />
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label>Hold variance note <span className="text-muted-foreground">(required if holds are below guidance)</span></Label>
-            <Textarea rows={2} value={form.hold_variance_note} onChange={(e) => setForm({ ...form, hold_variance_note: e.target.value })} />
+            <Label>
+              Hold variance note{" "}
+              <span className="text-muted-foreground">(required if holds are below guidance)</span>
+            </Label>
+            <Textarea
+              rows={2}
+              value={form.hold_variance_note}
+              onChange={(e) => setForm({ ...form, hold_variance_note: e.target.value })}
+            />
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
           <Button
             disabled={pending}
-            onClick={() => { onSave(form); setOpen(false); }}
+            onClick={() => {
+              onSave(form);
+              setOpen(false);
+            }}
           >
             {pending ? "Saving…" : "Save changes"}
           </Button>

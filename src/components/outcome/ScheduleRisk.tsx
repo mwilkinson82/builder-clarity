@@ -6,13 +6,33 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash2, AlertTriangle, PackageSearch, Users, ClipboardList, Clock } from "lucide-react";
 import {
-  listSchedule, createMilestone, updateMilestone, deleteMilestone,
-  createScheduleRisk, updateScheduleRisk, deleteScheduleRisk,
-  type MilestoneStatus, type ScheduleRiskKind, type MilestoneRow, type ScheduleRiskRow,
+  Plus,
+  Trash2,
+  AlertTriangle,
+  PackageSearch,
+  Users,
+  ClipboardList,
+  Clock,
+} from "lucide-react";
+import {
+  listSchedule,
+  createMilestone,
+  updateMilestone,
+  deleteMilestone,
+  createScheduleRisk,
+  updateScheduleRisk,
+  deleteScheduleRisk,
+  type MilestoneStatus,
+  type ScheduleRiskKind,
+  type MilestoneRow,
+  type ScheduleRiskRow,
 } from "@/lib/schedule.functions";
 import { updateProjectFinancials, type ProjectRow } from "@/lib/projects.functions";
 
@@ -29,7 +49,10 @@ const STATUS_STYLES: Record<MilestoneStatus, string> = {
   complete: "bg-muted text-muted-foreground border-hairline",
 };
 
-const RISK_META: Record<ScheduleRiskKind, { label: string; icon: typeof PackageSearch; placeholder: string; detailPlaceholder: string }> = {
+const RISK_META: Record<
+  ScheduleRiskKind,
+  { label: string; icon: typeof PackageSearch; placeholder: string; detailPlaceholder: string }
+> = {
   critical_decision: {
     label: "Critical delayed decisions",
     icon: ClipboardList,
@@ -78,10 +101,16 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
     useMutation({ mutationFn: (i: I) => fn({ data: i }), onSuccess: invalidateSchedule });
 
   const msCreate = useScheduleMutation<{ projectId: string; name: string }>(createMs);
-  const msUpdate = useScheduleMutation<{ id: string; patch: Partial<MilestoneRow> }>(updateMs as never);
+  const msUpdate = useScheduleMutation<{ id: string; patch: Partial<MilestoneRow> }>(
+    updateMs as never,
+  );
   const msDelete = useScheduleMutation<{ id: string }>(deleteMs);
-  const rCreate = useScheduleMutation<{ projectId: string; kind: ScheduleRiskKind; title: string }>(createRisk);
-  const rUpdate = useScheduleMutation<{ id: string; patch: Partial<ScheduleRiskRow> }>(updateRisk as never);
+  const rCreate = useScheduleMutation<{ projectId: string; kind: ScheduleRiskKind; title: string }>(
+    createRisk,
+  );
+  const rUpdate = useScheduleMutation<{ id: string; patch: Partial<ScheduleRiskRow> }>(
+    updateRisk as never,
+  );
   const rDelete = useScheduleMutation<{ id: string }>(deleteRisk);
 
   const finMut = useMutation({
@@ -99,7 +128,8 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
         <div className="mb-4">
           <h3 className="font-serif text-2xl text-foreground">Project completion</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            Baseline is what you committed to. Forecast is what you actually believe. Both feed the IOR report.
+            Baseline is what you committed to. Forecast is what you actually believe. Both feed the
+            IOR report.
           </p>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -130,7 +160,8 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
           <div>
             <h3 className="font-serif text-2xl text-foreground">Interim milestones</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              Dry-in, rough-ins, owner-furnished deliveries, substantial completion — anything between today and project completion. Log the reason whenever something slips.
+              Dry-in, rough-ins, owner-furnished deliveries, substantial completion — anything
+              between today and project completion. Log the reason whenever something slips.
             </p>
           </div>
           <AddInline
@@ -141,7 +172,9 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : milestones.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No interim milestones yet. Add your first one above.</p>
+          <p className="text-sm text-muted-foreground">
+            No interim milestones yet. Add your first one above.
+          </p>
         ) : (
           <div className="space-y-3">
             {milestones.map((m) => (
@@ -174,10 +207,20 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
 }
 
 function DateField({
-  label, value, accent, onCommit,
-}: { label: string; value: string | null; accent?: boolean; onCommit: (v: string | null) => void }) {
+  label,
+  value,
+  accent,
+  onCommit,
+}: {
+  label: string;
+  value: string | null;
+  accent?: boolean;
+  onCommit: (v: string | null) => void;
+}) {
   const [local, setLocal] = useState(value ?? "");
-  useEffect(() => { setLocal(value ?? ""); }, [value]);
+  useEffect(() => {
+    setLocal(value ?? "");
+  }, [value]);
   return (
     <div className="space-y-1.5">
       <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</Label>
@@ -196,14 +239,28 @@ function DateField({
 }
 
 function NumberField({
-  label, value, icon, tone, onCommit,
+  label,
+  value,
+  icon,
+  tone,
+  onCommit,
 }: {
-  label: string; value: number; icon?: React.ReactNode;
-  tone?: "danger" | "success"; onCommit: (v: number) => void;
+  label: string;
+  value: number;
+  icon?: React.ReactNode;
+  tone?: "danger" | "success";
+  onCommit: (v: number) => void;
 }) {
   const [local, setLocal] = useState(String(value));
-  useEffect(() => { setLocal(String(value)); }, [value]);
-  const toneCls = tone === "danger" && value > 0 ? "text-danger" : tone === "success" && value <= 0 ? "text-success" : "";
+  useEffect(() => {
+    setLocal(String(value));
+  }, [value]);
+  const toneCls =
+    tone === "danger" && value > 0
+      ? "text-danger"
+      : tone === "success" && value <= 0
+        ? "text-success"
+        : "";
   return (
     <div className="space-y-1.5">
       <Label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -215,7 +272,10 @@ function NumberField({
         onChange={(e) => setLocal(e.target.value)}
         onBlur={() => {
           const n = Number(local);
-          if (!Number.isFinite(n)) { setLocal(String(value)); return; }
+          if (!Number.isFinite(n)) {
+            setLocal(String(value));
+            return;
+          }
           if (n !== value) onCommit(n);
         }}
         className={`tabular ${toneCls}`}
@@ -225,14 +285,18 @@ function NumberField({
 }
 
 function MilestoneRowEditor({
-  row, onPatch, onDelete,
+  row,
+  onPatch,
+  onDelete,
 }: {
   row: MilestoneRow;
   onPatch: (patch: Partial<MilestoneRow>) => void;
   onDelete: () => void;
 }) {
   const [local, setLocal] = useState(row);
-  useEffect(() => { setLocal(row); }, [row]);
+  useEffect(() => {
+    setLocal(row);
+  }, [row]);
   const commit = (patch: Partial<MilestoneRow>) => {
     setLocal((s) => ({ ...s, ...patch }));
     onPatch(patch);
@@ -242,7 +306,9 @@ function MilestoneRowEditor({
     <div className="rounded-md border border-hairline bg-surface p-3">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-12 md:items-end">
         <div className="space-y-1 md:col-span-3">
-          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Milestone</Label>
+          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Milestone
+          </Label>
           <Input
             value={local.name}
             onChange={(e) => setLocal({ ...local, name: e.target.value })}
@@ -250,7 +316,9 @@ function MilestoneRowEditor({
           />
         </div>
         <div className="space-y-1 md:col-span-2">
-          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Baseline</Label>
+          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Baseline
+          </Label>
           <Input
             type="date"
             value={local.baseline_date ?? ""}
@@ -258,7 +326,9 @@ function MilestoneRowEditor({
           />
         </div>
         <div className="space-y-1 md:col-span-2">
-          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Forecast</Label>
+          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Forecast
+          </Label>
           <Input
             type="date"
             value={local.forecast_date ?? ""}
@@ -266,21 +336,29 @@ function MilestoneRowEditor({
           />
         </div>
         <div className="space-y-1 md:col-span-2">
-          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Status</Label>
+          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Status
+          </Label>
           <Select
             value={local.status}
             onValueChange={(v) => commit({ status: v as MilestoneStatus })}
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               {(Object.keys(STATUS_LABEL) as MilestoneStatus[]).map((s) => (
-                <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>
+                <SelectItem key={s} value={s}>
+                  {STATUS_LABEL[s]}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
         <div className="space-y-1 md:col-span-2">
-          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Owner</Label>
+          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Owner
+          </Label>
           <Input
             value={local.owner}
             onChange={(e) => setLocal({ ...local, owner: e.target.value })}
@@ -304,14 +382,18 @@ function MilestoneRowEditor({
             className="min-h-[140px] text-sm leading-relaxed"
             value={local.delay_reason}
             onChange={(e) => setLocal({ ...local, delay_reason: e.target.value })}
-            onBlur={() => row.delay_reason !== local.delay_reason && commit({ delay_reason: local.delay_reason })}
+            onBlur={() =>
+              row.delay_reason !== local.delay_reason &&
+              commit({ delay_reason: local.delay_reason })
+            }
             placeholder="What's causing the slip? Long-lead procurement, owner decision, weather, trade manpower…"
           />
-
         </div>
       )}
       <div className="mt-2 flex justify-end">
-        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_STYLES[local.status]}`}>
+        <span
+          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${STATUS_STYLES[local.status]}`}
+        >
           {STATUS_LABEL[local.status]}
         </span>
       </div>
@@ -320,7 +402,11 @@ function MilestoneRowEditor({
 }
 
 function RiskGroup({
-  kind, items, onAdd, onPatch, onDelete,
+  kind,
+  items,
+  onAdd,
+  onPatch,
+  onDelete,
 }: {
   kind: ScheduleRiskKind;
   items: ScheduleRiskRow[];
@@ -340,7 +426,9 @@ function RiskGroup({
           <div>
             <h4 className="font-serif text-xl text-foreground">{meta.label}</h4>
             <p className="text-xs text-muted-foreground">
-              {items.length === 0 ? "None logged yet." : `${items.length} item${items.length === 1 ? "" : "s"}`}
+              {items.length === 0
+                ? "None logged yet."
+                : `${items.length} item${items.length === 1 ? "" : "s"}`}
             </p>
           </div>
         </div>
@@ -364,7 +452,10 @@ function RiskGroup({
 }
 
 function RiskItem({
-  row, detailPlaceholder, onPatch, onDelete,
+  row,
+  detailPlaceholder,
+  onPatch,
+  onDelete,
 }: {
   row: ScheduleRiskRow;
   detailPlaceholder: string;
@@ -372,13 +463,17 @@ function RiskItem({
   onDelete: () => void;
 }) {
   const [local, setLocal] = useState(row);
-  useEffect(() => { setLocal(row); }, [row]);
+  useEffect(() => {
+    setLocal(row);
+  }, [row]);
   return (
     <div className="group rounded-md border border-hairline bg-surface p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 space-y-3">
           <div className="space-y-1">
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Title</Label>
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Title
+            </Label>
             <Input
               value={local.title}
               onChange={(e) => setLocal({ ...local, title: e.target.value })}
@@ -388,17 +483,16 @@ function RiskItem({
           </div>
           <div className="space-y-1">
             <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Detail — owner, impact, mitigation, dates
+              Detail - owner, blocked scope, dollar/schedule impact, dates
             </Label>
             <Textarea
-              rows={12}
-              className="min-h-[280px] text-sm leading-relaxed"
+              rows={5}
+              className="min-h-[140px] text-sm leading-relaxed"
               placeholder={detailPlaceholder}
               value={local.detail}
               onChange={(e) => setLocal({ ...local, detail: e.target.value })}
               onBlur={() => row.detail !== local.detail && onPatch({ detail: local.detail })}
             />
-
           </div>
         </div>
         <Button
@@ -415,9 +509,7 @@ function RiskItem({
   );
 }
 
-function AddInline({
-  placeholder, onAdd,
-}: { placeholder: string; onAdd: (v: string) => void }) {
+function AddInline({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string) => void }) {
   const [v, setV] = useState("");
   const submit = () => {
     const t = v.trim();
@@ -431,7 +523,12 @@ function AddInline({
         className="h-9"
         value={v}
         onChange={(e) => setV(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            submit();
+          }
+        }}
         placeholder={placeholder}
       />
       <Button size="sm" variant="outline" className="gap-1 shrink-0" onClick={submit}>

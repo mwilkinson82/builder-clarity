@@ -75,12 +75,13 @@ export function RiskAllocationWorkbench({
                   Put every exposure into dollars.
                 </h2>
                 <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                  Log the risk, choose eliminate/recover/offset/accept, and close it when the exposure is gone.
+                  Log the risk, choose eliminate/recover/offset/accept, and close it when the
+                  exposure is gone.
                 </p>
               </div>
               <div className="grid min-w-[240px] grid-cols-2 gap-2">
                 <MetricTile label="Live allocated risk" value={fmtUSD(activeRisk)} tone="danger" />
-                <MetricTile label="Restored/closed" value={fmtUSD(restoredRisk)} tone="success" />
+                <MetricTile label="Released risk" value={fmtUSD(restoredRisk)} tone="success" />
                 <MetricTile label="Exposure Hold" value={fmtUSD(rollup.exposureHolds)} />
                 <MetricTile label="Contingency Hold" value={fmtUSD(rollup.contingencyHold)} />
               </div>
@@ -88,7 +89,12 @@ export function RiskAllocationWorkbench({
 
             <div className="mt-6 grid gap-3 md:grid-cols-4">
               {treatmentRows.map((row) => (
-                <TreatmentCard key={row.path} label={RESPONSE_LABELS[row.path]} total={row.total} count={row.count} />
+                <TreatmentCard
+                  key={row.path}
+                  label={RESPONSE_LABELS[row.path]}
+                  total={row.total}
+                  count={row.count}
+                />
               ))}
             </div>
           </div>
@@ -99,13 +105,18 @@ export function RiskAllocationWorkbench({
               GP Impact
             </div>
             <div className="mt-5 space-y-3">
-              <BridgeRow label="Forecasted GP before holds" value={rollup.forecastedGPBeforeHolds} />
+              <BridgeRow
+                label="Forecasted GP before holds"
+                value={rollup.forecastedGPBeforeHolds}
+              />
               <BridgeRow label="Less Exposure Hold" value={-rollup.exposureHolds} danger />
               <BridgeRow label="Less Contingency Hold" value={-rollup.contingencyHold} danger />
               <div className="rounded-md border border-accent/50 bg-accent/10 px-4 py-3">
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="text-sm font-medium text-foreground">Indicated GP</span>
-                  <span className="font-serif text-3xl tabular text-accent">{fmtUSD(rollup.indicatedGP)}</span>
+                  <span className="font-serif text-3xl tabular text-accent">
+                    {fmtUSD(rollup.indicatedGP)}
+                  </span>
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   {fmtPct(rollup.indicatedGPpct)} vs original {fmtPct(rollup.originalGPpct)}
@@ -116,7 +127,9 @@ export function RiskAllocationWorkbench({
               <div className="flex items-start gap-2">
                 <TrendingDown className="mt-0.5 h-4 w-4 text-danger" />
                 <div>
-                  <div className="text-sm font-medium text-foreground">{fmtUSD(rollup.gpAtRisk)} original GP at risk</div>
+                  <div className="text-sm font-medium text-foreground">
+                    {fmtUSD(rollup.gpAtRisk)} original GP at risk
+                  </div>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {acceptedRisk > 0
                       ? `${fmtUSD(acceptedRisk)} is currently being accepted instead of eliminated, recovered, or offset.`
@@ -135,7 +148,8 @@ export function RiskAllocationWorkbench({
             <div>
               <h3 className="font-serif text-3xl text-foreground">Open risk tally</h3>
               <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                This is the running project meeting ledger for dollars currently held against the job.
+                This is the running project meeting ledger for dollars currently held against the
+                job. Likely exposure is dollar risk multiplied by probability.
               </p>
             </div>
             {topRisk && (
@@ -167,11 +181,22 @@ export function RiskAllocationWorkbench({
   );
 }
 
-function MetricTile({ label, value, tone }: { label: string; value: string; tone?: "danger" | "success" }) {
-  const cls = tone === "danger" ? "text-danger" : tone === "success" ? "text-success" : "text-foreground";
+function MetricTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "danger" | "success";
+}) {
+  const cls =
+    tone === "danger" ? "text-danger" : tone === "success" ? "text-success" : "text-foreground";
   return (
     <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-semibold uppercase leading-tight tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
       <div className={`mt-1 font-serif text-2xl tabular leading-none ${cls}`}>{value}</div>
     </div>
   );
@@ -182,7 +207,9 @@ function TreatmentCard({ label, total, count }: { label: string; total: number; 
     <div className="rounded-md border border-hairline bg-surface px-4 py-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-sm font-medium text-foreground">{label}</div>
-        <div className="rounded-full bg-card px-2 py-0.5 text-[10px] text-muted-foreground">{count}</div>
+        <div className="rounded-full bg-card px-2 py-0.5 text-[10px] text-muted-foreground">
+          {count}
+        </div>
       </div>
       <div className="mt-2 font-serif text-2xl tabular text-foreground">{fmtUSD(total)}</div>
     </div>
@@ -265,11 +292,16 @@ function HoldRow({
         </div>
         <div className={`text-right text-sm tabular ${below ? "text-danger" : "text-success"}`}>
           {fmtUSD(actual)}
-          <div className="text-[11px] text-muted-foreground">target {fmtUSD(target)} ({pct}%)</div>
+          <div className="text-[11px] text-muted-foreground">
+            target {fmtUSD(target)} ({pct}%)
+          </div>
         </div>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
-        <div className={`h-full rounded-full ${below ? "bg-danger" : "bg-success"}`} style={{ width: `${ratio}%` }} />
+        <div
+          className={`h-full rounded-full ${below ? "bg-danger" : "bg-success"}`}
+          style={{ width: `${ratio}%` }}
+        />
       </div>
     </div>
   );
