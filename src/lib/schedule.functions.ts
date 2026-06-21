@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import type { HoldClass, ResponsePath } from "@/lib/ior";
+import type { ExposureCategory, HoldClass, ResponsePath } from "@/lib/ior";
 
 export type MilestoneStatus = "on_track" | "at_risk" | "delayed" | "complete";
 export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_decision";
@@ -39,9 +39,16 @@ const MILESTONE_STATUSES = ["on_track", "at_risk", "delayed", "complete"] as con
 const RISK_KINDS = ["procurement", "trade_performance", "critical_decision"] as const;
 const RESPONSE_PATHS = ["eliminate", "recover", "offset", "accept"] as const;
 const HOLD_CLASSES = ["E-Hold", "C-Hold", "Both", "None"] as const;
+const RISK_EXPOSURE_CATEGORY: Record<ScheduleRiskKind, ExposureCategory> = {
+  critical_decision: "owner_decision",
+  procurement: "procurement",
+  trade_performance: "trade_performance",
+};
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
+const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) =>
+  error?.code === "PGRST204" && (error.message ?? "").includes(`'${column}' column`);
 
 const normalizeScheduleRisk = (r: Record<string, unknown>): ScheduleRiskRow => ({
   id: r.id as string,
@@ -81,9 +88,32 @@ export const listSchedule = createServerFn({ method: "GET" })
     ]);
     if (mRes.error) throw new Error(mRes.error.message);
     if (rRes.error) throw new Error(rRes.error.message);
+    const risks = (rRes.data ?? []).map((r) => normalizeScheduleRisk(r as Record<string, unknown>));
+    const unlinkedTitles = Array.from(
+      new Set(risks.filter((r) => !r.linked_exposure_id && r.title).map((r) => r.title)),
+    );
+    if (unlinkedTitles.length > 0) {
+      const { data: exposures, error: exposureError } = await context.supabase
+        .from("exposures")
+        .select("id,title,category,status")
+        .eq("project_id", data.projectId)
+        .in("title", unlinkedTitles)
+        .in("status", ["active", "escalated"]);
+      if (!exposureError) {
+        for (const risk of risks) {
+          if (risk.linked_exposure_id) continue;
+          const match = exposures?.find(
+            (exposure) =>
+              exposure.title === risk.title &&
+              exposure.category === RISK_EXPOSURE_CATEGORY[risk.kind],
+          );
+          if (match?.id) risk.linked_exposure_id = match.id as string;
+        }
+      }
+    }
     return {
       milestones: (mRes.data ?? []) as unknown as MilestoneRow[],
-      risks: (rRes.data ?? []).map((r) => normalizeScheduleRisk(r as Record<string, unknown>)),
+      risks,
     };
   });
 
@@ -193,10 +223,15 @@ export const updateScheduleRisk = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), patch: riskPatch }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase
-      .from("schedule_risks")
-      .update(data.patch)
-      .eq("id", data.id);
+    const savePatch = (patch: z.input<typeof riskPatch>) =>
+      context.supabase.from("schedule_risks").update(patch).eq("id", data.id);
+    let { error } = await savePatch(data.patch);
+    if (isMissingRestColumn(error, "linked_exposure_id") && "linked_exposure_id" in data.patch) {
+      const retryPatch = { ...data.patch };
+      delete retryPatch.linked_exposure_id;
+      if (Object.keys(retryPatch).length === 0) return { ok: true, linkSkipped: true };
+      ({ error } = await savePatch(retryPatch));
+    }
     if (error) throw new Error(error.message);
     return { ok: true };
   });

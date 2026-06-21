@@ -177,7 +177,7 @@ export function ScheduleRisk({
       await Promise.all([invalidateSchedule(), invalidateProject()]);
       await qc.refetchQueries({ queryKey: ["project", projectId] });
       toast.success("Risk allocation created", {
-        description: `${risk.title} is now linked into the open risk tally.`,
+        description: `${risk.title} is now in the open risk tally.`,
       });
     },
     onError: (error) => {
