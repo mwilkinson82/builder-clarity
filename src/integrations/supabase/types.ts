@@ -185,6 +185,71 @@ export type Database = {
           },
         ];
       };
+      daily_reports: {
+        Row: {
+          attachment_name: string;
+          attachment_path: string;
+          attachment_type: string;
+          author: string;
+          created_at: string;
+          created_by: string;
+          crew_count: number;
+          delays: string;
+          id: string;
+          notes: string;
+          project_id: string;
+          report_date: string;
+          safety_notes: string;
+          updated_at: string;
+          weather: string;
+          work_performed: string;
+        };
+        Insert: {
+          attachment_name?: string;
+          attachment_path?: string;
+          attachment_type?: string;
+          author?: string;
+          created_at?: string;
+          created_by?: string;
+          crew_count?: number;
+          delays?: string;
+          id?: string;
+          notes?: string;
+          project_id: string;
+          report_date?: string;
+          safety_notes?: string;
+          updated_at?: string;
+          weather?: string;
+          work_performed?: string;
+        };
+        Update: {
+          attachment_name?: string;
+          attachment_path?: string;
+          attachment_type?: string;
+          author?: string;
+          created_at?: string;
+          created_by?: string;
+          crew_count?: number;
+          delays?: string;
+          id?: string;
+          notes?: string;
+          project_id?: string;
+          report_date?: string;
+          safety_notes?: string;
+          updated_at?: string;
+          weather?: string;
+          work_performed?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "daily_reports_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       decisions: {
         Row: {
           created_at: string;

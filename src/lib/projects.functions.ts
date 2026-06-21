@@ -287,6 +287,7 @@ export const listProjects = createServerFn({ method: "GET" })
       ).length;
       return {
         id: p.id,
+        job_number: p.job_number,
         name: p.name,
         client: p.client,
         phase: p.phase,
@@ -294,6 +295,8 @@ export const listProjects = createServerFn({ method: "GET" })
         schedule_variance_weeks: p.schedule_variance_weeks,
         original_contract: p.original_contract,
         forecasted_final_contract: r.forecastedFinalContract,
+        forecasted_final_cost: r.forecastedFinalCost,
+        forecasted_gp_before_holds: r.forecastedGPBeforeHolds,
         indicated_gp: r.indicatedGP,
         indicated_gp_pct: r.indicatedGPpct,
         original_gp_pct: r.originalGPpct,

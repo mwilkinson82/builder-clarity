@@ -33,6 +33,7 @@ import { ReviewsTab } from "@/components/outcome/ReviewsTab";
 import { RiskAllocationWorkbench } from "@/components/outcome/RiskAllocationWorkbench";
 import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
+import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
 import {
   createExposure,
   updateExposure,
@@ -69,6 +70,7 @@ import {
   CalendarClock,
   ClipboardList,
   Download,
+  FileText,
   FileSpreadsheet,
   LayoutDashboard,
   ListChecks,
@@ -337,6 +339,12 @@ function ProjectPage() {
       icon: CalendarClock,
     },
     {
+      value: "daily-reports",
+      label: "Daily Reports",
+      detail: "Job log",
+      icon: FileText,
+    },
+    {
       value: "risk-tally",
       label: "Risk Tally",
       detail: `${liveExposureCount} live`,
@@ -535,6 +543,10 @@ function ProjectPage() {
                 subtitle="Completion forecast, interim milestones, critical path movement, and schedule-linked risk."
               />
               <ScheduleRisk project={project} lastReviewForecast={lastReviewForecast} />
+            </TabsContent>
+
+            <TabsContent value="daily-reports" className="mt-0">
+              <DailyReportsWorkspace projectId={projectId} />
             </TabsContent>
 
             <TabsContent value="risk-tally" className="mt-0 space-y-6">
