@@ -16,6 +16,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -29,9 +36,12 @@ import {
   BriefcaseBusiness,
   CalendarClock,
   LogOut,
+  MailPlus,
   Plus,
+  Search,
 } from "lucide-react";
 import { fmtUSD, fmtPct } from "@/lib/format";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/")({
   head: () => ({
@@ -64,6 +74,8 @@ function scheduleFor(weeks: number, scheduleRiskCount: number) {
   return { label: "On plan", score, className: "border-success/40 bg-success/10 text-success" };
 }
 
+type PortfolioSortMode = "manager" | "profitability" | "gp-risk" | "schedule" | "name";
+
 function PortfolioPage() {
   const list = useServerFn(listProjects);
   const seed = useServerFn(seedDemoIfEmpty);
@@ -72,7 +84,42 @@ function PortfolioPage() {
     queryKey: ["projects"],
     queryFn: () => list(),
   });
-  const portfolioTotals = useMemo(() => buildPortfolioTotals(projects), [projects]);
+  const [search, setSearch] = useState("");
+  const [managerFilter, setManagerFilter] = useState("all");
+  const [sortMode, setSortMode] = useState<PortfolioSortMode>("manager");
+  const managerNames = useMemo(
+    () =>
+      Array.from(new Set(projects.map((p) => p.project_manager.trim()).filter(Boolean))).sort(
+        (a, b) => a.localeCompare(b),
+      ),
+    [projects],
+  );
+  const visibleProjects = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = projects.filter((p) => {
+      const manager = p.project_manager.trim();
+      const matchesManager = managerFilter === "all" || manager === managerFilter;
+      const haystack = [p.name, p.job_number, p.client, p.project_manager].join(" ").toLowerCase();
+      return matchesManager && (!q || haystack.includes(q));
+    });
+    const sorted = [...filtered];
+    sorted.sort((a, b) => {
+      if (sortMode === "profitability") return a.indicated_gp_pct - b.indicated_gp_pct;
+      if (sortMode === "gp-risk") return b.gp_at_risk - a.gp_at_risk;
+      if (sortMode === "schedule") {
+        const aScore = a.schedule_variance_weeks * 10 + a.schedule_risk_count;
+        const bScore = b.schedule_variance_weeks * 10 + b.schedule_risk_count;
+        return bScore - aScore;
+      }
+      if (sortMode === "name") return a.name.localeCompare(b.name);
+      return (
+        (a.project_manager || "Unassigned").localeCompare(b.project_manager || "Unassigned") ||
+        a.name.localeCompare(b.name)
+      );
+    });
+    return sorted;
+  }, [managerFilter, projects, search, sortMode]);
+  const portfolioTotals = useMemo(() => buildPortfolioTotals(visibleProjects), [visibleProjects]);
 
   const seededRef = useRef(false);
   useEffect(() => {
@@ -106,6 +153,7 @@ function PortfolioPage() {
             <h1 className="mt-1 font-serif text-3xl text-foreground">Portfolio</h1>
           </div>
           <div className="flex items-center gap-2">
+            <InviteByMagicLinkButton />
             <NewProjectButton />
             <Button variant="ghost" size="sm" onClick={signOut} className="gap-1.5">
               <LogOut className="h-3.5 w-3.5" /> Sign out
@@ -122,12 +170,52 @@ function PortfolioPage() {
         ) : (
           <div className="space-y-6">
             <PortfolioDashboard totals={portfolioTotals} />
+            <div className="flex flex-col gap-3 rounded-lg border border-hairline bg-card p-4 shadow-card lg:flex-row lg:items-center">
+              <div className="relative flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search project, job number, client, or PM"
+                  className="pl-9"
+                />
+              </div>
+              <Select value={managerFilter} onValueChange={setManagerFilter}>
+                <SelectTrigger className="w-full lg:w-[220px]">
+                  <SelectValue placeholder="Project manager" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All project managers</SelectItem>
+                  {managerNames.map((manager) => (
+                    <SelectItem key={manager} value={manager}>
+                      {manager}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={sortMode} onValueChange={(v) => setSortMode(v as PortfolioSortMode)}>
+                <SelectTrigger className="w-full lg:w-[220px]">
+                  <SelectValue placeholder="Sort" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manager">PM A-Z</SelectItem>
+                  <SelectItem value="profitability">Profitability low to high</SelectItem>
+                  <SelectItem value="gp-risk">GP at risk high to low</SelectItem>
+                  <SelectItem value="schedule">Schedule risk high to low</SelectItem>
+                  <SelectItem value="name">Project A-Z</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="whitespace-nowrap text-xs text-muted-foreground">
+                Showing {visibleProjects.length} of {projects.length}
+              </div>
+            </div>
             <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
               <Table>
                 <TableHeader>
                   <TableRow className="bg-surface">
                     <TableHead>Project</TableHead>
                     <TableHead>Job #</TableHead>
+                    <TableHead>Project Manager</TableHead>
                     <TableHead className="text-right">Original Contract</TableHead>
                     <TableHead className="text-right">Plan GP %</TableHead>
                     <TableHead className="text-right">Indicated GP %</TableHead>
@@ -138,7 +226,17 @@ function PortfolioPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {projects.map((p) => {
+                  {visibleProjects.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={10}
+                        className="py-10 text-center text-sm text-muted-foreground"
+                      >
+                        No projects match the current portfolio filters.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {visibleProjects.map((p) => {
                     const s = statusFor(p.original_gp_pct, p.indicated_gp_pct);
                     const schedule = scheduleFor(p.schedule_variance_weeks, p.schedule_risk_count);
                     const jobNumber = p.job_number || `ID ${p.id.slice(0, 8).toUpperCase()}`;
@@ -179,6 +277,9 @@ function PortfolioPage() {
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-sm tabular text-foreground">
                           {jobNumber}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-sm text-foreground">
+                          {p.project_manager || "Unassigned"}
                         </TableCell>
                         <TableCell className="text-right tabular">
                           {fmtUSD(p.original_contract)}
@@ -446,11 +547,83 @@ function EmptyState() {
   );
 }
 
+function InviteByMagicLinkButton() {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const sendInvite = async () => {
+    const inviteEmail = email.trim();
+    if (!inviteEmail) return;
+    setSending(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: inviteEmail,
+        options: {
+          emailRedirectTo: window.location.origin,
+          shouldCreateUser: true,
+        },
+      });
+      if (error) throw error;
+      toast.success("Magic link sent", {
+        description: `${inviteEmail} can sign in and create projects.`,
+      });
+      setEmail("");
+      setOpen(false);
+    } catch (err) {
+      toast.error("Magic link did not send", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="gap-1.5">
+          <MailPlus className="h-3.5 w-3.5" /> Invite
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="font-serif text-2xl">Invite by magic link</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="space-y-1.5">
+            <Label>Email</Label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="pm@company.com"
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The link signs them in without a password. New users can create projects immediately.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!email.trim() || sending} onClick={sendInvite}>
+            {sending ? "Sending…" : "Send magic link"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function NewProjectButton() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [jobNumber, setJobNumber] = useState("");
   const [client, setClient] = useState("");
+  const [projectManager, setProjectManager] = useState("");
+  const [phase, setPhase] = useState<"Early" | "Middle" | "Late">("Early");
   const [contract, setContract] = useState("");
   const [costBudget, setCostBudget] = useState("");
   const navigate = useNavigate();
@@ -464,6 +637,8 @@ function NewProjectButton() {
           name,
           job_number: jobNumber,
           client,
+          project_manager: projectManager,
+          phase,
           original_contract: Number(contract) || 0,
           original_cost_budget: Number(costBudget) || 0,
         },
@@ -474,6 +649,8 @@ function NewProjectButton() {
       setName("");
       setJobNumber("");
       setClient("");
+      setProjectManager("");
+      setPhase("Early");
       setContract("");
       setCostBudget("");
       navigate({ to: "/projects/$projectId", params: { projectId: id } });
@@ -505,6 +682,32 @@ function NewProjectButton() {
           <div className="space-y-1.5">
             <Label>Client</Label>
             <Input value={client} onChange={(e) => setClient(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Project manager</Label>
+              <Input
+                value={projectManager}
+                onChange={(e) => setProjectManager(e.target.value)}
+                placeholder="e.g. Marshall Wilkinson"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Phase</Label>
+              <Select
+                value={phase}
+                onValueChange={(v) => setPhase(v as "Early" | "Middle" | "Late")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Early">Early</SelectItem>
+                  <SelectItem value="Middle">Middle</SelectItem>
+                  <SelectItem value="Late">Late</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">

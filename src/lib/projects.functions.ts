@@ -291,6 +291,7 @@ export const listProjects = createServerFn({ method: "GET" })
         job_number: p.job_number,
         name: p.name,
         client: p.client,
+        project_manager: p.project_manager,
         phase: p.phase,
         percent_complete: p.percent_complete,
         schedule_variance_weeks: p.schedule_variance_weeks,
@@ -462,6 +463,8 @@ const createProjectInput = z.object({
   name: z.string().min(1).max(200),
   job_number: z.string().max(100).default(""),
   client: z.string().max(200).default(""),
+  project_manager: z.string().max(200).default(""),
+  phase: z.enum(["Early", "Middle", "Late"]).default("Early"),
   original_contract: z.number().min(0),
   original_cost_budget: z.number().min(0),
 });
@@ -477,6 +480,8 @@ export const createProject = createServerFn({ method: "POST" })
         name: data.name,
         job_number: data.job_number,
         client: data.client,
+        project_manager: data.project_manager,
+        phase: data.phase,
         original_contract: data.original_contract,
         original_cost_budget: data.original_cost_budget,
       })
@@ -997,6 +1002,16 @@ export const importCostBuckets = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof importInput>) => importInput.parse(input))
   .handler(async ({ data, context }) => {
+    const { data: project, error: projectErr } = await context.supabase
+      .from("projects")
+      .select("id")
+      .eq("id", data.projectId)
+      .eq("owner_id", context.userId)
+      .single();
+    if (projectErr || !project) {
+      throw new Error(projectErr?.message ?? "Project not found or not accessible.");
+    }
+
     if (data.mode === "replace") {
       const { error: delErr } = await context.supabase
         .from("cost_buckets")
@@ -1047,7 +1062,8 @@ export const importCostBuckets = createServerFn({ method: "POST" })
     const { error: updErr } = await context.supabase
       .from("projects")
       .update({ original_cost_budget: total })
-      .eq("id", data.projectId);
+      .eq("id", data.projectId)
+      .eq("owner_id", context.userId);
     if (updErr) throw new Error(updErr.message);
 
     return { ok: true, inserted: insertRows.length, originalCostBudget: total };

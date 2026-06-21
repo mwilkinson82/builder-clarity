@@ -632,7 +632,36 @@ function ProjectPage() {
                     compact
                   />
                   <ImportSOVSheet
-                    onImport={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
+                    onImport={(rows, mode) =>
+                      bucketImport.mutate(
+                        { projectId, rows, mode },
+                        {
+                          onSuccess: (result) => {
+                            const imported =
+                              typeof result === "object" && result && "inserted" in result
+                                ? Number((result as { inserted: number }).inserted)
+                                : rows.length;
+                            const budget =
+                              typeof result === "object" && result && "originalCostBudget" in result
+                                ? Number(
+                                    (result as { originalCostBudget: number }).originalCostBudget,
+                                  )
+                                : rows.reduce(
+                                    (total, row) => total + row.actual_to_date + row.ftc,
+                                    0,
+                                  );
+                            toast.success("SOV imported", {
+                              description: `${imported} cost buckets loaded. Original cost budget is now ${fmtUSD(budget)}.`,
+                            });
+                          },
+                          onError: (err) => {
+                            toast.error("SOV import did not save", {
+                              description: err instanceof Error ? err.message : "Try again.",
+                            });
+                          },
+                        },
+                      )
+                    }
                     pending={bucketImport.isPending}
                   />
                 </div>

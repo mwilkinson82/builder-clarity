@@ -5,19 +5,43 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetFooter, SheetDescription,
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+  SheetFooter,
+  SheetDescription,
 } from "@/components/ui/sheet";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import { Upload, Check, AlertTriangle, FileSpreadsheet } from "lucide-react";
 import {
-  parseCsv, parseXlsx, parsePaste, parsePdf, guessColumnMap, applyMapping,
-
-  type Matrix, type ParsedSheet, type ColumnMap, type FieldKey, type BucketImportRow,
+  parseCsv,
+  parseXlsx,
+  parsePaste,
+  parsePdf,
+  guessColumnMap,
+  applyMapping,
+  missingRequiredMappings,
+  type Matrix,
+  type ParsedSheet,
+  type ColumnMap,
+  type FieldKey,
+  type BucketImportRow,
 } from "@/lib/sov-import";
 import { fmtUSD } from "@/lib/format";
 
@@ -34,7 +58,16 @@ export function ImportSOVSheet({
   onImport,
   pending,
 }: {
-  onImport: (rows: { bucket: string; original_budget: number; actual_to_date: number; ftc: number; sort_order: number }[], mode: "replace" | "append") => void;
+  onImport: (
+    rows: {
+      bucket: string;
+      original_budget: number;
+      actual_to_date: number;
+      ftc: number;
+      sort_order: number;
+    }[],
+    mode: "replace" | "append",
+  ) => void;
   pending?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -60,17 +93,21 @@ export function ImportSOVSheet({
       setHasHeader(p.hasHeader);
       setMap(guessColumnMap(p.matrix, p.hasHeader));
       if (p.matrix.length === 0) {
-        setError("No tabular rows detected. If this is a scanned PDF, export it as CSV/XLSX or paste the rows manually.");
+        setError(
+          "No tabular rows detected. If this is a scanned PDF, export it as CSV/XLSX or paste the rows manually.",
+        );
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to parse file.");
     }
   };
 
-
   const handlePaste = () => {
     setError(null);
-    if (!pasteText.trim()) { setError("Paste some rows first."); return; }
+    if (!pasteText.trim()) {
+      setError("Paste some rows first.");
+      return;
+    }
     const p = parsePaste(pasteText);
     setParsed(p);
     setHasHeader(p.hasHeader);
@@ -78,7 +115,10 @@ export function ImportSOVSheet({
   };
 
   const reset = () => {
-    setParsed(null); setMap({}); setError(null); setPasteText("");
+    setParsed(null);
+    setMap({});
+    setError(null);
+    setPasteText("");
     if (fileRef.current) fileRef.current.value = "";
   };
 
@@ -86,16 +126,33 @@ export function ImportSOVSheet({
   const valid = rows.filter((r) => r.valid);
   const invalid = rows.filter((r) => !r.valid);
   const total = valid.reduce((s, r) => s + r.original_budget, 0);
+  const missingMappings = parsed ? missingRequiredMappings(map) : [];
 
   const commit = () => {
-    if (valid.length === 0) { setError("No valid rows to import."); return; }
-    onImport(valid.map(({ valid: _v, reason: _r, ...row }) => row), mode);
+    if (missingMappings.length > 0) {
+      setError(`Map these required columns before importing: ${missingMappings.join(", ")}.`);
+      return;
+    }
+    if (valid.length === 0) {
+      setError("No valid rows to import.");
+      return;
+    }
+    onImport(
+      valid.map(({ valid: _v, reason: _r, ...row }) => row),
+      mode,
+    );
     setOpen(false);
     reset();
   };
 
   return (
-    <Sheet open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset(); }}>
+    <Sheet
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) reset();
+      }}
+    >
       <SheetTrigger asChild>
         <Button variant="outline" size="sm" className="gap-1.5">
           <Upload className="h-3.5 w-3.5" /> Import SOV
@@ -105,12 +162,28 @@ export function ImportSOVSheet({
         <SheetHeader>
           <SheetTitle className="font-serif text-2xl">Import Schedule of Values</SheetTitle>
           <SheetDescription>
-            CSV from QuickBooks, an Excel file, or pasted cells from any spreadsheet. We'll auto-detect the columns and you confirm the mapping before anything is created.
+            CSV from QuickBooks, an Excel file, or pasted cells from any spreadsheet. We'll
+            auto-detect the columns and you confirm the mapping before anything is created.
           </SheetDescription>
         </SheetHeader>
 
         {!parsed ? (
           <Tabs defaultValue="csv" className="mt-6">
+            <div className="mb-4 rounded-md border border-hairline bg-surface p-3 text-xs text-muted-foreground">
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground">
+                Import rules
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>Required: one row per cost bucket with Bucket name and Original budget.</div>
+                <div>
+                  Optional: Actual to date and FTC. If FTC is blank, it becomes Budget minus Actual.
+                </div>
+                <div>Do not include subtotal, grand total, summary, or blank rows.</div>
+                <div>
+                  Excel imports use the first worksheet; move the SOV tab first before uploading.
+                </div>
+              </div>
+            </div>
             <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="csv">CSV</TabsTrigger>
               <TabsTrigger value="xlsx">Excel (.xlsx)</TabsTrigger>
@@ -120,22 +193,43 @@ export function ImportSOVSheet({
 
             <TabsContent value="csv" className="space-y-3 pt-5">
               <Label>Choose a .csv file</Label>
-              <Input ref={fileRef} type="file" accept=".csv,text/csv" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+              <Input
+                ref={fileRef}
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+              />
               <Tip>From QuickBooks: Reports → Budget vs Actuals → Export → CSV.</Tip>
             </TabsContent>
 
             <TabsContent value="xlsx" className="space-y-3 pt-5">
               <Label>Choose an .xlsx or .xls file</Label>
-              <Input ref={fileRef} type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
-              <Tip>We read the first sheet only. If your SOV is on a tab named differently, move it to the first tab before exporting.</Tip>
+              <Input
+                ref={fileRef}
+                type="file"
+                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+              />
+              <Tip>
+                We read the first sheet only. If your SOV is on a tab named differently, move it to
+                the first tab before exporting.
+              </Tip>
             </TabsContent>
 
             <TabsContent value="pdf" className="space-y-3 pt-5">
               <Label>Choose a .pdf file (AIA G702/G703, pay app, or SOV)</Label>
-              <Input ref={fileRef} type="file" accept=".pdf,application/pdf" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
-              <Tip>Works on text-based PDFs (most pay apps and exports). Scanned/image PDFs won't extract — export as CSV/XLSX or paste instead. After parsing, review the column mapping carefully; PDF tables are messier than spreadsheets.</Tip>
+              <Input
+                ref={fileRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+              />
+              <Tip>
+                Works on text-based PDFs (most pay apps and exports). Scanned/image PDFs won't
+                extract — export as CSV/XLSX or paste instead. After parsing, review the column
+                mapping carefully; PDF tables are messier than spreadsheets.
+              </Tip>
             </TabsContent>
-
 
             <TabsContent value="paste" className="space-y-3 pt-5">
               <Label>Paste the rows from Excel or your SOV worksheet</Label>
@@ -143,11 +237,18 @@ export function ImportSOVSheet({
                 rows={10}
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
-                placeholder={"In Excel: select your bucket / budget / actual / FTC columns including the header row, copy (Ctrl+C / ⌘+C), then paste here.\n\nIf you're starting the job, you'll only have budgets — leave Actual and FTC as 0.\n\nExample at job start (no actuals yet):\nDivision\tBudget\tActual\tFTC\nSitework\t220,000\t0\t0\nStructure\t540,000\t0\t0\nEnvelope\t430,000\t0\t0\n\nExample mid-job:\nSitework\t220,000\t215,000\t8,000\nStructure\t540,000\t520,000\t35,000"}
+                placeholder={
+                  "In Excel: select your bucket / budget / actual / FTC columns including the header row, copy (Ctrl+C / ⌘+C), then paste here.\n\nIf you're starting the job, you'll only have budgets — leave Actual and FTC as 0.\n\nExample at job start (no actuals yet):\nDivision\tBudget\tActual\tFTC\nSitework\t220,000\t0\t0\nStructure\t540,000\t0\t0\nEnvelope\t430,000\t0\t0\n\nExample mid-job:\nSitework\t220,000\t215,000\t8,000\nStructure\t540,000\t520,000\t35,000"
+                }
                 className="font-mono text-xs"
               />
-              <Button onClick={handlePaste} variant="outline">Parse pasted rows</Button>
-              <Tip>You can paste with just two columns (bucket + budget) at job start — we'll set Actual and FTC to 0 automatically.</Tip>
+              <Button onClick={handlePaste} variant="outline">
+                Parse pasted rows
+              </Button>
+              <Tip>
+                You can paste with just two columns (bucket + budget) at job start — we'll set
+                Actual and FTC to 0 automatically.
+              </Tip>
             </TabsContent>
           </Tabs>
         ) : (
@@ -155,20 +256,31 @@ export function ImportSOVSheet({
             <div className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2 text-xs">
               <div className="flex items-center gap-2">
                 <FileSpreadsheet className="h-4 w-4" />
-                <span>{parsed.source.toUpperCase()}{parsed.sheetName ? ` · ${parsed.sheetName}` : ""}  ·  {rows.length} rows detected</span>
+                <span>
+                  {parsed.source.toUpperCase()}
+                  {parsed.sheetName ? ` · ${parsed.sheetName}` : ""} · {rows.length} rows detected
+                </span>
               </div>
-              <Button size="sm" variant="ghost" onClick={reset}>Start over</Button>
+              <Button size="sm" variant="ghost" onClick={reset}>
+                Start over
+              </Button>
             </div>
 
             <div className="flex items-center gap-4 text-xs">
               <label className="flex items-center gap-1.5">
-                <input type="checkbox" checked={hasHeader} onChange={(e) => setHasHeader(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={hasHeader}
+                  onChange={(e) => setHasHeader(e.target.checked)}
+                />
                 First row is a header
               </label>
               <div className="ml-auto flex items-center gap-2">
                 <span className="text-muted-foreground">After import:</span>
                 <Select value={mode} onValueChange={(v) => setMode(v as "replace" | "append")}>
-                  <SelectTrigger className="h-8 w-[160px]"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-8 w-[160px]">
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="replace">Replace all buckets</SelectItem>
                     <SelectItem value="append">Append to existing</SelectItem>
@@ -177,12 +289,29 @@ export function ImportSOVSheet({
               </div>
             </div>
 
-            <ColumnMapper matrix={parsed.matrix} hasHeader={hasHeader} map={map} onChange={setMap} />
+            <ColumnMapper
+              matrix={parsed.matrix}
+              hasHeader={hasHeader}
+              map={map}
+              onChange={setMap}
+            />
+
+            {missingMappings.length > 0 && (
+              <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+                Required mapping missing: {missingMappings.join(", ")}.
+              </div>
+            )}
 
             <div>
               <div className="mb-2 flex items-center gap-4 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1 text-success"><Check className="h-3 w-3" /> {valid.length} valid</span>
-                {invalid.length > 0 && <span className="inline-flex items-center gap-1 text-danger"><AlertTriangle className="h-3 w-3" /> {invalid.length} flagged</span>}
+                <span className="inline-flex items-center gap-1 text-success">
+                  <Check className="h-3 w-3" /> {valid.length} valid
+                </span>
+                {invalid.length > 0 && (
+                  <span className="inline-flex items-center gap-1 text-danger">
+                    <AlertTriangle className="h-3 w-3" /> {invalid.length} flagged
+                  </span>
+                )}
                 <span className="ml-auto tabular">Total budget: {fmtUSD(total)}</span>
               </div>
               <div className="max-h-[300px] overflow-auto rounded-md border border-hairline">
@@ -200,12 +329,24 @@ export function ImportSOVSheet({
                   <TableBody>
                     {rows.slice(0, 50).map((r, i) => (
                       <TableRow key={i} className={!r.valid ? "bg-danger/5" : ""}>
-                        <TableCell>{r.valid ? <Check className="h-3.5 w-3.5 text-success" /> : <AlertTriangle className="h-3.5 w-3.5 text-danger" />}</TableCell>
+                        <TableCell>
+                          {r.valid ? (
+                            <Check className="h-3.5 w-3.5 text-success" />
+                          ) : (
+                            <AlertTriangle className="h-3.5 w-3.5 text-danger" />
+                          )}
+                        </TableCell>
                         <TableCell className="font-medium">{r.bucket}</TableCell>
-                        <TableCell className="text-right tabular">{fmtUSD(r.original_budget)}</TableCell>
-                        <TableCell className="text-right tabular">{fmtUSD(r.actual_to_date)}</TableCell>
+                        <TableCell className="text-right tabular">
+                          {fmtUSD(r.original_budget)}
+                        </TableCell>
+                        <TableCell className="text-right tabular">
+                          {fmtUSD(r.actual_to_date)}
+                        </TableCell>
                         <TableCell className="text-right tabular">{fmtUSD(r.ftc)}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{r.reason ?? "—"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {r.reason ?? "—"}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -228,8 +369,13 @@ export function ImportSOVSheet({
               ? "Replacing will delete existing cost buckets and insert these rows."
               : "Appending keeps existing buckets and adds these rows beneath them."}
           </p>
-          <Button onClick={commit} disabled={!parsed || valid.length === 0 || pending}>
-            {pending ? "Importing…" : `Import ${valid.length} bucket${valid.length === 1 ? "" : "s"}`}
+          <Button
+            onClick={commit}
+            disabled={!parsed || missingMappings.length > 0 || valid.length === 0 || pending}
+          >
+            {pending
+              ? "Importing…"
+              : `Import ${valid.length} bucket${valid.length === 1 ? "" : "s"}`}
           </Button>
         </SheetFooter>
       </SheetContent>
@@ -238,12 +384,24 @@ export function ImportSOVSheet({
 }
 
 function Tip({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">{children}</p>;
+  return (
+    <p className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
+      {children}
+    </p>
+  );
 }
 
 function ColumnMapper({
-  matrix, hasHeader, map, onChange,
-}: { matrix: Matrix; hasHeader: boolean; map: ColumnMap; onChange: (m: ColumnMap) => void }) {
+  matrix,
+  hasHeader,
+  map,
+  onChange,
+}: {
+  matrix: Matrix;
+  hasHeader: boolean;
+  map: ColumnMap;
+  onChange: (m: ColumnMap) => void;
+}) {
   if (matrix.length === 0) return null;
   const ncols = Math.max(...matrix.map((r) => r.length));
   const header = hasHeader ? matrix[0] : [];
@@ -260,7 +418,9 @@ function ColumnMapper({
             <tr className="bg-surface">
               {Array.from({ length: ncols }).map((_, i) => (
                 <th key={i} className="px-2 py-2 text-left font-medium">
-                  <div className="text-muted-foreground">{hasHeader ? (header[i] ?? `Col ${i + 1}`) : `Col ${i + 1}`}</div>
+                  <div className="text-muted-foreground">
+                    {hasHeader ? (header[i] ?? `Col ${i + 1}`) : `Col ${i + 1}`}
+                  </div>
                   <Select
                     value={map[i] ?? "ignore"}
                     onValueChange={(v) => {
@@ -275,10 +435,23 @@ function ColumnMapper({
                       onChange(next);
                     }}
                   >
-                    <SelectTrigger className="mt-1 h-7 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="mt-1 h-7 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
-                      {(["bucket","original_budget","actual_to_date","ftc","sort_order","ignore"] as FieldKey[]).map((f) => (
-                        <SelectItem key={f} value={f}>{FIELD_LABELS[f]}</SelectItem>
+                      {(
+                        [
+                          "bucket",
+                          "original_budget",
+                          "actual_to_date",
+                          "ftc",
+                          "sort_order",
+                          "ignore",
+                        ] as FieldKey[]
+                      ).map((f) => (
+                        <SelectItem key={f} value={f}>
+                          {FIELD_LABELS[f]}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -290,7 +463,9 @@ function ColumnMapper({
             {sample.map((r, ri) => (
               <tr key={ri} className="border-t border-hairline">
                 {Array.from({ length: ncols }).map((_, ci) => (
-                  <td key={ci} className="px-2 py-1.5 tabular text-foreground/80">{r[ci] ?? ""}</td>
+                  <td key={ci} className="px-2 py-1.5 tabular text-foreground/80">
+                    {r[ci] ?? ""}
+                  </td>
                 ))}
               </tr>
             ))}

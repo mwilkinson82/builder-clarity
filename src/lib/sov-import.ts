@@ -15,7 +15,6 @@ export interface ParsedSheet {
   sheetName?: string;
 }
 
-
 const stringify = (v: unknown): string => {
   if (v == null) return "";
   if (typeof v === "number") return String(v);
@@ -42,7 +41,11 @@ export async function parseCsv(file: File): Promise<ParsedSheet> {
         const matrix = (res.data as unknown[][])
           .map((r) => (r as unknown[]).map(stringify))
           .filter((r) => r.some((c) => c.trim() !== ""));
-        resolve({ matrix, hasHeader: matrix[0] ? looksLikeHeader(matrix[0]) : false, source: "csv" });
+        resolve({
+          matrix,
+          hasHeader: matrix[0] ? looksLikeHeader(matrix[0]) : false,
+          source: "csv",
+        });
       },
       error: (err) => reject(err),
     });
@@ -55,7 +58,9 @@ export async function parseXlsx(file: File): Promise<ParsedSheet> {
   const sheetName = wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false });
-  const matrix = raw.map((r) => (r ?? []).map(stringify)).filter((r) => r.some((c) => c.trim() !== ""));
+  const matrix = raw
+    .map((r) => (r ?? []).map(stringify))
+    .filter((r) => r.some((c) => c.trim() !== ""));
   return {
     matrix,
     hasHeader: matrix[0] ? looksLikeHeader(matrix[0]) : false,
@@ -65,7 +70,10 @@ export async function parseXlsx(file: File): Promise<ParsedSheet> {
 }
 
 export function parsePaste(text: string): ParsedSheet {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n").filter((l) => l.trim() !== "");
+  const lines = text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((l) => l.trim() !== "");
   const delim = lines[0]?.includes("\t") ? "\t" : lines[0]?.includes(",") ? "," : "\t";
   const matrix = lines.map((l) => l.split(delim).map((c) => c.trim()));
   return { matrix, hasHeader: matrix[0] ? looksLikeHeader(matrix[0]) : false, source: "paste" };
@@ -80,7 +88,9 @@ export function parsePaste(text: string): ParsedSheet {
 export async function parsePdf(file: File): Promise<ParsedSheet> {
   const pdfjs = await import("pdfjs-dist");
   const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
-  (pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }).GlobalWorkerOptions.workerSrc = workerUrl;
+  (
+    pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }
+  ).GlobalWorkerOptions.workerSrc = workerUrl;
 
   const buf = await file.arrayBuffer();
   const pdf = await pdfjs.getDocument({ data: buf }).promise;
@@ -98,7 +108,10 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
       if (!text) continue;
       items.push({ x: it.transform[4], y: it.transform[5], w: it.width ?? 0, text });
     }
-    if (items.length === 0) { pages.push({ rowsRich: [], rowsCells: [] }); continue; }
+    if (items.length === 0) {
+      pages.push({ rowsRich: [], rowsCells: [] });
+      continue;
+    }
 
     items.sort((a, b) => b.y - a.y || a.x - b.x);
     const rowTol = 3;
@@ -118,8 +131,12 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
       let prevEnd = r[0].x + r[0].w;
       for (let i = 1; i < r.length; i++) {
         const it = r[i];
-        if (it.x - prevEnd > gapThreshold) { cells.push(cur); cur = it.text; }
-        else { cur += " " + it.text; }
+        if (it.x - prevEnd > gapThreshold) {
+          cells.push(cur);
+          cur = it.text;
+        } else {
+          cur += " " + it.text;
+        }
         prevEnd = it.x + it.w;
       }
       cells.push(cur);
@@ -146,9 +163,14 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
   for (const { rowsRich } of pages) {
     let headerStartIdx = -1;
     for (let i = 0; i < rowsRich.length; i++) {
-      const window = rowsRich.slice(i, Math.min(i + 4, rowsRich.length))
-        .map((r) => r.map((it) => it.text).join(" ")).join(" ");
-      if (/SCHEDULED\s*VALUE/i.test(window) && /(BALANCE\s*TO\s*FINISH|COMPLETED\s*AND\s*STORED)/i.test(window)) {
+      const window = rowsRich
+        .slice(i, Math.min(i + 4, rowsRich.length))
+        .map((r) => r.map((it) => it.text).join(" "))
+        .join(" ");
+      if (
+        /SCHEDULED\s*VALUE/i.test(window) &&
+        /(BALANCE\s*TO\s*FINISH|COMPLETED\s*AND\s*STORED)/i.test(window)
+      ) {
         headerStartIdx = i;
         break;
       }
@@ -156,7 +178,9 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
     if (headerStartIdx === -1) continue;
     isAia = true;
 
-    const headerItems = rowsRich.slice(headerStartIdx, Math.min(headerStartIdx + 4, rowsRich.length)).flat();
+    const headerItems = rowsRich
+      .slice(headerStartIdx, Math.min(headerStartIdx + 4, rowsRich.length))
+      .flat();
     const findAnchor = (re: RegExp): number | null => {
       for (let i = 0; i < headerItems.length; i++) {
         let phrase = headerItems[i].text;
@@ -184,12 +208,16 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
 
       const cols: Record<string, string[]> = { item: [], desc: [], sched: [], g: [], h: [] };
       for (const it of r) {
-        let best = "desc"; let bestDist = Infinity;
+        let best = "desc";
+        let bestDist = Infinity;
         for (const k of Object.keys(anchors)) {
           const a = anchors[k];
           if (a == null) continue;
           const d = Math.abs(it.x + it.w / 2 - a);
-          if (d < bestDist) { bestDist = d; best = k; }
+          if (d < bestDist) {
+            bestDist = d;
+            best = k;
+          }
         }
         cols[best].push(it.text);
       }
@@ -207,13 +235,19 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
   }
 
   if (isAia && aiaRows.length > 0) {
-    const header = ["Description", "Scheduled Value", "Completed & Stored to Date", "Balance to Finish"];
+    const header = [
+      "Description",
+      "Scheduled Value",
+      "Completed & Stored to Date",
+      "Balance to Finish",
+    ];
     return { matrix: [header, ...aiaRows], hasHeader: true, source: "pdf" };
   }
 
   // -------- Generic fallback (non-AIA PDFs) --------
   const allRows: string[][] = [];
-  for (const pg of pages) for (const r of pg.rowsCells) if (r.some((c) => c !== "")) allRows.push(r);
+  for (const pg of pages)
+    for (const r of pg.rowsCells) if (r.some((c) => c !== "")) allRows.push(r);
   const matrix = allRows.filter((row) => {
     if (row.length < 2) return false;
     const hasText = row.some((c) => /[A-Za-z]/.test(c) && parseNumber(c) === null);
@@ -223,21 +257,57 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
   return { matrix, hasHeader: matrix[0] ? looksLikeHeader(matrix[0]) : false, source: "pdf" };
 }
 
-
-
 // ---------------- Column mapping ----------------
 
-export type FieldKey = "bucket" | "original_budget" | "actual_to_date" | "ftc" | "sort_order" | "ignore";
+export type FieldKey =
+  | "bucket"
+  | "original_budget"
+  | "actual_to_date"
+  | "ftc"
+  | "sort_order"
+  | "ignore";
 
 export interface ColumnMap {
   [columnIndex: number]: FieldKey;
 }
 
 const HEADER_HINTS: Record<Exclude<FieldKey, "ignore">, RegExp[]> = {
-  bucket: [/bucket/i, /category/i, /division/i, /trade/i, /scope/i, /description/i, /^item$/i, /^name$/i],
-  original_budget: [/scheduled\s*value/i, /original/i, /^budget$/i, /contract\s*amount/i, /sov\s*amount/i, /amount/i, /total/i],
-  actual_to_date: [/completed\s*and\s*stored/i, /actual/i, /to[\s_-]?date/i, /spent/i, /paid/i, /billed/i, /incurred/i],
-  ftc: [/balance\s*to\s*finish/i, /ftc/i, /forecast\s*to\s*complete/i, /remaining/i, /etc\b/i, /to\s*complete/i],
+  bucket: [
+    /bucket/i,
+    /category/i,
+    /division/i,
+    /trade/i,
+    /scope/i,
+    /description/i,
+    /^item$/i,
+    /^name$/i,
+  ],
+  original_budget: [
+    /scheduled\s*value/i,
+    /original/i,
+    /^budget$/i,
+    /contract\s*amount/i,
+    /sov\s*amount/i,
+    /^amount$/i,
+    /^value$/i,
+  ],
+  actual_to_date: [
+    /completed\s*and\s*stored/i,
+    /actual/i,
+    /to[\s_-]?date/i,
+    /spent/i,
+    /paid/i,
+    /billed/i,
+    /incurred/i,
+  ],
+  ftc: [
+    /balance\s*to\s*finish/i,
+    /ftc/i,
+    /forecast\s*to\s*complete/i,
+    /remaining/i,
+    /etc\b/i,
+    /to\s*complete/i,
+  ],
   sort_order: [/^#$/i, /^order$/i, /sort/i, /^no\.?$/i, /^item\s*no/i, /line/i],
 };
 
@@ -256,7 +326,10 @@ export function guessColumnMap(matrix: Matrix, hasHeader: boolean): ColumnMap {
   if (hasHeader) {
     for (let i = 0; i < ncols; i++) {
       const cell = (headerRow[i] ?? "").trim();
-      for (const [field, patterns] of Object.entries(HEADER_HINTS) as [Exclude<FieldKey, "ignore">, RegExp[]][]) {
+      for (const [field, patterns] of Object.entries(HEADER_HINTS) as [
+        Exclude<FieldKey, "ignore">,
+        RegExp[],
+      ][]) {
         if (patterns.some((re) => re.test(cell))) {
           tryAssign(i, field);
           break;
@@ -274,13 +347,19 @@ export function guessColumnMap(matrix: Matrix, hasHeader: boolean): ColumnMap {
   if (!Object.values(out).includes("bucket")) {
     for (let i = 0; i < ncols; i++) {
       if (out[i] !== undefined) continue;
-      if (!isNumericCol(i)) { tryAssign(i, "bucket"); break; }
+      if (!isNumericCol(i)) {
+        tryAssign(i, "bucket");
+        break;
+      }
     }
   }
   if (!Object.values(out).includes("original_budget")) {
     for (let i = 0; i < ncols; i++) {
       if (out[i] !== undefined) continue;
-      if (isNumericCol(i)) { tryAssign(i, "original_budget"); break; }
+      if (isNumericCol(i)) {
+        tryAssign(i, "original_budget");
+        break;
+      }
     }
   }
 
@@ -290,12 +369,22 @@ export function guessColumnMap(matrix: Matrix, hasHeader: boolean): ColumnMap {
 
 export function parseNumber(s: string): number | null {
   if (s == null) return null;
-  const cleaned = String(s).replace(/[$,\s]/g, "").replace(/[()]/g, "");
+  const cleaned = String(s)
+    .replace(/[$,\s]/g, "")
+    .replace(/[()]/g, "");
   if (cleaned === "" || cleaned === "-") return null;
   const isNeg = String(s).trim().startsWith("(") && String(s).trim().endsWith(")");
   const n = Number(cleaned);
   if (!Number.isFinite(n)) return null;
   return isNeg ? -n : n;
+}
+
+export function missingRequiredMappings(map: ColumnMap): string[] {
+  const fields = Object.values(map);
+  const missing: string[] = [];
+  if (!fields.includes("bucket")) missing.push("Bucket name");
+  if (!fields.includes("original_budget")) missing.push("Original budget");
+  return missing;
 }
 
 export interface BucketImportRow {
@@ -319,7 +408,7 @@ export function applyMapping(
   for (const r of rows) {
     const get = (field: Exclude<FieldKey, "ignore">): string => {
       const idx = Object.entries(map).find(([, f]) => f === field)?.[0];
-      return idx == null ? "" : r[Number(idx)] ?? "";
+      return idx == null ? "" : (r[Number(idx)] ?? "");
     };
     const bucket = get("bucket").trim();
     const budget = parseNumber(get("original_budget")) ?? 0;
@@ -330,9 +419,18 @@ export function applyMapping(
     auto += 1;
     let valid = true;
     let reason: string | undefined;
-    if (!bucket) { valid = false; reason = "Missing bucket name"; }
-    else if (budget === 0 && actual === 0 && ftc === 0) {
-      valid = false; reason = "All amounts are zero";
+    if (!bucket) {
+      valid = false;
+      reason = "Missing bucket name";
+    } else if (/^(grand\s*)?total\b|^subtotal\b|^summary\b/i.test(bucket)) {
+      valid = false;
+      reason = "Total or summary row";
+    } else if (budget <= 0) {
+      valid = false;
+      reason = "Original budget is required";
+    } else if (actual < 0 || ftc < 0) {
+      valid = false;
+      reason = "Amounts cannot be negative";
     }
     out.push({
       bucket: bucket || "(unnamed)",

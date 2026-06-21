@@ -22,7 +22,9 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [magicLoading, setMagicLoading] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -30,9 +32,32 @@ function AuthPage() {
     });
   }, [navigate]);
 
-  const onSubmit = async (e: React.FormEvent) => {
+  const sendMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
+    setMagicLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: window.location.origin,
+          shouldCreateUser: true,
+        },
+      });
+      if (error) throw error;
+      setNotice("Check your email. Your secure sign-in link is on the way.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send magic link");
+    } finally {
+      setMagicLoading(false);
+    }
+  };
+
+  const onPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setNotice(null);
     setLoading(true);
     try {
       if (mode === "signup") {
@@ -57,19 +82,19 @@ function AuthPage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12">
-        <Link to="/" className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+        <Link
+          to="/"
+          className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground"
+        >
           ← Project Outcome Review
         </Link>
-        <h1 className="mt-6 font-serif text-4xl text-foreground">
-          {mode === "signin" ? "Sign in" : "Create your account"}
-        </h1>
+        <h1 className="mt-6 font-serif text-4xl text-foreground">Sign in by magic link</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          {mode === "signin"
-            ? "Access your portfolio of outcome reviews."
-            : "Open a new builder workspace. A Harbor Residence demo is seeded automatically."}
+          Enter your email and we will send a secure link. New users can use the same link to grab a
+          seat and start creating projects.
         </p>
 
-        <form onSubmit={onSubmit} className="mt-8 space-y-4">
+        <form onSubmit={sendMagicLink} className="mt-8 space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="email">Email</Label>
             <Input
@@ -81,37 +106,57 @@ function AuthPage() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="password">Password</Label>
-            <Input
-              id="password"
-              type="password"
-              required
-              minLength={6}
-              autoComplete={mode === "signin" ? "current-password" : "new-password"}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
           {error && (
             <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
               {error}
             </div>
           )}
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Working…" : mode === "signin" ? "Sign in" : "Create account"}
+          {notice && (
+            <div className="rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
+              {notice}
+            </div>
+          )}
+          <Button type="submit" className="w-full" disabled={magicLoading}>
+            {magicLoading ? "Sending…" : "Send magic link"}
           </Button>
         </form>
 
-        <button
-          type="button"
-          onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-          className="mt-6 text-sm text-muted-foreground hover:text-foreground"
-        >
-          {mode === "signin"
-            ? "No account? Create one →"
-            : "Already have an account? Sign in →"}
-        </button>
+        <div className="mt-8 border-t border-hairline pt-6">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Password fallback
+          </div>
+          <form onSubmit={onPasswordSubmit} className="mt-4 space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                required
+                minLength={6}
+                autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            <Button type="submit" variant="outline" className="w-full" disabled={loading}>
+              {loading
+                ? "Working…"
+                : mode === "signin"
+                  ? "Sign in with password"
+                  : "Create password account"}
+            </Button>
+          </form>
+
+          <button
+            type="button"
+            onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
+            className="mt-4 text-sm text-muted-foreground hover:text-foreground"
+          >
+            {mode === "signin"
+              ? "Need a password account? Create one →"
+              : "Already have a password? Sign in →"}
+          </button>
+        </div>
       </div>
     </div>
   );
