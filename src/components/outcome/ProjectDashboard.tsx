@@ -377,11 +377,11 @@ function DashboardMetric({
           : "text-foreground";
 
   return (
-    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+    <div className="flex min-h-[70px] flex-col justify-between rounded-md border border-hairline bg-surface px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase leading-[1.25] tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
-      <div className={`mt-1 text-lg font-medium tabular leading-tight ${toneText}`}>{value}</div>
+      <div className={`mt-2 text-lg font-medium tabular leading-none ${toneText}`}>{value}</div>
     </div>
   );
 }
