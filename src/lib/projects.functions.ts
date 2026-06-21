@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import {
   computeRollup,
+  computeScheduleVarianceWeeks,
   evaluateWarnings,
   guidanceTargets,
   exposureByCategory,
@@ -522,9 +523,29 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => updateFinancialsInput.parse(input))
   .handler(async ({ data, context }) => {
+    const patch = { ...data.patch };
+    if ("baseline_completion_date" in patch || "forecast_completion_date" in patch) {
+      const { data: current, error: loadError } = await context.supabase
+        .from("projects")
+        .select("baseline_completion_date, forecast_completion_date")
+        .eq("id", data.projectId)
+        .single();
+      if (loadError) throw new Error(loadError.message);
+
+      const baseline =
+        patch.baseline_completion_date !== undefined
+          ? patch.baseline_completion_date
+          : ((current.baseline_completion_date as string | null) ?? null);
+      const forecast =
+        patch.forecast_completion_date !== undefined
+          ? patch.forecast_completion_date
+          : ((current.forecast_completion_date as string | null) ?? null);
+      patch.schedule_variance_weeks = computeScheduleVarianceWeeks(baseline, forecast) ?? 0;
+    }
+
     const { error } = await context.supabase
       .from("projects")
-      .update(data.patch)
+      .update(patch)
       .eq("id", data.projectId);
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -902,12 +923,24 @@ export const submitReview = createServerFn({ method: "POST" })
       last_reviewed_at: string;
       last_review_summary: string;
       forecast_completion_date?: string;
+      schedule_variance_weeks?: number;
     } = {
       last_reviewed_at: new Date().toISOString(),
       last_review_summary: data.summary_notes,
     };
     if (data.forecast_completion_date_after) {
       patch.forecast_completion_date = data.forecast_completion_date_after;
+      const { data: current, error: currentError } = await context.supabase
+        .from("projects")
+        .select("baseline_completion_date")
+        .eq("id", data.projectId)
+        .single();
+      if (currentError) throw new Error(currentError.message);
+      patch.schedule_variance_weeks =
+        computeScheduleVarianceWeeks(
+          (current.baseline_completion_date as string | null) ?? null,
+          data.forecast_completion_date_after,
+        ) ?? 0;
     }
     const { error: pErr } = await context.supabase
       .from("projects")

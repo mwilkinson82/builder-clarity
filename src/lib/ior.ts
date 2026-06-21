@@ -58,6 +58,14 @@ export interface ProjectLite {
   baseline_completion_date?: string | null;
 }
 
+export function computeScheduleVarianceWeeks(baseline?: string | null, forecast?: string | null) {
+  if (!baseline || !forecast) return null;
+  const start = new Date(`${baseline}T00:00:00`);
+  const finish = new Date(`${forecast}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(finish.getTime())) return null;
+  return Math.round((finish.getTime() - start.getTime()) / 604800000);
+}
+
 export interface Rollup {
   originalContract: number;
   approvedCOContract: number;
@@ -112,13 +120,11 @@ export function computeRollup(
   const actualToDate = buckets.reduce((s, b) => s + b.actual_to_date, 0);
   const ftc = buckets.reduce((s, b) => s + b.ftc, 0);
 
-  const bucketCostBase =
-    buckets.length === 0 ? project.original_cost_budget : actualToDate + ftc;
+  const bucketCostBase = buckets.length === 0 ? project.original_cost_budget : actualToDate + ftc;
 
   const forecastedFinalContract =
     project.original_contract + approvedCOContract + weightedPendingCOContract;
-  const forecastedFinalCost =
-    bucketCostBase + approvedCOCost + weightedPendingCOCost;
+  const forecastedFinalCost = bucketCostBase + approvedCOCost + weightedPendingCOCost;
 
   const active = exposures.filter(isActive);
   const exposureHolds = active
@@ -235,8 +241,7 @@ export function evaluateWarnings(
     ? new Date(project.forecast_completion_date)
     : null;
   const slipping =
-    (baseline && forecast && forecast > baseline) ||
-    project.schedule_variance_weeks > 0;
+    (baseline && forecast && forecast > baseline) || project.schedule_variance_weeks > 0;
   if (slipping) {
     const hasSchedExp = exposures.some(
       (e) =>
@@ -286,9 +291,7 @@ export function evaluateWarnings(
   // 6. Bucket "savings" > 50% complete with no justification
   if (project.percent_complete > 50) {
     const suspicious = buckets.filter(
-      (b) =>
-        b.original_budget > 0 &&
-        b.actual_to_date + b.ftc < b.original_budget * 0.95,
+      (b) => b.original_budget > 0 && b.actual_to_date + b.ftc < b.original_budget * 0.95,
     );
     for (const b of suspicious) {
       warnings.push({

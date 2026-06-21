@@ -20,7 +20,6 @@ import {
   PackageSearch,
   Users,
   ClipboardList,
-  Clock,
   Pencil,
   CheckCircle2,
 } from "lucide-react";
@@ -40,7 +39,12 @@ import {
 } from "@/lib/schedule.functions";
 import { createExposure, updateProjectFinancials, type ProjectRow } from "@/lib/projects.functions";
 import { fmtUSD } from "@/lib/format";
-import type { ExposureCategory, HoldClass, ResponsePath } from "@/lib/ior";
+import {
+  computeScheduleVarianceWeeks,
+  type ExposureCategory,
+  type HoldClass,
+  type ResponsePath,
+} from "@/lib/ior";
 
 const STATUS_LABEL: Record<MilestoneStatus, string> = {
   on_track: "On track",
@@ -191,6 +195,10 @@ export function ScheduleRisk({
   const milestones = data?.milestones ?? [];
   const risks = data?.risks ?? [];
   const lastMovementWeeks = weeksBetween(lastReviewForecast, project.forecast_completion_date);
+  const scheduleVariance = computeScheduleVarianceWeeks(
+    project.baseline_completion_date,
+    project.forecast_completion_date,
+  );
 
   return (
     <div className="space-y-8">
@@ -207,21 +215,27 @@ export function ScheduleRisk({
           <DateField
             label="Baseline completion"
             value={project.baseline_completion_date}
-            onCommit={(v) => finMut.mutate({ baseline_completion_date: v })}
+            onCommit={(v) =>
+              finMut.mutate({
+                baseline_completion_date: v,
+                schedule_variance_weeks:
+                  computeScheduleVarianceWeeks(v, project.forecast_completion_date) ?? 0,
+              })
+            }
           />
           <DateField
             label="Forecast completion"
             value={project.forecast_completion_date}
             accent
-            onCommit={(v) => finMut.mutate({ forecast_completion_date: v })}
+            onCommit={(v) =>
+              finMut.mutate({
+                forecast_completion_date: v,
+                schedule_variance_weeks:
+                  computeScheduleVarianceWeeks(project.baseline_completion_date, v) ?? 0,
+              })
+            }
           />
-          <NumberField
-            label="Baseline variance (weeks)"
-            value={project.schedule_variance_weeks}
-            icon={<Clock className="h-4 w-4" />}
-            tone={project.schedule_variance_weeks > 0 ? "danger" : "success"}
-            onCommit={(v) => finMut.mutate({ schedule_variance_weeks: v })}
-          />
+          <ScheduleVarianceCard value={scheduleVariance} />
           <ScheduleDeltaCard value={lastMovementWeeks} />
         </div>
       </section>
@@ -281,12 +295,35 @@ export function ScheduleRisk({
   );
 }
 
-function weeksBetween(previous?: string | null, current?: string | null) {
-  if (!previous || !current) return null;
-  const prev = new Date(`${previous}T00:00:00`);
-  const next = new Date(`${current}T00:00:00`);
-  if (Number.isNaN(prev.getTime()) || Number.isNaN(next.getTime())) return null;
-  return Math.round((next.getTime() - prev.getTime()) / 604800000);
+const weeksBetween = computeScheduleVarianceWeeks;
+
+function varianceLabel(value: number | null) {
+  if (value == null) return "Set dates";
+  if (value > 0) return `+${value} wk`;
+  if (value < 0) return `${value} wk`;
+  return "On plan";
+}
+
+function varianceTone(value: number | null) {
+  if (value == null) return "text-muted-foreground";
+  if (value > 0) return "text-danger";
+  if (value < 0) return "text-success";
+  return "text-foreground";
+}
+
+function ScheduleVarianceCard({ value }: { value: number | null }) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        Baseline variance
+      </Label>
+      <div
+        className={`flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm tabular ${varianceTone(value)}`}
+      >
+        {varianceLabel(value)}
+      </div>
+    </div>
+  );
 }
 
 function ScheduleDeltaCard({ value }: { value: number | null }) {
@@ -348,52 +385,6 @@ function DateField({
           if (next !== (value ?? null)) onCommit(next);
         }}
         className={accent ? "border-accent/40 focus-visible:ring-accent" : ""}
-      />
-    </div>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  icon,
-  tone,
-  onCommit,
-}: {
-  label: string;
-  value: number;
-  icon?: React.ReactNode;
-  tone?: "danger" | "success";
-  onCommit: (v: number) => void;
-}) {
-  const [local, setLocal] = useState(String(value));
-  useEffect(() => {
-    setLocal(String(value));
-  }, [value]);
-  const toneCls =
-    tone === "danger" && value > 0
-      ? "text-danger"
-      : tone === "success" && value <= 0
-        ? "text-success"
-        : "";
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-        {icon} {label}
-      </Label>
-      <Input
-        type="number"
-        value={local}
-        onChange={(e) => setLocal(e.target.value)}
-        onBlur={() => {
-          const n = Number(local);
-          if (!Number.isFinite(n)) {
-            setLocal(String(value));
-            return;
-          }
-          if (n !== value) onCommit(n);
-        }}
-        className={`tabular ${toneCls}`}
       />
     </div>
   );

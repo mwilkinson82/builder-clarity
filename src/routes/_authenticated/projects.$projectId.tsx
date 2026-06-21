@@ -64,7 +64,12 @@ import {
 } from "@/lib/projects.functions";
 import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
-import type { Phase, ExposureCategory, Rollup } from "@/lib/ior";
+import {
+  computeScheduleVarianceWeeks,
+  type Phase,
+  type ExposureCategory,
+  type Rollup,
+} from "@/lib/ior";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
 import { toast } from "sonner";
 import {
@@ -467,6 +472,8 @@ function ProjectPage() {
                 <DownloadReportMenu onDownload={downloadCurrentReport} />
                 <EditFinancialsDialog
                   project={project}
+                  rollup={rollup}
+                  guidance={guidance}
                   onSave={(patch) => finUpdate.mutate({ projectId, patch })}
                   pending={finUpdate.isPending}
                 />
@@ -1278,14 +1285,20 @@ type EditableProject = {
 
 function EditFinancialsDialog({
   project,
+  rollup,
+  guidance,
   onSave,
   pending,
 }: {
   project: ProjectRow;
+  rollup: Rollup;
+  guidance: { ePct: number; cPct: number; eTarget: number; cTarget: number };
   onSave: (patch: Partial<EditableProject>) => void;
   pending: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const defaultHoldNote = () =>
+    `Current holds: E-Hold ${fmtUSD(rollup.exposureHolds)} vs ${fmtUSD(guidance.eTarget)} guidance (${guidance.ePct}%) and C-Hold ${fmtUSD(rollup.contingencyHold)} vs ${fmtUSD(guidance.cTarget)} guidance (${guidance.cPct}%). Explain why this hold posture is right for the project phase.`;
   const init = (): EditableProject => ({
     name: project.name,
     job_number: project.job_number,
@@ -1296,11 +1309,15 @@ function EditFinancialsDialog({
     schedule_variance_weeks: project.schedule_variance_weeks,
     phase: project.phase,
     percent_complete: project.percent_complete,
-    hold_variance_note: project.hold_variance_note,
+    hold_variance_note: project.hold_variance_note || defaultHoldNote(),
     forecast_completion_date: project.forecast_completion_date,
     baseline_completion_date: project.baseline_completion_date,
   });
   const [form, setForm] = useState<EditableProject>(init);
+  const calculatedScheduleVariance = computeScheduleVarianceWeeks(
+    form.baseline_completion_date,
+    form.forecast_completion_date,
+  );
 
   return (
     <Dialog
@@ -1368,7 +1385,7 @@ function EditFinancialsDialog({
               />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Phase</Label>
               <Select
@@ -1395,18 +1412,8 @@ function EditFinancialsDialog({
                 onChange={(e) => setForm({ ...form, percent_complete: Number(e.target.value) })}
               />
             </div>
-            <div className="space-y-1.5">
-              <Label>Schedule variance (wk)</Label>
-              <Input
-                type="number"
-                value={form.schedule_variance_weeks}
-                onChange={(e) =>
-                  setForm({ ...form, schedule_variance_weeks: Number(e.target.value) })
-                }
-              />
-            </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1.5">
               <Label>Baseline completion</Label>
               <Input
@@ -1427,15 +1434,38 @@ function EditFinancialsDialog({
                 }
               />
             </div>
+            <div className="space-y-1.5">
+              <Label>Schedule variance</Label>
+              <div
+                className={`flex h-10 items-center rounded-md border border-input bg-surface px-3 text-sm tabular ${
+                  (calculatedScheduleVariance ?? 0) > 0
+                    ? "text-danger"
+                    : (calculatedScheduleVariance ?? 0) < 0
+                      ? "text-success"
+                      : "text-foreground"
+                }`}
+              >
+                {calculatedScheduleVariance == null
+                  ? "Set dates"
+                  : calculatedScheduleVariance > 0
+                    ? `+${calculatedScheduleVariance} wk`
+                    : calculatedScheduleVariance < 0
+                      ? `${calculatedScheduleVariance} wk`
+                      : "On plan"}
+              </div>
+            </div>
           </div>
           <div className="space-y-1.5">
             <Label>
-              Hold variance note{" "}
-              <span className="text-muted-foreground">(required if holds are below guidance)</span>
+              Hold guidance note{" "}
+              <span className="text-muted-foreground">
+                (why current E-Hold/C-Hold posture is appropriate)
+              </span>
             </Label>
             <Textarea
               rows={2}
               value={form.hold_variance_note}
+              placeholder={defaultHoldNote()}
               onChange={(e) => setForm({ ...form, hold_variance_note: e.target.value })}
             />
           </div>
@@ -1447,7 +1477,10 @@ function EditFinancialsDialog({
           <Button
             disabled={pending}
             onClick={() => {
-              onSave(form);
+              onSave({
+                ...form,
+                schedule_variance_weeks: calculatedScheduleVariance ?? 0,
+              });
               setOpen(false);
             }}
           >
