@@ -1,7 +1,7 @@
 import { CircleDollarSign, ListChecks, TrendingDown } from "lucide-react";
 import { ExposuresTable, type ExposureDraft } from "@/components/outcome/ExposuresTable";
 import { fmtPct, fmtUSD } from "@/lib/format";
-import type { ResponsePath, Rollup } from "@/lib/ior";
+import type { ExposureStatus, ResponsePath, Rollup } from "@/lib/ior";
 import type { ExposureRow } from "@/lib/projects.functions";
 
 const RESPONSE_LABELS: Record<ResponsePath, string> = {
@@ -9,6 +9,15 @@ const RESPONSE_LABELS: Record<ResponsePath, string> = {
   recover: "Recover",
   offset: "Offset",
   accept: "Accept",
+};
+
+const STATUS_LABELS: Record<ExposureStatus, string> = {
+  active: "Active",
+  escalated: "Escalated",
+  recovered: "Recovered",
+  eliminated: "Eliminated",
+  accepted: "Accepted",
+  released: "Released",
 };
 
 function weighted(e: ExposureRow) {
@@ -20,7 +29,12 @@ function isLiveRisk(e: ExposureRow) {
 }
 
 function isClosedRisk(e: ExposureRow) {
-  return e.status === "recovered" || e.status === "eliminated" || e.status === "released";
+  return (
+    e.status === "recovered" ||
+    e.status === "eliminated" ||
+    e.status === "accepted" ||
+    e.status === "released"
+  );
 }
 
 export function RiskAllocationWorkbench({
@@ -30,6 +44,7 @@ export function RiskAllocationWorkbench({
   onCreateExposure,
   onUpdateExposure,
   onDeleteExposure,
+  onCreateTodo,
 }: {
   exposures: ExposureRow[];
   rollup: Rollup;
@@ -37,11 +52,12 @@ export function RiskAllocationWorkbench({
   onCreateExposure: (d: ExposureDraft) => void;
   onUpdateExposure: (id: string, patch: Partial<ExposureDraft>) => void;
   onDeleteExposure: (id: string) => void;
+  onCreateTodo?: (exposure: ExposureRow) => void;
 }) {
   const live = exposures.filter(isLiveRisk);
   const closed = exposures.filter(isClosedRisk);
   const activeRisk = live.reduce((s, e) => s + weighted(e), 0);
-  const restoredRisk = closed.reduce((s, e) => s + weighted(e), 0);
+  const closedRisk = closed.reduce((s, e) => s + weighted(e), 0);
   const acceptedRisk = live
     .filter((e) => e.response_path === "accept")
     .reduce((s, e) => s + weighted(e), 0);
@@ -50,6 +66,19 @@ export function RiskAllocationWorkbench({
     const matching = live.filter((e) => e.response_path === path);
     return {
       path,
+      total: matching.reduce((s, e) => s + weighted(e), 0),
+      count: matching.length,
+    };
+  });
+
+  const statusRows = (["recovered", "eliminated", "offset", "accepted"] as const).map((status) => {
+    const matching =
+      status === "offset"
+        ? closed.filter((e) => e.status === "released" && e.response_path === "offset")
+        : closed.filter((e) => e.status === status);
+    return {
+      status,
+      label: status === "offset" ? "Offset / released" : STATUS_LABELS[status],
       total: matching.reduce((s, e) => s + weighted(e), 0),
       count: matching.length,
     };
@@ -81,17 +110,34 @@ export function RiskAllocationWorkbench({
               </div>
               <div className="grid min-w-[240px] grid-cols-2 gap-2">
                 <MetricTile label="Live allocated risk" value={fmtUSD(activeRisk)} tone="danger" />
-                <MetricTile label="Released risk" value={fmtUSD(restoredRisk)} tone="success" />
+                <MetricTile label="Closed by status" value={fmtUSD(closedRisk)} tone="success" />
                 <MetricTile label="Exposure Hold" value={fmtUSD(rollup.exposureHolds)} />
                 <MetricTile label="Contingency Hold" value={fmtUSD(rollup.contingencyHold)} />
               </div>
             </div>
 
+            <div className="mt-6 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Planned treatment on live risk
+            </div>
             <div className="mt-6 grid gap-3 md:grid-cols-4">
               {treatmentRows.map((row) => (
                 <TreatmentCard
                   key={row.path}
                   label={RESPONSE_LABELS[row.path]}
+                  total={row.total}
+                  count={row.count}
+                />
+              ))}
+            </div>
+
+            <div className="mt-5 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Released from active holds by status
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-4">
+              {statusRows.map((row) => (
+                <TreatmentCard
+                  key={row.status}
+                  label={row.label}
                   total={row.total}
                   count={row.count}
                 />
@@ -165,6 +211,7 @@ export function RiskAllocationWorkbench({
             onCreate={onCreateExposure}
             onUpdate={onUpdateExposure}
             onDelete={onDeleteExposure}
+            onCreateTodo={onCreateTodo}
           />
         </div>
 

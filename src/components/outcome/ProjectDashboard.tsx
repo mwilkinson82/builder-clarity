@@ -109,16 +109,17 @@ export function ProjectDashboard({
             detail={fmtPct(rollup.originalGPpct)}
           />
           <KpiCell
-            label="Indicated GP"
-            value={fmtUSD(rollup.indicatedGP)}
-            detail={fmtPct(rollup.indicatedGPpct)}
-            tone="warning"
-          />
-          <KpiCell
             label="GP at risk"
             value={fmtUSD(rollup.gpAtRisk)}
             detail="Original - indicated"
             tone="danger"
+            featured
+          />
+          <KpiCell
+            label="Indicated GP"
+            value={fmtUSD(rollup.indicatedGP)}
+            detail={fmtPct(rollup.indicatedGPpct)}
+            tone="warning"
           />
           <KpiCell label="E-Hold" value={fmtUSD(rollup.exposureHolds)} detail="Specific risks" />
           <KpiCell label="C-Hold" value={fmtUSD(rollup.contingencyHold)} detail="Uncertainty" />
@@ -326,11 +327,13 @@ function KpiCell({
   value,
   detail,
   tone,
+  featured,
 }: {
   label: string;
   value: string;
   detail: string;
   tone?: "success" | "warning" | "danger";
+  featured?: boolean;
 }) {
   const toneText =
     tone === "danger"
@@ -342,11 +345,15 @@ function KpiCell({
           : "text-foreground";
 
   return (
-    <div className="bg-card p-4">
+    <div className={featured ? "bg-danger/10 p-4 ring-1 ring-inset ring-danger/35" : "bg-card p-4"}>
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
-      <div className={`mt-3 font-serif text-2xl tabular leading-none ${toneText}`}>{value}</div>
+      <div
+        className={`mt-3 font-serif tabular leading-none ${featured ? "text-3xl" : "text-2xl"} ${toneText}`}
+      >
+        {value}
+      </div>
       <div className="mt-2 text-xs text-muted-foreground">{detail}</div>
     </div>
   );

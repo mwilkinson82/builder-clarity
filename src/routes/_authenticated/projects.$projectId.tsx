@@ -32,10 +32,14 @@ import { ImportSOVSheet } from "@/components/outcome/ImportSOVSheet";
 import { ReviewsTab } from "@/components/outcome/ReviewsTab";
 import { RiskAllocationWorkbench } from "@/components/outcome/RiskAllocationWorkbench";
 import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
+import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import {
   createExposure,
   updateExposure,
   deleteExposure,
+  createDecision,
+  updateDecision,
+  deleteDecision,
   getProject,
   listProjects,
   updateProjectFinancials,
@@ -55,6 +59,7 @@ import {
   type ReviewRow,
   type ChangeOrderRow,
   type BillingApplicationRow,
+  type ExposureRow,
 } from "@/lib/projects.functions";
 import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
@@ -66,6 +71,7 @@ import {
   Download,
   FileSpreadsheet,
   LayoutDashboard,
+  ListChecks,
   LogOut,
   Pencil,
   Plus,
@@ -97,6 +103,9 @@ function ProjectPage() {
   const createExposureFn = useServerFn(createExposure);
   const updateExposureFn = useServerFn(updateExposure);
   const deleteExposureFn = useServerFn(deleteExposure);
+  const createDecisionFn = useServerFn(createDecision);
+  const updateDecisionFn = useServerFn(updateDecision);
+  const deleteDecisionFn = useServerFn(deleteDecision);
   const updateFinFn = useServerFn(updateProjectFinancials);
   const createCoFn = useServerFn(createChangeOrder);
   const updateCoFn = useServerFn(updateChangeOrder);
@@ -121,6 +130,9 @@ function ProjectPage() {
   const expCreate = useServerMutation<Record<string, unknown>>(createExposureFn as never);
   const expUpdate = useServerMutation<Record<string, unknown>>(updateExposureFn as never);
   const expDelete = useServerMutation<{ id: string }>(deleteExposureFn);
+  const decisionCreate = useServerMutation<Record<string, unknown>>(createDecisionFn as never);
+  const decisionUpdate = useServerMutation<Record<string, unknown>>(updateDecisionFn as never);
+  const decisionDelete = useServerMutation<{ id: string }>(deleteDecisionFn);
   const finUpdate = useServerMutation<Record<string, unknown>>(updateFinFn as never);
   const coCreate = useServerMutation<Record<string, unknown>>(createCoFn as never);
   const coUpdate = useServerMutation<Record<string, unknown>>(updateCoFn as never);
@@ -259,6 +271,25 @@ function ProjectPage() {
     reviews[0]?.forecast_completion_date_before ??
     null;
   const jobNumber = project.job_number || `ID ${project.id.slice(0, 8).toUpperCase()}`;
+  const openTodoCount = decisions.filter((d) => d.status !== "resolved").length;
+
+  const createTodoForRisk = (exposure: ExposureRow) => {
+    decisionCreate.mutate({
+      projectId,
+      decision: `${responseAction(exposure.response_path)}: ${exposure.title}`,
+      impact:
+        exposure.notes ||
+        exposure.release_condition ||
+        exposure.description ||
+        `Own the ${exposure.response_path} path for ${fmtUSD(exposure.dollar_exposure)} exposure.`,
+      owner: exposure.owner,
+      due_date: exposure.next_review_at,
+      status: "open",
+      linked_exposure_id: exposure.id,
+      linked_co_id: null,
+      notes: "",
+    });
+  };
 
   const downloadCurrentReport = async (style: IorPdfStyle) => {
     const bytes = await generateIorPdf(
@@ -310,6 +341,12 @@ function ProjectPage() {
       label: "Risk Tally",
       detail: `${liveExposureCount} live`,
       icon: ShieldAlert,
+    },
+    {
+      value: "todos",
+      label: "To-Dos",
+      detail: `${openTodoCount} open`,
+      icon: ListChecks,
     },
     {
       value: "sov",
@@ -508,6 +545,21 @@ function ProjectPage() {
                 onCreateExposure={(d) => expCreate.mutate({ projectId, ...d })}
                 onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
                 onDeleteExposure={(id) => expDelete.mutate({ id })}
+                onCreateTodo={createTodoForRisk}
+              />
+            </TabsContent>
+
+            <TabsContent value="todos" className="mt-0 space-y-6">
+              <WorkspaceHeader
+                title="To-Dos"
+                subtitle="Owned actions created from risk plans, schedule issues, change orders, and IOR review follow-through."
+              />
+              <DecisionsTable
+                decisions={decisions}
+                exposures={exposures}
+                onCreate={(d) => decisionCreate.mutate({ projectId, ...d })}
+                onUpdate={(id, patch) => decisionUpdate.mutate({ id, ...patch })}
+                onDelete={(id) => decisionDelete.mutate({ id })}
               />
             </TabsContent>
 
@@ -664,6 +716,13 @@ function SovMetric({ label, value }: { label: string; value: string }) {
       <div className="mt-1 text-lg font-medium tabular text-foreground">{value}</div>
     </div>
   );
+}
+
+function responseAction(path: import("@/lib/ior").ResponsePath) {
+  if (path === "eliminate") return "Eliminate";
+  if (path === "recover") return "Recover";
+  if (path === "offset") return "Offset";
+  return "Accept";
 }
 
 function BillingWorkspace({

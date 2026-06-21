@@ -26,7 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { ListChecks, Plus, Pencil, Trash2 } from "lucide-react";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
 import type { ExposureCategory, ExposureStatus, HoldClass, ResponsePath } from "@/lib/ior";
@@ -122,11 +122,13 @@ export function ExposuresTable({
   onCreate,
   onUpdate,
   onDelete,
+  onCreateTodo,
 }: {
   exposures: ExposureRow[];
   onCreate: (d: ExposureDraft) => void;
   onUpdate: (id: string, patch: Partial<ExposureDraft>) => void;
   onDelete: (id: string) => void;
+  onCreateTodo?: (exposure: ExposureRow) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -176,6 +178,16 @@ export function ExposuresTable({
     setOpen(false);
   };
 
+  const live = exposures
+    .filter((e) => e.status === "active" || e.status === "escalated")
+    .sort((a, b) => likelyValue(b) - likelyValue(a));
+  const topRiskId = live[0]?.id ?? null;
+  const eHolds = live.filter((e) => e.hold_class === "E-Hold" || e.hold_class === "Both");
+  const cHolds = live.filter((e) => e.hold_class === "C-Hold");
+  const closed = exposures
+    .filter((e) => e.status !== "active" && e.status !== "escalated")
+    .sort((a, b) => likelyValue(b) - likelyValue(a));
+
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
@@ -201,59 +213,48 @@ export function ExposuresTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {exposures.map((e) => (
-              <TableRow key={e.id} className={e.status === "released" ? "opacity-60" : ""}>
-                <TableCell className="min-w-[290px]">
-                  <div className="font-medium text-foreground">{e.title}</div>
-                  {e.description && (
-                    <div className="mt-0.5 text-xs text-muted-foreground max-w-md">
-                      {e.description}
-                    </div>
-                  )}
-                </TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {CATEGORY_LABELS[e.category]}
-                </TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(e.dollar_exposure)}</TableCell>
-                <TableCell className="text-right tabular text-muted-foreground">
-                  {e.probability}%
-                </TableCell>
-                <TableCell className="text-right tabular">
-                  {fmtUSD(e.dollar_exposure * (e.probability / 100))}
-                </TableCell>
-                <TableCell>
-                  <span className="inline-flex items-center rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[10px]">
-                    {e.hold_class}
-                  </span>
-                </TableCell>
-                <TableCell className="text-sm">{e.owner}</TableCell>
-                <TableCell>
-                  <StatusBadge status={e.status} />
-                </TableCell>
-                <TableCell>
-                  <TreatmentBadge path={e.response_path} />
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => openEdit(e)}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => onDelete(e.id)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
+            <RiskGroupRow label="E-Holds" detail="Known exposure now" count={eHolds.length} />
+            {eHolds.map((e) => (
+              <RiskRow
+                key={e.id}
+                exposure={e}
+                highlighted={e.id === topRiskId}
+                onEdit={openEdit}
+                onDelete={onDelete}
+                onCreateTodo={onCreateTodo}
+              />
+            ))}
+            <RiskGroupRow
+              label="C-Holds"
+              detail="Contingency still being gardened"
+              count={cHolds.length}
+            />
+            {cHolds.map((e) => (
+              <RiskRow
+                key={e.id}
+                exposure={e}
+                highlighted={e.id === topRiskId}
+                onEdit={openEdit}
+                onDelete={onDelete}
+                onCreateTodo={onCreateTodo}
+              />
+            ))}
+            {closed.length > 0 && (
+              <RiskGroupRow
+                label="Closed / released"
+                detail="Status has removed this from active holds"
+                count={closed.length}
+              />
+            )}
+            {closed.map((e) => (
+              <RiskRow
+                key={e.id}
+                exposure={e}
+                highlighted={false}
+                onEdit={openEdit}
+                onDelete={onDelete}
+                onCreateTodo={onCreateTodo}
+              />
             ))}
             {exposures.length === 0 && (
               <TableRow>
@@ -419,6 +420,15 @@ export function ExposuresTable({
               </div>
             </div>
             <div className="space-y-1.5">
+              <Label>Action plan / course of action</Label>
+              <Textarea
+                rows={3}
+                value={draft.notes}
+                placeholder="How will this be recovered, offset, eliminated, or accepted? Who must do what next?"
+                onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1.5">
               <Label>Release condition</Label>
               <Input
                 value={draft.release_condition}
@@ -443,5 +453,126 @@ export function ExposuresTable({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function likelyValue(e: ExposureRow) {
+  return e.dollar_exposure * (e.probability / 100);
+}
+
+function RiskGroupRow({ label, detail, count }: { label: string; detail: string; count: number }) {
+  return (
+    <TableRow className="bg-surface/80 hover:bg-surface/80">
+      <TableCell colSpan={10} className="py-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">
+              {label}
+            </span>
+            <span className="text-xs text-muted-foreground">{detail}</span>
+          </div>
+          <span className="rounded-full border border-hairline bg-card px-2 py-0.5 text-[10px] text-muted-foreground">
+            {count}
+          </span>
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function RiskRow({
+  exposure,
+  highlighted,
+  onEdit,
+  onDelete,
+  onCreateTodo,
+}: {
+  exposure: ExposureRow;
+  highlighted: boolean;
+  onEdit: (exposure: ExposureRow) => void;
+  onDelete: (id: string) => void;
+  onCreateTodo?: (exposure: ExposureRow) => void;
+}) {
+  const closed = exposure.status !== "active" && exposure.status !== "escalated";
+  return (
+    <TableRow
+      onDoubleClick={() => onEdit(exposure)}
+      className={[
+        closed ? "opacity-65" : "",
+        highlighted ? "border-l-4 border-l-danger bg-danger/8 hover:bg-danger/10" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <TableCell className="min-w-[290px]">
+        <div className="flex items-center gap-2">
+          <div className="font-medium text-foreground">{exposure.title}</div>
+          {highlighted && (
+            <span className="rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-danger">
+              Top risk
+            </span>
+          )}
+        </div>
+        {exposure.description && (
+          <div className="mt-0.5 max-w-md text-xs text-muted-foreground">
+            {exposure.description}
+          </div>
+        )}
+        {exposure.notes && (
+          <div className="mt-2 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-foreground">
+            <span className="font-medium">Plan: </span>
+            {exposure.notes}
+          </div>
+        )}
+      </TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {CATEGORY_LABELS[exposure.category]}
+      </TableCell>
+      <TableCell className="text-right tabular">{fmtUSD(exposure.dollar_exposure)}</TableCell>
+      <TableCell className="text-right tabular text-muted-foreground">
+        {exposure.probability}%
+      </TableCell>
+      <TableCell className="text-right tabular font-medium">
+        {fmtUSD(likelyValue(exposure))}
+      </TableCell>
+      <TableCell>
+        <span className="inline-flex items-center rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[10px]">
+          {exposure.hold_class}
+        </span>
+      </TableCell>
+      <TableCell className="text-sm">{exposure.owner}</TableCell>
+      <TableCell>
+        <StatusBadge status={exposure.status} />
+      </TableCell>
+      <TableCell>
+        <TreatmentBadge path={exposure.response_path} />
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="flex justify-end gap-1">
+          {onCreateTodo && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              title="Create linked to-do"
+              onClick={() => onCreateTodo(exposure)}
+            >
+              <ListChecks className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onEdit(exposure)}>
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7"
+            onClick={() => onDelete(exposure.id)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
   );
 }

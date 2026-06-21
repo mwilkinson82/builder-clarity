@@ -35,27 +35,30 @@ export function KpiStrip(props: {
 }) {
   const items: Kpi[] = [
     { label: "Original GP", value: fmtUSD(props.originalGP), sub: fmtPct(props.originalGPpct) },
-    { label: "Forecasted GP", value: fmtUSD(props.forecastedGP), sub: "Before holds" },
-    {
-      label: "Indicated GP",
-      value: fmtUSD(props.indicatedGP),
-      sub: fmtPct(props.indicatedGPpct),
-      tone: "accent",
-      tooltip: "Forecasted GP before holds, less Exposure Holds and Contingency Hold. Represents the GP we believe we'll actually deliver.",
-    },
     {
       label: "GP At Risk",
       value: fmtUSD(props.gpAtRisk),
       sub: "Original − Indicated",
       tone: "danger",
-      tooltip: "The amount of margin erosion between the original gross profit and the indicated outcome.",
+      tooltip:
+        "The amount of margin erosion between the original gross profit and the indicated outcome.",
     },
+    {
+      label: "Indicated GP",
+      value: fmtUSD(props.indicatedGP),
+      sub: fmtPct(props.indicatedGPpct),
+      tone: "accent",
+      tooltip:
+        "Forecasted GP before holds, less Exposure Holds and Contingency Hold. Represents the GP we believe we'll actually deliver.",
+    },
+    { label: "Forecasted GP", value: fmtUSD(props.forecastedGP), sub: "Before holds" },
     {
       label: "Exposure Holds",
       value: fmtUSD(props.exposureHolds),
       sub: "Specific known risks",
       tone: "warn",
-      tooltip: "E-Holds reserve against specific identified risks (a delayed window package, an overrun allowance, etc.).",
+      tooltip:
+        "E-Holds reserve against specific identified risks (a delayed window package, an overrun allowance, etc.).",
     },
     {
       label: "Contingency Hold",
