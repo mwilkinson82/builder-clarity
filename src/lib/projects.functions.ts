@@ -22,6 +22,7 @@ export type DecisionStatus = "open" | "in_progress" | "resolved" | "overdue";
 
 export interface ProjectRow {
   id: string;
+  job_number: string;
   name: string;
   client: string;
   original_contract: number;
@@ -82,7 +83,6 @@ export interface ChangeOrderRow {
   co_type: COType;
 }
 
-
 export interface BucketRow {
   id: string;
   project_id: string;
@@ -90,6 +90,29 @@ export interface BucketRow {
   original_budget: number;
   actual_to_date: number;
   ftc: number;
+  sort_order: number;
+  source_type: "original_sov" | "change_order" | "added_cost";
+  source_date: string | null;
+  source_note: string;
+}
+
+export type BillingStatus = "draft" | "submitted" | "paid" | "partial" | "rejected";
+
+export interface BillingApplicationRow {
+  id: string;
+  project_id: string;
+  application_number: string;
+  invoice_number: string;
+  submitted_date: string | null;
+  due_date: string | null;
+  billing_period: string;
+  contract_amount: number;
+  change_order_amount: number;
+  amount_billed: number;
+  paid_to_date: number;
+  retainage: number;
+  status: BillingStatus;
+  notes: string;
   sort_order: number;
 }
 
@@ -126,6 +149,7 @@ const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 
 const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   id: p.id as string,
+  job_number: str(p.job_number),
   name: p.name as string,
   client: str(p.client),
   original_contract: num(p.original_contract),
@@ -140,6 +164,24 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   baseline_completion_date: (p.baseline_completion_date as string | null) ?? null,
   last_review_summary: str(p.last_review_summary),
   project_manager: str(p.project_manager),
+});
+
+const normalizeBillingApplication = (b: Record<string, unknown>): BillingApplicationRow => ({
+  id: b.id as string,
+  project_id: b.project_id as string,
+  application_number: str(b.application_number),
+  invoice_number: str(b.invoice_number),
+  submitted_date: (b.submitted_date as string | null) ?? null,
+  due_date: (b.due_date as string | null) ?? null,
+  billing_period: str(b.billing_period),
+  contract_amount: num(b.contract_amount),
+  change_order_amount: num(b.change_order_amount),
+  amount_billed: num(b.amount_billed),
+  paid_to_date: num(b.paid_to_date),
+  retainage: num(b.retainage),
+  status: str(b.status, "draft") as BillingStatus,
+  notes: str(b.notes),
+  sort_order: num(b.sort_order),
 });
 
 const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
@@ -181,7 +223,9 @@ export const listProjects = createServerFn({ method: "GET" })
     const [expRes, cosRes, bucketsRes] = await Promise.all([
       context.supabase
         .from("exposures")
-        .select("project_id,category,dollar_exposure,probability,hold_class,status,response_path,opened_at,next_review_at")
+        .select(
+          "project_id,category,dollar_exposure,probability,hold_class,status,response_path,opened_at,next_review_at",
+        )
         .in("project_id", ids),
       context.supabase
         .from("change_orders")
@@ -232,9 +276,7 @@ export const listProjects = createServerFn({ method: "GET" })
       const r = computeRollup(p, buckets, cos, exposures);
       const warnings = evaluateWarnings(p, buckets, cos, exposures, r);
       const lastReview = p.last_reviewed_at ? new Date(p.last_reviewed_at).getTime() : null;
-      const daysSinceReview = lastReview
-        ? Math.floor((Date.now() - lastReview) / 86400000)
-        : null;
+      const daysSinceReview = lastReview ? Math.floor((Date.now() - lastReview) / 86400000) : null;
       const topCat = exposureByCategory(exposures)[0]?.category ?? null;
       const activeScheduleRiskCount = exposures.filter(
         (e) =>
@@ -276,12 +318,30 @@ export const getProject = createServerFn({ method: "GET" })
     const pid = data.projectId;
     const [pRes, eRes, cRes, bRes, dRes, rRes] = await Promise.all([
       context.supabase.from("projects").select("*").eq("id", pid).maybeSingle(),
-      context.supabase.from("exposures").select("*").eq("project_id", pid).order("opened_at", { ascending: false }),
+      context.supabase
+        .from("exposures")
+        .select("*")
+        .eq("project_id", pid)
+        .order("opened_at", { ascending: false }),
       context.supabase.from("change_orders").select("*").eq("project_id", pid).order("number"),
       context.supabase.from("cost_buckets").select("*").eq("project_id", pid).order("sort_order"),
-      context.supabase.from("decisions").select("*").eq("project_id", pid).order("due_date", { ascending: true, nullsFirst: false }),
-      context.supabase.from("reviews").select("*").eq("project_id", pid).order("reviewed_at", { ascending: false }).limit(10),
+      context.supabase
+        .from("decisions")
+        .select("*")
+        .eq("project_id", pid)
+        .order("due_date", { ascending: true, nullsFirst: false }),
+      context.supabase
+        .from("reviews")
+        .select("*")
+        .eq("project_id", pid)
+        .order("reviewed_at", { ascending: false })
+        .limit(10),
     ]);
+    const billRes = await context.supabase
+      .from("billing_applications")
+      .select("*")
+      .eq("project_id", pid)
+      .order("sort_order");
     if (pRes.error) throw new Error(pRes.error.message);
     if (!pRes.data) throw new Error("Project not found");
     if (eRes.error) throw new Error(eRes.error.message);
@@ -289,6 +349,11 @@ export const getProject = createServerFn({ method: "GET" })
     if (bRes.error) throw new Error(bRes.error.message);
     if (dRes.error) throw new Error(dRes.error.message);
     if (rRes.error) throw new Error(rRes.error.message);
+    const billingTableMissing =
+      billRes.error &&
+      (billRes.error.message.includes("billing_applications") ||
+        billRes.error.message.includes("schema cache"));
+    if (billRes.error && !billingTableMissing) throw new Error(billRes.error.message);
 
     const project = normalizeProject(pRes.data as Record<string, unknown>);
     const exposures: ExposureRow[] = (eRes.data ?? []).map((r) =>
@@ -307,7 +372,7 @@ export const getProject = createServerFn({ method: "GET" })
         probability: num(o.probability),
         owner: str(o.owner),
         notes: str(o.notes),
-        co_type: (str(o.co_type, "other") as COType),
+        co_type: str(o.co_type, "other") as COType,
       };
     });
 
@@ -321,8 +386,14 @@ export const getProject = createServerFn({ method: "GET" })
         actual_to_date: num(o.actual_to_date),
         ftc: num(o.ftc),
         sort_order: num(o.sort_order),
+        source_type: str(o.source_type, "original_sov") as BucketRow["source_type"],
+        source_date: (o.source_date as string | null) ?? null,
+        source_note: str(o.source_note),
       };
     });
+    const billingApplications: BillingApplicationRow[] = billingTableMissing
+      ? []
+      : (billRes.data ?? []).map((b) => normalizeBillingApplication(b as Record<string, unknown>));
     const decisions: DecisionRow[] = (dRes.data ?? []).map((d) => {
       const o = d as Record<string, unknown>;
       return {
@@ -345,7 +416,8 @@ export const getProject = createServerFn({ method: "GET" })
         project_id: o.project_id as string,
         reviewed_at: str(o.reviewed_at),
         reviewer: str(o.reviewer),
-        forecast_completion_date_before: (o.forecast_completion_date_before as string | null) ?? null,
+        forecast_completion_date_before:
+          (o.forecast_completion_date_before as string | null) ?? null,
         forecast_completion_date_after: (o.forecast_completion_date_after as string | null) ?? null,
         summary_notes: str(o.summary_notes),
         body_markdown: str(o.body_markdown),
@@ -369,6 +441,7 @@ export const getProject = createServerFn({ method: "GET" })
       buckets,
       decisions,
       reviews,
+      billingApplications,
       rollup,
       guidance,
       warnings,
@@ -383,6 +456,7 @@ const DEFAULT_BUCKETS = ["Sitework", "Structure", "Envelope", "MEP", "Finishes",
 
 const createProjectInput = z.object({
   name: z.string().min(1).max(200),
+  job_number: z.string().max(100).default(""),
   client: z.string().max(200).default(""),
   original_contract: z.number().min(0),
   original_cost_budget: z.number().min(0),
@@ -397,6 +471,7 @@ export const createProject = createServerFn({ method: "POST" })
       .insert({
         owner_id: context.userId,
         name: data.name,
+        job_number: data.job_number,
         client: data.client,
         original_contract: data.original_contract,
         original_cost_budget: data.original_cost_budget,
@@ -425,6 +500,7 @@ const updateFinancialsInput = z.object({
   projectId: z.string().uuid(),
   patch: z.object({
     name: z.string().min(1).max(200).optional(),
+    job_number: z.string().max(100).optional(),
     client: z.string().max(200).optional(),
     original_contract: z.number().min(0).optional(),
     original_cost_budget: z.number().min(0).optional(),
@@ -454,12 +530,26 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
 // ---------------- EXPOSURES ----------------
 
 const EXPOSURE_CATEGORIES = [
-  "owner_decision","design_drift","trade_performance","procurement",
-  "schedule_compression","allowance_overrun","field_change","closeout_punch","other",
+  "owner_decision",
+  "design_drift",
+  "trade_performance",
+  "procurement",
+  "schedule_compression",
+  "allowance_overrun",
+  "field_change",
+  "closeout_punch",
+  "other",
 ] as const;
 const RESPONSE_PATHS = ["eliminate", "recover", "offset", "accept"] as const;
 const HOLD_CLASSES = ["E-Hold", "C-Hold", "Both", "None"] as const;
-const EXPOSURE_STATUSES = ["active","escalated","recovered","eliminated","accepted","released"] as const;
+const EXPOSURE_STATUSES = [
+  "active",
+  "escalated",
+  "recovered",
+  "eliminated",
+  "accepted",
+  "released",
+] as const;
 
 const exposureInput = z.object({
   title: z.string().min(1).max(200),
@@ -485,11 +575,13 @@ export const createExposure = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
-    const { error } = await context.supabase
+    const { data: inserted, error } = await context.supabase
       .from("exposures")
-      .insert({ project_id: projectId, ...rest });
+      .insert({ project_id: projectId, ...rest })
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
-    return { ok: true };
+    return { ok: true, id: inserted.id as string };
   });
 
 export const updateExposure = createServerFn({ method: "POST" })
@@ -516,8 +608,13 @@ export const deleteExposure = createServerFn({ method: "POST" })
 // ---------------- CHANGE ORDERS ----------------
 
 const CO_TYPES = [
-  "owner_change","design_error","design_omission","unforeseen_condition",
-  "missed_scope","sub_issued","other",
+  "owner_change",
+  "design_error",
+  "design_omission",
+  "unforeseen_condition",
+  "missed_scope",
+  "sub_issued",
+  "other",
 ] as const;
 
 const coInput = z.object({
@@ -531,7 +628,6 @@ const coInput = z.object({
   notes: z.string().max(2000).default(""),
   co_type: z.enum(CO_TYPES).default("other"),
 });
-
 
 export const createChangeOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -577,6 +673,9 @@ const bucketInput = z.object({
     original_budget: z.number().min(0).optional(),
     actual_to_date: z.number().min(0).optional(),
     ftc: z.number().min(0).optional(),
+    source_type: z.enum(["original_sov", "change_order", "added_cost"]).optional(),
+    source_date: z.string().nullable().optional(),
+    source_note: z.string().max(500).optional(),
   }),
 });
 
@@ -598,6 +697,9 @@ const createBucketInput = z.object({
   original_budget: z.number().min(0).default(0),
   actual_to_date: z.number().min(0).default(0),
   ftc: z.number().min(0).default(0),
+  source_type: z.enum(["original_sov", "change_order", "added_cost"]).default("added_cost"),
+  source_date: z.string().nullable().optional(),
+  source_note: z.string().max(500).default(""),
 });
 
 export const createBucket = createServerFn({ method: "POST" })
@@ -618,6 +720,9 @@ export const createBucket = createServerFn({ method: "POST" })
       original_budget: data.original_budget,
       actual_to_date: data.actual_to_date,
       ftc: data.ftc,
+      source_type: data.source_type,
+      source_date: data.source_date ?? new Date().toISOString().slice(0, 10),
+      source_note: data.source_note,
       sort_order,
     });
     if (error) throw new Error(error.message);
@@ -683,6 +788,77 @@ export const deleteDecision = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+// ---------------- BILLING APPLICATIONS ----------------
+
+const BILLING_STATUSES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
+
+const billingApplicationInput = z.object({
+  application_number: z.string().max(100).default(""),
+  invoice_number: z.string().max(100).default(""),
+  submitted_date: z.string().nullable().optional(),
+  due_date: z.string().nullable().optional(),
+  billing_period: z.string().max(100).default(""),
+  contract_amount: z.number().min(0).default(0),
+  change_order_amount: z.number().min(0).default(0),
+  amount_billed: z.number().min(0).default(0),
+  paid_to_date: z.number().min(0).default(0),
+  retainage: z.number().min(0).default(0),
+  status: z.enum(BILLING_STATUSES).default("draft"),
+  notes: z.string().max(2000).default(""),
+  sort_order: z.number().int().optional(),
+});
+
+export const createBillingApplication = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string } & z.input<typeof billingApplicationInput>) =>
+    z.object({ projectId: z.string().uuid() }).merge(billingApplicationInput).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { projectId, ...rest } = data;
+    const { data: last } = await context.supabase
+      .from("billing_applications")
+      .select("sort_order")
+      .eq("project_id", projectId)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const sort_order = rest.sort_order ?? ((last?.sort_order as number | undefined) ?? 0) + 1;
+    const { error } = await context.supabase.from("billing_applications").insert({
+      project_id: projectId,
+      ...rest,
+      sort_order,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const updateBillingApplication = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: { id: string; patch: Partial<z.input<typeof billingApplicationInput>> }) =>
+      z.object({ id: z.string().uuid(), patch: billingApplicationInput.partial() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("billing_applications")
+      .update(data.patch)
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteBillingApplication = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("billing_applications")
+      .delete()
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 // ---------------- REVIEWS ----------------
 
 const submitReviewInput = z.object({
@@ -699,22 +875,24 @@ const submitReviewInput = z.object({
 
 export const submitReview = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: z.input<typeof submitReviewInput>) =>
-    submitReviewInput.parse(input),
-  )
+  .inputValidator((input: z.input<typeof submitReviewInput>) => submitReviewInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { data: inserted, error } = await context.supabase.from("reviews").insert({
-      project_id: data.projectId,
-      reviewer: data.reviewer,
-      forecast_completion_date_before: data.forecast_completion_date_before ?? null,
-      forecast_completion_date_after: data.forecast_completion_date_after ?? null,
-      summary_notes: data.summary_notes,
-      body_markdown: data.body_markdown,
-      pdf_style: data.pdf_style,
-      email_recipients: data.email_recipients,
-      kpi_snapshot: data.kpi_snapshot as Json,
-      status: "published",
-    }).select("id").single();
+    const { data: inserted, error } = await context.supabase
+      .from("reviews")
+      .insert({
+        project_id: data.projectId,
+        reviewer: data.reviewer,
+        forecast_completion_date_before: data.forecast_completion_date_before ?? null,
+        forecast_completion_date_after: data.forecast_completion_date_after ?? null,
+        summary_notes: data.summary_notes,
+        body_markdown: data.body_markdown,
+        pdf_style: data.pdf_style,
+        email_recipients: data.email_recipients,
+        kpi_snapshot: data.kpi_snapshot as Json,
+        status: "published",
+      })
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
 
     const patch: {
@@ -749,14 +927,9 @@ const updateReviewInput = z.object({
 
 export const updateReview = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: z.input<typeof updateReviewInput>) =>
-    updateReviewInput.parse(input),
-  )
+  .inputValidator((input: z.input<typeof updateReviewInput>) => updateReviewInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase
-      .from("reviews")
-      .update(data.patch)
-      .eq("id", data.id);
+    const { error } = await context.supabase.from("reviews").update(data.patch).eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -769,6 +942,9 @@ const importBucketRow = z.object({
   actual_to_date: z.number().min(0),
   ftc: z.number().min(0),
   sort_order: z.number().int().min(0),
+  source_type: z.enum(["original_sov", "change_order", "added_cost"]).default("original_sov"),
+  source_date: z.string().nullable().optional(),
+  source_note: z.string().max(500).default(""),
 });
 
 const importInput = z.object({
@@ -806,6 +982,9 @@ export const importCostBuckets = createServerFn({ method: "POST" })
       original_budget: r.original_budget,
       actual_to_date: r.actual_to_date,
       ftc: r.ftc,
+      source_type: r.source_type,
+      source_date: r.source_date ?? new Date().toISOString().slice(0, 10),
+      source_note: r.source_note,
       sort_order: baseOrder + i + 1,
     }));
     const { error } = await context.supabase.from("cost_buckets").insert(insertRows);

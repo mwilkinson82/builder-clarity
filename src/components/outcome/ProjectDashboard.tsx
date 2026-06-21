@@ -42,12 +42,14 @@ export function ProjectDashboard({
   rollup,
   warnings,
   scheduleRiskCount,
+  lastReviewForecast,
 }: {
   project: ProjectRow;
   exposures: ExposureRow[];
   rollup: Rollup;
   warnings: Warning[];
   scheduleRiskCount: number;
+  lastReviewForecast?: string | null;
 }) {
   const live = exposures.filter(isLiveRisk);
   const activeRisk = live.reduce((sum, exposure) => sum + weighted(exposure), 0);
@@ -60,6 +62,10 @@ export function ProjectDashboard({
   ).length;
   const linkedScheduleCount = scheduleRiskCount + scheduleLinkedExposures;
   const schedule = scheduleReliability(project.schedule_variance_weeks, linkedScheduleCount);
+  const scheduleMovementSinceLastUpdate = weeksBetween(
+    lastReviewForecast,
+    project.forecast_completion_date,
+  );
   const topRisk = topExposures[0] ?? null;
   const currentQuestion = warnings[0]?.title ?? topRisk?.title ?? "No urgent item logged";
   const financialBars = [
@@ -199,6 +205,19 @@ export function ProjectDashboard({
               tone={project.schedule_variance_weeks > 0 ? "danger" : "success"}
             />
             <DashboardMetric
+              label="Since last IOR"
+              value={formatScheduleMovement(scheduleMovementSinceLastUpdate)}
+              tone={
+                scheduleMovementSinceLastUpdate == null
+                  ? undefined
+                  : scheduleMovementSinceLastUpdate > 0
+                    ? "danger"
+                    : scheduleMovementSinceLastUpdate < 0
+                      ? "success"
+                      : undefined
+              }
+            />
+            <DashboardMetric
               label="Schedule risks"
               value={String(linkedScheduleCount)}
               tone={linkedScheduleCount > 0 ? "warning" : "success"}
@@ -285,6 +304,21 @@ export function ProjectDashboard({
       </div>
     </section>
   );
+}
+
+function weeksBetween(previous?: string | null, current?: string | null) {
+  if (!previous || !current) return null;
+  const prev = new Date(`${previous}T00:00:00`);
+  const next = new Date(`${current}T00:00:00`);
+  if (Number.isNaN(prev.getTime()) || Number.isNaN(next.getTime())) return null;
+  return Math.round((next.getTime() - prev.getTime()) / 604800000);
+}
+
+function formatScheduleMovement(value: number | null) {
+  if (value == null) return "No prior IOR";
+  if (value > 0) return `+${value} wk`;
+  if (value < 0) return `${value} wk`;
+  return "No movement";
 }
 
 function KpiCell({

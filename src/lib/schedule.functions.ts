@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { HoldClass, ResponsePath } from "@/lib/ior";
 
 export type MilestoneStatus = "on_track" | "at_risk" | "delayed" | "complete";
 export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_decision";
@@ -23,11 +24,41 @@ export interface ScheduleRiskRow {
   kind: ScheduleRiskKind;
   title: string;
   detail: string;
+  dollar_exposure: number;
+  probability: number;
+  schedule_impact_weeks: number | null;
+  owner: string;
+  due_date: string | null;
+  response_path: ResponsePath;
+  hold_class: HoldClass;
+  linked_exposure_id: string | null;
   sort_order: number;
 }
 
 const MILESTONE_STATUSES = ["on_track", "at_risk", "delayed", "complete"] as const;
 const RISK_KINDS = ["procurement", "trade_performance", "critical_decision"] as const;
+const RESPONSE_PATHS = ["eliminate", "recover", "offset", "accept"] as const;
+const HOLD_CLASSES = ["E-Hold", "C-Hold", "Both", "None"] as const;
+
+const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
+const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
+
+const normalizeScheduleRisk = (r: Record<string, unknown>): ScheduleRiskRow => ({
+  id: r.id as string,
+  project_id: r.project_id as string,
+  kind: str(r.kind, "critical_decision") as ScheduleRiskKind,
+  title: str(r.title),
+  detail: str(r.detail),
+  dollar_exposure: num(r.dollar_exposure),
+  probability: r.probability == null ? 100 : num(r.probability),
+  schedule_impact_weeks: r.schedule_impact_weeks == null ? null : num(r.schedule_impact_weeks),
+  owner: str(r.owner),
+  due_date: (r.due_date as string | null) ?? null,
+  response_path: str(r.response_path, "recover") as ResponsePath,
+  hold_class: str(r.hold_class, "E-Hold") as HoldClass,
+  linked_exposure_id: (r.linked_exposure_id as string | null) ?? null,
+  sort_order: num(r.sort_order),
+});
 
 // ---------- LIST ----------
 export const listSchedule = createServerFn({ method: "GET" })
@@ -52,7 +83,7 @@ export const listSchedule = createServerFn({ method: "GET" })
     if (rRes.error) throw new Error(rRes.error.message);
     return {
       milestones: (mRes.data ?? []) as unknown as MilestoneRow[],
-      risks: (rRes.data ?? []) as unknown as ScheduleRiskRow[],
+      risks: (rRes.data ?? []).map((r) => normalizeScheduleRisk(r as Record<string, unknown>)),
     };
   });
 
@@ -118,25 +149,39 @@ const riskPatch = z.object({
   title: z.string().min(1).max(200).optional(),
   detail: z.string().max(2000).optional(),
   kind: z.enum(RISK_KINDS).optional(),
+  dollar_exposure: z.number().min(0).optional(),
+  probability: z.number().min(0).max(100).optional(),
+  schedule_impact_weeks: z.number().nullable().optional(),
+  owner: z.string().max(200).optional(),
+  due_date: z.string().nullable().optional(),
+  response_path: z.enum(RESPONSE_PATHS).optional(),
+  hold_class: z.enum(HOLD_CLASSES).optional(),
+  linked_exposure_id: z.string().uuid().nullable().optional(),
   sort_order: z.number().int().optional(),
 });
 
 export const createScheduleRisk = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { projectId: string; kind: ScheduleRiskKind; title: string }) =>
-    z
-      .object({
-        projectId: z.string().uuid(),
-        kind: z.enum(RISK_KINDS),
-        title: z.string().min(1).max(200),
-      })
-      .parse(input),
+  .inputValidator(
+    (
+      input: { projectId: string; kind: ScheduleRiskKind; title: string } & Partial<
+        z.input<typeof riskPatch>
+      >,
+    ) =>
+      z
+        .object({
+          projectId: z.string().uuid(),
+          kind: z.enum(RISK_KINDS),
+          title: z.string().min(1).max(200),
+        })
+        .merge(riskPatch.omit({ kind: true, title: true }).partial())
+        .parse(input),
   )
   .handler(async ({ data, context }) => {
+    const { projectId, ...rest } = data;
     const { error } = await context.supabase.from("schedule_risks").insert({
-      project_id: data.projectId,
-      kind: data.kind,
-      title: data.title,
+      project_id: projectId,
+      ...rest,
     });
     if (error) throw new Error(error.message);
     return { ok: true };

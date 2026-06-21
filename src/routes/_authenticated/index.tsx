@@ -38,8 +38,10 @@ export const Route = createFileRoute("/_authenticated/")({
 
 function statusFor(originalPct: number, indicatedPct: number) {
   const erosion = originalPct - indicatedPct;
-  if (erosion >= 5) return { label: "At Risk", className: "border-danger/40 bg-danger/10 text-danger" };
-  if (erosion >= 2) return { label: "Watch", className: "border-warning/40 bg-warning/10 text-warning" };
+  if (erosion >= 5)
+    return { label: "At Risk", className: "border-danger/40 bg-danger/10 text-danger" };
+  if (erosion >= 2)
+    return { label: "Watch", className: "border-warning/40 bg-warning/10 text-warning" };
   return { label: "Healthy", className: "border-success/40 bg-success/10 text-success" };
 }
 
@@ -68,9 +70,13 @@ function PortfolioPage() {
   useEffect(() => {
     if (isLoading || seededRef.current || projects.length > 0) return;
     seededRef.current = true;
-    seed().then((r) => {
-      if (r.seeded) qc.invalidateQueries({ queryKey: ["projects"] });
-    }).catch(() => { seededRef.current = false; });
+    seed()
+      .then((r) => {
+        if (r.seeded) qc.invalidateQueries({ queryKey: ["projects"] });
+      })
+      .catch(() => {
+        seededRef.current = false;
+      });
   }, [isLoading, projects.length, seed, qc]);
 
   const navigate = useNavigate();
@@ -153,28 +159,46 @@ function PortfolioPage() {
                           </div>
                           <div className="text-xs text-muted-foreground">
                             {p.client} · {p.phase} · {p.percent_complete}% complete
-                            {p.top_category && <> · Top risk: {p.top_category.replace(/_/g, " ")}</>}
+                            {p.top_category && (
+                              <> · Top risk: {p.top_category.replace(/_/g, " ")}</>
+                            )}
                           </div>
                         </Link>
-
                       </TableCell>
-                      <TableCell className="text-right tabular">{fmtUSD(p.original_contract)}</TableCell>
-                      <TableCell className="text-right tabular">{fmtPct(p.original_gp_pct)}</TableCell>
-                      <TableCell className="text-right tabular">{fmtPct(p.indicated_gp_pct)}</TableCell>
-                      <TableCell className={`text-right tabular ${p.gp_at_risk > 0 ? "text-danger" : ""}`}>
+                      <TableCell className="text-right tabular">
+                        {fmtUSD(p.original_contract)}
+                      </TableCell>
+                      <TableCell className="text-right tabular">
+                        {fmtPct(p.original_gp_pct)}
+                      </TableCell>
+                      <TableCell className="text-right tabular">
+                        {fmtPct(p.indicated_gp_pct)}
+                      </TableCell>
+                      <TableCell
+                        className={`text-right tabular ${p.gp_at_risk > 0 ? "text-danger" : ""}`}
+                      >
                         {fmtUSD(p.gp_at_risk)}
                       </TableCell>
-                      <TableCell className="text-right tabular">{fmtUSD(p.risk_allocated)}</TableCell>
+                      <TableCell className="text-right tabular">
+                        {fmtUSD(p.risk_allocated)}
+                      </TableCell>
                       <TableCell>
-                        <div className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${schedule.className}`}>
+                        <div
+                          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${schedule.className}`}
+                        >
                           {schedule.label} · {Math.round(schedule.score)}%
                         </div>
                         <div className="mt-1 text-[11px] text-muted-foreground">
-                          {p.schedule_variance_weeks > 0 ? `+${p.schedule_variance_weeks} wk` : "No slip"} · {p.schedule_risk_count} risks
+                          {p.schedule_variance_weeks > 0
+                            ? `+${p.schedule_variance_weeks} wk`
+                            : "No slip"}{" "}
+                          · {p.schedule_risk_count} risks
                         </div>
                       </TableCell>
                       <TableCell>
-                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${s.className}`}>
+                        <span
+                          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${s.className}`}
+                        >
                           {s.label}
                         </span>
                       </TableCell>
@@ -207,6 +231,7 @@ function EmptyState() {
 function NewProjectButton() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [jobNumber, setJobNumber] = useState("");
   const [client, setClient] = useState("");
   const [contract, setContract] = useState("");
   const [costBudget, setCostBudget] = useState("");
@@ -219,6 +244,7 @@ function NewProjectButton() {
       create({
         data: {
           name,
+          job_number: jobNumber,
           client,
           original_contract: Number(contract) || 0,
           original_cost_budget: Number(costBudget) || 0,
@@ -227,7 +253,11 @@ function NewProjectButton() {
     onSuccess: ({ id }) => {
       qc.invalidateQueries({ queryKey: ["projects"] });
       setOpen(false);
-      setName(""); setClient(""); setContract(""); setCostBudget("");
+      setName("");
+      setJobNumber("");
+      setClient("");
+      setContract("");
+      setCostBudget("");
       navigate({ to: "/projects/$projectId", params: { projectId: id } });
     },
   });
@@ -235,16 +265,24 @@ function NewProjectButton() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" className="gap-1.5"><Plus className="h-3.5 w-3.5" /> New project</Button>
+        <Button size="sm" className="gap-1.5">
+          <Plus className="h-3.5 w-3.5" /> New project
+        </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">New project</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 py-2">
-          <div className="space-y-1.5">
-            <Label>Project name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Project name</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Job number</Label>
+              <Input value={jobNumber} onChange={(e) => setJobNumber(e.target.value)} />
+            </div>
           </div>
           <div className="space-y-1.5">
             <Label>Client</Label>
@@ -257,16 +295,19 @@ function NewProjectButton() {
             </div>
             <div className="space-y-1.5">
               <Label>Original cost budget (USD)</Label>
-              <Input type="number" value={costBudget} onChange={(e) => setCostBudget(e.target.value)} />
+              <Input
+                type="number"
+                value={costBudget}
+                onChange={(e) => setCostBudget(e.target.value)}
+              />
             </div>
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button
-            disabled={!name.trim() || mutation.isPending}
-            onClick={() => mutation.mutate()}
-          >
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!name.trim() || mutation.isPending} onClick={() => mutation.mutate()}>
             {mutation.isPending ? "Creating…" : "Create project"}
           </Button>
         </DialogFooter>

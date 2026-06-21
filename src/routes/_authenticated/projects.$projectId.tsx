@@ -48,9 +48,13 @@ import {
   submitReview,
   updateReview,
   importCostBuckets,
+  createBillingApplication,
+  updateBillingApplication,
+  deleteBillingApplication,
   type ProjectRow,
   type ReviewRow,
   type ChangeOrderRow,
+  type BillingApplicationRow,
 } from "@/lib/projects.functions";
 import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
@@ -64,8 +68,10 @@ import {
   LayoutDashboard,
   LogOut,
   Pencil,
+  Plus,
   ReceiptText,
   ShieldAlert,
+  Trash2,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
@@ -101,6 +107,9 @@ function ProjectPage() {
   const submitReviewFn = useServerFn(submitReview);
   const updateReviewFn = useServerFn(updateReview);
   const importBucketsFn = useServerFn(importCostBuckets);
+  const createBillingFn = useServerFn(createBillingApplication);
+  const updateBillingFn = useServerFn(updateBillingApplication);
+  const deleteBillingFn = useServerFn(deleteBillingApplication);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", projectId] });
@@ -122,6 +131,9 @@ function ProjectPage() {
   const reviewSubmit = useServerMutation<Record<string, unknown>>(submitReviewFn as never);
   const reviewUpdate = useServerMutation<Record<string, unknown>>(updateReviewFn as never);
   const bucketImport = useServerMutation<Record<string, unknown>>(importBucketsFn as never);
+  const billingCreate = useServerMutation<Record<string, unknown>>(createBillingFn as never);
+  const billingUpdate = useServerMutation<Record<string, unknown>>(updateBillingFn as never);
+  const billingDelete = useServerMutation<{ id: string }>(deleteBillingFn);
   const listScheduleFn = useServerFn(listSchedule);
   const { data: scheduleData } = useQuery({
     queryKey: ["schedule", projectId],
@@ -160,6 +172,7 @@ function ProjectPage() {
     buckets,
     decisions,
     reviews,
+    billingApplications,
     rollup,
     guidance,
     warnings,
@@ -241,6 +254,11 @@ function ProjectPage() {
   const liveExposureCount = exposures.filter(
     (e) => e.status === "active" || e.status === "escalated",
   ).length;
+  const lastReviewForecast =
+    reviews[0]?.forecast_completion_date_after ??
+    reviews[0]?.forecast_completion_date_before ??
+    null;
+  const jobNumber = project.job_number || `ID ${project.id.slice(0, 8).toUpperCase()}`;
 
   const downloadCurrentReport = async (style: IorPdfStyle) => {
     const bytes = await generateIorPdf(
@@ -323,7 +341,7 @@ function ProjectPage() {
     <div className="min-h-screen bg-background text-foreground">
       <header className="relative border-b border-hairline bg-surface-elevated">
         <div className="absolute inset-0 grid-bg opacity-40" />
-        <div className="relative mx-auto max-w-[1400px] px-6 py-8 lg:px-10 lg:py-10">
+        <div className="relative mx-auto max-w-[1400px] px-6 py-5 lg:px-10 lg:py-6">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <Link
@@ -355,7 +373,7 @@ function ProjectPage() {
             </Button>
           </div>
 
-          <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <div className="flex items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                 <span className="inline-block h-px w-8 bg-accent" />
@@ -366,10 +384,10 @@ function ProjectPage() {
                   </span>
                 )}
               </div>
-              <h1 className="mt-3 font-serif text-5xl leading-[1.05] text-foreground lg:text-6xl">
+              <h1 className="mt-2 font-serif text-4xl leading-[1.05] text-foreground lg:text-5xl">
                 {project.name}
               </h1>
-              <p className="mt-3 max-w-2xl text-base text-muted-foreground">
+              <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
                 An IOR operating record, not a budget report. Start from the SOV, work the schedule,
                 then price the exposure.
               </p>
@@ -393,7 +411,13 @@ function ProjectPage() {
                   pending={finUpdate.isPending}
                 />
               </div>
-              <dl className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm md:grid-cols-4">
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm md:grid-cols-5">
+                <div>
+                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    Job #
+                  </dt>
+                  <dd className="mt-0.5 tabular text-foreground">{jobNumber}</dd>
+                </div>
                 <div>
                   <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                     Client
@@ -464,6 +488,7 @@ function ProjectPage() {
                 rollup={rollup}
                 warnings={warnings}
                 scheduleRiskCount={scheduleRisks.length}
+                lastReviewForecast={lastReviewForecast}
               />
             </TabsContent>
 
@@ -472,7 +497,7 @@ function ProjectPage() {
                 title="Schedule"
                 subtitle="Completion forecast, interim milestones, critical path movement, and schedule-linked risk."
               />
-              <ScheduleRisk project={project} />
+              <ScheduleRisk project={project} lastReviewForecast={lastReviewForecast} />
             </TabsContent>
 
             <TabsContent value="risk-tally" className="mt-0 space-y-6">
@@ -499,7 +524,7 @@ function ProjectPage() {
                     pending={bucketImport.isPending}
                   />
                 </div>
-                <div className="mt-5 grid gap-3 md:grid-cols-4">
+                <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
                   <SovMetric label="Cost buckets loaded" value={String(buckets.length)} />
                   <SovMetric
                     label="Original cost budget"
@@ -507,18 +532,34 @@ function ProjectPage() {
                   />
                   <SovMetric label="Actual to date" value={fmtUSD(rollup.actualToDate)} />
                   <SovMetric label="Forecast to complete" value={fmtUSD(rollup.ftc)} />
+                  <SovMetric
+                    label="CO cost exposure"
+                    value={fmtUSD(rollup.weightedPendingCOCost)}
+                  />
+                  <SovMetric
+                    label="Forecasted final cost"
+                    value={fmtUSD(rollup.forecastedFinalCost)}
+                  />
                 </div>
               </div>
               <CostBucketsTable
                 buckets={buckets}
                 onUpdate={(id, patch) => bucketUpdate.mutate({ id, patch })}
-                onCreate={(name) => bucketCreate.mutate({ projectId, bucket: name })}
+                onCreate={(input) => bucketCreate.mutate({ projectId, ...input })}
                 onDelete={(id) => bucketDelete.mutate({ id })}
               />
             </TabsContent>
 
             <TabsContent value="billing" className="mt-0 space-y-6">
-              <BillingWorkspace project={project} rollup={rollup} changeOrders={changeOrders} />
+              <BillingWorkspace
+                project={project}
+                rollup={rollup}
+                changeOrders={changeOrders}
+                billingApplications={billingApplications}
+                onCreate={(input) => billingCreate.mutate({ projectId, ...input })}
+                onUpdate={(id, patch) => billingUpdate.mutate({ id, patch })}
+                onDelete={(id) => billingDelete.mutate({ id })}
+              />
             </TabsContent>
 
             <TabsContent value="ior-report" className="mt-0 space-y-6">
@@ -629,10 +670,18 @@ function BillingWorkspace({
   project,
   rollup,
   changeOrders,
+  billingApplications,
+  onCreate,
+  onUpdate,
+  onDelete,
 }: {
   project: ProjectRow;
   rollup: Rollup;
   changeOrders: ChangeOrderRow[];
+  billingApplications: BillingApplicationRow[];
+  onCreate: (input: Omit<BillingApplicationRow, "id" | "project_id">) => void;
+  onUpdate: (id: string, patch: Partial<BillingApplicationRow>) => void;
+  onDelete: (id: string) => void;
 }) {
   const earnedToDate = rollup.forecastedFinalContract * (project.percent_complete / 100);
   const contractRemaining = Math.max(0, rollup.forecastedFinalContract - earnedToDate);
@@ -642,48 +691,123 @@ function BillingWorkspace({
     0,
   );
   const holds = rollup.exposureHolds + rollup.contingencyHold;
+  const totalBilled = billingApplications.reduce((sum, app) => sum + app.amount_billed, 0);
+  const paidToDate = billingApplications.reduce((sum, app) => sum + app.paid_to_date, 0);
+  const retainage = billingApplications.reduce((sum, app) => sum + app.retainage, 0);
+  const outstanding = billingApplications.reduce(
+    (sum, app) => sum + Math.max(0, app.amount_billed - app.paid_to_date - app.retainage),
+    0,
+  );
+  const today = new Date().toISOString().slice(0, 10);
+
+  const addPayApplication = () => {
+    const nextNumber = String(billingApplications.length + 1).padStart(3, "0");
+    onCreate({
+      application_number: `Pay App ${nextNumber}`,
+      invoice_number: project.job_number
+        ? `${project.job_number}-${nextNumber}`
+        : `INV-${nextNumber}`,
+      submitted_date: today,
+      due_date: addDays(today, 30),
+      billing_period: "Current cycle",
+      contract_amount: project.original_contract,
+      change_order_amount: rollup.approvedCOContract,
+      amount_billed: earnedToDate,
+      paid_to_date: 0,
+      retainage: earnedToDate * 0.1,
+      status: "draft",
+      notes: "",
+      sort_order: billingApplications.length + 1,
+    });
+  };
 
   return (
     <section className="space-y-6">
       <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-        <WorkspaceHeader
-          title="Billing"
-          subtitle="Contract posture, percent complete, pending COs, and risk holds before the next pay application."
-          compact
-        />
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <WorkspaceHeader
+            title="Billing"
+            subtitle="Pay applications, invoice status, paid-to-date, retainage, outstanding balances, and pending COs."
+            compact
+          />
+          <Button size="sm" onClick={addPayApplication} className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> Add pay app
+          </Button>
+        </div>
+        <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           <SovMetric label="Forecasted contract" value={fmtUSD(rollup.forecastedFinalContract)} />
           <SovMetric label="Earned to date" value={fmtUSD(earnedToDate)} />
-          <SovMetric label="Remaining contract" value={fmtUSD(contractRemaining)} />
-          <SovMetric label="Holds affecting GP" value={fmtUSD(holds)} />
+          <SovMetric label="Billed to date" value={fmtUSD(totalBilled || earnedToDate)} />
+          <SovMetric label="Paid to date" value={fmtUSD(paidToDate)} />
+          <SovMetric label="Outstanding" value={fmtUSD(outstanding)} />
+          <SovMetric label="Retainage" value={fmtUSD(retainage)} />
         </div>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-            Pay app posture
+        <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
+          <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                Pay application ledger
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Contract billing, change-order billing, invoice dates, paid-to-date, retainage, and
+                open balance.
+              </p>
+            </div>
+            <div className="text-sm tabular text-muted-foreground">
+              Remaining contract {fmtUSD(contractRemaining)} · Holds {fmtUSD(holds)}
+            </div>
           </div>
-          <div className="mt-4 space-y-3">
-            <BillingLine label="Original contract" value={fmtUSD(project.original_contract)} />
-            <BillingLine label="Approved COs" value={fmtUSD(rollup.approvedCOContract)} />
-            <BillingLine
-              label="Pending COs"
-              value={fmtUSD(rollup.pendingCOContract)}
-              muted={`likely ${fmtUSD(weightedPending)}`}
-            />
-            <BillingLine label="Percent complete" value={`${project.percent_complete}%`} />
-            <BillingLine
-              label="Indicated GP"
-              value={fmtUSD(rollup.indicatedGP)}
-              danger={rollup.gpAtRisk > 0}
-            />
+          <div className="overflow-x-auto rounded-md border border-hairline">
+            <table className="min-w-[1180px] w-full text-sm">
+              <thead className="bg-surface text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left">Pay app</th>
+                  <th className="px-3 py-2 text-left">Invoice</th>
+                  <th className="px-3 py-2 text-left">Submitted / Due</th>
+                  <th className="px-3 py-2 text-right">Contract</th>
+                  <th className="px-3 py-2 text-right">COs</th>
+                  <th className="px-3 py-2 text-right">Billed</th>
+                  <th className="px-3 py-2 text-right">Paid</th>
+                  <th className="px-3 py-2 text-right">Retainage</th>
+                  <th className="px-3 py-2 text-right">Outstanding</th>
+                  <th className="px-3 py-2 text-left">Status</th>
+                  <th className="w-10 px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-hairline">
+                {billingApplications.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={11}
+                      className="px-3 py-8 text-center text-sm text-muted-foreground"
+                    >
+                      No pay applications logged yet. Add the first pay app above.
+                    </td>
+                  </tr>
+                ) : (
+                  billingApplications.map((app) => (
+                    <BillingApplicationRowEditor
+                      key={app.id}
+                      app={app}
+                      onPatch={(patch) => onUpdate(app.id, patch)}
+                      onDelete={() => onDelete(app.id)}
+                    />
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+        <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
           <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
             Pending COs in billing
+          </div>
+          <div className="mt-1 text-sm tabular text-muted-foreground">
+            Raw {fmtUSD(rollup.pendingCOContract)} · likely {fmtUSD(weightedPending)}
           </div>
           {pending.length === 0 ? (
             <p className="mt-4 text-sm text-muted-foreground">No pending change orders.</p>
@@ -724,32 +848,154 @@ function BillingWorkspace({
   );
 }
 
-function BillingLine({
-  label,
-  value,
-  muted,
-  danger,
+function addDays(date: string, days: number) {
+  const d = new Date(`${date}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function BillingApplicationRowEditor({
+  app,
+  onPatch,
+  onDelete,
 }: {
-  label: string;
-  value: string;
-  muted?: string;
-  danger?: boolean;
+  app: BillingApplicationRow;
+  onPatch: (patch: Partial<BillingApplicationRow>) => void;
+  onDelete: () => void;
 }) {
+  const outstanding = Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
+
   return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-hairline pb-2 last:border-0 last:pb-0">
-      <div>
-        <div className="text-sm text-muted-foreground">{label}</div>
-        {muted && <div className="text-xs text-muted-foreground">{muted}</div>}
-      </div>
-      <div className={`font-medium tabular ${danger ? "text-danger" : "text-foreground"}`}>
-        {value}
-      </div>
-    </div>
+    <tr>
+      <td className="px-3 py-2 align-top">
+        <EditableText
+          value={app.application_number}
+          onCommit={(application_number) => onPatch({ application_number })}
+        />
+        <EditableText
+          value={app.billing_period}
+          placeholder="Billing period"
+          small
+          onCommit={(billing_period) => onPatch({ billing_period })}
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <EditableText
+          value={app.invoice_number}
+          placeholder="Invoice #"
+          onCommit={(invoice_number) => onPatch({ invoice_number })}
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <Input
+          type="date"
+          value={app.submitted_date ?? ""}
+          onChange={(e) => onPatch({ submitted_date: e.target.value || null })}
+          className="h-8 min-w-[138px]"
+        />
+        <Input
+          type="date"
+          value={app.due_date ?? ""}
+          onChange={(e) => onPatch({ due_date: e.target.value || null })}
+          className="mt-1 h-8 min-w-[138px]"
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <MoneyInput
+          value={app.contract_amount}
+          onValueChange={(contract_amount) => onPatch({ contract_amount })}
+          align="right"
+          className="ml-auto h-8 w-28"
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <MoneyInput
+          value={app.change_order_amount}
+          onValueChange={(change_order_amount) => onPatch({ change_order_amount })}
+          align="right"
+          className="ml-auto h-8 w-28"
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <MoneyInput
+          value={app.amount_billed}
+          onValueChange={(amount_billed) => onPatch({ amount_billed })}
+          align="right"
+          className="ml-auto h-8 w-28"
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <MoneyInput
+          value={app.paid_to_date}
+          onValueChange={(paid_to_date) => onPatch({ paid_to_date })}
+          align="right"
+          className="ml-auto h-8 w-28"
+        />
+      </td>
+      <td className="px-3 py-2 align-top">
+        <MoneyInput
+          value={app.retainage}
+          onValueChange={(retainage) => onPatch({ retainage })}
+          align="right"
+          className="ml-auto h-8 w-28"
+        />
+      </td>
+      <td className="px-3 py-3 text-right align-top tabular font-medium">{fmtUSD(outstanding)}</td>
+      <td className="px-3 py-2 align-top">
+        <Select
+          value={app.status}
+          onValueChange={(status) => onPatch({ status: status as BillingApplicationRow["status"] })}
+        >
+          <SelectTrigger className="h-8 w-[118px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="draft">Draft</SelectItem>
+            <SelectItem value="submitted">Submitted</SelectItem>
+            <SelectItem value="partial">Partial</SelectItem>
+            <SelectItem value="paid">Paid</SelectItem>
+            <SelectItem value="rejected">Rejected</SelectItem>
+          </SelectContent>
+        </Select>
+      </td>
+      <td className="px-3 py-2 align-top">
+        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onDelete}>
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </td>
+    </tr>
+  );
+}
+
+function EditableText({
+  value,
+  placeholder,
+  small,
+  onCommit,
+}: {
+  value: string;
+  placeholder?: string;
+  small?: boolean;
+  onCommit: (value: string) => void;
+}) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => setLocal(value), [value]);
+  return (
+    <Input
+      value={local}
+      placeholder={placeholder}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => {
+        if (local !== value) onCommit(local);
+      }}
+      className={`h-8 min-w-[128px] ${small ? "mt-1 text-xs text-muted-foreground" : ""}`}
+    />
   );
 }
 
 type EditableProject = {
   name: string;
+  job_number: string;
   client: string;
   project_manager: string;
   original_contract: number;
@@ -774,6 +1020,7 @@ function EditFinancialsDialog({
   const [open, setOpen] = useState(false);
   const init = (): EditableProject => ({
     name: project.name,
+    job_number: project.job_number,
     client: project.client,
     project_manager: project.project_manager,
     original_contract: project.original_contract,
@@ -814,12 +1061,20 @@ function EditFinancialsDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Client</Label>
+              <Label>Job number</Label>
               <Input
-                value={form.client}
-                onChange={(e) => setForm({ ...form, client: e.target.value })}
+                value={form.job_number}
+                onChange={(e) => setForm({ ...form, job_number: e.target.value })}
+                placeholder="e.g. 26-014"
               />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Client</Label>
+            <Input
+              value={form.client}
+              onChange={(e) => setForm({ ...form, client: e.target.value })}
+            />
           </div>
           <div className="space-y-1.5">
             <Label>Project manager</Label>

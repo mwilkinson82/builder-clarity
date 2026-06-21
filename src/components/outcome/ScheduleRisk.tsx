@@ -4,6 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -34,7 +35,8 @@ import {
   type MilestoneRow,
   type ScheduleRiskRow,
 } from "@/lib/schedule.functions";
-import { updateProjectFinancials, type ProjectRow } from "@/lib/projects.functions";
+import { createExposure, updateProjectFinancials, type ProjectRow } from "@/lib/projects.functions";
+import type { ExposureCategory, HoldClass, ResponsePath } from "@/lib/ior";
 
 const STATUS_LABEL: Record<MilestoneStatus, string> = {
   on_track: "On track",
@@ -51,11 +53,18 @@ const STATUS_STYLES: Record<MilestoneStatus, string> = {
 
 const RISK_META: Record<
   ScheduleRiskKind,
-  { label: string; icon: typeof PackageSearch; placeholder: string; detailPlaceholder: string }
+  {
+    label: string;
+    icon: typeof PackageSearch;
+    category: ExposureCategory;
+    placeholder: string;
+    detailPlaceholder: string;
+  }
 > = {
   critical_decision: {
     label: "Critical delayed decisions",
     icon: ClipboardList,
+    category: "owner_decision",
     placeholder: "Short title (e.g. Appliance package selection)",
     detailPlaceholder:
       "Who owns it, what's blocked, dollar/schedule impact, mitigation plan, and dates. The more context here, the better the IOR report reads.",
@@ -63,6 +72,7 @@ const RISK_META: Record<
   procurement: {
     label: "Procurement risks",
     icon: PackageSearch,
+    category: "procurement",
     placeholder: "Short title (e.g. Window package — manufacturer slip)",
     detailPlaceholder:
       "Lead-time situation, vendor commitments, fallback options, cost impact if expedited, and what triggers escalation.",
@@ -70,13 +80,20 @@ const RISK_META: Record<
   trade_performance: {
     label: "Trade performance risks",
     icon: Users,
+    category: "trade_performance",
     placeholder: "Short title (e.g. Drywall sub — quality + manpower)",
     detailPlaceholder:
       "What's actually happening on site, evidence, sub's response, supplemental crew options, and dollar risk if it continues.",
   },
 };
 
-export function ScheduleRisk({ project }: { project: ProjectRow }) {
+export function ScheduleRisk({
+  project,
+  lastReviewForecast,
+}: {
+  project: ProjectRow;
+  lastReviewForecast?: string | null;
+}) {
   const qc = useQueryClient();
   const projectId = project.id;
   const listFn = useServerFn(listSchedule);
@@ -86,6 +103,7 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
   const createRisk = useServerFn(createScheduleRisk);
   const updateRisk = useServerFn(updateScheduleRisk);
   const deleteRisk = useServerFn(deleteScheduleRisk);
+  const createExposureFn = useServerFn(createExposure);
   const updateFin = useServerFn(updateProjectFinancials);
 
   const { data, isLoading } = useQuery({
@@ -113,6 +131,39 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
   );
   const rDelete = useScheduleMutation<{ id: string }>(deleteRisk);
 
+  const exposureCreate = useMutation({
+    mutationFn: async (risk: ScheduleRiskRow) => {
+      const meta = RISK_META[risk.kind];
+      const result = await createExposureFn({
+        data: {
+          projectId,
+          title: risk.title,
+          description: risk.detail,
+          category: meta.category,
+          dollar_exposure: risk.dollar_exposure,
+          probability: risk.probability,
+          schedule_impact_weeks: risk.schedule_impact_weeks,
+          owner: risk.owner,
+          response_path: risk.response_path,
+          hold_class: risk.hold_class,
+          status: "active",
+          due_date: risk.due_date,
+          next_review_at: risk.due_date,
+          release_condition: `Schedule risk resolved: ${risk.title}`,
+          notes: "Created from the Schedule tab.",
+        },
+      });
+      if (result.id) {
+        await updateRisk({ data: { id: risk.id, patch: { linked_exposure_id: result.id } } });
+      }
+      return result;
+    },
+    onSuccess: () => {
+      invalidateSchedule();
+      invalidateProject();
+    },
+  });
+
   const finMut = useMutation({
     mutationFn: (patch: Record<string, unknown>) => updateFin({ data: { projectId, patch } }),
     onSuccess: invalidateProject,
@@ -120,6 +171,7 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
 
   const milestones = data?.milestones ?? [];
   const risks = data?.risks ?? [];
+  const lastMovementWeeks = weeksBetween(lastReviewForecast, project.forecast_completion_date);
 
   return (
     <div className="space-y-8">
@@ -132,7 +184,7 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
             IOR report.
           </p>
         </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
           <DateField
             label="Baseline completion"
             value={project.baseline_completion_date}
@@ -145,12 +197,13 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
             onCommit={(v) => finMut.mutate({ forecast_completion_date: v })}
           />
           <NumberField
-            label="Schedule variance (weeks)"
+            label="Baseline variance (weeks)"
             value={project.schedule_variance_weeks}
             icon={<Clock className="h-4 w-4" />}
             tone={project.schedule_variance_weeks > 0 ? "danger" : "success"}
             onCommit={(v) => finMut.mutate({ schedule_variance_weeks: v })}
           />
+          <ScheduleDeltaCard value={lastMovementWeeks} />
         </div>
       </section>
 
@@ -199,8 +252,50 @@ export function ScheduleRisk({ project }: { project: ProjectRow }) {
             onAdd={(title) => rCreate.mutate({ projectId, kind, title })}
             onPatch={(id, patch) => rUpdate.mutate({ id, patch })}
             onDelete={(id) => rDelete.mutate({ id })}
+            onCreateExposure={(risk) => exposureCreate.mutate(risk)}
+            creatingExposure={exposureCreate.isPending}
           />
         ))}
+      </div>
+    </div>
+  );
+}
+
+function weeksBetween(previous?: string | null, current?: string | null) {
+  if (!previous || !current) return null;
+  const prev = new Date(`${previous}T00:00:00`);
+  const next = new Date(`${current}T00:00:00`);
+  if (Number.isNaN(prev.getTime()) || Number.isNaN(next.getTime())) return null;
+  return Math.round((next.getTime() - prev.getTime()) / 604800000);
+}
+
+function ScheduleDeltaCard({ value }: { value: number | null }) {
+  const label =
+    value == null
+      ? "No prior IOR"
+      : value > 0
+        ? `+${value} wk`
+        : value < 0
+          ? `${value} wk`
+          : "No movement";
+  const tone =
+    value == null
+      ? "text-muted-foreground"
+      : value > 0
+        ? "text-danger"
+        : value < 0
+          ? "text-success"
+          : "text-foreground";
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        Since last IOR update
+      </Label>
+      <div
+        className={`flex h-9 items-center rounded-md border border-input px-3 text-sm tabular ${tone}`}
+      >
+        {label}
       </div>
     </div>
   );
@@ -407,12 +502,16 @@ function RiskGroup({
   onAdd,
   onPatch,
   onDelete,
+  onCreateExposure,
+  creatingExposure,
 }: {
   kind: ScheduleRiskKind;
   items: ScheduleRiskRow[];
   onAdd: (title: string) => void;
   onPatch: (id: string, patch: Partial<ScheduleRiskRow>) => void;
   onDelete: (id: string) => void;
+  onCreateExposure: (risk: ScheduleRiskRow) => void;
+  creatingExposure: boolean;
 }) {
   const meta = RISK_META[kind];
   const Icon = meta.icon;
@@ -444,6 +543,8 @@ function RiskGroup({
             detailPlaceholder={meta.detailPlaceholder}
             onPatch={(p) => onPatch(r.id, p)}
             onDelete={() => onDelete(r.id)}
+            onCreateExposure={onCreateExposure}
+            creatingExposure={creatingExposure}
           />
         ))}
       </div>
@@ -456,11 +557,15 @@ function RiskItem({
   detailPlaceholder,
   onPatch,
   onDelete,
+  onCreateExposure,
+  creatingExposure,
 }: {
   row: ScheduleRiskRow;
   detailPlaceholder: string;
   onPatch: (patch: Partial<ScheduleRiskRow>) => void;
   onDelete: () => void;
+  onCreateExposure: (risk: ScheduleRiskRow) => void;
+  creatingExposure: boolean;
 }) {
   const [local, setLocal] = useState(row);
   useEffect(() => {
@@ -493,6 +598,138 @@ function RiskItem({
               onChange={(e) => setLocal({ ...local, detail: e.target.value })}
               onBlur={() => row.detail !== local.detail && onPatch({ detail: local.detail })}
             />
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
+            <div className="space-y-1 md:col-span-2">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Dollar risk
+              </Label>
+              <MoneyInput
+                value={local.dollar_exposure}
+                onValueChange={(v) => setLocal({ ...local, dollar_exposure: v })}
+                onBlur={() =>
+                  row.dollar_exposure !== local.dollar_exposure &&
+                  onPatch({ dollar_exposure: local.dollar_exposure })
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Probability %
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={local.probability}
+                onChange={(e) => setLocal({ ...local, probability: Number(e.target.value) })}
+                onBlur={() =>
+                  row.probability !== local.probability &&
+                  onPatch({ probability: local.probability })
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Impact (wk)
+              </Label>
+              <Input
+                type="number"
+                value={local.schedule_impact_weeks ?? ""}
+                onChange={(e) =>
+                  setLocal({
+                    ...local,
+                    schedule_impact_weeks: e.target.value === "" ? null : Number(e.target.value),
+                  })
+                }
+                onBlur={() =>
+                  row.schedule_impact_weeks !== local.schedule_impact_weeks &&
+                  onPatch({ schedule_impact_weeks: local.schedule_impact_weeks })
+                }
+              />
+            </div>
+            <div className="space-y-1 md:col-span-2">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Owner
+              </Label>
+              <Input
+                value={local.owner}
+                onChange={(e) => setLocal({ ...local, owner: e.target.value })}
+                onBlur={() => row.owner !== local.owner && onPatch({ owner: local.owner })}
+                placeholder="PM, owner, trade"
+              />
+            </div>
+            <div className="space-y-1 md:col-span-2">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Due date
+              </Label>
+              <Input
+                type="date"
+                value={local.due_date ?? ""}
+                onChange={(e) => {
+                  const next = e.target.value || null;
+                  setLocal({ ...local, due_date: next });
+                  if (row.due_date !== next) onPatch({ due_date: next });
+                }}
+              />
+            </div>
+            <div className="space-y-1 md:col-span-2">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Treatment path
+              </Label>
+              <Select
+                value={local.response_path}
+                onValueChange={(v) => {
+                  const next = v as ResponsePath;
+                  setLocal({ ...local, response_path: next });
+                  onPatch({ response_path: next });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="eliminate">Eliminate</SelectItem>
+                  <SelectItem value="recover">Recover</SelectItem>
+                  <SelectItem value="offset">Offset</SelectItem>
+                  <SelectItem value="accept">Accept</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1 md:col-span-2">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Hold class
+              </Label>
+              <Select
+                value={local.hold_class}
+                onValueChange={(v) => {
+                  const next = v as HoldClass;
+                  setLocal({ ...local, hold_class: next });
+                  onPatch({ hold_class: next });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="E-Hold">E-Hold</SelectItem>
+                  <SelectItem value="C-Hold">C-Hold</SelectItem>
+                  <SelectItem value="Both">Both</SelectItem>
+                  <SelectItem value="None">None</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              size="sm"
+              variant={local.linked_exposure_id ? "outline" : "default"}
+              disabled={creatingExposure || Boolean(local.linked_exposure_id)}
+              onClick={() => onCreateExposure(local)}
+            >
+              {local.linked_exposure_id ? "Linked to Risk Tally" : "Create risk allocation"}
+            </Button>
           </div>
         </div>
         <Button
