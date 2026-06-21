@@ -529,6 +529,7 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
         .from("projects")
         .select("baseline_completion_date, forecast_completion_date")
         .eq("id", data.projectId)
+        .eq("owner_id", context.userId)
         .single();
       if (loadError) throw new Error(loadError.message);
 
@@ -543,12 +544,15 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
       patch.schedule_variance_weeks = computeScheduleVarianceWeeks(baseline, forecast) ?? 0;
     }
 
-    const { error } = await context.supabase
+    const { data: updated, error } = await context.supabase
       .from("projects")
       .update(patch)
-      .eq("id", data.projectId);
+      .eq("id", data.projectId)
+      .eq("owner_id", context.userId)
+      .select("*")
+      .single();
     if (error) throw new Error(error.message);
-    return { ok: true };
+    return { ok: true, project: normalizeProject(updated as Record<string, unknown>) };
   });
 
 // ---------------- EXPOSURES ----------------

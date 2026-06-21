@@ -135,13 +135,39 @@ function ProjectPage() {
   const useServerMutation = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
     useMutation({ mutationFn: (input: I) => fn({ data: input }), onSuccess: invalidate });
 
+  const finUpdate = useMutation({
+    mutationFn: (input: Record<string, unknown>) =>
+      (
+        updateFinFn as (i: { data: Record<string, unknown> }) => Promise<{
+          ok: boolean;
+          project?: ProjectRow;
+        }>
+      )({ data: input }),
+    onSuccess: (result) => {
+      if (result.project) {
+        qc.setQueryData(["project", projectId], (current: unknown) => {
+          if (!current || typeof current !== "object") return current;
+          return { ...(current as Record<string, unknown>), project: result.project };
+        });
+      }
+      invalidate();
+      toast.success("Project updated", {
+        description: "The dashboard is using the saved project info.",
+      });
+    },
+    onError: (err) => {
+      toast.error("Project did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+
   const expCreate = useServerMutation<Record<string, unknown>>(createExposureFn as never);
   const expUpdate = useServerMutation<Record<string, unknown>>(updateExposureFn as never);
   const expDelete = useServerMutation<{ id: string }>(deleteExposureFn);
   const decisionCreate = useServerMutation<Record<string, unknown>>(createDecisionFn as never);
   const decisionUpdate = useServerMutation<Record<string, unknown>>(updateDecisionFn as never);
   const decisionDelete = useServerMutation<{ id: string }>(deleteDecisionFn);
-  const finUpdate = useServerMutation<Record<string, unknown>>(updateFinFn as never);
   const coCreate = useServerMutation<Record<string, unknown>>(createCoFn as never);
   const coUpdate = useServerMutation<Record<string, unknown>>(updateCoFn as never);
   const coDelete = useServerMutation<{ id: string }>(deleteCoFn);
