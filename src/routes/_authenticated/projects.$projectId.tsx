@@ -388,12 +388,6 @@ function ProjectPage() {
       icon: CalendarClock,
     },
     {
-      value: "daily-reports",
-      label: "Daily Reports",
-      detail: "Job log",
-      icon: FileText,
-    },
-    {
       value: "risk-tally",
       label: "Risk Tally",
       detail: `${liveExposureCount} live`,
@@ -428,6 +422,12 @@ function ProjectPage() {
       label: "IOR Reports",
       detail: `${reviews.length} saved`,
       icon: Download,
+    },
+    {
+      value: "daily-reports",
+      label: "Daily Reports",
+      detail: "Job log",
+      icon: FileText,
     },
   ];
 
