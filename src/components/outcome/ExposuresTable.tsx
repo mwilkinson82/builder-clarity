@@ -591,7 +591,12 @@ function RiskRow({
             size="icon"
             variant="ghost"
             className="h-7 w-7"
-            onClick={() => onDelete(exposure.id)}
+            aria-label={`Delete risk ${exposure.title}`}
+            title="Delete risk"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete(exposure.id);
+            }}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>

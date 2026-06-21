@@ -660,9 +660,37 @@ export const deleteExposure = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase.from("exposures").delete().eq("id", data.id);
+    const { data: exposure, error: findError } = await context.supabase
+      .from("exposures")
+      .select("id")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (findError) throw new Error(findError.message);
+    if (!exposure) throw new Error("Risk was not found or is not accessible.");
+
+    const { error: scheduleLinkError } = await context.supabase
+      .from("schedule_risks")
+      .update({ linked_exposure_id: null })
+      .eq("linked_exposure_id", data.id);
+    if (scheduleLinkError && !isMissingRestColumn(scheduleLinkError, "linked_exposure_id")) {
+      throw new Error(scheduleLinkError.message);
+    }
+
+    const { error: decisionLinkError } = await context.supabase
+      .from("decisions")
+      .update({ linked_exposure_id: null })
+      .eq("linked_exposure_id", data.id);
+    if (decisionLinkError) throw new Error(decisionLinkError.message);
+
+    const { data: deleted, error } = await context.supabase
+      .from("exposures")
+      .delete()
+      .eq("id", data.id)
+      .select("id")
+      .maybeSingle();
     if (error) throw new Error(error.message);
-    return { ok: true };
+    if (!deleted) throw new Error("Risk did not delete. Refresh and try again.");
+    return { ok: true, id: deleted.id as string };
   });
 
 // ---------------- CHANGE ORDERS ----------------

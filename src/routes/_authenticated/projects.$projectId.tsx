@@ -541,6 +541,37 @@ function ProjectPage() {
     );
   };
 
+  const handleDeleteExposure = (id: string) => {
+    const exposure = exposures.find((item) => item.id === id);
+    if (exposure && !window.confirm(`Delete risk "${exposure.title}"?`)) return;
+
+    qc.setQueryData(["project", projectId], (current: unknown) => {
+      if (!current || typeof current !== "object") return current;
+      const record = current as { exposures?: ExposureRow[] };
+      if (!Array.isArray(record.exposures)) return current;
+      return {
+        ...(current as Record<string, unknown>),
+        exposures: record.exposures.filter((item) => item.id !== id),
+      };
+    });
+
+    expDelete.mutate(
+      { id },
+      {
+        onSuccess: () => {
+          toast.success("Risk deleted");
+          invalidate();
+        },
+        onError: (err) => {
+          invalidate();
+          toast.error("Risk did not delete", {
+            description: err instanceof Error ? err.message : "Refresh and try again.",
+          });
+        },
+      },
+    );
+  };
+
   const downloadCurrentReport = async (style: IorPdfStyle) => {
     const bytes = await generateIorPdf(
       {
@@ -806,7 +837,7 @@ function ProjectPage() {
                 guidance={guidance}
                 onCreateExposure={(d) => expCreate.mutate({ projectId, ...d })}
                 onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
-                onDeleteExposure={(id) => expDelete.mutate({ id })}
+                onDeleteExposure={handleDeleteExposure}
                 onCreateTodo={createTodoForRisk}
               />
             </TabsContent>

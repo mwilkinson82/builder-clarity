@@ -560,7 +560,7 @@ function InviteByMagicLinkButton() {
       const { error } = await supabase.auth.signInWithOtp({
         email: inviteEmail,
         options: {
-          emailRedirectTo: window.location.origin,
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
           shouldCreateUser: true,
         },
       });
