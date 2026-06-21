@@ -108,13 +108,7 @@ export function ProjectDashboard({
             value={fmtUSD(rollup.originalGP)}
             detail={fmtPct(rollup.originalGPpct)}
           />
-          <KpiCell
-            label="GP at risk"
-            value={fmtUSD(rollup.gpAtRisk)}
-            detail="Original - indicated"
-            tone="danger"
-            featured
-          />
+          <KpiCell label="GP at risk" value={fmtUSD(rollup.gpAtRisk)} tone="danger" featured />
           <KpiCell
             label="Indicated GP"
             value={fmtUSD(rollup.indicatedGP)}
@@ -331,7 +325,7 @@ function KpiCell({
 }: {
   label: string;
   value: string;
-  detail: string;
+  detail?: string;
   tone?: "success" | "warning" | "danger";
   featured?: boolean;
 }) {
@@ -354,7 +348,7 @@ function KpiCell({
       >
         {value}
       </div>
-      <div className="mt-2 text-xs text-muted-foreground">{detail}</div>
+      <div className="mt-2 min-h-4 text-xs text-muted-foreground">{detail}</div>
     </div>
   );
 }

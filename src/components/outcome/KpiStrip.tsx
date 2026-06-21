@@ -38,10 +38,8 @@ export function KpiStrip(props: {
     {
       label: "GP At Risk",
       value: fmtUSD(props.gpAtRisk),
-      sub: "Original − Indicated",
       tone: "danger",
-      tooltip:
-        "The amount of margin erosion between the original gross profit and the indicated outcome.",
+      tooltip: "Gross profit currently at risk based on the latest indicated outcome.",
     },
     {
       label: "Indicated GP",
