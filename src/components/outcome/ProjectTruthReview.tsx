@@ -242,12 +242,12 @@ export function ProjectTruthReview({
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (o) reset(); }}>
       <Button onClick={() => setOpen(true)} className="gap-1.5">
-        <ClipboardCheck className="h-4 w-4" /> Start Project Truth Review
+        <ClipboardCheck className="h-4 w-4" /> Run IOR Review
       </Button>
 
       <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-serif text-2xl">Project Truth Review</DialogTitle>
+          <DialogTitle className="font-serif text-2xl">IOR Review</DialogTitle>
         </DialogHeader>
 
         <div className="mb-2 flex items-center gap-1">
@@ -278,7 +278,7 @@ export function ProjectTruthReview({
                 </div>
               </div>
               <div className="space-y-1.5">
-                <Label>What changed?</Label>
+                <Label>Schedule movement</Label>
                 <Textarea rows={3} value={scheduleNote} onChange={(e) => setScheduleNote(e.target.value)} placeholder="Owner allowance decision pushed cabinetry release 3 weeks." />
               </div>
             </div>
@@ -479,7 +479,7 @@ export function ProjectTruthReview({
           </Button>
           {isLast ? (
             <Button onClick={submit} disabled={pending || !canAdvance()}>
-              {pending ? "Saving…" : "Submit review & download PDF"}
+              {pending ? "Saving…" : "Save IOR review & download PDF"}
             </Button>
           ) : (
             <Button onClick={() => setStep((s) => s + 1)} disabled={!canAdvance()} className="gap-1.5">

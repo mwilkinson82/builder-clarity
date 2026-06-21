@@ -51,7 +51,7 @@ export function ReviewsTab({
       <div className="rounded-lg border border-hairline bg-card p-10 text-center">
         <FileText className="mx-auto h-8 w-8 text-muted-foreground" />
         <p className="mt-4 text-sm text-muted-foreground">
-          No reviews yet. Run the first Project Truth Review to log what's changed and produce the first IOR Report.
+          No IOR reviews yet. Run the first review to log what's changed and produce the first IOR Report.
         </p>
       </div>
     );

@@ -32,13 +32,24 @@ import {
   updateProjectFinancials, createChangeOrder, updateChangeOrder,
   deleteChangeOrder, updateBucket, createBucket, deleteBucket, submitReview, updateReview,
   importCostBuckets,
-  type ProjectRow, type ReviewRow,
+  type ProjectRow, type ReviewRow, type ChangeOrderRow,
 } from "@/lib/projects.functions";
 import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
-import type { Phase, ExposureCategory } from "@/lib/ior";
+import type { Phase, ExposureCategory, Rollup } from "@/lib/ior";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
-import { LogOut, Pencil, Download } from "lucide-react";
+import {
+  Boxes,
+  CalendarClock,
+  ClipboardList,
+  Download,
+  FileSpreadsheet,
+  LayoutDashboard,
+  LogOut,
+  Pencil,
+  ReceiptText,
+  ShieldAlert,
+} from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   head: () => ({ meta: [{ title: "Project Outcome Review" }] }),
@@ -227,6 +238,17 @@ function ProjectPage() {
     generatedAt: r ? new Date(r.reviewed_at) : new Date(),
   });
 
+  const projectNavItems = [
+    { value: "dashboard", label: "Dashboard", detail: "Project pulse", icon: LayoutDashboard },
+    { value: "schedule", label: "Schedule", detail: `${project.schedule_variance_weeks > 0 ? `+${project.schedule_variance_weeks} wk` : "On plan"}`, icon: CalendarClock },
+    { value: "risk-tally", label: "Risk Tally", detail: `${liveExposureCount} live`, icon: ShieldAlert },
+    { value: "sov", label: "SOV", detail: `${buckets.length} buckets`, icon: FileSpreadsheet },
+    { value: "billing", label: "Billing", detail: `${project.percent_complete}% complete`, icon: ReceiptText },
+    { value: "buckets", label: "Cost Buckets", detail: fmtUSD(rollup.forecastedFinalCost), icon: Boxes },
+    { value: "change-orders", label: "Change Orders", detail: fmtUSD(rollup.pendingCOContract), icon: ClipboardList },
+    { value: "ior-report", label: "IOR Report", detail: `${reviews.length} saved`, icon: Download },
+  ];
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="relative border-b border-hairline bg-surface-elevated">
@@ -255,7 +277,7 @@ function ProjectPage() {
             <div>
               <div className="flex items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                 <span className="inline-block h-px w-8 bg-accent" />
-                Project Truth · {project.phase} Phase · {project.percent_complete}% complete
+                IOR · {project.phase} Phase · {project.percent_complete}% complete
                 {lastReviewDays !== null && (
                   <span className={lastReviewDays > 30 ? "text-danger" : ""}>
                     · Last reviewed {lastReviewDays}d ago
@@ -266,7 +288,7 @@ function ProjectPage() {
                 {project.name}
               </h1>
               <p className="mt-3 max-w-2xl text-base text-muted-foreground">
-                A project truth system, not a budget report. Start from the SOV, capture exposure, convert it to managed decisions.
+                An IOR operating record, not a budget report. Start from the SOV, work the schedule, then price the exposure.
               </p>
             </div>
             <div className="flex flex-col items-end gap-3">
@@ -311,219 +333,221 @@ function ProjectPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1400px] space-y-8 px-6 py-10 lg:px-10">
-        <ProjectDashboard
-          project={project}
-          exposures={exposures}
-          rollup={rollup}
-          warnings={warnings}
-          scheduleRiskCount={scheduleRisks.length}
-        />
+      <main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8">
+        <Tabs defaultValue="dashboard" className="grid gap-6 lg:grid-cols-[238px_minmax(0,1fr)] lg:items-start">
+          <aside className="lg:sticky lg:top-6">
+            <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1 shadow-card lg:flex-col lg:items-stretch lg:overflow-visible">
+              {projectNavItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <TabsTrigger
+                    key={item.value}
+                    value={item.value}
+                    className="min-w-[148px] justify-start rounded-md px-3 py-3 text-left data-[state=active]:bg-foreground data-[state=active]:text-background lg:w-full"
+                  >
+                    <Icon className="mr-2 h-4 w-4 shrink-0" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium leading-tight">{item.label}</span>
+                      <span className="mt-0.5 block truncate text-[11px] font-normal opacity-70">{item.detail}</span>
+                    </span>
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          </aside>
 
-        <Tabs defaultValue="schedule" className="space-y-6">
-          <TabsList className="h-auto w-full flex-wrap justify-start gap-1 rounded-lg border border-hairline bg-card p-1">
-            {[
-              ["schedule", "Schedule"],
-              ["risk-tally", `Risk Tally (${liveExposureCount})`],
-              ["sov-billing", "SOV / Billing"],
-              ["buckets", "Cost Buckets"],
-              ["change-orders", "Change Orders"],
-              ["ior-report", `IOR Report (${reviews.length})`],
-            ].map(([v, label]) => (
-              <TabsTrigger
-                key={v}
-                value={v}
-                className="rounded-md px-4 py-2 text-sm data-[state=active]:bg-foreground data-[state=active]:text-background"
-              >
-                {label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-
-          <TabsContent value="schedule">
-            <SectionHeader title="Schedule" subtitle="Completion forecast, interim milestones, critical path movement, and schedule-linked risk. Work this first so every other exposure has the right context." />
-            <ScheduleRisk project={project} />
-          </TabsContent>
-
-          <TabsContent value="risk-tally" className="space-y-6">
-            <RiskAllocationWorkbench
-              exposures={exposures}
-              rollup={rollup}
-              guidance={guidance}
-              onCreateExposure={(d) => expCreate.mutate({ projectId, ...d })}
-              onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
-              onDeleteExposure={(id) => expDelete.mutate({ id })}
-            />
-
-            <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-              <SectionHeader title="Decision Log" subtitle="Owner, trade, procurement, and internal choices that need a next action or close-out." />
-              <DecisionsTable
-                decisions={decisions}
-                onCreate={(d) => decCreate.mutate({ projectId, ...d })}
-                onUpdate={(id, patch) => decUpdate.mutate({ id, ...patch })}
-                onDelete={(id) => decDelete.mutate({ id })}
+          <div className="min-w-0">
+            <TabsContent value="dashboard" className="mt-0">
+              <ProjectDashboard
+                project={project}
+                exposures={exposures}
+                rollup={rollup}
+                warnings={warnings}
+                scheduleRiskCount={scheduleRisks.length}
               />
-            </div>
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent value="sov-billing" className="space-y-6">
-            <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <h2 className="font-serif text-3xl text-foreground">SOV / Billing</h2>
-                  <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                    Load the schedule of values first, then manage billing and cost movement against that baseline.
-                  </p>
+            <TabsContent value="schedule" className="mt-0">
+              <WorkspaceHeader
+                title="Schedule"
+                subtitle="Completion forecast, interim milestones, critical path movement, and schedule-linked risk."
+              />
+              <ScheduleRisk project={project} />
+            </TabsContent>
+
+            <TabsContent value="risk-tally" className="mt-0 space-y-6">
+              <RiskAllocationWorkbench
+                exposures={exposures}
+                rollup={rollup}
+                guidance={guidance}
+                onCreateExposure={(d) => expCreate.mutate({ projectId, ...d })}
+                onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
+                onDeleteExposure={(id) => expDelete.mutate({ id })}
+              />
+
+              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+                <WorkspaceHeader title="Decision Log" subtitle="Owner, trade, procurement, and internal choices that need a next action or close-out." compact />
+                <DecisionsTable
+                  decisions={decisions}
+                  onCreate={(d) => decCreate.mutate({ projectId, ...d })}
+                  onUpdate={(id, patch) => decUpdate.mutate({ id, ...patch })}
+                  onDelete={(id) => decDelete.mutate({ id })}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="sov" className="mt-0 space-y-6">
+              <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <WorkspaceHeader title="SOV" subtitle="Schedule of values baseline, imported cost buckets, and budget structure." compact />
+                  <ImportSOVSheet
+                    onImport={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
+                    pending={bucketImport.isPending}
+                  />
                 </div>
+                <div className="mt-5 grid gap-3 md:grid-cols-4">
+                  <SovMetric label="Cost buckets loaded" value={String(buckets.length)} />
+                  <SovMetric label="Original cost budget" value={fmtUSD(project.original_cost_budget)} />
+                  <SovMetric label="Actual to date" value={fmtUSD(rollup.actualToDate)} />
+                  <SovMetric label="Forecast to complete" value={fmtUSD(rollup.ftc)} />
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="billing" className="mt-0 space-y-6">
+              <BillingWorkspace
+                project={project}
+                rollup={rollup}
+                changeOrders={changeOrders}
+              />
+            </TabsContent>
+
+            <TabsContent value="ior-report" className="mt-0 space-y-6">
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+                <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2 xl:p-10">
+                  <WorkspaceHeader title="IOR Report" subtitle="Financial outcome, hold posture, review history, and PDF-ready management narrative." compact />
+                  <OutcomeWaterfall
+                    originalContract={project.original_contract}
+                    approvedCOs={rollup.approvedCOContract}
+                    pendingCOs={rollup.weightedPendingCOContract}
+                    forecastedFinalContract={rollup.forecastedFinalContract}
+                    originalCostBudget={project.original_cost_budget}
+                    forecastedFinalCost={rollup.forecastedFinalCost}
+                    forecastedGPBeforeHolds={rollup.forecastedGPBeforeHolds}
+                    exposureHolds={rollup.exposureHolds}
+                    contingencyHold={rollup.contingencyHold}
+                    indicatedGP={rollup.indicatedGP}
+                    indicatedGPpct={rollup.indicatedGPpct}
+                  />
+                  <div className="mt-8 rounded-lg border border-hairline bg-surface p-6">
+                    <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                      <span className="inline-block h-px w-6 bg-foreground/50" />
+                      Management Interpretation
+                    </div>
+                    <p className="mt-3 font-serif text-xl leading-snug text-foreground">
+                      This project began as a{" "}
+                      <span className="tabular">{fmtPct(rollup.originalGPpct)}</span> GP job.
+                      Based on current exposures and forecasted final cost, it is now indicating{" "}
+                      <span className="tabular text-accent">{fmtPct(rollup.indicatedGPpct)}</span>.
+                      The company has{" "}
+                      <span className="tabular text-danger">{fmtUSD(rollup.gpAtRisk)}</span>{" "}
+                      of original expected profit at risk.
+                    </p>
+                  </div>
+                </div>
+
+                <aside className="space-y-6">
+                  <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                      Margin at risk by category
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      {byCategory.length === 0 && (
+                        <p className="text-sm text-muted-foreground">No active exposures.</p>
+                      )}
+                      {byCategory.map((c) => {
+                        const max = byCategory[0].total || 1;
+                        const pct = (c.total / max) * 100;
+                        return (
+                          <div key={c.category}>
+                            <div className="flex items-baseline justify-between text-xs">
+                              <span className="text-foreground">{CATEGORY_LABELS[c.category]}</span>
+                              <span className="tabular text-muted-foreground">{fmtUSD(c.total)}</span>
+                            </div>
+                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-secondary">
+                              <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                      Exposure aging (active)
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-3">
+                      <AgingCell label="< 7 days" value={aging.fresh} />
+                      <AgingCell label="7-30 days" value={aging.recent} />
+                      <AgingCell label="> 30 days" value={aging.stale} danger />
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+                    <div className="flex items-baseline justify-between">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                        Hold guidance - {project.phase}
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      <GuidanceRow label="E-Hold" actual={rollup.exposureHolds} target={guidance.eTarget} pct={guidance.ePct} />
+                      <GuidanceRow label="C-Hold" actual={rollup.contingencyHold} target={guidance.cTarget} pct={guidance.cPct} />
+                    </div>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Targets are % of remaining cost. If actual is below target, capture a written justification.
+                    </p>
+                  </div>
+                </aside>
+              </div>
+              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+                <WorkspaceHeader title="IOR Reviews" subtitle="Saved IOR report narratives, PDFs, and email-ready summaries." compact />
+                <ReviewsTab
+                  reviews={reviews}
+                  project={project}
+                  buildPdfInput={buildPdfInputForReview}
+                  onUpdate={(id, patch) => reviewUpdate.mutate({ id, patch })}
+                  pending={reviewUpdate.isPending}
+                />
+              </div>
+            </TabsContent>
+
+            <TabsContent value="buckets" className="mt-0">
+              <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+                <WorkspaceHeader title="Cost Buckets" subtitle="Actual-to-date plus forecast-to-complete per bucket." compact />
                 <ImportSOVSheet
                   onImport={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
                   pending={bucketImport.isPending}
                 />
               </div>
-              <div className="mt-5 grid gap-3 md:grid-cols-4">
-                <SovMetric label="Cost buckets loaded" value={String(buckets.length)} />
-                <SovMetric label="Original cost budget" value={fmtUSD(project.original_cost_budget)} />
-                <SovMetric label="Forecasted final cost" value={fmtUSD(rollup.forecastedFinalCost)} />
-                <SovMetric label="Pending COs" value={fmtUSD(rollup.pendingCOContract)} />
-              </div>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="ior-report" className="space-y-6">
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-              <div className="rounded-lg border border-hairline bg-card p-6 lg:col-span-2 lg:p-10 shadow-card">
-                <div className="mb-6">
-                  <h2 className="font-serif text-3xl text-foreground">IOR Report</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Financial outcome, hold posture, review history, and PDF-ready management narrative.
-                  </p>
-                </div>
-                <OutcomeWaterfall
-                  originalContract={project.original_contract}
-                  approvedCOs={rollup.approvedCOContract}
-                  pendingCOs={rollup.weightedPendingCOContract}
-                  forecastedFinalContract={rollup.forecastedFinalContract}
-                  originalCostBudget={project.original_cost_budget}
-                  forecastedFinalCost={rollup.forecastedFinalCost}
-                  forecastedGPBeforeHolds={rollup.forecastedGPBeforeHolds}
-                  exposureHolds={rollup.exposureHolds}
-                  contingencyHold={rollup.contingencyHold}
-                  indicatedGP={rollup.indicatedGP}
-                  indicatedGPpct={rollup.indicatedGPpct}
-                />
-                <div className="mt-8 rounded-lg border border-hairline bg-surface p-6">
-                  <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    <span className="inline-block h-px w-6 bg-foreground/50" />
-                    Management Interpretation
-                  </div>
-                  <p className="mt-3 font-serif text-xl leading-snug text-foreground">
-                    This project began as a{" "}
-                    <span className="tabular">{fmtPct(rollup.originalGPpct)}</span> GP job.
-                    Based on current exposures and forecasted final cost, it is now indicating{" "}
-                    <span className="tabular text-accent">{fmtPct(rollup.indicatedGPpct)}</span>.
-                    The company has{" "}
-                    <span className="tabular text-danger">{fmtUSD(rollup.gpAtRisk)}</span>{" "}
-                    of original expected profit at risk.
-                  </p>
-                </div>
-              </div>
-
-              <aside className="space-y-6">
-                <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    Margin at risk by category
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    {byCategory.length === 0 && (
-                      <p className="text-sm text-muted-foreground">No active exposures.</p>
-                    )}
-                    {byCategory.map((c) => {
-                      const max = byCategory[0].total || 1;
-                      const pct = (c.total / max) * 100;
-                      return (
-                        <div key={c.category}>
-                          <div className="flex items-baseline justify-between text-xs">
-                            <span className="text-foreground">{CATEGORY_LABELS[c.category]}</span>
-                            <span className="tabular text-muted-foreground">{fmtUSD(c.total)}</span>
-                          </div>
-                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-secondary">
-                            <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                    Exposure aging (active)
-                  </div>
-                  <div className="mt-3 grid grid-cols-3 gap-3">
-                    <AgingCell label="< 7 days" value={aging.fresh} />
-                    <AgingCell label="7–30 days" value={aging.recent} />
-                    <AgingCell label="> 30 days" value={aging.stale} danger />
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-                  <div className="flex items-baseline justify-between">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                      Hold guidance · {project.phase}
-                    </div>
-                  </div>
-                  <div className="mt-3 space-y-3">
-                    <GuidanceRow label="E-Hold" actual={rollup.exposureHolds} target={guidance.eTarget} pct={guidance.ePct} />
-                    <GuidanceRow label="C-Hold" actual={rollup.contingencyHold} target={guidance.cTarget} pct={guidance.cPct} />
-                  </div>
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    Targets are % of remaining cost. If actual is below target, capture a written justification.
-                  </p>
-                </div>
-              </aside>
-            </div>
-            <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-              <SectionHeader title="Project Truth Reviews" subtitle="Editable, downloadable IOR reports for project meetings and client-facing review." />
-              <ReviewsTab
-                reviews={reviews}
-                project={project}
-                buildPdfInput={buildPdfInputForReview}
-                onUpdate={(id, patch) => reviewUpdate.mutate({ id, patch })}
-                pending={reviewUpdate.isPending}
+              <CostBucketsTable
+                buckets={buckets}
+                onUpdate={(id, patch) => bucketUpdate.mutate({ id, patch })}
+                onCreate={(name) => bucketCreate.mutate({ projectId, bucket: name })}
+                onDelete={(id) => bucketDelete.mutate({ id })}
               />
-            </div>
-          </TabsContent>
+            </TabsContent>
 
-          <TabsContent value="buckets">
-            <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <h2 className="font-serif text-3xl text-foreground">Cost Buckets</h2>
-                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  Actual-to-date plus forecast-to-complete per bucket. Import your existing schedule of values from QuickBooks or Excel — we'll map the columns for you.
-                </p>
-              </div>
-              <ImportSOVSheet
-                onImport={(rows, mode) => bucketImport.mutate({ projectId, rows, mode })}
-                pending={bucketImport.isPending}
+            <TabsContent value="change-orders" className="mt-0">
+              <WorkspaceHeader title="Change Orders" subtitle="Approved COs add to both sides. Pending COs are probability-weighted into the rollup." />
+              <ChangeOrdersTable
+                changeOrders={changeOrders}
+                onCreate={(d) => coCreate.mutate({ projectId, ...d })}
+                onUpdate={(id, patch) => coUpdate.mutate({ id, ...patch })}
+                onDelete={(id) => coDelete.mutate({ id })}
               />
-            </div>
-            <CostBucketsTable
-              buckets={buckets}
-              onUpdate={(id, patch) => bucketUpdate.mutate({ id, patch })}
-              onCreate={(name) => bucketCreate.mutate({ projectId, bucket: name })}
-              onDelete={(id) => bucketDelete.mutate({ id })}
-            />
-          </TabsContent>
-
-          <TabsContent value="change-orders">
-            <SectionHeader title="Change Orders" subtitle="Approved COs add to both sides. Pending COs are probability-weighted into the rollup." />
-            <ChangeOrdersTable
-              changeOrders={changeOrders}
-              onCreate={(d) => coCreate.mutate({ projectId, ...d })}
-              onUpdate={(id, patch) => coUpdate.mutate({ id, ...patch })}
-              onDelete={(id) => coDelete.mutate({ id })}
-            />
-          </TabsContent>
+            </TabsContent>
+          </div>
         </Tabs>
       </main>
     </div>
@@ -541,10 +565,10 @@ function DownloadReportMenu({ onDownload }: { onDownload: (style: IorPdfStyle) =
 }
 
 
-function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
+function WorkspaceHeader({ title, subtitle, compact }: { title: string; subtitle: string; compact?: boolean }) {
   return (
-    <div className="mb-5">
-      <h2 className="font-serif text-3xl text-foreground">{title}</h2>
+    <div className={compact ? "" : "mb-5"}>
+      <h2 className={`font-serif text-foreground ${compact ? "text-3xl" : "text-4xl"}`}>{title}</h2>
       <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{subtitle}</p>
     </div>
   );
@@ -555,6 +579,102 @@ function SovMetric({ label, value }: { label: string; value: string }) {
     <div className="rounded-md border border-hairline bg-surface px-3 py-2">
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</div>
       <div className="mt-1 text-lg font-medium tabular text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function BillingWorkspace({
+  project,
+  rollup,
+  changeOrders,
+}: {
+  project: ProjectRow;
+  rollup: Rollup;
+  changeOrders: ChangeOrderRow[];
+}) {
+  const earnedToDate = rollup.forecastedFinalContract * (project.percent_complete / 100);
+  const contractRemaining = Math.max(0, rollup.forecastedFinalContract - earnedToDate);
+  const pending = changeOrders.filter((co) => co.status === "Pending");
+  const weightedPending = pending.reduce((sum, co) => sum + co.contract_amount * (co.probability / 100), 0);
+  const holds = rollup.exposureHolds + rollup.contingencyHold;
+
+  return (
+    <section className="space-y-6">
+      <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+        <WorkspaceHeader
+          title="Billing"
+          subtitle="Contract posture, percent complete, pending COs, and risk holds before the next pay application."
+          compact
+        />
+        <div className="mt-5 grid gap-3 md:grid-cols-4">
+          <SovMetric label="Forecasted contract" value={fmtUSD(rollup.forecastedFinalContract)} />
+          <SovMetric label="Earned to date" value={fmtUSD(earnedToDate)} />
+          <SovMetric label="Remaining contract" value={fmtUSD(contractRemaining)} />
+          <SovMetric label="Holds affecting GP" value={fmtUSD(holds)} />
+        </div>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            Pay app posture
+          </div>
+          <div className="mt-4 space-y-3">
+            <BillingLine label="Original contract" value={fmtUSD(project.original_contract)} />
+            <BillingLine label="Approved COs" value={fmtUSD(rollup.approvedCOContract)} />
+            <BillingLine label="Pending COs" value={fmtUSD(rollup.pendingCOContract)} muted={`weighted ${fmtUSD(weightedPending)}`} />
+            <BillingLine label="Percent complete" value={`${project.percent_complete}%`} />
+            <BillingLine label="Indicated GP" value={fmtUSD(rollup.indicatedGP)} danger={rollup.gpAtRisk > 0} />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            Pending COs in billing
+          </div>
+          {pending.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">No pending change orders.</p>
+          ) : (
+            <div className="mt-4 overflow-hidden rounded-md border border-hairline">
+              <table className="w-full text-sm">
+                <thead className="bg-surface text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 text-left">CO</th>
+                    <th className="px-3 py-2 text-right">Contract</th>
+                    <th className="px-3 py-2 text-right">Prob.</th>
+                    <th className="px-3 py-2 text-right">Weighted</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-hairline">
+                  {pending.map((co) => (
+                    <tr key={co.number}>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-foreground">{co.number}</div>
+                        <div className="text-xs text-muted-foreground">{co.description}</div>
+                      </td>
+                      <td className="px-3 py-2 text-right tabular">{fmtUSD(co.contract_amount)}</td>
+                      <td className="px-3 py-2 text-right tabular text-muted-foreground">{co.probability}%</td>
+                      <td className="px-3 py-2 text-right tabular">{fmtUSD(co.contract_amount * (co.probability / 100))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BillingLine({ label, value, muted, danger }: { label: string; value: string; muted?: string; danger?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-b border-hairline pb-2 last:border-0 last:pb-0">
+      <div>
+        <div className="text-sm text-muted-foreground">{label}</div>
+        {muted && <div className="text-xs text-muted-foreground">{muted}</div>}
+      </div>
+      <div className={`font-medium tabular ${danger ? "text-danger" : "text-foreground"}`}>{value}</div>
     </div>
   );
 }
