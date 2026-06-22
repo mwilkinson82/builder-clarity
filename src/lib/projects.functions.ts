@@ -91,6 +91,7 @@ export interface ChangeOrderRow {
 export interface BucketRow {
   id: string;
   project_id: string;
+  cost_code: string;
   bucket: string;
   original_budget: number;
   actual_to_date: number;
@@ -279,6 +280,7 @@ export const listProjects = createServerFn({ method: "GET" })
         probability: num(c.probability),
       }));
       const buckets = (bByP[p.id] ?? []).map((b) => ({
+        cost_code: str(b.cost_code),
         bucket: str(b.bucket),
         original_budget: num(b.original_budget),
         actual_to_date: num(b.actual_to_date),
@@ -399,6 +401,7 @@ export const getProject = createServerFn({ method: "GET" })
       return {
         id: o.id as string,
         project_id: o.project_id as string,
+        cost_code: str(o.cost_code),
         bucket: str(o.bucket),
         original_budget: num(o.original_budget),
         actual_to_date: num(o.actual_to_date),
@@ -544,6 +547,7 @@ export const createProject = createServerFn({ method: "POST" })
     const { error: bErr } = await context.supabase.from("cost_buckets").insert(
       DEFAULT_BUCKETS.map((bucket, i) => ({
         project_id: row.id,
+        cost_code: "",
         bucket,
         original_budget: per,
         actual_to_date: 0,
@@ -814,6 +818,7 @@ export const deleteChangeOrder = createServerFn({ method: "POST" })
 const bucketInput = z.object({
   id: z.string().uuid(),
   patch: z.object({
+    cost_code: z.string().max(80).optional(),
     bucket: z.string().min(1).max(100).optional(),
     original_budget: z.number().min(0).optional(),
     actual_to_date: z.number().min(0).optional(),
@@ -838,6 +843,7 @@ export const updateBucket = createServerFn({ method: "POST" })
 
 const createBucketInput = z.object({
   projectId: z.string().uuid(),
+  cost_code: z.string().max(80).default(""),
   bucket: z.string().min(1).max(100),
   original_budget: z.number().min(0).default(0),
   actual_to_date: z.number().min(0).default(0),
@@ -861,6 +867,7 @@ export const createBucket = createServerFn({ method: "POST" })
     const sort_order = ((last?.sort_order as number | undefined) ?? 0) + 1;
     const { error } = await context.supabase.from("cost_buckets").insert({
       project_id: data.projectId,
+      cost_code: data.cost_code.trim(),
       bucket: data.bucket,
       original_budget: data.original_budget,
       actual_to_date: data.actual_to_date,
@@ -1094,10 +1101,13 @@ export const updateReview = createServerFn({ method: "POST" })
 // ---------------- SOV IMPORT ----------------
 
 const importBucketRow = z.object({
+  cost_code: z.string().max(80).default(""),
   bucket: z.string().min(1).max(200),
   original_budget: z.number().min(0),
   actual_to_date: z.number().min(0),
   ftc: z.number().min(0),
+  actual_to_date_provided: z.boolean().default(false),
+  ftc_provided: z.boolean().default(false),
   sort_order: z.number().int().min(0),
   source_type: z.enum(["original_sov", "change_order", "added_cost"]).default("original_sov"),
   source_date: z.string().nullable().optional(),
@@ -1110,10 +1120,30 @@ const importInput = z.object({
   rows: z.array(importBucketRow).min(1).max(500),
 });
 
+const normalizeImportKey = (value: string) => value.trim().toLowerCase();
+
 export const importCostBuckets = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof importInput>) => importInput.parse(input))
   .handler(async ({ data, context }) => {
+    const seenCodes = new Set<string>();
+    const seenNames = new Set<string>();
+    for (const row of data.rows) {
+      const codeKey = normalizeImportKey(row.cost_code);
+      if (codeKey) {
+        if (seenCodes.has(codeKey)) {
+          throw new Error(`Duplicate cost code in import: ${row.cost_code}.`);
+        }
+        seenCodes.add(codeKey);
+      } else {
+        const nameKey = normalizeImportKey(row.bucket);
+        if (seenNames.has(nameKey)) {
+          throw new Error(`Duplicate bucket name in import: ${row.bucket}.`);
+        }
+        seenNames.add(nameKey);
+      }
+    }
+
     const { data: project, error: projectErr } = await context.supabase
       .from("projects")
       .select("id")
@@ -1130,31 +1160,89 @@ export const importCostBuckets = createServerFn({ method: "POST" })
         .eq("project_id", data.projectId);
       if (delErr) throw new Error(delErr.message);
     }
-    const baseOrder =
-      data.mode === "append"
-        ? await context.supabase
-            .from("cost_buckets")
-            .select("sort_order")
-            .eq("project_id", data.projectId)
-            .order("sort_order", { ascending: false })
-            .limit(1)
-            .maybeSingle()
-            .then((res) => (res.data?.sort_order ?? 0) as number)
-        : 0;
 
-    const insertRows = data.rows.map((r, i) => ({
+    let inserted = 0;
+    let updated = 0;
+    const today = new Date().toISOString().slice(0, 10);
+    const rowsForInsert = data.rows.map((r, i) => ({
       project_id: data.projectId,
+      cost_code: r.cost_code.trim(),
       bucket: r.bucket,
       original_budget: r.original_budget,
       actual_to_date: r.actual_to_date,
       ftc: r.ftc,
       source_type: r.source_type,
-      source_date: r.source_date ?? new Date().toISOString().slice(0, 10),
+      source_date: r.source_date ?? today,
       source_note: r.source_note,
-      sort_order: baseOrder + i + 1,
+      sort_order: i + 1,
     }));
-    const { error } = await context.supabase.from("cost_buckets").insert(insertRows);
-    if (error) throw new Error(error.message);
+
+    if (data.mode === "replace") {
+      const { error } = await context.supabase.from("cost_buckets").insert(rowsForInsert);
+      if (error) throw new Error(error.message);
+      inserted = rowsForInsert.length;
+    } else {
+      const { data: existingRows, error: existingErr } = await context.supabase
+        .from("cost_buckets")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("sort_order");
+      if (existingErr) throw new Error(existingErr.message);
+
+      const byCode = new Map<string, Record<string, unknown>>();
+      const byName = new Map<string, Record<string, unknown>>();
+      for (const existing of existingRows ?? []) {
+        const codeKey = normalizeImportKey(str(existing.cost_code));
+        if (codeKey) byCode.set(codeKey, existing as Record<string, unknown>);
+        byName.set(normalizeImportKey(str(existing.bucket)), existing as Record<string, unknown>);
+      }
+
+      let nextOrder =
+        (existingRows ?? []).reduce((max, row) => Math.max(max, num(row.sort_order)), 0) + 1;
+
+      for (const incoming of data.rows) {
+        const codeKey = normalizeImportKey(incoming.cost_code);
+        const nameKey = normalizeImportKey(incoming.bucket);
+        const match = (codeKey ? byCode.get(codeKey) : null) ?? byName.get(nameKey);
+        const source_date = incoming.source_date ?? today;
+        if (match?.id) {
+          const patch = {
+            cost_code: incoming.cost_code.trim(),
+            bucket: incoming.bucket,
+            original_budget: incoming.original_budget,
+            ...(incoming.actual_to_date_provided
+              ? { actual_to_date: incoming.actual_to_date }
+              : {}),
+            ...(incoming.ftc_provided ? { ftc: incoming.ftc } : {}),
+            source_type: incoming.source_type,
+            source_date,
+            source_note: incoming.source_note || "Updated from SOV import",
+          };
+          const { error: updateErr } = await context.supabase
+            .from("cost_buckets")
+            .update(patch)
+            .eq("id", match.id as string);
+          if (updateErr) throw new Error(updateErr.message);
+          updated += 1;
+        } else {
+          const { error: insertErr } = await context.supabase.from("cost_buckets").insert({
+            project_id: data.projectId,
+            cost_code: incoming.cost_code.trim(),
+            bucket: incoming.bucket,
+            original_budget: incoming.original_budget,
+            actual_to_date: incoming.actual_to_date,
+            ftc: incoming.ftc,
+            source_type: incoming.source_type,
+            source_date,
+            source_note: incoming.source_note,
+            sort_order: nextOrder,
+          });
+          if (insertErr) throw new Error(insertErr.message);
+          nextOrder += 1;
+          inserted += 1;
+        }
+      }
+    }
 
     // Treat the imported SOV as the source of truth for the project's
     // Original Cost Budget so Day-1 GP At Risk is $0. We use forecasted cost
@@ -1176,7 +1264,7 @@ export const importCostBuckets = createServerFn({ method: "POST" })
       .eq("id", data.projectId);
     if (updErr) throw new Error(updErr.message);
 
-    return { ok: true, inserted: insertRows.length, originalCostBudget: total };
+    return { ok: true, inserted, updated, originalCostBudget: total };
   });
 
 // ---------------- DEMO SEED (no-op if any project exists) ----------------

@@ -44,8 +44,10 @@ import {
   type BucketImportRow,
 } from "@/lib/sov-import";
 import { fmtUSD } from "@/lib/format";
+import type { BucketRow } from "@/lib/projects.functions";
 
 const FIELD_LABELS: Record<FieldKey, string> = {
+  cost_code: "Cost code",
   bucket: "Bucket name",
   original_budget: "Original budget",
   actual_to_date: "Actual to date",
@@ -55,15 +57,20 @@ const FIELD_LABELS: Record<FieldKey, string> = {
 };
 
 export function ImportSOVSheet({
+  existingBuckets = [],
   onImport,
   pending,
 }: {
+  existingBuckets?: BucketRow[];
   onImport: (
     rows: {
+      cost_code: string;
       bucket: string;
       original_budget: number;
       actual_to_date: number;
       ftc: number;
+      actual_to_date_provided: boolean;
+      ftc_provided: boolean;
       sort_order: number;
     }[],
     mode: "replace" | "append",
@@ -123,8 +130,12 @@ export function ImportSOVSheet({
   };
 
   const rows: BucketImportRow[] = parsed ? applyMapping(parsed.matrix, hasHeader, map) : [];
-  const valid = rows.filter((r) => r.valid);
-  const invalid = rows.filter((r) => !r.valid);
+  const plannedRows = planImportRows(rows, existingBuckets, mode);
+  const valid = plannedRows.filter((r) => r.valid);
+  const invalid = plannedRows.filter((r) => !r.valid);
+  const createCount = plannedRows.filter((r) => r.valid && r.action === "create").length;
+  const updateCount = plannedRows.filter((r) => r.valid && r.action === "update").length;
+  const skippedCount = plannedRows.filter((r) => !r.valid || r.action === "skip").length;
   const total = valid.reduce((s, r) => s + r.original_budget, 0);
   const missingMappings = parsed ? missingRequiredMappings(map) : [];
 
@@ -138,7 +149,7 @@ export function ImportSOVSheet({
       return;
     }
     onImport(
-      valid.map(({ valid: _v, reason: _r, ...row }) => row),
+      valid.map(({ valid: _v, reason: _r, action: _a, matchLabel: _m, ...row }) => row),
       mode,
     );
     setOpen(false);
@@ -177,6 +188,9 @@ export function ImportSOVSheet({
                 <div>Required: one row per cost bucket with Bucket name and Original budget.</div>
                 <div>
                   Optional: Actual to date and FTC. If FTC is blank, it becomes Budget minus Actual.
+                </div>
+                <div>
+                  Recommended: include Cost code so future imports can update the right line.
                 </div>
                 <div>Do not include subtotal, grand total, summary, or blank rows.</div>
                 <div>
@@ -238,7 +252,7 @@ export function ImportSOVSheet({
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
                 placeholder={
-                  "In Excel: select your bucket / budget / actual / FTC columns including the header row, copy (Ctrl+C / ⌘+C), then paste here.\n\nIf you're starting the job, you'll only have budgets — leave Actual and FTC as 0.\n\nExample at job start (no actuals yet):\nDivision\tBudget\tActual\tFTC\nSitework\t220,000\t0\t0\nStructure\t540,000\t0\t0\nEnvelope\t430,000\t0\t0\n\nExample mid-job:\nSitework\t220,000\t215,000\t8,000\nStructure\t540,000\t520,000\t35,000"
+                  "In Excel: select your cost code / bucket / budget / actual / FTC columns including the header row, copy (Ctrl+C / ⌘+C), then paste here.\n\nIf you're starting the job, you can paste only codes, bucket names, and budgets.\n\nExample at job start:\nCode\tDivision\tBudget\n0100\tSitework\t220,000\n0200\tStructure\t540,000\n0300\tEnvelope\t430,000\n\nExample mid-job:\nCode\tDivision\tBudget\tActual\tFTC\n0100\tSitework\t220,000\t215,000\t8,000\n0200\tStructure\t540,000\t520,000\t35,000"
                 }
                 className="font-mono text-xs"
               />
@@ -246,8 +260,8 @@ export function ImportSOVSheet({
                 Parse pasted rows
               </Button>
               <Tip>
-                You can paste with just two columns (bucket + budget) at job start — we'll set
-                Actual and FTC to 0 automatically.
+                You can paste with just bucket and budget at job start. Actual becomes $0 and FTC
+                becomes the remaining budget.
               </Tip>
             </TabsContent>
           </Tabs>
@@ -283,7 +297,7 @@ export function ImportSOVSheet({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="replace">Replace all buckets</SelectItem>
-                    <SelectItem value="append">Append to existing</SelectItem>
+                    <SelectItem value="append">Merge/update existing</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -307,11 +321,14 @@ export function ImportSOVSheet({
                 <span className="inline-flex items-center gap-1 text-success">
                   <Check className="h-3 w-3" /> {valid.length} valid
                 </span>
+                <span>{createCount} create</span>
+                <span>{updateCount} update</span>
                 {invalid.length > 0 && (
                   <span className="inline-flex items-center gap-1 text-danger">
                     <AlertTriangle className="h-3 w-3" /> {invalid.length} flagged
                   </span>
                 )}
+                {skippedCount > 0 && <span>{skippedCount} skip</span>}
                 <span className="ml-auto tabular">Total budget: {fmtUSD(total)}</span>
               </div>
               <div className="max-h-[300px] overflow-auto rounded-md border border-hairline">
@@ -319,6 +336,8 @@ export function ImportSOVSheet({
                   <TableHeader>
                     <TableRow className="bg-surface">
                       <TableHead className="w-10" />
+                      <TableHead>Action</TableHead>
+                      <TableHead>Code</TableHead>
                       <TableHead>Bucket</TableHead>
                       <TableHead className="text-right">Budget</TableHead>
                       <TableHead className="text-right">Actual</TableHead>
@@ -327,7 +346,7 @@ export function ImportSOVSheet({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {rows.slice(0, 50).map((r, i) => (
+                    {plannedRows.slice(0, 50).map((r, i) => (
                       <TableRow key={i} className={!r.valid ? "bg-danger/5" : ""}>
                         <TableCell>
                           {r.valid ? (
@@ -336,6 +355,10 @@ export function ImportSOVSheet({
                             <AlertTriangle className="h-3.5 w-3.5 text-danger" />
                           )}
                         </TableCell>
+                        <TableCell className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                          {r.valid ? r.action : "Skip"}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{r.cost_code || "—"}</TableCell>
                         <TableCell className="font-medium">{r.bucket}</TableCell>
                         <TableCell className="text-right tabular">
                           {fmtUSD(r.original_budget)}
@@ -345,7 +368,10 @@ export function ImportSOVSheet({
                         </TableCell>
                         <TableCell className="text-right tabular">{fmtUSD(r.ftc)}</TableCell>
                         <TableCell className="text-xs text-muted-foreground">
-                          {r.reason ?? "—"}
+                          {r.reason ??
+                            (r.action === "update"
+                              ? `Matches ${r.matchLabel}. Blank actual/FTC cells preserve current values.`
+                              : "—")}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -367,7 +393,7 @@ export function ImportSOVSheet({
           <p className="text-xs text-muted-foreground">
             {mode === "replace"
               ? "Replacing will delete existing cost buckets and insert these rows."
-              : "Appending keeps existing buckets and adds these rows beneath them."}
+              : "Merging updates matching cost codes or names, then adds new rows beneath them."}
           </p>
           <Button
             onClick={commit}
@@ -381,6 +407,42 @@ export function ImportSOVSheet({
       </SheetContent>
     </Sheet>
   );
+}
+
+type PlannedImportRow = BucketImportRow & {
+  action: "create" | "update" | "skip";
+  matchLabel?: string;
+};
+
+const norm = (value: string) => value.trim().toLowerCase();
+
+function planImportRows(
+  rows: BucketImportRow[],
+  existingBuckets: BucketRow[],
+  mode: "replace" | "append",
+): PlannedImportRow[] {
+  const byCode = new Map<string, BucketRow>();
+  const byName = new Map<string, BucketRow>();
+  for (const bucket of existingBuckets) {
+    const codeKey = norm(bucket.cost_code);
+    if (codeKey) byCode.set(codeKey, bucket);
+    byName.set(norm(bucket.bucket), bucket);
+  }
+
+  return rows.map((row) => {
+    if (!row.valid) return { ...row, action: "skip" as const };
+    if (mode === "replace") return { ...row, action: "create" as const };
+
+    const codeKey = norm(row.cost_code);
+    const match = (codeKey ? byCode.get(codeKey) : null) ?? byName.get(norm(row.bucket));
+    if (!match) return { ...row, action: "create" as const };
+
+    return {
+      ...row,
+      action: "update" as const,
+      matchLabel: match.cost_code ? `${match.cost_code} / ${match.bucket}` : match.bucket,
+    };
+  });
 }
 
 function Tip({ children }: { children: React.ReactNode }) {
@@ -442,6 +504,7 @@ function ColumnMapper({
                       {(
                         [
                           "bucket",
+                          "cost_code",
                           "original_budget",
                           "actual_to_date",
                           "ftc",

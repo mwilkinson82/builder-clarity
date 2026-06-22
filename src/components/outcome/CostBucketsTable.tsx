@@ -27,6 +27,7 @@ type BucketSource = BucketRow["source_type"];
 type BucketPatch = Partial<
   Pick<
     BucketRow,
+    | "cost_code"
     | "actual_to_date"
     | "ftc"
     | "original_budget"
@@ -37,6 +38,7 @@ type BucketPatch = Partial<
   >
 >;
 type NewBucketInput = {
+  cost_code: string;
   bucket: string;
   source_type: BucketSource;
   source_date: string;
@@ -60,6 +62,7 @@ export function CostBucketsTable({
   onCreate?: (input: NewBucketInput) => void;
   onDelete?: (id: string) => void;
 }) {
+  const [newCode, setNewCode] = useState("");
   const [newName, setNewName] = useState("");
   const [newSource, setNewSource] = useState<BucketSource>("added_cost");
   const today = new Date().toISOString().slice(0, 10);
@@ -68,11 +71,13 @@ export function CostBucketsTable({
     const n = newName.trim();
     if (!n || !onCreate) return;
     onCreate({
+      cost_code: newCode.trim(),
       bucket: n,
       source_type: newSource,
       source_date: today,
       source_note: SOURCE_LABEL[newSource],
     });
+    setNewCode("");
     setNewName("");
     setNewSource("added_cost");
   };
@@ -82,6 +87,7 @@ export function CostBucketsTable({
       <Table>
         <TableHeader>
           <TableRow className="bg-surface">
+            <TableHead>Code</TableHead>
             <TableHead>Bucket</TableHead>
             <TableHead>Source</TableHead>
             <TableHead className="text-right">Original Budget</TableHead>
@@ -99,6 +105,12 @@ export function CostBucketsTable({
             const neg = variance < 0;
             return (
               <TableRow key={b.id}>
+                <TableCell className="font-mono text-xs">
+                  <CodeCell
+                    value={b.cost_code}
+                    onCommit={(v) => onUpdate(b.id, { cost_code: v })}
+                  />
+                </TableCell>
                 <TableCell className="font-medium">
                   <NameCell value={b.bucket} onCommit={(v) => onUpdate(b.id, { bucket: v })} />
                 </TableCell>
@@ -149,7 +161,7 @@ export function CostBucketsTable({
           })}
           {buckets.length === 0 && (
             <TableRow>
-              <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
                 No cost buckets yet. Use "Import SOV" to bring in your existing schedule of values
                 from Excel or QuickBooks, or add the first line below.
               </TableCell>
@@ -157,8 +169,17 @@ export function CostBucketsTable({
           )}
           {onCreate && (
             <TableRow className="bg-surface/40">
-              <TableCell colSpan={7}>
+              <TableCell colSpan={8}>
                 <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                  <Input
+                    value={newCode}
+                    onChange={(e) => setNewCode(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") submitNew();
+                    }}
+                    placeholder="Code"
+                    className="h-8 md:w-28"
+                  />
                   <Input
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
@@ -204,6 +225,7 @@ export function CostBucketsTable({
             return (
               <TableFooter>
                 <TableRow className="bg-surface font-semibold">
+                  <TableCell />
                   <TableCell>Total</TableCell>
                   <TableCell />
                   <TableCell className="text-right tabular">{fmtUSD(tBudget)}</TableCell>
@@ -254,6 +276,25 @@ function NameCell({ value, onCommit }: { value: string; onCommit: (v: string) =>
       }}
       rows={2}
       className="min-h-[44px] w-full min-w-[220px] resize-y border-transparent bg-transparent px-1.5 py-1.5 leading-snug focus-visible:border-input focus-visible:bg-background"
+    />
+  );
+}
+
+function CodeCell({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  return (
+    <Input
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => {
+        const t = v.trim();
+        if (t !== value) onCommit(t);
+        else setV(value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+      className="h-8 w-24 border-transparent bg-transparent px-1.5 font-mono text-xs focus-visible:border-input focus-visible:bg-background"
     />
   );
 }
