@@ -43,6 +43,7 @@ export function ProjectDashboard({
   warnings,
   scheduleRiskCount,
   lastReviewForecast,
+  scheduleMovementSinceLastUpdate,
 }: {
   project: ProjectRow;
   exposures: ExposureRow[];
@@ -50,6 +51,7 @@ export function ProjectDashboard({
   warnings: Warning[];
   scheduleRiskCount: number;
   lastReviewForecast?: string | null;
+  scheduleMovementSinceLastUpdate?: number | null;
 }) {
   const live = exposures.filter(isLiveRisk);
   const activeRisk = live.reduce((sum, exposure) => sum + weighted(exposure), 0);
@@ -62,10 +64,9 @@ export function ProjectDashboard({
   ).length;
   const linkedScheduleCount = scheduleRiskCount + scheduleLinkedExposures;
   const schedule = scheduleReliability(project.schedule_variance_weeks, linkedScheduleCount);
-  const scheduleMovementSinceLastUpdate = weeksBetween(
-    lastReviewForecast,
-    project.forecast_completion_date,
-  );
+  const scheduleMovement =
+    scheduleMovementSinceLastUpdate ??
+    weeksBetween(lastReviewForecast, project.forecast_completion_date);
   const topRisk = topExposures[0] ?? null;
   const currentQuestion = warnings[0]?.title ?? topRisk?.title ?? "No urgent item logged";
   const financialBars = [
@@ -200,14 +201,14 @@ export function ProjectDashboard({
               tone={project.schedule_variance_weeks > 0 ? "danger" : "success"}
             />
             <DashboardMetric
-              label="Since last IOR"
-              value={formatScheduleMovement(scheduleMovementSinceLastUpdate)}
+              label="Since last update"
+              value={formatScheduleMovement(scheduleMovement)}
               tone={
-                scheduleMovementSinceLastUpdate == null
+                scheduleMovement == null
                   ? undefined
-                  : scheduleMovementSinceLastUpdate > 0
+                  : scheduleMovement > 0
                     ? "danger"
-                    : scheduleMovementSinceLastUpdate < 0
+                    : scheduleMovement < 0
                       ? "success"
                       : undefined
               }

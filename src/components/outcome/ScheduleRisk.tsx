@@ -144,21 +144,61 @@ export function ScheduleRisk({
       qc.invalidateQueries({ queryKey: ["project", projectId] }),
       qc.invalidateQueries({ queryKey: ["projects"] }),
     ]);
-  const useScheduleMutation = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
-    useMutation({ mutationFn: (i: I) => fn({ data: i }), onSuccess: invalidateSchedule });
+  const useScheduleMutation = <I,>(
+    fn: (i: { data: I }) => Promise<unknown>,
+    messages?: {
+      successTitle?: string;
+      successDescription?: string;
+      errorTitle?: string;
+    },
+  ) =>
+    useMutation({
+      mutationFn: (i: I) => fn({ data: i }),
+      onSuccess: async () => {
+        await invalidateSchedule();
+        if (messages?.successTitle) {
+          toast.success(messages.successTitle, {
+            description: messages.successDescription,
+          });
+        }
+      },
+      onError: (error) => {
+        if (!messages?.errorTitle) return;
+        toast.error(messages.errorTitle, {
+          description: error instanceof Error ? error.message : "Refresh and try again.",
+        });
+      },
+    });
 
-  const msCreate = useScheduleMutation<{ projectId: string; name: string }>(createMs);
+  const msCreate = useScheduleMutation<{ projectId: string; name: string }>(createMs, {
+    successTitle: "Milestone added",
+    successDescription: "It is now part of the schedule working list.",
+    errorTitle: "Milestone did not save",
+  });
   const msUpdate = useScheduleMutation<{ id: string; patch: Partial<MilestoneRow> }>(
     updateMs as never,
+    { errorTitle: "Milestone did not update" },
   );
-  const msDelete = useScheduleMutation<{ id: string }>(deleteMs);
+  const msDelete = useScheduleMutation<{ id: string }>(deleteMs, {
+    successTitle: "Milestone deleted",
+    errorTitle: "Milestone did not delete",
+  });
   const rCreate = useScheduleMutation<{ projectId: string; kind: ScheduleRiskKind; title: string }>(
     createRisk,
+    {
+      successTitle: "Schedule risk added",
+      successDescription: "Fill in the dollars, owner, dates, and treatment path next.",
+      errorTitle: "Schedule risk did not save",
+    },
   );
   const rUpdate = useScheduleMutation<{ id: string; patch: Partial<ScheduleRiskRow> }>(
     updateRisk as never,
+    { errorTitle: "Schedule risk did not update" },
   );
-  const rDelete = useScheduleMutation<{ id: string }>(deleteRisk);
+  const rDelete = useScheduleMutation<{ id: string }>(deleteRisk, {
+    successTitle: "Schedule risk deleted",
+    errorTitle: "Schedule risk did not delete",
+  });
 
   const exposureCreate = useMutation({
     mutationFn: async (risk: ScheduleRiskRow) => {
@@ -209,6 +249,11 @@ export function ScheduleRisk({
   const finMut = useMutation({
     mutationFn: (patch: Record<string, unknown>) => updateFin({ data: { projectId, patch } }),
     onSuccess: invalidateProject,
+    onError: (error) => {
+      toast.error("Schedule dates did not update", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
   });
 
   const milestones = data?.milestones ?? [];
@@ -461,9 +506,10 @@ function ScheduleUpdateLedger({
         </p>
       </div>
       <div className="overflow-hidden rounded-md border border-hairline">
-        <div className="grid grid-cols-[72px_110px_1fr_110px_110px_90px] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        <div className="grid grid-cols-[64px_100px_120px_1fr_100px_100px_84px] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           <div>Update</div>
           <div>Date</div>
+          <div>Baseline</div>
           <div>Forecast</div>
           <div>Variance</div>
           <div>Movement</div>
@@ -472,10 +518,13 @@ function ScheduleUpdateLedger({
         {updates.map((update) => (
           <div
             key={update.id}
-            className="grid grid-cols-[72px_110px_1fr_110px_110px_90px] items-start border-t border-hairline px-3 py-3 text-sm"
+            className="grid grid-cols-[64px_100px_120px_1fr_100px_100px_84px] items-start border-t border-hairline px-3 py-3 text-sm"
           >
             <div className="font-medium tabular text-foreground">#{update.update_number}</div>
             <div className="text-muted-foreground">{shortDate(update.update_date)}</div>
+            <div className="tabular text-muted-foreground">
+              {shortDate(update.baseline_completion_date)}
+            </div>
             <div>
               <div className="font-medium text-foreground">
                 {shortDate(update.forecast_completion_date)}
@@ -763,7 +812,14 @@ function RiskGroup({
   const meta = RISK_META[kind];
   const Icon = meta.icon;
   const [statusView, setStatusView] = useState<ScheduleRiskStatus | "all">("active");
-  const visibleItems = statusView === "all" ? items : items.filter((r) => r.status === statusView);
+  const visibleItems = (statusView === "all" ? items : items.filter((r) => r.status === statusView))
+    .slice()
+    .sort(
+      (a, b) =>
+        likelyRiskValue(b) - likelyRiskValue(a) ||
+        a.sort_order - b.sort_order ||
+        a.title.localeCompare(b.title),
+    );
   const activeCount = items.filter((r) => r.status === "active").length;
   const completedCount = items.filter((r) => r.status === "completed").length;
   return (
