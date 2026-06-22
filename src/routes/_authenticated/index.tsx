@@ -728,7 +728,7 @@ function InviteByMagicLinkButton() {
     mutationFn: (payload: {
       membershipId: string;
       role?: ProjectMemberRole;
-      status?: MemberStatus;
+      status?: Exclude<MemberStatus, "pending">;
     }) => updateProjectAccess({ data: payload }),
     onSuccess: async () => {
       await refreshTeam();
