@@ -433,6 +433,10 @@ function ProjectPage() {
 
   const milestones = scheduleData?.milestones ?? [];
   const scheduleRisks = scheduleData?.risks ?? [];
+  const scheduleUpdates = scheduleData?.updates ?? [];
+  const activeScheduleRiskCount = scheduleRisks.filter((risk) => risk.status === "active").length;
+  const latestScheduleUpdate = scheduleUpdates[0] ?? null;
+  const scheduleMovementSinceLastUpdate = latestScheduleUpdate?.movement_weeks ?? null;
   const liveExposureCount = exposures.filter(
     (e) => e.status === "active" || e.status === "escalated",
   ).length;
@@ -814,8 +818,9 @@ function ProjectPage() {
                 exposures={exposures}
                 rollup={rollup}
                 warnings={warnings}
-                scheduleRiskCount={scheduleRisks.length}
+                scheduleRiskCount={activeScheduleRiskCount}
                 lastReviewForecast={lastReviewForecast}
+                scheduleMovementSinceLastUpdate={scheduleMovementSinceLastUpdate}
               />
             </TabsContent>
 
