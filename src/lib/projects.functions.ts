@@ -832,13 +832,13 @@ const DECISION_STATUSES = ["open", "in_progress", "resolved", "overdue"] as cons
 
 const decisionInput = z.object({
   decision: z.string().min(1).max(500),
-  impact: z.string().max(500).default(""),
+  impact: z.string().max(5000).default(""),
   owner: z.string().max(200).default(""),
   due_date: z.string().nullable().optional(),
   status: z.enum(DECISION_STATUSES).default("open"),
   linked_exposure_id: z.string().uuid().nullable().optional(),
   linked_co_id: z.string().uuid().nullable().optional(),
-  notes: z.string().max(2000).default(""),
+  notes: z.string().max(5000).default(""),
 });
 
 export const createDecision = createServerFn({ method: "POST" })
