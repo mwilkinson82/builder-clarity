@@ -679,7 +679,7 @@ function InviteByMagicLinkButton() {
   });
 
   const memberMutation = useMutation({
-    mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: MemberStatus }) =>
+    mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: Exclude<MemberStatus, "pending"> }) =>
       updateMember({ data: payload }),
     onSuccess: async () => {
       await refreshTeam();
