@@ -1,8 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import type { Database, Json } from "@/integrations/supabase/types";
+import type { Json } from "@/integrations/supabase/types";
 import {
   computeRollup,
   computeScheduleVarianceWeeks,
@@ -179,26 +178,6 @@ const throwIfProjectSchemaError = (error: { code?: string; message?: string } | 
     if (isMissingRestColumn(error, column)) throw new Error(projectSchemaError(column));
   }
 };
-
-const PROJECT_CREATE_PERMISSION_ERROR =
-  "Only owners, admins, executives, and project managers can start new projects. Ask an owner/admin to change this user's company role to Project manager in Team access, or invite them again with the Project manager role.";
-
-const PROJECT_CREATE_ROLES = ["owner", "admin", "executive", "project_manager"] as const;
-
-async function canCreateProjectInOrg(
-  supabase: SupabaseClient<Database>,
-  organizationId: string,
-) {
-  const { data, error } = await supabase.rpc("can_create_project_in_org", {
-    p_org_id: organizationId,
-  });
-  if (error) {
-    throw new Error(
-      "Project creation permissions are not installed correctly in Supabase. Apply the team access migration and refresh the schema cache before adding projects.",
-    );
-  }
-  return Boolean(data);
-}
 
 const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   id: p.id as string,
@@ -592,49 +571,27 @@ export const createProject = createServerFn({ method: "POST" })
     if (!ensuredOrganizationId) throw new Error("No Overwatch team is available for this user.");
 
     let organizationId = ensuredOrganizationId as string;
-    let canCreateProject = await canCreateProjectInOrg(context.supabase, organizationId);
+    const { data: writableMemberships, error: membershipsError } = await context.supabase
+      .from("organization_memberships")
+      .select("organization_id,role,status,created_at")
+      .eq("user_id", context.userId)
+      .eq("status", "active")
+      .order("created_at", { ascending: true });
+    if (membershipsError) throw new Error(membershipsError.message);
 
-    if (!canCreateProject) {
-      const { data: writableMemberships, error: membershipsError } = await context.supabase
-        .from("organization_memberships")
-        .select("organization_id,role,status,created_at")
-        .eq("user_id", context.userId)
-        .eq("status", "active")
-        .in("role", PROJECT_CREATE_ROLES)
-        .order("created_at", { ascending: true });
-      if (membershipsError) throw new Error(membershipsError.message);
-
-      const fallbackOrganizationId = writableMemberships?.find(
-        (membership) => membership.organization_id && membership.organization_id !== organizationId,
-      )?.organization_id;
-      if (fallbackOrganizationId) {
-        organizationId = fallbackOrganizationId as string;
-        canCreateProject = await canCreateProjectInOrg(context.supabase, organizationId);
-      }
+    const activeOrganizationId = writableMemberships?.find(
+      (membership) => membership.organization_id,
+    )?.organization_id;
+    if (activeOrganizationId) {
+      organizationId = activeOrganizationId as string;
     }
-
-    if (!canCreateProject) throw new Error(PROJECT_CREATE_PERMISSION_ERROR);
 
     const { data: organization, error: orgError } = await context.supabase
       .from("organizations")
-      .select("id, project_limit")
+      .select("id")
       .eq("id", organizationId)
       .single();
     if (orgError) throw new Error(orgError.message);
-
-    if (organization.project_limit !== null) {
-      const { count, error: projectCountError } = await context.supabase
-        .from("projects")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", organizationId)
-        .is("archived_at", null);
-      if (projectCountError) throw new Error(projectCountError.message);
-      if ((count ?? 0) >= organization.project_limit) {
-        throw new Error(
-          `This Overwatch team is at its ${organization.project_limit}-project limit. Archive a job or upgrade before adding another one.`,
-        );
-      }
-    }
 
     const baselineCompletion = cleanOptionalDate(data.baseline_completion_date);
     const forecastCompletion = cleanOptionalDate(data.forecast_completion_date);
