@@ -714,13 +714,14 @@ export const createExposure = createServerFn({ method: "POST" })
         .single();
     let { data: inserted, error } = await insertExposure(rest);
     if (isMissingRestColumn(error, "released_amount")) {
-      const retry = { ...rest };
+      const retry: Partial<typeof rest> = { ...rest };
       delete retry.released_amount;
       delete retry.release_note;
       delete retry.release_updated_at;
-      ({ data: inserted, error } = await insertExposure(retry));
+      ({ data: inserted, error } = await insertExposure(retry as typeof rest));
     }
     if (error) throw new Error(error.message);
+    if (!inserted) throw new Error("Exposure did not save.");
     return { ok: true, id: inserted.id as string };
   });
 
