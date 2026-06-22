@@ -14,286 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      subscription_plans: {
-        Row: {
-          code: string
-          created_at: string
-          daily_report_limit_per_month: number | null
-          is_public: boolean
-          monthly_price_cents: number
-          name: string
-          project_limit: number | null
-          seat_limit: number | null
-          storage_limit_mb: number | null
-          updated_at: string
-        }
-        Insert: {
-          code: string
-          created_at?: string
-          daily_report_limit_per_month?: number | null
-          is_public?: boolean
-          monthly_price_cents?: number
-          name: string
-          project_limit?: number | null
-          seat_limit?: number | null
-          storage_limit_mb?: number | null
-          updated_at?: string
-        }
-        Update: {
-          code?: string
-          created_at?: string
-          daily_report_limit_per_month?: number | null
-          is_public?: boolean
-          monthly_price_cents?: number
-          name?: string
-          project_limit?: number | null
-          seat_limit?: number | null
-          storage_limit_mb?: number | null
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      profiles: {
-        Row: {
-          avatar_url: string
-          company_title: string
-          created_at: string
-          default_organization_id: string | null
-          email: string
-          full_name: string
-          id: string
-          phone: string
-          updated_at: string
-        }
-        Insert: {
-          avatar_url?: string
-          company_title?: string
-          created_at?: string
-          default_organization_id?: string | null
-          email?: string
-          full_name?: string
-          id: string
-          phone?: string
-          updated_at?: string
-        }
-        Update: {
-          avatar_url?: string
-          company_title?: string
-          created_at?: string
-          default_organization_id?: string | null
-          email?: string
-          full_name?: string
-          id?: string
-          phone?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "profiles_default_organization_fkey"
-            columns: ["default_organization_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      organizations: {
-        Row: {
-          billing_status: string
-          contractor_circle_grant: boolean
-          created_at: string
-          created_by: string | null
-          daily_report_limit_per_month: number
-          id: string
-          name: string
-          plan_code: string
-          project_limit: number
-          seat_limit: number
-          slug: string
-          storage_limit_mb: number
-          stripe_customer_id: string
-          stripe_subscription_id: string
-          trial_ends_at: string | null
-          updated_at: string
-        }
-        Insert: {
-          billing_status?: string
-          contractor_circle_grant?: boolean
-          created_at?: string
-          created_by?: string | null
-          daily_report_limit_per_month?: number
-          id?: string
-          name: string
-          plan_code?: string
-          project_limit?: number
-          seat_limit?: number
-          slug?: string
-          storage_limit_mb?: number
-          stripe_customer_id?: string
-          stripe_subscription_id?: string
-          trial_ends_at?: string | null
-          updated_at?: string
-        }
-        Update: {
-          billing_status?: string
-          contractor_circle_grant?: boolean
-          created_at?: string
-          created_by?: string | null
-          daily_report_limit_per_month?: number
-          id?: string
-          name?: string
-          plan_code?: string
-          project_limit?: number
-          seat_limit?: number
-          slug?: string
-          storage_limit_mb?: number
-          stripe_customer_id?: string
-          stripe_subscription_id?: string
-          trial_ends_at?: string | null
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "organizations_plan_code_fkey"
-            columns: ["plan_code"]
-            isOneToOne: false
-            referencedRelation: "subscription_plans"
-            referencedColumns: ["code"]
-          },
-        ]
-      }
-      organization_memberships: {
-        Row: {
-          created_at: string
-          id: string
-          invited_by: string | null
-          invited_email: string
-          organization_id: string
-          role: Database["public"]["Enums"]["account_role"]
-          status: Database["public"]["Enums"]["member_status"]
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          invited_by?: string | null
-          invited_email?: string
-          organization_id: string
-          role?: Database["public"]["Enums"]["account_role"]
-          status?: Database["public"]["Enums"]["member_status"]
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          invited_by?: string | null
-          invited_email?: string
-          organization_id?: string
-          role?: Database["public"]["Enums"]["account_role"]
-          status?: Database["public"]["Enums"]["member_status"]
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "organization_memberships_organization_id_fkey"
-            columns: ["organization_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      organization_invites: {
-        Row: {
-          accepted_at: string | null
-          accepted_by: string | null
-          created_at: string
-          email: string
-          expires_at: string
-          id: string
-          invited_by: string | null
-          organization_id: string
-          role: Database["public"]["Enums"]["account_role"]
-          status: Database["public"]["Enums"]["invite_status"]
-          updated_at: string
-        }
-        Insert: {
-          accepted_at?: string | null
-          accepted_by?: string | null
-          created_at?: string
-          email: string
-          expires_at?: string
-          id?: string
-          invited_by?: string | null
-          organization_id: string
-          role?: Database["public"]["Enums"]["account_role"]
-          status?: Database["public"]["Enums"]["invite_status"]
-          updated_at?: string
-        }
-        Update: {
-          accepted_at?: string | null
-          accepted_by?: string | null
-          created_at?: string
-          email?: string
-          expires_at?: string
-          id?: string
-          invited_by?: string | null
-          organization_id?: string
-          role?: Database["public"]["Enums"]["account_role"]
-          status?: Database["public"]["Enums"]["invite_status"]
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "organization_invites_organization_id_fkey"
-            columns: ["organization_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      project_memberships: {
-        Row: {
-          created_at: string
-          id: string
-          project_id: string
-          role: Database["public"]["Enums"]["project_member_role"]
-          status: Database["public"]["Enums"]["member_status"]
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          project_id: string
-          role?: Database["public"]["Enums"]["project_member_role"]
-          status?: Database["public"]["Enums"]["member_status"]
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          project_id?: string
-          role?: Database["public"]["Enums"]["project_member_role"]
-          status?: Database["public"]["Enums"]["member_status"]
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "project_memberships_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       billing_applications: {
         Row: {
           amount_billed: number
@@ -705,10 +425,7 @@ export type Database = {
           owner: string
           probability: number
           project_id: string
-          release_note: string
           release_condition: string
-          release_updated_at: string | null
-          released_amount: number
           resolved_at: string | null
           response_path: Database["public"]["Enums"]["response_path"]
           schedule_impact_weeks: number | null
@@ -730,10 +447,7 @@ export type Database = {
           owner?: string
           probability?: number
           project_id: string
-          release_note?: string
           release_condition?: string
-          release_updated_at?: string | null
-          released_amount?: number
           resolved_at?: string | null
           response_path?: Database["public"]["Enums"]["response_path"]
           schedule_impact_weeks?: number | null
@@ -755,10 +469,7 @@ export type Database = {
           owner?: string
           probability?: number
           project_id?: string
-          release_note?: string
           release_condition?: string
-          release_updated_at?: string | null
-          released_amount?: number
           resolved_at?: string | null
           response_path?: Database["public"]["Enums"]["response_path"]
           schedule_impact_weeks?: number | null
@@ -778,7 +489,6 @@ export type Database = {
       }
       projects: {
         Row: {
-          archived_at: string | null
           baseline_completion_date: string | null
           client: string
           created_at: string
@@ -790,7 +500,6 @@ export type Database = {
           last_reviewed_at: string | null
           name: string
           next_review_at: string | null
-          organization_id: string | null
           original_contract: number
           original_cost_budget: number
           owner_id: string
@@ -801,7 +510,6 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          archived_at?: string | null
           baseline_completion_date?: string | null
           client?: string
           created_at?: string
@@ -813,7 +521,6 @@ export type Database = {
           last_reviewed_at?: string | null
           name: string
           next_review_at?: string | null
-          organization_id?: string | null
           original_contract?: number
           original_cost_budget?: number
           owner_id: string
@@ -824,7 +531,6 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          archived_at?: string | null
           baseline_completion_date?: string | null
           client?: string
           created_at?: string
@@ -836,7 +542,6 @@ export type Database = {
           last_reviewed_at?: string | null
           name?: string
           next_review_at?: string | null
-          organization_id?: string | null
           original_contract?: number
           original_cost_budget?: number
           owner_id?: string
@@ -957,136 +662,14 @@ export type Database = {
           },
         ]
       }
-      schedule_updates: {
-        Row: {
-          baseline_completion_date: string | null
-          created_at: string
-          created_by: string | null
-          forecast_completion_date: string
-          id: string
-          movement_weeks: number
-          notes: string
-          project_id: string
-          update_date: string
-          update_number: number
-          updated_at: string
-          variance_weeks: number
-        }
-        Insert: {
-          baseline_completion_date?: string | null
-          created_at?: string
-          created_by?: string | null
-          forecast_completion_date: string
-          id?: string
-          movement_weeks?: number
-          notes?: string
-          project_id: string
-          update_date?: string
-          update_number: number
-          updated_at?: string
-          variance_weeks?: number
-        }
-        Update: {
-          baseline_completion_date?: string | null
-          created_at?: string
-          created_by?: string | null
-          forecast_completion_date?: string
-          id?: string
-          movement_weeks?: number
-          notes?: string
-          project_id?: string
-          update_date?: string
-          update_number?: number
-          updated_at?: string
-          variance_weeks?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "schedule_updates_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      schedule_milestone_updates: {
-        Row: {
-          baseline_date: string | null
-          created_at: string
-          forecast_date: string | null
-          id: string
-          milestone_id: string
-          notes: string
-          project_id: string
-          schedule_update_id: string | null
-          status: string
-          update_number: number
-          updated_at: string
-          variance_weeks: number
-        }
-        Insert: {
-          baseline_date?: string | null
-          created_at?: string
-          forecast_date?: string | null
-          id?: string
-          milestone_id: string
-          notes?: string
-          project_id: string
-          schedule_update_id?: string | null
-          status?: string
-          update_number: number
-          updated_at?: string
-          variance_weeks?: number
-        }
-        Update: {
-          baseline_date?: string | null
-          created_at?: string
-          forecast_date?: string | null
-          id?: string
-          milestone_id?: string
-          notes?: string
-          project_id?: string
-          schedule_update_id?: string | null
-          status?: string
-          update_number?: number
-          updated_at?: string
-          variance_weeks?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "schedule_milestone_updates_milestone_id_fkey"
-            columns: ["milestone_id"]
-            isOneToOne: false
-            referencedRelation: "schedule_milestones"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "schedule_milestone_updates_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "schedule_milestone_updates_schedule_update_id_fkey"
-            columns: ["schedule_update_id"]
-            isOneToOne: false
-            referencedRelation: "schedule_updates"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       schedule_risks: {
         Row: {
-          completed_at: string | null
           created_at: string
           detail: string
           dollar_exposure: number
           due_date: string | null
           hold_class: Database["public"]["Enums"]["hold_class"]
           id: string
-          inactive_reason: string
           kind: string
           linked_exposure_id: string | null
           owner: string
@@ -1095,19 +678,16 @@ export type Database = {
           response_path: Database["public"]["Enums"]["response_path"]
           schedule_impact_weeks: number | null
           sort_order: number
-          status: string
           title: string
           updated_at: string
         }
         Insert: {
-          completed_at?: string | null
           created_at?: string
           detail?: string
           dollar_exposure?: number
           due_date?: string | null
           hold_class?: Database["public"]["Enums"]["hold_class"]
           id?: string
-          inactive_reason?: string
           kind: string
           linked_exposure_id?: string | null
           owner?: string
@@ -1116,19 +696,16 @@ export type Database = {
           response_path?: Database["public"]["Enums"]["response_path"]
           schedule_impact_weeks?: number | null
           sort_order?: number
-          status?: string
           title: string
           updated_at?: string
         }
         Update: {
-          completed_at?: string | null
           created_at?: string
           detail?: string
           dollar_exposure?: number
           due_date?: string | null
           hold_class?: Database["public"]["Enums"]["hold_class"]
           id?: string
-          inactive_reason?: string
           kind?: string
           linked_exposure_id?: string | null
           owner?: string
@@ -1137,7 +714,6 @@ export type Database = {
           response_path?: Database["public"]["Enums"]["response_path"]
           schedule_impact_weeks?: number | null
           sort_order?: number
-          status?: string
           title?: string
           updated_at?: string
         }
@@ -1191,10 +767,6 @@ export type Database = {
         Args: { message_id: number; queue_name: string }
         Returns: boolean
       }
-      ensure_current_user_account: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
       enqueue_email: {
         Args: { payload: Json; queue_name: string }
         Returns: number
@@ -1218,13 +790,6 @@ export type Database = {
       }
     }
     Enums: {
-      account_role:
-        | "owner"
-        | "admin"
-        | "executive"
-        | "project_manager"
-        | "member"
-        | "viewer"
       decision_status: "open" | "in_progress" | "resolved" | "overdue"
       exposure_category:
         | "owner_decision"
@@ -1244,9 +809,6 @@ export type Database = {
         | "accepted"
         | "released"
       hold_class: "E-Hold" | "C-Hold" | "Both" | "None"
-      invite_status: "pending" | "accepted" | "revoked" | "expired"
-      member_status: "pending" | "active" | "disabled"
-      project_member_role: "owner" | "manager" | "editor" | "viewer"
       project_phase: "Early" | "Middle" | "Late"
       response_path: "eliminate" | "recover" | "offset" | "accept"
     }
