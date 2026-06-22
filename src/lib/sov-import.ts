@@ -444,6 +444,28 @@ export interface BucketImportRow {
   reason?: string;
 }
 
+export interface AmountColumnChoice {
+  columnIndex: number;
+  label: string;
+  total: number;
+  sampleCount: number;
+  recommended: boolean;
+  basis: "cost" | "sell" | "unit" | "unknown";
+  note: string;
+}
+
+export interface SovIntakeAnalysis {
+  profile: string;
+  confidence: "high" | "medium" | "low";
+  rawRows: number;
+  importRows: number;
+  mergedRows: number;
+  totalBudget: number;
+  selectedBudgetColumn: number | null;
+  amountChoices: AmountColumnChoice[];
+  warnings: string[];
+}
+
 export function applyMapping(
   matrix: Matrix,
   hasHeader: boolean,
@@ -552,4 +574,136 @@ function consolidateBucketRows(rows: BucketImportRow[]): BucketImportRow[] {
   }
 
   return consolidated;
+}
+
+export function analyzeSovIntake(
+  matrix: Matrix,
+  hasHeader: boolean,
+  map: ColumnMap,
+): SovIntakeAnalysis {
+  const rows = applyMapping(matrix, hasHeader, map);
+  const validRows = rows.filter((r) => r.valid);
+  const header = hasHeader ? (matrix[0] ?? []) : [];
+  const headerText = header.join(" ").toLowerCase();
+  const selectedBudgetEntry = Object.entries(map).find(([, field]) => field === "original_budget");
+  const selectedBudgetColumn = selectedBudgetEntry ? Number(selectedBudgetEntry[0]) : null;
+  const selectedBudgetLabel =
+    selectedBudgetColumn == null ? "" : (header[selectedBudgetColumn] ?? "").trim();
+
+  const amountChoices = detectAmountColumns(matrix, hasHeader, selectedBudgetColumn);
+  const warnings: string[] = [];
+  const mergedRows = validRows.filter((row) => row.reason?.startsWith("Merged ")).length;
+
+  let profile = "Generic spreadsheet";
+  let confidence: SovIntakeAnalysis["confidence"] = "medium";
+  if (/builder\s*cost/i.test(headerText) && /client\s*price/i.test(headerText)) {
+    profile = "Builder estimate export";
+    confidence = "high";
+  } else if (/scheduled\s*value/i.test(headerText) && /balance\s*to\s*finish/i.test(headerText)) {
+    profile = "AIA/SOV pay application";
+    confidence = "high";
+  } else if (/actual/i.test(headerText) && /budget/i.test(headerText)) {
+    profile = "Budget vs actual export";
+    confidence = "medium";
+  } else if (!hasHeader) {
+    profile = "Headerless spreadsheet";
+    confidence = "low";
+  }
+
+  if (!Object.values(map).includes("cost_code")) {
+    warnings.push("No cost-code column is mapped. Future imports will match by bucket name only.");
+  }
+  if (/client\s*price|unit\s*price|markup|profit/i.test(selectedBudgetLabel)) {
+    warnings.push(
+      `${selectedBudgetLabel} looks like a sell-price or markup column. Use a cost column unless this project is intentionally budgeted at client value.`,
+    );
+  }
+  if (/unit\s*cost/i.test(selectedBudgetLabel) && amountChoices.some((c) => c.basis === "cost")) {
+    warnings.push("A cost-total column exists. Unit Cost is usually not the SOV budget.");
+  }
+  if (
+    amountChoices.some((c) => c.basis === "sell") &&
+    amountChoices.some((c) => c.basis === "cost")
+  ) {
+    warnings.push(
+      "Both cost and client-price columns were found. Confirm the SOV should use cost.",
+    );
+  }
+  if (mergedRows > 0) {
+    warnings.push(`${mergedRows} cost-code buckets were built by merging repeated estimate lines.`);
+  }
+  if (validRows.length === 0) {
+    warnings.push("No importable rows were found. Check the column mapping before importing.");
+  }
+
+  return {
+    profile,
+    confidence,
+    rawRows: Math.max(0, matrix.length - (hasHeader ? 1 : 0)),
+    importRows: validRows.length,
+    mergedRows,
+    totalBudget: validRows.reduce((sum, row) => sum + row.original_budget, 0),
+    selectedBudgetColumn,
+    amountChoices,
+    warnings,
+  };
+}
+
+function detectAmountColumns(
+  matrix: Matrix,
+  hasHeader: boolean,
+  selectedBudgetColumn: number | null,
+): AmountColumnChoice[] {
+  if (matrix.length === 0) return [];
+  const ncols = Math.max(...matrix.map((row) => row.length));
+  const header = hasHeader ? (matrix[0] ?? []) : [];
+  const sampleRows = matrix.slice(hasHeader ? 1 : 0);
+  const choices: AmountColumnChoice[] = [];
+
+  for (let i = 0; i < ncols; i++) {
+    const label = (header[i] ?? `Column ${i + 1}`).trim() || `Column ${i + 1}`;
+    const lower = label.toLowerCase();
+    if (/%|margin|markup|profit|quantity|qty|rate/i.test(lower)) continue;
+
+    let sampleCount = 0;
+    let total = 0;
+    for (const row of sampleRows) {
+      const parsed = parseNumber(row[i] ?? "");
+      if (parsed == null) continue;
+      sampleCount += 1;
+      total += parsed;
+    }
+    if (sampleCount < Math.max(3, Math.ceil(sampleRows.length * 0.3))) continue;
+    if (Math.abs(total) <= 0) continue;
+
+    let basis: AmountColumnChoice["basis"] = "unknown";
+    let note = "Possible dollar column.";
+    if (/builder\s*cost|estimated?\s*cost|budgeted\s*cost|scheduled\s*value|budget/i.test(lower)) {
+      basis = "cost";
+      note = "Best fit for the cost budget.";
+    } else if (/client\s*price|contract|revenue|sell|sales|price/i.test(lower)) {
+      basis = "sell";
+      note = "Likely owner/client value, not cost.";
+    } else if (/unit\s*cost|unit\s*price/i.test(lower)) {
+      basis = "unit";
+      note = "Unit amount; use only if quantities are already one.";
+    }
+
+    choices.push({
+      columnIndex: i,
+      label,
+      total,
+      sampleCount,
+      recommended: i === selectedBudgetColumn || basis === "cost",
+      basis,
+      note,
+    });
+  }
+
+  return choices.sort((a, b) => {
+    if (a.columnIndex === selectedBudgetColumn) return -1;
+    if (b.columnIndex === selectedBudgetColumn) return 1;
+    const rank = { cost: 0, unknown: 1, unit: 2, sell: 3 };
+    return rank[a.basis] - rank[b.basis] || b.sampleCount - a.sampleCount;
+  });
 }

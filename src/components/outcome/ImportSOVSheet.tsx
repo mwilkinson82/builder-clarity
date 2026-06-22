@@ -36,6 +36,7 @@ import {
   parsePdf,
   guessColumnMap,
   applyMapping,
+  analyzeSovIntake,
   missingRequiredMappings,
   type Matrix,
   type ParsedSheet,
@@ -138,6 +139,16 @@ export function ImportSOVSheet({
   const skippedCount = plannedRows.filter((r) => !r.valid || r.action === "skip").length;
   const total = valid.reduce((s, r) => s + r.original_budget, 0);
   const missingMappings = parsed ? missingRequiredMappings(map) : [];
+  const intake = parsed ? analyzeSovIntake(parsed.matrix, hasHeader, map) : null;
+
+  const setBudgetColumn = (columnIndex: number) => {
+    const next = { ...map };
+    for (const [k, field] of Object.entries(next)) {
+      if (field === "original_budget") next[Number(k)] = "ignore";
+    }
+    next[columnIndex] = "original_budget";
+    setMap(next);
+  };
 
   const commit = () => {
     if (missingMappings.length > 0) {
@@ -171,11 +182,10 @@ export function ImportSOVSheet({
       </SheetTrigger>
       <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto">
         <SheetHeader>
-          <SheetTitle className="font-serif text-2xl">Import Schedule of Values</SheetTitle>
+          <SheetTitle className="font-serif text-2xl">SOV Intake Assistant</SheetTitle>
           <SheetDescription>
-            CSV from QuickBooks, builder estimate exports, Excel files, or pasted cells from any
-            spreadsheet. We'll auto-detect the columns and you confirm the mapping before anything
-            is created.
+            Drop in the contractor spreadsheet as-is. Overwatch maps it, stages the SOV, flags the
+            weird parts, and asks for confirmation before anything touches the job.
           </SheetDescription>
         </SheetHeader>
 
@@ -183,19 +193,16 @@ export function ImportSOVSheet({
           <Tabs defaultValue="csv" className="mt-6">
             <div className="mb-4 rounded-md border border-hairline bg-surface p-3 text-xs text-muted-foreground">
               <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground">
-                Import rules
+                What Overwatch will do
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
-                <div>Required: one row per cost bucket with Bucket name and Original budget.</div>
+                <div>Detect cost codes, bucket names, and the most likely budget column.</div>
+                <div>Stage the result first, including the total budget and any rejected rows.</div>
                 <div>
-                  Optional: Actual to date and FTC. If FTC is blank, it becomes Budget minus Actual.
-                </div>
-                <div>Recommended: include Cost code so future imports update the right line.</div>
-                <div>
-                  Estimate reports are OK. Repeated cost-code line items will roll into one bucket.
+                  Roll repeated estimate lines into cost-code buckets instead of rejecting them.
                 </div>
                 <div>
-                  Excel imports use the first worksheet; move the SOV tab first before uploading.
+                  Keep the PM in control: replace the job budget or merge/update existing buckets.
                 </div>
               </div>
             </div>
@@ -226,8 +233,8 @@ export function ImportSOVSheet({
                 onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
               />
               <Tip>
-                We read the first sheet only. For BuilderTrend-style estimate reports, Builder Cost
-                becomes the cost budget and repeated cost codes are grouped automatically.
+                BuilderTrend-style estimate reports, generic Excel files, and older .xls exports are
+                supported. If multiple dollar columns exist, confirm which one is the budget.
               </Tip>
             </TabsContent>
 
@@ -273,13 +280,16 @@ export function ImportSOVSheet({
                 <FileSpreadsheet className="h-4 w-4" />
                 <span>
                   {parsed.source.toUpperCase()}
-                  {parsed.sheetName ? ` · ${parsed.sheetName}` : ""} · {rows.length} rows detected
+                  {parsed.sheetName ? ` · ${parsed.sheetName}` : ""} ·{" "}
+                  {intake?.rawRows ?? rows.length} raw rows
                 </span>
               </div>
               <Button size="sm" variant="ghost" onClick={reset}>
                 Start over
               </Button>
             </div>
+
+            {intake && <IntakeReview analysis={intake} onBudgetColumnChange={setBudgetColumn} />}
 
             <div className="flex items-center gap-4 text-xs">
               <label className="flex items-center gap-1.5">
@@ -320,7 +330,7 @@ export function ImportSOVSheet({
             <div>
               <div className="mb-2 flex items-center gap-4 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1 text-success">
-                  <Check className="h-3 w-3" /> {valid.length} valid
+                  <Check className="h-3 w-3" /> {valid.length} staged
                 </span>
                 <span>{createCount} create</span>
                 <span>{updateCount} update</span>
@@ -451,6 +461,117 @@ function Tip({ children }: { children: React.ReactNode }) {
     <p className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
       {children}
     </p>
+  );
+}
+
+function IntakeReview({
+  analysis,
+  onBudgetColumnChange,
+}: {
+  analysis: ReturnType<typeof analyzeSovIntake>;
+  onBudgetColumnChange: (columnIndex: number) => void;
+}) {
+  const confidenceClass =
+    analysis.confidence === "high"
+      ? "text-success"
+      : analysis.confidence === "medium"
+        ? "text-warning"
+        : "text-danger";
+
+  return (
+    <div className="rounded-md border border-hairline bg-background">
+      <div className="grid gap-0 border-b border-hairline sm:grid-cols-4">
+        <div className="border-b border-hairline p-3 sm:border-b-0 sm:border-r">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Detected
+          </div>
+          <div className="mt-1 font-medium">{analysis.profile}</div>
+          <div
+            className={`mt-1 text-xs font-semibold uppercase tracking-[0.14em] ${confidenceClass}`}
+          >
+            {analysis.confidence} confidence
+          </div>
+        </div>
+        <Metric label="Raw rows" value={analysis.rawRows.toString()} />
+        <Metric label="Staged buckets" value={analysis.importRows.toString()} />
+        <Metric label="Budget total" value={fmtUSD(analysis.totalBudget)} tone="strong" />
+      </div>
+
+      <div className="grid gap-4 p-3 md:grid-cols-[minmax(0,1fr)_minmax(240px,0.7fr)]">
+        <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Budget basis
+          </div>
+          {analysis.amountChoices.length > 0 ? (
+            <Select
+              value={
+                analysis.selectedBudgetColumn == null
+                  ? undefined
+                  : String(analysis.selectedBudgetColumn)
+              }
+              onValueChange={(value) => onBudgetColumnChange(Number(value))}
+            >
+              <SelectTrigger className="h-auto min-h-10 text-left">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {analysis.amountChoices.map((choice) => (
+                  <SelectItem key={choice.columnIndex} value={String(choice.columnIndex)}>
+                    {choice.label} · {fmtUSD(choice.total)}
+                    {choice.basis === "cost" ? " · cost" : ""}
+                    {choice.basis === "sell" ? " · client price" : ""}
+                    {choice.basis === "unit" ? " · unit" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+              No clear dollar column was detected. Map Original budget below before importing.
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Confirm this total against the estimate or SOV before importing. If it looks wrong,
+            change the budget basis or fix the column map below.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Review flags
+          </div>
+          {analysis.warnings.length > 0 ? (
+            <div className="space-y-1.5">
+              {analysis.warnings.slice(0, 4).map((warning, index) => (
+                <div
+                  key={`${warning}-${index}`}
+                  className="rounded-md border border-warning/30 bg-warning/10 px-2.5 py-2 text-xs text-warning"
+                >
+                  {warning}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-md border border-success/30 bg-success/10 px-2.5 py-2 text-xs text-success">
+              No obvious import issues found.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value, tone }: { label: string; value: string; tone?: "strong" }) {
+  return (
+    <div className="border-b border-hairline p-3 sm:border-b-0 sm:border-r last:sm:border-r-0">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 text-lg tabular ${tone === "strong" ? "font-semibold" : ""}`}>
+        {value}
+      </div>
+    </div>
   );
 }
 
