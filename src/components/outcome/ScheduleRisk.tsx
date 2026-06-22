@@ -32,10 +32,14 @@ import {
   createScheduleRisk,
   updateScheduleRisk,
   deleteScheduleRisk,
+  createScheduleUpdate,
   type MilestoneStatus,
   type ScheduleRiskKind,
+  type ScheduleRiskStatus,
   type MilestoneRow,
   type ScheduleRiskRow,
+  type ScheduleUpdateRow,
+  type ScheduleMilestoneUpdateRow,
 } from "@/lib/schedule.functions";
 import { createExposure, updateProjectFinancials, type ProjectRow } from "@/lib/projects.functions";
 import { fmtUSD } from "@/lib/format";
@@ -57,6 +61,17 @@ const STATUS_STYLES: Record<MilestoneStatus, string> = {
   at_risk: "bg-warning/15 text-warning border-warning/30",
   delayed: "bg-danger/15 text-danger border-danger/30",
   complete: "bg-muted text-muted-foreground border-hairline",
+};
+
+const RISK_STATUS_LABEL: Record<ScheduleRiskStatus, string> = {
+  active: "Active",
+  inactive: "Inactive",
+  completed: "Completed",
+};
+const RISK_STATUS_STYLES: Record<ScheduleRiskStatus, string> = {
+  active: "bg-warning/15 text-warning border-warning/30",
+  inactive: "bg-secondary text-muted-foreground border-hairline",
+  completed: "bg-success/15 text-success border-success/30",
 };
 
 const RISK_META: Record<
@@ -112,8 +127,12 @@ export function ScheduleRisk({
   const createRisk = useServerFn(createScheduleRisk);
   const updateRisk = useServerFn(updateScheduleRisk);
   const deleteRisk = useServerFn(deleteScheduleRisk);
+  const createUpdate = useServerFn(createScheduleUpdate);
   const createExposureFn = useServerFn(createExposure);
   const updateFin = useServerFn(updateProjectFinancials);
+  const [forecastDraft, setForecastDraft] = useState(project.forecast_completion_date ?? "");
+  const [updateDate, setUpdateDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [updateNotes, setUpdateNotes] = useState("");
 
   const { data, isLoading } = useQuery({
     queryKey: ["schedule", projectId],
@@ -194,11 +213,44 @@ export function ScheduleRisk({
 
   const milestones = data?.milestones ?? [];
   const risks = data?.risks ?? [];
-  const lastMovementWeeks = weeksBetween(lastReviewForecast, project.forecast_completion_date);
+  const updates = data?.updates ?? [];
+  const milestoneUpdates = data?.milestoneUpdates ?? [];
+  const lastScheduleUpdate = updates[0] ?? null;
+  const lastMovementWeeks = lastScheduleUpdate
+    ? lastScheduleUpdate.movement_weeks
+    : weeksBetween(lastReviewForecast, project.forecast_completion_date);
   const scheduleVariance = computeScheduleVarianceWeeks(
     project.baseline_completion_date,
-    project.forecast_completion_date,
+    forecastDraft || project.forecast_completion_date,
   );
+  useEffect(() => {
+    setForecastDraft(project.forecast_completion_date ?? "");
+  }, [project.forecast_completion_date]);
+
+  const scheduleUpdate = useMutation({
+    mutationFn: () =>
+      createUpdate({
+        data: {
+          projectId,
+          forecast_completion_date: forecastDraft,
+          update_date: updateDate,
+          notes: updateNotes,
+        },
+      }),
+    onSuccess: async () => {
+      setUpdateNotes("");
+      await Promise.all([invalidateSchedule(), invalidateProject()]);
+      toast.success("Schedule update saved", {
+        description: "Forecast movement has been added to the schedule history.",
+      });
+    },
+    onError: (error) => {
+      toast.error("Schedule update did not save", {
+        description:
+          error instanceof Error ? error.message : "Check the forecast date and try again.",
+      });
+    },
+  });
 
   return (
     <div className="space-y-8">
@@ -225,20 +277,41 @@ export function ScheduleRisk({
           />
           <DateField
             label="Forecast completion"
-            value={project.forecast_completion_date}
+            value={forecastDraft}
             accent
-            onCommit={(v) =>
-              finMut.mutate({
-                forecast_completion_date: v,
-                schedule_variance_weeks:
-                  computeScheduleVarianceWeeks(project.baseline_completion_date, v) ?? 0,
-              })
-            }
+            onCommit={(v) => setForecastDraft(v ?? "")}
           />
           <ScheduleVarianceCard value={scheduleVariance} />
           <ScheduleDeltaCard value={lastMovementWeeks} />
         </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
+          <div className="space-y-1.5">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Update date
+            </Label>
+            <Input type="date" value={updateDate} onChange={(e) => setUpdateDate(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Schedule movement note
+            </Label>
+            <Input
+              value={updateNotes}
+              onChange={(e) => setUpdateNotes(e.target.value)}
+              placeholder="What changed since the last schedule update?"
+            />
+          </div>
+          <Button
+            type="button"
+            disabled={!forecastDraft || scheduleUpdate.isPending}
+            onClick={() => scheduleUpdate.mutate()}
+          >
+            {scheduleUpdate.isPending ? "Saving..." : "Save schedule update"}
+          </Button>
+        </div>
       </section>
+
+      <ScheduleUpdateLedger updates={updates} milestoneUpdates={milestoneUpdates} />
 
       {/* Interim milestones */}
       <section className="rounded-lg border border-hairline bg-card p-6">
@@ -347,7 +420,7 @@ function ScheduleDeltaCard({ value }: { value: number | null }) {
   return (
     <div className="space-y-1.5">
       <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        Since last IOR update
+        Since last schedule update
       </Label>
       <div
         className={`flex h-9 items-center rounded-md border border-input px-3 text-sm tabular ${tone}`}
@@ -355,6 +428,75 @@ function ScheduleDeltaCard({ value }: { value: number | null }) {
         {label}
       </div>
     </div>
+  );
+}
+
+function ScheduleUpdateLedger({
+  updates,
+  milestoneUpdates,
+}: {
+  updates: ScheduleUpdateRow[];
+  milestoneUpdates: ScheduleMilestoneUpdateRow[];
+}) {
+  if (updates.length === 0) {
+    return (
+      <section className="rounded-lg border border-hairline bg-card p-6">
+        <h3 className="font-serif text-2xl text-foreground">Schedule update history</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          No formal schedule updates have been saved yet. The next saved forecast becomes update 1.
+        </p>
+      </section>
+    );
+  }
+  const milestoneCountByUpdate = milestoneUpdates.reduce<Record<number, number>>((acc, update) => {
+    acc[update.update_number] = (acc[update.update_number] ?? 0) + 1;
+    return acc;
+  }, {});
+  return (
+    <section className="rounded-lg border border-hairline bg-card p-6">
+      <div className="mb-4">
+        <h3 className="font-serif text-2xl text-foreground">Schedule update history</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Each saved update records forecast movement against the baseline and the prior update.
+        </p>
+      </div>
+      <div className="overflow-hidden rounded-md border border-hairline">
+        <div className="grid grid-cols-[72px_110px_1fr_110px_110px_90px] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          <div>Update</div>
+          <div>Date</div>
+          <div>Forecast</div>
+          <div>Variance</div>
+          <div>Movement</div>
+          <div>Milestones</div>
+        </div>
+        {updates.map((update) => (
+          <div
+            key={update.id}
+            className="grid grid-cols-[72px_110px_1fr_110px_110px_90px] items-start border-t border-hairline px-3 py-3 text-sm"
+          >
+            <div className="font-medium tabular text-foreground">#{update.update_number}</div>
+            <div className="text-muted-foreground">{shortDate(update.update_date)}</div>
+            <div>
+              <div className="font-medium text-foreground">
+                {shortDate(update.forecast_completion_date)}
+              </div>
+              {update.notes && (
+                <div className="mt-1 max-w-2xl text-xs text-muted-foreground">{update.notes}</div>
+              )}
+            </div>
+            <div className={`tabular ${varianceTone(update.variance_weeks)}`}>
+              {varianceLabel(update.variance_weeks)}
+            </div>
+            <div className={`tabular ${varianceTone(update.movement_weeks)}`}>
+              {varianceLabel(update.movement_weeks)}
+            </div>
+            <div className="tabular text-muted-foreground">
+              {milestoneCountByUpdate[update.update_number] ?? 0}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -620,6 +762,10 @@ function RiskGroup({
 }) {
   const meta = RISK_META[kind];
   const Icon = meta.icon;
+  const [statusView, setStatusView] = useState<ScheduleRiskStatus | "all">("active");
+  const visibleItems = statusView === "all" ? items : items.filter((r) => r.status === statusView);
+  const activeCount = items.filter((r) => r.status === "active").length;
+  const completedCount = items.filter((r) => r.status === "completed").length;
   return (
     <div className="rounded-lg border border-hairline bg-card p-6">
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -632,16 +778,35 @@ function RiskGroup({
             <p className="text-xs text-muted-foreground">
               {items.length === 0
                 ? "None logged yet."
-                : `${items.length} item${items.length === 1 ? "" : "s"}`}
+                : `${activeCount} active · ${completedCount} completed · ${items.length} total`}
             </p>
           </div>
         </div>
-        <div className="w-full max-w-sm">
+        <div className="flex w-full max-w-xl flex-col gap-2 sm:flex-row">
+          <Select
+            value={statusView}
+            onValueChange={(value) => setStatusView(value as ScheduleRiskStatus | "all")}
+          >
+            <SelectTrigger className="h-9 sm:w-[150px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="inactive">Inactive</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+              <SelectItem value="all">All</SelectItem>
+            </SelectContent>
+          </Select>
           <AddInline placeholder={meta.placeholder} onAdd={onAdd} />
         </div>
       </div>
       <div className="space-y-3">
-        {items.map((r) => (
+        {visibleItems.length === 0 && (
+          <div className="rounded-md border border-dashed border-hairline bg-surface/60 px-3 py-5 text-sm text-muted-foreground">
+            No {statusView === "all" ? "" : statusView} items in this group.
+          </div>
+        )}
+        {visibleItems.map((r) => (
           <RiskItem
             key={r.id}
             row={r}
@@ -712,6 +877,11 @@ function RiskItem({
     if (row.due_date !== local.due_date) patch.due_date = local.due_date;
     if (row.response_path !== local.response_path) patch.response_path = local.response_path;
     if (row.hold_class !== local.hold_class) patch.hold_class = local.hold_class;
+    if (row.status !== local.status) patch.status = local.status;
+    if (row.completed_at !== local.completed_at) patch.completed_at = local.completed_at;
+    if (row.inactive_reason !== local.inactive_reason) {
+      patch.inactive_reason = local.inactive_reason;
+    }
     return patch;
   };
   const saveDraft = () => {
@@ -746,9 +916,20 @@ function RiskItem({
                   <CheckCircle2 className="h-3 w-3" /> Linked
                 </span>
               )}
+              <span
+                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${RISK_STATUS_STYLES[local.status]}`}
+              >
+                {RISK_STATUS_LABEL[local.status]}
+              </span>
             </div>
             {local.detail && (
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{local.detail}</p>
+            )}
+            {local.status !== "active" && local.inactive_reason && (
+              <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
+                {local.status === "completed" ? "Completed: " : "Inactive: "}
+                {local.inactive_reason}
+              </p>
             )}
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs md:min-w-[560px] md:grid-cols-5">
@@ -955,7 +1136,58 @@ function RiskItem({
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-1 md:col-span-2">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Status
+              </Label>
+              <Select
+                value={local.status}
+                onValueChange={(v) => {
+                  const next = v as ScheduleRiskStatus;
+                  setLocal({
+                    ...local,
+                    status: next,
+                    completed_at:
+                      next === "completed"
+                        ? (local.completed_at ?? new Date().toISOString())
+                        : null,
+                  });
+                  onPatch({
+                    status: next,
+                    completed_at:
+                      next === "completed"
+                        ? (local.completed_at ?? new Date().toISOString())
+                        : null,
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
+          {local.status !== "active" && (
+            <div className="space-y-1">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                {local.status === "completed" ? "Completion note" : "Inactive reason"}
+              </Label>
+              <Input
+                value={local.inactive_reason}
+                onChange={(e) => setLocal({ ...local, inactive_reason: e.target.value })}
+                onBlur={() =>
+                  row.inactive_reason !== local.inactive_reason &&
+                  onPatch({ inactive_reason: local.inactive_reason })
+                }
+                placeholder="Why is this no longer an active schedule risk?"
+              />
+            </div>
+          )}
           <div className="flex flex-wrap items-center justify-end gap-2">
             {isLinked && (
               <span className="inline-flex items-center gap-1 rounded-full border border-success/30 bg-success/10 px-2 py-1 text-xs font-medium text-success">

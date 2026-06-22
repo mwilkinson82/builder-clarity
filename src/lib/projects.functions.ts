@@ -23,6 +23,7 @@ export type DecisionStatus = "open" | "in_progress" | "resolved" | "overdue";
 
 export interface ProjectRow {
   id: string;
+  organization_id: string | null;
   job_number: string;
   name: string;
   client: string;
@@ -52,6 +53,9 @@ export interface ExposureRow {
   owner: string;
   response_path: ResponsePath;
   release_condition: string;
+  released_amount: number;
+  release_note: string;
+  release_updated_at: string | null;
   hold_class: HoldClass;
   status: ExposureStatus;
   due_date: string | null;
@@ -153,6 +157,7 @@ const isMissingRestColumn = (error: { code?: string; message?: string } | null, 
 
 const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   id: p.id as string,
+  organization_id: (p.organization_id as string | null) ?? null,
   job_number: str(p.job_number),
   name: p.name as string,
   client: str(p.client),
@@ -200,6 +205,9 @@ const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
   owner: str(e.owner),
   response_path: (e.response_path as ResponsePath) ?? "accept",
   release_condition: str(e.release_condition),
+  released_amount: num(e.released_amount),
+  release_note: str(e.release_note),
+  release_updated_at: (e.release_updated_at as string | null) ?? null,
   hold_class: (e.hold_class as HoldClass) ?? "E-Hold",
   status: (e.status as ExposureStatus) ?? "active",
   due_date: (e.due_date as string | null) ?? null,
@@ -214,6 +222,9 @@ const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
 export const listProjects = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
+    const { error: accountError } = await context.supabase.rpc("ensure_current_user_account");
+    if (accountError) throw new Error(accountError.message);
+
     const { data: rawProjects, error } = await context.supabase
       .from("projects")
       .select("*")
@@ -225,12 +236,7 @@ export const listProjects = createServerFn({ method: "GET" })
     if (ids.length === 0) return [];
 
     const [expRes, cosRes, bucketsRes] = await Promise.all([
-      context.supabase
-        .from("exposures")
-        .select(
-          "project_id,category,dollar_exposure,probability,hold_class,status,response_path,opened_at,next_review_at",
-        )
-        .in("project_id", ids),
+      context.supabase.from("exposures").select("*").in("project_id", ids),
       context.supabase
         .from("change_orders")
         .select("project_id,contract_amount,cost_amount,status,probability")
@@ -262,6 +268,7 @@ export const listProjects = createServerFn({ method: "GET" })
         hold_class: (e.hold_class as HoldClass) ?? "E-Hold",
         status: (e.status as ExposureStatus) ?? "active",
         response_path: (e.response_path as ResponsePath) ?? "accept",
+        released_amount: num(e.released_amount),
         opened_at: (e.opened_at as string | null) ?? null,
         next_review_at: (e.next_review_at as string | null) ?? null,
       }));
@@ -323,6 +330,9 @@ export const getProject = createServerFn({ method: "GET" })
     z.object({ projectId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    const { error: accountError } = await context.supabase.rpc("ensure_current_user_account");
+    if (accountError) throw new Error(accountError.message);
+
     const pid = data.projectId;
     const [pRes, eRes, cRes, bRes, dRes, rRes] = await Promise.all([
       context.supabase.from("projects").select("*").eq("id", pid).maybeSingle(),
@@ -476,8 +486,36 @@ export const createProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => createProjectInput.parse(input))
   .handler(async ({ data, context }) => {
+    const { data: organizationId, error: accountError } = await context.supabase.rpc(
+      "ensure_current_user_account",
+    );
+    if (accountError) throw new Error(accountError.message);
+    if (!organizationId) throw new Error("No Overwatch team is available for this user.");
+
+    const { data: organization, error: orgError } = await context.supabase
+      .from("organizations")
+      .select("id, project_limit")
+      .eq("id", organizationId)
+      .single();
+    if (orgError) throw new Error(orgError.message);
+
+    if (organization.project_limit !== null) {
+      const { count, error: projectCountError } = await context.supabase
+        .from("projects")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", organizationId)
+        .is("archived_at", null);
+      if (projectCountError) throw new Error(projectCountError.message);
+      if ((count ?? 0) >= organization.project_limit) {
+        throw new Error(
+          `This Overwatch team is at its ${organization.project_limit}-project limit. Archive a job or upgrade before adding another one.`,
+        );
+      }
+    }
+
     const baseInsert = {
       owner_id: context.userId,
+      organization_id: organizationId,
       name: data.name,
       client: data.client,
       project_manager: data.project_manager,
@@ -547,7 +585,6 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
         .from("projects")
         .select("baseline_completion_date, forecast_completion_date")
         .eq("id", data.projectId)
-        .eq("owner_id", context.userId)
         .single();
       if (loadError) throw new Error(loadError.message);
 
@@ -567,7 +604,6 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
         .from("projects")
         .update(nextPatch)
         .eq("id", data.projectId)
-        .eq("owner_id", context.userId)
         .select("*")
         .single();
 
@@ -621,6 +657,9 @@ const exposureInput = z.object({
   owner: z.string().max(200).default(""),
   response_path: z.enum(RESPONSE_PATHS),
   release_condition: z.string().max(500).default(""),
+  released_amount: z.number().min(0).default(0),
+  release_note: z.string().max(2000).default(""),
+  release_updated_at: z.string().nullable().optional(),
   hold_class: z.enum(HOLD_CLASSES).default("E-Hold"),
   status: z.enum(EXPOSURE_STATUSES).default("active"),
   due_date: z.string().nullable().optional(),
@@ -635,11 +674,20 @@ export const createExposure = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
-    const { data: inserted, error } = await context.supabase
-      .from("exposures")
-      .insert({ project_id: projectId, ...rest })
-      .select("id")
-      .single();
+    const insertExposure = (payload: typeof rest) =>
+      context.supabase
+        .from("exposures")
+        .insert({ project_id: projectId, ...payload })
+        .select("id")
+        .single();
+    let { data: inserted, error } = await insertExposure(rest);
+    if (isMissingRestColumn(error, "released_amount")) {
+      const retry = { ...rest };
+      delete retry.released_amount;
+      delete retry.release_note;
+      delete retry.release_updated_at;
+      ({ data: inserted, error } = await insertExposure(retry));
+    }
     if (error) throw new Error(error.message);
     return { ok: true, id: inserted.id as string };
   });
@@ -651,7 +699,16 @@ export const updateExposure = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { id, ...patch } = data;
-    const { error } = await context.supabase.from("exposures").update(patch).eq("id", id);
+    const savePatch = (nextPatch: typeof patch) =>
+      context.supabase.from("exposures").update(nextPatch).eq("id", id);
+    let { error } = await savePatch(patch);
+    if (isMissingRestColumn(error, "released_amount")) {
+      const retry = { ...patch };
+      delete retry.released_amount;
+      delete retry.release_note;
+      delete retry.release_updated_at;
+      ({ error } = await savePatch(retry));
+    }
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -1061,7 +1118,6 @@ export const importCostBuckets = createServerFn({ method: "POST" })
       .from("projects")
       .select("id")
       .eq("id", data.projectId)
-      .eq("owner_id", context.userId)
       .single();
     if (projectErr || !project) {
       throw new Error(projectErr?.message ?? "Project not found or not accessible.");
@@ -1117,8 +1173,7 @@ export const importCostBuckets = createServerFn({ method: "POST" })
     const { error: updErr } = await context.supabase
       .from("projects")
       .update({ original_cost_budget: total })
-      .eq("id", data.projectId)
-      .eq("owner_id", context.userId);
+      .eq("id", data.projectId);
     if (updErr) throw new Error(updErr.message);
 
     return { ok: true, inserted: insertRows.length, originalCostBudget: total };

@@ -44,6 +44,7 @@ export interface ExposureLite {
   hold_class: HoldClass;
   status: ExposureStatus;
   response_path: ResponsePath;
+  released_amount?: number | null;
   opened_at?: string | null;
   next_review_at?: string | null;
 }
@@ -92,6 +93,10 @@ function expWeighted(e: ExposureLite) {
   return e.dollar_exposure * (e.probability / 100);
 }
 
+export function remainingExposureValue(e: ExposureLite) {
+  return Math.max(0, expWeighted(e) - (e.released_amount ?? 0));
+}
+
 function isActive(e: ExposureLite) {
   return e.status === "active" || e.status === "escalated";
 }
@@ -129,10 +134,10 @@ export function computeRollup(
   const active = exposures.filter(isActive);
   const exposureHolds = active
     .filter((e) => e.hold_class === "E-Hold" || e.hold_class === "Both")
-    .reduce((s, e) => s + expWeighted(e), 0);
+    .reduce((s, e) => s + remainingExposureValue(e), 0);
   const contingencyHold = active
     .filter((e) => e.hold_class === "C-Hold" || e.hold_class === "Both")
-    .reduce((s, e) => s + expWeighted(e), 0);
+    .reduce((s, e) => s + remainingExposureValue(e), 0);
 
   const forecastedGPBeforeHolds = forecastedFinalContract - forecastedFinalCost;
   const indicatedGP = forecastedGPBeforeHolds - exposureHolds - contingencyHold;
@@ -278,7 +283,7 @@ export function evaluateWarnings(
   // 5. Accepted exposures > 1% of original contract
   const accepted = exposures
     .filter((e) => e.response_path === "accept" && isActive(e))
-    .reduce((s, e) => s + e.dollar_exposure, 0);
+    .reduce((s, e) => s + remainingExposureValue(e), 0);
   if (accepted > project.original_contract * 0.01) {
     warnings.push({
       id: "accept-too-much",
@@ -313,7 +318,7 @@ export function exposureByCategory(
   for (const e of exposures) {
     if (!isActive(e)) continue;
     const cur = map.get(e.category) ?? { total: 0, count: 0 };
-    cur.total += expWeighted(e);
+    cur.total += remainingExposureValue(e);
     cur.count += 1;
     map.set(e.category, cur);
   }

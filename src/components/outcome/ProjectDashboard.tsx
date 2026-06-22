@@ -1,10 +1,10 @@
 import { AlertTriangle, CalendarClock, CircleDollarSign, ShieldAlert } from "lucide-react";
 import { fmtPct, fmtUSD } from "@/lib/format";
 import type { ExposureRow, ProjectRow } from "@/lib/projects.functions";
-import type { Rollup, Warning } from "@/lib/ior";
+import { remainingExposureValue, type Rollup, type Warning } from "@/lib/ior";
 
 function weighted(e: ExposureRow) {
-  return e.dollar_exposure * (e.probability / 100);
+  return remainingExposureValue(e);
 }
 
 function isLiveRisk(e: ExposureRow) {

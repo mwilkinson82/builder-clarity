@@ -61,6 +61,9 @@ export type ExposureDraft = {
   owner: string;
   response_path: ResponsePath;
   release_condition: string;
+  released_amount: number;
+  release_note: string;
+  release_updated_at: string | null;
   hold_class: HoldClass;
   status: ExposureStatus;
   next_review_at: string | null;
@@ -77,6 +80,9 @@ const empty: ExposureDraft = {
   owner: "",
   response_path: "recover",
   release_condition: "",
+  released_amount: 0,
+  release_note: "",
+  release_updated_at: null,
   hold_class: "E-Hold",
   status: "active",
   next_review_at: null,
@@ -153,6 +159,9 @@ export function ExposuresTable({
       owner: e.owner,
       response_path: e.response_path,
       release_condition: e.release_condition,
+      released_amount: e.released_amount,
+      release_note: e.release_note,
+      release_updated_at: e.release_updated_at,
       hold_class: e.hold_class,
       status: e.status,
       next_review_at: e.next_review_at,
@@ -173,14 +182,20 @@ export function ExposuresTable({
       setErrors(errs);
       return;
     }
-    if (editingId) onUpdate(editingId, draft);
-    else onCreate(draft);
+    const likely = draft.dollar_exposure * (draft.probability / 100);
+    const payload = {
+      ...draft,
+      released_amount: Math.min(draft.released_amount, likely),
+      release_updated_at: draft.released_amount > 0 ? new Date().toISOString() : null,
+    };
+    if (editingId) onUpdate(editingId, payload);
+    else onCreate(payload);
     setOpen(false);
   };
 
   const live = exposures
     .filter((e) => e.status === "active" || e.status === "escalated")
-    .sort((a, b) => likelyValue(b) - likelyValue(a));
+    .sort((a, b) => remainingValue(b) - remainingValue(a));
   const eHolds = live.filter((e) => e.hold_class === "E-Hold" || e.hold_class === "Both");
   const cHolds = live.filter((e) => e.hold_class === "C-Hold");
   const unclassifiedLive = live.filter((e) => e.hold_class === "None");
@@ -200,7 +215,7 @@ export function ExposuresTable({
       </div>
 
       <div className="overflow-hidden rounded-lg border border-hairline bg-card">
-        <Table className="min-w-[980px]">
+        <Table className="min-w-[1120px]">
           <TableHeader>
             <TableRow className="bg-surface">
               <TableHead className="min-w-[290px]">Risk / exposure</TableHead>
@@ -208,6 +223,8 @@ export function ExposuresTable({
               <TableHead className="text-right">Dollar</TableHead>
               <TableHead className="text-right">Prob.</TableHead>
               <TableHead className="text-right">Likely $</TableHead>
+              <TableHead className="text-right">Released</TableHead>
+              <TableHead className="text-right">Remaining</TableHead>
               <TableHead>Hold</TableHead>
               <TableHead>Owner</TableHead>
               <TableHead>Status</TableHead>
@@ -277,7 +294,7 @@ export function ExposuresTable({
             ))}
             {exposures.length === 0 && (
               <TableRow>
-                <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={12} className="py-10 text-center text-sm text-muted-foreground">
                   No risk allocations yet. Every emerging problem has a dollar consequence - add the
                   first one to begin protecting margin.
                 </TableCell>
@@ -438,6 +455,34 @@ export function ExposuresTable({
                 </Select>
               </div>
             </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label>Recovered / offset so far</Label>
+                <MoneyInput
+                  value={draft.released_amount}
+                  onValueChange={(v) => setDraft({ ...draft, released_amount: v })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Remaining likely hold</Label>
+                <div className="flex h-10 items-center rounded-md border border-hairline bg-surface px-3 text-sm font-medium tabular text-foreground">
+                  {fmtUSD(
+                    Math.max(
+                      0,
+                      draft.dollar_exposure * (draft.probability / 100) - draft.released_amount,
+                    ),
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Release note</Label>
+                <Input
+                  value={draft.release_note}
+                  placeholder="CO approved, buyout savings..."
+                  onChange={(e) => setDraft({ ...draft, release_note: e.target.value })}
+                />
+              </div>
+            </div>
             <div className="space-y-1.5">
               <Label>Action plan / course of action</Label>
               <Textarea
@@ -479,10 +524,18 @@ function likelyValue(e: ExposureRow) {
   return e.dollar_exposure * (e.probability / 100);
 }
 
+function releasedValue(e: ExposureRow) {
+  return Math.min(likelyValue(e), e.released_amount ?? 0);
+}
+
+function remainingValue(e: ExposureRow) {
+  return Math.max(0, likelyValue(e) - releasedValue(e));
+}
+
 function RiskGroupRow({ label, detail, count }: { label: string; detail: string; count: number }) {
   return (
     <TableRow className="bg-surface/80 hover:bg-surface/80">
-      <TableCell colSpan={10} className="py-2">
+      <TableCell colSpan={12} className="py-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-baseline gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">
@@ -544,6 +597,12 @@ function RiskRow({
             {exposure.notes}
           </div>
         )}
+        {exposure.release_note && (
+          <div className="mt-2 rounded-md border border-success/25 bg-success/10 px-2 py-1.5 text-xs text-foreground">
+            <span className="font-medium text-success">Released: </span>
+            {exposure.release_note}
+          </div>
+        )}
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
         {CATEGORY_LABELS[exposure.category]}
@@ -554,6 +613,12 @@ function RiskRow({
       </TableCell>
       <TableCell className="text-right tabular font-medium">
         {fmtUSD(likelyValue(exposure))}
+      </TableCell>
+      <TableCell className="text-right tabular text-success">
+        {releasedValue(exposure) > 0 ? fmtUSD(releasedValue(exposure)) : "$0"}
+      </TableCell>
+      <TableCell className="text-right tabular font-semibold text-foreground">
+        {fmtUSD(remainingValue(exposure))}
       </TableCell>
       <TableCell>
         <span className="inline-flex items-center rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[10px]">

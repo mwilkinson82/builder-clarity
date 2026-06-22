@@ -24,6 +24,18 @@ export interface DailyReportRow {
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 
+const monthBounds = (dateText: string) => {
+  const date = new Date(`${dateText}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) throw new Error("Report date is not valid.");
+
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1));
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  };
+};
+
 const normalizeDailyReport = (r: Record<string, unknown>): DailyReportRow => ({
   id: r.id as string,
   project_id: r.project_id as string,
@@ -79,6 +91,61 @@ export const upsertDailyReport = createServerFn({ method: "POST" })
   .inputValidator((input) => dailyReportInput.parse(input))
   .handler(async ({ data, context }) => {
     const { projectId, ...report } = data;
+    const { data: project, error: projectError } = await context.supabase
+      .from("projects")
+      .select("id,organization_id")
+      .eq("id", projectId)
+      .single();
+    if (projectError) throw new Error(projectError.message);
+
+    if (project.organization_id) {
+      const { data: existing, error: existingError } = await context.supabase
+        .from("daily_reports")
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("report_date", report.report_date)
+        .maybeSingle();
+      if (existingError) throw new Error(existingError.message);
+
+      if (!existing) {
+        const { data: organization, error: orgError } = await context.supabase
+          .from("organizations")
+          .select("daily_report_limit_per_month")
+          .eq("id", project.organization_id)
+          .single();
+        if (orgError) throw new Error(orgError.message);
+
+        const limit = Number(organization.daily_report_limit_per_month ?? 0);
+        if (limit > 0) {
+          const { data: organizationProjects, error: orgProjectsError } = await context.supabase
+            .from("projects")
+            .select("id")
+            .eq("organization_id", project.organization_id)
+            .is("archived_at", null);
+          if (orgProjectsError) throw new Error(orgProjectsError.message);
+
+          const projectIds = (organizationProjects ?? []).map((p) => p.id);
+          const bounds = monthBounds(report.report_date);
+          const { count, error: countError } =
+            projectIds.length === 0
+              ? { count: 0, error: null }
+              : await context.supabase
+                  .from("daily_reports")
+                  .select("id", { count: "exact", head: true })
+                  .in("project_id", projectIds)
+                  .gte("report_date", bounds.start)
+                  .lt("report_date", bounds.end);
+          if (countError) throw new Error(countError.message);
+
+          if ((count ?? 0) >= limit) {
+            throw new Error(
+              `This Overwatch team is at its ${limit}-daily-log monthly limit. Upgrade before adding another daily report for this month.`,
+            );
+          }
+        }
+      }
+    }
+
     const { data: row, error } = await context.supabase
       .from("daily_reports")
       .upsert(

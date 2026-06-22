@@ -1,7 +1,12 @@
 import { CircleDollarSign, ListChecks, TrendingDown } from "lucide-react";
 import { ExposuresTable, type ExposureDraft } from "@/components/outcome/ExposuresTable";
 import { fmtPct, fmtUSD } from "@/lib/format";
-import type { ExposureStatus, ResponsePath, Rollup } from "@/lib/ior";
+import {
+  remainingExposureValue,
+  type ExposureStatus,
+  type ResponsePath,
+  type Rollup,
+} from "@/lib/ior";
 import type { ExposureRow } from "@/lib/projects.functions";
 
 const RESPONSE_LABELS: Record<ResponsePath, string> = {
@@ -22,6 +27,14 @@ const STATUS_LABELS: Record<ExposureStatus, string> = {
 
 function weighted(e: ExposureRow) {
   return e.dollar_exposure * (e.probability / 100);
+}
+
+function remaining(e: ExposureRow) {
+  return remainingExposureValue(e);
+}
+
+function released(e: ExposureRow) {
+  return Math.min(weighted(e), e.released_amount ?? 0);
 }
 
 function isLiveRisk(e: ExposureRow) {
@@ -56,17 +69,18 @@ export function RiskAllocationWorkbench({
 }) {
   const live = exposures.filter(isLiveRisk);
   const closed = exposures.filter(isClosedRisk);
-  const activeRisk = live.reduce((s, e) => s + weighted(e), 0);
+  const activeRisk = live.reduce((s, e) => s + remaining(e), 0);
   const closedRisk = closed.reduce((s, e) => s + weighted(e), 0);
+  const partialReleasedRisk = live.reduce((s, e) => s + released(e), 0);
   const acceptedRisk = live
     .filter((e) => e.response_path === "accept")
-    .reduce((s, e) => s + weighted(e), 0);
+    .reduce((s, e) => s + remaining(e), 0);
 
   const treatmentRows = (Object.keys(RESPONSE_LABELS) as ResponsePath[]).map((path) => {
     const matching = live.filter((e) => e.response_path === path);
     return {
       path,
-      total: matching.reduce((s, e) => s + weighted(e), 0),
+      total: matching.reduce((s, e) => s + remaining(e), 0),
       count: matching.length,
     };
   });
@@ -86,7 +100,7 @@ export function RiskAllocationWorkbench({
 
   const topRisk = live.reduce<ExposureRow | null>((current, exposure) => {
     if (!current) return exposure;
-    return weighted(exposure) > weighted(current) ? exposure : current;
+    return remaining(exposure) > remaining(current) ? exposure : current;
   }, null);
 
   return (
@@ -109,15 +123,19 @@ export function RiskAllocationWorkbench({
                 </p>
               </div>
               <div className="grid min-w-[240px] grid-cols-2 gap-2">
-                <MetricTile label="Live allocated risk" value={fmtUSD(activeRisk)} tone="danger" />
-                <MetricTile label="Closed by status" value={fmtUSD(closedRisk)} tone="success" />
+                <MetricTile label="Live remaining risk" value={fmtUSD(activeRisk)} tone="danger" />
+                <MetricTile
+                  label="Released / closed"
+                  value={fmtUSD(closedRisk + partialReleasedRisk)}
+                  tone="success"
+                />
                 <MetricTile label="Exposure Hold" value={fmtUSD(rollup.exposureHolds)} />
                 <MetricTile label="Contingency Hold" value={fmtUSD(rollup.contingencyHold)} />
               </div>
             </div>
 
             <div className="mt-6 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Planned treatment on live risk
+              Planned treatment on remaining live risk
             </div>
             <div className="mt-6 grid gap-3 md:grid-cols-4">
               {treatmentRows.map((row) => (
@@ -202,7 +220,7 @@ export function RiskAllocationWorkbench({
               <div className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-xs">
                 <div className="font-medium text-danger">Largest live item</div>
                 <div className="mt-0.5 text-foreground">{topRisk.title}</div>
-                <div className="tabular text-muted-foreground">{fmtUSD(weighted(topRisk))}</div>
+                <div className="tabular text-muted-foreground">{fmtUSD(remaining(topRisk))}</div>
               </div>
             )}
           </div>

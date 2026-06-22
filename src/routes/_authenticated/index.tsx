@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { createProject, listProjects, seedDemoIfEmpty } from "@/lib/projects.functions";
+import { createTeamInvite, getTeamWorkspace, type AccountRole } from "@/lib/team.functions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -39,6 +40,7 @@ import {
   MailPlus,
   Plus,
   Search,
+  Users,
 } from "lucide-react";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import { toast } from "sonner";
@@ -565,16 +567,38 @@ function EmptyState() {
   );
 }
 
+const roleOptions: { value: AccountRole; label: string }[] = [
+  { value: "executive", label: "Executive" },
+  { value: "project_manager", label: "Project manager" },
+  { value: "member", label: "Team member" },
+  { value: "viewer", label: "Viewer" },
+  { value: "admin", label: "Admin" },
+];
+
+function roleLabel(role: string) {
+  return roleOptions.find((option) => option.value === role)?.label ?? role;
+}
+
 function InviteByMagicLinkButton() {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
-  const [sending, setSending] = useState(false);
+  const [role, setRole] = useState<AccountRole>("project_manager");
+  const qc = useQueryClient();
+  const loadTeam = useServerFn(getTeamWorkspace);
+  const createInvite = useServerFn(createTeamInvite);
+  const { data: team, isLoading } = useQuery({
+    queryKey: ["team-workspace"],
+    queryFn: () => loadTeam(),
+    enabled: open,
+  });
 
-  const sendInvite = async () => {
-    const inviteEmail = email.trim();
-    if (!inviteEmail) return;
-    setSending(true);
-    try {
+  const inviteMutation = useMutation({
+    mutationFn: async () => {
+      const inviteEmail = email.trim().toLowerCase();
+      if (!inviteEmail) throw new Error("Enter an email address.");
+
+      await createInvite({ data: { email: inviteEmail, role } });
+
       const { error } = await supabase.auth.signInWithOtp({
         email: inviteEmail,
         options: {
@@ -583,51 +607,163 @@ function InviteByMagicLinkButton() {
         },
       });
       if (error) throw error;
-      toast.success("Magic link sent", {
-        description: `${inviteEmail} can sign in and create projects.`,
+
+      return inviteEmail;
+    },
+    onSuccess: async (inviteEmail) => {
+      await qc.invalidateQueries({ queryKey: ["team-workspace"] });
+      toast.success("Team invite sent", {
+        description: `${inviteEmail} can sign in and join this Overwatch team.`,
       });
       setEmail("");
-      setOpen(false);
-    } catch (err) {
-      toast.error("Magic link did not send", {
+      setRole("project_manager");
+    },
+    onError: (err) => {
+      toast.error("Team invite did not send", {
         description: err instanceof Error ? err.message : "Try again.",
       });
-    } finally {
-      setSending(false);
-    }
+    },
+  });
+
+  const sendInvite = async () => {
+    inviteMutation.mutate();
   };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm" variant="outline" className="gap-1.5">
-          <MailPlus className="h-3.5 w-3.5" /> Invite
+          <Users className="h-3.5 w-3.5" /> Team
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="font-serif text-2xl">Invite by magic link</DialogTitle>
+          <DialogTitle className="font-serif text-2xl">Team access</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-4 py-2">
-          <div className="space-y-1.5">
-            <Label>Email</Label>
-            <Input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="pm@company.com"
-            />
+        <div className="grid gap-5 py-2">
+          <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-4">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Plan
+              </div>
+              <div className="mt-1 font-medium">
+                {team?.organization.contractor_circle_grant
+                  ? "Circle grant"
+                  : team?.organization.plan_code}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Projects
+              </div>
+              <div className="mt-1 font-medium">
+                {team ? `${team.usage.projects}/${team.organization.project_limit}` : "-"}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Seats
+              </div>
+              <div className="mt-1 font-medium">
+                {team
+                  ? `${team.usage.activeSeats + team.usage.pendingInvites}/${team.organization.seat_limit}`
+                  : "-"}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Daily logs
+              </div>
+              <div className="mt-1 font-medium">{team ? team.usage.dailyReports : "-"}</div>
+            </div>
           </div>
-          <p className="text-xs text-muted-foreground">
-            The link signs them in without a password. New users can create projects immediately.
-          </p>
+
+          <div className="grid gap-3 md:grid-cols-[1fr_180px_auto] md:items-end">
+            <div className="space-y-1.5">
+              <Label>Email</Label>
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="pm@company.com"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Role</Label>
+              <Select value={role} onValueChange={(v) => setRole(v as AccountRole)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {roleOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              disabled={!email.trim() || inviteMutation.isPending}
+              onClick={sendInvite}
+              className="gap-1.5"
+            >
+              <MailPlus className="h-3.5 w-3.5" />
+              {inviteMutation.isPending ? "Sending..." : "Send invite"}
+            </Button>
+          </div>
+
+          <div className="rounded-md border border-hairline">
+            <div className="border-b border-hairline bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Members
+            </div>
+            <div className="divide-y divide-hairline">
+              {isLoading ? (
+                <div className="px-3 py-4 text-sm text-muted-foreground">Loading team...</div>
+              ) : !team || team.members.length === 0 ? (
+                <div className="px-3 py-4 text-sm text-muted-foreground">No team members yet.</div>
+              ) : (
+                team.members.map((member) => (
+                  <div
+                    key={member.id}
+                    className="grid gap-1 px-3 py-3 md:grid-cols-[1fr_140px_90px]"
+                  >
+                    <div>
+                      <div className="font-medium">{member.full_name || member.email}</div>
+                      <div className="text-xs text-muted-foreground">{member.email}</div>
+                    </div>
+                    <div className="text-sm text-muted-foreground">{roleLabel(member.role)}</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      {member.status}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {team && team.invites.length > 0 && (
+            <div className="rounded-md border border-hairline">
+              <div className="border-b border-hairline bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Pending invites
+              </div>
+              <div className="divide-y divide-hairline">
+                {team.invites.map((invite) => (
+                  <div key={invite.id} className="grid gap-1 px-3 py-3 md:grid-cols-[1fr_140px]">
+                    <div>
+                      <div className="font-medium">{invite.email}</div>
+                      <div className="text-xs text-muted-foreground">Magic link invite pending</div>
+                    </div>
+                    <div className="text-sm text-muted-foreground">{roleLabel(invite.role)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
-          <Button disabled={!email.trim() || sending} onClick={sendInvite}>
-            {sending ? "Sending…" : "Send magic link"}
+            Close
           </Button>
         </DialogFooter>
       </DialogContent>

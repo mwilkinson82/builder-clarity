@@ -444,21 +444,22 @@ function ProjectPage() {
   const openTodoCount = decisions.filter((d) => d.status !== "resolved").length;
 
   const createTodoForRisk = (exposure: ExposureRow) => {
+    const impact =
+      exposure.notes ||
+      exposure.release_condition ||
+      exposure.description ||
+      `Own the ${exposure.response_path} path for ${fmtUSD(exposure.dollar_exposure)} exposure.`;
     decisionCreate.mutate(
       {
         projectId,
         decision: `${responseAction(exposure.response_path)}: ${exposure.title}`,
-        impact:
-          exposure.notes ||
-          exposure.release_condition ||
-          exposure.description ||
-          `Own the ${exposure.response_path} path for ${fmtUSD(exposure.dollar_exposure)} exposure.`,
+        impact: impact.slice(0, 500),
         owner: exposure.owner,
         due_date: exposure.next_review_at,
         status: "open",
         linked_exposure_id: exposure.id,
         linked_co_id: null,
-        notes: "",
+        notes: impact.length > 500 ? impact : "",
       },
       {
         onSuccess: () => {
