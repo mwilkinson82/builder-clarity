@@ -897,7 +897,7 @@ function InviteByMagicLinkButton() {
                           onValueChange={(v) =>
                             memberMutation.mutate({
                               membershipId: member.id,
-                              status: v as MemberStatus,
+                              status: v as Exclude<MemberStatus, "pending">,
                             })
                           }
                         >
