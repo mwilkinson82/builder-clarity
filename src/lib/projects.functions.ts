@@ -513,39 +513,12 @@ export const createProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => createProjectInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { data: organizationId, error: accountError } = await context.supabase.rpc(
-      "ensure_current_user_account",
-    );
-    if (accountError) throw new Error(accountError.message);
-    if (!organizationId) throw new Error("No Overwatch team is available for this user.");
-
-    const { data: organization, error: orgError } = await context.supabase
-      .from("organizations")
-      .select("id, project_limit")
-      .eq("id", organizationId)
-      .single();
-    if (orgError) throw new Error(orgError.message);
-
-    if (organization.project_limit !== null) {
-      const { count, error: projectCountError } = await context.supabase
-        .from("projects")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", organizationId)
-        .is("archived_at", null);
-      if (projectCountError) throw new Error(projectCountError.message);
-      if ((count ?? 0) >= organization.project_limit) {
-        throw new Error(
-          `This Overwatch team is at its ${organization.project_limit}-project limit. Archive a job or upgrade before adding another one.`,
-        );
-      }
-    }
-
     const baselineCompletion = cleanOptionalDate(data.baseline_completion_date);
     const forecastCompletion = cleanOptionalDate(data.forecast_completion_date);
     const baseInsert = {
       owner_id: context.userId,
-      organization_id: organizationId,
       name: data.name,
+
       job_number: data.job_number.trim(),
       client: data.client,
       project_manager: data.project_manager,
