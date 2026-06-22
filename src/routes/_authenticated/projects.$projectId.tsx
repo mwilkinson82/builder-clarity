@@ -863,6 +863,7 @@ function ProjectPage() {
                     compact
                   />
                   <ImportSOVSheet
+                    existingBuckets={buckets}
                     onImport={(rows, mode) =>
                       bucketImport.mutate(
                         { projectId, rows, mode },
@@ -872,6 +873,10 @@ function ProjectPage() {
                               typeof result === "object" && result && "inserted" in result
                                 ? Number((result as { inserted: number }).inserted)
                                 : rows.length;
+                            const updated =
+                              typeof result === "object" && result && "updated" in result
+                                ? Number((result as { updated: number }).updated)
+                                : 0;
                             const budget =
                               typeof result === "object" && result && "originalCostBudget" in result
                                 ? Number(
@@ -882,7 +887,7 @@ function ProjectPage() {
                                     0,
                                   );
                             toast.success("SOV imported", {
-                              description: `${imported} cost buckets loaded. Original cost budget is now ${fmtUSD(budget)}.`,
+                              description: `${imported} created, ${updated} updated. Original cost budget is now ${fmtUSD(budget)}.`,
                             });
                           },
                           onError: (err) => {

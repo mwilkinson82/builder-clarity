@@ -260,6 +260,7 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
 // ---------------- Column mapping ----------------
 
 export type FieldKey =
+  | "cost_code"
   | "bucket"
   | "original_budget"
   | "actual_to_date"
@@ -272,6 +273,17 @@ export interface ColumnMap {
 }
 
 const HEADER_HINTS: Record<Exclude<FieldKey, "ignore">, RegExp[]> = {
+  cost_code: [
+    /cost\s*code/i,
+    /costcode/i,
+    /job\s*cost/i,
+    /phase\s*code/i,
+    /cost\s*type/i,
+    /^code$/i,
+    /^item\s*no/i,
+    /^line\s*no/i,
+    /^#$/i,
+  ],
   bucket: [
     /bucket/i,
     /category/i,
@@ -308,7 +320,7 @@ const HEADER_HINTS: Record<Exclude<FieldKey, "ignore">, RegExp[]> = {
     /etc\b/i,
     /to\s*complete/i,
   ],
-  sort_order: [/^#$/i, /^order$/i, /sort/i, /^no\.?$/i, /^item\s*no/i, /line/i],
+  sort_order: [/^order$/i, /sort/i, /^no\.?$/i],
 };
 
 export function guessColumnMap(matrix: Matrix, hasHeader: boolean): ColumnMap {
@@ -388,10 +400,13 @@ export function missingRequiredMappings(map: ColumnMap): string[] {
 }
 
 export interface BucketImportRow {
+  cost_code: string;
   bucket: string;
   original_budget: number;
   actual_to_date: number;
   ftc: number;
+  actual_to_date_provided: boolean;
+  ftc_provided: boolean;
   sort_order: number;
   valid: boolean;
   reason?: string;
@@ -410,10 +425,19 @@ export function applyMapping(
       const idx = Object.entries(map).find(([, f]) => f === field)?.[0];
       return idx == null ? "" : (r[Number(idx)] ?? "");
     };
+    const costCode = get("cost_code").trim();
     const bucket = get("bucket").trim();
-    const budget = parseNumber(get("original_budget")) ?? 0;
-    const actual = parseNumber(get("actual_to_date")) ?? 0;
-    const ftc = parseNumber(get("ftc")) ?? 0;
+    const budgetRaw = get("original_budget").trim();
+    const actualRaw = get("actual_to_date").trim();
+    const ftcRaw = get("ftc").trim();
+    const budgetParsed = parseNumber(budgetRaw);
+    const actualParsed = parseNumber(actualRaw);
+    const ftcParsed = parseNumber(ftcRaw);
+    const budget = budgetParsed ?? 0;
+    const actualProvided = actualRaw !== "" && actualParsed !== null;
+    const ftcProvided = ftcRaw !== "" && ftcParsed !== null;
+    const actual = actualParsed ?? 0;
+    const ftc = ftcParsed ?? Math.max(0, budget - actual);
     const orderRaw = parseNumber(get("sort_order"));
     const sort = orderRaw == null ? auto : Math.round(orderRaw);
     auto += 1;
@@ -425,6 +449,15 @@ export function applyMapping(
     } else if (/^(grand\s*)?total\b|^subtotal\b|^summary\b/i.test(bucket)) {
       valid = false;
       reason = "Total or summary row";
+    } else if (budgetRaw !== "" && budgetParsed === null) {
+      valid = false;
+      reason = "Malformed original budget";
+    } else if (actualRaw !== "" && actualParsed === null) {
+      valid = false;
+      reason = "Malformed actual to date";
+    } else if (ftcRaw !== "" && ftcParsed === null) {
+      valid = false;
+      reason = "Malformed forecast to complete";
     } else if (budget <= 0) {
       valid = false;
       reason = "Original budget is required";
@@ -433,14 +466,38 @@ export function applyMapping(
       reason = "Amounts cannot be negative";
     }
     out.push({
+      cost_code: costCode,
       bucket: bucket || "(unnamed)",
       original_budget: budget,
       actual_to_date: actual,
-      ftc: ftc || Math.max(0, budget - actual),
+      ftc,
+      actual_to_date_provided: actualProvided,
+      ftc_provided: ftcProvided,
       sort_order: sort,
       valid,
       reason,
     });
+  }
+  const seenCodes = new Set<string>();
+  const seenNames = new Set<string>();
+  for (const row of out) {
+    if (!row.valid) continue;
+    const codeKey = row.cost_code.trim().toLowerCase();
+    if (codeKey) {
+      if (seenCodes.has(codeKey)) {
+        row.valid = false;
+        row.reason = "Duplicate cost code";
+      }
+      seenCodes.add(codeKey);
+      continue;
+    }
+
+    const nameKey = row.bucket.trim().toLowerCase();
+    if (seenNames.has(nameKey)) {
+      row.valid = false;
+      row.reason = "Duplicate bucket name";
+    }
+    seenNames.add(nameKey);
   }
   return out;
 }
