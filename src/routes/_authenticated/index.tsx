@@ -824,7 +824,7 @@ function InviteByMagicLinkButton() {
   });
 
   const memberMutation = useMutation({
-    mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: MemberStatus }) =>
+    mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: Exclude<MemberStatus, "pending"> }) =>
       updateMember({ data: payload }),
     onSuccess: async () => {
       await refreshTeam();
@@ -873,7 +873,7 @@ function InviteByMagicLinkButton() {
     mutationFn: (payload: {
       membershipId: string;
       role?: ProjectMemberRole;
-      status?: MemberStatus;
+      status?: Exclude<MemberStatus, "pending">;
     }) => updateProjectAccess({ data: payload }),
     onSuccess: async () => {
       await refreshTeam();
@@ -1042,7 +1042,7 @@ function InviteByMagicLinkButton() {
                           onValueChange={(v) =>
                             memberMutation.mutate({
                               membershipId: member.id,
-                              status: v as MemberStatus,
+                              status: v as Exclude<MemberStatus, "pending">,
                             })
                           }
                         >
@@ -1226,7 +1226,7 @@ function InviteByMagicLinkButton() {
                           onValueChange={(v) =>
                             projectAccessMutation.mutate({
                               membershipId: member.id,
-                              status: v as MemberStatus,
+                              status: v as Exclude<MemberStatus, "pending">,
                             })
                           }
                         >
