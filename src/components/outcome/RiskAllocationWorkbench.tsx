@@ -2,6 +2,7 @@ import { CircleDollarSign, ListChecks, TrendingDown } from "lucide-react";
 import { ExposuresTable, type ExposureDraft } from "@/components/outcome/ExposuresTable";
 import { fmtPct, fmtUSD } from "@/lib/format";
 import {
+  releasedExposureValue,
   remainingExposureValue,
   type ExposureStatus,
   type ResponsePath,
@@ -25,29 +26,16 @@ const STATUS_LABELS: Record<ExposureStatus, string> = {
   released: "Released",
 };
 
-function weighted(e: ExposureRow) {
-  return e.dollar_exposure * (e.probability / 100);
-}
-
 function remaining(e: ExposureRow) {
   return remainingExposureValue(e);
 }
 
 function released(e: ExposureRow) {
-  return Math.min(weighted(e), e.released_amount ?? 0);
+  return releasedExposureValue(e);
 }
 
-function isLiveRisk(e: ExposureRow) {
-  return e.status === "active" || e.status === "escalated";
-}
-
-function isClosedRisk(e: ExposureRow) {
-  return (
-    e.status === "recovered" ||
-    e.status === "eliminated" ||
-    e.status === "accepted" ||
-    e.status === "released"
-  );
+function carriesRemainingRisk(e: ExposureRow) {
+  return remaining(e) > 0;
 }
 
 export function RiskAllocationWorkbench({
@@ -67,17 +55,16 @@ export function RiskAllocationWorkbench({
   onDeleteExposure: (id: string) => void;
   onCreateTodo?: (exposure: ExposureRow) => void;
 }) {
-  const live = exposures.filter(isLiveRisk);
-  const closed = exposures.filter(isClosedRisk);
-  const activeRisk = live.reduce((s, e) => s + remaining(e), 0);
-  const closedRisk = closed.reduce((s, e) => s + weighted(e), 0);
-  const partialReleasedRisk = live.reduce((s, e) => s + released(e), 0);
-  const acceptedRisk = live
+  const carrying = exposures.filter(carriesRemainingRisk);
+  const releasedRows = exposures.filter((e) => released(e) > 0);
+  const activeRisk = carrying.reduce((s, e) => s + remaining(e), 0);
+  const releasedRisk = releasedRows.reduce((s, e) => s + released(e), 0);
+  const acceptedRisk = carrying
     .filter((e) => e.response_path === "accept")
     .reduce((s, e) => s + remaining(e), 0);
 
   const treatmentRows = (Object.keys(RESPONSE_LABELS) as ResponsePath[]).map((path) => {
-    const matching = live.filter((e) => e.response_path === path);
+    const matching = carrying.filter((e) => e.response_path === path);
     return {
       path,
       total: matching.reduce((s, e) => s + remaining(e), 0),
@@ -88,17 +75,17 @@ export function RiskAllocationWorkbench({
   const statusRows = (["recovered", "eliminated", "offset", "accepted"] as const).map((status) => {
     const matching =
       status === "offset"
-        ? closed.filter((e) => e.status === "released" && e.response_path === "offset")
-        : closed.filter((e) => e.status === status);
+        ? releasedRows.filter((e) => e.status === "released" && e.response_path === "offset")
+        : releasedRows.filter((e) => e.status === status);
     return {
       status,
       label: status === "offset" ? "Offset / released" : STATUS_LABELS[status],
-      total: matching.reduce((s, e) => s + weighted(e), 0),
+      total: matching.reduce((s, e) => s + released(e), 0),
       count: matching.length,
     };
   });
 
-  const topRisk = live.reduce<ExposureRow | null>((current, exposure) => {
+  const topRisk = carrying.reduce<ExposureRow | null>((current, exposure) => {
     if (!current) return exposure;
     return remaining(exposure) > remaining(current) ? exposure : current;
   }, null);
@@ -124,18 +111,14 @@ export function RiskAllocationWorkbench({
               </div>
               <div className="grid min-w-[240px] grid-cols-2 gap-2">
                 <MetricTile label="Live remaining risk" value={fmtUSD(activeRisk)} tone="danger" />
-                <MetricTile
-                  label="Released / closed"
-                  value={fmtUSD(closedRisk + partialReleasedRisk)}
-                  tone="success"
-                />
+                <MetricTile label="Released / closed" value={fmtUSD(releasedRisk)} tone="success" />
                 <MetricTile label="Exposure Hold" value={fmtUSD(rollup.exposureHolds)} />
                 <MetricTile label="Contingency Hold" value={fmtUSD(rollup.contingencyHold)} />
               </div>
             </div>
 
             <div className="mt-6 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Planned treatment on remaining live risk
+              Planned treatment on remaining risk
             </div>
             <div className="mt-6 grid gap-3 md:grid-cols-4">
               {treatmentRows.map((row) => (
@@ -218,7 +201,7 @@ export function RiskAllocationWorkbench({
             </div>
             {topRisk && (
               <div className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-xs">
-                <div className="font-medium text-danger">Largest live item</div>
+                <div className="font-medium text-danger">Largest remaining item</div>
                 <div className="mt-0.5 text-foreground">{topRisk.title}</div>
                 <div className="tabular text-muted-foreground">{fmtUSD(remaining(topRisk))}</div>
               </div>

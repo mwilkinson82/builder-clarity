@@ -89,16 +89,27 @@ export interface Rollup {
   remainingCost: number;
 }
 
-function expWeighted(e: ExposureLite) {
-  return e.dollar_exposure * (e.probability / 100);
+export function weightedExposureValue(e: ExposureLite) {
+  const exposure = Math.max(0, e.dollar_exposure);
+  const probability = Math.max(0, Math.min(100, e.probability));
+  return exposure * (probability / 100);
+}
+
+export function releasedExposureValue(e: ExposureLite) {
+  const released = Math.max(0, e.released_amount ?? 0);
+  return Math.min(weightedExposureValue(e), released);
 }
 
 export function remainingExposureValue(e: ExposureLite) {
-  return Math.max(0, expWeighted(e) - (e.released_amount ?? 0));
+  return Math.max(0, weightedExposureValue(e) - releasedExposureValue(e));
 }
 
-function isActive(e: ExposureLite) {
+function isStatusActive(e: ExposureLite) {
   return e.status === "active" || e.status === "escalated";
+}
+
+function carriesRemainingRisk(e: ExposureLite) {
+  return remainingExposureValue(e) > 0;
 }
 
 export function computeRollup(
@@ -131,11 +142,11 @@ export function computeRollup(
     project.original_contract + approvedCOContract + weightedPendingCOContract;
   const forecastedFinalCost = bucketCostBase + approvedCOCost + weightedPendingCOCost;
 
-  const active = exposures.filter(isActive);
-  const exposureHolds = active
+  const carrying = exposures.filter(carriesRemainingRisk);
+  const exposureHolds = carrying
     .filter((e) => e.hold_class === "E-Hold" || e.hold_class === "Both")
     .reduce((s, e) => s + remainingExposureValue(e), 0);
-  const contingencyHold = active
+  const contingencyHold = carrying
     .filter((e) => e.hold_class === "C-Hold" || e.hold_class === "Both")
     .reduce((s, e) => s + remainingExposureValue(e), 0);
 
@@ -250,7 +261,7 @@ export function evaluateWarnings(
   if (slipping) {
     const hasSchedExp = exposures.some(
       (e) =>
-        isActive(e) &&
+        carriesRemainingRisk(e) &&
         (e.category === "schedule_compression" ||
           e.category === "procurement" ||
           e.category === "owner_decision"),
@@ -267,7 +278,9 @@ export function evaluateWarnings(
 
   // 4. Stale active exposures (>30 days, no next_review_at)
   const now = Date.now();
-  for (const e of exposures.filter(isActive)) {
+  for (const e of exposures.filter(
+    (exposure) => isStatusActive(exposure) || carriesRemainingRisk(exposure),
+  )) {
     if (!e.opened_at) continue;
     const ageDays = (now - new Date(e.opened_at).getTime()) / 86400000;
     if (ageDays > 30 && !e.next_review_at) {
@@ -282,7 +295,7 @@ export function evaluateWarnings(
 
   // 5. Accepted exposures > 1% of original contract
   const accepted = exposures
-    .filter((e) => e.response_path === "accept" && isActive(e))
+    .filter((e) => e.response_path === "accept" && carriesRemainingRisk(e))
     .reduce((s, e) => s + remainingExposureValue(e), 0);
   if (accepted > project.original_contract * 0.01) {
     warnings.push({
@@ -316,7 +329,7 @@ export function exposureByCategory(
 ): { category: ExposureCategory; total: number; count: number }[] {
   const map = new Map<ExposureCategory, { total: number; count: number }>();
   for (const e of exposures) {
-    if (!isActive(e)) continue;
+    if (!carriesRemainingRisk(e)) continue;
     const cur = map.get(e.category) ?? { total: 0, count: 0 };
     cur.total += remainingExposureValue(e);
     cur.count += 1;
@@ -333,7 +346,7 @@ export function exposureAging(
 ): { fresh: number; recent: number; stale: number } {
   const buckets = { fresh: 0, recent: 0, stale: 0 };
   for (const e of exposures) {
-    if (!isActive(e) || !e.opened_at) continue;
+    if (!carriesRemainingRisk(e) || !e.opened_at) continue;
     const days = (now - new Date(e.opened_at).getTime()) / 86400000;
     if (days < 7) buckets.fresh += 1;
     else if (days < 30) buckets.recent += 1;

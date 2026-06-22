@@ -333,7 +333,7 @@ export const listProjects = createServerFn({ method: "GET" })
         ) ?? null;
       const activeScheduleRiskCount = exposures.filter(
         (e) =>
-          (e.status === "active" || e.status === "escalated") &&
+          remainingExposureValue(e) > 0 &&
           (e.category === "schedule_compression" ||
             e.category === "procurement" ||
             e.category === "owner_decision"),

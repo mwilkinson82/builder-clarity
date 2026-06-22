@@ -29,7 +29,15 @@ import {
 import { ListChecks, Plus, Pencil, Trash2 } from "lucide-react";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
-import type { ExposureCategory, ExposureStatus, HoldClass, ResponsePath } from "@/lib/ior";
+import {
+  releasedExposureValue,
+  remainingExposureValue,
+  weightedExposureValue,
+  type ExposureCategory,
+  type ExposureStatus,
+  type HoldClass,
+  type ResponsePath,
+} from "@/lib/ior";
 import type { ExposureRow } from "@/lib/projects.functions";
 
 const CATEGORY_LABELS: Record<ExposureCategory, string> = {
@@ -183,28 +191,29 @@ export function ExposuresTable({
       return;
     }
     const likely = draft.dollar_exposure * (draft.probability / 100);
+    const releasedAmount = Math.max(0, Math.min(draft.released_amount, likely));
     const payload = {
       ...draft,
-      released_amount: Math.min(draft.released_amount, likely),
-      release_updated_at: draft.released_amount > 0 ? new Date().toISOString() : null,
+      released_amount: releasedAmount,
+      release_updated_at: releasedAmount > 0 ? new Date().toISOString() : null,
     };
     if (editingId) onUpdate(editingId, payload);
     else onCreate(payload);
     setOpen(false);
   };
 
-  const live = exposures
-    .filter((e) => e.status === "active" || e.status === "escalated")
+  const openRisks = exposures
+    .filter((e) => remainingValue(e) > 0)
     .sort((a, b) => remainingValue(b) - remainingValue(a));
-  const eHolds = live.filter((e) => e.hold_class === "E-Hold" || e.hold_class === "Both");
-  const cHolds = live.filter((e) => e.hold_class === "C-Hold");
-  const unclassifiedLive = live.filter((e) => e.hold_class === "None");
+  const eHolds = openRisks.filter((e) => e.hold_class === "E-Hold" || e.hold_class === "Both");
+  const cHolds = openRisks.filter((e) => e.hold_class === "C-Hold");
+  const unclassifiedLive = openRisks.filter((e) => e.hold_class === "None");
   const topEHoldId = eHolds[0]?.id ?? null;
   const topCHoldId = cHolds[0]?.id ?? null;
   const topUnclassifiedId = unclassifiedLive[0]?.id ?? null;
   const closed = exposures
-    .filter((e) => e.status !== "active" && e.status !== "escalated")
-    .sort((a, b) => likelyValue(b) - likelyValue(a));
+    .filter((e) => remainingValue(e) === 0)
+    .sort((a, b) => releasedValue(b) - releasedValue(a));
 
   return (
     <div className="space-y-4">
@@ -279,7 +288,7 @@ export function ExposuresTable({
             {closed.length > 0 && (
               <RiskGroupRow
                 label="Closed / released"
-                detail="Status has removed this from active holds"
+                detail="No remaining hold against indicated GP"
                 count={closed.length}
               />
             )}
@@ -521,15 +530,15 @@ export function ExposuresTable({
 }
 
 function likelyValue(e: ExposureRow) {
-  return e.dollar_exposure * (e.probability / 100);
+  return weightedExposureValue(e);
 }
 
 function releasedValue(e: ExposureRow) {
-  return Math.min(likelyValue(e), e.released_amount ?? 0);
+  return releasedExposureValue(e);
 }
 
 function remainingValue(e: ExposureRow) {
-  return Math.max(0, likelyValue(e) - releasedValue(e));
+  return remainingExposureValue(e);
 }
 
 function RiskGroupRow({ label, detail, count }: { label: string; detail: string; count: number }) {
@@ -565,7 +574,7 @@ function RiskRow({
   onDelete: (id: string) => void;
   onCreateTodo?: (exposure: ExposureRow) => void;
 }) {
-  const closed = exposure.status !== "active" && exposure.status !== "escalated";
+  const closed = remainingValue(exposure) === 0;
   const highlighted = Boolean(highlightLabel);
   return (
     <TableRow

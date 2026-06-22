@@ -3,12 +3,12 @@ import { fmtPct, fmtUSD } from "@/lib/format";
 import type { ExposureRow, ProjectRow } from "@/lib/projects.functions";
 import { remainingExposureValue, type Rollup, type Warning } from "@/lib/ior";
 
-function weighted(e: ExposureRow) {
+function remaining(e: ExposureRow) {
   return remainingExposureValue(e);
 }
 
-function isLiveRisk(e: ExposureRow) {
-  return e.status === "active" || e.status === "escalated";
+function hasRemainingRisk(e: ExposureRow) {
+  return remainingExposureValue(e) > 0;
 }
 
 function formatDate(d?: string | null) {
@@ -53,10 +53,10 @@ export function ProjectDashboard({
   lastReviewForecast?: string | null;
   scheduleMovementSinceLastUpdate?: number | null;
 }) {
-  const live = exposures.filter(isLiveRisk);
-  const activeRisk = live.reduce((sum, exposure) => sum + weighted(exposure), 0);
-  const topExposures = [...live].sort((a, b) => weighted(b) - weighted(a)).slice(0, 5);
-  const scheduleLinkedExposures = live.filter(
+  const remainingRisks = exposures.filter(hasRemainingRisk);
+  const activeRisk = remainingRisks.reduce((sum, exposure) => sum + remaining(exposure), 0);
+  const topExposures = [...remainingRisks].sort((a, b) => remaining(b) - remaining(a)).slice(0, 5);
+  const scheduleLinkedExposures = remainingRisks.filter(
     (exposure) =>
       exposure.category === "schedule_compression" ||
       exposure.category === "procurement" ||
@@ -239,7 +239,7 @@ export function ProjectDashboard({
                     <th className="px-3 py-2 text-left">Treatment</th>
                     <th className="px-3 py-2 text-right">$ exposure</th>
                     <th className="px-3 py-2 text-right">Prob.</th>
-                    <th className="px-3 py-2 text-right">Likely $</th>
+                    <th className="px-3 py-2 text-right">Remaining $</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-hairline">
@@ -257,7 +257,7 @@ export function ProjectDashboard({
                         {e.probability}%
                       </td>
                       <td className="px-3 py-2 text-right tabular font-medium">
-                        {fmtUSD(weighted(e))}
+                        {fmtUSD(remaining(e))}
                       </td>
                     </tr>
                   ))}

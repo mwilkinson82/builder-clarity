@@ -38,7 +38,13 @@ import type {
   BucketRow,
   DecisionRow,
 } from "@/lib/projects.functions";
-import type { ExposureCategory, HoldClass, ResponsePath, Rollup } from "@/lib/ior";
+import {
+  remainingExposureValue,
+  type ExposureCategory,
+  type HoldClass,
+  type ResponsePath,
+  type Rollup,
+} from "@/lib/ior";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
 
 const RESPONSE_META: Record<ResponsePath, { label: string; icon: typeof Target; meaning: string }> =
@@ -188,7 +194,7 @@ export function ProjectTruthReview({
 
   // Step 3: treatment path overrides for *all* active exposures (existing + new)
   const activeExisting = useMemo(
-    () => exposures.filter((e) => e.status === "active" || e.status === "escalated"),
+    () => exposures.filter((e) => remainingExposureValue(e) > 0),
     [exposures],
   );
   const [treatmentOverrides, setTreatmentOverrides] = useState<Record<string, ResponsePath>>({});
