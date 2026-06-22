@@ -1301,9 +1301,13 @@ function NewProjectButton() {
           baseline_completion_date: baselineCompletion || null,
           forecast_completion_date: forecastCompletion || null,
         },
-      }),
+    }),
     onSuccess: ({ id }) => {
       qc.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project created", {
+        id: "create-project",
+        description: "Opening the new project now.",
+      });
       setOpen(false);
       setName("");
       setJobNumber("");
@@ -1318,10 +1322,24 @@ function NewProjectButton() {
     },
     onError: (err) => {
       toast.error("Project did not save", {
+        id: "create-project",
         description: err instanceof Error ? err.message : "Try again.",
       });
     },
   });
+
+  const handleCreateProject = (event?: React.FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    if (!name.trim()) {
+      toast.error("Project name is required", {
+        description: "Add a project name before creating the job.",
+      });
+      return;
+    }
+    if (mutation.isPending) return;
+    toast.loading("Creating project...", { id: "create-project" });
+    mutation.mutate();
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -1334,7 +1352,7 @@ function NewProjectButton() {
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">New project</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-4 py-2">
+        <form className="grid gap-4 py-2" onSubmit={handleCreateProject}>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Project name</Label>
@@ -1427,15 +1445,15 @@ function NewProjectButton() {
               </div>
             </div>
           </div>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
-          <Button disabled={!name.trim() || mutation.isPending} onClick={() => mutation.mutate()}>
-            {mutation.isPending ? "Creating…" : "Create project"}
-          </Button>
-        </DialogFooter>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!name.trim() || mutation.isPending}>
+              {mutation.isPending ? "Creating..." : "Create project"}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
