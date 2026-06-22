@@ -43,6 +43,7 @@ import {
   Users,
 } from "lucide-react";
 import { fmtUSD, fmtPct } from "@/lib/format";
+import { computeScheduleVarianceWeeks } from "@/lib/ior";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/")({
@@ -780,9 +781,15 @@ function NewProjectButton() {
   const [phase, setPhase] = useState<"Early" | "Middle" | "Late">("Early");
   const [contract, setContract] = useState("");
   const [costBudget, setCostBudget] = useState("");
+  const [baselineCompletion, setBaselineCompletion] = useState("");
+  const [forecastCompletion, setForecastCompletion] = useState("");
   const navigate = useNavigate();
   const qc = useQueryClient();
   const create = useServerFn(createProject);
+  const scheduleVariance = computeScheduleVarianceWeeks(
+    baselineCompletion || null,
+    forecastCompletion || null,
+  );
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -795,6 +802,8 @@ function NewProjectButton() {
           phase,
           original_contract: Number(contract) || 0,
           original_cost_budget: Number(costBudget) || 0,
+          baseline_completion_date: baselineCompletion || null,
+          forecast_completion_date: forecastCompletion || null,
         },
       }),
     onSuccess: ({ id }) => {
@@ -807,7 +816,14 @@ function NewProjectButton() {
       setPhase("Early");
       setContract("");
       setCostBudget("");
+      setBaselineCompletion("");
+      setForecastCompletion("");
       navigate({ to: "/projects/$projectId", params: { projectId: id } });
+    },
+    onError: (err) => {
+      toast.error("Project did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
     },
   });
 
@@ -875,6 +891,44 @@ function NewProjectButton() {
                 value={costBudget}
                 onChange={(e) => setCostBudget(e.target.value)}
               />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label>Baseline completion</Label>
+              <Input
+                type="date"
+                value={baselineCompletion}
+                onChange={(e) => setBaselineCompletion(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Forecast completion</Label>
+              <Input
+                type="date"
+                value={forecastCompletion}
+                onChange={(e) => setForecastCompletion(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Calculated variance</Label>
+              <div
+                className={`flex h-10 items-center rounded-md border border-input bg-surface px-3 text-sm tabular ${
+                  (scheduleVariance ?? 0) > 0
+                    ? "text-danger"
+                    : (scheduleVariance ?? 0) < 0
+                      ? "text-success"
+                      : "text-foreground"
+                }`}
+              >
+                {scheduleVariance == null
+                  ? "0 wk"
+                  : scheduleVariance > 0
+                    ? `+${scheduleVariance} wk`
+                    : scheduleVariance < 0
+                      ? `${scheduleVariance} wk`
+                      : "0 wk"}
+              </div>
             </div>
           </div>
         </div>

@@ -155,6 +155,28 @@ const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) =>
   error?.code === "PGRST204" && (error.message ?? "").includes(`'${column}' column`);
 
+const PROJECT_METADATA_MIGRATION = "20260622140000_project_metadata_hardening.sql";
+const PROJECT_METADATA_COLUMNS = [
+  "job_number",
+  "project_manager",
+  "baseline_completion_date",
+  "forecast_completion_date",
+  "schedule_variance_weeks",
+  "hold_variance_note",
+] as const;
+
+const cleanOptionalDate = (value: string | null | undefined) =>
+  value && value.trim() ? value : null;
+
+const projectSchemaError = (column: string) =>
+  `Supabase schema is missing public.projects.${column}. Apply ${PROJECT_METADATA_MIGRATION} and refresh the Supabase schema cache before saving project metadata.`;
+
+const throwIfProjectSchemaError = (error: { code?: string; message?: string } | null) => {
+  for (const column of PROJECT_METADATA_COLUMNS) {
+    if (isMissingRestColumn(error, column)) throw new Error(projectSchemaError(column));
+  }
+};
+
 const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   id: p.id as string,
   organization_id: (p.organization_id as string | null) ?? null,
@@ -480,6 +502,8 @@ const createProjectInput = z.object({
   phase: z.enum(["Early", "Middle", "Late"]).default("Early"),
   original_contract: z.number().min(0),
   original_cost_budget: z.number().min(0),
+  baseline_completion_date: z.string().nullable().optional(),
+  forecast_completion_date: z.string().nullable().optional(),
 });
 
 export const createProject = createServerFn({ method: "POST" })
@@ -513,30 +537,29 @@ export const createProject = createServerFn({ method: "POST" })
       }
     }
 
+    const baselineCompletion = cleanOptionalDate(data.baseline_completion_date);
+    const forecastCompletion = cleanOptionalDate(data.forecast_completion_date);
     const baseInsert = {
       owner_id: context.userId,
       organization_id: organizationId,
       name: data.name,
+      job_number: data.job_number.trim(),
       client: data.client,
       project_manager: data.project_manager,
       phase: data.phase,
       original_contract: data.original_contract,
       original_cost_budget: data.original_cost_budget,
+      baseline_completion_date: baselineCompletion,
+      forecast_completion_date: forecastCompletion,
+      schedule_variance_weeks:
+        computeScheduleVarianceWeeks(baselineCompletion, forecastCompletion) ?? 0,
     };
-    const insertProject = (includeJobNumber: boolean) =>
-      context.supabase
-        .from("projects")
-        .insert({
-          ...baseInsert,
-          ...(includeJobNumber ? { job_number: data.job_number } : {}),
-        })
-        .select("id")
-        .single();
-
-    let { data: row, error } = await insertProject(Boolean(data.job_number.trim()));
-    if (isMissingRestColumn(error, "job_number")) {
-      ({ data: row, error } = await insertProject(false));
-    }
+    const { data: row, error } = await context.supabase
+      .from("projects")
+      .insert(baseInsert)
+      .select("id")
+      .single();
+    throwIfProjectSchemaError(error);
     if (error) throw new Error(error.message);
     if (!row) throw new Error("Project did not save.");
 
@@ -580,12 +603,22 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
   .inputValidator((input) => updateFinancialsInput.parse(input))
   .handler(async ({ data, context }) => {
     const patch = { ...data.patch };
+    delete patch.schedule_variance_weeks;
+
+    if ("baseline_completion_date" in patch) {
+      patch.baseline_completion_date = cleanOptionalDate(patch.baseline_completion_date);
+    }
+    if ("forecast_completion_date" in patch) {
+      patch.forecast_completion_date = cleanOptionalDate(patch.forecast_completion_date);
+    }
+
     if ("baseline_completion_date" in patch || "forecast_completion_date" in patch) {
       const { data: current, error: loadError } = await context.supabase
         .from("projects")
         .select("baseline_completion_date, forecast_completion_date")
         .eq("id", data.projectId)
         .single();
+      throwIfProjectSchemaError(loadError);
       if (loadError) throw new Error(loadError.message);
 
       const baseline =
@@ -607,18 +640,11 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
         .select("*")
         .single();
 
-    let jobNumberSkipped = false;
-    let { data: updated, error } = await savePatch(patch);
-    if (isMissingRestColumn(error, "job_number") && "job_number" in patch) {
-      const retryPatch = { ...patch };
-      delete retryPatch.job_number;
-      jobNumberSkipped = true;
-      ({ data: updated, error } = await savePatch(retryPatch));
-    }
+    const { data: updated, error } = await savePatch(patch);
+    throwIfProjectSchemaError(error);
     if (error) throw new Error(error.message);
     return {
       ok: true,
-      jobNumberSkipped,
       project: normalizeProject(updated as Record<string, unknown>),
     };
   });

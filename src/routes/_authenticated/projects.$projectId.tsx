@@ -252,7 +252,6 @@ function ProjectPage() {
         updateFinFn as (i: { data: Record<string, unknown> }) => Promise<{
           ok: boolean;
           project?: ProjectRow;
-          jobNumberSkipped?: boolean;
         }>
       )({ data: input }),
     onSuccess: (result) => {
@@ -264,9 +263,7 @@ function ProjectPage() {
       }
       invalidate();
       toast.success("Project updated", {
-        description: result.jobNumberSkipped
-          ? "Saved project info. Job number needs the Supabase column migration before it can persist."
-          : "The dashboard is using the saved project info.",
+        description: "Header, portfolio, dashboard, and reports are using the saved project info.",
       });
     },
     onError: (err) => {
@@ -1548,7 +1545,6 @@ type EditableProject = {
   project_manager: string;
   original_contract: number;
   original_cost_budget: number;
-  schedule_variance_weeks: number;
   phase: Phase;
   percent_complete: number;
   hold_variance_note: string;
@@ -1570,8 +1566,14 @@ function EditFinancialsDialog({
   pending: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const defaultHoldNote = () =>
-    `Current holds: E-Hold ${fmtUSD(rollup.exposureHolds)} vs ${fmtUSD(guidance.eTarget)} guidance (${guidance.ePct}%) and C-Hold ${fmtUSD(rollup.contingencyHold)} vs ${fmtUSD(guidance.cTarget)} guidance (${guidance.cPct}%). Explain why this hold posture is right for the project phase.`;
+  const defaultHoldNote = () => {
+    const belowGuidance =
+      rollup.exposureHolds < guidance.eTarget || rollup.contingencyHold < guidance.cTarget;
+    const posture = belowGuidance
+      ? "Below guidance: document why the project can safely carry less hold than the target."
+      : "At or above guidance: document what is driving the hold and what must happen to release dollars.";
+    return `${posture} Current holds: E-Hold ${fmtUSD(rollup.exposureHolds)} vs ${fmtUSD(guidance.eTarget)} guidance (${guidance.ePct}%) and C-Hold ${fmtUSD(rollup.contingencyHold)} vs ${fmtUSD(guidance.cTarget)} guidance (${guidance.cPct}%).`;
+  };
   const init = (): EditableProject => ({
     name: project.name,
     job_number: project.job_number,
@@ -1579,7 +1581,6 @@ function EditFinancialsDialog({
     project_manager: project.project_manager,
     original_contract: project.original_contract,
     original_cost_budget: project.original_cost_budget,
-    schedule_variance_weeks: project.schedule_variance_weeks,
     phase: project.phase,
     percent_complete: project.percent_complete,
     hold_variance_note: project.hold_variance_note || defaultHoldNote(),
@@ -1708,7 +1709,7 @@ function EditFinancialsDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Schedule variance</Label>
+              <Label>Calculated variance</Label>
               <div
                 className={`flex h-10 items-center rounded-md border border-input bg-surface px-3 text-sm tabular ${
                   (calculatedScheduleVariance ?? 0) > 0
@@ -1752,7 +1753,7 @@ function EditFinancialsDialog({
             onClick={() => {
               onSave({
                 ...form,
-                schedule_variance_weeks: calculatedScheduleVariance ?? 0,
+                hold_variance_note: form.hold_variance_note.trim() || defaultHoldNote(),
               });
               setOpen(false);
             }}
