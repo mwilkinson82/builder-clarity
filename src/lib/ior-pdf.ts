@@ -3,7 +3,12 @@
 // All drawing helpers operate in points (72 = 1 inch). US Letter portrait.
 
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, type RGB } from "pdf-lib";
-import type { Rollup, ExposureCategory, ResponsePath } from "@/lib/ior";
+import {
+  remainingExposureValue,
+  type Rollup,
+  type ExposureCategory,
+  type ResponsePath,
+} from "@/lib/ior";
 import type {
   ProjectRow,
   ExposureRow,
@@ -330,7 +335,7 @@ function drawExposuresTable(
     { label: "Treatment", x: M + 278, w: 60 },
     { label: "$ Exposure", x: M + 342, w: 60 },
     { label: "Prob", x: M + 408, w: 30 },
-    { label: "Weighted", x: M + 442, w: 70 },
+    { label: "Remaining", x: M + 442, w: 70 },
   ];
   ensure(c, 16);
   cols.forEach((col) =>
@@ -352,10 +357,10 @@ function drawExposuresTable(
   for (const g of groups) {
     if (g.key) {
       ensure(c, 14);
-      const groupTotal = g.items.reduce((s, e) => s + e.dollar_exposure * (e.probability / 100), 0);
+      const groupTotal = g.items.reduce((s, e) => s + remainingExposureValue(e), 0);
       text(
         c,
-        `${g.key.toUpperCase()}  ·  ${g.items.length} item${g.items.length === 1 ? "" : "s"}  ·  ${fmtUSD(groupTotal)} weighted`,
+        `${g.key.toUpperCase()}  ·  ${g.items.length} item${g.items.length === 1 ? "" : "s"}  ·  ${fmtUSD(groupTotal)} remaining`,
         M,
         c.y,
         { font: c.sansB, size: 7, color: ACCENT },
@@ -374,7 +379,7 @@ function drawExposuresTable(
       });
       text(c, fmtUSD(e.dollar_exposure), cols[3].x, c.y, { size: 8.5 });
       text(c, `${e.probability}%`, cols[4].x, c.y, { size: 8.5, color: MUTED });
-      text(c, fmtUSD(e.dollar_exposure * (e.probability / 100)), cols[5].x, c.y, {
+      text(c, fmtUSD(remainingExposureValue(e)), cols[5].x, c.y, {
         font: c.sansB,
         size: 8.5,
       });
@@ -649,8 +654,8 @@ export async function generateIorPdf(
     drawExposuresTable(
       c,
       input.exposures
-        .filter((e) => e.status === "active" || e.status === "escalated")
-        .sort((a, b) => b.dollar_exposure * b.probability - a.dollar_exposure * a.probability),
+        .filter((e) => remainingExposureValue(e) > 0)
+        .sort((a, b) => remainingExposureValue(b) - remainingExposureValue(a)),
       { limit: 5 },
     );
     sectionTitle(c, "Required decisions");
@@ -663,7 +668,7 @@ export async function generateIorPdf(
     sectionTitle(c, "Exposure register — by treatment path");
     drawExposuresTable(
       c,
-      input.exposures.filter((e) => e.status !== "released"),
+      input.exposures.filter((e) => remainingExposureValue(e) > 0),
       { groupByPath: true },
     );
     sectionTitle(c, "Cost buckets");
@@ -734,7 +739,7 @@ export async function generateIorPdf(
     sectionTitle(c, "Exposure register — grouped by treatment path");
     drawExposuresTable(
       c,
-      input.exposures.filter((e) => e.status !== "released"),
+      input.exposures.filter((e) => remainingExposureValue(e) > 0),
       { groupByPath: true },
     );
 

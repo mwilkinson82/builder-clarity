@@ -66,6 +66,7 @@ import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import {
   computeScheduleVarianceWeeks,
+  remainingExposureValue,
   type Phase,
   type ExposureCategory,
   type Rollup,
@@ -434,9 +435,7 @@ function ProjectPage() {
   const activeScheduleRiskCount = scheduleRisks.filter((risk) => risk.status === "active").length;
   const latestScheduleUpdate = scheduleUpdates[0] ?? null;
   const scheduleMovementSinceLastUpdate = latestScheduleUpdate?.movement_weeks ?? null;
-  const liveExposureCount = exposures.filter(
-    (e) => e.status === "active" || e.status === "escalated",
-  ).length;
+  const liveExposureCount = exposures.filter((e) => remainingExposureValue(e) > 0).length;
   const lastReviewForecast =
     reviews[0]?.forecast_completion_date_after ??
     reviews[0]?.forecast_completion_date_before ??
