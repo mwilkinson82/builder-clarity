@@ -4,7 +4,18 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { createProject, listProjects, seedDemoIfEmpty } from "@/lib/projects.functions";
-import { createTeamInvite, getTeamWorkspace, type AccountRole } from "@/lib/team.functions";
+import {
+  assignProjectMember,
+  createTeamInvite,
+  getTeamWorkspace,
+  removeProjectMember,
+  revokeTeamInvite,
+  updateProjectMember,
+  updateTeamMember,
+  type AccountRole,
+  type MemberStatus,
+  type ProjectMemberRole,
+} from "@/lib/team.functions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -40,6 +51,7 @@ import {
   MailPlus,
   Plus,
   Search,
+  Trash2,
   Users,
 } from "lucide-react";
 import { fmtUSD, fmtPct } from "@/lib/format";
@@ -568,29 +580,69 @@ function EmptyState() {
 }
 
 const roleOptions: { value: AccountRole; label: string }[] = [
+  { value: "owner", label: "Owner" },
+  { value: "admin", label: "Admin" },
   { value: "executive", label: "Executive" },
   { value: "project_manager", label: "Project manager" },
   { value: "member", label: "Team member" },
   { value: "viewer", label: "Viewer" },
-  { value: "admin", label: "Admin" },
+];
+
+const memberStatusOptions: { value: MemberStatus; label: string }[] = [
+  { value: "active", label: "Active" },
+  { value: "disabled", label: "Disabled" },
+];
+
+const projectRoleOptions: { value: ProjectMemberRole; label: string }[] = [
+  { value: "owner", label: "Project owner" },
+  { value: "manager", label: "Manager" },
+  { value: "editor", label: "Editor" },
+  { value: "viewer", label: "Viewer" },
 ];
 
 function roleLabel(role: string) {
   return roleOptions.find((option) => option.value === role)?.label ?? role;
 }
 
+function projectRoleLabel(role: string) {
+  return projectRoleOptions.find((option) => option.value === role)?.label ?? role;
+}
+
 function InviteByMagicLinkButton() {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<AccountRole>("project_manager");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [projectRole, setProjectRole] = useState<ProjectMemberRole>("viewer");
   const qc = useQueryClient();
   const loadTeam = useServerFn(getTeamWorkspace);
   const createInvite = useServerFn(createTeamInvite);
+  const updateMember = useServerFn(updateTeamMember);
+  const revokeInvite = useServerFn(revokeTeamInvite);
+  const assignMember = useServerFn(assignProjectMember);
+  const updateProjectAccess = useServerFn(updateProjectMember);
+  const removeProjectAccess = useServerFn(removeProjectMember);
   const { data: team, isLoading } = useQuery({
     queryKey: ["team-workspace"],
     queryFn: () => loadTeam(),
     enabled: open,
   });
+
+  useEffect(() => {
+    if (!team) return;
+    setSelectedProjectId((current) => current || team.projects[0]?.id || "");
+    setSelectedUserId(
+      (current) => current || team.members.find((m) => m.status === "active")?.user_id || "",
+    );
+  }, [team]);
+
+  const refreshTeam = async () => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["team-workspace"] }),
+      qc.invalidateQueries({ queryKey: ["projects"] }),
+    ]);
+  };
 
   const inviteMutation = useMutation({
     mutationFn: async () => {
@@ -625,6 +677,82 @@ function InviteByMagicLinkButton() {
     },
   });
 
+  const memberMutation = useMutation({
+    mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: MemberStatus }) =>
+      updateMember({ data: payload }),
+    onSuccess: async () => {
+      await refreshTeam();
+      toast.success("Team member updated");
+    },
+    onError: (err) => {
+      toast.error("Team member did not update", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: (inviteId: string) => revokeInvite({ data: { inviteId } }),
+    onSuccess: async () => {
+      await refreshTeam();
+      toast.success("Invite revoked");
+    },
+    onError: (err) => {
+      toast.error("Invite did not revoke", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+
+  const assignMutation = useMutation({
+    mutationFn: () => {
+      if (!selectedProjectId) throw new Error("Choose a project.");
+      if (!selectedUserId) throw new Error("Choose a team member.");
+      return assignMember({
+        data: { projectId: selectedProjectId, userId: selectedUserId, role: projectRole },
+      });
+    },
+    onSuccess: async () => {
+      await refreshTeam();
+      toast.success("Project access updated");
+    },
+    onError: (err) => {
+      toast.error("Project access did not update", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+
+  const projectAccessMutation = useMutation({
+    mutationFn: (payload: {
+      membershipId: string;
+      role?: ProjectMemberRole;
+      status?: MemberStatus;
+    }) => updateProjectAccess({ data: payload }),
+    onSuccess: async () => {
+      await refreshTeam();
+      toast.success("Project member updated");
+    },
+    onError: (err) => {
+      toast.error("Project member did not update", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+
+  const removeProjectAccessMutation = useMutation({
+    mutationFn: (membershipId: string) => removeProjectAccess({ data: { membershipId } }),
+    onSuccess: async () => {
+      await refreshTeam();
+      toast.success("Project access removed");
+    },
+    onError: (err) => {
+      toast.error("Project access did not remove", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+
   const sendInvite = async () => {
     inviteMutation.mutate();
   };
@@ -636,11 +764,11 @@ function InviteByMagicLinkButton() {
           <Users className="h-3.5 w-3.5" /> Team
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">Team access</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-5 py-2">
+        <div className="grid max-h-[76vh] gap-5 overflow-y-auto py-2 pr-1">
           <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-4">
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -678,40 +806,49 @@ function InviteByMagicLinkButton() {
             </div>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-[1fr_180px_auto] md:items-end">
-            <div className="space-y-1.5">
-              <Label>Email</Label>
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="pm@company.com"
-              />
+          {team && !team.canManageTeam && (
+            <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+              You can see this workspace, but only owners, admins, and executives can invite seats
+              or change company roles.
             </div>
-            <div className="space-y-1.5">
-              <Label>Role</Label>
-              <Select value={role} onValueChange={(v) => setRole(v as AccountRole)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {roleOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          )}
+
+          {(!team || team.canManageTeam) && (
+            <div className="grid gap-3 rounded-md border border-hairline p-3 md:grid-cols-[1fr_190px_auto] md:items-end">
+              <div className="space-y-1.5">
+                <Label>Email</Label>
+                <Input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="pm@company.com"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Company role</Label>
+                <Select value={role} onValueChange={(v) => setRole(v as AccountRole)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {roleOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                disabled={!email.trim() || inviteMutation.isPending}
+                onClick={sendInvite}
+                className="gap-1.5"
+              >
+                <MailPlus className="h-3.5 w-3.5" />
+                {inviteMutation.isPending ? "Sending..." : "Send invite"}
+              </Button>
             </div>
-            <Button
-              disabled={!email.trim() || inviteMutation.isPending}
-              onClick={sendInvite}
-              className="gap-1.5"
-            >
-              <MailPlus className="h-3.5 w-3.5" />
-              {inviteMutation.isPending ? "Sending..." : "Send invite"}
-            </Button>
-          </div>
+          )}
 
           <div className="rounded-md border border-hairline">
             <div className="border-b border-hairline bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -726,16 +863,65 @@ function InviteByMagicLinkButton() {
                 team.members.map((member) => (
                   <div
                     key={member.id}
-                    className="grid gap-1 px-3 py-3 md:grid-cols-[1fr_140px_90px]"
+                    className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_190px_150px] md:items-center"
                   >
                     <div>
                       <div className="font-medium">{member.full_name || member.email}</div>
                       <div className="text-xs text-muted-foreground">{member.email}</div>
                     </div>
-                    <div className="text-sm text-muted-foreground">{roleLabel(member.role)}</div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                      {member.status}
-                    </div>
+                    {team.canManageTeam ? (
+                      <>
+                        <Select
+                          value={member.role}
+                          onValueChange={(v) =>
+                            memberMutation.mutate({
+                              membershipId: member.id,
+                              role: v as AccountRole,
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {roleOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={member.status === "pending" ? "active" : member.status}
+                          onValueChange={(v) =>
+                            memberMutation.mutate({
+                              membershipId: member.id,
+                              status: v as MemberStatus,
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {memberStatusOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-sm text-muted-foreground">
+                          {roleLabel(member.role)}
+                        </div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                          {member.status}
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))
               )}
@@ -749,17 +935,182 @@ function InviteByMagicLinkButton() {
               </div>
               <div className="divide-y divide-hairline">
                 {team.invites.map((invite) => (
-                  <div key={invite.id} className="grid gap-1 px-3 py-3 md:grid-cols-[1fr_140px]">
+                  <div
+                    key={invite.id}
+                    className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_150px_auto] md:items-center"
+                  >
                     <div>
                       <div className="font-medium">{invite.email}</div>
                       <div className="text-xs text-muted-foreground">Magic link invite pending</div>
                     </div>
                     <div className="text-sm text-muted-foreground">{roleLabel(invite.role)}</div>
+                    {team.canManageTeam && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={revokeMutation.isPending}
+                        onClick={() => revokeMutation.mutate(invite.id)}
+                      >
+                        Revoke
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>
             </div>
           )}
+
+          <div className="rounded-md border border-hairline">
+            <div className="border-b border-hairline bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Project access
+            </div>
+            <div className="grid gap-4 p-3">
+              <div className="grid gap-3 md:grid-cols-[1fr_1fr_180px_auto] md:items-end">
+                <div className="space-y-1.5">
+                  <Label>Project</Label>
+                  <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {team?.projects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.job_number
+                            ? `${project.job_number} - ${project.name}`
+                            : project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Team member</Label>
+                  <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose person" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {team?.members
+                        .filter((member) => member.status === "active")
+                        .map((member) => (
+                          <SelectItem key={member.user_id} value={member.user_id}>
+                            {member.full_name || member.email}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Project role</Label>
+                  <Select
+                    value={projectRole}
+                    onValueChange={(v) => setProjectRole(v as ProjectMemberRole)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {projectRoleOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  disabled={!selectedProjectId || !selectedUserId || assignMutation.isPending}
+                  onClick={() => assignMutation.mutate()}
+                >
+                  {assignMutation.isPending ? "Saving..." : "Assign"}
+                </Button>
+              </div>
+
+              {isLoading ? (
+                <div className="text-sm text-muted-foreground">Loading project access...</div>
+              ) : !team || team.projects.length === 0 ? (
+                <div className="text-sm text-muted-foreground">
+                  Create a project before assigning project access.
+                </div>
+              ) : team.projectMembers.length === 0 ? (
+                <div className="text-sm text-muted-foreground">
+                  No project-level access has been assigned yet.
+                </div>
+              ) : (
+                <div className="divide-y divide-hairline rounded-md border border-hairline">
+                  {team.projectMembers.map((member) => {
+                    const project = team.projects.find((p) => p.id === member.project_id);
+                    return (
+                      <div
+                        key={member.id}
+                        className="grid gap-2 px-3 py-3 lg:grid-cols-[1.2fr_1fr_170px_140px_auto] lg:items-center"
+                      >
+                        <div>
+                          <div className="font-medium">{project?.name || "Project"}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {project?.job_number || "No job number"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="font-medium">{member.full_name || member.email}</div>
+                          <div className="text-xs text-muted-foreground">{member.email}</div>
+                        </div>
+                        <Select
+                          value={member.role}
+                          onValueChange={(v) =>
+                            projectAccessMutation.mutate({
+                              membershipId: member.id,
+                              role: v as ProjectMemberRole,
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {projectRoleOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={member.status === "pending" ? "active" : member.status}
+                          onValueChange={(v) =>
+                            projectAccessMutation.mutate({
+                              membershipId: member.id,
+                              status: v as MemberStatus,
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {memberStatusOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={removeProjectAccessMutation.isPending}
+                          onClick={() => removeProjectAccessMutation.mutate(member.id)}
+                          aria-label="Remove project access"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => setOpen(false)}>
