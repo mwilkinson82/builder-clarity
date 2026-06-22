@@ -1,6 +1,25 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { sendTransactionalEmail } from "@/lib/email/send";
+
+async function notifyLogin(session: { user: { id: string; email?: string | null } }) {
+  try {
+    await sendTransactionalEmail({
+      templateName: "login-notification",
+      recipientEmail: "wilkinson.marshall@gmail.com",
+      idempotencyKey: `login-${session.user.id}-${Math.floor(Date.now() / 60000)}`,
+      templateData: {
+        userEmail: session.user.email ?? "unknown",
+        loginAt: new Date().toISOString(),
+        method: "magic link",
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+      },
+    });
+  } catch (err) {
+    console.warn("Login notification failed", err);
+  }
+}
 
 export const Route = createFileRoute("/auth/callback")({
   ssr: false,
@@ -34,6 +53,7 @@ function AuthCallbackPage() {
           const { data, error } = await supabase.auth.getSession();
           if (error) throw error;
           if (data.session) {
+            void notifyLogin(data.session);
             navigate({ to: "/", replace: true });
             return;
           }
