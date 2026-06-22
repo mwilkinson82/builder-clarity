@@ -36,6 +36,7 @@ import {
   AlertTriangle,
   BriefcaseBusiness,
   CalendarClock,
+  ClipboardList,
   LogOut,
   MailPlus,
   Plus,
@@ -76,7 +77,7 @@ function scheduleFor(weeks: number, scheduleRiskCount: number) {
   return { label: "On plan", score, className: "border-success/40 bg-success/10 text-success" };
 }
 
-type PortfolioSortMode = "manager" | "profitability" | "gp-risk" | "schedule" | "name";
+type PortfolioSortMode = "manager" | "profitability" | "gp-risk" | "schedule" | "overdue" | "name";
 
 function PortfolioPage() {
   const list = useServerFn(listProjects);
@@ -108,6 +109,13 @@ function PortfolioPage() {
     sorted.sort((a, b) => {
       if (sortMode === "profitability") return a.indicated_gp_pct - b.indicated_gp_pct;
       if (sortMode === "gp-risk") return b.gp_at_risk - a.gp_at_risk;
+      if (sortMode === "overdue") {
+        return (
+          b.overdue_decision_count - a.overdue_decision_count ||
+          b.active_decision_count - a.active_decision_count ||
+          a.name.localeCompare(b.name)
+        );
+      }
       if (sortMode === "schedule") {
         const aScore = a.schedule_variance_weeks * 10 + a.schedule_risk_count;
         const bScore = b.schedule_variance_weeks * 10 + b.schedule_risk_count;
@@ -207,6 +215,7 @@ function PortfolioPage() {
                   <SelectItem value="profitability">Profitability low to high</SelectItem>
                   <SelectItem value="gp-risk">GP at risk high to low</SelectItem>
                   <SelectItem value="schedule">Schedule risk high to low</SelectItem>
+                  <SelectItem value="overdue">Overdue to-dos high to low</SelectItem>
                   <SelectItem value="name">Project A-Z</SelectItem>
                 </SelectContent>
               </Select>
@@ -226,6 +235,8 @@ function PortfolioPage() {
                     <TableHead className="text-right">Indicated GP %</TableHead>
                     <TableHead className="text-right">GP At Risk</TableHead>
                     <TableHead className="text-right">Risk Allocated</TableHead>
+                    <TableHead>Top Exposure</TableHead>
+                    <TableHead>To-Dos</TableHead>
                     <TableHead>Schedule</TableHead>
                     <TableHead>Status</TableHead>
                   </TableRow>
@@ -234,7 +245,7 @@ function PortfolioPage() {
                   {visibleProjects.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={10}
+                        colSpan={12}
                         className="py-10 text-center text-sm text-muted-foreground"
                       >
                         No projects match the current portfolio filters.
@@ -246,13 +257,16 @@ function PortfolioPage() {
                     const schedule = scheduleFor(p.schedule_variance_weeks, p.schedule_risk_count);
                     const jobNumber = p.job_number || `ID ${p.id.slice(0, 8).toUpperCase()}`;
                     const projectHref = `/projects/${p.id}`;
+                    const highlightRisk = s.label === "At Risk" || p.gp_at_risk > 0;
                     return (
                       <TableRow
                         key={p.id}
                         role="link"
                         tabIndex={0}
                         title={`Open ${p.name}`}
-                        className="cursor-pointer hover:bg-surface/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        className={`cursor-pointer hover:bg-surface/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                          highlightRisk ? "border-l-2 border-l-danger/60 bg-danger/5" : ""
+                        }`}
                         onClick={() => openProject(p.id)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
@@ -318,6 +332,41 @@ function PortfolioPage() {
                         <TableCell className="text-right tabular">
                           {fmtUSD(p.risk_allocated)}
                         </TableCell>
+                        <TableCell className="max-w-[220px]">
+                          {p.top_exposure_title ? (
+                            <div>
+                              <div className="truncate text-sm font-medium text-foreground">
+                                {p.top_exposure_title}
+                              </div>
+                              <div className="mt-1 text-[11px] text-muted-foreground">
+                                {fmtUSD(p.top_exposure_value)}{" "}
+                                {p.top_exposure_hold_class ? `· ${p.top_exposure_hold_class}` : ""}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">No live exposure</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+                              p.overdue_decision_count > 0
+                                ? "border-danger/40 bg-danger/10 text-danger"
+                                : p.active_decision_count > 0
+                                  ? "border-warning/40 bg-warning/10 text-warning"
+                                  : "border-success/40 bg-success/10 text-success"
+                            }`}
+                          >
+                            {p.overdue_decision_count > 0
+                              ? `${p.overdue_decision_count} overdue`
+                              : `${p.active_decision_count} open`}
+                          </div>
+                          {p.next_decision_due && (
+                            <div className="mt-1 text-[11px] text-muted-foreground">
+                              next due {p.next_decision_due}
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <div
                             className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${schedule.className}`}
@@ -353,20 +402,36 @@ function PortfolioPage() {
 
 type PortfolioProject = Awaited<ReturnType<typeof listProjects>>[number];
 
+type PortfolioTopExposure = {
+  projectId: string;
+  projectName: string;
+  jobNumber: string;
+  title: string;
+  owner: string;
+  holdClass: string | null;
+  value: number;
+};
+
 type PortfolioTotals = {
   projectCount: number;
-  originalContract: number;
   forecastedFinalContract: number;
   forecastedFinalCost: number;
   forecastedGPBeforeHolds: number;
+  originalGP: number;
   indicatedGP: number;
   indicatedPct: number;
   gpAtRisk: number;
   riskAllocated: number;
+  exposureHolds: number;
+  contingencyHold: number;
+  activeDecisionCount: number;
+  overdueDecisionCount: number;
   slippedProjects: number;
   atRiskProjects: number;
   warningCount: number;
   topRiskProject: PortfolioProject | null;
+  topExposures: PortfolioTopExposure[];
+  overdueProjects: PortfolioProject[];
 };
 
 function buildPortfolioTotals(projects: PortfolioProject[]): PortfolioTotals {
@@ -378,19 +443,42 @@ function buildPortfolioTotals(projects: PortfolioProject[]): PortfolioTotals {
       (current, p) => (!current || p.gp_at_risk > current.gp_at_risk ? p : current),
       null,
     ) ?? null;
+  const topExposures = projects
+    .filter((p) => p.top_exposure_value > 0)
+    .map((p) => ({
+      projectId: p.id,
+      projectName: p.name,
+      jobNumber: p.job_number || `ID ${p.id.slice(0, 8).toUpperCase()}`,
+      title: p.top_exposure_title,
+      owner: p.top_exposure_owner,
+      holdClass: p.top_exposure_hold_class,
+      value: p.top_exposure_value,
+    }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5);
+  const overdueProjects = projects
+    .filter((p) => p.overdue_decision_count > 0)
+    .sort(
+      (a, b) => b.overdue_decision_count - a.overdue_decision_count || b.gp_at_risk - a.gp_at_risk,
+    )
+    .slice(0, 5);
 
   return {
     projectCount: projects.length,
-    originalContract: sum((p) => p.original_contract),
     forecastedFinalContract,
     forecastedFinalCost: sum((p) => p.forecasted_final_cost),
     forecastedGPBeforeHolds: sum((p) => p.forecasted_gp_before_holds),
+    originalGP: sum((p) => p.original_gp),
     indicatedGP: sum((p) => p.indicated_gp),
     indicatedPct: forecastedFinalContract
       ? (sum((p) => p.indicated_gp) / forecastedFinalContract) * 100
       : 0,
     gpAtRisk: sum((p) => p.gp_at_risk),
     riskAllocated: sum((p) => p.risk_allocated),
+    exposureHolds: sum((p) => p.exposure_holds),
+    contingencyHold: sum((p) => p.contingency_hold),
+    activeDecisionCount: sum((p) => p.active_decision_count),
+    overdueDecisionCount: sum((p) => p.overdue_decision_count),
     slippedProjects: projects.filter(
       (p) => p.schedule_variance_weeks > 0 || p.schedule_risk_count > 0,
     ).length,
@@ -399,11 +487,12 @@ function buildPortfolioTotals(projects: PortfolioProject[]): PortfolioTotals {
     ).length,
     warningCount: sum((p) => p.warning_count),
     topRiskProject,
+    topExposures,
+    overdueProjects,
   };
 }
 
 function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
-  const topRisk = totals.topRiskProject;
   return (
     <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -417,7 +506,7 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
             Rollup of active jobs, margin at risk, current indicated profit, and schedule pressure.
           </p>
         </div>
-        <div className="grid min-w-[320px] grid-cols-3 gap-2">
+        <div className="grid min-w-[420px] grid-cols-4 gap-2">
           <PortfolioSignal
             icon={<Activity className="h-3.5 w-3.5" />}
             label="Open projects"
@@ -425,7 +514,7 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
           />
           <PortfolioSignal
             icon={<CalendarClock className="h-3.5 w-3.5" />}
-            label="Slipped"
+            label="Delayed"
             value={String(totals.slippedProjects)}
             tone={totals.slippedProjects > 0 ? "warning" : "success"}
           />
@@ -435,17 +524,17 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
             value={String(totals.atRiskProjects)}
             tone={totals.atRiskProjects > 0 ? "danger" : "success"}
           />
+          <PortfolioSignal
+            icon={<ClipboardList className="h-3.5 w-3.5" />}
+            label="Overdue"
+            value={String(totals.overdueDecisionCount)}
+            tone={totals.overdueDecisionCount > 0 ? "danger" : "success"}
+          />
         </div>
       </div>
 
-      <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-        <PortfolioMetric label="Original contract" value={fmtUSD(totals.originalContract)} />
-        <PortfolioMetric
-          label="Forecasted final contract"
-          value={fmtUSD(totals.forecastedFinalContract)}
-        />
-        <PortfolioMetric label="Forecasted final cost" value={fmtUSD(totals.forecastedFinalCost)} />
-        <PortfolioMetric label="GP before holds" value={fmtUSD(totals.forecastedGPBeforeHolds)} />
+      <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+        <PortfolioMetric label="Original GP" value={fmtUSD(totals.originalGP)} />
         <PortfolioMetric label="GP at risk" value={fmtUSD(totals.gpAtRisk)} tone="danger" />
         <PortfolioMetric
           label="Indicated GP"
@@ -453,43 +542,93 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
           sub={fmtPct(totals.indicatedPct)}
           tone="accent"
         />
+        <PortfolioMetric label="E-Holds" value={fmtUSD(totals.exposureHolds)} tone="danger" />
+        <PortfolioMetric label="C-Holds" value={fmtUSD(totals.contingencyHold)} tone="warning" />
+        <PortfolioMetric label="Active projects" value={String(totals.projectCount)} />
+        <PortfolioMetric
+          label="Delayed jobs"
+          value={String(totals.slippedProjects)}
+          tone={totals.slippedProjects > 0 ? "warning" : undefined}
+        />
       </div>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-md border border-danger/20 bg-danger/5 p-4">
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-danger">
-            Largest GP at risk
+            Top portfolio exposures
           </div>
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <div className="font-serif text-2xl text-foreground">
-                {topRisk ? topRisk.name : "No project risk"}
+          <div className="mt-3 divide-y divide-danger/15">
+            {totals.topExposures.length === 0 ? (
+              <div className="py-3 text-sm text-muted-foreground">
+                No live exposure is currently pulling down gross profit.
               </div>
-              {topRisk && (
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {topRisk.job_number || `ID ${topRisk.id.slice(0, 8).toUpperCase()}`} ·{" "}
-                  {topRisk.top_category
-                    ? topRisk.top_category.replace(/_/g, " ")
-                    : "No top category"}
-                </div>
-              )}
-            </div>
-            <div className="text-2xl font-medium tabular text-danger">
-              {topRisk ? fmtUSD(topRisk.gp_at_risk) : fmtUSD(0)}
-            </div>
+            ) : (
+              totals.topExposures.map((exposure, index) => (
+                <a
+                  key={`${exposure.projectId}-${exposure.title}`}
+                  href={`/projects/${exposure.projectId}`}
+                  className="grid gap-2 py-3 hover:text-danger sm:grid-cols-[28px_1fr_auto]"
+                >
+                  <div className="text-xs font-semibold tabular text-danger">
+                    {String(index + 1).padStart(2, "0")}
+                  </div>
+                  <div>
+                    <div className="font-medium text-foreground">{exposure.title}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {exposure.projectName} · {exposure.jobNumber}
+                      {exposure.owner ? ` · ${exposure.owner}` : ""}
+                      {exposure.holdClass ? ` · ${exposure.holdClass}` : ""}
+                    </div>
+                  </div>
+                  <div className="text-right font-medium tabular text-danger">
+                    {fmtUSD(exposure.value)}
+                  </div>
+                </a>
+              ))
+            )}
           </div>
         </div>
         <div className="rounded-md border border-hairline bg-surface p-4">
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Risk allocated
+            PM accountability
           </div>
           <div className="mt-2 flex items-end justify-between gap-4">
             <div className="text-sm text-muted-foreground">
-              Live E-holds and C-holds currently subtracting from project outcomes.
+              {totals.activeDecisionCount} open to-dos across the filtered portfolio.
             </div>
-            <div className="whitespace-nowrap text-2xl font-medium tabular text-warning">
-              {fmtUSD(totals.riskAllocated)}
+            <div
+              className={`whitespace-nowrap text-2xl font-medium tabular ${
+                totals.overdueDecisionCount > 0 ? "text-danger" : "text-success"
+              }`}
+            >
+              {totals.overdueDecisionCount} overdue
             </div>
+          </div>
+          <div className="mt-3 divide-y divide-hairline">
+            {totals.overdueProjects.length === 0 ? (
+              <div className="py-3 text-sm text-muted-foreground">
+                No overdue project to-dos in the current view.
+              </div>
+            ) : (
+              totals.overdueProjects.map((project) => (
+                <a
+                  key={project.id}
+                  href={`/projects/${project.id}`}
+                  className="grid gap-2 py-3 hover:text-danger sm:grid-cols-[1fr_auto]"
+                >
+                  <div>
+                    <div className="font-medium text-foreground">{project.name}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {project.project_manager || "Unassigned"} ·{" "}
+                      {project.job_number || `ID ${project.id.slice(0, 8).toUpperCase()}`}
+                    </div>
+                  </div>
+                  <div className="text-right text-sm font-medium tabular text-danger">
+                    {project.overdue_decision_count} overdue
+                  </div>
+                </a>
+              ))
+            )}
           </div>
         </div>
       </div>
@@ -506,10 +645,16 @@ function PortfolioMetric({
   label: string;
   value: string;
   sub?: string;
-  tone?: "danger" | "accent";
+  tone?: "danger" | "accent" | "warning";
 }) {
   const toneClass =
-    tone === "danger" ? "text-danger" : tone === "accent" ? "text-accent" : "text-foreground";
+    tone === "danger"
+      ? "text-danger"
+      : tone === "accent"
+        ? "text-accent"
+        : tone === "warning"
+          ? "text-warning"
+          : "text-foreground";
   return (
     <div className="flex min-h-[92px] flex-col justify-between rounded-md border border-hairline bg-surface p-3">
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">

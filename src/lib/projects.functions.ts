@@ -9,6 +9,7 @@ import {
   guidanceTargets,
   exposureByCategory,
   exposureAging,
+  remainingExposureValue,
   type Phase,
   type Rollup,
   type Warning,
@@ -235,7 +236,7 @@ export const listProjects = createServerFn({ method: "GET" })
     const ids = projects.map((p) => p.id);
     if (ids.length === 0) return [];
 
-    const [expRes, cosRes, bucketsRes] = await Promise.all([
+    const [expRes, cosRes, bucketsRes, decisionsRes] = await Promise.all([
       context.supabase.from("exposures").select("*").in("project_id", ids),
       context.supabase
         .from("change_orders")
@@ -245,10 +246,15 @@ export const listProjects = createServerFn({ method: "GET" })
         .from("cost_buckets")
         .select("project_id,bucket,original_budget,actual_to_date,ftc")
         .in("project_id", ids),
+      context.supabase
+        .from("decisions")
+        .select("project_id,decision,impact,owner,due_date,status,linked_exposure_id")
+        .in("project_id", ids),
     ]);
     if (expRes.error) throw new Error(expRes.error.message);
     if (cosRes.error) throw new Error(cosRes.error.message);
     if (bucketsRes.error) throw new Error(bucketsRes.error.message);
+    if (decisionsRes.error) throw new Error(decisionsRes.error.message);
 
     type Keyed = { project_id: string };
     const groupBy = <T extends Keyed>(rows: readonly unknown[]): Record<string, T[]> => {
@@ -259,9 +265,11 @@ export const listProjects = createServerFn({ method: "GET" })
     const eByP = groupBy<{ project_id: string } & Record<string, unknown>>(expRes.data ?? []);
     const cByP = groupBy<{ project_id: string } & Record<string, unknown>>(cosRes.data ?? []);
     const bByP = groupBy<{ project_id: string } & Record<string, unknown>>(bucketsRes.data ?? []);
+    const dByP = groupBy<{ project_id: string } & Record<string, unknown>>(decisionsRes.data ?? []);
 
     return projects.map((p) => {
       const exposures = (eByP[p.id] ?? []).map((e) => ({
+        title: str(e.title),
         category: (e.category as ExposureCategory) ?? "other",
         dollar_exposure: num(e.dollar_exposure),
         probability: num(e.probability),
@@ -269,6 +277,7 @@ export const listProjects = createServerFn({ method: "GET" })
         status: (e.status as ExposureStatus) ?? "active",
         response_path: (e.response_path as ResponsePath) ?? "accept",
         released_amount: num(e.released_amount),
+        owner: str(e.owner),
         opened_at: (e.opened_at as string | null) ?? null,
         next_review_at: (e.next_review_at as string | null) ?? null,
       }));
@@ -289,6 +298,15 @@ export const listProjects = createServerFn({ method: "GET" })
       const lastReview = p.last_reviewed_at ? new Date(p.last_reviewed_at).getTime() : null;
       const daysSinceReview = lastReview ? Math.floor((Date.now() - lastReview) / 86400000) : null;
       const topCat = exposureByCategory(exposures)[0]?.category ?? null;
+      const liveExposures = exposures.filter(
+        (e) => e.status === "active" || e.status === "escalated",
+      );
+      const topExposure =
+        liveExposures.reduce<(typeof liveExposures)[number] | null>(
+          (current, e) =>
+            !current || remainingExposureValue(e) > remainingExposureValue(current) ? e : current,
+          null,
+        ) ?? null;
       const activeScheduleRiskCount = exposures.filter(
         (e) =>
           (e.status === "active" || e.status === "escalated") &&
@@ -296,6 +314,31 @@ export const listProjects = createServerFn({ method: "GET" })
             e.category === "procurement" ||
             e.category === "owner_decision"),
       ).length;
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const decisions = (dByP[p.id] ?? []).map((d) => ({
+        decision: str(d.decision),
+        impact: str(d.impact),
+        owner: str(d.owner),
+        due_date: (d.due_date as string | null) ?? null,
+        status: (d.status as DecisionStatus) ?? "open",
+        linked_exposure_id: (d.linked_exposure_id as string | null) ?? null,
+      }));
+      const activeDecisions = decisions.filter(
+        (d) => d.status === "open" || d.status === "in_progress" || d.status === "overdue",
+      );
+      const overdueDecisions = activeDecisions.filter((d) => {
+        if (d.status === "overdue") return true;
+        if (!d.due_date) return false;
+        return new Date(`${d.due_date}T00:00:00`).getTime() < todayStart.getTime();
+      });
+      const nextDecision = activeDecisions
+        .filter((d) => d.due_date)
+        .sort(
+          (a, b) =>
+            new Date(`${a.due_date}T00:00:00`).getTime() -
+            new Date(`${b.due_date}T00:00:00`).getTime(),
+        )[0];
       return {
         id: p.id,
         job_number: p.job_number,
@@ -309,6 +352,7 @@ export const listProjects = createServerFn({ method: "GET" })
         forecasted_final_contract: r.forecastedFinalContract,
         forecasted_final_cost: r.forecastedFinalCost,
         forecasted_gp_before_holds: r.forecastedGPBeforeHolds,
+        original_gp: r.originalGP,
         indicated_gp: r.indicatedGP,
         indicated_gp_pct: r.indicatedGPpct,
         original_gp_pct: r.originalGPpct,
@@ -320,6 +364,13 @@ export const listProjects = createServerFn({ method: "GET" })
         warning_count: warnings.length,
         days_since_review: daysSinceReview,
         top_category: topCat,
+        top_exposure_title: topExposure?.title ?? "",
+        top_exposure_value: topExposure ? remainingExposureValue(topExposure) : 0,
+        top_exposure_hold_class: topExposure?.hold_class ?? null,
+        top_exposure_owner: topExposure?.owner ?? "",
+        active_decision_count: activeDecisions.length,
+        overdue_decision_count: overdueDecisions.length,
+        next_decision_due: nextDecision?.due_date ?? null,
       };
     });
   });
