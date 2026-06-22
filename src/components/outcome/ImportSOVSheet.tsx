@@ -173,8 +173,9 @@ export function ImportSOVSheet({
         <SheetHeader>
           <SheetTitle className="font-serif text-2xl">Import Schedule of Values</SheetTitle>
           <SheetDescription>
-            CSV from QuickBooks, an Excel file, or pasted cells from any spreadsheet. We'll
-            auto-detect the columns and you confirm the mapping before anything is created.
+            CSV from QuickBooks, builder estimate exports, Excel files, or pasted cells from any
+            spreadsheet. We'll auto-detect the columns and you confirm the mapping before anything
+            is created.
           </SheetDescription>
         </SheetHeader>
 
@@ -189,10 +190,10 @@ export function ImportSOVSheet({
                 <div>
                   Optional: Actual to date and FTC. If FTC is blank, it becomes Budget minus Actual.
                 </div>
+                <div>Recommended: include Cost code so future imports update the right line.</div>
                 <div>
-                  Recommended: include Cost code so future imports can update the right line.
+                  Estimate reports are OK. Repeated cost-code line items will roll into one bucket.
                 </div>
-                <div>Do not include subtotal, grand total, summary, or blank rows.</div>
                 <div>
                   Excel imports use the first worksheet; move the SOV tab first before uploading.
                 </div>
@@ -225,8 +226,8 @@ export function ImportSOVSheet({
                 onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
               />
               <Tip>
-                We read the first sheet only. If your SOV is on a tab named differently, move it to
-                the first tab before exporting.
+                We read the first sheet only. For BuilderTrend-style estimate reports, Builder Cost
+                becomes the cost budget and repeated cost codes are grouped automatically.
               </Tip>
             </TabsContent>
 

@@ -290,11 +290,15 @@ const HEADER_HINTS: Record<Exclude<FieldKey, "ignore">, RegExp[]> = {
     /division/i,
     /trade/i,
     /scope/i,
+    /^title$/i,
     /description/i,
     /^item$/i,
     /^name$/i,
   ],
   original_budget: [
+    /builder\s*cost/i,
+    /estimated?\s*cost/i,
+    /budgeted\s*cost/i,
     /scheduled\s*value/i,
     /original/i,
     /^budget$/i,
@@ -336,6 +340,27 @@ export function guessColumnMap(matrix: Matrix, hasHeader: boolean): ColumnMap {
   };
 
   if (hasHeader) {
+    const findHeader = (patterns: RegExp[]) => {
+      for (let i = 0; i < ncols; i++) {
+        const cell = (headerRow[i] ?? "").trim();
+        if (patterns.some((re) => re.test(cell))) return i;
+      }
+      return -1;
+    };
+
+    // BuilderTrend/estimate exports commonly contain cost-code line items with
+    // "Builder Cost" as the construction-cost basis and "Client Price" as the
+    // marked-up owner price. Prefer those explicit columns before the generic
+    // fallback has a chance to mistake Quantity or Unit Cost for the budget.
+    const estimateCostCode = findHeader([/^cost\s*code$/i]);
+    const estimateTitle = findHeader([/^title$/i, /^description$/i]);
+    const estimateBudget = findHeader([/^builder\s*cost$/i, /^estimated?\s*cost$/i]);
+    if (estimateCostCode >= 0 && estimateBudget >= 0) {
+      tryAssign(estimateCostCode, "cost_code");
+      if (estimateTitle >= 0) tryAssign(estimateTitle, "bucket");
+      tryAssign(estimateBudget, "original_budget");
+    }
+
     for (let i = 0; i < ncols; i++) {
       const cell = (headerRow[i] ?? "").trim();
       for (const [field, patterns] of Object.entries(HEADER_HINTS) as [
@@ -391,6 +416,13 @@ export function parseNumber(s: string): number | null {
   return isNeg ? -n : n;
 }
 
+const splitCostCodeLabel = (value: string): { code: string; label: string } | null => {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^([A-Za-z]?\d[\w.-]*)\s+(.+)$/);
+  if (!match) return null;
+  return { code: match[1].trim(), label: match[2].trim() };
+};
+
 export function missingRequiredMappings(map: ColumnMap): string[] {
   const fields = Object.values(map);
   const missing: string[] = [];
@@ -425,8 +457,11 @@ export function applyMapping(
       const idx = Object.entries(map).find(([, f]) => f === field)?.[0];
       return idx == null ? "" : (r[Number(idx)] ?? "");
     };
-    const costCode = get("cost_code").trim();
-    const bucket = get("bucket").trim();
+    const costCodeRaw = get("cost_code").trim();
+    const codeParts = splitCostCodeLabel(costCodeRaw);
+    const costCode = codeParts?.code ?? costCodeRaw;
+    const bucketRaw = get("bucket").trim();
+    const bucket = codeParts?.label || bucketRaw;
     const budgetRaw = get("original_budget").trim();
     const actualRaw = get("actual_to_date").trim();
     const ftcRaw = get("ftc").trim();
@@ -478,26 +513,43 @@ export function applyMapping(
       reason,
     });
   }
-  const seenCodes = new Set<string>();
-  const seenNames = new Set<string>();
-  for (const row of out) {
-    if (!row.valid) continue;
+  return consolidateBucketRows(out);
+}
+
+function consolidateBucketRows(rows: BucketImportRow[]): BucketImportRow[] {
+  const consolidated: BucketImportRow[] = [];
+  const byKey = new Map<string, { row: BucketImportRow; count: number }>();
+
+  const makeKey = (row: BucketImportRow) => {
     const codeKey = row.cost_code.trim().toLowerCase();
-    if (codeKey) {
-      if (seenCodes.has(codeKey)) {
-        row.valid = false;
-        row.reason = "Duplicate cost code";
-      }
-      seenCodes.add(codeKey);
+    if (codeKey) return `code:${codeKey}`;
+    return `bucket:${row.bucket.trim().toLowerCase()}`;
+  };
+
+  for (const row of rows) {
+    if (!row.valid) {
+      consolidated.push(row);
       continue;
     }
 
-    const nameKey = row.bucket.trim().toLowerCase();
-    if (seenNames.has(nameKey)) {
-      row.valid = false;
-      row.reason = "Duplicate bucket name";
+    const key = makeKey(row);
+    const existing = byKey.get(key);
+    if (!existing) {
+      const clone = { ...row };
+      byKey.set(key, { row: clone, count: 1 });
+      consolidated.push(clone);
+      continue;
     }
-    seenNames.add(nameKey);
+
+    existing.row.original_budget += row.original_budget;
+    existing.row.actual_to_date += row.actual_to_date;
+    existing.row.ftc += row.ftc;
+    existing.row.actual_to_date_provided =
+      existing.row.actual_to_date_provided || row.actual_to_date_provided;
+    existing.row.ftc_provided = existing.row.ftc_provided || row.ftc_provided;
+    existing.count += 1;
+    existing.row.reason = `Merged ${existing.count} estimate lines.`;
   }
-  return out;
+
+  return consolidated;
 }

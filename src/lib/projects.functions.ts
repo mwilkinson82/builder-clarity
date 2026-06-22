@@ -1193,6 +1193,8 @@ const importBucketRow = z.object({
   source_note: z.string().max(500).default(""),
 });
 
+type ImportBucketRow = z.infer<typeof importBucketRow>;
+
 const importInput = z.object({
   projectId: z.string().uuid(),
   mode: z.enum(["replace", "append"]).default("replace"),
@@ -1201,13 +1203,42 @@ const importInput = z.object({
 
 const normalizeImportKey = (value: string) => value.trim().toLowerCase();
 
+const consolidateImportRows = (rows: ImportBucketRow[]): ImportBucketRow[] => {
+  const consolidated: ImportBucketRow[] = [];
+  const byKey = new Map<string, ImportBucketRow>();
+
+  for (const row of rows) {
+    const codeKey = normalizeImportKey(row.cost_code);
+    const key = codeKey ? `code:${codeKey}` : `bucket:${normalizeImportKey(row.bucket)}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      const clone = { ...row };
+      byKey.set(key, clone);
+      consolidated.push(clone);
+      continue;
+    }
+
+    existing.original_budget += row.original_budget;
+    existing.actual_to_date += row.actual_to_date;
+    existing.ftc += row.ftc;
+    existing.actual_to_date_provided =
+      existing.actual_to_date_provided || row.actual_to_date_provided;
+    existing.ftc_provided = existing.ftc_provided || row.ftc_provided;
+    existing.source_note =
+      existing.source_note || row.source_note || "Merged duplicate estimate lines";
+  }
+
+  return consolidated;
+};
+
 export const importCostBuckets = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof importInput>) => importInput.parse(input))
   .handler(async ({ data, context }) => {
+    const importRows = consolidateImportRows(data.rows);
     const seenCodes = new Set<string>();
     const seenNames = new Set<string>();
-    for (const row of data.rows) {
+    for (const row of importRows) {
       const codeKey = normalizeImportKey(row.cost_code);
       if (codeKey) {
         if (seenCodes.has(codeKey)) {
@@ -1243,7 +1274,7 @@ export const importCostBuckets = createServerFn({ method: "POST" })
     let inserted = 0;
     let updated = 0;
     const today = new Date().toISOString().slice(0, 10);
-    const rowsForInsert = data.rows.map((r, i) => ({
+    const rowsForInsert = importRows.map((r, i) => ({
       project_id: data.projectId,
       cost_code: r.cost_code.trim(),
       bucket: r.bucket,
@@ -1279,7 +1310,7 @@ export const importCostBuckets = createServerFn({ method: "POST" })
       let nextOrder =
         (existingRows ?? []).reduce((max, row) => Math.max(max, num(row.sort_order)), 0) + 1;
 
-      for (const incoming of data.rows) {
+      for (const incoming of importRows) {
         const codeKey = normalizeImportKey(incoming.cost_code);
         const nameKey = normalizeImportKey(incoming.bucket);
         const match = (codeKey ? byCode.get(codeKey) : null) ?? byName.get(nameKey);
