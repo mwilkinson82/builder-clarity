@@ -1081,7 +1081,7 @@ function InviteByMagicLinkButton() {
                           onValueChange={(v) =>
                             projectAccessMutation.mutate({
                               membershipId: member.id,
-                              status: v as MemberStatus,
+                              status: v as Exclude<MemberStatus, "pending">,
                             })
                           }
                         >
