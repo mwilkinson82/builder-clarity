@@ -473,56 +473,77 @@ export type Database = {
       }
       daily_reports: {
         Row: {
+          attachment_bytes: number
+          attachment_count: number
+          attachment_manifest: Json
           attachment_name: string
           attachment_path: string
           attachment_type: string
           author: string
+          client_visible: boolean
           created_at: string
           created_by: string
           crew_count: number
           delays: string
           id: string
+          manpower: string
           notes: string
           project_id: string
+          quality_notes: string
           report_date: string
           safety_notes: string
           updated_at: string
+          visitors: string
           weather: string
           work_performed: string
         }
         Insert: {
+          attachment_bytes?: number
+          attachment_count?: number
+          attachment_manifest?: Json
           attachment_name?: string
           attachment_path?: string
           attachment_type?: string
           author?: string
+          client_visible?: boolean
           created_at?: string
           created_by?: string
           crew_count?: number
           delays?: string
           id?: string
+          manpower?: string
           notes?: string
           project_id: string
+          quality_notes?: string
           report_date?: string
           safety_notes?: string
           updated_at?: string
+          visitors?: string
           weather?: string
           work_performed?: string
         }
         Update: {
+          attachment_bytes?: number
+          attachment_count?: number
+          attachment_manifest?: Json
           attachment_name?: string
           attachment_path?: string
           attachment_type?: string
           author?: string
+          client_visible?: boolean
           created_at?: string
           created_by?: string
           crew_count?: number
           delays?: string
           id?: string
+          manpower?: string
           notes?: string
           project_id?: string
+          quality_notes?: string
           report_date?: string
           safety_notes?: string
           updated_at?: string
+          visitors?: string
           weather?: string
           work_performed?: string
         }

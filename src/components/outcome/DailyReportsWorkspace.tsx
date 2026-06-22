@@ -1,29 +1,42 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   deleteDailyReport,
   listDailyReports,
   upsertDailyReport,
+  type DailyReportAttachment,
   type DailyReportRow,
 } from "@/lib/daily-reports.functions";
 import {
   CalendarDays,
   CheckCircle2,
+  Download,
   ExternalLink,
+  Eye,
+  EyeOff,
   FileText,
   Image as ImageIcon,
-  Paperclip,
   Pencil,
   Save,
+  Search,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 
 const BUCKET = "daily-reports";
@@ -36,18 +49,29 @@ const ALLOWED_TYPES = new Set([
   "image/heic",
 ]);
 
+type VisibilityFilter = "all" | "client" | "internal";
+
 type DailyReportDraft = {
   report_date: string;
   author: string;
   weather: string;
   crew_count: string;
+  manpower: string;
   work_performed: string;
   delays: string;
   safety_notes: string;
+  visitors: string;
+  quality_notes: string;
   notes: string;
-  attachment_name: string;
-  attachment_path: string;
-  attachment_type: string;
+  client_visible: boolean;
+  attachment_manifest: DailyReportAttachment[];
+};
+
+type ReportFilters = {
+  search: string;
+  start: string;
+  end: string;
+  visibility: VisibilityFilter;
 };
 
 const localDate = () => {
@@ -61,13 +85,22 @@ const emptyDraft = (): DailyReportDraft => ({
   author: "",
   weather: "",
   crew_count: "0",
+  manpower: "",
   work_performed: "",
   delays: "",
   safety_notes: "",
+  visitors: "",
+  quality_notes: "",
   notes: "",
-  attachment_name: "",
-  attachment_path: "",
-  attachment_type: "",
+  client_visible: false,
+  attachment_manifest: [],
+});
+
+const emptyFilters = (): ReportFilters => ({
+  search: "",
+  start: "",
+  end: "",
+  visibility: "all",
 });
 
 function formatDate(value: string) {
@@ -91,20 +124,61 @@ function isImage(type: string) {
   return type.startsWith("image/");
 }
 
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return bytes > 0 ? `${bytes} B` : "0 MB";
+}
+
 function reportToDraft(report: DailyReportRow): DailyReportDraft {
   return {
     report_date: report.report_date,
     author: report.author,
     weather: report.weather,
     crew_count: String(report.crew_count),
+    manpower: report.manpower,
     work_performed: report.work_performed,
     delays: report.delays,
     safety_notes: report.safety_notes,
+    visitors: report.visitors,
+    quality_notes: report.quality_notes,
     notes: report.notes,
-    attachment_name: report.attachment_name,
-    attachment_path: report.attachment_path,
-    attachment_type: report.attachment_type,
+    client_visible: report.client_visible,
+    attachment_manifest: report.attachment_manifest,
   };
+}
+
+function buildDailyReportPacket(reports: DailyReportRow[], projectId: string) {
+  const generated = new Date().toLocaleString("en-US");
+  const entries = reports
+    .map((report) => {
+      const attachments =
+        report.attachment_manifest.map((a) => `- ${a.name}`).join("\n") || "- None";
+      return [
+        `## ${formatDate(report.report_date)}`,
+        `Author: ${report.author || "-"}`,
+        `Client visible: ${report.client_visible ? "Yes" : "No"}`,
+        `Crew count: ${report.crew_count}`,
+        `Weather: ${report.weather || "-"}`,
+        `Manpower: ${report.manpower || "-"}`,
+        `Work performed: ${report.work_performed || "-"}`,
+        `Delays / blockers: ${report.delays || "-"}`,
+        `Visitors / inspections: ${report.visitors || "-"}`,
+        `Safety notes: ${report.safety_notes || "-"}`,
+        `Quality notes: ${report.quality_notes || "-"}`,
+        `Internal notes: ${report.notes || "-"}`,
+        "Attachments:",
+        attachments,
+      ].join("\n\n");
+    })
+    .join("\n\n---\n\n");
+
+  return [
+    `# Daily Reports Packet`,
+    `Project ID: ${projectId}`,
+    `Generated: ${generated}`,
+    entries,
+  ].join("\n\n");
 }
 
 export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
@@ -114,7 +188,10 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<DailyReportDraft>(() => emptyDraft());
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [removedAttachmentPaths, setRemovedAttachmentPaths] = useState<string[]>([]);
+  const [filters, setFilters] = useState<ReportFilters>(() => emptyFilters());
 
   const {
     data: reports = [],
@@ -125,76 +202,129 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
     queryFn: () => listFn({ data: { projectId } }),
   });
 
+  const filteredReports = useMemo(() => {
+    const query = filters.search.trim().toLowerCase();
+    return reports.filter((report) => {
+      if (filters.start && report.report_date < filters.start) return false;
+      if (filters.end && report.report_date > filters.end) return false;
+      if (filters.visibility === "client" && !report.client_visible) return false;
+      if (filters.visibility === "internal" && report.client_visible) return false;
+      if (!query) return true;
+      const haystack = [
+        report.report_date,
+        report.author,
+        report.weather,
+        report.manpower,
+        report.work_performed,
+        report.delays,
+        report.safety_notes,
+        report.visitors,
+        report.quality_notes,
+        report.notes,
+        ...report.attachment_manifest.map((attachment) => attachment.name),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [filters, reports]);
+
   const metrics = useMemo(() => {
-    const withAttachments = reports.filter((r) => r.attachment_path).length;
+    const attachmentCount = reports.reduce(
+      (sum, report) => sum + Math.max(report.attachment_count, report.attachment_manifest.length),
+      0,
+    );
+    const storageBytes = reports.reduce((sum, report) => sum + report.attachment_bytes, 0);
+    const clientVisibleCount = reports.filter((report) => report.client_visible).length;
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const lastWeekCount = reports.filter(
-      (r) => new Date(`${r.report_date}T12:00:00`) >= sevenDaysAgo,
+      (report) => new Date(`${report.report_date}T12:00:00`) >= sevenDaysAgo,
     ).length;
     return {
       count: reports.length,
       latest: reports[0]?.report_date ?? "",
-      withAttachments,
+      attachmentCount,
+      storageBytes,
+      clientVisibleCount,
       lastWeekCount,
     };
   }, [reports]);
 
   const resetForm = () => {
     setDraft(emptyDraft());
-    setFile(null);
+    setFiles([]);
+    setRemovedAttachmentPaths([]);
+    setFileInputKey((key) => key + 1);
     setEditingId(null);
   };
 
-  const uploadAttachment = async () => {
-    if (!file) {
-      return {
-        attachment_name: draft.attachment_name,
-        attachment_path: draft.attachment_path,
-        attachment_type: draft.attachment_type,
-      };
+  const uploadAttachments = async () => {
+    if (files.length === 0) return draft.attachment_manifest;
+
+    for (const file of files) {
+      if (!ALLOWED_TYPES.has(file.type)) {
+        throw new Error("Daily report uploads must be PDF, PNG, JPG, WebP, or HEIC.");
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        throw new Error("Daily report uploads must be 25 MB or smaller.");
+      }
     }
 
-    if (!ALLOWED_TYPES.has(file.type)) {
-      throw new Error("Daily report uploads must be PDF, PNG, JPG, WebP, or HEIC.");
-    }
-    if (file.size > MAX_FILE_SIZE) {
-      throw new Error("Daily report uploads must be 25 MB or smaller.");
+    const uploaded: DailyReportAttachment[] = [];
+    for (const file of files) {
+      const safeName = sanitizeFileName(file.name) || "daily-report";
+      const path = `${projectId}/${draft.report_date}/${crypto.randomUUID()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+      if (uploadError) throw new Error(uploadError.message);
+      uploaded.push({
+        name: file.name,
+        path,
+        type: file.type,
+        size: file.size,
+        uploaded_at: new Date().toISOString(),
+        client_visible: draft.client_visible,
+      });
     }
 
-    const safeName = sanitizeFileName(file.name) || "daily-report";
-    const path = `${projectId}/${draft.report_date}/${crypto.randomUUID()}-${safeName}`;
-    const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, file, {
-      contentType: file.type,
-      upsert: false,
-    });
-    if (uploadError) throw new Error(uploadError.message);
-
-    return {
-      attachment_name: file.name,
-      attachment_path: path,
-      attachment_type: file.type,
-    };
+    return [...draft.attachment_manifest, ...uploaded];
   };
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!draft.report_date) throw new Error("Choose a report date.");
-      const attachment = await uploadAttachment();
-      return upsertFn({
+      const attachmentManifest = await uploadAttachments();
+      const primaryAttachment = attachmentManifest[0];
+      const report = await upsertFn({
         data: {
           projectId,
           report_date: draft.report_date,
           author: draft.author,
           weather: draft.weather,
           crew_count: Number(draft.crew_count) || 0,
+          manpower: draft.manpower,
           work_performed: draft.work_performed,
           delays: draft.delays,
           safety_notes: draft.safety_notes,
+          visitors: draft.visitors,
+          quality_notes: draft.quality_notes,
           notes: draft.notes,
-          ...attachment,
+          client_visible: draft.client_visible,
+          attachment_manifest: attachmentManifest,
+          attachment_name: primaryAttachment?.name ?? "",
+          attachment_path: primaryAttachment?.path ?? "",
+          attachment_type: primaryAttachment?.type ?? "",
         },
       });
+
+      if (removedAttachmentPaths.length > 0) {
+        await supabase.storage.from(BUCKET).remove([...new Set(removedAttachmentPaths)]);
+      }
+
+      return report;
     },
     onSuccess: async (report) => {
       await qc.invalidateQueries({ queryKey: ["daily-reports", projectId] });
@@ -212,8 +342,10 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
 
   const deleteMutation = useMutation({
     mutationFn: async (report: DailyReportRow) => {
-      if (report.attachment_path) {
-        await supabase.storage.from(BUCKET).remove([report.attachment_path]);
+      const paths = new Set(report.attachment_manifest.map((attachment) => attachment.path));
+      if (report.attachment_path) paths.add(report.attachment_path);
+      if (paths.size > 0) {
+        await supabase.storage.from(BUCKET).remove([...paths]);
       }
       return deleteFn({ data: { id: report.id } });
     },
@@ -229,11 +361,10 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
     },
   });
 
-  const openAttachment = async (report: DailyReportRow) => {
-    if (!report.attachment_path) return;
+  const openAttachment = async (attachment: DailyReportAttachment) => {
     const { data, error: signedUrlError } = await supabase.storage
       .from(BUCKET)
-      .createSignedUrl(report.attachment_path, 600);
+      .createSignedUrl(attachment.path, 600);
     if (signedUrlError || !data?.signedUrl) {
       toast.error("Attachment could not open", {
         description: signedUrlError?.message ?? "Try again.",
@@ -245,8 +376,41 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
 
   const editReport = (report: DailyReportRow) => {
     setDraft(reportToDraft(report));
-    setFile(null);
+    setFiles([]);
+    setRemovedAttachmentPaths([]);
+    setFileInputKey((key) => key + 1);
     setEditingId(report.id);
+  };
+
+  const removeExistingAttachment = (path: string) => {
+    setDraft((current) => ({
+      ...current,
+      attachment_manifest: current.attachment_manifest.filter(
+        (attachment) => attachment.path !== path,
+      ),
+    }));
+    setRemovedAttachmentPaths((current) => (current.includes(path) ? current : [...current, path]));
+  };
+
+  const removePendingFile = (index: number) => {
+    setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  const exportFilteredReports = () => {
+    if (filteredReports.length === 0) {
+      toast.error("No reports to export", {
+        description: "Adjust the filters or add a daily report first.",
+      });
+      return;
+    }
+    const packet = buildDailyReportPacket(filteredReports, projectId);
+    const blob = new Blob([packet], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `daily-reports-${projectId.slice(0, 8)}-${localDate()}.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   };
 
   const missingTable =
@@ -264,18 +428,20 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
             </div>
             <h2 className="mt-2 font-serif text-4xl text-foreground">Job log by day.</h2>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Fill it out here or upload the signed PDF/photo packet. Every entry is stored by date
-              on this project.
+              Capture field activity, manpower, delays, visitors, safety and quality notes, and
+              signed PDF or photo documentation.
             </p>
           </div>
-          <div className="grid min-w-[280px] grid-cols-2 gap-2">
+          <div className="grid min-w-[320px] grid-cols-2 gap-2 xl:grid-cols-3">
             <DailyMetric label="Reports logged" value={String(metrics.count)} />
             <DailyMetric label="Last 7 days" value={String(metrics.lastWeekCount)} />
             <DailyMetric
               label="Latest report"
               value={metrics.latest ? formatDate(metrics.latest) : "-"}
             />
-            <DailyMetric label="Attachments" value={String(metrics.withAttachments)} />
+            <DailyMetric label="Client visible" value={String(metrics.clientVisibleCount)} />
+            <DailyMetric label="Attachments" value={String(metrics.attachmentCount)} />
+            <DailyMetric label="Storage used" value={formatBytes(metrics.storageBytes)} />
           </div>
         </div>
       </section>
@@ -302,14 +468,14 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
             <Input
               type="date"
               value={draft.report_date}
-              onChange={(e) => setDraft({ ...draft, report_date: e.target.value })}
+              onChange={(e) => setDraft((current) => ({ ...current, report_date: e.target.value }))}
             />
           </Field>
           <Field label="Author / PM">
             <Input
               value={draft.author}
               placeholder="PM, superintendent, or field lead"
-              onChange={(e) => setDraft({ ...draft, author: e.target.value })}
+              onChange={(e) => setDraft((current) => ({ ...current, author: e.target.value }))}
             />
           </Field>
           <Field label="Crew count">
@@ -317,7 +483,7 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
               type="number"
               min={0}
               value={draft.crew_count}
-              onChange={(e) => setDraft({ ...draft, crew_count: e.target.value })}
+              onChange={(e) => setDraft((current) => ({ ...current, crew_count: e.target.value }))}
             />
           </Field>
         </div>
@@ -327,23 +493,15 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
             <Input
               value={draft.weather}
               placeholder="Clear, rain delay, high heat, site access, etc."
-              onChange={(e) => setDraft({ ...draft, weather: e.target.value })}
+              onChange={(e) => setDraft((current) => ({ ...current, weather: e.target.value }))}
             />
           </Field>
-          <Field label="Attachment">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                type="file"
-                accept="application/pdf,image/png,image/jpeg,image/webp,image/heic"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              />
-              {(file || draft.attachment_name) && (
-                <div className="flex min-h-10 items-center gap-2 rounded-md border border-hairline bg-surface px-3 text-xs text-muted-foreground">
-                  <Paperclip className="h-3.5 w-3.5 shrink-0" />
-                  <span className="line-clamp-1">{file?.name || draft.attachment_name}</span>
-                </div>
-              )}
-            </div>
+          <Field label="Manpower by trade">
+            <Input
+              value={draft.manpower}
+              placeholder="3 carpenters, 2 electricians, 1 painter"
+              onChange={(e) => setDraft((current) => ({ ...current, manpower: e.target.value }))}
+            />
           </Field>
         </div>
 
@@ -353,7 +511,9 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
               rows={4}
               value={draft.work_performed}
               placeholder="What happened on site today?"
-              onChange={(e) => setDraft({ ...draft, work_performed: e.target.value })}
+              onChange={(e) =>
+                setDraft((current) => ({ ...current, work_performed: e.target.value }))
+              }
             />
           </Field>
           <Field label="Delays / blockers">
@@ -361,7 +521,15 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
               rows={4}
               value={draft.delays}
               placeholder="Schedule slippage, missing information, trade issues, owner decisions, inspections."
-              onChange={(e) => setDraft({ ...draft, delays: e.target.value })}
+              onChange={(e) => setDraft((current) => ({ ...current, delays: e.target.value }))}
+            />
+          </Field>
+          <Field label="Visitors / inspections">
+            <Textarea
+              rows={3}
+              value={draft.visitors}
+              placeholder="Client visits, inspectors, consultants, vendors, deliveries."
+              onChange={(e) => setDraft((current) => ({ ...current, visitors: e.target.value }))}
             />
           </Field>
           <Field label="Safety notes">
@@ -369,17 +537,84 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
               rows={3}
               value={draft.safety_notes}
               placeholder="Incidents, inspections, toolbox talks, safety holds."
-              onChange={(e) => setDraft({ ...draft, safety_notes: e.target.value })}
+              onChange={(e) =>
+                setDraft((current) => ({ ...current, safety_notes: e.target.value }))
+              }
             />
           </Field>
-          <Field label="General notes">
+          <Field label="Quality notes">
+            <Textarea
+              rows={3}
+              value={draft.quality_notes}
+              placeholder="Defects, punch items, rework, inspection quality notes."
+              onChange={(e) =>
+                setDraft((current) => ({ ...current, quality_notes: e.target.value }))
+              }
+            />
+          </Field>
+          <Field label="Internal notes">
             <Textarea
               rows={3}
               value={draft.notes}
-              placeholder="Anything that should survive into the project record."
-              onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+              placeholder="Private PM notes that should stay in the project record."
+              onChange={(e) => setDraft((current) => ({ ...current, notes: e.target.value }))}
             />
           </Field>
+        </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+          <Field label="Attachments">
+            <div className="space-y-3">
+              <Input
+                key={fileInputKey}
+                type="file"
+                multiple
+                accept="application/pdf,image/png,image/jpeg,image/webp,image/heic"
+                onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+              />
+              {files.length > 0 && (
+                <AttachmentList
+                  title="Ready to upload"
+                  attachments={files.map((file) => ({
+                    name: file.name,
+                    path: file.name,
+                    type: file.type,
+                    size: file.size,
+                    uploaded_at: "",
+                    client_visible: draft.client_visible,
+                  }))}
+                  onRemove={(_, index) => removePendingFile(index)}
+                />
+              )}
+              {draft.attachment_manifest.length > 0 && (
+                <AttachmentList
+                  title="Stored on this report"
+                  attachments={draft.attachment_manifest}
+                  onRemove={(attachment) => removeExistingAttachment(attachment.path)}
+                />
+              )}
+            </div>
+          </Field>
+
+          <div className="rounded-md border border-hairline bg-surface p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <Label htmlFor="client-visible-daily-log" className="text-sm font-medium">
+                  Client visible
+                </Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Marks this day for the future client portal and client packet exports.
+                </p>
+              </div>
+              <Switch
+                id="client-visible-daily-log"
+                checked={draft.client_visible}
+                onCheckedChange={(checked) =>
+                  setDraft((current) => ({ ...current, client_visible: checked }))
+                }
+              />
+            </div>
+          </div>
         </div>
 
         <div className="mt-5 flex justify-end">
@@ -388,7 +623,11 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
             disabled={saveMutation.isPending}
             className="gap-1.5"
           >
-            {file ? <Upload className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}
+            {files.length > 0 ? (
+              <Upload className="h-3.5 w-3.5" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}
             {saveMutation.isPending
               ? "Saving..."
               : editingId
@@ -399,12 +638,52 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
       </section>
 
       <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <h3 className="font-serif text-2xl text-foreground">Daily report history</h3>
             <p className="text-sm text-muted-foreground">
-              Date-sorted project record for meeting review and job documentation.
+              Date-sorted project record for meeting review, dispute support, and job documentation.
             </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-[minmax(190px,1fr)_140px_140px_150px_auto]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={filters.search}
+                placeholder="Search reports"
+                className="pl-9"
+                onChange={(e) => setFilters((current) => ({ ...current, search: e.target.value }))}
+              />
+            </div>
+            <Input
+              type="date"
+              value={filters.start}
+              onChange={(e) => setFilters((current) => ({ ...current, start: e.target.value }))}
+            />
+            <Input
+              type="date"
+              value={filters.end}
+              onChange={(e) => setFilters((current) => ({ ...current, end: e.target.value }))}
+            />
+            <Select
+              value={filters.visibility}
+              onValueChange={(value) =>
+                setFilters((current) => ({ ...current, visibility: value as VisibilityFilter }))
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All reports</SelectItem>
+                <SelectItem value="client">Client visible</SelectItem>
+                <SelectItem value="internal">Internal only</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline" className="gap-1.5" onClick={exportFilteredReports}>
+              <Download className="h-3.5 w-3.5" />
+              Export
+            </Button>
           </div>
         </div>
 
@@ -420,13 +699,17 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
           <div className="rounded-md border border-dashed border-hairline bg-surface p-8 text-center text-sm text-muted-foreground">
             No daily reports logged yet.
           </div>
+        ) : filteredReports.length === 0 ? (
+          <div className="rounded-md border border-dashed border-hairline bg-surface p-8 text-center text-sm text-muted-foreground">
+            No daily reports match the current filters.
+          </div>
         ) : (
           <div className="space-y-3">
-            {reports.map((report) => (
+            {filteredReports.map((report) => (
               <DailyReportItem
                 key={report.id}
                 report={report}
-                onOpen={() => openAttachment(report)}
+                onOpenAttachment={openAttachment}
                 onEdit={() => editReport(report)}
                 onDelete={() => {
                   if (confirm(`Delete the daily report for ${formatDate(report.report_date)}?`)) {
@@ -465,20 +748,60 @@ function DailyMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function AttachmentList({
+  title,
+  attachments,
+  onRemove,
+}: {
+  title: string;
+  attachments: DailyReportAttachment[];
+  onRemove: (attachment: DailyReportAttachment, index: number) => void;
+}) {
+  return (
+    <div className="rounded-md border border-hairline bg-surface p-3">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {title}
+      </div>
+      <div className="grid gap-2">
+        {attachments.map((attachment, index) => {
+          const AttachmentIcon = isImage(attachment.type) ? ImageIcon : FileText;
+          return (
+            <div
+              key={`${attachment.path}-${index}`}
+              className="flex min-w-0 items-center gap-2 rounded-md border border-hairline bg-card px-3 py-2 text-xs text-muted-foreground"
+            >
+              <AttachmentIcon className="h-3.5 w-3.5 shrink-0 text-accent" />
+              <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+              <span className="shrink-0 tabular">{formatBytes(attachment.size)}</span>
+              <button
+                type="button"
+                aria-label={`Remove ${attachment.name}`}
+                onClick={() => onRemove(attachment, index)}
+                className="rounded p-1 hover:bg-background"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function DailyReportItem({
   report,
-  onOpen,
+  onOpenAttachment,
   onEdit,
   onDelete,
   deleting,
 }: {
   report: DailyReportRow;
-  onOpen: () => void;
+  onOpenAttachment: (attachment: DailyReportAttachment) => void;
   onEdit: () => void;
   onDelete: () => void;
   deleting: boolean;
 }) {
-  const AttachmentIcon = isImage(report.attachment_type) ? ImageIcon : FileText;
   return (
     <article className="grid gap-4 rounded-md border border-hairline bg-surface p-4 lg:grid-cols-[180px_minmax(0,1fr)_auto]">
       <div>
@@ -489,27 +812,44 @@ function DailyReportItem({
           <div>{report.author || "No author recorded"}</div>
           <div>
             {report.crew_count} crew{report.crew_count === 1 ? "" : "s"}
-            {report.weather ? ` · ${report.weather}` : ""}
+            {report.weather ? ` - ${report.weather}` : ""}
+          </div>
+          <div
+            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${
+              report.client_visible
+                ? "border-success/25 bg-success/10 text-success"
+                : "border-hairline bg-card text-muted-foreground"
+            }`}
+          >
+            {report.client_visible ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+            {report.client_visible ? "Client visible" : "Internal"}
           </div>
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         <ReportSnippet label="Work performed" value={report.work_performed} />
+        <ReportSnippet label="Manpower" value={report.manpower} />
         <ReportSnippet label="Delays / blockers" value={report.delays} tone="danger" />
+        <ReportSnippet label="Visitors" value={report.visitors} />
         <ReportSnippet label="Safety" value={report.safety_notes} />
-        <ReportSnippet label="Notes" value={report.notes} />
-        {report.attachment_path && (
-          <button
-            type="button"
-            onClick={onOpen}
-            className="flex items-center gap-2 rounded-md border border-hairline bg-card px-3 py-2 text-left text-sm hover:bg-background"
-          >
-            <AttachmentIcon className="h-4 w-4 shrink-0 text-accent" />
-            <span className="min-w-0 flex-1 truncate">{report.attachment_name}</span>
-            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          </button>
-        )}
+        <ReportSnippet label="Quality" value={report.quality_notes} />
+        <ReportSnippet label="Internal notes" value={report.notes} />
+        {report.attachment_manifest.map((attachment, index) => {
+          const AttachmentIcon = isImage(attachment.type) ? ImageIcon : FileText;
+          return (
+            <button
+              key={`${attachment.path}-${index}`}
+              type="button"
+              onClick={() => onOpenAttachment(attachment)}
+              className="flex min-w-0 items-center gap-2 rounded-md border border-hairline bg-card px-3 py-2 text-left text-sm hover:bg-background"
+            >
+              <AttachmentIcon className="h-4 w-4 shrink-0 text-accent" />
+              <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+              <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            </button>
+          );
+        })}
       </div>
 
       <div className="flex items-start justify-end gap-1">
