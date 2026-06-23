@@ -618,7 +618,7 @@ function TeamPage() {
                             onValueChange={(value) =>
                               memberMutation.mutate({
                                 membershipId: member.id,
-                                status: value as MemberStatus,
+                                status: value as "active" | "disabled",
                               })
                             }
                           >
