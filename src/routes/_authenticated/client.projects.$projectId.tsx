@@ -11,6 +11,7 @@ import {
   getClientPortalProject,
   recordClientChangeOrderDecision,
   type ChangeOrderApprovalRow,
+  type ClientPortalBillingApplication,
   type ClientPortalChangeOrder,
   type ClientPortalDailyReport,
   type ClientPortalDailyReportAttachment,
@@ -97,6 +98,19 @@ function ClientProjectPage() {
   const totals = useMemo(() => {
     const changeOrders = projectQuery.data?.changeOrders ?? [];
     const dailyReports = projectQuery.data?.dailyReports ?? [];
+    const billingApplications = projectQuery.data?.billingApplications ?? [];
+    const totalBilled = billingApplications.reduce(
+      (total: number, app: ClientPortalBillingApplication) => total + app.amount_billed,
+      0,
+    );
+    const paidToDate = billingApplications.reduce(
+      (total: number, app: ClientPortalBillingApplication) => total + app.paid_to_date,
+      0,
+    );
+    const retainage = billingApplications.reduce(
+      (total: number, app: ClientPortalBillingApplication) => total + app.retainage,
+      0,
+    );
     return {
       visible: changeOrders.length,
       amount: changeOrders.reduce(
@@ -107,8 +121,17 @@ function ClientProjectPage() {
         (co: ClientPortalChangeOrder) => co.client_status === "approved",
       ).length,
       dailyReports: dailyReports.length,
+      payApps: billingApplications.length,
+      totalBilled,
+      paidToDate,
+      retainage,
+      outstanding: Math.max(0, totalBilled - paidToDate - retainage),
     };
-  }, [projectQuery.data?.changeOrders, projectQuery.data?.dailyReports]);
+  }, [
+    projectQuery.data?.billingApplications,
+    projectQuery.data?.changeOrders,
+    projectQuery.data?.dailyReports,
+  ]);
 
   const signOut = async () => {
     await supabase.auth.signOut();
@@ -157,9 +180,11 @@ function ClientProjectPage() {
     );
   }
 
-  const { project, changeOrders, approvals, dailyReports, portalPermissions } = projectQuery.data;
+  const { project, changeOrders, approvals, billingApplications, dailyReports, portalPermissions } =
+    projectQuery.data;
   const canViewChangeOrders = portalPermissions?.canViewChangeOrders ?? true;
   const canViewDailyReports = portalPermissions?.canViewDailyReports ?? true;
+  const canViewBilling = portalPermissions?.canViewBilling ?? false;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -180,11 +205,12 @@ function ClientProjectPage() {
               <LogOut className="h-3.5 w-3.5" /> Sign out
             </Button>
           </div>
-          <dl className="mt-6 grid gap-3 md:grid-cols-5">
+          <dl className="mt-6 grid gap-3 md:grid-cols-6">
             <ClientMetric label="Client" value={project.client || "Project client"} />
             <ClientMetric label="Job #" value={project.job_number || "Not listed"} />
             <ClientMetric label="COs for review" value={String(totals.visible)} />
             <ClientMetric label="Shared CO value" value={fmtUSD(totals.amount)} />
+            <ClientMetric label="Pay apps" value={canViewBilling ? String(totals.payApps) : "Off"} />
             <ClientMetric
               label="Daily reports"
               value={canViewDailyReports ? String(totals.dailyReports) : "Off"}
@@ -329,6 +355,98 @@ function ClientProjectPage() {
                   </article>
                 );
               })
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+          <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="font-serif text-3xl">Billing shared with client</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Pay application status, payment posture, retainage, and open balance.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            {!canViewBilling ? (
+              <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
+                Billing is not enabled for this client seat yet.
+              </div>
+            ) : billingApplications.length === 0 ? (
+              <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
+                No pay applications are currently shared with you.
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <dl className="grid gap-3 md:grid-cols-4">
+                  <ClientMetric label="Billed to date" value={fmtUSD(totals.totalBilled)} />
+                  <ClientMetric label="Paid to date" value={fmtUSD(totals.paidToDate)} />
+                  <ClientMetric label="Retainage" value={fmtUSD(totals.retainage)} />
+                  <ClientMetric label="Outstanding" value={fmtUSD(totals.outstanding)} />
+                </dl>
+                <div className="overflow-x-auto rounded-md border border-hairline">
+                  <table className="w-full min-w-[760px] text-sm">
+                    <thead className="bg-muted/45 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-3">Pay app</th>
+                        <th className="px-3 py-3">Invoice</th>
+                        <th className="px-3 py-3">Submitted / due</th>
+                        <th className="px-3 py-3 text-right">Billed</th>
+                        <th className="px-3 py-3 text-right">Paid</th>
+                        <th className="px-3 py-3 text-right">Retainage</th>
+                        <th className="px-3 py-3 text-right">Open</th>
+                        <th className="px-3 py-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {billingApplications.map((app: ClientPortalBillingApplication) => {
+                        const open = Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
+                        return (
+                          <tr key={app.id} className="border-t border-hairline">
+                            <td className="px-3 py-3 align-top">
+                              <div className="font-medium text-foreground">
+                                {app.application_number || "Pay application"}
+                              </div>
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {app.billing_period || "Current billing cycle"}
+                              </div>
+                            </td>
+                            <td className="px-3 py-3 align-top">
+                              {app.invoice_number || "Not issued"}
+                            </td>
+                            <td className="px-3 py-3 align-top text-xs text-muted-foreground">
+                              <div>
+                                Submitted{" "}
+                                {app.submitted_date ? formatClientDate(app.submitted_date) : "not set"}
+                              </div>
+                              <div>Due {app.due_date ? formatClientDate(app.due_date) : "not set"}</div>
+                            </td>
+                            <td className="px-3 py-3 text-right align-top tabular">
+                              {fmtUSD(app.amount_billed)}
+                            </td>
+                            <td className="px-3 py-3 text-right align-top tabular">
+                              {fmtUSD(app.paid_to_date)}
+                            </td>
+                            <td className="px-3 py-3 text-right align-top tabular">
+                              {fmtUSD(app.retainage)}
+                            </td>
+                            <td className="px-3 py-3 text-right align-top tabular font-medium">
+                              {fmtUSD(open)}
+                            </td>
+                            <td className="px-3 py-3 align-top">
+                              <span className="inline-flex rounded-md border border-hairline bg-muted/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]">
+                                {app.status}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             )}
           </div>
         </section>

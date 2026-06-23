@@ -34,6 +34,17 @@ interface ClientPortalWorkspaceProps {
   projectId: string;
 }
 
+type AccessPermissionField =
+  | "can_view_change_orders"
+  | "can_view_daily_reports"
+  | "can_view_billing";
+
+interface AccessPermissionInput {
+  accessId: string;
+  field: AccessPermissionField;
+  value: boolean;
+}
+
 const blankContact = {
   name: "",
   email: "",
@@ -176,15 +187,8 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
   });
 
   const accessPermissionMutation = useMutation({
-    mutationFn: (input: {
-      accessId: string;
-      patch: Partial<
-        Pick<
-          ProjectClientAccessRow,
-          "can_view_change_orders" | "can_view_daily_reports" | "can_view_billing"
-        >
-      >;
-    }) => updateAccess({ data: { accessId: input.accessId, ...input.patch } }),
+    mutationFn: (input: AccessPermissionInput) =>
+      updateAccess({ data: { accessId: input.accessId, [input.field]: input.value } }),
     onSuccess: async () => {
       await invalidate();
       toast.success("Client permissions updated");
@@ -201,6 +205,12 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
   }, [projectId]);
 
   const data = portalQuery.data;
+  const savingPermissionKey =
+    accessPermissionMutation.isPending && accessPermissionMutation.variables
+      ? `${accessPermissionMutation.variables.accessId}:${accessPermissionMutation.variables.field}`
+      : "";
+  const isPermissionSaving = (accessId: string, field: AccessPermissionField) =>
+    savingPermissionKey === `${accessId}:${field}`;
   const accessByEmail = useMemo(() => {
     const map = new Map<string, ProjectClientAccessRow>();
     for (const access of data?.access ?? []) map.set(access.email.toLowerCase(), access);
@@ -428,7 +438,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
               data.access.map((access: ProjectClientAccessRow) => (
                 <div
                   key={access.id}
-                  className="grid gap-3 border-b border-hairline p-4 text-sm last:border-b-0 md:grid-cols-[minmax(0,1fr)_minmax(280px,360px)_110px_150px]"
+                  className="grid gap-3 border-b border-hairline p-4 text-sm last:border-b-0 xl:grid-cols-[minmax(0,1fr)_auto]"
                 >
                   <div className="min-w-0">
                     <div className="truncate font-medium text-foreground">{access.email}</div>
@@ -437,63 +447,68 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
                       {access.last_sent_at ? access.last_sent_at.slice(0, 10) : "not sent"}
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <PermissionButton
-                      label="COs"
-                      active={access.can_view_change_orders}
-                      disabled={accessPermissionMutation.isPending}
-                      onClick={() =>
-                        accessPermissionMutation.mutate({
-                          accessId: access.id,
-                          patch: { can_view_change_orders: !access.can_view_change_orders },
-                        })
-                      }
-                    />
-                    <PermissionButton
-                      label="Daily"
-                      active={access.can_view_daily_reports}
-                      disabled={accessPermissionMutation.isPending}
-                      onClick={() =>
-                        accessPermissionMutation.mutate({
-                          accessId: access.id,
-                          patch: { can_view_daily_reports: !access.can_view_daily_reports },
-                        })
-                      }
-                    />
-                    <PermissionButton
-                      label="Billing"
-                      active={access.can_view_billing}
-                      disabled={accessPermissionMutation.isPending}
-                      onClick={() =>
-                        accessPermissionMutation.mutate({
-                          accessId: access.id,
-                          patch: { can_view_billing: !access.can_view_billing },
-                        })
-                      }
-                    />
-                  </div>
-                  <span className="rounded-full border border-hairline px-2.5 py-1 text-center text-xs font-semibold uppercase tracking-[0.12em]">
-                    {access.status}
-                  </span>
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={sendLinkMutation.isPending}
-                      onClick={() => sendLinkMutation.mutate(access)}
-                    >
-                      Send link
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      disabled={revokeAccessMutation.isPending}
-                      onClick={() => revokeAccessMutation.mutate(access.id)}
-                    >
-                      Revoke
-                    </Button>
+                  <div className="flex flex-col gap-2 xl:items-end">
+                    <div className="flex flex-wrap gap-2">
+                      <PermissionButton
+                        label="COs"
+                        active={access.can_view_change_orders}
+                        disabled={isPermissionSaving(access.id, "can_view_change_orders")}
+                        onClick={() =>
+                          accessPermissionMutation.mutate({
+                            accessId: access.id,
+                            field: "can_view_change_orders",
+                            value: !access.can_view_change_orders,
+                          })
+                        }
+                      />
+                      <PermissionButton
+                        label="Daily"
+                        active={access.can_view_daily_reports}
+                        disabled={isPermissionSaving(access.id, "can_view_daily_reports")}
+                        onClick={() =>
+                          accessPermissionMutation.mutate({
+                            accessId: access.id,
+                            field: "can_view_daily_reports",
+                            value: !access.can_view_daily_reports,
+                          })
+                        }
+                      />
+                      <PermissionButton
+                        label="Billing"
+                        active={access.can_view_billing}
+                        disabled={isPermissionSaving(access.id, "can_view_billing")}
+                        onClick={() =>
+                          accessPermissionMutation.mutate({
+                            accessId: access.id,
+                            field: "can_view_billing",
+                            value: !access.can_view_billing,
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                      <span className="inline-flex h-8 w-fit items-center justify-center rounded-md border border-hairline px-2.5 text-xs font-semibold uppercase tracking-[0.12em]">
+                        {access.status}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={sendLinkMutation.isPending}
+                        onClick={() => sendLinkMutation.mutate(access)}
+                      >
+                        Send link
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={revokeAccessMutation.isPending}
+                        onClick={() => revokeAccessMutation.mutate(access.id)}
+                      >
+                        Revoke
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ))
