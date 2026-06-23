@@ -193,13 +193,13 @@ Deliverables:
 These are the next repo-backed moves after the SOV intake work:
 
 1. Run the Phase 0 smoke gate before each push/publish: `npm run smoke:phase0`, `npm run build`, then `npm run smoke:phase0:live` after Lovable publishes.
-2. Add daily report client packet export.
-3. Convert pay apps into an invoice lifecycle with status history.
-4. Add usage meters to the organization UI while keeping Contractor Circle grant access non-blocking.
-5. Add Stripe subscription and payment planning once the invoice data model is settled.
+2. Convert pay apps into an invoice lifecycle with status history.
+3. Add usage meters to the organization UI while keeping Contractor Circle grant access non-blocking.
+4. Add Stripe subscription and payment planning once the invoice data model is settled.
 
 Recently completed:
 
+- Daily report packet PDF export for internal filtered reports and client-visible portal reports.
 - Admin/support portfolio filters for company, PM, GP at risk, indicated GP, schedule variance, stale IOR review, and daily-report activity.
 
 ## Architecture Notes

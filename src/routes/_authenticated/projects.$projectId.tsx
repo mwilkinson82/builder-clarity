@@ -857,7 +857,7 @@ function ProjectPage() {
             </TabsContent>
 
             <TabsContent value="daily-reports" className="mt-0">
-              <DailyReportsWorkspace projectId={projectId} />
+              <DailyReportsWorkspace projectId={projectId} project={project} />
             </TabsContent>
 
             <TabsContent value="risk-tally" className="mt-0 space-y-6">

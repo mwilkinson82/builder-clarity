@@ -2,7 +2,15 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { CheckCircle2, ExternalLink, FileText, LogOut, MessageSquare, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  Download,
+  ExternalLink,
+  FileText,
+  LogOut,
+  MessageSquare,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,6 +24,7 @@ import {
   type ClientPortalDailyReport,
   type ClientPortalDailyReportAttachment,
 } from "@/lib/client-portal.functions";
+import { downloadPdfBytes, generateDailyReportPacketPdf } from "@/lib/daily-report-packet-pdf";
 import { fmtUSD } from "@/lib/format";
 
 const DAILY_REPORT_BUCKET = "daily-reports";
@@ -25,6 +34,14 @@ const clientDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   year: "numeric",
 });
+
+const safeFileName = (value: string) =>
+  value
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
 
 export const Route = createFileRoute("/_authenticated/client/projects/$projectId")({
   head: () => ({
@@ -66,6 +83,7 @@ function ClientProjectPage() {
   const loadProject = useServerFn(getClientPortalProject);
   const recordDecision = useServerFn(recordClientChangeOrderDecision);
   const [notesByCo, setNotesByCo] = useState<Record<string, string>>({});
+  const [exportingDailyPacket, setExportingDailyPacket] = useState(false);
 
   const projectQuery = useQuery({
     queryKey: ["client-portal-project", projectId],
@@ -151,6 +169,32 @@ function ClientProjectPage() {
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
+  const downloadDailyReportPacket = async () => {
+    const data = projectQuery.data;
+    if (!data || data.dailyReports.length === 0) {
+      toast.error("No daily reports to download");
+      return;
+    }
+
+    setExportingDailyPacket(true);
+    try {
+      const pdfBytes = await generateDailyReportPacketPdf({
+        project: data.project,
+        reports: data.dailyReports,
+        title: "Client Daily Report Packet",
+      });
+      const projectName = safeFileName(data.project.name || "overwatch-project");
+      downloadPdfBytes(pdfBytes, `${projectName}-daily-report-packet.pdf`);
+      toast.success("Daily report packet downloaded");
+    } catch (err) {
+      toast.error("Daily report packet did not download", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    } finally {
+      setExportingDailyPacket(false);
+    }
+  };
+
   if (projectQuery.isLoading) {
     return (
       <div className="min-h-screen bg-background px-6 py-10 text-foreground">
@@ -210,7 +254,10 @@ function ClientProjectPage() {
             <ClientMetric label="Job #" value={project.job_number || "Not listed"} />
             <ClientMetric label="COs for review" value={String(totals.visible)} />
             <ClientMetric label="Shared CO value" value={fmtUSD(totals.amount)} />
-            <ClientMetric label="Pay apps" value={canViewBilling ? String(totals.payApps) : "Off"} />
+            <ClientMetric
+              label="Pay apps"
+              value={canViewBilling ? String(totals.payApps) : "Off"}
+            />
             <ClientMetric
               label="Daily reports"
               value={canViewDailyReports ? String(totals.dailyReports) : "Off"}
@@ -402,7 +449,10 @@ function ClientProjectPage() {
                     </thead>
                     <tbody>
                       {billingApplications.map((app: ClientPortalBillingApplication) => {
-                        const open = Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
+                        const open = Math.max(
+                          0,
+                          app.amount_billed - app.paid_to_date - app.retainage,
+                        );
                         return (
                           <tr key={app.id} className="border-t border-hairline">
                             <td className="px-3 py-3 align-top">
@@ -419,9 +469,13 @@ function ClientProjectPage() {
                             <td className="px-3 py-3 align-top text-xs text-muted-foreground">
                               <div>
                                 Submitted{" "}
-                                {app.submitted_date ? formatClientDate(app.submitted_date) : "not set"}
+                                {app.submitted_date
+                                  ? formatClientDate(app.submitted_date)
+                                  : "not set"}
                               </div>
-                              <div>Due {app.due_date ? formatClientDate(app.due_date) : "not set"}</div>
+                              <div>
+                                Due {app.due_date ? formatClientDate(app.due_date) : "not set"}
+                              </div>
                             </td>
                             <td className="px-3 py-3 text-right align-top tabular">
                               {fmtUSD(app.amount_billed)}
@@ -459,6 +513,19 @@ function ClientProjectPage() {
                 Field updates marked client-visible by the project team.
               </p>
             </div>
+            {canViewDailyReports && dailyReports.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                disabled={exportingDailyPacket}
+                onClick={downloadDailyReportPacket}
+              >
+                <Download className="h-3.5 w-3.5" />
+                {exportingDailyPacket ? "Preparing..." : "Download packet"}
+              </Button>
+            )}
           </div>
 
           <div className="mt-6 space-y-3">

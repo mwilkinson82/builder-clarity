@@ -74,7 +74,10 @@ function expectSql(sql, patterns, label) {
   if (missing.length === 0) {
     pass(label);
   } else {
-    fail(label, `Missing migration token(s): ${missing.map((pattern) => pattern.toString()).join(", ")}`);
+    fail(
+      label,
+      `Missing migration token(s): ${missing.map((pattern) => pattern.toString()).join(", ")}`,
+    );
   }
 }
 
@@ -98,6 +101,7 @@ await expectFile("src/routes/_authenticated/index.tsx", "portfolio route");
 await expectFile("src/routes/_authenticated/projects.$projectId.tsx", "project route");
 await expectFile("src/routes/_authenticated/client.projects.$projectId.tsx", "client portal route");
 await expectFile("src/routes/_authenticated/team.tsx", "team workspace route");
+await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF generator");
 
 await expectContains(
   "src/routeTree.gen.ts",
@@ -160,10 +164,25 @@ await expectContains(
   [
     /supabase\.storage\.from\(BUCKET\)\.upload/,
     /client_visible/,
+    /generateDailyReportPacketPdf/,
+    /downloadPdfBytes/,
+    /Export PDF/,
     /toast\.success\(editingId \? "Daily report updated" : "Daily report saved"/,
     /toast\.success\("Daily report deleted"/,
   ],
-  "daily reports support attachments, client visibility, and user feedback",
+  "daily reports support attachments, client visibility, PDF packets, and user feedback",
+);
+
+await expectContains(
+  "src/routes/_authenticated/client.projects.$projectId.tsx",
+  [
+    /generateDailyReportPacketPdf/,
+    /downloadDailyReportPacket/,
+    /Download packet/,
+    /Billing shared with client/,
+    /Daily reports shared with client/,
+  ],
+  "client portal exposes shared daily reports, billing, and packet export",
 );
 
 await expectContains(
@@ -307,9 +326,16 @@ expectSql(
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");
-  await expectLiveRoute("/client/projects/00000000-0000-0000-0000-000000000000", [200, 302, 307, 308, 404], "custom domain client route is deployed");
+  await expectLiveRoute(
+    "/client/projects/00000000-0000-0000-0000-000000000000",
+    [200, 302, 307, 308, 404],
+    "custom domain client route is deployed",
+  );
 } else {
-  warn("live custom-domain checks skipped", "Run npm run smoke:phase0:live after Lovable publishes.");
+  warn(
+    "live custom-domain checks skipped",
+    "Run npm run smoke:phase0:live after Lovable publishes.",
+  );
 }
 
 const failed = checks.filter((check) => !check.ok);
@@ -325,6 +351,8 @@ for (const check of failed) {
   console.error(`✗ ${check.name}${check.detail ? ` — ${check.detail}` : ""}`);
 }
 
-console.log(`\nPhase 0 smoke: ${passed.length} passed, ${failed.length} failed, ${warnings.length} warning${warnings.length === 1 ? "" : "s"}.`);
+console.log(
+  `\nPhase 0 smoke: ${passed.length} passed, ${failed.length} failed, ${warnings.length} warning${warnings.length === 1 ? "" : "s"}.`,
+);
 
 if (failed.length > 0) process.exit(1);

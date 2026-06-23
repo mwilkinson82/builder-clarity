@@ -23,6 +23,11 @@ import {
   type DailyReportRow,
 } from "@/lib/daily-reports.functions";
 import {
+  downloadPdfBytes,
+  generateDailyReportPacketPdf,
+  type DailyReportPacketProject,
+} from "@/lib/daily-report-packet-pdf";
+import {
   CalendarDays,
   CheckCircle2,
   Download,
@@ -148,40 +153,13 @@ function reportToDraft(report: DailyReportRow): DailyReportDraft {
   };
 }
 
-function buildDailyReportPacket(reports: DailyReportRow[], projectId: string) {
-  const generated = new Date().toLocaleString("en-US");
-  const entries = reports
-    .map((report) => {
-      const attachments =
-        report.attachment_manifest.map((a) => `- ${a.name}`).join("\n") || "- None";
-      return [
-        `## ${formatDate(report.report_date)}`,
-        `Author: ${report.author || "-"}`,
-        `Client visible: ${report.client_visible ? "Yes" : "No"}`,
-        `Crew count: ${report.crew_count}`,
-        `Weather: ${report.weather || "-"}`,
-        `Manpower: ${report.manpower || "-"}`,
-        `Work performed: ${report.work_performed || "-"}`,
-        `Delays / blockers: ${report.delays || "-"}`,
-        `Visitors / inspections: ${report.visitors || "-"}`,
-        `Safety notes: ${report.safety_notes || "-"}`,
-        `Quality notes: ${report.quality_notes || "-"}`,
-        `Internal notes: ${report.notes || "-"}`,
-        "Attachments:",
-        attachments,
-      ].join("\n\n");
-    })
-    .join("\n\n---\n\n");
-
-  return [
-    `# Daily Reports Packet`,
-    `Project ID: ${projectId}`,
-    `Generated: ${generated}`,
-    entries,
-  ].join("\n\n");
-}
-
-export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
+export function DailyReportsWorkspace({
+  projectId,
+  project,
+}: {
+  projectId: string;
+  project?: DailyReportPacketProject;
+}) {
   const listFn = useServerFn(listDailyReports);
   const upsertFn = useServerFn(upsertDailyReport);
   const deleteFn = useServerFn(deleteDailyReport);
@@ -192,6 +170,7 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [removedAttachmentPaths, setRemovedAttachmentPaths] = useState<string[]>([]);
   const [filters, setFilters] = useState<ReportFilters>(() => emptyFilters());
+  const [exportingPacket, setExportingPacket] = useState(false);
 
   const {
     data: reports = [],
@@ -396,21 +375,38 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
     setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index));
   };
 
-  const exportFilteredReports = () => {
+  const exportFilteredReports = async () => {
     if (filteredReports.length === 0) {
       toast.error("No reports to export", {
         description: "Adjust the filters or add a daily report first.",
       });
       return;
     }
-    const packet = buildDailyReportPacket(filteredReports, projectId);
-    const blob = new Blob([packet], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `daily-reports-${projectId.slice(0, 8)}-${localDate()}.md`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+
+    setExportingPacket(true);
+    try {
+      const packetProject = project ?? {
+        name: "Daily Reports",
+        job_number: projectId.slice(0, 8),
+      };
+      const pdfBytes = await generateDailyReportPacketPdf({
+        project: packetProject,
+        reports: filteredReports,
+      });
+      const projectName = sanitizeFileName(packetProject.name || "daily-reports").toLowerCase();
+      downloadPdfBytes(pdfBytes, `${projectName}-daily-reports-${localDate()}.pdf`);
+      toast.success("Daily report packet downloaded", {
+        description: `${filteredReports.length} report${
+          filteredReports.length === 1 ? "" : "s"
+        } included.`,
+      });
+    } catch (err) {
+      toast.error("Daily report packet did not download", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    } finally {
+      setExportingPacket(false);
+    }
   };
 
   const missingTable =
@@ -680,9 +676,14 @@ export function DailyReportsWorkspace({ projectId }: { projectId: string }) {
                 <SelectItem value="internal">Internal only</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" className="gap-1.5" onClick={exportFilteredReports}>
+            <Button
+              variant="outline"
+              className="gap-1.5"
+              onClick={exportFilteredReports}
+              disabled={exportingPacket}
+            >
               <Download className="h-3.5 w-3.5" />
-              Export
+              {exportingPacket ? "Preparing..." : "Export PDF"}
             </Button>
           </div>
         </div>
