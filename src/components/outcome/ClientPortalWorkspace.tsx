@@ -23,6 +23,7 @@ import {
   setChangeOrderClientVisibility,
   updateClientProjectAccess,
   upsertClientContact,
+  type ClientContactRow,
   type ClientPortalChangeOrder,
   type ChangeOrderApprovalRow,
   type ProjectClientAccessRow,
