@@ -28,7 +28,7 @@ import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/outcome/ScheduleRisk";
 import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
-import { ImportSOVSheet } from "@/components/outcome/ImportSOVSheet";
+import { ImportSOVSheet, type SovMappingProfileDraft } from "@/components/outcome/ImportSOVSheet";
 import { ReviewsTab } from "@/components/outcome/ReviewsTab";
 import { RiskAllocationWorkbench } from "@/components/outcome/RiskAllocationWorkbench";
 import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
@@ -54,6 +54,7 @@ import {
   submitReview,
   updateReview,
   importCostBuckets,
+  saveSovMappingProfile,
   createBillingApplication,
   updateBillingApplication,
   deleteBillingApplication,
@@ -239,6 +240,7 @@ function ProjectPage() {
   const submitReviewFn = useServerFn(submitReview);
   const updateReviewFn = useServerFn(updateReview);
   const importBucketsFn = useServerFn(importCostBuckets);
+  const saveSovProfileFn = useServerFn(saveSovMappingProfile);
   const createBillingFn = useServerFn(createBillingApplication);
   const updateBillingFn = useServerFn(updateBillingApplication);
   const deleteBillingFn = useServerFn(deleteBillingApplication);
@@ -292,6 +294,21 @@ function ProjectPage() {
   const reviewSubmit = useServerMutation<Record<string, unknown>>(submitReviewFn as never);
   const reviewUpdate = useServerMutation<Record<string, unknown>>(updateReviewFn as never);
   const bucketImport = useServerMutation<Record<string, unknown>>(importBucketsFn as never);
+  const sovProfileSave = useMutation({
+    mutationFn: (input: SovMappingProfileDraft) =>
+      saveSovProfileFn({ data: { projectId, ...input } }),
+    onSuccess: () => {
+      toast.success("SOV mapping saved", {
+        description: "This spreadsheet format can now be reused on future imports.",
+      });
+      invalidate();
+    },
+    onError: (err) => {
+      toast.error("SOV mapping did not save", {
+        description: err instanceof Error ? err.message : "Try again after Lovable publishes.",
+      });
+    },
+  });
   const billingCreate = useServerMutation<Record<string, unknown>>(createBillingFn as never);
   const billingUpdate = useServerMutation<Record<string, unknown>>(updateBillingFn as never);
   const billingDelete = useServerMutation<{ id: string }>(deleteBillingFn);
@@ -349,6 +366,7 @@ function ProjectPage() {
     decisions,
     reviews,
     sovImports,
+    sovMappingProfiles,
     billingApplications,
     rollup,
     guidance,
@@ -878,6 +896,11 @@ function ProjectPage() {
                   />
                   <ImportSOVSheet
                     existingBuckets={buckets}
+                    mappingProfiles={sovMappingProfiles ?? []}
+                    onSaveProfile={(profile) =>
+                      sovProfileSave.mutateAsync(profile).then(() => undefined)
+                    }
+                    savingProfile={sovProfileSave.isPending}
                     onImport={(rows, mode, metadata) =>
                       bucketImport.mutate(
                         { projectId, rows, mode, metadata },

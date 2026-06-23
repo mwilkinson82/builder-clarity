@@ -15,7 +15,7 @@ The smoke command checks the pieces that have broken during rollout:
 
 - Magic-link auth, callback, portfolio, team, project, and client portal routes are generated.
 - Project creation and direct project navigation are wired.
-- SOV import, schedule-to-risk allocation, linked to-do, risk delete, pay app, daily report, and client portal write paths exist with user-facing toasts.
+- SOV import, reusable SOV mapping profiles, schedule-to-risk allocation, linked to-do, risk delete, pay app, daily report, and client portal write paths exist with user-facing toasts.
 - Migrations include the tables, columns, grants, RLS, and RPCs that the UI expects.
 
 ## Live Custom Domain Gate
@@ -35,7 +35,7 @@ Use a real member account on `https://overwatch.alpcontractorcircle.com`.
 1. Request a magic link and confirm it lands on Portfolio.
 2. Open Harbor Residence and confirm the demo IOR is visible.
 3. Create a new project with a job number, client, PM, contract, budget, baseline date, and forecast date.
-4. Import a messy SOV spreadsheet. Confirm SOV lines are grouped by division/code and searchable.
+4. Import a messy SOV spreadsheet. Confirm SOV lines are grouped by division/code and searchable. Save the successful mapping profile, start a second import, and confirm the saved mapping can be reapplied.
 5. Add or edit a schedule update.
 6. Add a schedule risk and create a risk allocation from it.
 7. Open Risk Tally and confirm the schedule allocation appears in E-holds or C-holds.

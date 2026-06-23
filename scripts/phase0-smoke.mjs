@@ -131,11 +131,13 @@ await expectContains(
     /createDecision/,
     /createBillingApplication/,
     /importCostBuckets/,
+    /saveSovMappingProfile/,
     /DailyReportsWorkspace/,
     /ClientPortalWorkspace/,
     /toast\.success\("Linked to-do created/,
     /toast\.success\("Risk deleted/,
     /toast\.success\("Pay app added/,
+    /toast\.success\("SOV mapping saved/,
     /toast\.success\("SOV imported/,
   ],
   "project route wires core Phase 0 write paths and success toasts",
@@ -175,6 +177,18 @@ await expectContains(
     /toast\.success\("Client magic link sent"/,
   ],
   "client portal workspace controls per-seat module access and magic links",
+);
+
+await expectContains(
+  "src/components/outcome/ImportSOVSheet.tsx",
+  [
+    /mappingProfiles/,
+    /Apply a saved SOV mapping/,
+    /Save this mapping for future imports/,
+    /onSaveProfile/,
+    /SovMappingProfileDraft/,
+  ],
+  "SOV intake can save and reuse company mapping profiles",
 );
 
 await expectContains(
@@ -224,6 +238,19 @@ expectSql(
     /alter table public\.cost_buckets[\s\S]*cost_code/i,
   ],
   "SOV import history and cost-code migrations exist with RLS/grants",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.sov_mapping_profiles/i,
+    /organization_id uuid not null references public\.organizations/i,
+    /grant select, insert, update, delete on public\.sov_mapping_profiles to authenticated/i,
+    /alter table public\.sov_mapping_profiles enable row level security/i,
+    /sov_mapping_profiles_member_select/i,
+    /sov_mapping_profiles_member_insert/i,
+  ],
+  "SOV mapping profiles migration exists with org-scoped RLS/grants",
 );
 
 expectSql(

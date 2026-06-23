@@ -136,6 +136,29 @@ export interface SovImportRow {
   created_at: string;
 }
 
+export interface SovMappingProfileRow {
+  id: string;
+  organization_id: string;
+  created_by: string | null;
+  name: string;
+  normalized_name: string;
+  source_type: string;
+  source_sheet: string;
+  profile: string;
+  confidence: "high" | "medium" | "low" | "unknown";
+  has_header: boolean;
+  column_map: Json;
+  selected_budget_column: number | null;
+  selected_budget_label: string;
+  sample_headers: Json;
+  amount_choices: Json;
+  warnings: Json;
+  last_used_at: string | null;
+  use_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export type BillingStatus = "draft" | "submitted" | "paid" | "partial" | "rejected";
 
 export interface BillingApplicationRow {
@@ -186,6 +209,30 @@ export interface ReviewRow {
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
+
+const normalizeSovMappingProfile = (row: Record<string, unknown>): SovMappingProfileRow => ({
+  id: row.id as string,
+  organization_id: row.organization_id as string,
+  created_by: (row.created_by as string | null) ?? null,
+  name: str(row.name),
+  normalized_name: str(row.normalized_name),
+  source_type: str(row.source_type),
+  source_sheet: str(row.source_sheet),
+  profile: str(row.profile),
+  confidence: str(row.confidence, "unknown") as SovMappingProfileRow["confidence"],
+  has_header: Boolean(row.has_header ?? true),
+  column_map: (row.column_map ?? {}) as Json,
+  selected_budget_column:
+    row.selected_budget_column == null ? null : num(row.selected_budget_column),
+  selected_budget_label: str(row.selected_budget_label),
+  sample_headers: (row.sample_headers ?? []) as Json,
+  amount_choices: (row.amount_choices ?? []) as Json,
+  warnings: (row.warnings ?? []) as Json,
+  last_used_at: (row.last_used_at as string | null) ?? null,
+  use_count: num(row.use_count),
+  created_at: str(row.created_at),
+  updated_at: str(row.updated_at),
+});
 
 const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) =>
   error?.code === "PGRST204" && (error.message ?? "").includes(`'${column}' column`);
@@ -492,6 +539,25 @@ export const getProject = createServerFn({ method: "GET" })
     if (billRes.error && !billingTableMissing) throw new Error(billRes.error.message);
 
     const project = normalizeProject(pRes.data as Record<string, unknown>);
+    let sovMappingProfiles: SovMappingProfileRow[] = [];
+    if (project.organization_id) {
+      const profileRes = await (context.supabase as any)
+        .from("sov_mapping_profiles")
+        .select("*")
+        .eq("organization_id", project.organization_id)
+        .order("updated_at", { ascending: false })
+        .limit(25);
+      const profilesTableMissing =
+        profileRes.error &&
+        (profileRes.error.message.includes("sov_mapping_profiles") ||
+          profileRes.error.message.includes("schema cache"));
+      if (profileRes.error && !profilesTableMissing) throw new Error(profileRes.error.message);
+      sovMappingProfiles = profilesTableMissing
+        ? []
+        : ((profileRes.data ?? []) as unknown[]).map((row) =>
+            normalizeSovMappingProfile(row as Record<string, unknown>),
+          );
+    }
     const exposures: ExposureRow[] = (eRes.data ?? []).map((r) =>
       normalizeExposure(r as Record<string, unknown>),
     );
@@ -616,6 +682,7 @@ export const getProject = createServerFn({ method: "GET" })
       decisions,
       reviews,
       sovImports,
+      sovMappingProfiles,
       billingApplications,
       rollup,
       guidance,
@@ -1318,6 +1385,22 @@ const importInput = z.object({
   metadata: importMetadataInput,
 });
 
+const saveSovMappingProfileInput = z.object({
+  projectId: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  source_type: z.string().max(50).default(""),
+  source_sheet: z.string().max(200).default(""),
+  profile: z.string().max(120).default(""),
+  confidence: z.enum(["high", "medium", "low", "unknown"]).default("unknown"),
+  has_header: z.boolean().default(true),
+  column_map: z.record(z.string(), z.string()).default({}),
+  selected_budget_column: z.number().int().nullable().optional(),
+  selected_budget_label: z.string().max(200).default(""),
+  sample_headers: z.array(z.string().max(200)).max(80).default([]),
+  amount_choices: z.array(z.unknown()).max(40).default([]),
+  warnings: z.array(z.string().max(1000)).max(20).default([]),
+});
+
 const normalizeImportKey = (value: string) => value.trim().toLowerCase();
 
 const consolidateImportRows = (rows: ImportBucketRow[]): ImportBucketRow[] => {
@@ -1347,6 +1430,55 @@ const consolidateImportRows = (rows: ImportBucketRow[]): ImportBucketRow[] => {
 
   return consolidated;
 };
+
+export const saveSovMappingProfile = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof saveSovMappingProfileInput>) =>
+    saveSovMappingProfileInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { data: project, error: projectErr } = await context.supabase
+      .from("projects")
+      .select("id, organization_id")
+      .eq("id", data.projectId)
+      .single();
+    if (projectErr || !project) {
+      throw new Error(projectErr?.message ?? "Project not found or not accessible.");
+    }
+    const organizationId = (project as { organization_id: string | null }).organization_id;
+    if (!organizationId) {
+      throw new Error("This project is not attached to a company workspace yet.");
+    }
+
+    const name = data.name.trim();
+    const normalizedName = name.toLowerCase();
+    const { data: profile, error } = await (context.supabase as any)
+      .from("sov_mapping_profiles")
+      .upsert(
+        {
+          organization_id: organizationId,
+          created_by: context.userId,
+          name,
+          normalized_name: normalizedName,
+          source_type: data.source_type,
+          source_sheet: data.source_sheet,
+          profile: data.profile,
+          confidence: data.confidence,
+          has_header: data.has_header,
+          column_map: data.column_map,
+          selected_budget_column: data.selected_budget_column ?? null,
+          selected_budget_label: data.selected_budget_label,
+          sample_headers: data.sample_headers,
+          amount_choices: data.amount_choices as Json,
+          warnings: data.warnings,
+        },
+        { onConflict: "organization_id,normalized_name" },
+      )
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return { ok: true, profile: normalizeSovMappingProfile(profile as Record<string, unknown>) };
+  });
 
 export const importCostBuckets = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

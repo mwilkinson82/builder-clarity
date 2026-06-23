@@ -30,6 +30,7 @@ Already in the repo:
 - Project-level IOR dashboard, schedule, risk tally, to-dos, SOV/costs, billing, change orders, IOR reports, and daily reports.
 - Daily report attachments, client-visible flags, and storage accounting fields.
 - SOV intake assistant that stages contractor spreadsheets, flags doubtful mappings, and imports reviewed rows.
+- Company-level SOV mapping profiles so repeat BuilderTrend, QuickBooks, AIA, or estimator exports can be reused instead of remapped every time.
 - Partial risk release model for exposures that are only partially recovered, offset, eliminated, or accepted.
 - Basic billing application ledger.
 
@@ -44,7 +45,7 @@ Deliverables:
 - Confirm core write paths do not fail against Lovable Cloud schema cache: project edit, project create, risk create/edit/delete, linked to-do, schedule-to-risk allocation, pay app create/edit/delete, daily report create/edit/upload.
 - Add clear toast messages for all create/update/delete actions.
 - Preserve SOV review workflow and add import-history visibility so a PM can see what file or paste created the current cost buckets.
-- Keep AJ-style builder estimate spreadsheets working without the user reading instructions.
+- Keep AJ-style builder estimate spreadsheets working without the user reading instructions, and save the successful mapping for the next similar import.
 
 Definition of done:
 
@@ -192,12 +193,11 @@ Deliverables:
 These are the next repo-backed moves after the SOV intake work:
 
 1. Run the Phase 0 smoke gate before each push/publish: `npm run smoke:phase0`, `npm run build`, then `npm run smoke:phase0:live` after Lovable publishes.
-2. Add SOV mapping profile persistence so recurring builder spreadsheet formats can be reused instead of remapped every import.
-3. Add admin/support portfolio filters for company, PM, GP at risk, indicated GP, schedule variance, stale IOR review, and daily-report activity.
-4. Add daily report client packet export.
-5. Convert pay apps into an invoice lifecycle with status history.
-6. Add usage meters to the organization UI while keeping Contractor Circle grant access non-blocking.
-7. Add Stripe subscription and payment planning once the invoice data model is settled.
+2. Add admin/support portfolio filters for company, PM, GP at risk, indicated GP, schedule variance, stale IOR review, and daily-report activity.
+3. Add daily report client packet export.
+4. Convert pay apps into an invoice lifecycle with status history.
+5. Add usage meters to the organization UI while keeping Contractor Circle grant access non-blocking.
+6. Add Stripe subscription and payment planning once the invoice data model is settled.
 
 ## Architecture Notes
 

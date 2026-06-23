@@ -45,7 +45,7 @@ import {
   type BucketImportRow,
 } from "@/lib/sov-import";
 import { fmtUSD } from "@/lib/format";
-import type { BucketRow } from "@/lib/projects.functions";
+import type { BucketRow, SovMappingProfileRow } from "@/lib/projects.functions";
 
 const FIELD_LABELS: Record<FieldKey, string> = {
   cost_code: "Cost code",
@@ -84,9 +84,27 @@ export interface SovImportMetadata {
   warnings: string[];
 }
 
+export interface SovMappingProfileDraft {
+  name: string;
+  source_type: string;
+  source_sheet: string;
+  profile: string;
+  confidence: "high" | "medium" | "low" | "unknown";
+  has_header: boolean;
+  column_map: Record<string, string>;
+  selected_budget_column: number | null;
+  selected_budget_label: string;
+  sample_headers: string[];
+  amount_choices: SovImportMetadata["amount_choices"];
+  warnings: string[];
+}
+
 export function ImportSOVSheet({
   existingBuckets = [],
   onImport,
+  mappingProfiles = [],
+  onSaveProfile,
+  savingProfile,
   pending,
 }: {
   existingBuckets?: BucketRow[];
@@ -104,6 +122,9 @@ export function ImportSOVSheet({
     mode: "replace" | "append",
     metadata: SovImportMetadata,
   ) => void;
+  mappingProfiles?: SovMappingProfileRow[];
+  onSaveProfile?: (profile: SovMappingProfileDraft) => Promise<void> | void;
+  savingProfile?: boolean;
   pending?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -111,6 +132,7 @@ export function ImportSOVSheet({
   const [map, setMap] = useState<ColumnMap>({});
   const [hasHeader, setHasHeader] = useState(true);
   const [sourceName, setSourceName] = useState("");
+  const [profileName, setProfileName] = useState("");
   const [pasteText, setPasteText] = useState("");
   const [mode, setMode] = useState<"replace" | "append">("replace");
   const [error, setError] = useState<string | null>(null);
@@ -126,10 +148,12 @@ export function ImportSOVSheet({
           : ext === "xlsx" || ext === "xls"
             ? await parseXlsx(file)
             : await parseCsv(file);
+      const guessedMap = guessColumnMap(p.matrix, p.hasHeader);
       setParsed(p);
       setHasHeader(p.hasHeader);
       setSourceName(file.name);
-      setMap(guessColumnMap(p.matrix, p.hasHeader));
+      setProfileName(`${file.name.replace(/\.[^.]+$/, "")} mapping`);
+      setMap(guessedMap);
       if (p.matrix.length === 0) {
         setError(
           "No tabular rows detected. If this is a scanned PDF, export it as CSV/XLSX or paste the rows manually.",
@@ -150,6 +174,7 @@ export function ImportSOVSheet({
     setParsed(p);
     setHasHeader(p.hasHeader);
     setSourceName("Pasted rows");
+    setProfileName("Pasted SOV mapping");
     setMap(guessColumnMap(p.matrix, p.hasHeader));
   };
 
@@ -158,6 +183,7 @@ export function ImportSOVSheet({
     setMap({});
     setError(null);
     setSourceName("");
+    setProfileName("");
     setPasteText("");
     if (fileRef.current) fileRef.current.value = "";
   };
@@ -172,6 +198,9 @@ export function ImportSOVSheet({
   const total = valid.reduce((s, r) => s + r.original_budget, 0);
   const missingMappings = parsed ? missingRequiredMappings(map) : [];
   const intake = parsed ? analyzeSovIntake(parsed.matrix, hasHeader, map) : null;
+  const compatibleProfiles = parsed
+    ? mappingProfiles.filter((profile) => !profile.source_type || profile.source_type === parsed.source)
+    : mappingProfiles;
 
   const setBudgetColumn = (columnIndex: number) => {
     const next = { ...map };
@@ -180,6 +209,51 @@ export function ImportSOVSheet({
     }
     next[columnIndex] = "original_budget";
     setMap(next);
+  };
+
+  const applyProfile = (profileId: string) => {
+    const profile = mappingProfiles.find((item) => item.id === profileId);
+    if (!profile) return;
+    const nextMap = columnMapFromJson(profile.column_map);
+    if (Object.keys(nextMap).length === 0) {
+      setError("That saved mapping does not have any column assignments.");
+      return;
+    }
+    setHasHeader(profile.has_header);
+    setMap(nextMap);
+    setProfileName(profile.name);
+    setError(null);
+  };
+
+  const saveProfile = async () => {
+    if (!parsed || !intake || !onSaveProfile) return;
+    const name = profileName.trim() || `${intake.profile} mapping`;
+    const selectedBudgetColumn = intake.selectedBudgetColumn ?? null;
+    const selectedBudgetLabel =
+      selectedBudgetColumn == null
+        ? ""
+        : (parsed.matrix[0]?.[selectedBudgetColumn] ?? `Column ${selectedBudgetColumn + 1}`);
+    try {
+      await onSaveProfile({
+        name,
+        source_type: parsed.source,
+        source_sheet: parsed.sheetName ?? "",
+        profile: intake.profile,
+        confidence: intake.confidence,
+        has_header: hasHeader,
+        column_map: Object.fromEntries(
+          Object.entries(map).map(([columnIndex, field]) => [columnIndex, field]),
+        ),
+        selected_budget_column: selectedBudgetColumn,
+        selected_budget_label: selectedBudgetLabel.trim(),
+        sample_headers: hasHeader ? (parsed.matrix[0] ?? []).slice(0, 80) : [],
+        amount_choices: intake.amountChoices,
+        warnings: intake.warnings,
+      });
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Mapping profile did not save.");
+    }
   };
 
   const commit = () => {
@@ -347,6 +421,32 @@ export function ImportSOVSheet({
               </Button>
             </div>
 
+            {compatibleProfiles.length > 0 && (
+              <div className="rounded-md border border-hairline bg-surface p-3">
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Saved mapping
+                </div>
+                <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                  <Select onValueChange={applyProfile}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Apply a saved SOV mapping" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {compatibleProfiles.map((profile) => (
+                        <SelectItem key={profile.id} value={profile.id}>
+                          {profile.name}
+                          {profile.source_sheet ? ` · ${profile.source_sheet}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="text-xs text-muted-foreground">
+                    Reuse mappings for repeat BuilderTrend, QuickBooks, AIA, or estimator exports.
+                  </div>
+                </div>
+              </div>
+            )}
+
             {intake && <IntakeReview analysis={intake} onBudgetColumnChange={setBudgetColumn} />}
 
             <div className="flex items-center gap-4 text-xs">
@@ -378,6 +478,33 @@ export function ImportSOVSheet({
               map={map}
               onChange={setMap}
             />
+
+            {onSaveProfile && (
+              <div className="rounded-md border border-hairline bg-surface p-3">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                  <div className="space-y-1.5">
+                    <Label>Save this mapping for future imports</Label>
+                    <Input
+                      value={profileName}
+                      onChange={(event) => setProfileName(event.target.value)}
+                      placeholder="e.g. BuilderTrend estimate export"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={saveProfile}
+                    disabled={savingProfile || !parsed || missingMappings.length > 0}
+                  >
+                    {savingProfile ? "Saving…" : "Save mapping"}
+                  </Button>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Saved mappings are shared with this company workspace so the next PM can import
+                  the same spreadsheet format faster.
+                </p>
+              </div>
+            )}
 
             {missingMappings.length > 0 && (
               <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
@@ -484,6 +611,28 @@ type PlannedImportRow = BucketImportRow & {
 };
 
 const norm = (value: string) => value.trim().toLowerCase();
+const FIELD_KEYS = [
+  "cost_code",
+  "bucket",
+  "original_budget",
+  "actual_to_date",
+  "ftc",
+  "sort_order",
+  "ignore",
+] as const satisfies readonly FieldKey[];
+
+function columnMapFromJson(value: unknown): ColumnMap {
+  const allowed = new Set<FieldKey>(FIELD_KEYS);
+  const out: ColumnMap = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+  for (const [columnIndex, field] of Object.entries(value)) {
+    if (!allowed.has(field as FieldKey)) continue;
+    const index = Number(columnIndex);
+    if (!Number.isInteger(index) || index < 0) continue;
+    out[index] = field as FieldKey;
+  }
+  return out;
+}
 
 function planImportRows(
   rows: BucketImportRow[],
