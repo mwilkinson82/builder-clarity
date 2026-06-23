@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Table,
   TableBody,
@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
 import { fmtUSD } from "@/lib/format";
 import type { BucketRow } from "@/lib/projects.functions";
 
@@ -65,7 +65,19 @@ export function CostBucketsTable({
   const [newCode, setNewCode] = useState("");
   const [newName, setNewName] = useState("");
   const [newSource, setNewSource] = useState<BucketSource>("added_cost");
+  const [search, setSearch] = useState("");
   const today = new Date().toISOString().slice(0, 10);
+  const visibleBuckets = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const sorted = [...buckets].sort(compareBucketByCode);
+    if (!q) return sorted;
+    return sorted.filter((b) =>
+      [b.cost_code, b.bucket, b.source_note ?? "", SOURCE_LABEL[b.source_type]]
+        .join(" ")
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [buckets, search]);
 
   const submitNew = () => {
     const n = newName.trim();
@@ -84,10 +96,30 @@ export function CostBucketsTable({
 
   return (
     <div className="overflow-hidden rounded-lg border border-hairline bg-card">
+      <div className="flex flex-col gap-3 border-b border-hairline bg-card px-3 py-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Sorted by code / division
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Showing {visibleBuckets.length} of {buckets.length} SOV line
+            {buckets.length === 1 ? "" : "s"}.
+          </div>
+        </div>
+        <div className="relative md:w-80">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search code, division, bucket, or source"
+            className="h-9 pl-8"
+          />
+        </div>
+      </div>
       <Table>
         <TableHeader>
           <TableRow className="bg-surface">
-            <TableHead>Code</TableHead>
+            <TableHead>Code / Division</TableHead>
             <TableHead>Bucket</TableHead>
             <TableHead>Source</TableHead>
             <TableHead className="text-right">Original Budget</TableHead>
@@ -99,7 +131,7 @@ export function CostBucketsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {buckets.map((b) => {
+          {visibleBuckets.map((b) => {
             const fac = b.actual_to_date + b.ftc;
             const variance = b.original_budget - fac;
             const neg = variance < 0;
@@ -167,6 +199,13 @@ export function CostBucketsTable({
               </TableCell>
             </TableRow>
           )}
+          {buckets.length > 0 && visibleBuckets.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
+                No SOV lines match that search.
+              </TableCell>
+            </TableRow>
+          )}
           {onCreate && (
             <TableRow className="bg-surface/40">
               <TableCell colSpan={8}>
@@ -177,7 +216,7 @@ export function CostBucketsTable({
                     onKeyDown={(e) => {
                       if (e.key === "Enter") submitNew();
                     }}
-                    placeholder="Code"
+                    placeholder="Code / division"
                     className="h-8 md:w-28"
                   />
                   <Input
@@ -245,6 +284,24 @@ export function CostBucketsTable({
       </Table>
     </div>
   );
+}
+
+function compareBucketByCode(a: BucketRow, b: BucketRow) {
+  const aCode = a.cost_code.trim();
+  const bCode = b.cost_code.trim();
+  if (aCode && bCode) {
+    const codeOrder = aCode.localeCompare(bCode, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+    if (codeOrder !== 0) return codeOrder;
+  } else if (aCode) {
+    return -1;
+  } else if (bCode) {
+    return 1;
+  }
+
+  return a.sort_order - b.sort_order || a.bucket.localeCompare(b.bucket);
 }
 
 function NumCell({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
