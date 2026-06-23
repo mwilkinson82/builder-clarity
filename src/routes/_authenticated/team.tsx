@@ -214,7 +214,7 @@ function TeamPage() {
   });
 
   const memberMutation = useMutation({
-    mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: MemberStatus }) =>
+    mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: "active" | "disabled" }) =>
       updateMember({ data: payload }),
     onSuccess: async () => {
       await refreshWorkspace();
@@ -263,7 +263,7 @@ function TeamPage() {
     mutationFn: (payload: {
       membershipId: string;
       role?: ProjectMemberRole;
-      status?: MemberStatus;
+      status?: "active" | "disabled";
     }) => updateProjectAccess({ data: payload }),
     onSuccess: async () => {
       await refreshWorkspace();
@@ -618,7 +618,7 @@ function TeamPage() {
                             onValueChange={(value) =>
                               memberMutation.mutate({
                                 membershipId: member.id,
-                                status: value as MemberStatus,
+                                status: value as "active" | "disabled",
                               })
                             }
                           >

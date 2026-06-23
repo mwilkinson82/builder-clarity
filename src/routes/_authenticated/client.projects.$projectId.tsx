@@ -82,8 +82,8 @@ function ClientProjectPage() {
     const changeOrders = projectQuery.data?.changeOrders ?? [];
     return {
       visible: changeOrders.length,
-      amount: changeOrders.reduce((total, co) => total + co.contract_amount, 0),
-      approved: changeOrders.filter((co) => co.client_status === "approved").length,
+      amount: changeOrders.reduce((total: number, co: ClientPortalChangeOrder) => total + co.contract_amount, 0),
+      approved: changeOrders.filter((co: ClientPortalChangeOrder) => co.client_status === "approved").length,
     };
   }, [projectQuery.data?.changeOrders]);
 
@@ -168,7 +168,7 @@ function ClientProjectPage() {
                 No change orders have been shared with this client portal yet.
               </div>
             ) : (
-              changeOrders.map((co) => {
+              changeOrders.map((co: ClientPortalChangeOrder) => {
                 const approval = latestApproval(approvals, co.id);
                 const note = notesByCo[co.id] ?? "";
                 return (

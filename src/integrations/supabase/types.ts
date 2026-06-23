@@ -82,8 +82,77 @@ export type Database = {
           },
         ]
       }
+      change_order_approvals: {
+        Row: {
+          change_order_id: string
+          client_email: string
+          client_user_id: string | null
+          contact_id: string | null
+          created_at: string
+          decision: Database["public"]["Enums"]["client_approval_decision"]
+          document_version: string
+          id: string
+          notes: string
+          project_id: string
+          user_agent: string
+        }
+        Insert: {
+          change_order_id: string
+          client_email?: string
+          client_user_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          decision: Database["public"]["Enums"]["client_approval_decision"]
+          document_version?: string
+          id?: string
+          notes?: string
+          project_id: string
+          user_agent?: string
+        }
+        Update: {
+          change_order_id?: string
+          client_email?: string
+          client_user_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          decision?: Database["public"]["Enums"]["client_approval_decision"]
+          document_version?: string
+          id?: string
+          notes?: string
+          project_id?: string
+          user_agent?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "change_order_approvals_change_order_id_fkey"
+            columns: ["change_order_id"]
+            isOneToOne: false
+            referencedRelation: "change_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "change_order_approvals_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "client_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "change_order_approvals_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       change_orders: {
         Row: {
+          client_decided_at: string | null
+          client_notes: string
+          client_sent_at: string | null
+          client_status: Database["public"]["Enums"]["client_change_order_status"]
+          client_visible: boolean
           co_type: string
           contract_amount: number
           cost_amount: number
@@ -99,6 +168,11 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          client_decided_at?: string | null
+          client_notes?: string
+          client_sent_at?: string | null
+          client_status?: Database["public"]["Enums"]["client_change_order_status"]
+          client_visible?: boolean
           co_type?: string
           contract_amount?: number
           cost_amount?: number
@@ -114,6 +188,11 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          client_decided_at?: string | null
+          client_notes?: string
+          client_sent_at?: string | null
+          client_status?: Database["public"]["Enums"]["client_change_order_status"]
+          client_visible?: boolean
           co_type?: string
           contract_amount?: number
           cost_amount?: number
@@ -134,6 +213,59 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_contacts: {
+        Row: {
+          company: string
+          created_at: string
+          created_by: string | null
+          email: string
+          id: string
+          name: string
+          notes: string
+          organization_id: string
+          phone: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          company?: string
+          created_at?: string
+          created_by?: string | null
+          email: string
+          id?: string
+          name?: string
+          notes?: string
+          organization_id: string
+          phone?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          company?: string
+          created_at?: string
+          created_by?: string | null
+          email?: string
+          id?: string
+          name?: string
+          notes?: string
+          organization_id?: string
+          phone?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_contacts_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -200,6 +332,7 @@ export type Database = {
           attachment_path: string
           attachment_type: string
           author: string
+          client_visible: boolean
           created_at: string
           created_by: string
           crew_count: number
@@ -218,6 +351,7 @@ export type Database = {
           attachment_path?: string
           attachment_type?: string
           author?: string
+          client_visible?: boolean
           created_at?: string
           created_by?: string
           crew_count?: number
@@ -236,6 +370,7 @@ export type Database = {
           attachment_path?: string
           attachment_type?: string
           author?: string
+          client_visible?: boolean
           created_at?: string
           created_by?: string
           crew_count?: number
@@ -698,6 +833,78 @@ export type Database = {
             columns: ["default_organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_client_access: {
+        Row: {
+          accepted_at: string | null
+          accepted_by: string | null
+          can_view_billing: boolean
+          can_view_change_orders: boolean
+          can_view_daily_reports: boolean
+          client_user_id: string | null
+          contact_id: string | null
+          created_at: string
+          email: string
+          id: string
+          invited_by: string | null
+          last_sent_at: string | null
+          project_id: string
+          role: string
+          status: Database["public"]["Enums"]["client_access_status"]
+          updated_at: string
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          can_view_billing?: boolean
+          can_view_change_orders?: boolean
+          can_view_daily_reports?: boolean
+          client_user_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          email: string
+          id?: string
+          invited_by?: string | null
+          last_sent_at?: string | null
+          project_id: string
+          role?: string
+          status?: Database["public"]["Enums"]["client_access_status"]
+          updated_at?: string
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by?: string | null
+          can_view_billing?: boolean
+          can_view_change_orders?: boolean
+          can_view_daily_reports?: boolean
+          client_user_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          email?: string
+          id?: string
+          invited_by?: string | null
+          last_sent_at?: string | null
+          project_id?: string
+          role?: string
+          status?: Database["public"]["Enums"]["client_access_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_client_access_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "client_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_client_access_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
             referencedColumns: ["id"]
           },
         ]
@@ -1198,12 +1405,20 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      can_approve_client_change_order: {
+        Args: { p_change_order_id: string }
+        Returns: boolean
+      }
       can_create_project_in_org: {
         Args: { p_org_id: string }
         Returns: boolean
       }
       can_manage_org: { Args: { p_org_id: string }; Returns: boolean }
       can_manage_project: { Args: { p_project_id: string }; Returns: boolean }
+      can_read_client_project: {
+        Args: { p_project_id: string }
+        Returns: boolean
+      }
       can_read_project: { Args: { p_project_id: string }; Returns: boolean }
       delete_email: {
         Args: { message_id: number; queue_name: string }
@@ -1236,6 +1451,16 @@ export type Database = {
           read_ct: number
         }[]
       }
+      record_client_change_order_decision: {
+        Args: {
+          p_change_order_id: string
+          p_decision: Database["public"]["Enums"]["client_approval_decision"]
+          p_notes?: string
+          p_user_agent?: string
+        }
+        Returns: string
+      }
+      storage_project_id: { Args: { p_name: string }; Returns: string }
     }
     Enums: {
       account_role:
@@ -1245,6 +1470,9 @@ export type Database = {
         | "project_manager"
         | "member"
         | "viewer"
+      client_access_status: "pending" | "active" | "revoked"
+      client_approval_decision: "approved" | "rejected" | "comment"
+      client_change_order_status: "not_sent" | "sent" | "approved" | "rejected"
       decision_status: "open" | "in_progress" | "resolved" | "overdue"
       exposure_category:
         | "owner_decision"
@@ -1404,6 +1632,9 @@ export const Constants = {
         "member",
         "viewer",
       ],
+      client_access_status: ["pending", "active", "revoked"],
+      client_approval_decision: ["approved", "rejected", "comment"],
+      client_change_order_status: ["not_sent", "sent", "approved", "rejected"],
       decision_status: ["open", "in_progress", "resolved", "overdue"],
       exposure_category: [
         "owner_decision",

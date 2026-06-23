@@ -23,6 +23,7 @@ import {
   setChangeOrderClientVisibility,
   updateClientProjectAccess,
   upsertClientContact,
+  type ClientContactRow,
   type ClientPortalChangeOrder,
   type ChangeOrderApprovalRow,
   type ProjectClientAccessRow,
@@ -186,9 +187,9 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
     return map;
   }, [data?.access]);
 
-  const visibleCount = (data?.changeOrders ?? []).filter((co) => co.client_visible).length;
+  const visibleCount = (data?.changeOrders ?? []).filter((co: ClientPortalChangeOrder) => co.client_visible).length;
   const approvedCount = (data?.changeOrders ?? []).filter(
-    (co) => co.client_status === "approved",
+    (co: ClientPortalChangeOrder) => co.client_status === "approved",
   ).length;
 
   if (portalQuery.isLoading) {
@@ -337,7 +338,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
             {data.contacts.length === 0 ? (
               <div className="p-5 text-sm text-muted-foreground">No client contacts yet.</div>
             ) : (
-              data.contacts.map((contact) => {
+              data.contacts.map((contact: ClientContactRow) => {
                 const access = accessByEmail.get(contact.email.toLowerCase());
                 return (
                   <div
@@ -404,7 +405,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
                 Grant access to a contact to create the first client seat.
               </div>
             ) : (
-              data.access.map((access) => (
+              data.access.map((access: ProjectClientAccessRow) => (
                 <div
                   key={access.id}
                   className="grid gap-3 border-b border-hairline p-4 text-sm last:border-b-0 md:grid-cols-[minmax(0,1fr)_120px_150px]"
@@ -475,7 +476,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
                   </td>
                 </tr>
               ) : (
-                data.changeOrders.map((co) => {
+                data.changeOrders.map((co: ClientPortalChangeOrder) => {
                   const approval = latestApprovalFor(data.approvals, co.id);
                   return (
                     <tr key={co.id} className="border-t border-hairline">
