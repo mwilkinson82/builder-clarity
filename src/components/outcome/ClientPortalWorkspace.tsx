@@ -476,7 +476,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
                   </td>
                 </tr>
               ) : (
-                data.changeOrders.map((co) => {
+                data.changeOrders.map((co: ClientPortalChangeOrder) => {
                   const approval = latestApprovalFor(data.approvals, co.id);
                   return (
                     <tr key={co.id} className="border-t border-hairline">
