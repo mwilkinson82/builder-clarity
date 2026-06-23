@@ -560,7 +560,7 @@ export const getProject = createServerFn({ method: "GET" })
     });
     const sovImports: SovImportRow[] = sovImportsTableMissing
       ? []
-      : (siRes.data ?? []).map((r) => {
+      : ((siRes.data ?? []) as unknown[]).map((r) => {
           const o = r as Record<string, unknown>;
           return {
             id: o.id as string,
