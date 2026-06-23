@@ -456,7 +456,7 @@ export const getProject = createServerFn({ method: "GET" })
         .eq("project_id", pid)
         .order("reviewed_at", { ascending: false })
         .limit(10),
-      context.supabase
+      (context.supabase as any)
         .from("sov_imports")
         .select("*")
         .eq("project_id", pid)
@@ -560,7 +560,7 @@ export const getProject = createServerFn({ method: "GET" })
     });
     const sovImports: SovImportRow[] = sovImportsTableMissing
       ? []
-      : (siRes.data ?? []).map((r) => {
+      : ((siRes.data ?? []) as unknown[]).map((r) => {
           const o = r as Record<string, unknown>;
           return {
             id: o.id as string,
@@ -835,14 +835,14 @@ export const createExposure = createServerFn({ method: "POST" })
         .single();
     let { data: inserted, error } = await insertExposure(rest);
     if (isMissingRestColumn(error, "released_amount")) {
-      const retry = { ...rest };
+      const retry: Record<string, unknown> = { ...rest };
       delete retry.released_amount;
       delete retry.release_note;
       delete retry.release_updated_at;
-      ({ data: inserted, error } = await insertExposure(retry));
+      ({ data: inserted, error } = await insertExposure(retry as typeof rest));
     }
     if (error) throw new Error(error.message);
-    return { ok: true, id: inserted.id as string };
+    return { ok: true, id: (inserted as { id: string } | null)?.id ?? "" };
   });
 
 export const updateExposure = createServerFn({ method: "POST" })
@@ -1485,7 +1485,7 @@ export const importCostBuckets = createServerFn({ method: "POST" })
       metadata.total_budget || importRows.reduce((sum, row) => sum + row.original_budget, 0);
     let importHistorySaved = false;
     let importHistoryError = "";
-    const { error: importHistoryErr } = await context.supabase.from("sov_imports").insert({
+    const { error: importHistoryErr } = await (context.supabase as any).from("sov_imports").insert({
       project_id: data.projectId,
       imported_by: context.userId,
       mode: data.mode,

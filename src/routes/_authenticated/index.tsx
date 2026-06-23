@@ -825,7 +825,7 @@ function InviteByMagicLinkButton() {
 
   const memberMutation = useMutation({
     mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: MemberStatus }) =>
-      updateMember({ data: payload }),
+      updateMember({ data: payload as { membershipId: string; role?: AccountRole; status?: "active" | "disabled" } }),
     onSuccess: async () => {
       await refreshTeam();
       toast.success("Team member updated");
@@ -874,7 +874,7 @@ function InviteByMagicLinkButton() {
       membershipId: string;
       role?: ProjectMemberRole;
       status?: MemberStatus;
-    }) => updateProjectAccess({ data: payload }),
+    }) => updateProjectAccess({ data: payload as { membershipId: string; role?: ProjectMemberRole; status?: "active" | "disabled" } }),
     onSuccess: async () => {
       await refreshTeam();
       toast.success("Project member updated");

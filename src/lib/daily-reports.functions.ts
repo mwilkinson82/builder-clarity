@@ -254,7 +254,7 @@ export const upsertDailyReport = createServerFn({ method: "POST" })
       }
     }
 
-    const { data: row, error } = await context.supabase
+    const { data: row, error } = await (context.supabase as any)
       .from("daily_reports")
       .upsert(
         {
