@@ -14,6 +14,24 @@ export type Database = {
   }
   public: {
     Tables: {
+      app_super_admins: {
+        Row: {
+          created_at: string
+          granted_by: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          granted_by?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          granted_by?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       billing_applications: {
         Row: {
           amount_billed: number
@@ -1434,6 +1452,7 @@ export type Database = {
         Returns: string
       }
       is_org_member: { Args: { p_org_id: string }; Returns: boolean }
+      is_super_admin: { Args: never; Returns: boolean }
       move_to_dlq: {
         Args: {
           dlq_name: string
