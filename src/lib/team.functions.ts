@@ -23,6 +23,7 @@ export type InviteStatus = "pending" | "accepted" | "revoked" | "expired";
 export interface TeamOrganization {
   id: string;
   name: string;
+  slug: string;
   plan_code: string;
   billing_status: string;
   project_limit: number;
@@ -30,6 +31,16 @@ export interface TeamOrganization {
   storage_limit_mb: number;
   daily_report_limit_per_month: number;
   contractor_circle_grant: boolean;
+}
+
+export interface TeamProfile {
+  id: string;
+  email: string;
+  full_name: string;
+  phone: string;
+  company_title: string;
+  avatar_url: string;
+  default_organization_id: string | null;
 }
 
 export interface TeamMember {
@@ -154,7 +165,7 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       context.supabase
         .from("organizations")
         .select(
-          "id,name,plan_code,billing_status,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month,contractor_circle_grant",
+          "id,name,slug,plan_code,billing_status,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month,contractor_circle_grant",
         )
         .eq("id", organizationId)
         .single(),
@@ -220,7 +231,10 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
     const profilesRes =
       userIds.length === 0
         ? { data: [], error: null }
-        : await context.supabase.from("profiles").select("id,email,full_name").in("id", userIds);
+        : await context.supabase
+            .from("profiles")
+            .select("id,email,full_name,phone,company_title,avatar_url,default_organization_id")
+            .in("id", userIds);
     if (profilesRes.error) throw new Error(profilesRes.error.message);
 
     const profilesById = new Map(
@@ -233,6 +247,7 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
     const organization: TeamOrganization = {
       id: orgRes.data.id as string,
       name: str(orgRes.data.name),
+      slug: str(orgRes.data.slug),
       plan_code: str(orgRes.data.plan_code),
       billing_status: str(orgRes.data.billing_status),
       project_limit: num(orgRes.data.project_limit),
@@ -285,8 +300,21 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       created_at: str(i.created_at),
     }));
 
+    const currentProfileRow = profilesRes.data?.find((p) => p.id === context.userId);
+    const currentProfile: TeamProfile = {
+      id: context.userId,
+      email: str(currentProfileRow?.email),
+      full_name: str(currentProfileRow?.full_name),
+      phone: str(currentProfileRow?.phone),
+      company_title: str(currentProfileRow?.company_title),
+      avatar_url: str(currentProfileRow?.avatar_url),
+      default_organization_id:
+        (currentProfileRow?.default_organization_id as string | null) ?? null,
+    };
+
     return {
       organization,
+      currentProfile,
       members,
       invites,
       projects,
@@ -300,6 +328,70 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
         dailyReports: dailyReportCountRes.count ?? 0,
       },
     };
+  });
+
+const profileUpdateInput = z.object({
+  full_name: z.string().max(200).default(""),
+  phone: z.string().max(50).default(""),
+  company_title: z.string().max(120).default(""),
+});
+
+export const updateMyProfile = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof profileUpdateInput>) => profileUpdateInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const organizationId = await ensureCurrentOrganization(context);
+
+    const { data: updated, error } = await context.supabase
+      .from("profiles")
+      .update({
+        full_name: data.full_name.trim(),
+        phone: data.phone.trim(),
+        company_title: data.company_title.trim(),
+        default_organization_id: organizationId,
+      })
+      .eq("id", context.userId)
+      .select("id,email,full_name,phone,company_title,avatar_url,default_organization_id")
+      .single();
+    if (error) throw new Error(error.message);
+
+    return { profile: updated as TeamProfile };
+  });
+
+const organizationUpdateInput = z.object({
+  name: z.string().min(1, "Enter a company name.").max(160),
+  slug: z.string().max(120).default(""),
+});
+
+export const updateOrganization = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof organizationUpdateInput>) =>
+    organizationUpdateInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const organizationId = await ensureCurrentOrganization(context);
+    await requireCanManageOrganization(context, organizationId);
+
+    const cleanSlug = data.slug
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+    const { data: updated, error } = await context.supabase
+      .from("organizations")
+      .update({
+        name: data.name.trim(),
+        slug: cleanSlug,
+      })
+      .eq("id", organizationId)
+      .select(
+        "id,name,slug,plan_code,billing_status,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month,contractor_circle_grant",
+      )
+      .single();
+    if (error) throw new Error(error.message);
+
+    return { organization: updated as TeamOrganization };
   });
 
 const teamInviteInput = z.object({

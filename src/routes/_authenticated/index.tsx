@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -179,7 +179,11 @@ function PortfolioPage() {
             <h1 className="mt-1 font-serif text-3xl text-foreground">Portfolio</h1>
           </div>
           <div className="flex items-center gap-2">
-            <InviteByMagicLinkButton />
+            <Button asChild size="sm" variant="outline" className="gap-1.5">
+              <Link to="/team">
+                <Users className="h-3.5 w-3.5" /> Team
+              </Link>
+            </Button>
             <NewProjectButton />
             <Button variant="ghost" size="sm" onClick={signOut} className="gap-1.5">
               <LogOut className="h-3.5 w-3.5" /> Sign out
@@ -1301,7 +1305,7 @@ function NewProjectButton() {
           baseline_completion_date: baselineCompletion || null,
           forecast_completion_date: forecastCompletion || null,
         },
-    }),
+      }),
     onSuccess: ({ id }) => {
       qc.invalidateQueries({ queryKey: ["projects"] });
       toast.success("Project created", {
