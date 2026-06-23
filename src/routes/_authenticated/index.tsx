@@ -146,7 +146,7 @@ function PortfolioPage() {
 
   const seededRef = useRef(false);
   useEffect(() => {
-    if (isLoading || seededRef.current || projects.length > 0) return;
+    if (isLoading || seededRef.current) return;
     seededRef.current = true;
     seed()
       .then((r) => {
@@ -155,7 +155,7 @@ function PortfolioPage() {
       .catch(() => {
         seededRef.current = false;
       });
-  }, [isLoading, projects.length, seed, qc]);
+  }, [isLoading, seed, qc]);
 
   const navigate = useNavigate();
   const router = useRouter();
@@ -275,6 +275,7 @@ function PortfolioPage() {
                     const jobNumber = p.job_number || `ID ${p.id.slice(0, 8).toUpperCase()}`;
                     const projectHref = `/projects/${p.id}`;
                     const highlightRisk = s.label === "At Risk" || p.gp_at_risk > 0;
+                    const isDemo = p.job_number === "DEMO-HARBOR";
                     return (
                       <TableRow
                         key={p.id}
@@ -300,6 +301,14 @@ function PortfolioPage() {
                           >
                             <div className="flex items-center gap-2">
                               <div className="font-serif text-lg text-foreground">{p.name}</div>
+                              {isDemo && (
+                                <span
+                                  title="Seeded Overwatch teaching project"
+                                  className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent"
+                                >
+                                  Demo IOR
+                                </span>
+                              )}
                               {p.warning_count > 0 && (
                                 <span
                                   title={`${p.warning_count} system risk${p.warning_count === 1 ? "" : "s"} detected`}

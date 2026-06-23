@@ -1536,16 +1536,710 @@ export const importCostBuckets = createServerFn({ method: "POST" })
     };
   });
 
-// ---------------- DEMO SEED (no-op if any project exists) ----------------
-// The DB trigger seeds a demo project on user creation; this fn is kept
-// for parity with old call sites and just reports state.
+// ---------------- DEMO SEED ----------------
+// Every company workspace should have one fully built Harbor Residence project
+// so new users can learn the IOR workflow before loading their own job.
+
+const HARBOR_DEMO_JOB_NUMBER = "DEMO-HARBOR";
+const HARBOR_DEMO_NAME = "Harbor Residence";
+const HARBOR_DEMO_CLIENT = "Private Luxury Residence";
+
+const harborDemoBuckets = [
+  {
+    cost_code: "0100",
+    bucket: "Sitework",
+    original_budget: 220000,
+    actual_to_date: 215000,
+    ftc: 8000,
+  },
+  {
+    cost_code: "0300",
+    bucket: "Structure",
+    original_budget: 540000,
+    actual_to_date: 520000,
+    ftc: 35000,
+  },
+  {
+    cost_code: "0700",
+    bucket: "Envelope",
+    original_budget: 430000,
+    actual_to_date: 300000,
+    ftc: 160000,
+  },
+  { cost_code: "1500", bucket: "MEP", original_budget: 480000, actual_to_date: 260000, ftc: 240000 },
+  {
+    cost_code: "0900",
+    bucket: "Finishes",
+    original_budget: 780000,
+    actual_to_date: 180000,
+    ftc: 690000,
+  },
+  { cost_code: "0130", bucket: "GC/OH", original_budget: 270000, actual_to_date: 150000, ftc: 142000 },
+] as const;
+
+const harborDemoExposures = [
+  {
+    title: "Cabinets misassembled and damaged on delivery",
+    description:
+      "Vendor missed the cabinet measurements. The cabinets arrived with wrong dimensions and damaged doors.",
+    category: "procurement",
+    dollar_exposure: 20000,
+    probability: 100,
+    schedule_impact_weeks: 2,
+    owner: "Vendor",
+    response_path: "recover",
+    release_condition: "Vendor credit issued and replacement delivery confirmed.",
+    released_amount: 0,
+    release_note: "",
+    hold_class: "E-Hold",
+    status: "active",
+    due_date: "2026-07-06",
+    next_review_at: "2026-06-28",
+    notes:
+      "Plan: document the damaged delivery, request vendor credit, and confirm replacement dates before rough-in sequence is affected.",
+  },
+  {
+    title: "Remaining finish-phase uncertainty",
+    description: "General contingency for trim, paint, and closeout variability.",
+    category: "other",
+    dollar_exposure: 65000,
+    probability: 100,
+    schedule_impact_weeks: null,
+    owner: "PM",
+    response_path: "accept",
+    release_condition: "Release as finish trades are bought out and closeout scope is stable.",
+    released_amount: 0,
+    release_note: "",
+    hold_class: "C-Hold",
+    status: "active",
+    due_date: "2026-08-15",
+    next_review_at: "2026-07-15",
+    notes: "Contingency is being gardened until finish scope, trim, and punch-list exposure settle.",
+  },
+  {
+    title: "Weak drywall subcontractor",
+    description: "Quality issues may require supplemental crew.",
+    category: "trade_performance",
+    dollar_exposure: 15000,
+    probability: 100,
+    schedule_impact_weeks: 1,
+    owner: "R. Singh",
+    response_path: "accept",
+    release_condition: "Drywall quality accepted and rework avoided.",
+    released_amount: 0,
+    release_note: "",
+    hold_class: "E-Hold",
+    status: "active",
+    due_date: "2026-06-26",
+    next_review_at: "2026-06-26",
+    notes:
+      "Plan: assign foreman to inspect daily and decide whether to supplement manpower by Friday.",
+  },
+  {
+    title: "Late appliance selection",
+    description: "Selection delay threatens MEP rough-in sequence.",
+    category: "owner_decision",
+    dollar_exposure: 12000,
+    probability: 100,
+    schedule_impact_weeks: 1,
+    owner: "K. Alvarez",
+    response_path: "accept",
+    release_condition: "Appliance package approved and lead times confirmed.",
+    released_amount: 0,
+    release_note: "",
+    hold_class: "E-Hold",
+    status: "active",
+    due_date: "2026-06-24",
+    next_review_at: "2026-06-24",
+    notes: "Plan: escalate selection decision to owner and document schedule impact if not approved.",
+  },
+  {
+    title: "Window delivery delay",
+    description: "Manufacturer pushed ship date five weeks; acceleration may be required.",
+    category: "schedule_compression",
+    dollar_exposure: 18000,
+    probability: 50,
+    schedule_impact_weeks: 3,
+    owner: "K. Alvarez",
+    response_path: "offset",
+    release_condition: "Recovered by resequencing dry-in and avoiding acceleration cost.",
+    released_amount: 0,
+    release_note: "",
+    hold_class: "E-Hold",
+    status: "active",
+    due_date: "2026-06-29",
+    next_review_at: "2026-06-29",
+    notes: "Plan: resequence dry-in work and price acceleration as a fallback.",
+  },
+  {
+    title: "Lighting allowance overrun",
+    description: "Owner selections are trending thirty percent over allowance.",
+    category: "allowance_overrun",
+    dollar_exposure: 22000,
+    probability: 100,
+    schedule_impact_weeks: null,
+    owner: "M. Chen",
+    response_path: "accept",
+    release_condition: "Final lighting package signed and purchase orders issued.",
+    released_amount: 22000,
+    release_note: "Recovered through owner approval of the lighting upgrade.",
+    release_updated_at: "2026-06-11T18:00:00.000Z",
+    hold_class: "E-Hold",
+    status: "recovered",
+    due_date: null,
+    next_review_at: null,
+    notes: "Closed example: dollars were released when the owner accepted the upgrade.",
+  },
+  {
+    title: "Unapproved electrical changes",
+    description: "Field changes not yet captured in change orders.",
+    category: "field_change",
+    dollar_exposure: 9500,
+    probability: 100,
+    schedule_impact_weeks: null,
+    owner: "J. Patel",
+    response_path: "offset",
+    release_condition: "Electrical field changes approved or offset by buyout savings.",
+    released_amount: 9500,
+    release_note: "Offset against buyout savings.",
+    release_updated_at: "2026-06-11T18:30:00.000Z",
+    hold_class: "E-Hold",
+    status: "recovered",
+    due_date: null,
+    next_review_at: null,
+    notes: "Closed example: dollars moved out of active E-Hold once the offset was documented.",
+  },
+  {
+    title: "Electrician contingency overrun",
+    description: "Known electrical productivity and small-scope contingency.",
+    category: "trade_performance",
+    dollar_exposure: 2000,
+    probability: 100,
+    schedule_impact_weeks: null,
+    owner: "BMB",
+    response_path: "eliminate",
+    release_condition: "Accepted within the original contingency plan.",
+    released_amount: 2000,
+    release_note: "Accepted and closed against planned contingency.",
+    release_updated_at: "2026-06-11T19:00:00.000Z",
+    hold_class: "C-Hold",
+    status: "accepted",
+    due_date: null,
+    next_review_at: null,
+    notes: "Closed C-Hold example for teaching the difference between active holds and released risk.",
+  },
+] as const;
+
+const harborDemoChangeOrders = [
+  {
+    number: "CO-001",
+    description: "Owner-requested wine room expansion",
+    contract_amount: 145000,
+    cost_amount: 122000,
+    status: "Pending",
+    probability: 50,
+    owner: "PM",
+    notes: "Client-facing example waiting on signature.",
+    co_type: "owner_change",
+    client_visible: true,
+    client_status: "sent",
+    client_sent_at: "2026-06-10T16:00:00.000Z",
+  },
+  {
+    number: "CO-002",
+    description: "Upgraded primary bath stone package",
+    contract_amount: 65000,
+    cost_amount: 58000,
+    status: "Approved",
+    probability: 100,
+    owner: "PM",
+    notes: "Approved change order example.",
+    co_type: "owner_change",
+    client_visible: true,
+    client_status: "approved",
+    client_sent_at: "2026-06-05T15:00:00.000Z",
+    client_decided_at: "2026-06-07T17:00:00.000Z",
+  },
+  {
+    number: "CO-003",
+    description: "Pool equipment relocation",
+    contract_amount: 85000,
+    cost_amount: 72000,
+    status: "Pending",
+    probability: 75,
+    owner: "PM",
+    notes: "Probability-weighted into the IOR rollup.",
+    co_type: "owner_change",
+    client_visible: true,
+    client_status: "sent",
+    client_sent_at: "2026-06-12T15:30:00.000Z",
+  },
+  {
+    number: "CO-004",
+    description: "Outdoor kitchen scope add",
+    contract_amount: 120000,
+    cost_amount: 98000,
+    status: "Pending",
+    probability: 50,
+    owner: "PM",
+    notes: "Shared with client so the portal shows multiple approval states.",
+    co_type: "owner_change",
+    client_visible: true,
+    client_status: "sent",
+    client_sent_at: "2026-06-12T15:35:00.000Z",
+  },
+] as const;
+
+const safeErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
+
+const roundWeeks = (baseline: string | null, forecast: string | null) =>
+  computeScheduleVarianceWeeks(baseline, forecast) ?? 0;
 
 export const seedDemoIfEmpty = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { count, error: cErr } = await context.supabase
+    const { data: ensuredOrganizationId, error: accountError } = await context.supabase.rpc(
+      "ensure_current_user_account",
+    );
+    if (accountError) throw new Error(accountError.message);
+    if (!ensuredOrganizationId) throw new Error("No Overwatch team is available for this user.");
+
+    let organizationId = ensuredOrganizationId as string;
+    const { data: memberships, error: membershipsError } = await context.supabase
+      .from("organization_memberships")
+      .select("organization_id,created_at")
+      .eq("user_id", context.userId)
+      .eq("status", "active")
+      .order("created_at", { ascending: true });
+    if (membershipsError) throw new Error(membershipsError.message);
+    const activeOrganizationId = memberships?.find((m) => m.organization_id)?.organization_id;
+    if (activeOrganizationId) organizationId = activeOrganizationId as string;
+
+    const { data: existingDemo, error: demoLookupError } = await context.supabase
       .from("projects")
-      .select("id", { count: "exact", head: true });
-    if (cErr) throw new Error(cErr.message);
-    return { seeded: false as const, exists: (count ?? 0) > 0 };
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("job_number", HARBOR_DEMO_JOB_NUMBER)
+      .maybeSingle();
+    if (demoLookupError) throw new Error(demoLookupError.message);
+    if (existingDemo?.id) {
+      return { seeded: false as const, exists: true, demoProjectId: existingDemo.id as string };
+    }
+
+    const { data: existingHarbor, error: harborLookupError } = await context.supabase
+      .from("projects")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("name", HARBOR_DEMO_NAME)
+      .eq("client", HARBOR_DEMO_CLIENT)
+      .limit(1)
+      .maybeSingle();
+    if (harborLookupError) throw new Error(harborLookupError.message);
+    if (existingHarbor?.id) {
+      return { seeded: false as const, exists: true, demoProjectId: existingHarbor.id as string };
+    }
+
+    const projectInsert = {
+      owner_id: context.userId,
+      organization_id: organizationId,
+      job_number: HARBOR_DEMO_JOB_NUMBER,
+      name: HARBOR_DEMO_NAME,
+      client: HARBOR_DEMO_CLIENT,
+      project_manager: "Overwatch Demo PM",
+      original_contract: 3200000,
+      original_cost_budget: 2720000,
+      phase: "Middle" as const,
+      percent_complete: 60,
+      baseline_completion_date: "2026-05-16",
+      forecast_completion_date: "2026-06-30",
+      schedule_variance_weeks: 6,
+      hold_variance_note:
+        "Demo note: E-Hold and C-Hold levels are carried so the IOR shows how active risk protects gross profit.",
+      last_reviewed_at: "2026-06-11T17:48:00.000Z",
+      next_review_at: "2026-06-25T17:00:00.000Z",
+      last_review_summary:
+        "Project remains on budget before holds, but a six-week schedule slip and open exposure ledger are actively eroding indicated gross profit.",
+    };
+
+    let { data: projectRow, error: projectError } = await context.supabase
+      .from("projects")
+      .insert(projectInsert)
+      .select("id")
+      .single();
+    if (projectError?.code === "23505") {
+      const { data: retryDemo, error: retryError } = await context.supabase
+        .from("projects")
+        .select("id")
+        .eq("organization_id", organizationId)
+        .eq("job_number", HARBOR_DEMO_JOB_NUMBER)
+        .maybeSingle();
+      if (retryError) throw new Error(retryError.message);
+      if (retryDemo?.id) {
+        return { seeded: false as const, exists: true, demoProjectId: retryDemo.id as string };
+      }
+    }
+    throwIfProjectSchemaError(projectError);
+    if (projectError) throw new Error(projectError.message);
+    if (!projectRow?.id) throw new Error("Harbor demo project did not save.");
+
+    const projectId = projectRow.id as string;
+    const seedWarnings: string[] = [];
+
+    const { error: bucketError } = await context.supabase.from("cost_buckets").insert(
+      harborDemoBuckets.map((bucket, index) => ({
+        project_id: projectId,
+        ...bucket,
+        source_type: "original_sov" as const,
+        source_date: "2026-06-01",
+        source_note: "Seeded Harbor Residence demo SOV.",
+        sort_order: index + 1,
+      })),
+    );
+    if (bucketError) throw new Error(bucketError.message);
+
+    const { data: exposureRows, error: exposureError } = await context.supabase
+      .from("exposures")
+      .insert(
+        harborDemoExposures.map((exposure) => ({
+          project_id: projectId,
+          ...exposure,
+        })),
+      )
+      .select("id,title");
+    if (exposureError) throw new Error(exposureError.message);
+    const exposureIdByTitle = new Map(
+      (exposureRows ?? []).map((row) => [row.title as string, row.id as string]),
+    );
+
+    const { data: changeOrderRows, error: changeOrderError } = await context.supabase
+      .from("change_orders")
+      .insert(harborDemoChangeOrders.map((co) => ({ project_id: projectId, ...co })))
+      .select("id,number");
+    if (changeOrderError) throw new Error(changeOrderError.message);
+    const changeOrderIdByNumber = new Map(
+      (changeOrderRows ?? []).map((row) => [row.number as string, row.id as string]),
+    );
+
+    const { error: decisionError } = await context.supabase.from("decisions").insert([
+      {
+        project_id: projectId,
+        decision: "Recover cabinet replacement credit",
+        impact: "Protects $20,000 E-Hold and two weeks of schedule exposure.",
+        owner: "PM",
+        due_date: "2026-06-28",
+        status: "open",
+        linked_exposure_id: exposureIdByTitle.get("Cabinets misassembled and damaged on delivery") ?? null,
+        notes: "Send vendor letter, attach photos, and confirm replacement delivery date.",
+      },
+      {
+        project_id: projectId,
+        decision: "Escalate appliance selection to owner",
+        impact: "Unblocks MEP rough-in and protects $12,000 in likely exposure.",
+        owner: "K. Alvarez",
+        due_date: "2026-06-24",
+        status: "overdue",
+        linked_exposure_id: exposureIdByTitle.get("Late appliance selection") ?? null,
+        notes: "Decision is intentionally overdue in the demo so the To-Dos tab has a clear teaching example.",
+      },
+      {
+        project_id: projectId,
+        decision: "Decide whether to supplement drywall manpower",
+        impact: "Mitigates $15,000 trade performance exposure.",
+        owner: "R. Singh",
+        due_date: "2026-06-26",
+        status: "in_progress",
+        linked_exposure_id: exposureIdByTitle.get("Weak drywall subcontractor") ?? null,
+        notes: "Review daily production and quality before Friday.",
+      },
+      {
+        project_id: projectId,
+        decision: "Hold finish contingency until trim scope is stable",
+        impact: "Preserves $65,000 C-Hold until closeout risk is known.",
+        owner: "Executive",
+        due_date: "2026-07-15",
+        status: "open",
+        linked_exposure_id: exposureIdByTitle.get("Remaining finish-phase uncertainty") ?? null,
+        notes: "This explains why C-Holds are managed differently than known E-Holds.",
+      },
+    ]);
+    if (decisionError) throw new Error(decisionError.message);
+
+    const { error: billingError } = await context.supabase.from("billing_applications").insert({
+      project_id: projectId,
+      application_number: "Pay App 001",
+      invoice_number: "DEMO-2601-001",
+      submitted_date: "2026-06-21",
+      due_date: "2026-07-21",
+      billing_period: "Current cycle",
+      contract_amount: 3461250,
+      change_order_amount: 65000,
+      amount_billed: 2120250,
+      paid_to_date: 1200000,
+      retainage: 212025,
+      status: "submitted",
+      notes: "Demo pay application shared to show client-facing billing posture.",
+      sort_order: 1,
+    });
+    if (billingError) throw new Error(billingError.message);
+
+    const { data: milestoneRows, error: milestoneError } = await context.supabase
+      .from("schedule_milestones")
+      .insert([
+        {
+          project_id: projectId,
+          name: "Cabinet install",
+          baseline_date: "2026-06-22",
+          forecast_date: "2026-07-06",
+          status: "delayed",
+          delay_reason: "Cabinets were misassembled and damaged by the manufacturer.",
+          owner: "BMB",
+          sort_order: 1,
+        },
+        {
+          project_id: projectId,
+          name: "MEP rough-in release",
+          baseline_date: "2026-06-15",
+          forecast_date: "2026-06-29",
+          status: "at_risk",
+          delay_reason: "Appliance package and window delivery are pushing the rough-in sequence.",
+          owner: "K. Alvarez",
+          sort_order: 2,
+        },
+        {
+          project_id: projectId,
+          name: "Substantial completion",
+          baseline_date: "2026-05-16",
+          forecast_date: "2026-06-30",
+          status: "delayed",
+          delay_reason: "Current completion forecast is six weeks past baseline.",
+          owner: "PM",
+          sort_order: 3,
+        },
+      ])
+      .select("id,name,baseline_date,forecast_date,status,delay_reason");
+    if (milestoneError) throw new Error(milestoneError.message);
+
+    const { data: updateRow, error: scheduleUpdateError } = await context.supabase
+      .from("schedule_updates")
+      .insert({
+        project_id: projectId,
+        update_number: 1,
+        update_date: "2026-06-11",
+        baseline_completion_date: "2026-05-16",
+        forecast_completion_date: "2026-06-30",
+        variance_weeks: 6,
+        movement_weeks: 0,
+        notes:
+          "Initial Harbor Residence demo schedule update. Forecast completion moved because window delivery and cabinet procurement are affecting the critical path.",
+      })
+      .select("id")
+      .single();
+    if (scheduleUpdateError) throw new Error(scheduleUpdateError.message);
+
+    const { error: milestoneUpdateError } = await context.supabase
+      .from("schedule_milestone_updates")
+      .insert(
+        (milestoneRows ?? []).map((milestone) => ({
+          project_id: projectId,
+          milestone_id: milestone.id as string,
+          schedule_update_id: updateRow.id as string,
+          update_number: 1,
+          baseline_date: (milestone.baseline_date as string | null) ?? null,
+          forecast_date: (milestone.forecast_date as string | null) ?? null,
+          variance_weeks: roundWeeks(
+            (milestone.baseline_date as string | null) ?? null,
+            (milestone.forecast_date as string | null) ?? null,
+          ),
+          status: str(milestone.status, "on_track"),
+          notes: str(milestone.delay_reason),
+        })),
+      );
+    if (milestoneUpdateError) throw new Error(milestoneUpdateError.message);
+
+    const { error: scheduleRiskError } = await context.supabase.from("schedule_risks").insert([
+      {
+        project_id: projectId,
+        kind: "procurement",
+        title: "Cabinets misassembled and damaged on delivery",
+        detail:
+          "Cabinet replacement is driving two weeks of schedule exposure and a vendor recovery action.",
+        dollar_exposure: 20000,
+        probability: 100,
+        schedule_impact_weeks: 2,
+        owner: "PM",
+        due_date: "2026-07-06",
+        response_path: "recover",
+        hold_class: "E-Hold",
+        linked_exposure_id: exposureIdByTitle.get("Cabinets misassembled and damaged on delivery") ?? null,
+        status: "active",
+        sort_order: 1,
+      },
+      {
+        project_id: projectId,
+        kind: "critical_decision",
+        title: "Late appliance selection",
+        detail: "Owner decision is needed to release MEP rough-in sequence.",
+        dollar_exposure: 12000,
+        probability: 100,
+        schedule_impact_weeks: 1,
+        owner: "K. Alvarez",
+        due_date: "2026-06-24",
+        response_path: "accept",
+        hold_class: "E-Hold",
+        linked_exposure_id: exposureIdByTitle.get("Late appliance selection") ?? null,
+        status: "active",
+        sort_order: 2,
+      },
+      {
+        project_id: projectId,
+        kind: "trade_performance",
+        title: "Weak drywall subcontractor",
+        detail: "Quality misses may require supplemental crew or backcharge tracking.",
+        dollar_exposure: 15000,
+        probability: 100,
+        schedule_impact_weeks: 1,
+        owner: "R. Singh",
+        due_date: "2026-06-26",
+        response_path: "accept",
+        hold_class: "E-Hold",
+        linked_exposure_id: exposureIdByTitle.get("Weak drywall subcontractor") ?? null,
+        status: "active",
+        sort_order: 3,
+      },
+      {
+        project_id: projectId,
+        kind: "procurement",
+        title: "Window delivery delay",
+        detail: "Manufacturer pushed ship date five weeks; resequencing may prevent acceleration.",
+        dollar_exposure: 18000,
+        probability: 50,
+        schedule_impact_weeks: 3,
+        owner: "K. Alvarez",
+        due_date: "2026-06-29",
+        response_path: "offset",
+        hold_class: "E-Hold",
+        linked_exposure_id: exposureIdByTitle.get("Window delivery delay") ?? null,
+        status: "active",
+        sort_order: 4,
+      },
+    ]);
+    if (scheduleRiskError) throw new Error(scheduleRiskError.message);
+
+    const { error: reportError } = await context.supabase.from("daily_reports").insert([
+      {
+        project_id: projectId,
+        report_date: "2026-06-10",
+        author: "Overwatch Demo PM",
+        weather: "Clear, 84F",
+        crew_count: 18,
+        work_performed:
+          "Drywall crew continued second-floor finish work. Cabinet delivery inspected and damage documented.",
+        delays: "Cabinet replacement and appliance selection remain schedule constraints.",
+        safety_notes: "No incidents. Reviewed material staging and housekeeping.",
+        notes: "Client-visible demo log so the client portal has field-report context.",
+        client_visible: true,
+      },
+      {
+        project_id: projectId,
+        report_date: "2026-06-11",
+        author: "Overwatch Demo PM",
+        weather: "Humid, afternoon rain",
+        crew_count: 16,
+        work_performed:
+          "MEP coordination walk completed. Drywall quality review found minor rework in two rooms.",
+        delays: "Potential acceleration cost if window delivery date cannot be recovered.",
+        safety_notes: "Reviewed ladder safety after rain.",
+        notes: "Internal demo log showing that not every daily report has to be client visible.",
+        client_visible: false,
+      },
+    ]);
+    if (reportError) throw new Error(reportError.message);
+
+    const { error: reviewError } = await context.supabase.from("reviews").insert({
+      project_id: projectId,
+      reviewed_at: "2026-06-11T17:48:00.000Z",
+      reviewer: "Overwatch Demo PM",
+      forecast_completion_date_before: "2026-06-16",
+      forecast_completion_date_after: "2026-06-30",
+      summary_notes:
+        "Project remains profitable before holds, but schedule movement and live exposures are reducing indicated gross profit. Owner decisions and vendor recovery actions need to close this cycle.",
+      body_markdown:
+        "## Executive IOR Narrative\n\nHarbor Residence began as a 15.0% gross-profit job. Current schedule movement, live E-Holds, and C-Hold contingency reduce indicated gross profit until the team recovers or releases the exposure ledger.\n\n### Management focus\n\n1. Recover cabinet vendor exposure.\n2. Resolve appliance decision before MEP rough-in slips further.\n3. Hold finish contingency until closeout risk is clearer.",
+      status: "published",
+      email_recipients: [],
+      pdf_style: "executive",
+      kpi_snapshot: {
+        original_gp: 480000,
+        gp_at_risk: 261750,
+        indicated_gp: 218250,
+        schedule_variance_weeks: 6,
+      } as Json,
+    });
+    if (reviewError) throw new Error(reviewError.message);
+
+    try {
+      const demoClientEmail = "demo.client@overwatch.example";
+      const { data: existingContact, error: existingContactError } = await context.supabase
+        .from("client_contacts")
+        .select("id")
+        .eq("organization_id", organizationId)
+        .ilike("email", demoClientEmail)
+        .limit(1)
+        .maybeSingle();
+      if (existingContactError) throw existingContactError;
+
+      let contactId = (existingContact?.id as string | undefined) ?? "";
+      if (!contactId) {
+        const { data: contact, error: contactError } = await context.supabase
+          .from("client_contacts")
+          .insert({
+            organization_id: organizationId,
+            created_by: context.userId,
+            name: "Demo Client Rep",
+            email: demoClientEmail,
+            company: HARBOR_DEMO_CLIENT,
+            title: "Owner Representative",
+            notes: "Seeded client contact for the Harbor Residence demo portal.",
+          })
+          .select("id")
+          .single();
+        if (contactError) throw contactError;
+        contactId = contact.id as string;
+      }
+
+      const { error: accessError } = await context.supabase.from("project_client_access").insert({
+        project_id: projectId,
+        contact_id: contactId,
+        email: demoClientEmail,
+        role: "client",
+        status: "pending",
+        can_view_change_orders: true,
+        can_view_daily_reports: true,
+        can_view_billing: true,
+        invited_by: context.userId,
+        last_sent_at: "2026-06-12T16:00:00.000Z",
+      });
+      if (accessError) throw accessError;
+
+      const approvedCoId = changeOrderIdByNumber.get("CO-002");
+      if (approvedCoId) {
+        const { error: approvalError } = await context.supabase
+          .from("change_order_approvals")
+          .insert({
+            project_id: projectId,
+            change_order_id: approvedCoId,
+            contact_id: contactId,
+            client_email: demoClientEmail,
+            decision: "approved",
+            notes: "Demo approval record.",
+            document_version: "demo-v1",
+          });
+        if (approvalError) throw approvalError;
+      }
+    } catch (error) {
+      seedWarnings.push(`client portal demo skipped: ${safeErrorMessage(error)}`);
+    }
+
+    return { seeded: true as const, exists: true, demoProjectId: projectId, seedWarnings };
   });
