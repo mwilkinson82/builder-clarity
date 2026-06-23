@@ -1438,18 +1438,6 @@ export type Database = {
         Returns: boolean
       }
       can_read_project: { Args: { p_project_id: string }; Returns: boolean }
-      can_view_client_change_orders: {
-        Args: { p_project_id: string }
-        Returns: boolean
-      }
-      can_view_client_billing: {
-        Args: { p_project_id: string }
-        Returns: boolean
-      }
-      can_view_client_daily_reports: {
-        Args: { p_project_id: string }
-        Returns: boolean
-      }
       delete_email: {
         Args: { message_id: number; queue_name: string }
         Returns: boolean
