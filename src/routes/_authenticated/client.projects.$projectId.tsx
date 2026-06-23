@@ -168,7 +168,7 @@ function ClientProjectPage() {
                 No change orders have been shared with this client portal yet.
               </div>
             ) : (
-              changeOrders.map((co) => {
+              changeOrders.map((co: ClientPortalChangeOrder) => {
                 const approval = latestApproval(approvals, co.id);
                 const note = notesByCo[co.id] ?? "";
                 return (
