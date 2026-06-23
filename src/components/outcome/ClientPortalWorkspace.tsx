@@ -405,7 +405,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
                 Grant access to a contact to create the first client seat.
               </div>
             ) : (
-              data.access.map((access) => (
+              data.access.map((access: ProjectClientAccessRow) => (
                 <div
                   key={access.id}
                   className="grid gap-3 border-b border-hairline p-4 text-sm last:border-b-0 md:grid-cols-[minmax(0,1fr)_120px_150px]"
