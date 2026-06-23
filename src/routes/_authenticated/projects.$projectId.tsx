@@ -61,6 +61,7 @@ import {
   type ChangeOrderRow,
   type BillingApplicationRow,
   type ExposureRow,
+  type SovImportRow,
 } from "@/lib/projects.functions";
 import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
@@ -345,6 +346,7 @@ function ProjectPage() {
     buckets,
     decisions,
     reviews,
+    sovImports,
     billingApplications,
     rollup,
     guidance,
@@ -868,9 +870,9 @@ function ProjectPage() {
                   />
                   <ImportSOVSheet
                     existingBuckets={buckets}
-                    onImport={(rows, mode) =>
+                    onImport={(rows, mode, metadata) =>
                       bucketImport.mutate(
-                        { projectId, rows, mode },
+                        { projectId, rows, mode, metadata },
                         {
                           onSuccess: (result) => {
                             const imported =
@@ -893,6 +895,17 @@ function ProjectPage() {
                             toast.success("SOV imported", {
                               description: `${imported} created, ${updated} updated. Original cost budget is now ${fmtUSD(budget)}.`,
                             });
+                            if (
+                              typeof result === "object" &&
+                              result &&
+                              "importHistorySaved" in result &&
+                              !(result as { importHistorySaved: boolean }).importHistorySaved
+                            ) {
+                              toast.warning("SOV imported, history pending", {
+                                description:
+                                  "The buckets saved, but the import ledger table is not available yet.",
+                              });
+                            }
                           },
                           onError: (err) => {
                             toast.error("SOV import did not save", {
@@ -922,6 +935,7 @@ function ProjectPage() {
                     value={fmtUSD(rollup.forecastedFinalCost)}
                   />
                 </div>
+                <SovImportHistory imports={sovImports ?? []} />
               </div>
               <CostBucketsTable
                 buckets={buckets}
@@ -1046,6 +1060,123 @@ function SovMetric({ label, value }: { label: string; value: string }) {
       <div className="mt-1 text-lg font-medium tabular text-foreground">{value}</div>
     </div>
   );
+}
+
+function SovImportHistory({ imports }: { imports: SovImportRow[] }) {
+  const latest = imports[0];
+  if (!latest) {
+    return (
+      <div className="mt-5 rounded-md border border-dashed border-hairline bg-background/60 px-3 py-3 text-sm text-muted-foreground">
+        No SOV import history yet. After the next import, Overwatch will show the source file,
+        mapping confidence, selected budget basis, and warnings here.
+      </div>
+    );
+  }
+
+  const warnings = Array.isArray(latest.warnings)
+    ? latest.warnings.filter((warning): warning is string => typeof warning === "string")
+    : [];
+  const confidenceTone =
+    latest.confidence === "high"
+      ? "text-success"
+      : latest.confidence === "medium"
+        ? "text-warning"
+        : "text-danger";
+  const source = [latest.source_name || latest.source_type || "Imported SOV", latest.source_sheet]
+    .filter(Boolean)
+    .join(" / ");
+
+  return (
+    <div className="mt-5 rounded-md border border-hairline bg-background">
+      <div className="flex flex-col gap-3 border-b border-hairline px-3 py-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Latest SOV import
+          </div>
+          <div className="mt-1 font-medium text-foreground">{source}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {latest.profile || "Generic spreadsheet"} ·{" "}
+            <span className={`font-semibold uppercase ${confidenceTone}`}>
+              {latest.confidence}
+            </span>{" "}
+            confidence · {formatShortDateTime(latest.created_at)}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          <MiniLedgerStat label="Rows" value={String(latest.raw_rows)} />
+          <MiniLedgerStat label="Staged" value={String(latest.staged_rows)} />
+          <MiniLedgerStat label="Created" value={String(latest.inserted_count)} />
+          <MiniLedgerStat label="Updated" value={String(latest.updated_count)} />
+        </div>
+      </div>
+      <div className="grid gap-3 px-3 py-3 md:grid-cols-3">
+        <div className="rounded-md border border-hairline bg-surface px-3 py-2">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Imported budget
+          </div>
+          <div className="mt-1 text-lg font-medium tabular">{fmtUSD(latest.total_budget)}</div>
+        </div>
+        <div className="rounded-md border border-hairline bg-surface px-3 py-2">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Budget basis
+          </div>
+          <div className="mt-1 text-sm font-medium">
+            {latest.selected_budget_label ||
+              (latest.selected_budget_column == null
+                ? "Not recorded"
+                : `Column ${latest.selected_budget_column + 1}`)}
+          </div>
+        </div>
+        <div className="rounded-md border border-hairline bg-surface px-3 py-2">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Mode
+          </div>
+          <div className="mt-1 text-sm font-medium capitalize">
+            {latest.mode === "append" ? "Merge/update existing" : "Replace all buckets"}
+          </div>
+        </div>
+      </div>
+      {warnings.length > 0 && (
+        <div className="border-t border-hairline px-3 py-3">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Review flags
+          </div>
+          <div className="grid gap-2 lg:grid-cols-2">
+            {warnings.slice(0, 4).map((warning, index) => (
+              <div
+                key={`${warning}-${index}`}
+                className="rounded-md border border-warning/30 bg-warning/10 px-2.5 py-2 text-xs text-warning"
+              >
+                {warning}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {imports.length > 1 && (
+        <div className="border-t border-hairline px-3 py-2 text-xs text-muted-foreground">
+          {imports.length - 1} previous import{imports.length === 2 ? "" : "s"} retained for audit.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniLedgerStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-hairline bg-surface px-2.5 py-2">
+      <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 font-medium tabular text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function formatShortDateTime(value: string) {
+  if (!value) return "Date not recorded";
+  const compact = value.replace("T", " ").slice(0, 16);
+  return compact || "Date not recorded";
 }
 
 function responseAction(path: import("@/lib/ior").ResponsePath) {

@@ -57,6 +57,33 @@ const FIELD_LABELS: Record<FieldKey, string> = {
   ignore: "Ignore",
 };
 
+export interface SovImportMetadata {
+  source_type: string;
+  source_name: string;
+  source_sheet: string;
+  profile: string;
+  confidence: "high" | "medium" | "low" | "unknown";
+  has_header: boolean;
+  raw_rows: number;
+  staged_rows: number;
+  skipped_rows: number;
+  merged_rows: number;
+  total_budget: number;
+  selected_budget_column: number | null;
+  selected_budget_label: string;
+  column_map: Record<string, string>;
+  amount_choices: {
+    columnIndex: number;
+    label: string;
+    total: number;
+    sampleCount: number;
+    recommended: boolean;
+    basis: string;
+    note: string;
+  }[];
+  warnings: string[];
+}
+
 export function ImportSOVSheet({
   existingBuckets = [],
   onImport,
@@ -75,6 +102,7 @@ export function ImportSOVSheet({
       sort_order: number;
     }[],
     mode: "replace" | "append",
+    metadata: SovImportMetadata,
   ) => void;
   pending?: boolean;
 }) {
@@ -82,6 +110,7 @@ export function ImportSOVSheet({
   const [parsed, setParsed] = useState<ParsedSheet | null>(null);
   const [map, setMap] = useState<ColumnMap>({});
   const [hasHeader, setHasHeader] = useState(true);
+  const [sourceName, setSourceName] = useState("");
   const [pasteText, setPasteText] = useState("");
   const [mode, setMode] = useState<"replace" | "append">("replace");
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +128,7 @@ export function ImportSOVSheet({
             : await parseCsv(file);
       setParsed(p);
       setHasHeader(p.hasHeader);
+      setSourceName(file.name);
       setMap(guessColumnMap(p.matrix, p.hasHeader));
       if (p.matrix.length === 0) {
         setError(
@@ -119,6 +149,7 @@ export function ImportSOVSheet({
     const p = parsePaste(pasteText);
     setParsed(p);
     setHasHeader(p.hasHeader);
+    setSourceName("Pasted rows");
     setMap(guessColumnMap(p.matrix, p.hasHeader));
   };
 
@@ -126,6 +157,7 @@ export function ImportSOVSheet({
     setParsed(null);
     setMap({});
     setError(null);
+    setSourceName("");
     setPasteText("");
     if (fileRef.current) fileRef.current.value = "";
   };
@@ -159,9 +191,35 @@ export function ImportSOVSheet({
       setError("No valid rows to import.");
       return;
     }
+    const selectedBudgetColumn = intake?.selectedBudgetColumn ?? null;
+    const selectedBudgetLabel =
+      selectedBudgetColumn == null
+        ? ""
+        : (parsed?.matrix[0]?.[selectedBudgetColumn] ?? `Column ${selectedBudgetColumn + 1}`);
+    const metadata: SovImportMetadata = {
+      source_type: parsed?.source ?? "",
+      source_name: sourceName,
+      source_sheet: parsed?.sheetName ?? "",
+      profile: intake?.profile ?? "",
+      confidence: intake?.confidence ?? "unknown",
+      has_header: hasHeader,
+      raw_rows: intake?.rawRows ?? rows.length,
+      staged_rows: valid.length,
+      skipped_rows: skippedCount,
+      merged_rows: intake?.mergedRows ?? 0,
+      total_budget: total,
+      selected_budget_column: selectedBudgetColumn,
+      selected_budget_label: selectedBudgetLabel.trim(),
+      column_map: Object.fromEntries(
+        Object.entries(map).map(([columnIndex, field]) => [columnIndex, field]),
+      ),
+      amount_choices: intake?.amountChoices ?? [],
+      warnings: intake?.warnings ?? [],
+    };
     onImport(
       valid.map(({ valid: _v, reason: _r, action: _a, matchLabel: _m, ...row }) => row),
       mode,
+      metadata,
     );
     setOpen(false);
     reset();

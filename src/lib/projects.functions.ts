@@ -103,6 +103,33 @@ export interface BucketRow {
   source_note: string;
 }
 
+export interface SovImportRow {
+  id: string;
+  project_id: string;
+  imported_by: string | null;
+  mode: "replace" | "append";
+  source_type: string;
+  source_name: string;
+  source_sheet: string;
+  profile: string;
+  confidence: "high" | "medium" | "low" | "unknown";
+  has_header: boolean;
+  raw_rows: number;
+  staged_rows: number;
+  inserted_count: number;
+  updated_count: number;
+  skipped_count: number;
+  merged_rows: number;
+  total_budget: number;
+  original_cost_budget: number;
+  selected_budget_column: number | null;
+  selected_budget_label: string;
+  column_map: Json;
+  amount_choices: Json;
+  warnings: Json;
+  created_at: string;
+}
+
 export type BillingStatus = "draft" | "submitted" | "paid" | "partial" | "rejected";
 
 export interface BillingApplicationRow {
@@ -409,7 +436,7 @@ export const getProject = createServerFn({ method: "GET" })
     if (accountError) throw new Error(accountError.message);
 
     const pid = data.projectId;
-    const [pRes, eRes, cRes, bRes, dRes, rRes] = await Promise.all([
+    const [pRes, eRes, cRes, bRes, dRes, rRes, siRes] = await Promise.all([
       context.supabase.from("projects").select("*").eq("id", pid).maybeSingle(),
       context.supabase
         .from("exposures")
@@ -429,6 +456,12 @@ export const getProject = createServerFn({ method: "GET" })
         .eq("project_id", pid)
         .order("reviewed_at", { ascending: false })
         .limit(10),
+      context.supabase
+        .from("sov_imports")
+        .select("*")
+        .eq("project_id", pid)
+        .order("created_at", { ascending: false })
+        .limit(5),
     ]);
     const billRes = await context.supabase
       .from("billing_applications")
@@ -442,6 +475,10 @@ export const getProject = createServerFn({ method: "GET" })
     if (bRes.error) throw new Error(bRes.error.message);
     if (dRes.error) throw new Error(dRes.error.message);
     if (rRes.error) throw new Error(rRes.error.message);
+    const sovImportsTableMissing =
+      siRes.error &&
+      (siRes.error.message.includes("sov_imports") || siRes.error.message.includes("schema cache"));
+    if (siRes.error && !sovImportsTableMissing) throw new Error(siRes.error.message);
     const billingTableMissing =
       billRes.error &&
       (billRes.error.message.includes("billing_applications") ||
@@ -521,6 +558,38 @@ export const getProject = createServerFn({ method: "GET" })
         kpi_snapshot: (o.kpi_snapshot ?? {}) as Json,
       };
     });
+    const sovImports: SovImportRow[] = sovImportsTableMissing
+      ? []
+      : (siRes.data ?? []).map((r) => {
+          const o = r as Record<string, unknown>;
+          return {
+            id: o.id as string,
+            project_id: o.project_id as string,
+            imported_by: (o.imported_by as string | null) ?? null,
+            mode: str(o.mode, "replace") as SovImportRow["mode"],
+            source_type: str(o.source_type),
+            source_name: str(o.source_name),
+            source_sheet: str(o.source_sheet),
+            profile: str(o.profile),
+            confidence: str(o.confidence, "unknown") as SovImportRow["confidence"],
+            has_header: Boolean(o.has_header ?? true),
+            raw_rows: num(o.raw_rows),
+            staged_rows: num(o.staged_rows),
+            inserted_count: num(o.inserted_count),
+            updated_count: num(o.updated_count),
+            skipped_count: num(o.skipped_count),
+            merged_rows: num(o.merged_rows),
+            total_budget: num(o.total_budget),
+            original_cost_budget: num(o.original_cost_budget),
+            selected_budget_column:
+              o.selected_budget_column == null ? null : num(o.selected_budget_column),
+            selected_budget_label: str(o.selected_budget_label),
+            column_map: (o.column_map ?? {}) as Json,
+            amount_choices: (o.amount_choices ?? []) as Json,
+            warnings: (o.warnings ?? []) as Json,
+            created_at: str(o.created_at),
+          };
+        });
 
     const rollup: Rollup = computeRollup(project, buckets, changeOrders, exposures);
     const guidance = guidanceTargets(project.phase, rollup.remainingCost);
@@ -535,6 +604,7 @@ export const getProject = createServerFn({ method: "GET" })
       buckets,
       decisions,
       reviews,
+      sovImports,
       billingApplications,
       rollup,
       guidance,
@@ -1195,10 +1265,46 @@ const importBucketRow = z.object({
 
 type ImportBucketRow = z.infer<typeof importBucketRow>;
 
+const importMetadataInput = z
+  .object({
+    source_type: z.string().max(50).default(""),
+    source_name: z.string().max(300).default(""),
+    source_sheet: z.string().max(200).default(""),
+    profile: z.string().max(120).default(""),
+    confidence: z.enum(["high", "medium", "low", "unknown"]).default("unknown"),
+    has_header: z.boolean().default(true),
+    raw_rows: z.number().int().min(0).default(0),
+    staged_rows: z.number().int().min(0).default(0),
+    skipped_rows: z.number().int().min(0).default(0),
+    merged_rows: z.number().int().min(0).default(0),
+    total_budget: z.number().min(0).default(0),
+    selected_budget_column: z.number().int().nullable().optional(),
+    selected_budget_label: z.string().max(200).default(""),
+    column_map: z.record(z.string(), z.string()).default({}),
+    amount_choices: z
+      .array(
+        z
+          .object({
+            columnIndex: z.number().int(),
+            label: z.string().max(200),
+            total: z.number(),
+            sampleCount: z.number().int().min(0),
+            recommended: z.boolean(),
+            basis: z.string().max(40),
+            note: z.string().max(500),
+          })
+          .passthrough(),
+      )
+      .default([]),
+    warnings: z.array(z.string().max(1000)).max(20).default([]),
+  })
+  .default({});
+
 const importInput = z.object({
   projectId: z.string().uuid(),
   mode: z.enum(["replace", "append"]).default("replace"),
   rows: z.array(importBucketRow).min(1).max(500),
+  metadata: importMetadataInput,
 });
 
 const normalizeImportKey = (value: string) => value.trim().toLowerCase();
@@ -1374,7 +1480,49 @@ export const importCostBuckets = createServerFn({ method: "POST" })
       .eq("id", data.projectId);
     if (updErr) throw new Error(updErr.message);
 
-    return { ok: true, inserted, updated, originalCostBudget: total };
+    const metadata = data.metadata;
+    const importBudgetTotal =
+      metadata.total_budget || importRows.reduce((sum, row) => sum + row.original_budget, 0);
+    let importHistorySaved = false;
+    let importHistoryError = "";
+    const { error: importHistoryErr } = await context.supabase.from("sov_imports").insert({
+      project_id: data.projectId,
+      imported_by: context.userId,
+      mode: data.mode,
+      source_type: metadata.source_type,
+      source_name: metadata.source_name,
+      source_sheet: metadata.source_sheet,
+      profile: metadata.profile,
+      confidence: metadata.confidence,
+      has_header: metadata.has_header,
+      raw_rows: metadata.raw_rows,
+      staged_rows: metadata.staged_rows || importRows.length,
+      inserted_count: inserted,
+      updated_count: updated,
+      skipped_count: metadata.skipped_rows,
+      merged_rows: metadata.merged_rows,
+      total_budget: importBudgetTotal,
+      original_cost_budget: total,
+      selected_budget_column: metadata.selected_budget_column ?? null,
+      selected_budget_label: metadata.selected_budget_label,
+      column_map: metadata.column_map,
+      amount_choices: metadata.amount_choices,
+      warnings: metadata.warnings,
+    });
+    if (importHistoryErr) {
+      importHistoryError = importHistoryErr.message;
+    } else {
+      importHistorySaved = true;
+    }
+
+    return {
+      ok: true,
+      inserted,
+      updated,
+      originalCostBudget: total,
+      importHistorySaved,
+      importHistoryError,
+    };
   });
 
 // ---------------- DEMO SEED (no-op if any project exists) ----------------

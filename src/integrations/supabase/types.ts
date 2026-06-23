@@ -418,6 +418,102 @@ export type Database = {
           },
         ]
       }
+      sov_imports: {
+        Row: {
+          amount_choices: Json
+          column_map: Json
+          confidence: string
+          created_at: string
+          has_header: boolean
+          id: string
+          imported_by: string | null
+          inserted_count: number
+          merged_rows: number
+          mode: string
+          original_cost_budget: number
+          profile: string
+          project_id: string
+          raw_rows: number
+          selected_budget_column: number | null
+          selected_budget_label: string
+          skipped_count: number
+          source_name: string
+          source_sheet: string
+          source_type: string
+          staged_rows: number
+          total_budget: number
+          updated_count: number
+          warnings: Json
+        }
+        Insert: {
+          amount_choices?: Json
+          column_map?: Json
+          confidence?: string
+          created_at?: string
+          has_header?: boolean
+          id?: string
+          imported_by?: string | null
+          inserted_count?: number
+          merged_rows?: number
+          mode?: string
+          original_cost_budget?: number
+          profile?: string
+          project_id: string
+          raw_rows?: number
+          selected_budget_column?: number | null
+          selected_budget_label?: string
+          skipped_count?: number
+          source_name?: string
+          source_sheet?: string
+          source_type?: string
+          staged_rows?: number
+          total_budget?: number
+          updated_count?: number
+          warnings?: Json
+        }
+        Update: {
+          amount_choices?: Json
+          column_map?: Json
+          confidence?: string
+          created_at?: string
+          has_header?: boolean
+          id?: string
+          imported_by?: string | null
+          inserted_count?: number
+          merged_rows?: number
+          mode?: string
+          original_cost_budget?: number
+          profile?: string
+          project_id?: string
+          raw_rows?: number
+          selected_budget_column?: number | null
+          selected_budget_label?: string
+          skipped_count?: number
+          source_name?: string
+          source_sheet?: string
+          source_type?: string
+          staged_rows?: number
+          total_budget?: number
+          updated_count?: number
+          warnings?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sov_imports_imported_by_fkey"
+            columns: ["imported_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sov_imports_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cost_buckets: {
         Row: {
           actual_to_date: number
