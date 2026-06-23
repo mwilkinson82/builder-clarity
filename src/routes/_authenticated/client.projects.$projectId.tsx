@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { CheckCircle2, LogOut, MessageSquare, XCircle } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileText, LogOut, MessageSquare, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,8 +12,18 @@ import {
   recordClientChangeOrderDecision,
   type ChangeOrderApprovalRow,
   type ClientPortalChangeOrder,
+  type ClientPortalDailyReport,
+  type ClientPortalDailyReportAttachment,
 } from "@/lib/client-portal.functions";
 import { fmtUSD } from "@/lib/format";
+
+const DAILY_REPORT_BUCKET = "daily-reports";
+
+const clientDateFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
 
 export const Route = createFileRoute("/_authenticated/client/projects/$projectId")({
   head: () => ({
@@ -40,6 +50,12 @@ function latestApproval(
   changeOrderId: string,
 ): ChangeOrderApprovalRow | undefined {
   return approvals.find((approval) => approval.change_order_id === changeOrderId);
+}
+
+function formatClientDate(value: string) {
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value || "No date";
+  return clientDateFormatter.format(date);
 }
 
 function ClientProjectPage() {
@@ -80,16 +96,36 @@ function ClientProjectPage() {
 
   const totals = useMemo(() => {
     const changeOrders = projectQuery.data?.changeOrders ?? [];
+    const dailyReports = projectQuery.data?.dailyReports ?? [];
     return {
       visible: changeOrders.length,
-      amount: changeOrders.reduce((total: number, co: ClientPortalChangeOrder) => total + co.contract_amount, 0),
-      approved: changeOrders.filter((co: ClientPortalChangeOrder) => co.client_status === "approved").length,
+      amount: changeOrders.reduce(
+        (total: number, co: ClientPortalChangeOrder) => total + co.contract_amount,
+        0,
+      ),
+      approved: changeOrders.filter(
+        (co: ClientPortalChangeOrder) => co.client_status === "approved",
+      ).length,
+      dailyReports: dailyReports.length,
     };
-  }, [projectQuery.data?.changeOrders]);
+  }, [projectQuery.data?.changeOrders, projectQuery.data?.dailyReports]);
 
   const signOut = async () => {
     await supabase.auth.signOut();
     navigate({ to: "/auth" });
+  };
+
+  const openDailyAttachment = async (attachment: ClientPortalDailyReportAttachment) => {
+    const { data, error } = await supabase.storage
+      .from(DAILY_REPORT_BUCKET)
+      .createSignedUrl(attachment.path, 600);
+    if (error || !data?.signedUrl) {
+      toast.error("Attachment could not open", {
+        description: error?.message ?? "Try again.",
+      });
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
   if (projectQuery.isLoading) {
@@ -121,7 +157,7 @@ function ClientProjectPage() {
     );
   }
 
-  const { project, changeOrders, approvals } = projectQuery.data;
+  const { project, changeOrders, approvals, dailyReports } = projectQuery.data;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -134,24 +170,25 @@ function ClientProjectPage() {
               </div>
               <h1 className="mt-2 font-serif text-4xl leading-tight">{project.name}</h1>
               <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                Review change orders shared by the project team. Your approval or rejection is
-                recorded immediately.
+                Review change orders and daily reports shared by the project team. Your approval or
+                rejection is recorded immediately.
               </p>
             </div>
             <Button variant="ghost" size="sm" className="gap-1.5" onClick={signOut}>
               <LogOut className="h-3.5 w-3.5" /> Sign out
             </Button>
           </div>
-          <dl className="mt-6 grid gap-3 md:grid-cols-4">
+          <dl className="mt-6 grid gap-3 md:grid-cols-5">
             <ClientMetric label="Client" value={project.client || "Project client"} />
             <ClientMetric label="Job #" value={project.job_number || "Not listed"} />
             <ClientMetric label="COs for review" value={String(totals.visible)} />
             <ClientMetric label="Shared CO value" value={fmtUSD(totals.amount)} />
+            <ClientMetric label="Daily reports" value={String(totals.dailyReports)} />
           </dl>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-8">
+      <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
         <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
@@ -165,7 +202,7 @@ function ClientProjectPage() {
           <div className="mt-6 space-y-4">
             {changeOrders.length === 0 ? (
               <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
-                No change orders have been shared with this client portal yet.
+                No change orders are currently awaiting your review.
               </div>
             ) : (
               changeOrders.map((co: ClientPortalChangeOrder) => {
@@ -286,6 +323,33 @@ function ClientProjectPage() {
             )}
           </div>
         </section>
+
+        <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+          <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="font-serif text-3xl">Daily reports shared with client</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Field updates marked client-visible by the project team.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 space-y-3">
+            {dailyReports.length === 0 ? (
+              <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
+                No daily reports are currently shared with you.
+              </div>
+            ) : (
+              dailyReports.map((report: ClientPortalDailyReport) => (
+                <DailyReportCard
+                  key={report.id}
+                  report={report}
+                  onOpenAttachment={openDailyAttachment}
+                />
+              ))
+            )}
+          </div>
+        </section>
       </main>
     </div>
   );
@@ -299,5 +363,72 @@ function ClientMetric({ label, value }: { label: string; value: string }) {
       </dt>
       <dd className="mt-1 truncate font-serif text-2xl">{value}</dd>
     </div>
+  );
+}
+
+function DailyReportCard({
+  report,
+  onOpenAttachment,
+}: {
+  report: ClientPortalDailyReport;
+  onOpenAttachment: (attachment: ClientPortalDailyReportAttachment) => void;
+}) {
+  const visibleNotes = [
+    ["Work performed", report.work_performed],
+    ["Manpower", report.manpower],
+    ["Delays / blockers", report.delays],
+    ["Safety", report.safety_notes],
+    ["Visitors", report.visitors],
+    ["Quality", report.quality_notes],
+  ].filter(([, value]) => value);
+
+  return (
+    <article className="rounded-md border border-hairline bg-background p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h3 className="font-serif text-2xl">{formatClientDate(report.report_date)}</h3>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {[report.author, report.weather, `${report.crew_count} crew`]
+              .filter(Boolean)
+              .join(" · ")}
+          </div>
+        </div>
+        {report.attachments.length > 0 && (
+          <div className="flex flex-wrap justify-start gap-2 md:justify-end">
+            {report.attachments.map((attachment) => (
+              <Button
+                key={attachment.path}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => onOpenAttachment(attachment)}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                <span className="max-w-[180px] truncate">{attachment.name}</span>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </Button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {visibleNotes.length > 0 ? (
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {visibleNotes.map(([label, value]) => (
+            <div key={label} className="rounded-md border border-hairline bg-muted/20 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                {label}
+              </div>
+              <p className="mt-1 text-sm text-foreground">{value}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-4 text-sm text-muted-foreground">
+          This report was shared without additional field notes.
+        </p>
+      )}
+    </article>
   );
 }

@@ -56,6 +56,30 @@ export interface ClientPortalChangeOrder {
   client_decided_at: string | null;
 }
 
+export interface ClientPortalDailyReportAttachment {
+  name: string;
+  path: string;
+  type: string;
+}
+
+export interface ClientPortalDailyReport {
+  id: string;
+  project_id: string;
+  report_date: string;
+  author: string;
+  weather: string;
+  crew_count: number;
+  manpower: string;
+  work_performed: string;
+  delays: string;
+  safety_notes: string;
+  visitors: string;
+  quality_notes: string;
+  notes: string;
+  attachments: ClientPortalDailyReportAttachment[];
+  client_visible: boolean;
+}
+
 export interface ChangeOrderApprovalRow {
   id: string;
   project_id: string;
@@ -167,6 +191,54 @@ function normalizeChangeOrder(row: Record<string, unknown>): ClientPortalChangeO
     client_notes: str(row.client_notes),
     client_sent_at: (row.client_sent_at as string | null) ?? null,
     client_decided_at: (row.client_decided_at as string | null) ?? null,
+  };
+}
+
+function normalizeDailyAttachment(row: unknown): ClientPortalDailyReportAttachment | null {
+  if (typeof row !== "object" || row === null || Array.isArray(row)) return null;
+  const item = row as Record<string, unknown>;
+  const path = str(item.path).trim();
+  if (!path) return null;
+  return {
+    name: str(item.name, "Daily report attachment"),
+    path,
+    type: str(item.type, "application/octet-stream"),
+  };
+}
+
+function normalizeDailyReport(row: Record<string, unknown>): ClientPortalDailyReport {
+  const manifest = Array.isArray(row.attachment_manifest)
+    ? row.attachment_manifest
+        .map((item) => normalizeDailyAttachment(item))
+        .filter((item): item is ClientPortalDailyReportAttachment => Boolean(item))
+    : [];
+  const legacyAttachment =
+    manifest.length === 0 && str(row.attachment_path).trim()
+      ? [
+          {
+            name: str(row.attachment_name, "Daily report attachment"),
+            path: str(row.attachment_path),
+            type: str(row.attachment_type, "application/octet-stream"),
+          },
+        ]
+      : [];
+
+  return {
+    id: row.id as string,
+    project_id: row.project_id as string,
+    report_date: str(row.report_date),
+    author: str(row.author),
+    weather: str(row.weather),
+    crew_count: num(row.crew_count),
+    manpower: str(row.manpower),
+    work_performed: str(row.work_performed),
+    delays: str(row.delays),
+    safety_notes: str(row.safety_notes),
+    visitors: str(row.visitors),
+    quality_notes: str(row.quality_notes),
+    notes: str(row.notes),
+    attachments: manifest.length > 0 ? manifest : legacyAttachment,
+    client_visible: bool(row.client_visible),
   };
 }
 
@@ -448,7 +520,7 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
       throw new Error("You do not have client access to this project.");
     }
 
-    const [projectRes, changeOrdersRes, approvalsRes] = await Promise.all([
+    const [projectRes, changeOrdersRes, approvalsRes, dailyReportsRes] = await Promise.all([
       db(context)
         .from("projects")
         .select(
@@ -467,10 +539,18 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
         .select("*")
         .eq("project_id", data.projectId)
         .order("created_at", { ascending: false }),
+      db(context)
+        .from("daily_reports")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .eq("client_visible", true)
+        .order("report_date", { ascending: false })
+        .limit(20),
     ]);
     if (projectRes.error) throw new Error(projectRes.error.message);
     if (changeOrdersRes.error) throw new Error(changeOrdersRes.error.message);
     if (approvalsRes.error) throw new Error(approvalsRes.error.message);
+    if (dailyReportsRes.error) throw new Error(dailyReportsRes.error.message);
 
     return {
       project: normalizeClientProject(projectRes.data as Record<string, unknown>),
@@ -479,6 +559,9 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
       ),
       approvals: (approvalsRes.data ?? []).map((row: Record<string, unknown>) =>
         normalizeApproval(row),
+      ),
+      dailyReports: (dailyReportsRes.data ?? []).map((row: Record<string, unknown>) =>
+        normalizeDailyReport(row),
       ),
     };
   });
