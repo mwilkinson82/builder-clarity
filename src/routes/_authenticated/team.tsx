@@ -214,7 +214,7 @@ function TeamPage() {
   });
 
   const memberMutation = useMutation({
-    mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: MemberStatus }) =>
+    mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: "active" | "disabled" }) =>
       updateMember({ data: payload }),
     onSuccess: async () => {
       await refreshWorkspace();
