@@ -1,6 +1,9 @@
 ## Goal
 Turn the IOR app from a dashboard into a true risk-to-margin operating system: PMs import their existing SOV, log dollarized risks with a treatment path, and generate a polished weekly PDF report ready for an L10 / PM meeting. Ship as one coherent release.
 
+## Current commercial roadmap
+The next build-out roadmap now lives in `docs/overwatch-buildout-phases.md`. It separates the completed demo-readiness work from the phased path toward a Contractor Circle-ready operating system with team access, client portal, billing, payments, commercial gating, and the practical Buildertrend/Procore replacement wedge.
+
 ## 1. Comma-formatted dollar inputs (`MoneyInput`)
 - New `src/components/ui/money-input.tsx`: type-as-you-go thousands separators, returns clean number, accepts decimals, blocks letters.
 - Replace raw `<Input type="number">` in: project edit (Original Contract, Original Cost Budget), Cost Buckets table, Change Orders table, Exposures table. Reads stay formatted with `fmtUSD`.
