@@ -187,9 +187,9 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
     return map;
   }, [data?.access]);
 
-  const visibleCount = (data?.changeOrders ?? []).filter((co) => co.client_visible).length;
+  const visibleCount = (data?.changeOrders ?? []).filter((co: ClientPortalChangeOrder) => co.client_visible).length;
   const approvedCount = (data?.changeOrders ?? []).filter(
-    (co) => co.client_status === "approved",
+    (co: ClientPortalChangeOrder) => co.client_status === "approved",
   ).length;
 
   if (portalQuery.isLoading) {
