@@ -1,7 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import type { BillingStatus, COStatus, COType } from "@/lib/projects.functions";
+import type {
+  BillingApplicationEventRow,
+  BillingStatus,
+  COStatus,
+  COType,
+} from "@/lib/projects.functions";
 
 export type ClientAccessStatus = "pending" | "active" | "revoked";
 export type ClientChangeOrderStatus = "not_sent" | "sent" | "approved" | "rejected";
@@ -96,6 +101,7 @@ export interface ClientPortalBillingApplication {
   status: BillingStatus;
   notes: string;
   sort_order: number;
+  status_events: BillingApplicationEventRow[];
 }
 
 export interface ChangeOrderApprovalRow {
@@ -159,8 +165,31 @@ type ServerContext = {
   claims?: Record<string, unknown>;
 };
 
+type SupabaseResult<T = unknown> = {
+  data: T;
+  error: { message?: string; code?: string } | null;
+};
+
+type SupabaseQuery = PromiseLike<SupabaseResult> & {
+  select: (...args: unknown[]) => SupabaseQuery;
+  insert: (...args: unknown[]) => SupabaseQuery;
+  update: (...args: unknown[]) => SupabaseQuery;
+  upsert: (...args: unknown[]) => SupabaseQuery;
+  delete: (...args: unknown[]) => SupabaseQuery;
+  eq: (...args: unknown[]) => SupabaseQuery;
+  order: (...args: unknown[]) => SupabaseQuery;
+  limit: (...args: unknown[]) => SupabaseQuery;
+  single: (...args: unknown[]) => Promise<SupabaseResult>;
+  maybeSingle: (...args: unknown[]) => Promise<SupabaseResult>;
+};
+
+type SupabaseLike = {
+  from: (relation: string) => SupabaseQuery;
+  rpc: (functionName: string, args?: Record<string, unknown>) => Promise<SupabaseResult>;
+};
+
 function db(context: ServerContext) {
-  return context.supabase as any;
+  return context.supabase as SupabaseLike;
 }
 
 function isMissingRpcError(error: unknown) {
@@ -178,6 +207,15 @@ function isMissingBillingApplicationsError(error: unknown) {
   return (
     code === "PGRST205" ||
     /billing_applications|schema cache|could not find the table/i.test(message)
+  );
+}
+
+function isMissingBillingApplicationEventsError(error: unknown) {
+  const message = str((error as { message?: unknown })?.message);
+  const code = str((error as { code?: unknown })?.code);
+  return (
+    code === "PGRST205" ||
+    /billing_application_events|schema cache|could not find the table/i.test(message)
   );
 }
 
@@ -315,6 +353,24 @@ function normalizeBillingApplication(row: Record<string, unknown>): ClientPortal
     status: str(row.status, "draft") as BillingStatus,
     notes: str(row.notes),
     sort_order: num(row.sort_order),
+    status_events: [],
+  };
+}
+
+function normalizeBillingApplicationEvent(
+  row: Record<string, unknown>,
+): BillingApplicationEventRow {
+  return {
+    id: row.id as string,
+    billing_application_id: row.billing_application_id as string,
+    project_id: row.project_id as string,
+    event_type: str(row.event_type, "status_change"),
+    from_status: str(row.from_status),
+    to_status: str(row.to_status),
+    amount: num(row.amount),
+    notes: str(row.notes),
+    created_by: (row.created_by as string | null) ?? null,
+    created_at: str(row.created_at),
   };
 }
 
@@ -621,47 +677,60 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
           ),
         ]);
 
-    const [projectRes, changeOrdersRes, approvalsRes, billingApplicationsRes, dailyReportsRes] =
-      await Promise.all([
-        db(context)
-          .from("projects")
-          .select(
-            "id,organization_id,name,client,job_number,project_manager,baseline_completion_date,forecast_completion_date,percent_complete",
-          )
-          .eq("id", data.projectId)
-          .single(),
-        canViewChangeOrders
-          ? db(context)
-              .from("change_orders")
-              .select("*")
-              .eq("project_id", data.projectId)
-              .eq("client_visible", true)
-              .order("number")
-          : Promise.resolve({ data: [], error: null }),
-        canViewChangeOrders
-          ? db(context)
-              .from("change_order_approvals")
-              .select("*")
-              .eq("project_id", data.projectId)
-              .order("created_at", { ascending: false })
-          : Promise.resolve({ data: [], error: null }),
-        canViewBilling
-          ? db(context)
-              .from("billing_applications")
-              .select("*")
-              .eq("project_id", data.projectId)
-              .order("sort_order")
-          : Promise.resolve({ data: [], error: null }),
-        canViewDailyReports
-          ? db(context)
-              .from("daily_reports")
-              .select("*")
-              .eq("project_id", data.projectId)
-              .eq("client_visible", true)
-              .order("report_date", { ascending: false })
-              .limit(20)
-          : Promise.resolve({ data: [], error: null }),
-      ]);
+    const [
+      projectRes,
+      changeOrdersRes,
+      approvalsRes,
+      billingApplicationsRes,
+      billingEventsRes,
+      dailyReportsRes,
+    ] = await Promise.all([
+      db(context)
+        .from("projects")
+        .select(
+          "id,organization_id,name,client,job_number,project_manager,baseline_completion_date,forecast_completion_date,percent_complete",
+        )
+        .eq("id", data.projectId)
+        .single(),
+      canViewChangeOrders
+        ? db(context)
+            .from("change_orders")
+            .select("*")
+            .eq("project_id", data.projectId)
+            .eq("client_visible", true)
+            .order("number")
+        : Promise.resolve({ data: [], error: null }),
+      canViewChangeOrders
+        ? db(context)
+            .from("change_order_approvals")
+            .select("*")
+            .eq("project_id", data.projectId)
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+      canViewBilling
+        ? db(context)
+            .from("billing_applications")
+            .select("*")
+            .eq("project_id", data.projectId)
+            .order("sort_order")
+        : Promise.resolve({ data: [], error: null }),
+      canViewBilling
+        ? db(context)
+            .from("billing_application_events")
+            .select("*")
+            .eq("project_id", data.projectId)
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+      canViewDailyReports
+        ? db(context)
+            .from("daily_reports")
+            .select("*")
+            .eq("project_id", data.projectId)
+            .eq("client_visible", true)
+            .order("report_date", { ascending: false })
+            .limit(20)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
     if (projectRes.error) throw new Error(projectRes.error.message);
     if (changeOrdersRes.error) throw new Error(changeOrdersRes.error.message);
     if (approvalsRes.error) throw new Error(approvalsRes.error.message);
@@ -671,7 +740,22 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
     ) {
       throw new Error(billingApplicationsRes.error.message);
     }
+    if (billingEventsRes.error && !isMissingBillingApplicationEventsError(billingEventsRes.error)) {
+      throw new Error(billingEventsRes.error.message);
+    }
     if (dailyReportsRes.error) throw new Error(dailyReportsRes.error.message);
+
+    const billingEvents = billingEventsRes.error
+      ? []
+      : (billingEventsRes.data ?? []).map((row: Record<string, unknown>) =>
+          normalizeBillingApplicationEvent(row),
+        );
+    const billingEventsByApplication = new Map<string, BillingApplicationEventRow[]>();
+    billingEvents.forEach((event) => {
+      const existing = billingEventsByApplication.get(event.billing_application_id) ?? [];
+      existing.push(event);
+      billingEventsByApplication.set(event.billing_application_id, existing);
+    });
 
     return {
       project: normalizeClientProject(projectRes.data as Record<string, unknown>),
@@ -683,9 +767,13 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
       ),
       billingApplications: billingApplicationsRes.error
         ? []
-        : (billingApplicationsRes.data ?? []).map((row: Record<string, unknown>) =>
-            normalizeBillingApplication(row),
-          ),
+        : (billingApplicationsRes.data ?? []).map((row: Record<string, unknown>) => {
+            const app = normalizeBillingApplication(row);
+            return {
+              ...app,
+              status_events: billingEventsByApplication.get(app.id) ?? [],
+            };
+          }),
       dailyReports: (dailyReportsRes.data ?? []).map((row: Record<string, unknown>) =>
         normalizeDailyReport(row),
       ),

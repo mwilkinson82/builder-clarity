@@ -199,6 +199,20 @@ export interface BillingApplicationRow {
   status: BillingStatus;
   notes: string;
   sort_order: number;
+  status_events: BillingApplicationEventRow[];
+}
+
+export interface BillingApplicationEventRow {
+  id: string;
+  billing_application_id: string;
+  project_id: string;
+  event_type: string;
+  from_status: string;
+  to_status: string;
+  amount: number;
+  notes: string;
+  created_by: string | null;
+  created_at: string;
 }
 
 export interface DecisionRow {
@@ -330,6 +344,22 @@ const normalizeBillingApplication = (b: Record<string, unknown>): BillingApplica
   status: str(b.status, "draft") as BillingStatus,
   notes: str(b.notes),
   sort_order: num(b.sort_order),
+  status_events: [],
+});
+
+const normalizeBillingApplicationEvent = (
+  row: Record<string, unknown>,
+): BillingApplicationEventRow => ({
+  id: row.id as string,
+  billing_application_id: row.billing_application_id as string,
+  project_id: row.project_id as string,
+  event_type: str(row.event_type, "status_change"),
+  from_status: str(row.from_status),
+  to_status: str(row.to_status),
+  amount: num(row.amount),
+  notes: str(row.notes),
+  created_by: (row.created_by as string | null) ?? null,
+  created_at: str(row.created_at),
 });
 
 const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
@@ -644,6 +674,26 @@ export const getProject = createServerFn({ method: "GET" })
         billRes.error.message.includes("schema cache"));
     if (billRes.error && !billingTableMissing) throw new Error(billRes.error.message);
 
+    let billingEventRows: BillingApplicationEventRow[] = [];
+    if (!billingTableMissing && (billRes.data ?? []).length > 0) {
+      const billingEventRes = await dynamicTable(context.supabase, "billing_application_events")
+        .select("*")
+        .eq("project_id", pid)
+        .order("created_at", { ascending: false });
+      const billingEventsTableMissing =
+        billingEventRes.error &&
+        (billingEventRes.error.message.includes("billing_application_events") ||
+          billingEventRes.error.message.includes("schema cache"));
+      if (billingEventRes.error && !billingEventsTableMissing) {
+        throw new Error(billingEventRes.error.message);
+      }
+      billingEventRows = billingEventsTableMissing
+        ? []
+        : ((billingEventRes.data ?? []) as unknown[]).map((row) =>
+            normalizeBillingApplicationEvent(row as Record<string, unknown>),
+          );
+    }
+
     const project = normalizeProject(pRes.data as Record<string, unknown>);
     let sovMappingProfiles: SovMappingProfileRow[] = [];
     if (project.organization_id) {
@@ -704,9 +754,21 @@ export const getProject = createServerFn({ method: "GET" })
         source_note: str(o.source_note),
       };
     });
+    const billingEventsByApplication = new Map<string, BillingApplicationEventRow[]>();
+    billingEventRows.forEach((event) => {
+      const existing = billingEventsByApplication.get(event.billing_application_id) ?? [];
+      existing.push(event);
+      billingEventsByApplication.set(event.billing_application_id, existing);
+    });
     const billingApplications: BillingApplicationRow[] = billingTableMissing
       ? []
-      : (billRes.data ?? []).map((b) => normalizeBillingApplication(b as Record<string, unknown>));
+      : (billRes.data ?? []).map((b) => {
+          const app = normalizeBillingApplication(b as Record<string, unknown>);
+          return {
+            ...app,
+            status_events: billingEventsByApplication.get(app.id) ?? [],
+          };
+        });
     const decisions: DecisionRow[] = (dRes.data ?? []).map((d) => {
       const o = d as Record<string, unknown>;
       return {
@@ -1292,6 +1354,36 @@ const billingApplicationInput = z.object({
   sort_order: z.number().int().optional(),
 });
 
+function isMissingBillingEventsTable(error: unknown) {
+  const message =
+    error instanceof Error ? error.message : str((error as { message?: unknown })?.message);
+  return /billing_application_events|schema cache/i.test(message);
+}
+
+async function recordBillingApplicationEvent(
+  supabase: unknown,
+  input: {
+    billing_application_id: string;
+    project_id: string;
+    event_type: string;
+    from_status?: string;
+    to_status?: string;
+    amount?: number;
+    notes?: string;
+  },
+) {
+  const { error } = await dynamicTable(supabase, "billing_application_events").insert({
+    billing_application_id: input.billing_application_id,
+    project_id: input.project_id,
+    event_type: input.event_type,
+    from_status: input.from_status ?? "",
+    to_status: input.to_status ?? "",
+    amount: input.amount ?? 0,
+    notes: input.notes ?? "",
+  });
+  if (error && !isMissingBillingEventsTable(error)) throw new Error(error.message);
+}
+
 export const createBillingApplication = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId: string } & z.input<typeof billingApplicationInput>) =>
@@ -1307,12 +1399,26 @@ export const createBillingApplication = createServerFn({ method: "POST" })
       .limit(1)
       .maybeSingle();
     const sort_order = rest.sort_order ?? ((last?.sort_order as number | undefined) ?? 0) + 1;
-    const { error } = await context.supabase.from("billing_applications").insert({
-      project_id: projectId,
-      ...rest,
-      sort_order,
-    });
+    const { data: created, error } = await context.supabase
+      .from("billing_applications")
+      .insert({
+        project_id: projectId,
+        ...rest,
+        sort_order,
+      })
+      .select("*")
+      .single();
     if (error) throw new Error(error.message);
+    const createdRow = normalizeBillingApplication(created as Record<string, unknown>);
+    await recordBillingApplicationEvent(context.supabase, {
+      billing_application_id: createdRow.id,
+      project_id: projectId,
+      event_type: "created",
+      from_status: "",
+      to_status: createdRow.status,
+      amount: createdRow.amount_billed,
+      notes: createdRow.notes || "Pay application created.",
+    });
     return { ok: true };
   });
 
@@ -1323,11 +1429,43 @@ export const updateBillingApplication = createServerFn({ method: "POST" })
       z.object({ id: z.string().uuid(), patch: billingApplicationInput.partial() }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    const { data: before, error: beforeError } = await context.supabase
+      .from("billing_applications")
+      .select("id,project_id,status,amount_billed,paid_to_date,application_number")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (beforeError) throw new Error(beforeError.message);
+    if (!before) throw new Error("Pay app not found.");
+
     const { error } = await context.supabase
       .from("billing_applications")
       .update(data.patch)
       .eq("id", data.id);
     if (error) throw new Error(error.message);
+
+    const previousStatus = str(before.status, "draft");
+    const nextStatus = data.patch.status;
+    const statusChanged = typeof nextStatus === "string" && nextStatus !== previousStatus;
+    const previousPaid = num(before.paid_to_date);
+    const nextPaid = data.patch.paid_to_date;
+    const paidChanged = typeof nextPaid === "number" && nextPaid !== previousPaid;
+
+    if (statusChanged || paidChanged) {
+      const eventType = statusChanged ? "status_change" : "payment_update";
+      const eventNotes = statusChanged
+        ? `${str(before.application_number, "Pay app")} moved from ${previousStatus} to ${nextStatus}.`
+        : `${str(before.application_number, "Pay app")} paid-to-date updated from ${previousPaid} to ${nextPaid}.`;
+      await recordBillingApplicationEvent(context.supabase, {
+        billing_application_id: data.id,
+        project_id: before.project_id as string,
+        event_type: eventType,
+        from_status: previousStatus,
+        to_status: statusChanged ? nextStatus : previousStatus,
+        amount: paidChanged ? nextPaid : num(before.amount_billed),
+        notes: eventNotes,
+      });
+    }
+
     return { ok: true };
   });
 
@@ -2218,23 +2356,36 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
     ]);
     if (decisionError) throw new Error(decisionError.message);
 
-    const { error: billingError } = await context.supabase.from("billing_applications").insert({
-      project_id: projectId,
-      application_number: "Pay App 001",
-      invoice_number: "DEMO-2601-001",
-      submitted_date: "2026-06-21",
-      due_date: "2026-07-21",
-      billing_period: "Current cycle",
-      contract_amount: 3461250,
-      change_order_amount: 65000,
-      amount_billed: 2120250,
-      paid_to_date: 1200000,
-      retainage: 212025,
-      status: "submitted",
-      notes: "Demo pay application shared to show client-facing billing posture.",
-      sort_order: 1,
-    });
+    const { data: billingApplication, error: billingError } = await context.supabase
+      .from("billing_applications")
+      .insert({
+        project_id: projectId,
+        application_number: "Pay App 001",
+        invoice_number: "DEMO-2601-001",
+        submitted_date: "2026-06-21",
+        due_date: "2026-07-21",
+        billing_period: "Current cycle",
+        contract_amount: 3461250,
+        change_order_amount: 65000,
+        amount_billed: 2120250,
+        paid_to_date: 1200000,
+        retainage: 212025,
+        status: "submitted",
+        notes: "Demo pay application shared to show client-facing billing posture.",
+        sort_order: 1,
+      })
+      .select("id")
+      .single();
     if (billingError) throw new Error(billingError.message);
+    await recordBillingApplicationEvent(context.supabase, {
+      billing_application_id: billingApplication.id,
+      project_id: projectId,
+      event_type: "created",
+      from_status: "",
+      to_status: "submitted",
+      amount: 2120250,
+      notes: "Demo pay application opened for client-facing billing posture.",
+    });
 
     const { data: milestoneRows, error: milestoneError } = await context.supabase
       .from("schedule_milestones")

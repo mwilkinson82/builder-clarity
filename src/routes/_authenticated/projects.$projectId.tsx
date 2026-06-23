@@ -62,6 +62,7 @@ import {
   type ReviewRow,
   type ChangeOrderRow,
   type BillingApplicationRow,
+  type BillingApplicationEventRow,
   type ExposureRow,
   type SovImportRow,
 } from "@/lib/projects.functions";
@@ -118,6 +119,35 @@ function makeLocalBillingId() {
   return `${LOCAL_BILLING_ID_PREFIX}${randomId}`;
 }
 
+function makeLocalBillingEvent(
+  projectId: string,
+  billingApplicationId: string,
+  input: {
+    event_type: string;
+    from_status?: string;
+    to_status?: string;
+    amount?: number;
+    notes?: string;
+  },
+): BillingApplicationEventRow {
+  const randomId =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return {
+    id: `local-billing-event-${randomId}`,
+    billing_application_id: billingApplicationId,
+    project_id: projectId,
+    event_type: input.event_type,
+    from_status: input.from_status ?? "",
+    to_status: input.to_status ?? "",
+    amount: input.amount ?? 0,
+    notes: input.notes ?? "",
+    created_by: null,
+    created_at: new Date().toISOString(),
+  };
+}
+
 function billingString(value: unknown, fallback = "") {
   return typeof value === "string" ? value : fallback;
 }
@@ -138,8 +168,9 @@ function makeLocalBillingApplication(
   projectId: string,
   input: BillingDraft,
 ): BillingApplicationRow {
+  const id = makeLocalBillingId();
   return {
-    id: makeLocalBillingId(),
+    id,
     project_id: projectId,
     application_number: input.application_number,
     invoice_number: input.invoice_number,
@@ -154,6 +185,37 @@ function makeLocalBillingApplication(
     status: input.status,
     notes: input.notes,
     sort_order: input.sort_order,
+    status_events: [
+      makeLocalBillingEvent(projectId, id, {
+        event_type: "created",
+        from_status: "",
+        to_status: input.status,
+        amount: input.amount_billed,
+        notes: input.notes || "Pay application created locally.",
+      }),
+    ],
+  };
+}
+
+function normalizeStoredBillingEvent(
+  projectId: string,
+  billingApplicationId: string,
+  raw: unknown,
+): BillingApplicationEventRow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const id = billingString(record.id);
+  return {
+    id: id || `local-billing-event-${Date.now()}`,
+    billing_application_id: billingString(record.billing_application_id, billingApplicationId),
+    project_id: billingString(record.project_id, projectId),
+    event_type: billingString(record.event_type, "status_change"),
+    from_status: billingString(record.from_status),
+    to_status: billingString(record.to_status),
+    amount: billingNumber(record.amount),
+    notes: billingString(record.notes),
+    created_by: typeof record.created_by === "string" ? record.created_by : null,
+    created_at: billingString(record.created_at, new Date().toISOString()),
   };
 }
 
@@ -164,8 +226,9 @@ function normalizeStoredBillingApplication(
   if (!raw || typeof raw !== "object") return null;
   const record = raw as Record<string, unknown>;
   const id = billingString(record.id);
+  const normalizedId = id.startsWith(LOCAL_BILLING_ID_PREFIX) ? id : makeLocalBillingId();
   return {
-    id: id.startsWith(LOCAL_BILLING_ID_PREFIX) ? id : makeLocalBillingId(),
+    id: normalizedId,
     project_id: projectId,
     application_number: billingString(record.application_number, "Pay App"),
     invoice_number: billingString(record.invoice_number),
@@ -180,6 +243,11 @@ function normalizeStoredBillingApplication(
     status: isBillingStatus(record.status) ? record.status : "draft",
     notes: billingString(record.notes),
     sort_order: billingNumber(record.sort_order),
+    status_events: Array.isArray(record.status_events)
+      ? record.status_events
+          .map((event) => normalizeStoredBillingEvent(projectId, normalizedId, event))
+          .filter((event): event is BillingApplicationEventRow => Boolean(event))
+      : [],
   };
 }
 
@@ -531,7 +599,27 @@ function ProjectPage() {
   const handleUpdatePayApp = (id: string, patch: Partial<BillingApplicationRow>) => {
     if (id.startsWith(LOCAL_BILLING_ID_PREFIX)) {
       storeLocalBillingApplications((current) =>
-        current.map((app) => (app.id === id ? { ...app, ...patch } : app)),
+        current.map((app) => {
+          if (app.id !== id) return app;
+          const statusChanged = patch.status && patch.status !== app.status;
+          const paidChanged =
+            typeof patch.paid_to_date === "number" && patch.paid_to_date !== app.paid_to_date;
+          const lifecycleEvents = [...app.status_events];
+          if (statusChanged || paidChanged) {
+            lifecycleEvents.unshift(
+              makeLocalBillingEvent(projectId, app.id, {
+                event_type: statusChanged ? "status_change" : "payment_update",
+                from_status: app.status,
+                to_status: statusChanged ? patch.status : app.status,
+                amount: paidChanged ? patch.paid_to_date : app.amount_billed,
+                notes: statusChanged
+                  ? `${app.application_number || "Pay app"} moved from ${app.status} to ${patch.status}.`
+                  : `${app.application_number || "Pay app"} paid-to-date updated from ${app.paid_to_date} to ${patch.paid_to_date}.`,
+              }),
+            );
+          }
+          return { ...app, ...patch, status_events: lifecycleEvents };
+        }),
       );
       return;
     }
@@ -1219,7 +1307,7 @@ function responseAction(path: import("@/lib/ior").ResponsePath) {
   return "Accept";
 }
 
-type BillingDraft = Omit<BillingApplicationRow, "id" | "project_id">;
+type BillingDraft = Omit<BillingApplicationRow, "id" | "project_id" | "status_events">;
 
 function BillingWorkspace({
   project,
@@ -1572,6 +1660,15 @@ function addDays(date: string, days: number) {
   return d.toISOString().slice(0, 10);
 }
 
+function billingEventLabel(event: BillingApplicationEventRow) {
+  if (event.event_type === "created") return `Created as ${event.to_status || "draft"}`;
+  if (event.event_type === "payment_update") return `Payment updated ${fmtUSD(event.amount)}`;
+  if (event.from_status && event.to_status) {
+    return `${event.from_status} to ${event.to_status}`;
+  }
+  return event.to_status || event.event_type;
+}
+
 function BillingApplicationRowEditor({
   app,
   onPatch,
@@ -1582,106 +1679,130 @@ function BillingApplicationRowEditor({
   onDelete: () => void;
 }) {
   const outstanding = Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
+  const events = app.status_events.slice(0, 3);
 
   return (
-    <tr>
-      <td className="px-3 py-2 align-top">
-        <EditableText
-          value={app.application_number}
-          onCommit={(application_number) => onPatch({ application_number })}
-        />
-        <EditableText
-          value={app.billing_period}
-          placeholder="Billing period"
-          small
-          onCommit={(billing_period) => onPatch({ billing_period })}
-        />
-      </td>
-      <td className="px-3 py-2 align-top">
-        <EditableText
-          value={app.invoice_number}
-          placeholder="Invoice #"
-          onCommit={(invoice_number) => onPatch({ invoice_number })}
-        />
-      </td>
-      <td className="px-3 py-2 align-top">
-        <Input
-          type="date"
-          value={app.submitted_date ?? ""}
-          onChange={(e) => onPatch({ submitted_date: e.target.value || null })}
-          className="h-8 min-w-[138px]"
-        />
-        <Input
-          type="date"
-          value={app.due_date ?? ""}
-          onChange={(e) => onPatch({ due_date: e.target.value || null })}
-          className="mt-1 h-8 min-w-[138px]"
-        />
-      </td>
-      <td className="px-3 py-2 align-top">
-        <MoneyInput
-          value={app.contract_amount}
-          onValueChange={(contract_amount) => onPatch({ contract_amount })}
-          align="right"
-          className="ml-auto h-8 w-28"
-        />
-      </td>
-      <td className="px-3 py-2 align-top">
-        <MoneyInput
-          value={app.change_order_amount}
-          onValueChange={(change_order_amount) => onPatch({ change_order_amount })}
-          align="right"
-          className="ml-auto h-8 w-28"
-        />
-      </td>
-      <td className="px-3 py-2 align-top">
-        <MoneyInput
-          value={app.amount_billed}
-          onValueChange={(amount_billed) => onPatch({ amount_billed })}
-          align="right"
-          className="ml-auto h-8 w-28"
-        />
-      </td>
-      <td className="px-3 py-2 align-top">
-        <MoneyInput
-          value={app.paid_to_date}
-          onValueChange={(paid_to_date) => onPatch({ paid_to_date })}
-          align="right"
-          className="ml-auto h-8 w-28"
-        />
-      </td>
-      <td className="px-3 py-2 align-top">
-        <MoneyInput
-          value={app.retainage}
-          onValueChange={(retainage) => onPatch({ retainage })}
-          align="right"
-          className="ml-auto h-8 w-28"
-        />
-      </td>
-      <td className="px-3 py-3 text-right align-top tabular font-medium">{fmtUSD(outstanding)}</td>
-      <td className="px-3 py-2 align-top">
-        <Select
-          value={app.status}
-          onValueChange={(status) => onPatch({ status: status as BillingApplicationRow["status"] })}
-        >
-          <SelectTrigger className="h-8 w-[118px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="draft">Draft</SelectItem>
-            <SelectItem value="submitted">Submitted</SelectItem>
-            <SelectItem value="partial">Partial</SelectItem>
-            <SelectItem value="paid">Paid</SelectItem>
-            <SelectItem value="rejected">Rejected</SelectItem>
-          </SelectContent>
-        </Select>
-      </td>
-      <td className="px-3 py-2 align-top">
-        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onDelete}>
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </td>
-    </tr>
+    <>
+      <tr>
+        <td className="px-3 py-2 align-top">
+          <EditableText
+            value={app.application_number}
+            onCommit={(application_number) => onPatch({ application_number })}
+          />
+          <EditableText
+            value={app.billing_period}
+            placeholder="Billing period"
+            small
+            onCommit={(billing_period) => onPatch({ billing_period })}
+          />
+        </td>
+        <td className="px-3 py-2 align-top">
+          <EditableText
+            value={app.invoice_number}
+            placeholder="Invoice #"
+            onCommit={(invoice_number) => onPatch({ invoice_number })}
+          />
+        </td>
+        <td className="px-3 py-2 align-top">
+          <Input
+            type="date"
+            value={app.submitted_date ?? ""}
+            onChange={(e) => onPatch({ submitted_date: e.target.value || null })}
+            className="h-8 min-w-[138px]"
+          />
+          <Input
+            type="date"
+            value={app.due_date ?? ""}
+            onChange={(e) => onPatch({ due_date: e.target.value || null })}
+            className="mt-1 h-8 min-w-[138px]"
+          />
+        </td>
+        <td className="px-3 py-2 align-top">
+          <MoneyInput
+            value={app.contract_amount}
+            onValueChange={(contract_amount) => onPatch({ contract_amount })}
+            align="right"
+            className="ml-auto h-8 w-28"
+          />
+        </td>
+        <td className="px-3 py-2 align-top">
+          <MoneyInput
+            value={app.change_order_amount}
+            onValueChange={(change_order_amount) => onPatch({ change_order_amount })}
+            align="right"
+            className="ml-auto h-8 w-28"
+          />
+        </td>
+        <td className="px-3 py-2 align-top">
+          <MoneyInput
+            value={app.amount_billed}
+            onValueChange={(amount_billed) => onPatch({ amount_billed })}
+            align="right"
+            className="ml-auto h-8 w-28"
+          />
+        </td>
+        <td className="px-3 py-2 align-top">
+          <MoneyInput
+            value={app.paid_to_date}
+            onValueChange={(paid_to_date) => onPatch({ paid_to_date })}
+            align="right"
+            className="ml-auto h-8 w-28"
+          />
+        </td>
+        <td className="px-3 py-2 align-top">
+          <MoneyInput
+            value={app.retainage}
+            onValueChange={(retainage) => onPatch({ retainage })}
+            align="right"
+            className="ml-auto h-8 w-28"
+          />
+        </td>
+        <td className="px-3 py-3 text-right align-top tabular font-medium">
+          {fmtUSD(outstanding)}
+        </td>
+        <td className="px-3 py-2 align-top">
+          <Select
+            value={app.status}
+            onValueChange={(status) =>
+              onPatch({ status: status as BillingApplicationRow["status"] })
+            }
+          >
+            <SelectTrigger className="h-8 w-[118px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="submitted">Submitted</SelectItem>
+              <SelectItem value="partial">Partial</SelectItem>
+              <SelectItem value="paid">Paid</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+            </SelectContent>
+          </Select>
+        </td>
+        <td className="px-3 py-2 align-top">
+          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onDelete}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </td>
+      </tr>
+      {events.length > 0 && (
+        <tr className="bg-surface/45">
+          <td colSpan={11} className="px-3 pb-3 pt-0">
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              {events.map((event) => (
+                <span
+                  key={event.id}
+                  className="inline-flex items-center gap-2 rounded-md border border-hairline bg-card px-2.5 py-1"
+                >
+                  <span className="font-medium text-foreground">{billingEventLabel(event)}</span>
+                  <span>{formatShortDateTime(event.created_at)}</span>
+                </span>
+              ))}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 

@@ -453,6 +453,7 @@ function ClientProjectPage() {
                           0,
                           app.amount_billed - app.paid_to_date - app.retainage,
                         );
+                        const latestEvent = app.status_events[0];
                         return (
                           <tr key={app.id} className="border-t border-hairline">
                             <td className="px-3 py-3 align-top">
@@ -493,6 +494,11 @@ function ClientProjectPage() {
                               <span className="inline-flex rounded-md border border-hairline bg-muted/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]">
                                 {app.status}
                               </span>
+                              {latestEvent ? (
+                                <div className="mt-1 text-[11px] text-muted-foreground">
+                                  Updated {formatClientDate(latestEvent.created_at)}
+                                </div>
+                              ) : null}
                             </td>
                           </tr>
                         );
