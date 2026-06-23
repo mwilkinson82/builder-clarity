@@ -191,16 +191,13 @@ Deliverables:
 
 These are the next repo-backed moves after the SOV intake work:
 
-1. Add SOV import history and mapping profile persistence.
-2. Add team settings/profile screens for the organization foundation already in the schema.
-3. Add client contacts and client project access tables.
-4. Build the first client portal route for change-order approval.
+1. Run the Phase 0 smoke gate before each push/publish: `npm run smoke:phase0`, `npm run build`, then `npm run smoke:phase0:live` after Lovable publishes.
+2. Add SOV mapping profile persistence so recurring builder spreadsheet formats can be reused instead of remapped every import.
+3. Add admin/support portfolio filters for company, PM, GP at risk, indicated GP, schedule variance, stale IOR review, and daily-report activity.
+4. Add daily report client packet export.
 5. Convert pay apps into an invoice lifecycle with status history.
 6. Add usage meters to the organization UI while keeping Contractor Circle grant access non-blocking.
-7. Add daily report client packet export.
-8. Add admin/support portfolio filters for company, PM, GP at risk, indicated GP, schedule variance, stale IOR review, and daily-report activity.
-9. Add smoke-test coverage for the current custom-domain member flow.
-10. Add Stripe subscription and payment planning once the invoice data model is settled.
+7. Add Stripe subscription and payment planning once the invoice data model is settled.
 
 ## Architecture Notes
 
