@@ -78,14 +78,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
+      { title: "Overwatch" },
       {
         name: "description",
         content:
           "Forecast project outcomes for luxury custom home builders with a premium financial and risk management dashboard.",
       },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
+      { property: "og:title", content: "Overwatch" },
       {
         property: "og:description",
         content:
@@ -94,7 +94,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
-      { name: "twitter:title", content: "Lovable App" },
+      { name: "twitter:title", content: "Overwatch" },
       {
         name: "twitter:description",
         content:
@@ -110,6 +110,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         content:
           "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1cebaa4f-3a59-4c5f-b0bc-80f79c91f70d/id-preview-8573b11a--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1781239420130.png",
       },
+      { name: "description", content: "Overwatch, powered by ALP. Project Management Command Center" },
+      { property: "og:description", content: "Overwatch, powered by ALP. Project Management Command Center" },
+      { name: "twitter:description", content: "Overwatch, powered by ALP. Project Management Command Center" },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/612ea966-3f8a-4d60-aef0-90f72e457f32/id-preview-a01fe3b1--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1782249307606.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/612ea966-3f8a-4d60-aef0-90f72e457f32/id-preview-a01fe3b1--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1782249307606.png" },
     ],
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
