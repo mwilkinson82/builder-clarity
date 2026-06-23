@@ -175,6 +175,26 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
       }),
   });
 
+  const accessPermissionMutation = useMutation({
+    mutationFn: (input: {
+      accessId: string;
+      patch: Partial<
+        Pick<
+          ProjectClientAccessRow,
+          "can_view_change_orders" | "can_view_daily_reports" | "can_view_billing"
+        >
+      >;
+    }) => updateAccess({ data: { accessId: input.accessId, ...input.patch } }),
+    onSuccess: async () => {
+      await invalidate();
+      toast.success("Client permissions updated");
+    },
+    onError: (err) =>
+      toast.error("Client permissions did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      }),
+  });
+
   const portalUrl = useMemo(() => {
     if (typeof window === "undefined") return buildClientPath(projectId);
     return `${window.location.origin}${buildClientPath(projectId)}`;
@@ -397,7 +417,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
         <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
           <h3 className="font-serif text-2xl">Client access ledger</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            Active means the client has accepted the magic link at least once.
+            Toggle exactly what this client seat can see before sending the magic link.
           </p>
           <div className="mt-5 overflow-hidden rounded-md border border-hairline">
             {data.access.length === 0 ? (
@@ -408,7 +428,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
               data.access.map((access: ProjectClientAccessRow) => (
                 <div
                   key={access.id}
-                  className="grid gap-3 border-b border-hairline p-4 text-sm last:border-b-0 md:grid-cols-[minmax(0,1fr)_120px_150px]"
+                  className="grid gap-3 border-b border-hairline p-4 text-sm last:border-b-0 md:grid-cols-[minmax(0,1fr)_minmax(280px,360px)_110px_150px]"
                 >
                   <div className="min-w-0">
                     <div className="truncate font-medium text-foreground">{access.email}</div>
@@ -416,6 +436,41 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
                       Last link:{" "}
                       {access.last_sent_at ? access.last_sent_at.slice(0, 10) : "not sent"}
                     </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <PermissionButton
+                      label="COs"
+                      active={access.can_view_change_orders}
+                      disabled={accessPermissionMutation.isPending}
+                      onClick={() =>
+                        accessPermissionMutation.mutate({
+                          accessId: access.id,
+                          patch: { can_view_change_orders: !access.can_view_change_orders },
+                        })
+                      }
+                    />
+                    <PermissionButton
+                      label="Daily"
+                      active={access.can_view_daily_reports}
+                      disabled={accessPermissionMutation.isPending}
+                      onClick={() =>
+                        accessPermissionMutation.mutate({
+                          accessId: access.id,
+                          patch: { can_view_daily_reports: !access.can_view_daily_reports },
+                        })
+                      }
+                    />
+                    <PermissionButton
+                      label="Billing"
+                      active={access.can_view_billing}
+                      disabled={accessPermissionMutation.isPending}
+                      onClick={() =>
+                        accessPermissionMutation.mutate({
+                          accessId: access.id,
+                          patch: { can_view_billing: !access.can_view_billing },
+                        })
+                      }
+                    />
                   </div>
                   <span className="rounded-full border border-hairline px-2.5 py-1 text-center text-xs font-semibold uppercase tracking-[0.12em]">
                     {access.status}
@@ -548,6 +603,34 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <Label>{label}</Label>
       {children}
     </div>
+  );
+}
+
+function PermissionButton({
+  label,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant={active ? "default" : "outline"}
+      disabled={disabled}
+      className="h-8 min-w-20 justify-center gap-1.5"
+      onClick={onClick}
+    >
+      {label}
+      <span className="text-[10px] uppercase tracking-[0.12em] opacity-70">
+        {active ? "on" : "off"}
+      </span>
+    </Button>
   );
 }
 

@@ -80,6 +80,7 @@ Deliverables:
 
 - Client contacts per project.
 - Client project access table separate from internal organization membership.
+- Per-seat portal permissions for change orders, daily reports, and billing so a client contact only sees enabled modules plus explicitly shared items.
 - Client magic-link login.
 - Client portal routes:
   - Project home: client-safe project summary.
@@ -215,4 +216,3 @@ These are the next repo-backed moves after the SOV intake work:
 The promise is not "all of Procore, cheaper." The promise is:
 
 "Run every project through the money, see gross profit at risk before it disappears, and give the client enough portal, approval, billing, and daily-report workflow to keep the job moving."
-

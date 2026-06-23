@@ -157,7 +157,9 @@ function ClientProjectPage() {
     );
   }
 
-  const { project, changeOrders, approvals, dailyReports } = projectQuery.data;
+  const { project, changeOrders, approvals, dailyReports, portalPermissions } = projectQuery.data;
+  const canViewChangeOrders = portalPermissions?.canViewChangeOrders ?? true;
+  const canViewDailyReports = portalPermissions?.canViewDailyReports ?? true;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -183,7 +185,10 @@ function ClientProjectPage() {
             <ClientMetric label="Job #" value={project.job_number || "Not listed"} />
             <ClientMetric label="COs for review" value={String(totals.visible)} />
             <ClientMetric label="Shared CO value" value={fmtUSD(totals.amount)} />
-            <ClientMetric label="Daily reports" value={String(totals.dailyReports)} />
+            <ClientMetric
+              label="Daily reports"
+              value={canViewDailyReports ? String(totals.dailyReports) : "Off"}
+            />
           </dl>
         </div>
       </header>
@@ -200,7 +205,11 @@ function ClientProjectPage() {
           </div>
 
           <div className="mt-6 space-y-4">
-            {changeOrders.length === 0 ? (
+            {!canViewChangeOrders ? (
+              <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
+                Change orders are not enabled for this client seat yet.
+              </div>
+            ) : changeOrders.length === 0 ? (
               <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
                 No change orders are currently awaiting your review.
               </div>
@@ -335,7 +344,11 @@ function ClientProjectPage() {
           </div>
 
           <div className="mt-6 space-y-3">
-            {dailyReports.length === 0 ? (
+            {!canViewDailyReports ? (
+              <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
+                Daily reports are not enabled for this client seat yet.
+              </div>
+            ) : dailyReports.length === 0 ? (
               <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
                 No daily reports are currently shared with you.
               </div>

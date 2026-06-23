@@ -106,6 +106,11 @@ export interface ClientPortalProjectRow {
   percent_complete: number;
 }
 
+export interface ClientPortalPermissions {
+  canViewChangeOrders: boolean;
+  canViewDailyReports: boolean;
+}
+
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const bool = (v: unknown, d = false) => (typeof v === "boolean" ? v : d);
@@ -137,6 +142,29 @@ type ServerContext = {
 
 function db(context: ServerContext) {
   return context.supabase as any;
+}
+
+function isMissingRpcError(error: unknown) {
+  const message = str((error as { message?: unknown })?.message);
+  const code = str((error as { code?: unknown })?.code);
+  return (
+    code === "PGRST202" ||
+    /schema cache|could not find the function|function .* does not exist/i.test(message)
+  );
+}
+
+async function readClientModuleAccess(
+  context: ServerContext,
+  functionName: string,
+  projectId: string,
+  fallback: boolean,
+) {
+  const { data, error } = await db(context).rpc(functionName, { p_project_id: projectId });
+  if (error) {
+    if (isMissingRpcError(error)) return fallback;
+    throw new Error(error.message);
+  }
+  return Boolean(data);
 }
 
 function normalizeContact(row: Record<string, unknown>): ClientContactRow {
@@ -516,9 +544,28 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
     ]);
     if (clientAccessRes.error) throw new Error(clientAccessRes.error.message);
     if (internalAccessRes.error) throw new Error(internalAccessRes.error.message);
-    if (!clientAccessRes.data && !internalAccessRes.data) {
+    const clientCanReadProject = Boolean(clientAccessRes.data);
+    const internalCanReadProject = Boolean(internalAccessRes.data);
+    if (!clientCanReadProject && !internalCanReadProject) {
       throw new Error("You do not have client access to this project.");
     }
+
+    const [canViewChangeOrders, canViewDailyReports] = internalCanReadProject
+      ? [true, true]
+      : await Promise.all([
+          readClientModuleAccess(
+            context as ServerContext,
+            "can_view_client_change_orders",
+            data.projectId,
+            clientCanReadProject,
+          ),
+          readClientModuleAccess(
+            context as ServerContext,
+            "can_view_client_daily_reports",
+            data.projectId,
+            false,
+          ),
+        ]);
 
     const [projectRes, changeOrdersRes, approvalsRes, dailyReportsRes] = await Promise.all([
       db(context)
@@ -528,24 +575,30 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
         )
         .eq("id", data.projectId)
         .single(),
-      db(context)
-        .from("change_orders")
-        .select("*")
-        .eq("project_id", data.projectId)
-        .eq("client_visible", true)
-        .order("number"),
-      db(context)
-        .from("change_order_approvals")
-        .select("*")
-        .eq("project_id", data.projectId)
-        .order("created_at", { ascending: false }),
-      db(context)
-        .from("daily_reports")
-        .select("*")
-        .eq("project_id", data.projectId)
-        .eq("client_visible", true)
-        .order("report_date", { ascending: false })
-        .limit(20),
+      canViewChangeOrders
+        ? db(context)
+            .from("change_orders")
+            .select("*")
+            .eq("project_id", data.projectId)
+            .eq("client_visible", true)
+            .order("number")
+        : Promise.resolve({ data: [], error: null }),
+      canViewChangeOrders
+        ? db(context)
+            .from("change_order_approvals")
+            .select("*")
+            .eq("project_id", data.projectId)
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+      canViewDailyReports
+        ? db(context)
+            .from("daily_reports")
+            .select("*")
+            .eq("project_id", data.projectId)
+            .eq("client_visible", true)
+            .order("report_date", { ascending: false })
+            .limit(20)
+        : Promise.resolve({ data: [], error: null }),
     ]);
     if (projectRes.error) throw new Error(projectRes.error.message);
     if (changeOrdersRes.error) throw new Error(changeOrdersRes.error.message);
@@ -563,6 +616,10 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
       dailyReports: (dailyReportsRes.data ?? []).map((row: Record<string, unknown>) =>
         normalizeDailyReport(row),
       ),
+      portalPermissions: {
+        canViewChangeOrders,
+        canViewDailyReports,
+      } satisfies ClientPortalPermissions,
     };
   });
 
