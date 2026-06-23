@@ -338,7 +338,7 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
             {data.contacts.length === 0 ? (
               <div className="p-5 text-sm text-muted-foreground">No client contacts yet.</div>
             ) : (
-              data.contacts.map((contact) => {
+              data.contacts.map((contact: ClientContactRow) => {
                 const access = accessByEmail.get(contact.email.toLowerCase());
                 return (
                   <div
