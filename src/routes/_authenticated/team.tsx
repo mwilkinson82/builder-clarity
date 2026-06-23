@@ -263,7 +263,7 @@ function TeamPage() {
     mutationFn: (payload: {
       membershipId: string;
       role?: ProjectMemberRole;
-      status?: MemberStatus;
+      status?: "active" | "disabled";
     }) => updateProjectAccess({ data: payload }),
     onSuccess: async () => {
       await refreshWorkspace();
