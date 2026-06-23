@@ -19,6 +19,28 @@ import {
   type ExposureStatus,
 } from "@/lib/ior";
 
+type DynamicSupabaseError = { code?: string; message: string };
+type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
+type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
+  select(columns?: string): DynamicSupabaseQuery;
+  insert(values: unknown): DynamicSupabaseQuery;
+  upsert(values: unknown, options?: { onConflict?: string }): DynamicSupabaseQuery;
+  in(column: string, values: readonly string[]): Promise<DynamicSupabaseResult<unknown[]>>;
+  eq(column: string, value: unknown): DynamicSupabaseQuery;
+  order(
+    column: string,
+    options?: { ascending?: boolean; nullsFirst?: boolean },
+  ): DynamicSupabaseQuery;
+  limit(count: number): DynamicSupabaseQuery;
+  single(): Promise<DynamicSupabaseResult>;
+};
+type DynamicSupabaseClient = {
+  from(relation: string): DynamicSupabaseQuery;
+};
+
+const dynamicTable = (supabase: unknown, relation: string) =>
+  (supabase as DynamicSupabaseClient).from(relation);
+
 export type COStatus = "Approved" | "Pending" | "Denied";
 export type DecisionStatus = "open" | "in_progress" | "resolved" | "overdue";
 export type ClientChangeOrderStatus = "not_sent" | "sent" | "approved" | "rejected";
@@ -237,6 +259,19 @@ const normalizeSovMappingProfile = (row: Record<string, unknown>): SovMappingPro
 const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) =>
   error?.code === "PGRST204" && (error.message ?? "").includes(`'${column}' column`);
 
+const isMissingRestRelation = (
+  error: { code?: string; message?: string } | null,
+  relation: string,
+) => {
+  const message = error?.message ?? "";
+  return (
+    error?.code === "PGRST205" &&
+    (message.includes(`'public.${relation}'`) ||
+      message.includes(`'${relation}'`) ||
+      message.includes("schema cache"))
+  );
+};
+
 const PROJECT_METADATA_MIGRATION = "20260622140000_project_metadata_hardening.sql";
 const PROJECT_METADATA_COLUMNS = [
   "job_number",
@@ -338,8 +373,11 @@ export const listProjects = createServerFn({ method: "GET" })
     const projects = (rawProjects ?? []).map(normalizeProject);
     const ids = projects.map((p) => p.id);
     if (ids.length === 0) return [];
+    const organizationIds = Array.from(
+      new Set(projects.map((p) => p.organization_id).filter((id): id is string => Boolean(id))),
+    );
 
-    const [expRes, cosRes, bucketsRes, decisionsRes] = await Promise.all([
+    const [expRes, cosRes, bucketsRes, decisionsRes, organizationsRes] = await Promise.all([
       context.supabase.from("exposures").select("*").in("project_id", ids),
       context.supabase
         .from("change_orders")
@@ -353,11 +391,39 @@ export const listProjects = createServerFn({ method: "GET" })
         .from("decisions")
         .select("project_id,decision,impact,owner,due_date,status,linked_exposure_id")
         .in("project_id", ids),
+      organizationIds.length === 0
+        ? { data: [], error: null }
+        : context.supabase.from("organizations").select("id,name").in("id", organizationIds),
     ]);
     if (expRes.error) throw new Error(expRes.error.message);
     if (cosRes.error) throw new Error(cosRes.error.message);
     if (bucketsRes.error) throw new Error(bucketsRes.error.message);
     if (decisionsRes.error) throw new Error(decisionsRes.error.message);
+    if (organizationsRes.error) throw new Error(organizationsRes.error.message);
+
+    let dailyReportRows: Record<string, unknown>[] = [];
+    const dailyReportsRes = await dynamicTable(context.supabase, "daily_reports")
+      .select("project_id,report_date,client_visible,attachment_count,attachment_bytes")
+      .in("project_id", ids);
+    if (dailyReportsRes.error) {
+      if (
+        isMissingRestColumn(dailyReportsRes.error, "attachment_count") ||
+        isMissingRestColumn(dailyReportsRes.error, "attachment_bytes")
+      ) {
+        const fallbackRes = await context.supabase
+          .from("daily_reports")
+          .select("project_id,report_date,client_visible")
+          .in("project_id", ids);
+        if (fallbackRes.error && !isMissingRestRelation(fallbackRes.error, "daily_reports")) {
+          throw new Error(fallbackRes.error.message);
+        }
+        dailyReportRows = (fallbackRes.data ?? []) as unknown[] as Record<string, unknown>[];
+      } else if (!isMissingRestRelation(dailyReportsRes.error, "daily_reports")) {
+        throw new Error(dailyReportsRes.error.message);
+      }
+    } else {
+      dailyReportRows = (dailyReportsRes.data ?? []) as unknown[] as Record<string, unknown>[];
+    }
 
     type Keyed = { project_id: string };
     const groupBy = <T extends Keyed>(rows: readonly unknown[]): Record<string, T[]> => {
@@ -369,6 +435,13 @@ export const listProjects = createServerFn({ method: "GET" })
     const cByP = groupBy<{ project_id: string } & Record<string, unknown>>(cosRes.data ?? []);
     const bByP = groupBy<{ project_id: string } & Record<string, unknown>>(bucketsRes.data ?? []);
     const dByP = groupBy<{ project_id: string } & Record<string, unknown>>(decisionsRes.data ?? []);
+    const drByP = groupBy<{ project_id: string } & Record<string, unknown>>(dailyReportRows);
+    const organizationNames = new Map(
+      (organizationsRes.data ?? []).map((organization) => [
+        organization.id as string,
+        str(organization.name),
+      ]),
+    );
 
     return projects.map((p) => {
       const exposures = (eByP[p.id] ?? []).map((e) => ({
@@ -443,8 +516,28 @@ export const listProjects = createServerFn({ method: "GET" })
             new Date(`${a.due_date}T00:00:00`).getTime() -
             new Date(`${b.due_date}T00:00:00`).getTime(),
         )[0];
+      const dailyReports = drByP[p.id] ?? [];
+      const lastDailyReportDate =
+        dailyReports
+          .map((report) => str(report.report_date))
+          .filter(Boolean)
+          .sort(
+            (a, b) => new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime(),
+          )[0] ?? null;
+      const daysSinceDailyReport = lastDailyReportDate
+        ? Math.max(
+            0,
+            Math.floor(
+              (Date.now() - new Date(`${lastDailyReportDate}T00:00:00`).getTime()) / 86400000,
+            ),
+          )
+        : null;
       return {
         id: p.id,
+        organization_id: p.organization_id,
+        organization_name:
+          (p.organization_id ? organizationNames.get(p.organization_id) : "") ||
+          "Unassigned company",
         job_number: p.job_number,
         name: p.name,
         client: p.client,
@@ -475,6 +568,20 @@ export const listProjects = createServerFn({ method: "GET" })
         active_decision_count: activeDecisions.length,
         overdue_decision_count: overdueDecisions.length,
         next_decision_due: nextDecision?.due_date ?? null,
+        daily_report_count: dailyReports.length,
+        client_visible_daily_report_count: dailyReports.filter((report) =>
+          Boolean(report.client_visible),
+        ).length,
+        last_daily_report_date: lastDailyReportDate,
+        days_since_daily_report: daysSinceDailyReport,
+        daily_report_attachment_count: dailyReports.reduce(
+          (total, report) => total + Math.max(0, num(report.attachment_count)),
+          0,
+        ),
+        daily_report_attachment_bytes: dailyReports.reduce(
+          (total, report) => total + Math.max(0, num(report.attachment_bytes)),
+          0,
+        ),
       };
     });
   });
@@ -509,8 +616,7 @@ export const getProject = createServerFn({ method: "GET" })
         .eq("project_id", pid)
         .order("reviewed_at", { ascending: false })
         .limit(10),
-      (context.supabase as any)
-        .from("sov_imports")
+      dynamicTable(context.supabase, "sov_imports")
         .select("*")
         .eq("project_id", pid)
         .order("created_at", { ascending: false })
@@ -541,8 +647,7 @@ export const getProject = createServerFn({ method: "GET" })
     const project = normalizeProject(pRes.data as Record<string, unknown>);
     let sovMappingProfiles: SovMappingProfileRow[] = [];
     if (project.organization_id) {
-      const profileRes = await (context.supabase as any)
-        .from("sov_mapping_profiles")
+      const profileRes = await dynamicTable(context.supabase, "sov_mapping_profiles")
         .select("*")
         .eq("organization_id", project.organization_id)
         .order("updated_at", { ascending: false })
@@ -1452,8 +1557,7 @@ export const saveSovMappingProfile = createServerFn({ method: "POST" })
 
     const name = data.name.trim();
     const normalizedName = name.toLowerCase();
-    const { data: profile, error } = await (context.supabase as any)
-      .from("sov_mapping_profiles")
+    const { data: profile, error } = await dynamicTable(context.supabase, "sov_mapping_profiles")
       .upsert(
         {
           organization_id: organizationId,
@@ -1628,7 +1732,7 @@ export const importCostBuckets = createServerFn({ method: "POST" })
       metadata.total_budget || importRows.reduce((sum, row) => sum + row.original_budget, 0);
     let importHistorySaved = false;
     let importHistoryError = "";
-    const { error: importHistoryErr } = await (context.supabase as any).from("sov_imports").insert({
+    const { error: importHistoryErr } = await dynamicTable(context.supabase, "sov_imports").insert({
       project_id: data.projectId,
       imported_by: context.userId,
       mode: data.mode,
@@ -1698,7 +1802,13 @@ const harborDemoBuckets = [
     actual_to_date: 300000,
     ftc: 160000,
   },
-  { cost_code: "1500", bucket: "MEP", original_budget: 480000, actual_to_date: 260000, ftc: 240000 },
+  {
+    cost_code: "1500",
+    bucket: "MEP",
+    original_budget: 480000,
+    actual_to_date: 260000,
+    ftc: 240000,
+  },
   {
     cost_code: "0900",
     bucket: "Finishes",
@@ -1706,7 +1816,13 @@ const harborDemoBuckets = [
     actual_to_date: 180000,
     ftc: 690000,
   },
-  { cost_code: "0130", bucket: "GC/OH", original_budget: 270000, actual_to_date: 150000, ftc: 142000 },
+  {
+    cost_code: "0130",
+    bucket: "GC/OH",
+    original_budget: 270000,
+    actual_to_date: 150000,
+    ftc: 142000,
+  },
 ] as const;
 
 const harborDemoExposures = [
@@ -1746,7 +1862,8 @@ const harborDemoExposures = [
     status: "active",
     due_date: "2026-08-15",
     next_review_at: "2026-07-15",
-    notes: "Contingency is being gardened until finish scope, trim, and punch-list exposure settle.",
+    notes:
+      "Contingency is being gardened until finish scope, trim, and punch-list exposure settle.",
   },
   {
     title: "Weak drywall subcontractor",
@@ -1783,7 +1900,8 @@ const harborDemoExposures = [
     status: "active",
     due_date: "2026-06-24",
     next_review_at: "2026-06-24",
-    notes: "Plan: escalate selection decision to owner and document schedule impact if not approved.",
+    notes:
+      "Plan: escalate selection decision to owner and document schedule impact if not approved.",
   },
   {
     title: "Window delivery delay",
@@ -1858,7 +1976,8 @@ const harborDemoExposures = [
     status: "accepted",
     due_date: null,
     next_review_at: null,
-    notes: "Closed C-Hold example for teaching the difference between active holds and released risk.",
+    notes:
+      "Closed C-Hold example for teaching the difference between active holds and released risk.",
   },
 ] as const;
 
@@ -1994,7 +2113,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         "Project remains on budget before holds, but a six-week schedule slip and open exposure ledger are actively eroding indicated gross profit.",
     };
 
-    let { data: projectRow, error: projectError } = await context.supabase
+    const { data: projectRow, error: projectError } = await context.supabase
       .from("projects")
       .insert(projectInsert)
       .select("id")
@@ -2061,7 +2180,8 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         owner: "PM",
         due_date: "2026-06-28",
         status: "open",
-        linked_exposure_id: exposureIdByTitle.get("Cabinets misassembled and damaged on delivery") ?? null,
+        linked_exposure_id:
+          exposureIdByTitle.get("Cabinets misassembled and damaged on delivery") ?? null,
         notes: "Send vendor letter, attach photos, and confirm replacement delivery date.",
       },
       {
@@ -2072,7 +2192,8 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         due_date: "2026-06-24",
         status: "overdue",
         linked_exposure_id: exposureIdByTitle.get("Late appliance selection") ?? null,
-        notes: "Decision is intentionally overdue in the demo so the To-Dos tab has a clear teaching example.",
+        notes:
+          "Decision is intentionally overdue in the demo so the To-Dos tab has a clear teaching example.",
       },
       {
         project_id: projectId,
@@ -2203,7 +2324,8 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         due_date: "2026-07-06",
         response_path: "recover",
         hold_class: "E-Hold",
-        linked_exposure_id: exposureIdByTitle.get("Cabinets misassembled and damaged on delivery") ?? null,
+        linked_exposure_id:
+          exposureIdByTitle.get("Cabinets misassembled and damaged on delivery") ?? null,
         status: "active",
         sort_order: 1,
       },

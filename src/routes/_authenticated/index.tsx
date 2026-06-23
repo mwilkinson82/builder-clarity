@@ -48,9 +48,11 @@ import {
   BriefcaseBusiness,
   CalendarClock,
   ClipboardList,
+  FileText,
   LogOut,
   MailPlus,
   Plus,
+  RotateCcw,
   Search,
   Trash2,
   Users,
@@ -91,6 +93,27 @@ function scheduleFor(weeks: number, scheduleRiskCount: number) {
 }
 
 type PortfolioSortMode = "manager" | "profitability" | "gp-risk" | "schedule" | "overdue" | "name";
+type PortfolioRiskFilter = "all" | "at-risk" | "watch" | "healthy";
+type PortfolioScheduleFilter = "all" | "slipped" | "watch" | "on-plan";
+type PortfolioReviewFilter = "all" | "stale" | "current" | "never";
+type PortfolioDailyFilter = "all" | "current" | "stale" | "none" | "client-visible";
+
+function dailyReportFor(reportCount: number, daysSince: number | null) {
+  if (reportCount === 0 || daysSince === null) {
+    return { label: "None", className: "border-warning/40 bg-warning/10 text-warning" };
+  }
+  if (daysSince > 7) {
+    return { label: "Stale", className: "border-danger/40 bg-danger/10 text-danger" };
+  }
+  return { label: "Current", className: "border-success/40 bg-success/10 text-success" };
+}
+
+function shortDate(value: string | null) {
+  if (!value) return "";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
 
 function PortfolioPage() {
   const list = useServerFn(listProjects);
@@ -101,8 +124,20 @@ function PortfolioPage() {
     queryFn: () => list(),
   });
   const [search, setSearch] = useState("");
+  const [companyFilter, setCompanyFilter] = useState("all");
   const [managerFilter, setManagerFilter] = useState("all");
+  const [riskFilter, setRiskFilter] = useState<PortfolioRiskFilter>("all");
+  const [scheduleFilter, setScheduleFilter] = useState<PortfolioScheduleFilter>("all");
+  const [reviewFilter, setReviewFilter] = useState<PortfolioReviewFilter>("all");
+  const [dailyFilter, setDailyFilter] = useState<PortfolioDailyFilter>("all");
   const [sortMode, setSortMode] = useState<PortfolioSortMode>("manager");
+  const companyNames = useMemo(
+    () =>
+      Array.from(new Set(projects.map((p) => p.organization_name.trim()).filter(Boolean))).sort(
+        (a, b) => a.localeCompare(b),
+      ),
+    [projects],
+  );
   const managerNames = useMemo(
     () =>
       Array.from(new Set(projects.map((p) => p.project_manager.trim()).filter(Boolean))).sort(
@@ -114,9 +149,35 @@ function PortfolioPage() {
     const q = search.trim().toLowerCase();
     const filtered = projects.filter((p) => {
       const manager = p.project_manager.trim();
+      const company = p.organization_name.trim();
+      const status = statusFor(p.original_gp_pct, p.indicated_gp_pct).label;
+      const schedule = scheduleFor(p.schedule_variance_weeks, p.schedule_risk_count).label;
+      const daily = dailyReportFor(p.daily_report_count, p.days_since_daily_report).label;
+      const reviewState =
+        p.days_since_review === null ? "never" : p.days_since_review > 30 ? "stale" : "current";
+      const matchesCompany = companyFilter === "all" || company === companyFilter;
       const matchesManager = managerFilter === "all" || manager === managerFilter;
-      const haystack = [p.name, p.job_number, p.client, p.project_manager].join(" ").toLowerCase();
-      return matchesManager && (!q || haystack.includes(q));
+      const matchesRisk =
+        riskFilter === "all" || status.toLowerCase().replace(" ", "-") === riskFilter;
+      const matchesSchedule =
+        scheduleFilter === "all" || schedule.toLowerCase().replace(" ", "-") === scheduleFilter;
+      const matchesReview = reviewFilter === "all" || reviewState === reviewFilter;
+      const matchesDaily =
+        dailyFilter === "all" ||
+        (dailyFilter === "client-visible" && p.client_visible_daily_report_count > 0) ||
+        daily.toLowerCase() === dailyFilter;
+      const haystack = [p.name, p.job_number, p.client, p.project_manager, p.organization_name]
+        .join(" ")
+        .toLowerCase();
+      return (
+        matchesCompany &&
+        matchesManager &&
+        matchesRisk &&
+        matchesSchedule &&
+        matchesReview &&
+        matchesDaily &&
+        (!q || haystack.includes(q))
+      );
     });
     const sorted = [...filtered];
     sorted.sort((a, b) => {
@@ -141,8 +202,36 @@ function PortfolioPage() {
       );
     });
     return sorted;
-  }, [managerFilter, projects, search, sortMode]);
+  }, [
+    companyFilter,
+    dailyFilter,
+    managerFilter,
+    projects,
+    reviewFilter,
+    riskFilter,
+    scheduleFilter,
+    search,
+    sortMode,
+  ]);
   const portfolioTotals = useMemo(() => buildPortfolioTotals(visibleProjects), [visibleProjects]);
+  const activeFilterCount = [
+    search.trim(),
+    companyFilter !== "all",
+    managerFilter !== "all",
+    riskFilter !== "all",
+    scheduleFilter !== "all",
+    reviewFilter !== "all",
+    dailyFilter !== "all",
+  ].filter(Boolean).length;
+  const resetFilters = () => {
+    setSearch("");
+    setCompanyFilter("all");
+    setManagerFilter("all");
+    setRiskFilter("all");
+    setScheduleFilter("all");
+    setReviewFilter("all");
+    setDailyFilter("all");
+  };
 
   const seededRef = useRef(false);
   useEffect(() => {
@@ -200,44 +289,132 @@ function PortfolioPage() {
         ) : (
           <div className="space-y-6">
             <PortfolioDashboard totals={portfolioTotals} />
-            <div className="flex flex-col gap-3 rounded-lg border border-hairline bg-card p-4 shadow-card lg:flex-row lg:items-center">
-              <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search project, job number, client, or PM"
-                  className="pl-9"
-                />
+            <div className="space-y-3 rounded-lg border border-hairline bg-card p-4 shadow-card">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                <div className="relative flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search project, job number, client, PM, or company"
+                    className="pl-9"
+                  />
+                </div>
+                <Select value={managerFilter} onValueChange={setManagerFilter}>
+                  <SelectTrigger className="w-full lg:w-[220px]">
+                    <SelectValue placeholder="Project manager" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All project managers</SelectItem>
+                    {managerNames.map((manager) => (
+                      <SelectItem key={manager} value={manager}>
+                        {manager}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={sortMode} onValueChange={(v) => setSortMode(v as PortfolioSortMode)}>
+                  <SelectTrigger className="w-full lg:w-[220px]">
+                    <SelectValue placeholder="Sort" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="manager">PM A-Z</SelectItem>
+                    <SelectItem value="profitability">Profitability low to high</SelectItem>
+                    <SelectItem value="gp-risk">GP at risk high to low</SelectItem>
+                    <SelectItem value="schedule">Schedule risk high to low</SelectItem>
+                    <SelectItem value="overdue">Overdue to-dos high to low</SelectItem>
+                    <SelectItem value="name">Project A-Z</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <Select value={managerFilter} onValueChange={setManagerFilter}>
-                <SelectTrigger className="w-full lg:w-[220px]">
-                  <SelectValue placeholder="Project manager" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All project managers</SelectItem>
-                  {managerNames.map((manager) => (
-                    <SelectItem key={manager} value={manager}>
-                      {manager}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={sortMode} onValueChange={(v) => setSortMode(v as PortfolioSortMode)}>
-                <SelectTrigger className="w-full lg:w-[220px]">
-                  <SelectValue placeholder="Sort" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="manager">PM A-Z</SelectItem>
-                  <SelectItem value="profitability">Profitability low to high</SelectItem>
-                  <SelectItem value="gp-risk">GP at risk high to low</SelectItem>
-                  <SelectItem value="schedule">Schedule risk high to low</SelectItem>
-                  <SelectItem value="overdue">Overdue to-dos high to low</SelectItem>
-                  <SelectItem value="name">Project A-Z</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="whitespace-nowrap text-xs text-muted-foreground">
-                Showing {visibleProjects.length} of {projects.length}
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.1fr_repeat(5,minmax(0,1fr))_auto]">
+                <Select value={companyFilter} onValueChange={setCompanyFilter}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Company" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All companies</SelectItem>
+                    {companyNames.map((company) => (
+                      <SelectItem key={company} value={company}>
+                        {company}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={riskFilter}
+                  onValueChange={(v) => setRiskFilter(v as PortfolioRiskFilter)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Risk status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All risk</SelectItem>
+                    <SelectItem value="at-risk">At risk</SelectItem>
+                    <SelectItem value="watch">Watch</SelectItem>
+                    <SelectItem value="healthy">Healthy</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={scheduleFilter}
+                  onValueChange={(v) => setScheduleFilter(v as PortfolioScheduleFilter)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Schedule" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All schedules</SelectItem>
+                    <SelectItem value="slipped">Slipped</SelectItem>
+                    <SelectItem value="watch">Watch</SelectItem>
+                    <SelectItem value="on-plan">On plan</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={reviewFilter}
+                  onValueChange={(v) => setReviewFilter(v as PortfolioReviewFilter)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="IOR review" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All IOR reviews</SelectItem>
+                    <SelectItem value="stale">Stale 30+ days</SelectItem>
+                    <SelectItem value="current">Current</SelectItem>
+                    <SelectItem value="never">Never reviewed</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={dailyFilter}
+                  onValueChange={(v) => setDailyFilter(v as PortfolioDailyFilter)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Daily reports" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All daily reports</SelectItem>
+                    <SelectItem value="current">Current 7 days</SelectItem>
+                    <SelectItem value="stale">Stale 8+ days</SelectItem>
+                    <SelectItem value="none">No reports</SelectItem>
+                    <SelectItem value="client-visible">Client-visible</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground xl:justify-end">
+                  <span className="whitespace-nowrap">
+                    Showing {visibleProjects.length} of {projects.length}
+                    {activeFilterCount > 0 ? ` · ${activeFilterCount} filters` : ""}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={resetFilters}
+                    disabled={activeFilterCount === 0}
+                    className="gap-1.5"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Reset
+                  </Button>
+                </div>
               </div>
             </div>
             <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
@@ -255,6 +432,7 @@ function PortfolioPage() {
                     <TableHead>Top Exposure</TableHead>
                     <TableHead>To-Dos</TableHead>
                     <TableHead>Schedule</TableHead>
+                    <TableHead>Daily Reports</TableHead>
                     <TableHead>Status</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -262,7 +440,7 @@ function PortfolioPage() {
                   {visibleProjects.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={12}
+                        colSpan={13}
                         className="py-10 text-center text-sm text-muted-foreground"
                       >
                         No projects match the current portfolio filters.
@@ -272,6 +450,7 @@ function PortfolioPage() {
                   {visibleProjects.map((p) => {
                     const s = statusFor(p.original_gp_pct, p.indicated_gp_pct);
                     const schedule = scheduleFor(p.schedule_variance_weeks, p.schedule_risk_count);
+                    const daily = dailyReportFor(p.daily_report_count, p.days_since_daily_report);
                     const jobNumber = p.job_number || `ID ${p.id.slice(0, 8).toUpperCase()}`;
                     const projectHref = `/projects/${p.id}`;
                     const highlightRisk = s.label === "At Risk" || p.gp_at_risk > 0;
@@ -327,7 +506,8 @@ function PortfolioPage() {
                               )}
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              {p.client} · {p.phase} · {p.percent_complete}% complete
+                              {p.organization_name} · {p.client} · {p.phase} · {p.percent_complete}%
+                              complete
                               {p.top_category && (
                                 <> · Top risk: {p.top_category.replace(/_/g, " ")}</>
                               )}
@@ -407,6 +587,23 @@ function PortfolioPage() {
                           </div>
                         </TableCell>
                         <TableCell>
+                          <div
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${daily.className}`}
+                          >
+                            {daily.label}
+                          </div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            {p.daily_report_count === 0
+                              ? "No job logs"
+                              : `${p.daily_report_count} logs · last ${shortDate(p.last_daily_report_date)}`}
+                          </div>
+                          {p.client_visible_daily_report_count > 0 && (
+                            <div className="mt-0.5 text-[11px] text-muted-foreground">
+                              {p.client_visible_daily_report_count} client-visible
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>
                           <span
                             className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${s.className}`}
                           >
@@ -454,6 +651,13 @@ type PortfolioTotals = {
   overdueDecisionCount: number;
   slippedProjects: number;
   atRiskProjects: number;
+  staleReviewProjects: number;
+  neverReviewedProjects: number;
+  dailyReportCount: number;
+  projectsWithoutDailyReports: number;
+  staleDailyReportProjects: number;
+  clientVisibleDailyReportCount: number;
+  dailyReportAttachmentCount: number;
   warningCount: number;
   topRiskProject: PortfolioProject | null;
   topExposures: PortfolioTopExposure[];
@@ -511,6 +715,17 @@ function buildPortfolioTotals(projects: PortfolioProject[]): PortfolioTotals {
     atRiskProjects: projects.filter(
       (p) => statusFor(p.original_gp_pct, p.indicated_gp_pct).label === "At Risk",
     ).length,
+    staleReviewProjects: projects.filter(
+      (p) => p.days_since_review !== null && p.days_since_review > 30,
+    ).length,
+    neverReviewedProjects: projects.filter((p) => p.days_since_review === null).length,
+    dailyReportCount: sum((p) => p.daily_report_count),
+    projectsWithoutDailyReports: projects.filter((p) => p.daily_report_count === 0).length,
+    staleDailyReportProjects: projects.filter(
+      (p) => p.daily_report_count > 0 && (p.days_since_daily_report ?? 0) > 7,
+    ).length,
+    clientVisibleDailyReportCount: sum((p) => p.client_visible_daily_report_count),
+    dailyReportAttachmentCount: sum((p) => p.daily_report_attachment_count),
     warningCount: sum((p) => p.warning_count),
     topRiskProject,
     topExposures,
@@ -532,7 +747,7 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
             Rollup of active jobs, margin at risk, current indicated profit, and schedule pressure.
           </p>
         </div>
-        <div className="grid min-w-[420px] grid-cols-4 gap-2">
+        <div className="grid gap-2 sm:grid-cols-3 xl:min-w-[640px] xl:grid-cols-6">
           <PortfolioSignal
             icon={<Activity className="h-3.5 w-3.5" />}
             label="Open projects"
@@ -551,6 +766,20 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
             tone={totals.atRiskProjects > 0 ? "danger" : "success"}
           />
           <PortfolioSignal
+            icon={<AlertTriangle className="h-3.5 w-3.5" />}
+            label="Stale IOR"
+            value={String(totals.staleReviewProjects + totals.neverReviewedProjects)}
+            tone={
+              totals.staleReviewProjects + totals.neverReviewedProjects > 0 ? "warning" : "success"
+            }
+          />
+          <PortfolioSignal
+            icon={<FileText className="h-3.5 w-3.5" />}
+            label="No daily"
+            value={String(totals.projectsWithoutDailyReports)}
+            tone={totals.projectsWithoutDailyReports > 0 ? "warning" : "success"}
+          />
+          <PortfolioSignal
             icon={<ClipboardList className="h-3.5 w-3.5" />}
             label="Overdue"
             value={String(totals.overdueDecisionCount)}
@@ -559,7 +788,7 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
         </div>
       </div>
 
-      <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+      <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-8">
         <PortfolioMetric label="Original GP" value={fmtUSD(totals.originalGP)} />
         <PortfolioMetric label="GP at risk" value={fmtUSD(totals.gpAtRisk)} tone="danger" />
         <PortfolioMetric
@@ -575,6 +804,11 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
           label="Delayed jobs"
           value={String(totals.slippedProjects)}
           tone={totals.slippedProjects > 0 ? "warning" : undefined}
+        />
+        <PortfolioMetric
+          label="Daily logs"
+          value={String(totals.dailyReportCount)}
+          sub={`${totals.clientVisibleDailyReportCount} client-visible`}
         />
       </div>
 
@@ -838,7 +1072,13 @@ function InviteByMagicLinkButton() {
 
   const memberMutation = useMutation({
     mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: MemberStatus }) =>
-      updateMember({ data: payload as { membershipId: string; role?: AccountRole; status?: "active" | "disabled" } }),
+      updateMember({
+        data: payload as {
+          membershipId: string;
+          role?: AccountRole;
+          status?: "active" | "disabled";
+        },
+      }),
     onSuccess: async () => {
       await refreshTeam();
       toast.success("Team member updated");
@@ -887,7 +1127,14 @@ function InviteByMagicLinkButton() {
       membershipId: string;
       role?: ProjectMemberRole;
       status?: MemberStatus;
-    }) => updateProjectAccess({ data: payload as { membershipId: string; role?: ProjectMemberRole; status?: "active" | "disabled" } }),
+    }) =>
+      updateProjectAccess({
+        data: payload as {
+          membershipId: string;
+          role?: ProjectMemberRole;
+          status?: "active" | "disabled";
+        },
+      }),
     onSuccess: async () => {
       await refreshTeam();
       toast.success("Project member updated");
