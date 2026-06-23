@@ -20,6 +20,7 @@ import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_au
 import { Route as LovableEmailTransactionalSendRouteImport } from './routes/lovable/email/transactional/send'
 import { Route as LovableEmailTransactionalPreviewRouteImport } from './routes/lovable/email/transactional/preview'
 import { Route as LovableEmailQueueProcessRouteImport } from './routes/lovable/email/queue/process'
+import { Route as AuthenticatedClientProjectsProjectIdRouteImport } from './routes/_authenticated/client.projects.$projectId'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -79,6 +80,12 @@ const LovableEmailQueueProcessRoute =
     path: '/lovable/email/queue/process',
     getParentRoute: () => rootRouteImport,
   } as any)
+const AuthenticatedClientProjectsProjectIdRoute =
+  AuthenticatedClientProjectsProjectIdRouteImport.update({
+    id: '/client/projects/$projectId',
+    path: '/client/projects/$projectId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
@@ -88,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
+  '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/lovable/email/transactional/send': typeof LovableEmailTransactionalSendRoute
@@ -100,6 +108,7 @@ export interface FileRoutesByTo {
   '/': typeof AuthenticatedIndexRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
+  '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/lovable/email/transactional/send': typeof LovableEmailTransactionalSendRoute
@@ -114,6 +123,7 @@ export interface FileRoutesById {
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
+  '/_authenticated/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/lovable/email/transactional/send': typeof LovableEmailTransactionalSendRoute
@@ -128,6 +138,7 @@ export interface FileRouteTypes {
     | '/email/unsubscribe'
     | '/projects/$projectId'
     | '/lovable/email/suppression'
+    | '/client/projects/$projectId'
     | '/lovable/email/queue/process'
     | '/lovable/email/transactional/preview'
     | '/lovable/email/transactional/send'
@@ -140,6 +151,7 @@ export interface FileRouteTypes {
     | '/'
     | '/projects/$projectId'
     | '/lovable/email/suppression'
+    | '/client/projects/$projectId'
     | '/lovable/email/queue/process'
     | '/lovable/email/transactional/preview'
     | '/lovable/email/transactional/send'
@@ -153,6 +165,7 @@ export interface FileRouteTypes {
     | '/_authenticated/'
     | '/_authenticated/projects/$projectId'
     | '/lovable/email/suppression'
+    | '/_authenticated/client/projects/$projectId'
     | '/lovable/email/queue/process'
     | '/lovable/email/transactional/preview'
     | '/lovable/email/transactional/send'
@@ -247,6 +260,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LovableEmailQueueProcessRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/client/projects/$projectId': {
+      id: '/_authenticated/client/projects/$projectId'
+      path: '/client/projects/$projectId'
+      fullPath: '/client/projects/$projectId'
+      preLoaderRoute: typeof AuthenticatedClientProjectsProjectIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
@@ -254,12 +274,15 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedProjectsProjectIdRoute: typeof AuthenticatedProjectsProjectIdRoute
+  AuthenticatedClientProjectsProjectIdRoute: typeof AuthenticatedClientProjectsProjectIdRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedTeamRoute: AuthenticatedTeamRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedProjectsProjectIdRoute: AuthenticatedProjectsProjectIdRoute,
+  AuthenticatedClientProjectsProjectIdRoute:
+    AuthenticatedClientProjectsProjectIdRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =

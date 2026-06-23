@@ -21,6 +21,7 @@ import {
 
 export type COStatus = "Approved" | "Pending" | "Denied";
 export type DecisionStatus = "open" | "in_progress" | "resolved" | "overdue";
+export type ClientChangeOrderStatus = "not_sent" | "sent" | "approved" | "rejected";
 
 export interface ProjectRow {
   id: string;
@@ -87,6 +88,11 @@ export interface ChangeOrderRow {
   owner: string;
   notes: string;
   co_type: COType;
+  client_visible: boolean;
+  client_status: ClientChangeOrderStatus;
+  client_notes: string;
+  client_sent_at: string | null;
+  client_decided_at: string | null;
 }
 
 export interface BucketRow {
@@ -503,6 +509,11 @@ export const getProject = createServerFn({ method: "GET" })
         owner: str(o.owner),
         notes: str(o.notes),
         co_type: str(o.co_type, "other") as COType,
+        client_visible: Boolean(o.client_visible ?? false),
+        client_status: str(o.client_status, "not_sent") as ClientChangeOrderStatus,
+        client_notes: str(o.client_notes),
+        client_sent_at: (o.client_sent_at as string | null) ?? null,
+        client_decided_at: (o.client_decided_at as string | null) ?? null,
       };
     });
 

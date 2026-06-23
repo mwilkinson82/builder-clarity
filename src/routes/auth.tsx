@@ -16,8 +16,24 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
+function safeNextFromLocation() {
+  if (typeof window === "undefined") return "/";
+  const next = new URLSearchParams(window.location.search).get("next") ?? "/";
+  if (!next.startsWith("/") || next.startsWith("//")) return "/";
+  return next;
+}
+
+function goAfterAuth(next: string, navigate: ReturnType<typeof useNavigate>) {
+  if (next === "/") {
+    navigate({ to: "/", replace: true });
+  } else {
+    window.location.replace(next);
+  }
+}
+
 function AuthPage() {
   const navigate = useNavigate();
+  const next = safeNextFromLocation();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,9 +44,9 @@ function AuthPage() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate({ to: "/" });
+      if (data.session) goAfterAuth(next, navigate);
     });
-  }, [navigate]);
+  }, [navigate, next]);
 
   const sendMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,7 +57,7 @@ function AuthPage() {
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
           shouldCreateUser: true,
         },
       });
@@ -64,14 +80,16 @@ function AuthPage() {
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+          },
         });
         if (error) throw error;
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       }
-      navigate({ to: "/" });
+      goAfterAuth(next, navigate);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {

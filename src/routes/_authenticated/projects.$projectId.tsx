@@ -34,6 +34,7 @@ import { RiskAllocationWorkbench } from "@/components/outcome/RiskAllocationWork
 import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
+import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
 import {
   createExposure,
   updateExposure,
@@ -88,6 +89,7 @@ import {
   ReceiptText,
   ShieldAlert,
   Trash2,
+  Users,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
@@ -651,6 +653,12 @@ function ProjectPage() {
       icon: ClipboardList,
     },
     {
+      value: "client-portal",
+      label: "Client Portal",
+      detail: "CO approvals",
+      icon: Users,
+    },
+    {
       value: "ior-report",
       label: "IOR Reports",
       detail: `${reviews.length} saved`,
@@ -1015,6 +1023,10 @@ function ProjectPage() {
                 onDelete={(id) => coDelete.mutate({ id })}
               />
             </TabsContent>
+
+            <TabsContent value="client-portal" className="mt-0">
+              <ClientPortalWorkspace projectId={projectId} />
+            </TabsContent>
           </div>
         </Tabs>
       </main>
@@ -1096,9 +1108,7 @@ function SovImportHistory({ imports }: { imports: SovImportRow[] }) {
           <div className="mt-1 font-medium text-foreground">{source}</div>
           <div className="mt-1 text-xs text-muted-foreground">
             {latest.profile || "Generic spreadsheet"} ·{" "}
-            <span className={`font-semibold uppercase ${confidenceTone}`}>
-              {latest.confidence}
-            </span>{" "}
+            <span className={`font-semibold uppercase ${confidenceTone}`}>{latest.confidence}</span>{" "}
             confidence · {formatShortDateTime(latest.created_at)}
           </div>
         </div>

@@ -32,6 +32,20 @@ export const Route = createFileRoute("/auth/callback")({
   component: AuthCallbackPage,
 });
 
+function safeNextFromUrl(url: URL) {
+  const next = url.searchParams.get("next") ?? "/";
+  if (!next.startsWith("/") || next.startsWith("//")) return "/";
+  return next;
+}
+
+function goAfterSignIn(next: string, navigate: ReturnType<typeof useNavigate>) {
+  if (next === "/") {
+    navigate({ to: "/", replace: true });
+  } else {
+    window.location.replace(next);
+  }
+}
+
 function AuthCallbackPage() {
   const navigate = useNavigate();
   const [message, setMessage] = useState("Completing sign-in...");
@@ -42,6 +56,7 @@ function AuthCallbackPage() {
     async function finishSignIn() {
       try {
         const url = new URL(window.location.href);
+        const next = safeNextFromUrl(url);
         const code = url.searchParams.get("code");
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
@@ -54,7 +69,7 @@ function AuthCallbackPage() {
           if (error) throw error;
           if (data.session) {
             void notifyLogin(data.session);
-            navigate({ to: "/", replace: true });
+            goAfterSignIn(next, navigate);
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 250));
@@ -75,7 +90,9 @@ function AuthCallbackPage() {
     finishSignIn();
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session && !cancelled) navigate({ to: "/", replace: true });
+      if (session && !cancelled) {
+        goAfterSignIn(safeNextFromUrl(new URL(window.location.href)), navigate);
+      }
     });
 
     return () => {
