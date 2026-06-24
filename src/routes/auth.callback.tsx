@@ -46,6 +46,32 @@ function goAfterSignIn(next: string, navigate: ReturnType<typeof useNavigate>) {
   }
 }
 
+async function establishSessionFromUrl(url: URL) {
+  const code = url.searchParams.get("code");
+  if (code) {
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error) throw error;
+    return data.session ?? null;
+  }
+
+  const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const authError = hashParams.get("error_description") ?? hashParams.get("error");
+  if (authError) throw new Error(authError);
+
+  const accessToken = hashParams.get("access_token");
+  const refreshToken = hashParams.get("refresh_token");
+  if (!accessToken || !refreshToken) return null;
+
+  const { data, error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+  if (error) throw error;
+
+  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  return data.session ?? null;
+}
+
 function AuthCallbackPage() {
   const navigate = useNavigate();
   const [message, setMessage] = useState("Completing sign-in...");
@@ -57,10 +83,11 @@ function AuthCallbackPage() {
       try {
         const url = new URL(window.location.href);
         const next = safeNextFromUrl(url);
-        const code = url.searchParams.get("code");
-        if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) throw error;
+        const sessionFromUrl = await establishSessionFromUrl(url);
+        if (sessionFromUrl) {
+          void notifyLogin(sessionFromUrl);
+          goAfterSignIn(next, navigate);
+          return;
         }
 
         const started = Date.now();
@@ -87,17 +114,24 @@ function AuthCallbackPage() {
       }
     }
 
-    finishSignIn();
+    void finishSignIn();
 
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session && !cancelled) {
-        goAfterSignIn(safeNextFromUrl(new URL(window.location.href)), navigate);
-      }
-    });
+    let subscription: { unsubscribe: () => void } | undefined;
+    try {
+      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (session && !cancelled) {
+          goAfterSignIn(safeNextFromUrl(new URL(window.location.href)), navigate);
+        }
+      });
+      subscription = data.subscription;
+    } catch (err) {
+      console.error(err);
+      setMessage(err instanceof Error ? err.message : "Could not start sign-in listener.");
+    }
 
     return () => {
       cancelled = true;
-      data.subscription.unsubscribe();
+      subscription?.unsubscribe();
     };
   }, [navigate]);
 

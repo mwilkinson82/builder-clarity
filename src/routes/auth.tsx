@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link, Outlet } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,15 @@ function goAfterAuth(next: string, navigate: ReturnType<typeof useNavigate>) {
 }
 
 function AuthPage() {
+  const isCallbackRoute =
+    typeof window !== "undefined" && window.location.pathname.startsWith("/auth/callback");
+
+  if (isCallbackRoute) return <Outlet />;
+
+  return <AuthForm />;
+}
+
+function AuthForm() {
   const navigate = useNavigate();
   const next = safeNextFromLocation();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -52,9 +61,25 @@ function AuthPage() {
   const [magicLoading, setMagicLoading] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) goAfterAuth(next, navigate);
-    });
+    let cancelled = false;
+
+    async function checkExistingSession() {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (!cancelled && data.session) goAfterAuth(next, navigate);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not check current session.");
+        }
+      }
+    }
+
+    void checkExistingSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, [navigate, next]);
 
   const sendMagicLink = async (e: React.FormEvent) => {

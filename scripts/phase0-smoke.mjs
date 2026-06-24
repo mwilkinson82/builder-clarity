@@ -128,6 +128,30 @@ await expectContains(
 );
 
 await expectContains(
+  "src/integrations/supabase/client.ts",
+  [/readRuntimeEnv/, /globalThis/, /VITE_SUPABASE_URL/, /SUPABASE_PUBLISHABLE_KEY/],
+  "browser Supabase client reads env without crashing on process.env",
+);
+
+await expectContains(
+  "src/routes/auth.tsx",
+  [/Outlet/, /AuthForm/, /checkExistingSession/, /Could not check current session/, /setError/],
+  "auth page handles session-check failures without blanking",
+);
+
+await expectContains(
+  "src/routes/auth.callback.tsx",
+  [
+    /establishSessionFromUrl/,
+    /exchangeCodeForSession/,
+    /setSession/,
+    /access_token/,
+    /refresh_token/,
+  ],
+  "auth callback supports code and hash-token magic links",
+);
+
+await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [
     /createExposure/,
