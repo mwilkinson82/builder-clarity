@@ -20,7 +20,7 @@ import {
 } from "@/lib/ior";
 
 type DynamicSupabaseError = { code?: string; message: string };
-type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
+type DynamicSupabaseResult<T = any> = { data: T | null; error: DynamicSupabaseError | null };
 type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   select(columns?: string): DynamicSupabaseQuery;
   insert(values: unknown): DynamicSupabaseQuery;
@@ -1683,8 +1683,7 @@ export const createBillingInvoice = createServerFn({ method: "POST" })
     const status = rest.status as InvoiceStatus;
     const sentAt = isInvoiceSentStatus(status) ? new Date().toISOString() : null;
     const paidAt = status === "paid" ? new Date().toISOString() : null;
-    const { data: created, error } = await context.supabase
-      .from("billing_invoices")
+    const { data: created, error } = await dynamicTable(context.supabase, "billing_invoices")
       .insert({
         project_id: projectId,
         ...rest,
@@ -1706,8 +1705,7 @@ export const updateBillingInvoice = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), patch: billingInvoiceInput.partial() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { data: before, error: loadError } = await context.supabase
-      .from("billing_invoices")
+    const { data: before, error: loadError } = await dynamicTable(context.supabase, "billing_invoices")
       .select("status,sent_at,paid_at")
       .eq("id", data.id)
       .single();
@@ -1722,8 +1720,7 @@ export const updateBillingInvoice = createServerFn({ method: "POST" })
       patch.paid_at = new Date().toISOString();
     }
 
-    const { data: updated, error } = await context.supabase
-      .from("billing_invoices")
+    const { data: updated, error } = await dynamicTable(context.supabase, "billing_invoices")
       .update(patch)
       .eq("id", data.id)
       .select("*")
@@ -1739,7 +1736,9 @@ export const deleteBillingInvoice = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase.from("billing_invoices").delete().eq("id", data.id);
+    const { error } = await dynamicTable(context.supabase, "billing_invoices")
+      .delete()
+      .eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -1748,8 +1747,10 @@ export const recordInvoicePayment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof paymentLedgerInput>) => paymentLedgerInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { data: invoice, error: invoiceError } = await context.supabase
-      .from("billing_invoices")
+    const { data: invoice, error: invoiceError } = await dynamicTable(
+      context.supabase,
+      "billing_invoices",
+    )
       .select("id,project_id,billing_application_id,total_due")
       .eq("id", data.invoiceId)
       .single();
@@ -1761,7 +1762,7 @@ export const recordInvoicePayment = createServerFn({ method: "POST" })
     const processorFee = data.processor_fee ?? 0;
     const overwatchFee = data.overwatch_fee ?? 0;
     const netPayout = Math.max(0, data.amount - processorFee - overwatchFee);
-    const { error: insertError } = await context.supabase.from("payment_ledger").insert({
+    const { error: insertError } = await dynamicTable(context.supabase, "payment_ledger").insert({
       project_id: projectId,
       invoice_id: data.invoiceId,
       billing_application_id: billingApplicationId,
@@ -1778,20 +1779,24 @@ export const recordInvoicePayment = createServerFn({ method: "POST" })
     });
     if (insertError) throw new Error(insertError.message);
 
-    const { data: payments, error: paymentsError } = await context.supabase
-      .from("payment_ledger")
+    const { data: payments, error: paymentsError } = await dynamicTable(
+      context.supabase,
+      "payment_ledger",
+    )
       .select("amount,status")
       .eq("invoice_id", data.invoiceId)
       .eq("status", "succeeded");
     if (paymentsError) throw new Error(paymentsError.message);
 
-    const paidAmount = (payments ?? []).reduce((sum, payment) => sum + num(payment.amount), 0);
+    const paidAmount = ((payments ?? []) as Record<string, unknown>[]).reduce(
+      (sum: number, payment: Record<string, unknown>) => sum + num(payment.amount),
+      0,
+    );
     const totalDue = num(invoice.total_due);
     const nextStatus = paymentAdjustedInvoiceStatus(totalDue, paidAmount);
     const paidAt = nextStatus === "paid" ? new Date().toISOString() : null;
 
-    const { error: updateInvoiceError } = await context.supabase
-      .from("billing_invoices")
+    const { error: updateInvoiceError } = await dynamicTable(context.supabase, "billing_invoices")
       .update({
         paid_amount: paidAmount,
         status: nextStatus,

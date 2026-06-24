@@ -1517,7 +1517,7 @@ function BillingWorkspace({
       total_due: totalDue,
       paid_amount: paidAmount,
       status,
-      client_visible: status !== "draft" && status !== "void",
+      client_visible: status !== "draft",
       notes: app?.notes ?? "",
     };
   };
