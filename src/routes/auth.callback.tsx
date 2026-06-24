@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { sendTransactionalEmail } from "@/lib/email/send";
@@ -38,12 +38,28 @@ function safeNextFromUrl(url: URL) {
   return next;
 }
 
-function goAfterSignIn(next: string, navigate: ReturnType<typeof useNavigate>) {
-  if (next === "/") {
-    navigate({ to: "/", replace: true });
-  } else {
-    window.location.replace(next);
+function callbackHref(next: string) {
+  return `/auth/callback?next=${encodeURIComponent(next)}`;
+}
+
+function authHref(next: string) {
+  return `/auth?next=${encodeURIComponent(next)}`;
+}
+
+function cleanCallbackUrl(url: URL) {
+  if (url.hash) window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+}
+
+function goAfterSignIn(next: string) {
+  window.location.replace(next);
+}
+
+function callbackFailureMessage(err: unknown) {
+  const message = err instanceof Error ? err.message : "Could not complete sign-in.";
+  if (/already|expired|invalid|jwt|refresh|token|link/i.test(message)) {
+    return "This sign-in link was already used or expired. Request a fresh magic link and open it once.";
   }
+  return message;
 }
 
 async function establishSessionFromUrl(url: URL) {
@@ -56,25 +72,31 @@ async function establishSessionFromUrl(url: URL) {
 
   const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
   const authError = hashParams.get("error_description") ?? hashParams.get("error");
-  if (authError) throw new Error(authError);
+  if (authError) {
+    cleanCallbackUrl(url);
+    throw new Error(authError);
+  }
 
   const accessToken = hashParams.get("access_token");
   const refreshToken = hashParams.get("refresh_token");
   if (!accessToken || !refreshToken) return null;
 
-  const { data, error } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-  });
-  if (error) throw error;
-
-  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
-  return data.session ?? null;
+  try {
+    const { data, error } = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    if (error) throw error;
+    return data.session ?? null;
+  } finally {
+    cleanCallbackUrl(url);
+  }
 }
 
 function AuthCallbackPage() {
-  const navigate = useNavigate();
   const [message, setMessage] = useState("Completing sign-in...");
+  const [nextPath, setNextPath] = useState("/");
+  const [showRecovery, setShowRecovery] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,33 +105,35 @@ function AuthCallbackPage() {
       try {
         const url = new URL(window.location.href);
         const next = safeNextFromUrl(url);
+        setNextPath(next);
         const sessionFromUrl = await establishSessionFromUrl(url);
         if (sessionFromUrl) {
           void notifyLogin(sessionFromUrl);
-          goAfterSignIn(next, navigate);
+          goAfterSignIn(next);
           return;
         }
 
         const started = Date.now();
-        while (!cancelled && Date.now() - started < 8000) {
+        while (!cancelled && Date.now() - started < 3000) {
           const { data, error } = await supabase.auth.getSession();
           if (error) throw error;
           if (data.session) {
             void notifyLogin(data.session);
-            goAfterSignIn(next, navigate);
+            goAfterSignIn(next);
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 250));
         }
 
         if (!cancelled) {
-          setMessage("Sign-in link opened. Taking you back to sign in...");
-          navigate({ to: "/auth", replace: true });
+          setShowRecovery(true);
+          setMessage("No active session was found. Request a fresh magic link and open it once.");
         }
       } catch (err) {
         console.error(err);
         if (!cancelled) {
-          setMessage(err instanceof Error ? err.message : "Could not complete sign-in.");
+          setShowRecovery(true);
+          setMessage(callbackFailureMessage(err));
         }
       }
     }
@@ -120,7 +144,7 @@ function AuthCallbackPage() {
     try {
       const { data } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session && !cancelled) {
-          goAfterSignIn(safeNextFromUrl(new URL(window.location.href)), navigate);
+          goAfterSignIn(safeNextFromUrl(new URL(window.location.href)));
         }
       });
       subscription = data.subscription;
@@ -133,7 +157,7 @@ function AuthCallbackPage() {
       cancelled = true;
       subscription?.unsubscribe();
     };
-  }, [navigate]);
+  }, []);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-6 text-foreground">
@@ -141,6 +165,22 @@ function AuthCallbackPage() {
         <div className="mx-auto h-2 w-12 rounded-full bg-primary/70" />
         <h1 className="mt-6 font-serif text-3xl">Opening IOR</h1>
         <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+        {showRecovery && (
+          <div className="mt-6 flex flex-col gap-3">
+            <a
+              href={authHref(nextPath)}
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
+            >
+              Request fresh magic link
+            </a>
+            <a
+              href={callbackHref(nextPath)}
+              className="text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              Retry callback
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );

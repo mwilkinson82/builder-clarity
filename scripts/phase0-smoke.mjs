@@ -129,7 +129,13 @@ await expectContains(
 
 await expectContains(
   "src/integrations/supabase/client.ts",
-  [/readRuntimeEnv/, /globalThis/, /VITE_SUPABASE_URL/, /SUPABASE_PUBLISHABLE_KEY/],
+  [
+    /readRuntimeEnv/,
+    /globalThis/,
+    /VITE_SUPABASE_URL/,
+    /SUPABASE_PUBLISHABLE_KEY/,
+    /detectSessionInUrl:\s*true/,
+  ],
   "browser Supabase client reads env without crashing on process.env",
 );
 
@@ -147,8 +153,17 @@ await expectContains(
     /setSession/,
     /access_token/,
     /refresh_token/,
+    /window\.location\.replace\(next\)/,
+    /Request fresh magic link/,
+    /already used or expired/,
   ],
-  "auth callback supports code and hash-token magic links",
+  "auth callback supports code/hash magic links and used-link recovery",
+);
+
+await expectContains(
+  "src/routes/_authenticated/route.tsx",
+  [/getSession/, /getUser/, /continuing with restored session/, /sessionData\.session\.user/],
+  "authenticated route lets restored browser sessions survive refresh",
 );
 
 await expectContains(
