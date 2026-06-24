@@ -1788,7 +1788,10 @@ export const recordInvoicePayment = createServerFn({ method: "POST" })
       .eq("status", "succeeded");
     if (paymentsError) throw new Error(paymentsError.message);
 
-    const paidAmount = (payments ?? []).reduce((sum, payment) => sum + num(payment.amount), 0);
+    const paidAmount = ((payments ?? []) as Record<string, unknown>[]).reduce(
+      (sum: number, payment: Record<string, unknown>) => sum + num(payment.amount),
+      0,
+    );
     const totalDue = num(invoice.total_due);
     const nextStatus = paymentAdjustedInvoiceStatus(totalDue, paidAmount);
     const paidAt = nextStatus === "paid" ? new Date().toISOString() : null;

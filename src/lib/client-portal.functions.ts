@@ -840,7 +840,7 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
           normalizeBillingApplicationEvent(row),
         );
     const billingEventsByApplication = new Map<string, BillingApplicationEventRow[]>();
-    billingEvents.forEach((event) => {
+    billingEvents.forEach((event: BillingApplicationEventRow) => {
       const existing = billingEventsByApplication.get(event.billing_application_id) ?? [];
       existing.push(event);
       billingEventsByApplication.set(event.billing_application_id, existing);
@@ -851,7 +851,7 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
           normalizePaymentLedger(row),
         );
     const paymentsByInvoice = new Map<string, PaymentLedgerRow[]>();
-    paymentEvents.forEach((payment) => {
+    paymentEvents.forEach((payment: PaymentLedgerRow) => {
       const existing = paymentsByInvoice.get(payment.invoice_id) ?? [];
       existing.push(payment);
       paymentsByInvoice.set(payment.invoice_id, existing);
