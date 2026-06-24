@@ -229,6 +229,28 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/outcome/RiskAllocationWorkbench.tsx",
+  [
+    /grid-cols-\[minmax\(0,1\.15fr\)_minmax\(0,0\.85fr\)\]/,
+    /min-\[1800px\]:grid-cols-\[minmax\(0,1fr\)_260px\]/,
+    /aria-label="Risk tally workspace"/,
+  ],
+  "risk tally layout keeps its wide ledger inside the workspace instead of forcing viewport scroll",
+);
+
+await expectContains(
+  "src/components/outcome/ExposuresTable.tsx",
+  [/w-full min-w-0 max-w-full overflow-x-auto/, /min-w-\[1120px\]/],
+  "risk exposure table scrolls internally when the ledger is wider than the screen",
+);
+
+await expectContains(
+  "src/components/ui/table.tsx",
+  [/w-full min-w-0 max-w-full overflow-auto/],
+  "shared table wrapper cannot force page-level horizontal overflow",
+);
+
+await expectContains(
   "src/lib/team.functions.ts",
   [
     /CONTRACTOR_CIRCLE_GRANT_LIMITS/,

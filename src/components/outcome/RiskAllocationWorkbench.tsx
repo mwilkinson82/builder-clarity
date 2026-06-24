@@ -93,7 +93,7 @@ export function RiskAllocationWorkbench({
   return (
     <section className="min-w-0 space-y-5" aria-label="Risk tally workspace">
       <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
-        <div className="grid gap-px bg-hairline lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="grid gap-px bg-hairline lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           <div className="min-w-0 bg-card p-6 lg:p-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
@@ -146,7 +146,7 @@ export function RiskAllocationWorkbench({
             </div>
           </div>
 
-          <div className="bg-surface-elevated p-6 lg:p-8">
+          <div className="min-w-0 bg-surface-elevated p-6 lg:p-8">
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               <CircleDollarSign className="h-3.5 w-3.5" />
               GP Impact
@@ -189,7 +189,7 @@ export function RiskAllocationWorkbench({
         </div>
       </div>
 
-      <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,1fr)_260px]">
+      <div className="grid min-w-0 gap-5 min-[1800px]:grid-cols-[minmax(0,1fr)_260px]">
         <div
           id="risk-ledger"
           className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card"

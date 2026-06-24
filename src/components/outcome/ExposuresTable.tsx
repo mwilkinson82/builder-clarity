@@ -223,7 +223,7 @@ export function ExposuresTable({
         </Button>
       </div>
 
-      <div className="max-w-full overflow-x-auto overflow-y-hidden rounded-lg border border-hairline bg-card">
+      <div className="w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden rounded-lg border border-hairline bg-card">
         <Table className="min-w-[1120px] w-full">
           <TableHeader>
             <TableRow className="bg-surface">
