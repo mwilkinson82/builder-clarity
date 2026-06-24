@@ -23,6 +23,15 @@ function safeNextFromLocation() {
   return next;
 }
 
+const LIVE_AUTH_ORIGIN = "https://overwatch.alpcontractorcircle.com";
+
+function authRedirectTo(next: string) {
+  if (typeof window === "undefined") return `${LIVE_AUTH_ORIGIN}/auth/callback?next=${encodeURIComponent(next)}`;
+  const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  const origin = isLocal ? window.location.origin : LIVE_AUTH_ORIGIN;
+  return `${origin}/auth/callback?next=${encodeURIComponent(next)}`;
+}
+
 function goAfterAuth(next: string, navigate: ReturnType<typeof useNavigate>) {
   if (next === "/") {
     navigate({ to: "/", replace: true });
@@ -57,7 +66,7 @@ function AuthPage() {
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+          emailRedirectTo: authRedirectTo(next),
           shouldCreateUser: true,
         },
       });
@@ -81,7 +90,7 @@ function AuthPage() {
           email,
           password,
           options: {
-            emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+            emailRedirectTo: authRedirectTo(next),
           },
         });
         if (error) throw error;
