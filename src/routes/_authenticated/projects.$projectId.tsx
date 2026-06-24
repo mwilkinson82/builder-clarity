@@ -107,6 +107,7 @@ import {
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
+  ssr: false,
   head: () => ({ meta: [{ title: "Project IOR — Overwatch" }] }),
   component: ProjectPage,
 });
@@ -1564,10 +1565,7 @@ function BillingWorkspace({
           (access: ProjectClientAccessRow) =>
             access.status !== "revoked" && access.can_view_billing && access.email,
         )
-        .map((access: ProjectClientAccessRow) => [
-          access.email.trim().toLowerCase(),
-          access,
-        ]),
+        .map((access: ProjectClientAccessRow) => [access.email.trim().toLowerCase(), access]),
     ).values(),
   );
 

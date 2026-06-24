@@ -45,6 +45,7 @@ const safeFileName = (value: string) =>
     .toLowerCase();
 
 export const Route = createFileRoute("/_authenticated/client/projects/$projectId")({
+  ssr: false,
   head: () => ({
     meta: [
       { title: "Client Portal — Overwatch" },

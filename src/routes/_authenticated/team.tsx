@@ -48,6 +48,7 @@ import {
 } from "@/lib/team.functions";
 
 export const Route = createFileRoute("/_authenticated/team")({
+  ssr: false,
   head: () => ({
     meta: [
       { title: "Your Company — Overwatch" },
@@ -553,12 +554,8 @@ function TeamPage() {
                 stripePriceId={team.organization.stripe_price_id}
                 stripeConnectStatus={team.organization.stripe_connect_status}
                 paymentProcessorReady={team.organization.payment_processor_ready}
-                subscriptionCurrentPeriodEnd={
-                  team.organization.subscription_current_period_end
-                }
-                subscriptionCancelAtPeriodEnd={
-                  team.organization.subscription_cancel_at_period_end
-                }
+                subscriptionCurrentPeriodEnd={team.organization.subscription_current_period_end}
+                subscriptionCancelAtPeriodEnd={team.organization.subscription_cancel_at_period_end}
               />
             )}
 
@@ -685,9 +682,7 @@ function TeamPage() {
                     <MiniStat
                       label="Payments"
                       value={
-                        team.organization.payment_processor_ready
-                          ? "Online ready"
-                          : "Manual only"
+                        team.organization.payment_processor_ready ? "Online ready" : "Manual only"
                       }
                     />
                     <MiniStat label="Role" value={roleLabel(team.currentUserRole ?? "member")} />
@@ -1052,10 +1047,16 @@ function PlanReadinessPanel({
   const commerceRows = [
     {
       label: "Overwatch subscription",
-      value: subscriptionReady ? "Connected" : checkoutConfigured ? "Price staged" : "Not connected",
+      value: subscriptionReady
+        ? "Connected"
+        : checkoutConfigured
+          ? "Price staged"
+          : "Not connected",
       detail: subscriptionReady
         ? `Stripe customer and subscription are recorded${
-            subscriptionCurrentPeriodEnd ? ` through ${shortDate(subscriptionCurrentPeriodEnd)}` : ""
+            subscriptionCurrentPeriodEnd
+              ? ` through ${shortDate(subscriptionCurrentPeriodEnd)}`
+              : ""
           }.`
         : "Ready for Stripe Checkout Sessions once live plan prices are connected.",
       tone: subscriptionReady ? "default" : "warning",
@@ -1171,9 +1172,9 @@ function PlanReadinessPanel({
             ))}
           </div>
           <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-            Overwatch subscriptions and client invoice payments are separate. Client payments
-            should run through a platform payment flow so Overwatch can collect an application fee
-            before the contractor payout, subject to final Stripe Connect and compliance setup.
+            Overwatch subscriptions and client invoice payments are separate. Client payments should
+            run through a platform payment flow so Overwatch can collect an application fee before
+            the contractor payout, subject to final Stripe Connect and compliance setup.
           </div>
           <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1238,9 +1239,7 @@ function CommerceReadinessItem({
           <Icon className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate font-medium">{label}</span>
         </div>
-        <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.08em]">
-          {value}
-        </span>
+        <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.08em]">{value}</span>
       </div>
       <div className="mt-1 pl-5 text-xs leading-snug opacity-85">{detail}</div>
     </div>
@@ -1267,7 +1266,11 @@ function UsageReadinessRow({
         ? "border-warning/30 bg-warning/10 text-warning"
         : "border-success/25 bg-success/10 text-success";
   const meterClass =
-    status.tone === "danger" ? "bg-danger" : status.tone === "warning" ? "bg-warning" : "bg-success";
+    status.tone === "danger"
+      ? "bg-danger"
+      : status.tone === "warning"
+        ? "bg-warning"
+        : "bg-success";
   const Icon = status.tone === "default" ? CheckCircle2 : AlertTriangle;
 
   return (
@@ -1285,7 +1288,9 @@ function UsageReadinessRow({
           />
         </div>
       </div>
-      <div className={`inline-flex min-h-10 items-center gap-2 rounded-md border px-3 py-2 ${statusClass}`}>
+      <div
+        className={`inline-flex min-h-10 items-center gap-2 rounded-md border px-3 py-2 ${statusClass}`}
+      >
         <Icon className="h-4 w-4 shrink-0" />
         <div>
           <div className="text-xs font-semibold uppercase tracking-[0.1em]">{status.label}</div>

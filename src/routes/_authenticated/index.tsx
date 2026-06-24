@@ -72,6 +72,7 @@ function formatUsageValue(used: number, limit: number) {
 }
 
 export const Route = createFileRoute("/_authenticated/")({
+  ssr: false,
   head: () => ({
     meta: [
       { title: "Portfolio — Overwatch" },
