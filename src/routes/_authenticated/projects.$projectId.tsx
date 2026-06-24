@@ -36,6 +36,10 @@ import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
 import {
+  getClientPortalManagement,
+  type ProjectClientAccessRow,
+} from "@/lib/client-portal.functions";
+import {
   createExposure,
   updateExposure,
   deleteExposure,
@@ -1400,28 +1404,70 @@ function invoiceFilename(project: ProjectRow, invoice: BillingInvoiceRow) {
   return `Overwatch-Invoice-${projectPart || "project"}-${invoicePart || "invoice"}.pdf`;
 }
 
-function buildInvoiceEmail(project: ProjectRow, invoice: BillingInvoiceRow) {
-  const subject =
-    `Invoice ${invoice.invoice_number || invoice.title || ""} - ${project.name}`.trim();
-  const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
-  const body = [
-    `Hi,`,
-    ``,
-    `Attached is the current invoice for ${project.name}${project.job_number ? `, job ${project.job_number}` : ""}.`,
-    ``,
-    `Invoice: ${invoice.invoice_number || invoice.title || "Invoice"}`,
-    `Status: ${invoiceStatusLabel(invoice.status)}`,
-    `Total due: ${fmtUSD(invoice.total_due)}`,
-    `Paid to date: ${fmtUSD(invoice.paid_amount)}`,
-    `Open balance: ${fmtUSD(openBalance)}`,
-    invoice.due_date ? `Due date: ${invoice.due_date}` : "",
-    ``,
-    `Please review and let us know if you have any questions.`,
-  ]
-    .filter((line) => line !== "")
-    .join("\n");
+function invoicePortalUrl(projectId: string) {
+  if (typeof window === "undefined") return `/client/projects/${projectId}`;
+  return `${window.location.origin}/client/projects/${projectId}`;
+}
 
-  return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+async function enqueueInvoiceEmail(input: {
+  project: ProjectRow;
+  invoice: BillingInvoiceRow;
+  linkedPayApp?: BillingApplicationRow;
+  recipientEmail: string;
+}) {
+  const { project, invoice, linkedPayApp, recipientEmail } = input;
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (sessionError || !accessToken) {
+    throw new Error("Your session expired. Sign in again before sending invoice email.");
+  }
+
+  const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
+  const response = await fetch("/lovable/email/transactional/send", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      templateName: "invoice-notification",
+      recipientEmail,
+      idempotencyKey: `invoice:${invoice.id}:${recipientEmail}:${Date.now()}`,
+      templateData: {
+        projectName: project.name,
+        clientName: project.client,
+        jobNumber: project.job_number,
+        invoiceNumber: invoice.invoice_number || invoice.title || "Invoice",
+        invoiceTitle: invoice.title || linkedPayApp?.application_number || "",
+        invoiceStatus: invoiceStatusLabel(invoice.status),
+        totalDue: fmtUSD(invoice.total_due),
+        paidAmount: fmtUSD(invoice.paid_amount),
+        openBalance: fmtUSD(openBalance),
+        dueDate: invoice.due_date,
+        portalUrl: invoicePortalUrl(project.id),
+        notes:
+          invoice.notes ||
+          linkedPayApp?.notes ||
+          "This invoice is available in the Overwatch client portal.",
+      },
+    }),
+  });
+
+  let result: Record<string, unknown> = {};
+  try {
+    result = (await response.json()) as Record<string, unknown>;
+  } catch {
+    result = {};
+  }
+  if (!response.ok || result.success === false) {
+    const errorMessage =
+      typeof result.error === "string"
+        ? result.error
+        : typeof result.reason === "string"
+          ? result.reason
+          : "The email service did not accept the invoice notification.";
+    throw new Error(errorMessage);
+  }
 }
 
 function responseAction(path: import("@/lib/ior").ResponsePath) {
@@ -1504,6 +1550,26 @@ function BillingWorkspace({
   );
   const clientVisibleInvoices = billingInvoices.filter((invoice) => invoice.client_visible).length;
   const today = new Date().toISOString().slice(0, 10);
+  const loadClientPortal = useServerFn(getClientPortalManagement);
+  const clientPortalQuery = useQuery({
+    queryKey: ["client-portal-management", project.id, "billing-recipients"],
+    queryFn: () => loadClientPortal({ data: { projectId: project.id } }),
+    enabled: billingInvoices.length > 0,
+    staleTime: 30_000,
+  });
+  const invoiceRecipients = Array.from(
+    new Map(
+      (clientPortalQuery.data?.access ?? [])
+        .filter(
+          (access: ProjectClientAccessRow) =>
+            access.status !== "revoked" && access.can_view_billing && access.email,
+        )
+        .map((access: ProjectClientAccessRow) => [
+          access.email.trim().toLowerCase(),
+          access,
+        ]),
+    ).values(),
+  );
 
   const buildDraft = (): BillingDraft => {
     const nextNumber = String(billingApplications.length + 1).padStart(3, "0");
@@ -2013,11 +2079,12 @@ function BillingWorkspace({
             </Dialog>
           </div>
 
-          <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <div className="mb-4 grid gap-3 md:grid-cols-5">
             <SovMetric label="Invoice total due" value={fmtUSD(invoiceTotalDue)} />
             <SovMetric label="Invoice paid" value={fmtUSD(invoicePaid)} />
             <SovMetric label="Invoice open" value={fmtUSD(invoiceOpenBalance)} />
             <SovMetric label="Client-visible" value={String(clientVisibleInvoices)} />
+            <SovMetric label="Billing recipients" value={String(invoiceRecipients.length)} />
           </div>
 
           <div className="overflow-x-auto rounded-md border border-hairline">
@@ -2054,6 +2121,13 @@ function BillingWorkspace({
                         project={project}
                         invoice={invoice}
                         linkedPayApp={linkedPayApp}
+                        invoiceRecipients={invoiceRecipients}
+                        invoiceRecipientsLoading={clientPortalQuery.isLoading}
+                        invoiceRecipientsError={
+                          clientPortalQuery.error instanceof Error
+                            ? clientPortalQuery.error.message
+                            : ""
+                        }
                         savingPayment={savingPayment}
                         onPatch={(patch) => onUpdateInvoice(invoice.id, patch)}
                         onDelete={() => onDeleteInvoice(invoice.id)}
@@ -2274,6 +2348,9 @@ function BillingInvoiceRowEditor({
   project,
   invoice,
   linkedPayApp,
+  invoiceRecipients,
+  invoiceRecipientsLoading,
+  invoiceRecipientsError,
   savingPayment,
   onPatch,
   onDelete,
@@ -2282,6 +2359,9 @@ function BillingInvoiceRowEditor({
   project: ProjectRow;
   invoice: BillingInvoiceRow;
   linkedPayApp?: BillingApplicationRow;
+  invoiceRecipients: ProjectClientAccessRow[];
+  invoiceRecipientsLoading?: boolean;
+  invoiceRecipientsError?: string;
   savingPayment?: boolean;
   onPatch: (patch: Partial<BillingInvoiceRow>) => void;
   onDelete: () => void;
@@ -2342,19 +2422,66 @@ function BillingInvoiceRowEditor({
     }
   };
 
-  const emailInvoice = () => {
+  const emailInvoice = async () => {
     setInvoiceAction("email");
     try {
-      window.location.href = buildInvoiceEmail(project, invoice);
-      toast.success("Invoice email draft opened", {
-        description: "Attach the downloaded invoice PDF before sending.",
+      if (invoice.status === "void") {
+        throw new Error("Void invoices cannot be sent to clients.");
+      }
+      if (invoiceRecipientsError) {
+        throw new Error(`Client billing recipients did not load: ${invoiceRecipientsError}`);
+      }
+      if (invoiceRecipients.length === 0) {
+        throw new Error(
+          "No client seats have Billing On. Open Client Portal, grant a client seat, and turn Billing On.",
+        );
+      }
+
+      const results = await Promise.allSettled(
+        invoiceRecipients.map((recipient) =>
+          enqueueInvoiceEmail({
+            project,
+            invoice,
+            linkedPayApp,
+            recipientEmail: recipient.email,
+          }),
+        ),
+      );
+      const sentCount = results.filter((result) => result.status === "fulfilled").length;
+      const failed = results.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (sentCount === 0) {
+        throw failed?.reason instanceof Error
+          ? failed.reason
+          : new Error("No invoice emails were queued.");
+      }
+
+      onPatch({
+        client_visible: true,
+        status: invoice.status === "draft" ? "sent" : invoice.status,
       });
+
+      toast.success("Invoice email queued", {
+        description:
+          sentCount === 1
+            ? `Sent to ${invoiceRecipients[0].email}.`
+            : `Sent to ${sentCount} client billing recipients.`,
+      });
+      if (failed) {
+        toast.warning("Some invoice emails did not queue", {
+          description:
+            failed.reason instanceof Error
+              ? failed.reason.message
+              : "Check client recipients and send again if needed.",
+        });
+      }
     } catch (error) {
-      toast.error("Invoice email did not open", {
+      toast.error("Invoice email did not queue", {
         description: error instanceof Error ? error.message : "Please try again.",
       });
     } finally {
-      window.setTimeout(() => setInvoiceAction(null), 300);
+      setInvoiceAction(null);
     }
   };
 
@@ -2465,10 +2592,10 @@ function BillingInvoiceRowEditor({
             variant="outline"
             className="h-8 gap-1.5"
             onClick={emailInvoice}
-            disabled={invoiceAction === "email"}
+            disabled={invoiceAction === "email" || invoiceRecipientsLoading}
           >
             <Mail className="h-3.5 w-3.5" />
-            Email
+            {invoiceAction === "email" ? "Sending..." : "Send"}
           </Button>
           <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
             <DialogTrigger asChild>

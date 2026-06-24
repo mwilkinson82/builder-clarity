@@ -103,6 +103,7 @@ await expectFile("src/routes/_authenticated/client.projects.$projectId.tsx", "cl
 await expectFile("src/routes/_authenticated/team.tsx", "team workspace route");
 await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF generator");
 await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
+await expectFile("src/lib/email-templates/invoice-notification.tsx", "invoice email template");
 
 await expectContains(
   "src/routeTree.gen.ts",
@@ -184,7 +185,10 @@ await expectContains(
     /Record payment/,
     /generateInvoicePdf/,
     /Invoice PDF downloaded/,
-    /Invoice email draft opened/,
+    /enqueueInvoiceEmail/,
+    /invoice-notification/,
+    /Billing recipients/,
+    /Invoice email queued/,
     /toast\.success\("Linked to-do created/,
     /toast\.success\("Risk deleted/,
     /toast\.success\("Pay app added/,
@@ -213,6 +217,18 @@ await expectContains(
   "src/lib/invoice-pdf.ts",
   [/PDFDocument/, /OVERWATCH BILLING/, /Billing summary/, /Payment history/, /Job #/],
   "invoice PDF generator includes branded invoice summary and payment history",
+);
+
+await expectContains(
+  "src/lib/email-templates/registry.ts",
+  [/invoice-notification/, /invoiceNotification/],
+  "transactional invoice email template is registered",
+);
+
+await expectContains(
+  "src/lib/email-templates/invoice-notification.tsx",
+  [/OVERWATCH BILLING/, /Open client portal/, /totalDue/, /openBalance/],
+  "invoice notification email includes client portal CTA and billing totals",
 );
 
 await expectContains(
