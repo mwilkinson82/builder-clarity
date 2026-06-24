@@ -134,13 +134,19 @@ await expectContains(
     /deleteExposure/,
     /createDecision/,
     /createBillingApplication/,
+    /createBillingInvoice/,
+    /recordInvoicePayment/,
     /importCostBuckets/,
     /saveSovMappingProfile/,
     /DailyReportsWorkspace/,
     /ClientPortalWorkspace/,
+    /Invoice & payment ledger/,
+    /Record payment/,
     /toast\.success\("Linked to-do created/,
     /toast\.success\("Risk deleted/,
     /toast\.success\("Pay app added/,
+    /toast\.success\("Invoice created/,
+    /toast\.success\("Payment recorded/,
     /toast\.success\("SOV mapping saved/,
     /toast\.success\("SOV imported/,
   ],
@@ -179,6 +185,8 @@ await expectContains(
     /generateDailyReportPacketPdf/,
     /downloadDailyReportPacket/,
     /Download packet/,
+    /billingInvoices/,
+    /Invoice total/,
     /Billing shared with client/,
     /Daily reports shared with client/,
   ],
@@ -281,6 +289,21 @@ expectSql(
     /billing_applications_client_select/i,
   ],
   "billing applications exist for internal use and client visibility",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.billing_invoices/i,
+    /create table if not exists public\.payment_ledger/i,
+    /grant select, insert, update, delete on public\.billing_invoices to authenticated/i,
+    /grant select, insert, update, delete on public\.payment_ledger to authenticated/i,
+    /alter table public\.billing_invoices enable row level security/i,
+    /alter table public\.payment_ledger enable row level security/i,
+    /billing_invoices_client_select/i,
+    /payment_ledger_client_select/i,
+  ],
+  "invoice/payment ledger foundation exists with client-visible billing policies",
 );
 
 expectSql(

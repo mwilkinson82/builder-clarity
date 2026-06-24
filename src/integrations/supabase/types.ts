@@ -148,6 +148,87 @@ export type Database = {
           },
         ];
       };
+      billing_invoices: {
+        Row: {
+          billing_application_id: string | null;
+          client_visible: boolean;
+          created_at: string;
+          created_by: string | null;
+          due_date: string | null;
+          id: string;
+          invoice_number: string;
+          issue_date: string | null;
+          notes: string;
+          paid_amount: number;
+          paid_at: string | null;
+          project_id: string;
+          retainage: number;
+          sent_at: string | null;
+          status: string;
+          subtotal: number;
+          title: string;
+          total_due: number;
+          updated_at: string;
+        };
+        Insert: {
+          billing_application_id?: string | null;
+          client_visible?: boolean;
+          created_at?: string;
+          created_by?: string | null;
+          due_date?: string | null;
+          id?: string;
+          invoice_number?: string;
+          issue_date?: string | null;
+          notes?: string;
+          paid_amount?: number;
+          paid_at?: string | null;
+          project_id: string;
+          retainage?: number;
+          sent_at?: string | null;
+          status?: string;
+          subtotal?: number;
+          title?: string;
+          total_due?: number;
+          updated_at?: string;
+        };
+        Update: {
+          billing_application_id?: string | null;
+          client_visible?: boolean;
+          created_at?: string;
+          created_by?: string | null;
+          due_date?: string | null;
+          id?: string;
+          invoice_number?: string;
+          issue_date?: string | null;
+          notes?: string;
+          paid_amount?: number;
+          paid_at?: string | null;
+          project_id?: string;
+          retainage?: number;
+          sent_at?: string | null;
+          status?: string;
+          subtotal?: number;
+          title?: string;
+          total_due?: number;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "billing_invoices_billing_application_id_fkey";
+            columns: ["billing_application_id"];
+            isOneToOne: false;
+            referencedRelation: "billing_applications";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "billing_invoices_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       change_order_approvals: {
         Row: {
           change_order_id: string;
@@ -968,6 +1049,88 @@ export type Database = {
           },
           {
             foreignKeyName: "project_client_access_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      payment_ledger: {
+        Row: {
+          amount: number;
+          billing_application_id: string | null;
+          created_at: string;
+          created_by: string | null;
+          id: string;
+          invoice_id: string;
+          net_payout: number;
+          notes: string;
+          overwatch_fee: number;
+          paid_at: string;
+          payment_method: string;
+          processor: string;
+          processor_fee: number;
+          processor_payment_id: string;
+          project_id: string;
+          status: string;
+          updated_at: string;
+        };
+        Insert: {
+          amount?: number;
+          billing_application_id?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+          id?: string;
+          invoice_id: string;
+          net_payout?: number;
+          notes?: string;
+          overwatch_fee?: number;
+          paid_at?: string;
+          payment_method?: string;
+          processor?: string;
+          processor_fee?: number;
+          processor_payment_id?: string;
+          project_id: string;
+          status?: string;
+          updated_at?: string;
+        };
+        Update: {
+          amount?: number;
+          billing_application_id?: string | null;
+          created_at?: string;
+          created_by?: string | null;
+          id?: string;
+          invoice_id?: string;
+          net_payout?: number;
+          notes?: string;
+          overwatch_fee?: number;
+          paid_at?: string;
+          payment_method?: string;
+          processor?: string;
+          processor_fee?: number;
+          processor_payment_id?: string;
+          project_id?: string;
+          status?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "payment_ledger_billing_application_id_fkey";
+            columns: ["billing_application_id"];
+            isOneToOne: false;
+            referencedRelation: "billing_applications";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "payment_ledger_invoice_id_fkey";
+            columns: ["invoice_id"];
+            isOneToOne: false;
+            referencedRelation: "billing_invoices";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "payment_ledger_project_id_fkey";
             columns: ["project_id"];
             isOneToOne: false;
             referencedRelation: "projects";

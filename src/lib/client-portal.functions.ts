@@ -3,9 +3,11 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type {
   BillingApplicationEventRow,
+  BillingInvoiceRow,
   BillingStatus,
   COStatus,
   COType,
+  PaymentLedgerRow,
 } from "@/lib/projects.functions";
 
 export type ClientAccessStatus = "pending" | "active" | "revoked";
@@ -219,6 +221,22 @@ function isMissingBillingApplicationEventsError(error: unknown) {
   );
 }
 
+function isMissingBillingInvoicesError(error: unknown) {
+  const message = str((error as { message?: unknown })?.message);
+  const code = str((error as { code?: unknown })?.code);
+  return (
+    code === "PGRST205" || /billing_invoices|schema cache|could not find the table/i.test(message)
+  );
+}
+
+function isMissingPaymentLedgerError(error: unknown) {
+  const message = str((error as { message?: unknown })?.message);
+  const code = str((error as { code?: unknown })?.code);
+  return (
+    code === "PGRST205" || /payment_ledger|schema cache|could not find the table/i.test(message)
+  );
+}
+
 async function readClientModuleAccess(
   context: ServerContext,
   functionName: string,
@@ -371,6 +389,52 @@ function normalizeBillingApplicationEvent(
     notes: str(row.notes),
     created_by: (row.created_by as string | null) ?? null,
     created_at: str(row.created_at),
+  };
+}
+
+function normalizePaymentLedger(row: Record<string, unknown>): PaymentLedgerRow {
+  return {
+    id: row.id as string,
+    project_id: row.project_id as string,
+    invoice_id: row.invoice_id as string,
+    billing_application_id: (row.billing_application_id as string | null) ?? null,
+    amount: num(row.amount),
+    processor_fee: num(row.processor_fee),
+    overwatch_fee: num(row.overwatch_fee),
+    net_payout: num(row.net_payout),
+    payment_method: str(row.payment_method, "manual"),
+    processor: str(row.processor, "manual"),
+    processor_payment_id: str(row.processor_payment_id),
+    status: str(row.status, "succeeded") as PaymentLedgerRow["status"],
+    paid_at: str(row.paid_at),
+    notes: str(row.notes),
+    created_by: (row.created_by as string | null) ?? null,
+    created_at: str(row.created_at),
+    updated_at: str(row.updated_at),
+  };
+}
+
+function normalizeBillingInvoice(row: Record<string, unknown>): BillingInvoiceRow {
+  return {
+    id: row.id as string,
+    project_id: row.project_id as string,
+    billing_application_id: (row.billing_application_id as string | null) ?? null,
+    invoice_number: str(row.invoice_number),
+    title: str(row.title),
+    issue_date: (row.issue_date as string | null) ?? null,
+    due_date: (row.due_date as string | null) ?? null,
+    subtotal: num(row.subtotal),
+    retainage: num(row.retainage),
+    total_due: num(row.total_due),
+    paid_amount: num(row.paid_amount),
+    status: str(row.status, "draft") as BillingInvoiceRow["status"],
+    client_visible: bool(row.client_visible),
+    sent_at: (row.sent_at as string | null) ?? null,
+    paid_at: (row.paid_at as string | null) ?? null,
+    notes: str(row.notes),
+    payment_events: [],
+    created_at: str(row.created_at),
+    updated_at: str(row.updated_at),
   };
 }
 
@@ -683,6 +747,8 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
       approvalsRes,
       billingApplicationsRes,
       billingEventsRes,
+      billingInvoicesRes,
+      paymentLedgerRes,
       dailyReportsRes,
     ] = await Promise.all([
       db(context)
@@ -721,6 +787,21 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
             .eq("project_id", data.projectId)
             .order("created_at", { ascending: false })
         : Promise.resolve({ data: [], error: null }),
+      canViewBilling
+        ? db(context)
+            .from("billing_invoices")
+            .select("*")
+            .eq("project_id", data.projectId)
+            .order("issue_date", { ascending: false, nullsFirst: false })
+            .order("created_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
+      canViewBilling
+        ? db(context)
+            .from("payment_ledger")
+            .select("*")
+            .eq("project_id", data.projectId)
+            .order("paid_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
       canViewDailyReports
         ? db(context)
             .from("daily_reports")
@@ -743,6 +824,12 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
     if (billingEventsRes.error && !isMissingBillingApplicationEventsError(billingEventsRes.error)) {
       throw new Error(billingEventsRes.error.message);
     }
+    if (billingInvoicesRes.error && !isMissingBillingInvoicesError(billingInvoicesRes.error)) {
+      throw new Error(billingInvoicesRes.error.message);
+    }
+    if (paymentLedgerRes.error && !isMissingPaymentLedgerError(paymentLedgerRes.error)) {
+      throw new Error(paymentLedgerRes.error.message);
+    }
     if (dailyReportsRes.error) throw new Error(dailyReportsRes.error.message);
 
     const billingEvents = billingEventsRes.error
@@ -755,6 +842,17 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
       const existing = billingEventsByApplication.get(event.billing_application_id) ?? [];
       existing.push(event);
       billingEventsByApplication.set(event.billing_application_id, existing);
+    });
+    const paymentEvents = paymentLedgerRes.error
+      ? []
+      : (paymentLedgerRes.data ?? []).map((row: Record<string, unknown>) =>
+          normalizePaymentLedger(row),
+        );
+    const paymentsByInvoice = new Map<string, PaymentLedgerRow[]>();
+    paymentEvents.forEach((payment) => {
+      const existing = paymentsByInvoice.get(payment.invoice_id) ?? [];
+      existing.push(payment);
+      paymentsByInvoice.set(payment.invoice_id, existing);
     });
 
     return {
@@ -772,6 +870,15 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
             return {
               ...app,
               status_events: billingEventsByApplication.get(app.id) ?? [],
+            };
+          }),
+      billingInvoices: billingInvoicesRes.error
+        ? []
+        : (billingInvoicesRes.data ?? []).map((row: Record<string, unknown>) => {
+            const invoice = normalizeBillingInvoice(row);
+            return {
+              ...invoice,
+              payment_events: paymentsByInvoice.get(invoice.id) ?? [],
             };
           }),
       dailyReports: (dailyReportsRes.data ?? []).map((row: Record<string, unknown>) =>

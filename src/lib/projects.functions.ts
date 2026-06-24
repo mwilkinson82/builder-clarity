@@ -24,6 +24,8 @@ type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupaba
 type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   select(columns?: string): DynamicSupabaseQuery;
   insert(values: unknown): DynamicSupabaseQuery;
+  update(values: unknown): DynamicSupabaseQuery;
+  delete(): DynamicSupabaseQuery;
   upsert(values: unknown, options?: { onConflict?: string }): DynamicSupabaseQuery;
   in(column: string, values: readonly string[]): Promise<DynamicSupabaseResult<unknown[]>>;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
@@ -33,6 +35,7 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   ): DynamicSupabaseQuery;
   limit(count: number): DynamicSupabaseQuery;
   single(): Promise<DynamicSupabaseResult>;
+  maybeSingle(): Promise<DynamicSupabaseResult>;
 };
 type DynamicSupabaseClient = {
   from(relation: string): DynamicSupabaseQuery;
@@ -215,6 +218,59 @@ export interface BillingApplicationEventRow {
   created_at: string;
 }
 
+export type InvoiceStatus =
+  | "draft"
+  | "sent"
+  | "viewed"
+  | "partially_paid"
+  | "paid"
+  | "overdue"
+  | "void";
+
+export type PaymentStatus = "pending" | "succeeded" | "failed" | "refunded" | "void";
+
+export interface BillingInvoiceRow {
+  id: string;
+  project_id: string;
+  billing_application_id: string | null;
+  invoice_number: string;
+  title: string;
+  issue_date: string | null;
+  due_date: string | null;
+  subtotal: number;
+  retainage: number;
+  total_due: number;
+  paid_amount: number;
+  status: InvoiceStatus;
+  client_visible: boolean;
+  sent_at: string | null;
+  paid_at: string | null;
+  notes: string;
+  payment_events: PaymentLedgerRow[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaymentLedgerRow {
+  id: string;
+  project_id: string;
+  invoice_id: string;
+  billing_application_id: string | null;
+  amount: number;
+  processor_fee: number;
+  overwatch_fee: number;
+  net_payout: number;
+  payment_method: string;
+  processor: string;
+  processor_payment_id: string;
+  status: PaymentStatus;
+  paid_at: string;
+  notes: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DecisionRow {
   id: string;
   project_id: string;
@@ -360,6 +416,48 @@ const normalizeBillingApplicationEvent = (
   notes: str(row.notes),
   created_by: (row.created_by as string | null) ?? null,
   created_at: str(row.created_at),
+});
+
+const normalizePaymentLedger = (row: Record<string, unknown>): PaymentLedgerRow => ({
+  id: row.id as string,
+  project_id: row.project_id as string,
+  invoice_id: row.invoice_id as string,
+  billing_application_id: (row.billing_application_id as string | null) ?? null,
+  amount: num(row.amount),
+  processor_fee: num(row.processor_fee),
+  overwatch_fee: num(row.overwatch_fee),
+  net_payout: num(row.net_payout),
+  payment_method: str(row.payment_method, "manual"),
+  processor: str(row.processor, "manual"),
+  processor_payment_id: str(row.processor_payment_id),
+  status: str(row.status, "succeeded") as PaymentStatus,
+  paid_at: str(row.paid_at, new Date().toISOString()),
+  notes: str(row.notes),
+  created_by: (row.created_by as string | null) ?? null,
+  created_at: str(row.created_at),
+  updated_at: str(row.updated_at),
+});
+
+const normalizeBillingInvoice = (row: Record<string, unknown>): BillingInvoiceRow => ({
+  id: row.id as string,
+  project_id: row.project_id as string,
+  billing_application_id: (row.billing_application_id as string | null) ?? null,
+  invoice_number: str(row.invoice_number),
+  title: str(row.title),
+  issue_date: (row.issue_date as string | null) ?? null,
+  due_date: (row.due_date as string | null) ?? null,
+  subtotal: num(row.subtotal),
+  retainage: num(row.retainage),
+  total_due: num(row.total_due),
+  paid_amount: num(row.paid_amount),
+  status: str(row.status, "draft") as InvoiceStatus,
+  client_visible: Boolean(row.client_visible ?? false),
+  sent_at: (row.sent_at as string | null) ?? null,
+  paid_at: (row.paid_at as string | null) ?? null,
+  notes: str(row.notes),
+  payment_events: [],
+  created_at: str(row.created_at),
+  updated_at: str(row.updated_at),
 });
 
 const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
@@ -657,6 +755,11 @@ export const getProject = createServerFn({ method: "GET" })
       .select("*")
       .eq("project_id", pid)
       .order("sort_order");
+    const invoiceRes = await dynamicTable(context.supabase, "billing_invoices")
+      .select("*")
+      .eq("project_id", pid)
+      .order("issue_date", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false });
     if (pRes.error) throw new Error(pRes.error.message);
     if (!pRes.data) throw new Error("Project not found");
     if (eRes.error) throw new Error(eRes.error.message);
@@ -673,6 +776,12 @@ export const getProject = createServerFn({ method: "GET" })
       (billRes.error.message.includes("billing_applications") ||
         billRes.error.message.includes("schema cache"));
     if (billRes.error && !billingTableMissing) throw new Error(billRes.error.message);
+    const billingInvoicesTableMissing =
+      invoiceRes.error &&
+      (isMissingRestRelation(invoiceRes.error, "billing_invoices") ||
+        invoiceRes.error.message.includes("billing_invoices") ||
+        invoiceRes.error.message.includes("schema cache"));
+    if (invoiceRes.error && !billingInvoicesTableMissing) throw new Error(invoiceRes.error.message);
 
     let billingEventRows: BillingApplicationEventRow[] = [];
     if (!billingTableMissing && (billRes.data ?? []).length > 0) {
@@ -691,6 +800,24 @@ export const getProject = createServerFn({ method: "GET" })
         ? []
         : ((billingEventRes.data ?? []) as unknown[]).map((row) =>
             normalizeBillingApplicationEvent(row as Record<string, unknown>),
+          );
+    }
+    let paymentRows: PaymentLedgerRow[] = [];
+    if (!billingInvoicesTableMissing && (invoiceRes.data ?? []).length > 0) {
+      const paymentRes = await dynamicTable(context.supabase, "payment_ledger")
+        .select("*")
+        .eq("project_id", pid)
+        .order("paid_at", { ascending: false });
+      const paymentTableMissing =
+        paymentRes.error &&
+        (isMissingRestRelation(paymentRes.error, "payment_ledger") ||
+          paymentRes.error.message.includes("payment_ledger") ||
+          paymentRes.error.message.includes("schema cache"));
+      if (paymentRes.error && !paymentTableMissing) throw new Error(paymentRes.error.message);
+      paymentRows = paymentTableMissing
+        ? []
+        : ((paymentRes.data ?? []) as unknown[]).map((row) =>
+            normalizePaymentLedger(row as Record<string, unknown>),
           );
     }
 
@@ -767,6 +894,21 @@ export const getProject = createServerFn({ method: "GET" })
           return {
             ...app,
             status_events: billingEventsByApplication.get(app.id) ?? [],
+          };
+        });
+    const paymentsByInvoice = new Map<string, PaymentLedgerRow[]>();
+    paymentRows.forEach((payment) => {
+      const existing = paymentsByInvoice.get(payment.invoice_id) ?? [];
+      existing.push(payment);
+      paymentsByInvoice.set(payment.invoice_id, existing);
+    });
+    const billingInvoices: BillingInvoiceRow[] = billingInvoicesTableMissing
+      ? []
+      : ((invoiceRes.data ?? []) as unknown[]).map((row) => {
+          const invoice = normalizeBillingInvoice(row as Record<string, unknown>);
+          return {
+            ...invoice,
+            payment_events: paymentsByInvoice.get(invoice.id) ?? [],
           };
         });
     const decisions: DecisionRow[] = (dRes.data ?? []).map((d) => {
@@ -851,6 +993,7 @@ export const getProject = createServerFn({ method: "GET" })
       sovImports,
       sovMappingProfiles,
       billingApplications,
+      billingInvoices,
       rollup,
       guidance,
       warnings,
@@ -1479,6 +1622,206 @@ export const deleteBillingApplication = createServerFn({ method: "POST" })
       .eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+// ---------------- BILLING INVOICES + PAYMENTS ----------------
+
+const INVOICE_STATUSES = [
+  "draft",
+  "sent",
+  "viewed",
+  "partially_paid",
+  "paid",
+  "overdue",
+  "void",
+] as const;
+
+const billingInvoiceInput = z.object({
+  billing_application_id: z.string().uuid().nullable().optional(),
+  invoice_number: z.string().max(100).default(""),
+  title: z.string().max(200).default(""),
+  issue_date: z.string().nullable().optional(),
+  due_date: z.string().nullable().optional(),
+  subtotal: z.number().min(0).default(0),
+  retainage: z.number().min(0).default(0),
+  total_due: z.number().min(0).default(0),
+  paid_amount: z.number().min(0).default(0),
+  status: z.enum(INVOICE_STATUSES).default("draft"),
+  client_visible: z.boolean().default(false),
+  notes: z.string().max(4000).default(""),
+});
+
+const paymentLedgerInput = z.object({
+  invoiceId: z.string().uuid(),
+  amount: z.number().positive(),
+  processor_fee: z.number().min(0).default(0),
+  overwatch_fee: z.number().min(0).default(0),
+  paid_at: z.string().optional(),
+  payment_method: z.string().max(100).default("manual"),
+  processor: z.string().max(100).default("manual"),
+  processor_payment_id: z.string().max(200).default(""),
+  notes: z.string().max(4000).default(""),
+});
+
+function isInvoiceSentStatus(status: InvoiceStatus) {
+  return status !== "draft" && status !== "void";
+}
+
+function paymentAdjustedInvoiceStatus(totalDue: number, paidAmount: number): InvoiceStatus {
+  if (totalDue > 0 && paidAmount >= totalDue) return "paid";
+  if (paidAmount > 0) return "partially_paid";
+  return "sent";
+}
+
+export const createBillingInvoice = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string } & z.input<typeof billingInvoiceInput>) =>
+    z.object({ projectId: z.string().uuid() }).merge(billingInvoiceInput).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { projectId, ...rest } = data;
+    const status = rest.status as InvoiceStatus;
+    const sentAt = isInvoiceSentStatus(status) ? new Date().toISOString() : null;
+    const paidAt = status === "paid" ? new Date().toISOString() : null;
+    const { data: created, error } = await context.supabase
+      .from("billing_invoices")
+      .insert({
+        project_id: projectId,
+        ...rest,
+        sent_at: sentAt,
+        paid_at: paidAt,
+      })
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return {
+      ok: true,
+      invoice: normalizeBillingInvoice(created as Record<string, unknown>),
+    };
+  });
+
+export const updateBillingInvoice = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string; patch: Partial<z.input<typeof billingInvoiceInput>> }) =>
+    z.object({ id: z.string().uuid(), patch: billingInvoiceInput.partial() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { data: before, error: loadError } = await context.supabase
+      .from("billing_invoices")
+      .select("status,sent_at,paid_at")
+      .eq("id", data.id)
+      .single();
+    if (loadError) throw new Error(loadError.message);
+
+    const patch: Record<string, unknown> = { ...data.patch };
+    const nextStatus = data.patch.status as InvoiceStatus | undefined;
+    if (nextStatus && isInvoiceSentStatus(nextStatus) && !before.sent_at) {
+      patch.sent_at = new Date().toISOString();
+    }
+    if (nextStatus === "paid" && !before.paid_at) {
+      patch.paid_at = new Date().toISOString();
+    }
+
+    const { data: updated, error } = await context.supabase
+      .from("billing_invoices")
+      .update(patch)
+      .eq("id", data.id)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return {
+      ok: true,
+      invoice: normalizeBillingInvoice(updated as Record<string, unknown>),
+    };
+  });
+
+export const deleteBillingInvoice = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("billing_invoices").delete().eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const recordInvoicePayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof paymentLedgerInput>) => paymentLedgerInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { data: invoice, error: invoiceError } = await context.supabase
+      .from("billing_invoices")
+      .select("id,project_id,billing_application_id,total_due")
+      .eq("id", data.invoiceId)
+      .single();
+    if (invoiceError) throw new Error(invoiceError.message);
+    if (!invoice) throw new Error("Invoice not found.");
+
+    const projectId = invoice.project_id as string;
+    const billingApplicationId = (invoice.billing_application_id as string | null) ?? null;
+    const processorFee = data.processor_fee ?? 0;
+    const overwatchFee = data.overwatch_fee ?? 0;
+    const netPayout = Math.max(0, data.amount - processorFee - overwatchFee);
+    const { error: insertError } = await context.supabase.from("payment_ledger").insert({
+      project_id: projectId,
+      invoice_id: data.invoiceId,
+      billing_application_id: billingApplicationId,
+      amount: data.amount,
+      processor_fee: processorFee,
+      overwatch_fee: overwatchFee,
+      net_payout: netPayout,
+      payment_method: data.payment_method,
+      processor: data.processor,
+      processor_payment_id: data.processor_payment_id,
+      status: "succeeded",
+      paid_at: data.paid_at ? new Date(data.paid_at).toISOString() : new Date().toISOString(),
+      notes: data.notes,
+    });
+    if (insertError) throw new Error(insertError.message);
+
+    const { data: payments, error: paymentsError } = await context.supabase
+      .from("payment_ledger")
+      .select("amount,status")
+      .eq("invoice_id", data.invoiceId)
+      .eq("status", "succeeded");
+    if (paymentsError) throw new Error(paymentsError.message);
+
+    const paidAmount = (payments ?? []).reduce((sum, payment) => sum + num(payment.amount), 0);
+    const totalDue = num(invoice.total_due);
+    const nextStatus = paymentAdjustedInvoiceStatus(totalDue, paidAmount);
+    const paidAt = nextStatus === "paid" ? new Date().toISOString() : null;
+
+    const { error: updateInvoiceError } = await context.supabase
+      .from("billing_invoices")
+      .update({
+        paid_amount: paidAmount,
+        status: nextStatus,
+        paid_at: paidAt,
+      })
+      .eq("id", data.invoiceId);
+    if (updateInvoiceError) throw new Error(updateInvoiceError.message);
+
+    if (billingApplicationId) {
+      const { error: updatePayAppError } = await context.supabase
+        .from("billing_applications")
+        .update({
+          paid_to_date: paidAmount,
+          status: nextStatus === "paid" ? "paid" : "partial",
+        })
+        .eq("id", billingApplicationId);
+      if (updatePayAppError) throw new Error(updatePayAppError.message);
+
+      await recordBillingApplicationEvent(context.supabase, {
+        billing_application_id: billingApplicationId,
+        project_id: projectId,
+        event_type: "payment_update",
+        from_status: "",
+        to_status: nextStatus === "paid" ? "paid" : "partial",
+        amount: paidAmount,
+        notes: `Invoice payment recorded: ${data.notes || "manual payment"}`,
+      });
+    }
+
+    return { ok: true, paidAmount, status: nextStatus };
   });
 
 // ---------------- REVIEWS ----------------

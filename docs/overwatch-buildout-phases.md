@@ -32,7 +32,7 @@ Already in the repo:
 - SOV intake assistant that stages contractor spreadsheets, flags doubtful mappings, and imports reviewed rows.
 - Company-level SOV mapping profiles so repeat BuilderTrend, QuickBooks, AIA, or estimator exports can be reused instead of remapped every time.
 - Partial risk release model for exposures that are only partially recovered, offset, eliminated, or accepted.
-- Basic billing application ledger.
+- Basic billing application ledger plus invoice and payment-ledger foundation.
 
 ## Phase 0 - Stabilize The Current Rollout
 
@@ -193,14 +193,15 @@ Deliverables:
 These are the next repo-backed moves after the SOV intake work:
 
 1. Run the Phase 0 smoke gate before each push/publish: `npm run smoke:phase0`, `npm run build`, then `npm run smoke:phase0:live` after Lovable publishes.
-2. Convert pay apps into an invoice lifecycle with status history.
+2. Add invoice PDF generation and email send flow for client-visible invoices.
 3. Add usage meters to the organization UI while keeping Contractor Circle grant access non-blocking.
-4. Add Stripe subscription and payment planning once the invoice data model is settled.
+4. Add Stripe subscription and payment planning now that the invoice/payment data model is in place.
 
 Recently completed:
 
 - Daily report packet PDF export for internal filtered reports and client-visible portal reports.
 - Admin/support portfolio filters for company, PM, GP at risk, indicated GP, schedule variance, stale IOR review, and daily-report activity.
+- Invoice/payment foundation: billing invoices, payment ledger, client-visible invoice billing, payment recording, and pay-app backfill migration.
 
 ## Architecture Notes
 

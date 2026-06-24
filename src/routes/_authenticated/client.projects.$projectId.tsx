@@ -24,6 +24,7 @@ import {
   type ClientPortalDailyReport,
   type ClientPortalDailyReportAttachment,
 } from "@/lib/client-portal.functions";
+import type { BillingInvoiceRow } from "@/lib/projects.functions";
 import { downloadPdfBytes, generateDailyReportPacketPdf } from "@/lib/daily-report-packet-pdf";
 import { fmtUSD } from "@/lib/format";
 
@@ -71,7 +72,7 @@ function latestApproval(
 }
 
 function formatClientDate(value: string) {
-  const date = new Date(`${value}T12:00:00`);
+  const date = value.includes("T") ? new Date(value) : new Date(`${value}T12:00:00`);
   if (Number.isNaN(date.getTime())) return value || "No date";
   return clientDateFormatter.format(date);
 }
@@ -117,6 +118,7 @@ function ClientProjectPage() {
     const changeOrders = projectQuery.data?.changeOrders ?? [];
     const dailyReports = projectQuery.data?.dailyReports ?? [];
     const billingApplications = projectQuery.data?.billingApplications ?? [];
+    const billingInvoices = projectQuery.data?.billingInvoices ?? [];
     const totalBilled = billingApplications.reduce(
       (total: number, app: ClientPortalBillingApplication) => total + app.amount_billed,
       0,
@@ -127,6 +129,14 @@ function ClientProjectPage() {
     );
     const retainage = billingApplications.reduce(
       (total: number, app: ClientPortalBillingApplication) => total + app.retainage,
+      0,
+    );
+    const invoiceDue = billingInvoices.reduce(
+      (total: number, invoice: BillingInvoiceRow) => total + invoice.total_due,
+      0,
+    );
+    const invoicePaid = billingInvoices.reduce(
+      (total: number, invoice: BillingInvoiceRow) => total + invoice.paid_amount,
       0,
     );
     return {
@@ -140,13 +150,18 @@ function ClientProjectPage() {
       ).length,
       dailyReports: dailyReports.length,
       payApps: billingApplications.length,
+      invoices: billingInvoices.length,
       totalBilled,
       paidToDate,
       retainage,
       outstanding: Math.max(0, totalBilled - paidToDate - retainage),
+      invoiceDue,
+      invoicePaid,
+      invoiceOpen: Math.max(0, invoiceDue - invoicePaid),
     };
   }, [
     projectQuery.data?.billingApplications,
+    projectQuery.data?.billingInvoices,
     projectQuery.data?.changeOrders,
     projectQuery.data?.dailyReports,
   ]);
@@ -224,8 +239,15 @@ function ClientProjectPage() {
     );
   }
 
-  const { project, changeOrders, approvals, billingApplications, dailyReports, portalPermissions } =
-    projectQuery.data;
+  const {
+    project,
+    changeOrders,
+    approvals,
+    billingApplications,
+    billingInvoices,
+    dailyReports,
+    portalPermissions,
+  } = projectQuery.data;
   const canViewChangeOrders = portalPermissions?.canViewChangeOrders ?? true;
   const canViewDailyReports = portalPermissions?.canViewDailyReports ?? true;
   const canViewBilling = portalPermissions?.canViewBilling ?? false;
@@ -255,8 +277,8 @@ function ClientProjectPage() {
             <ClientMetric label="COs for review" value={String(totals.visible)} />
             <ClientMetric label="Shared CO value" value={fmtUSD(totals.amount)} />
             <ClientMetric
-              label="Pay apps"
-              value={canViewBilling ? String(totals.payApps) : "Off"}
+              label="Invoices"
+              value={canViewBilling ? String(totals.invoices || totals.payApps) : "Off"}
             />
             <ClientMetric
               label="Daily reports"
@@ -421,91 +443,175 @@ function ClientProjectPage() {
               <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
                 Billing is not enabled for this client seat yet.
               </div>
-            ) : billingApplications.length === 0 ? (
+            ) : billingApplications.length === 0 && billingInvoices.length === 0 ? (
               <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
-                No pay applications are currently shared with you.
+                No billing records are currently shared with you.
               </div>
             ) : (
               <div className="space-y-5">
                 <dl className="grid gap-3 md:grid-cols-4">
-                  <ClientMetric label="Billed to date" value={fmtUSD(totals.totalBilled)} />
-                  <ClientMetric label="Paid to date" value={fmtUSD(totals.paidToDate)} />
+                  <ClientMetric
+                    label={billingInvoices.length > 0 ? "Invoice total" : "Billed to date"}
+                    value={fmtUSD(
+                      billingInvoices.length > 0 ? totals.invoiceDue : totals.totalBilled,
+                    )}
+                  />
+                  <ClientMetric
+                    label="Paid to date"
+                    value={fmtUSD(
+                      billingInvoices.length > 0 ? totals.invoicePaid : totals.paidToDate,
+                    )}
+                  />
                   <ClientMetric label="Retainage" value={fmtUSD(totals.retainage)} />
-                  <ClientMetric label="Outstanding" value={fmtUSD(totals.outstanding)} />
+                  <ClientMetric
+                    label="Outstanding"
+                    value={fmtUSD(
+                      billingInvoices.length > 0 ? totals.invoiceOpen : totals.outstanding,
+                    )}
+                  />
                 </dl>
-                <div className="overflow-x-auto rounded-md border border-hairline">
-                  <table className="w-full min-w-[760px] text-sm">
-                    <thead className="bg-muted/45 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                      <tr>
-                        <th className="px-3 py-3">Pay app</th>
-                        <th className="px-3 py-3">Invoice</th>
-                        <th className="px-3 py-3">Submitted / due</th>
-                        <th className="px-3 py-3 text-right">Billed</th>
-                        <th className="px-3 py-3 text-right">Paid</th>
-                        <th className="px-3 py-3 text-right">Retainage</th>
-                        <th className="px-3 py-3 text-right">Open</th>
-                        <th className="px-3 py-3">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {billingApplications.map((app: ClientPortalBillingApplication) => {
-                        const open = Math.max(
-                          0,
-                          app.amount_billed - app.paid_to_date - app.retainage,
-                        );
-                        const latestEvent = app.status_events[0];
-                        return (
-                          <tr key={app.id} className="border-t border-hairline">
-                            <td className="px-3 py-3 align-top">
-                              <div className="font-medium text-foreground">
-                                {app.application_number || "Pay application"}
-                              </div>
-                              <div className="mt-1 text-xs text-muted-foreground">
-                                {app.billing_period || "Current billing cycle"}
-                              </div>
-                            </td>
-                            <td className="px-3 py-3 align-top">
-                              {app.invoice_number || "Not issued"}
-                            </td>
-                            <td className="px-3 py-3 align-top text-xs text-muted-foreground">
-                              <div>
-                                Submitted{" "}
-                                {app.submitted_date
-                                  ? formatClientDate(app.submitted_date)
-                                  : "not set"}
-                              </div>
-                              <div>
-                                Due {app.due_date ? formatClientDate(app.due_date) : "not set"}
-                              </div>
-                            </td>
-                            <td className="px-3 py-3 text-right align-top tabular">
-                              {fmtUSD(app.amount_billed)}
-                            </td>
-                            <td className="px-3 py-3 text-right align-top tabular">
-                              {fmtUSD(app.paid_to_date)}
-                            </td>
-                            <td className="px-3 py-3 text-right align-top tabular">
-                              {fmtUSD(app.retainage)}
-                            </td>
-                            <td className="px-3 py-3 text-right align-top tabular font-medium">
-                              {fmtUSD(open)}
-                            </td>
-                            <td className="px-3 py-3 align-top">
-                              <span className="inline-flex rounded-md border border-hairline bg-muted/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]">
-                                {app.status}
-                              </span>
-                              {latestEvent ? (
-                                <div className="mt-1 text-[11px] text-muted-foreground">
-                                  Updated {formatClientDate(latestEvent.created_at)}
+                {billingInvoices.length > 0 ? (
+                  <div className="overflow-x-auto rounded-md border border-hairline">
+                    <table className="w-full min-w-[760px] text-sm">
+                      <thead className="bg-muted/45 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-3">Invoice</th>
+                          <th className="px-3 py-3">Issued / due</th>
+                          <th className="px-3 py-3 text-right">Total due</th>
+                          <th className="px-3 py-3 text-right">Paid</th>
+                          <th className="px-3 py-3 text-right">Open</th>
+                          <th className="px-3 py-3">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {billingInvoices.map((invoice: BillingInvoiceRow) => {
+                          const open = Math.max(0, invoice.total_due - invoice.paid_amount);
+                          const latestPayment = invoice.payment_events[0];
+                          return (
+                            <tr key={invoice.id} className="border-t border-hairline">
+                              <td className="px-3 py-3 align-top">
+                                <div className="font-medium text-foreground">
+                                  {invoice.invoice_number || "Invoice"}
                                 </div>
-                              ) : null}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  {invoice.title || "Current invoice"}
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 align-top text-xs text-muted-foreground">
+                                <div>
+                                  Issued{" "}
+                                  {invoice.issue_date
+                                    ? formatClientDate(invoice.issue_date)
+                                    : "not set"}
+                                </div>
+                                <div>
+                                  Due{" "}
+                                  {invoice.due_date
+                                    ? formatClientDate(invoice.due_date)
+                                    : "not set"}
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 text-right align-top tabular">
+                                {fmtUSD(invoice.total_due)}
+                              </td>
+                              <td className="px-3 py-3 text-right align-top tabular">
+                                {fmtUSD(invoice.paid_amount)}
+                              </td>
+                              <td className="px-3 py-3 text-right align-top tabular font-medium">
+                                {fmtUSD(open)}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                <span className="inline-flex rounded-md border border-hairline bg-muted/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] capitalize">
+                                  {invoice.status.replace("_", " ")}
+                                </span>
+                                {latestPayment ? (
+                                  <div className="mt-1 text-[11px] text-muted-foreground">
+                                    Last payment {formatClientDate(latestPayment.paid_at)}
+                                  </div>
+                                ) : null}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+                {billingApplications.length > 0 ? (
+                  <div className="overflow-x-auto rounded-md border border-hairline">
+                    <table className="w-full min-w-[760px] text-sm">
+                      <thead className="bg-muted/45 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-3">Pay app</th>
+                          <th className="px-3 py-3">Invoice</th>
+                          <th className="px-3 py-3">Submitted / due</th>
+                          <th className="px-3 py-3 text-right">Billed</th>
+                          <th className="px-3 py-3 text-right">Paid</th>
+                          <th className="px-3 py-3 text-right">Retainage</th>
+                          <th className="px-3 py-3 text-right">Open</th>
+                          <th className="px-3 py-3">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {billingApplications.map((app: ClientPortalBillingApplication) => {
+                          const open = Math.max(
+                            0,
+                            app.amount_billed - app.paid_to_date - app.retainage,
+                          );
+                          const latestEvent = app.status_events[0];
+                          return (
+                            <tr key={app.id} className="border-t border-hairline">
+                              <td className="px-3 py-3 align-top">
+                                <div className="font-medium text-foreground">
+                                  {app.application_number || "Pay application"}
+                                </div>
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  {app.billing_period || "Current billing cycle"}
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                {app.invoice_number || "Not issued"}
+                              </td>
+                              <td className="px-3 py-3 align-top text-xs text-muted-foreground">
+                                <div>
+                                  Submitted{" "}
+                                  {app.submitted_date
+                                    ? formatClientDate(app.submitted_date)
+                                    : "not set"}
+                                </div>
+                                <div>
+                                  Due {app.due_date ? formatClientDate(app.due_date) : "not set"}
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 text-right align-top tabular">
+                                {fmtUSD(app.amount_billed)}
+                              </td>
+                              <td className="px-3 py-3 text-right align-top tabular">
+                                {fmtUSD(app.paid_to_date)}
+                              </td>
+                              <td className="px-3 py-3 text-right align-top tabular">
+                                {fmtUSD(app.retainage)}
+                              </td>
+                              <td className="px-3 py-3 text-right align-top tabular font-medium">
+                                {fmtUSD(open)}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                <span className="inline-flex rounded-md border border-hairline bg-muted/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]">
+                                  {app.status}
+                                </span>
+                                {latestEvent ? (
+                                  <div className="mt-1 text-[11px] text-muted-foreground">
+                                    Updated {formatClientDate(latestEvent.created_at)}
+                                  </div>
+                                ) : null}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
