@@ -464,22 +464,22 @@ function PortfolioPage() {
               </div>
             </div>
             <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
-              <Table>
+              <Table className="min-w-[1420px]">
                 <TableHeader>
-                  <TableRow className="bg-surface">
-                    <TableHead>Project</TableHead>
-                    <TableHead>Job #</TableHead>
-                    <TableHead>Project Manager</TableHead>
-                    <TableHead className="text-right">Original Contract</TableHead>
-                    <TableHead className="text-right">Plan GP %</TableHead>
-                    <TableHead className="text-right">Indicated GP %</TableHead>
-                    <TableHead className="text-right">GP At Risk</TableHead>
-                    <TableHead className="text-right">Risk Allocated</TableHead>
-                    <TableHead>Top Exposure</TableHead>
-                    <TableHead>To-Dos</TableHead>
-                    <TableHead>Schedule</TableHead>
-                    <TableHead>Daily Reports</TableHead>
-                    <TableHead>Status</TableHead>
+                  <TableRow className="bg-surface [&>th]:whitespace-nowrap [&>th]:px-3 [&>th]:py-3 [&>th]:align-bottom">
+                    <TableHead className="w-[250px]">Project</TableHead>
+                    <TableHead className="w-[120px]">Job #</TableHead>
+                    <TableHead className="w-[160px]">Project Manager</TableHead>
+                    <TableHead className="w-[140px] text-right">Original Contract</TableHead>
+                    <TableHead className="w-[95px] text-right">Plan GP %</TableHead>
+                    <TableHead className="w-[115px] text-right">Indicated GP %</TableHead>
+                    <TableHead className="w-[125px] text-right">GP At Risk</TableHead>
+                    <TableHead className="w-[130px] text-right">Risk Allocated</TableHead>
+                    <TableHead className="w-[250px]">Top Exposure</TableHead>
+                    <TableHead className="w-[125px]">To-Dos</TableHead>
+                    <TableHead className="w-[145px]">Schedule</TableHead>
+                    <TableHead className="w-[145px]">Daily Reports</TableHead>
+                    <TableHead className="w-[115px]">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -507,7 +507,7 @@ function PortfolioPage() {
                         role="link"
                         tabIndex={0}
                         title={`Open ${p.name}`}
-                        className={`cursor-pointer hover:bg-surface/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                        className={`cursor-pointer hover:bg-surface/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>td]:px-3 [&>td]:py-4 [&>td]:align-top ${
                           highlightRisk ? "border-l-2 border-l-danger/60 bg-danger/5" : ""
                         }`}
                         onClick={() => openProject(p.id)}
@@ -584,7 +584,7 @@ function PortfolioPage() {
                         <TableCell className="text-right tabular">
                           {fmtUSD(p.risk_allocated)}
                         </TableCell>
-                        <TableCell className="max-w-[220px]">
+                        <TableCell className="max-w-[250px]">
                           {p.top_exposure_title ? (
                             <div>
                               <div className="truncate text-sm font-medium text-foreground">
@@ -600,19 +600,19 @@ function PortfolioPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <div
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${
+                          <PortfolioPill
+                            className={
                               p.overdue_decision_count > 0
                                 ? "border-danger/40 bg-danger/10 text-danger"
                                 : p.active_decision_count > 0
                                   ? "border-warning/40 bg-warning/10 text-warning"
                                   : "border-success/40 bg-success/10 text-success"
-                            }`}
+                            }
                           >
                             {p.overdue_decision_count > 0
                               ? `${p.overdue_decision_count} overdue`
                               : `${p.active_decision_count} open`}
-                          </div>
+                          </PortfolioPill>
                           {p.next_decision_due && (
                             <div className="mt-1 text-[11px] text-muted-foreground">
                               next due {p.next_decision_due}
@@ -620,11 +620,9 @@ function PortfolioPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <div
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${schedule.className}`}
-                          >
+                          <PortfolioPill className={schedule.className}>
                             {schedule.label} · {Math.round(schedule.score)}%
-                          </div>
+                          </PortfolioPill>
                           <div className="mt-1 text-[11px] text-muted-foreground">
                             {p.schedule_variance_weeks > 0
                               ? `+${p.schedule_variance_weeks} wk`
@@ -633,11 +631,7 @@ function PortfolioPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${daily.className}`}
-                          >
-                            {daily.label}
-                          </div>
+                          <PortfolioPill className={daily.className}>{daily.label}</PortfolioPill>
                           <div className="mt-1 text-[11px] text-muted-foreground">
                             {p.daily_report_count === 0
                               ? "No job logs"
@@ -650,11 +644,7 @@ function PortfolioPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <span
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${s.className}`}
-                          >
-                            {s.label}
-                          </span>
+                          <PortfolioPill className={s.className}>{s.label}</PortfolioPill>
                         </TableCell>
                       </TableRow>
                     );
@@ -666,6 +656,16 @@ function PortfolioPage() {
         )}
       </main>
     </div>
+  );
+}
+
+function PortfolioPill({ children, className }: { children: ReactNode; className: string }) {
+  return (
+    <span
+      className={`inline-flex h-6 min-w-[78px] items-center justify-center whitespace-nowrap rounded-full border px-2.5 text-center text-[10px] font-semibold uppercase leading-none tracking-[0.08em] ${className}`}
+    >
+      {children}
+    </span>
   );
 }
 
