@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 240" role="img" aria-label="Overwatch">
+  <rect width="960" height="240" rx="36" fill="#fbf8f2"/>
+  <path d="M80 62h190" stroke="#f15a3a" stroke-width="10" stroke-linecap="round"/>
+  <text x="80" y="145" fill="#1f1914" font-family="Georgia, 'Times New Roman', serif" font-size="78">Overwatch</text>
+  <text x="84" y="188" fill="#726960" font-family="Arial, Helvetica, sans-serif" font-size="22" letter-spacing="5">IOR PROJECT MANAGEMENT</text>
+  <g transform="translate(760 48)">
+    <rect width="128" height="128" rx="30" fill="#1f1914"/>
+    <path d="M31 44h66" stroke="#f15a3a" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="64" cy="70" r="33" fill="none" stroke="#fbf8f2" stroke-width="9"/>
+    <circle cx="64" cy="70" r="15" fill="#f15a3a"/>
+  </g>
+</svg>

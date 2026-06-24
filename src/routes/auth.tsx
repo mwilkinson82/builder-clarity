@@ -8,8 +8,12 @@ import { Label } from "@/components/ui/label";
 export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
-      { title: "Sign in — Project Outcome Review" },
-      { name: "description", content: "Sign in to your Project Outcome Review portfolio." },
+      { title: "Sign in — Overwatch" },
+      {
+        name: "description",
+        content:
+          "Sign in to Overwatch, the IOR project management command center for contractors.",
+      },
     ],
   }),
   component: AuthPage,
@@ -138,7 +142,7 @@ function AuthForm() {
           to="/"
           className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground"
         >
-          ← Project Outcome Review
+          ← Overwatch
         </Link>
         <h1 className="mt-6 font-serif text-4xl text-foreground">Sign in by magic link</h1>
         <p className="mt-2 text-sm text-muted-foreground">

@@ -25,8 +25,8 @@ async function notifyLogin(session: { user: { id: string; email?: string | null 
 export const Route = createFileRoute("/auth/callback")({
   head: () => ({
     meta: [
-      { title: "Signing in — Project Outcome Review" },
-      { name: "description", content: "Completing your Project Outcome Review sign-in." },
+      { title: "Signing in — Overwatch" },
+      { name: "description", content: "Completing your Overwatch sign-in." },
     ],
   }),
   component: AuthCallbackPage,

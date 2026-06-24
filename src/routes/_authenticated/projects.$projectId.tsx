@@ -103,7 +103,7 @@ import {
 } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
-  head: () => ({ meta: [{ title: "Project Outcome Review" }] }),
+  head: () => ({ meta: [{ title: "Project IOR — Overwatch" }] }),
   component: ProjectPage,
 });
 

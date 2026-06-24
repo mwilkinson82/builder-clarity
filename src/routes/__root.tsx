@@ -13,6 +13,12 @@ import { Toaster } from "@/components/ui/sonner";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
+const SITE_URL = "https://overwatch.alpcontractorcircle.com";
+const SITE_TITLE = "Overwatch | IOR Project Management for Contractors";
+const SITE_DESCRIPTION =
+  "Overwatch is the IOR operating record for contractors: schedule, risk, billing, change orders, daily reports, and gross profit visibility in one project command center.";
+const SITE_IMAGE = `${SITE_URL}/og-overwatch.png`;
+
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -78,45 +84,51 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Overwatch" },
+      { title: SITE_TITLE },
       {
         name: "description",
-        content:
-          "Forecast project outcomes for luxury custom home builders with a premium financial and risk management dashboard.",
+        content: SITE_DESCRIPTION,
       },
-      { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Overwatch" },
+      { name: "author", content: "ALP Contractor Circle" },
+      { name: "application-name", content: "Overwatch" },
+      { name: "apple-mobile-web-app-title", content: "Overwatch" },
+      { name: "theme-color", content: "#1f1914" },
+      {
+        name: "keywords",
+        content:
+          "Overwatch, IOR, indicated outcome report, contractor project management, construction financial dashboard, construction risk management, schedule of values, change orders",
+      },
+      { property: "og:site_name", content: "Overwatch" },
+      { property: "og:title", content: SITE_TITLE },
       {
         property: "og:description",
-        content:
-          "Forecast project outcomes for luxury custom home builders with a premium financial and risk management dashboard.",
+        content: SITE_DESCRIPTION,
       },
       { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
-      { name: "twitter:title", content: "Overwatch" },
+      { property: "og:url", content: SITE_URL },
+      { property: "og:image", content: SITE_IMAGE },
+      { property: "og:image:width", content: "1200" },
+      { property: "og:image:height", content: "630" },
       {
-        name: "twitter:description",
-        content:
-          "Forecast project outcomes for luxury custom home builders with a premium financial and risk management dashboard.",
+        property: "og:image:alt",
+        content: "Overwatch IOR project management dashboard preview",
       },
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: SITE_TITLE },
+      { name: "twitter:description", content: SITE_DESCRIPTION },
+      { name: "twitter:image", content: SITE_IMAGE },
       {
-        property: "og:image",
-        content:
-          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1cebaa4f-3a59-4c5f-b0bc-80f79c91f70d/id-preview-8573b11a--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1781239420130.png",
+        name: "twitter:image:alt",
+        content: "Overwatch IOR project management dashboard preview",
       },
-      {
-        name: "twitter:image",
-        content:
-          "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/1cebaa4f-3a59-4c5f-b0bc-80f79c91f70d/id-preview-8573b11a--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1781239420130.png",
-      },
-      { name: "description", content: "Overwatch, powered by ALP. Project Management Command Center" },
-      { property: "og:description", content: "Overwatch, powered by ALP. Project Management Command Center" },
-      { name: "twitter:description", content: "Overwatch, powered by ALP. Project Management Command Center" },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/612ea966-3f8a-4d60-aef0-90f72e457f32/id-preview-a01fe3b1--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1782249307606.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/612ea966-3f8a-4d60-aef0-90f72e457f32/id-preview-a01fe3b1--30e58105-16bb-4ec6-b870-93190cb1542c.lovable.app-1782249307606.png" },
     ],
     links: [
+      { rel: "canonical", href: SITE_URL },
+      { rel: "icon", href: "/favicon.ico", sizes: "any" },
+      { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
+      { rel: "icon", href: "/icon-48.png", type: "image/png", sizes: "48x48" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+      { rel: "manifest", href: "/site.webmanifest" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {

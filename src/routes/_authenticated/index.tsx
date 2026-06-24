@@ -74,8 +74,11 @@ function formatUsageValue(used: number, limit: number) {
 export const Route = createFileRoute("/_authenticated/")({
   head: () => ({
     meta: [
-      { title: "Portfolio — Project Outcome Review" },
-      { name: "description", content: "All active outcome reviews across your portfolio." },
+      { title: "Portfolio — Overwatch" },
+      {
+        name: "description",
+        content: "Company-wide IOR posture across active Overwatch projects.",
+      },
     ],
   }),
   component: PortfolioPage,
@@ -290,7 +293,7 @@ function PortfolioPage() {
         <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-6 lg:px-10">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-              Project Outcome Review
+              Overwatch
             </div>
             <h1 className="mt-1 font-serif text-3xl text-foreground">Portfolio</h1>
           </div>
