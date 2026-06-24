@@ -106,7 +106,10 @@ await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
 await expectFile("src/lib/email-templates/invoice-notification.tsx", "invoice email template");
 await expectFile("src/lib/stripe.server.ts", "Stripe server helper");
 await expectFile("src/routes/api/stripe/checkout/invoice.ts", "invoice Stripe Checkout route");
-await expectFile("src/routes/api/stripe/checkout/subscription.ts", "subscription Stripe Checkout route");
+await expectFile(
+  "src/routes/api/stripe/checkout/subscription.ts",
+  "subscription Stripe Checkout route",
+);
 await expectFile("src/routes/api/stripe/webhook.ts", "Stripe webhook route");
 
 await expectContains(
@@ -228,6 +231,8 @@ await expectContains(
 await expectContains(
   "src/lib/team.functions.ts",
   [
+    /CONTRACTOR_CIRCLE_GRANT_LIMITS/,
+    /seats:\s*10/,
     /ORGANIZATION_COMMERCIAL_COLUMNS/,
     /billing_email/,
     /billing_contact_name/,

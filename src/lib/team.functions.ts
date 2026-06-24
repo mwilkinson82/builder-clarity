@@ -97,6 +97,13 @@ const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const bool = (v: unknown) => (typeof v === "boolean" ? v : Boolean(v));
 
+const CONTRACTOR_CIRCLE_GRANT_LIMITS = {
+  projects: 10,
+  seats: 10,
+  storageMb: 10_240,
+  dailyReportsPerMonth: 1_000,
+} as const;
+
 const ORGANIZATION_BASE_SELECT =
   "id,name,slug,plan_code,billing_status,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month,contractor_circle_grant";
 
@@ -131,6 +138,8 @@ function missingCommercialOrganizationColumn(error: { code?: string; message?: s
 }
 
 function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
+  const contractorCircleGrant = bool(row.contractor_circle_grant);
+
   return {
     id: row.id as string,
     name: str(row.name),
@@ -148,11 +157,17 @@ function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
     subscription_current_period_end: str(row.subscription_current_period_end),
     subscription_cancel_at_period_end: bool(row.subscription_cancel_at_period_end),
     payment_processor_ready: bool(row.payment_processor_ready),
-    project_limit: num(row.project_limit),
-    seat_limit: num(row.seat_limit),
-    storage_limit_mb: num(row.storage_limit_mb),
-    daily_report_limit_per_month: num(row.daily_report_limit_per_month),
-    contractor_circle_grant: bool(row.contractor_circle_grant),
+    project_limit: contractorCircleGrant
+      ? CONTRACTOR_CIRCLE_GRANT_LIMITS.projects
+      : num(row.project_limit),
+    seat_limit: contractorCircleGrant ? CONTRACTOR_CIRCLE_GRANT_LIMITS.seats : num(row.seat_limit),
+    storage_limit_mb: contractorCircleGrant
+      ? CONTRACTOR_CIRCLE_GRANT_LIMITS.storageMb
+      : num(row.storage_limit_mb),
+    daily_report_limit_per_month: contractorCircleGrant
+      ? CONTRACTOR_CIRCLE_GRANT_LIMITS.dailyReportsPerMonth
+      : num(row.daily_report_limit_per_month),
+    contractor_circle_grant: contractorCircleGrant,
   };
 }
 
@@ -171,7 +186,8 @@ type TeamServerContext = {
 async function ensureCurrentOrganization(context: TeamServerContext) {
   const { data: organizationId, error } = await context.supabase.rpc("ensure_current_user_account");
   if (error) throw new Error(error.message);
-  if (!organizationId) throw new Error("No Overwatch company workspace is available for this user.");
+  if (!organizationId)
+    throw new Error("No Overwatch company workspace is available for this user.");
   return organizationId as string;
 }
 

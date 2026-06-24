@@ -796,7 +796,7 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
             Rollup of active jobs, margin at risk, current indicated profit, and schedule pressure.
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3 xl:min-w-[640px] xl:grid-cols-6">
+        <div className="grid gap-2 sm:grid-cols-3 2xl:min-w-[640px] 2xl:grid-cols-6">
           <PortfolioSignal
             icon={<Activity className="h-3.5 w-3.5" />}
             label="Open projects"
@@ -837,7 +837,7 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
         </div>
       </div>
 
-      <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-8">
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
         <PortfolioMetric label="Original GP" value={fmtUSD(totals.originalGP)} />
         <PortfolioMetric label="GP at risk" value={fmtUSD(totals.gpAtRisk)} tone="danger" />
         <PortfolioMetric
@@ -965,13 +965,15 @@ function PortfolioMetric({
           ? "text-warning"
           : "text-foreground";
   return (
-    <div className="flex min-h-[92px] flex-col justify-between rounded-md border border-hairline bg-surface p-3">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+    <div className="flex h-[96px] min-w-0 flex-col rounded-md border border-hairline bg-surface p-3">
+      <div className="min-h-[28px] text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
-      <div>
-        <div className={`text-lg font-medium tabular ${toneClass}`}>{value}</div>
-        {sub && <div className="mt-1 text-xs tabular text-muted-foreground">{sub}</div>}
+      <div className="mt-auto">
+        <div className={`text-lg font-medium leading-none tabular ${toneClass}`}>{value}</div>
+        <div className="mt-1 min-h-4 text-xs leading-4 tabular text-muted-foreground">
+          {sub || "\u00a0"}
+        </div>
       </div>
     </div>
   );
@@ -997,12 +999,12 @@ function PortfolioSignal({
           ? "border-success/30 bg-success/10 text-success"
           : "border-hairline bg-surface text-foreground";
   return (
-    <div className={`rounded-md border p-3 ${toneClass}`}>
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em]">
-        {icon}
-        {label}
+    <div className={`flex h-[86px] min-w-0 flex-col rounded-md border p-3 ${toneClass}`}>
+      <div className="flex min-h-[28px] items-start gap-1.5 text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.12em]">
+        <span className="mt-0.5 shrink-0">{icon}</span>
+        <span>{label}</span>
       </div>
-      <div className="mt-2 text-2xl font-medium tabular">{value}</div>
+      <div className="mt-auto text-2xl font-medium leading-none tabular">{value}</div>
     </div>
   );
 }
@@ -1358,7 +1360,9 @@ function InviteByMagicLinkButton() {
               {isLoading ? (
                 <div className="px-3 py-4 text-sm text-muted-foreground">Loading company...</div>
               ) : !team || team.members.length === 0 ? (
-                <div className="px-3 py-4 text-sm text-muted-foreground">No company members yet.</div>
+                <div className="px-3 py-4 text-sm text-muted-foreground">
+                  No company members yet.
+                </div>
               ) : (
                 team.members.map((member) => (
                   <div
