@@ -1057,7 +1057,7 @@ export const createProject = createServerFn({ method: "POST" })
       "ensure_current_user_account",
     );
     if (accountError) throw new Error(accountError.message);
-    if (!ensuredOrganizationId) throw new Error("No Overwatch team is available for this user.");
+    if (!ensuredOrganizationId) throw new Error("No Overwatch company workspace is available for this user.");
 
     let organizationId = ensuredOrganizationId as string;
     const { data: writableMemberships, error: membershipsError } = await context.supabase
@@ -2571,7 +2571,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       "ensure_current_user_account",
     );
     if (accountError) throw new Error(accountError.message);
-    if (!ensuredOrganizationId) throw new Error("No Overwatch team is available for this user.");
+    if (!ensuredOrganizationId) throw new Error("No Overwatch company workspace is available for this user.");
 
     let organizationId = ensuredOrganizationId as string;
     const { data: memberships, error: membershipsError } = await context.supabase

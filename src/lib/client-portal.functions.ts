@@ -497,7 +497,7 @@ async function loadProjectForManagement(context: ServerContext, projectId: strin
     .eq("id", projectId)
     .single();
   if (error) throw new Error(error.message);
-  if (!data?.organization_id) throw new Error("This project is missing an Overwatch team.");
+  if (!data?.organization_id) throw new Error("This project is missing an Overwatch company.");
   return data as Record<string, unknown> & { organization_id: string };
 }
 

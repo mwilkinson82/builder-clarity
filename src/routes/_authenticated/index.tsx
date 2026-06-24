@@ -300,7 +300,7 @@ function PortfolioPage() {
           <div className="flex items-center gap-2">
             <Button asChild size="sm" variant="outline" className="gap-1.5">
               <Link to="/team">
-                <Users className="h-3.5 w-3.5" /> Team
+                <Users className="h-3.5 w-3.5" /> Company
               </Link>
             </Button>
             <NewProjectButton />
@@ -1059,7 +1059,7 @@ const roleOptions: { value: AccountRole; label: string }[] = [
   { value: "admin", label: "Admin" },
   { value: "executive", label: "Executive" },
   { value: "project_manager", label: "Project manager" },
-  { value: "member", label: "Team member" },
+  { value: "member", label: "Company member" },
   { value: "viewer", label: "Viewer" },
 ];
 
@@ -1139,14 +1139,14 @@ function InviteByMagicLinkButton() {
     },
     onSuccess: async (inviteEmail) => {
       await qc.invalidateQueries({ queryKey: ["team-workspace"] });
-      toast.success("Team invite sent", {
-        description: `${inviteEmail} can sign in and join this Overwatch team.`,
+      toast.success("Company invite sent", {
+        description: `${inviteEmail} can sign in and join this Overwatch company.`,
       });
       setEmail("");
       setRole("project_manager");
     },
     onError: (err) => {
-      toast.error("Team invite did not send", {
+      toast.error("Company invite did not send", {
         description: err instanceof Error ? err.message : "Try again.",
       });
     },
@@ -1163,10 +1163,10 @@ function InviteByMagicLinkButton() {
       }),
     onSuccess: async () => {
       await refreshTeam();
-      toast.success("Team member updated");
+      toast.success("Company member updated");
     },
     onError: (err) => {
-      toast.error("Team member did not update", {
+      toast.error("Company member did not update", {
         description: err instanceof Error ? err.message : "Try again.",
       });
     },
@@ -1188,7 +1188,7 @@ function InviteByMagicLinkButton() {
   const assignMutation = useMutation({
     mutationFn: () => {
       if (!selectedProjectId) throw new Error("Choose a project.");
-      if (!selectedUserId) throw new Error("Choose a team member.");
+      if (!selectedUserId) throw new Error("Choose a company member.");
       return assignMember({
         data: { projectId: selectedProjectId, userId: selectedUserId, role: projectRole },
       });
@@ -1249,12 +1249,12 @@ function InviteByMagicLinkButton() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm" variant="outline" className="gap-1.5">
-          <Users className="h-3.5 w-3.5" /> Team
+          <Users className="h-3.5 w-3.5" /> Company
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-5xl">
         <DialogHeader>
-          <DialogTitle className="font-serif text-2xl">Team access</DialogTitle>
+          <DialogTitle className="font-serif text-2xl">Company access</DialogTitle>
         </DialogHeader>
         <div className="grid max-h-[76vh] gap-5 overflow-y-auto py-2 pr-1">
           <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-4">
@@ -1356,9 +1356,9 @@ function InviteByMagicLinkButton() {
             </div>
             <div className="divide-y divide-hairline">
               {isLoading ? (
-                <div className="px-3 py-4 text-sm text-muted-foreground">Loading team...</div>
+                <div className="px-3 py-4 text-sm text-muted-foreground">Loading company...</div>
               ) : !team || team.members.length === 0 ? (
-                <div className="px-3 py-4 text-sm text-muted-foreground">No team members yet.</div>
+                <div className="px-3 py-4 text-sm text-muted-foreground">No company members yet.</div>
               ) : (
                 team.members.map((member) => (
                   <div
@@ -1484,7 +1484,7 @@ function InviteByMagicLinkButton() {
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Team member</Label>
+                  <Label>Company member</Label>
                   <Select value={selectedUserId} onValueChange={setSelectedUserId}>
                     <SelectTrigger>
                       <SelectValue placeholder="Choose person" />

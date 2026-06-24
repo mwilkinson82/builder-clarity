@@ -100,7 +100,7 @@ await expectFile("src/routes/auth.callback.tsx", "auth callback route");
 await expectFile("src/routes/_authenticated/index.tsx", "portfolio route");
 await expectFile("src/routes/_authenticated/projects.$projectId.tsx", "project route");
 await expectFile("src/routes/_authenticated/client.projects.$projectId.tsx", "client portal route");
-await expectFile("src/routes/_authenticated/team.tsx", "team workspace route");
+await expectFile("src/routes/_authenticated/team.tsx", "company workspace route");
 await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF generator");
 await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
 await expectFile("src/lib/email-templates/invoice-notification.tsx", "invoice email template");
@@ -121,7 +121,7 @@ await expectContains(
     /fullPath:\s*'\/api\/stripe\/checkout\/subscription'/,
     /fullPath:\s*'\/api\/stripe\/webhook'/,
   ],
-  "generated route tree includes auth, team, project, client portal, and Stripe API routes",
+  "generated route tree includes auth, company workspace, project, client portal, and Stripe API routes",
 );
 
 await expectContains(
@@ -211,18 +211,18 @@ await expectContains(
   "src/routes/_authenticated/team.tsx",
   [
     /PlanReadinessPanel/,
-    /Plan and Stripe readiness/,
-    /Commercial readiness/,
-    /Stripe readiness/,
-    /Subscription checkout/,
+    /Plan and payment readiness/,
+    /Commercial setup/,
+    /Payment readiness/,
+    /Overwatch subscription/,
     /Client invoice payments/,
     /Billing contact/,
     /Checkout Sessions/,
     /usageStatus/,
-    /Contractor Circle grant keeps users working/,
+    /Contractor Circle grant keeps this company working/,
     /Storage and attachments/,
   ],
-  "team workspace exposes plan, Stripe, and usage controls without blocking Contractor Circle access",
+  "company workspace exposes plan, Stripe, and usage controls without blocking Contractor Circle access",
 );
 
 await expectContains(
@@ -237,7 +237,7 @@ await expectContains(
     /payment_processor_ready/,
     /missingCommercialOrganizationColumn/,
   ],
-  "team server functions expose commercial billing readiness with schema-cache fallback",
+  "company workspace server functions expose commercial billing readiness with schema-cache fallback",
 );
 
 await expectContains(
@@ -525,7 +525,7 @@ expectSql(
     /daily_report_limit_per_month/i,
     /storage_limit_mb/i,
   ],
-  "team workspace and non-blocking Contractor Circle grant foundation exists",
+  "company workspace and non-blocking Contractor Circle grant foundation exists",
 );
 
 if (live) {

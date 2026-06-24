@@ -188,7 +188,7 @@ export async function requireCanManageOrganization(context: AuthedStripeContext,
   });
   if (error) throw new RouteError("organization_access_check_failed", error.message, 500);
   if (!data) {
-    throw new RouteError("forbidden", "You do not have permission to manage this team.", 403);
+    throw new RouteError("forbidden", "You do not have permission to manage this company.", 403);
   }
 }
 

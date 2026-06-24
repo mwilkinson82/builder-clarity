@@ -171,7 +171,7 @@ type TeamServerContext = {
 async function ensureCurrentOrganization(context: TeamServerContext) {
   const { data: organizationId, error } = await context.supabase.rpc("ensure_current_user_account");
   if (error) throw new Error(error.message);
-  if (!organizationId) throw new Error("No Overwatch team is available for this user.");
+  if (!organizationId) throw new Error("No Overwatch company workspace is available for this user.");
   return organizationId as string;
 }
 
@@ -180,7 +180,7 @@ async function requireCanManageOrganization(context: TeamServerContext, organiza
     p_org_id: organizationId,
   });
   if (error) throw new Error(error.message);
-  if (!canManage) throw new Error("You do not have permission to manage this Overwatch team.");
+  if (!canManage) throw new Error("You do not have permission to manage this Overwatch company.");
 }
 
 async function requireCanManageProject(context: TeamServerContext, projectId: string) {
@@ -293,7 +293,7 @@ async function assertNotLastOrgOwner(
     .eq("status", "active")
     .neq("id", membership.id);
   if (error) throw new Error(error.message);
-  if ((count ?? 0) < 1) throw new Error("Every Overwatch team needs at least one active owner.");
+  if ((count ?? 0) < 1) throw new Error("Every Overwatch company needs at least one active owner.");
 }
 
 async function assertNotLastProjectOwner(
@@ -595,7 +595,7 @@ export const createTeamInvite = createServerFn({ method: "POST" })
       claimedSeats >= organization.seat_limit
     ) {
       throw new Error(
-        `This Overwatch team is at its ${organization.seat_limit}-seat limit. Revoke an invite or upgrade before adding another person.`,
+        `This Overwatch company is at its ${organization.seat_limit}-seat limit. Revoke an invite or upgrade before adding another person.`,
       );
     }
 
@@ -662,7 +662,7 @@ export const updateTeamMember = createServerFn({ method: "POST" })
       .single();
     if (membershipError) throw new Error(membershipError.message);
     if (membership.organization_id !== organizationId) {
-      throw new Error("That team member does not belong to this Overwatch team.");
+      throw new Error("That company member does not belong to this Overwatch company.");
     }
 
     await assertNotLastOrgOwner(context, membership, data.role, data.status);
@@ -700,7 +700,7 @@ export const revokeTeamInvite = createServerFn({ method: "POST" })
       .single();
     if (inviteError) throw new Error(inviteError.message);
     if (invite.organization_id !== organizationId) {
-      throw new Error("That invite does not belong to this Overwatch team.");
+      throw new Error("That invite does not belong to this Overwatch company.");
     }
 
     const { error } = await context.supabase
@@ -733,7 +733,7 @@ export const assignProjectMember = createServerFn({ method: "POST" })
       .single();
     if (projectError) throw new Error(projectError.message);
     if (!project.organization_id)
-      throw new Error("This project is not attached to an Overwatch team.");
+      throw new Error("This project is not attached to an Overwatch company.");
 
     const { data: teamMember, error: teamMemberError } = await context.supabase
       .from("organization_memberships")
@@ -743,7 +743,7 @@ export const assignProjectMember = createServerFn({ method: "POST" })
       .eq("status", "active")
       .maybeSingle();
     if (teamMemberError) throw new Error(teamMemberError.message);
-    if (!teamMember) throw new Error("Only active team members can be assigned to projects.");
+    if (!teamMember) throw new Error("Only active company members can be assigned to projects.");
 
     const { data: membership, error } = await context.supabase
       .from("project_memberships")

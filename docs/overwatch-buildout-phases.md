@@ -20,6 +20,7 @@ The anchor remains:
 - Client-facing access must be explicit by project and by item. Internal risk notes, margin strategy, and PM-only commentary do not become visible just because a client can log in.
 - Every production feature needs a database migration, RLS coverage, a happy-path UI, and a clear failure state.
 - Do not chase broad Procore parity yet. RFIs, submittals, specs, insurance, procurement logs, and deep document control are later modules unless a paying customer makes them necessary.
+- Current Contractor Circle grant meters are advisory product assumptions, not final pricing: 10 projects, 10 seats, 10 GB storage, and 1,000 monthly daily logs until paid plans are finalized.
 
 ## Current Foundation
 
@@ -52,14 +53,14 @@ Definition of done:
 - A new member can sign in, create a project, import a messy spreadsheet, create a schedule risk, allocate it into the risk tally, create a linked to-do, add a pay app, upload a daily report attachment, and download an IOR report.
 - The same flow works from the custom domain, not only the Lovable preview domain.
 
-## Phase 1 - Team Workspace And Portfolio Control
+## Phase 1 - Company Workspace And Portfolio Control
 
-Goal: Companies can run Overwatch as a team, while Marshall can still support and inspect the portfolio rollout.
+Goal: Companies can run Overwatch from a clear company admin workspace, while Marshall can still support and inspect the portfolio rollout.
 
 Deliverables:
 
 - Profile page for each user: name, company, title, phone, default organization, avatar later.
-- Team settings page: invite people, revoke invites, change roles, disable members, assign project access.
+- Company settings page: invite people, revoke invites, change roles, disable members, assign project access.
 - Role model in the UI: owner, admin, executive, project manager, member, viewer.
 - Project manager assignment on every project.
 - Portfolio views:
@@ -111,9 +112,9 @@ Deliverables:
 - Invoice/proposal PDF generation with Overwatch branding.
 - Email invoice/proposal to client contacts.
 - Stripe payment flow:
-  - Client pays invoice.
-  - Contractor receives payment through the connected flow chosen later.
-  - Overwatch can support a transaction fee when commercialized.
+  - Client pays invoice through a hosted payment experience.
+  - Contractor receives the net payout through a Stripe Connect platform flow.
+  - Overwatch can collect an application or transaction fee before the contractor payout when commercialized.
 - Payment ledger: amount, processor fee, Overwatch fee, net payout, payment status, refund status.
 - Export package for accounting: invoice CSV, payment CSV, cost code summary.
 
@@ -194,15 +195,15 @@ These are the next repo-backed moves after the SOV intake work:
 
 1. Run the Phase 0 smoke gate before each push/publish: `npm run smoke:phase0`, `npm run build`, then `npm run smoke:phase0:live` after Lovable publishes.
 2. Configure production secrets in Lovable Cloud before any live payment button is exposed: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and the final app URL if different from `https://overwatch.alpcontractorcircle.com`.
-3. Decide payment money movement before charging clients: direct platform payments first, Stripe Connect destination charges, or separate connected accounts per contractor.
+3. Decide payment money movement before charging clients: use Stripe Connect as the target platform model, with destination charges or an equivalent Connect flow that lets Overwatch collect an application fee while routing net proceeds to the contractor.
 4. Wire the contractor billing UI to the guarded invoice checkout route, then test one invoice payment end-to-end through Stripe test mode and the webhook.
-5. Wire the Team workspace upgrade CTA to the subscription checkout route only after plan prices are confirmed.
+5. Wire the Company workspace upgrade CTA to the subscription checkout route only after plan prices are confirmed.
 6. Harden invoice/client billing smoke coverage against the live Lovable publish.
 
 Recently completed:
 
 - Guarded Stripe Checkout route foundation for client invoices and subscriptions, plus webhook processing for invoice payment success/failure, refunds, and subscription status changes.
-- Stripe commercial-readiness foundation: plan price IDs, organization billing contact fields, subscription/customer/connect status, invoice payment URL fields, and Team workspace readiness display.
+- Stripe commercial-readiness foundation: plan price IDs, organization billing contact fields, subscription/customer/connect status, invoice payment URL fields, and Company workspace readiness display.
 - Contractor-side invoice PDF export and email-ready handoff from the invoice ledger.
 - Transactional invoice email queue from the billing ledger to client seats with Billing On.
 - Daily report packet PDF export for internal filtered reports and client-visible portal reports.
@@ -218,6 +219,9 @@ Recently completed:
 - Money-affecting actions should become auditable events, not silent overwrites.
 - Client-visible content should be opt-in per item: daily reports, documents, change orders, invoices, proposals.
 - Support access should be explicit and logged.
+- There are two Stripe tracks: Overwatch subscription billing for the contractor account, and client invoice payments for money moving from the owner/client to the contractor.
+- Client invoice payments should use a Stripe Connect platform flow rather than a direct contractor-only Stripe link, so Overwatch can charge an application fee and still route payouts cleanly.
+- Any plan to hold funds, earn float, or monetize settlement timing needs legal, compliance, and banking review before implementation. Do not make that an implicit product behavior.
 
 ## Product Positioning
 

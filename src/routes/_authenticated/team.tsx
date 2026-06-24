@@ -50,7 +50,7 @@ import {
 export const Route = createFileRoute("/_authenticated/team")({
   head: () => ({
     meta: [
-      { title: "Team — Overwatch" },
+      { title: "Your Company — Overwatch" },
       {
         name: "description",
         content: "Manage Overwatch company profile, seats, roles, and project access.",
@@ -65,7 +65,7 @@ const roleOptions: { value: AccountRole; label: string }[] = [
   { value: "admin", label: "Admin" },
   { value: "executive", label: "Executive" },
   { value: "project_manager", label: "Project manager" },
-  { value: "member", label: "Team member" },
+  { value: "member", label: "Company member" },
   { value: "viewer", label: "Viewer" },
 ];
 
@@ -194,7 +194,7 @@ function usageStatus(used: number, limit: number, grantActive: boolean): UsageSt
       tone: grantActive ? "warning" : "danger",
       label: grantActive ? "Over advisory limit" : "Limit reached",
       detail: grantActive
-        ? "Contractor Circle grant keeps users working while this is priced for conversion."
+        ? "Contractor Circle grant keeps this company working while paid plan terms are finalized."
         : "Upgrade or reduce usage before adding more work here.",
     };
   }
@@ -343,7 +343,7 @@ function TeamPage() {
     },
     onSuccess: async (email) => {
       await refreshWorkspace();
-      toast.success("Team invite sent", {
+      toast.success("Company invite sent", {
         description: `${email} can sign in to Overwatch.`,
       });
       setInviteEmail("");
@@ -364,10 +364,10 @@ function TeamPage() {
     }) => updateMember({ data: payload }),
     onSuccess: async () => {
       await refreshWorkspace();
-      toast.success("Team member updated");
+      toast.success("Company member updated");
     },
     onError: (error) => {
-      toast.error("Team member did not update", {
+      toast.error("Company member did not update", {
         description: error instanceof Error ? error.message : "Try again.",
       });
     },
@@ -389,7 +389,7 @@ function TeamPage() {
   const assignMutation = useMutation({
     mutationFn: () => {
       if (!selectedProjectId) throw new Error("Choose a project.");
-      if (!selectedUserId) throw new Error("Choose a team member.");
+      if (!selectedUserId) throw new Error("Choose a company member.");
       return assignMember({
         data: { projectId: selectedProjectId, userId: selectedUserId, role: projectRole },
       });
@@ -455,7 +455,7 @@ function TeamPage() {
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               Overwatch Company Workspace
             </div>
-            <h1 className="mt-1 font-serif text-4xl text-foreground">Team</h1>
+            <h1 className="mt-1 font-serif text-4xl text-foreground">Your Company</h1>
           </div>
           <div className="flex items-center gap-2">
             <Button asChild variant="outline" size="sm">
@@ -472,11 +472,11 @@ function TeamPage() {
       <main className="mx-auto max-w-[1400px] px-6 py-8 lg:px-10">
         {isLoading ? (
           <div className="rounded-lg border border-hairline bg-card p-8 text-sm text-muted-foreground shadow-card">
-            Loading team workspace...
+            Loading company workspace...
           </div>
         ) : !team ? (
           <div className="rounded-lg border border-danger/30 bg-danger/10 p-8 text-sm text-danger shadow-card">
-            Team workspace did not load.
+            Company workspace did not load.
           </div>
         ) : (
           <div className="space-y-6">
@@ -491,7 +491,7 @@ function TeamPage() {
                 }
                 sub={
                   team.organization.contractor_circle_grant
-                    ? "advisory limits"
+                    ? "advisory plan"
                     : team.organization.billing_status
                 }
               />
@@ -533,7 +533,7 @@ function TeamPage() {
               />
               <UsageCard
                 icon={<HardDrive className="h-4 w-4" />}
-                label="Storage plan"
+                label="Storage meter"
                 value={`${usage?.storageUsedLabel ?? "0 B"} / ${usage?.storageLimitLabel ?? "0 B"}`}
                 sub={`${usage?.attachmentCount ?? 0} attachments`}
                 meterValue={usage ? meterPercent(usage.storageBytes, usage.storageLimitBytes) : 0}
@@ -717,7 +717,7 @@ function TeamPage() {
                 <SectionHeader
                   icon={<MailPlus className="h-4 w-4" />}
                   eyebrow="Seats"
-                  title="Invite team members"
+                  title="Invite company users"
                 />
                 <div className="mt-5 grid gap-3 md:grid-cols-[1fr_190px_auto] md:items-end">
                   <div className="space-y-1.5">
@@ -905,7 +905,7 @@ function TeamPage() {
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Team member</Label>
+                  <Label>Company member</Label>
                   <Select value={selectedUserId} onValueChange={setSelectedUserId}>
                     <SelectTrigger>
                       <SelectValue placeholder="Choose person" />
@@ -1051,7 +1051,7 @@ function PlanReadinessPanel({
   const checkoutConfigured = Boolean(stripePriceId);
   const commerceRows = [
     {
-      label: "Subscription checkout",
+      label: "Overwatch subscription",
       value: subscriptionReady ? "Connected" : checkoutConfigured ? "Price staged" : "Not connected",
       detail: subscriptionReady
         ? `Stripe customer and subscription are recorded${
@@ -1064,8 +1064,8 @@ function PlanReadinessPanel({
       label: "Client invoice payments",
       value: connectReady ? "Online ready" : "Manual only",
       detail: connectReady
-        ? "Client invoices can use hosted payment links when enabled per invoice."
-        : "Invoices still support PDF and email. Online payment links stay hidden until Stripe is connected.",
+        ? "Client invoices can use hosted payment links through the Overwatch payment rail when enabled per invoice."
+        : "PDF and email stay available. Online payment links stay hidden until Stripe Connect is ready.",
       tone: connectReady ? "default" : "warning",
     },
     {
@@ -1129,8 +1129,8 @@ function PlanReadinessPanel({
         <div className="border-b border-hairline p-5 lg:border-b-0 lg:border-r">
           <SectionHeader
             icon={<Gauge className="h-4 w-4" />}
-            eyebrow="Plan and Stripe readiness"
-            title="Commercial readiness"
+            eyebrow="Plan and payment readiness"
+            title="Commercial setup"
           />
           <div className="mt-5 grid gap-3 text-sm">
             <PlanFact label="Plan" value={planLabel} />
@@ -1158,17 +1158,22 @@ function PlanReadinessPanel({
             }`}
           >
             {grantActive
-              ? "Contractor Circle grant keeps users working. These meters are advisory until paid plans are turned on."
+              ? "Contractor Circle grant keeps this company working. Current trial assumptions are 10 projects, 10 seats, 10GB storage, and 1,000 monthly daily logs until paid plans are finalized."
               : "Plan limits can enforce seats, jobs, reports, and storage once billing is active."}
           </div>
           <div className="mt-4 grid gap-2">
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               <CreditCard className="h-3.5 w-3.5" />
-              Stripe readiness
+              Payment readiness
             </div>
             {commerceRows.map((row) => (
               <CommerceReadinessItem key={row.label} {...row} />
             ))}
+          </div>
+          <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+            Overwatch subscriptions and client invoice payments are separate. Client payments
+            should run through a platform payment flow so Overwatch can collect an application fee
+            before the contractor payout, subject to final Stripe Connect and compliance setup.
           </div>
           <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">

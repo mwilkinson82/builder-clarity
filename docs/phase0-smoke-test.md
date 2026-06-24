@@ -13,7 +13,7 @@ npm run build
 
 The smoke command checks the pieces that have broken during rollout:
 
-- Magic-link auth, callback, portfolio, team, project, and client portal routes are generated.
+- Magic-link auth, callback, portfolio, company workspace, project, and client portal routes are generated.
 - Project creation and direct project navigation are wired.
 - SOV import, reusable SOV mapping profiles, schedule-to-risk allocation, linked to-do, risk delete, pay app, daily report, and client portal write paths exist with user-facing toasts.
 - Migrations include the tables, columns, grants, RLS, and RPCs that the UI expects.

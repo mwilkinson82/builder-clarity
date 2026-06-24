@@ -261,7 +261,7 @@ export const upsertDailyReport = createServerFn({ method: "POST" })
 
           if ((count ?? 0) >= limit) {
             throw new Error(
-              `This Overwatch team is at its ${limit}-daily-log monthly limit. Upgrade before adding another daily report for this month.`,
+              `This Overwatch company is at its ${limit}-daily-log monthly limit. Upgrade before adding another daily report for this month.`,
             );
           }
         }
