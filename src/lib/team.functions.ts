@@ -85,6 +85,15 @@ export interface TeamProjectMember {
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const bool = (v: unknown) => (typeof v === "boolean" ? v : Boolean(v));
+const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) =>
+  error?.code === "PGRST204" && (error.message ?? "").includes(`'${column}' column`);
+
+type DailyReportUsageRow = {
+  id?: string;
+  report_date?: string | null;
+  attachment_count?: number | string | null;
+  attachment_bytes?: number | string | null;
+};
 
 type TeamServerContext = {
   supabase: SupabaseClient;
@@ -112,6 +121,71 @@ async function requireCanManageProject(context: TeamServerContext, projectId: st
   });
   if (error) throw new Error(error.message);
   if (!canManage) throw new Error("You do not have permission to manage this project.");
+}
+
+function currentMonthBounds() {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  };
+}
+
+async function loadDailyReportUsage(context: TeamServerContext, projectIds: string[]) {
+  if (projectIds.length === 0) {
+    return {
+      total: 0,
+      thisMonth: 0,
+      attachmentCount: 0,
+      storageBytes: 0,
+    };
+  }
+
+  const reportRes = await context.supabase
+    .from("daily_reports")
+    .select("id,report_date,attachment_count,attachment_bytes")
+    .in("project_id", projectIds);
+
+  let rows: DailyReportUsageRow[];
+  if (reportRes.error) {
+    if (
+      isMissingRestColumn(reportRes.error, "attachment_count") ||
+      isMissingRestColumn(reportRes.error, "attachment_bytes")
+    ) {
+      const fallbackRes = await context.supabase
+        .from("daily_reports")
+        .select("id,report_date")
+        .in("project_id", projectIds);
+      if (fallbackRes.error) throw new Error(fallbackRes.error.message);
+      rows = (fallbackRes.data ?? []) as DailyReportUsageRow[];
+    } else {
+      throw new Error(reportRes.error.message);
+    }
+  } else {
+    rows = (reportRes.data ?? []) as DailyReportUsageRow[];
+  }
+
+  const bounds = currentMonthBounds();
+  return rows.reduce(
+    (usage, row) => {
+      const reportDate = str(row.report_date);
+      const isThisMonth = reportDate >= bounds.start && reportDate < bounds.end;
+      return {
+        total: usage.total + 1,
+        thisMonth: usage.thisMonth + (isThisMonth ? 1 : 0),
+        attachmentCount: usage.attachmentCount + Math.max(0, num(row.attachment_count)),
+        storageBytes: usage.storageBytes + Math.max(0, num(row.attachment_bytes)),
+      };
+    },
+    {
+      total: 0,
+      thisMonth: 0,
+      attachmentCount: 0,
+      storageBytes: 0,
+    },
+  );
 }
 
 async function assertNotLastOrgOwner(
@@ -202,7 +276,7 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
     }));
     const projectIds = projects.map((p) => p.id);
 
-    const [projectMembersRes, dailyReportCountRes] = await Promise.all([
+    const [projectMembersRes, dailyReportUsage] = await Promise.all([
       projectIds.length === 0
         ? { data: [], error: null }
         : context.supabase
@@ -210,15 +284,9 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
             .select("*")
             .in("project_id", projectIds)
             .order("created_at", { ascending: true }),
-      projectIds.length === 0
-        ? { count: 0, error: null }
-        : context.supabase
-            .from("daily_reports")
-            .select("id", { count: "exact", head: true })
-            .in("project_id", projectIds),
+      loadDailyReportUsage(context, projectIds),
     ]);
     if (projectMembersRes.error) throw new Error(projectMembersRes.error.message);
-    if (dailyReportCountRes.error) throw new Error(dailyReportCountRes.error.message);
 
     const memberRows = membersRes.data ?? [];
     const projectMemberRows = projectMembersRes.data ?? [];
@@ -325,7 +393,10 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
         projects: projectIds.length,
         activeSeats: members.filter((m) => m.status === "active").length,
         pendingInvites: invites.length,
-        dailyReports: dailyReportCountRes.count ?? 0,
+        dailyReports: dailyReportUsage.total,
+        dailyReportsThisMonth: dailyReportUsage.thisMonth,
+        dailyReportAttachmentCount: dailyReportUsage.attachmentCount,
+        dailyReportStorageBytes: dailyReportUsage.storageBytes,
       },
     };
   });
@@ -409,7 +480,7 @@ export const createTeamInvite = createServerFn({ method: "POST" })
 
     const { data: organization, error: orgError } = await context.supabase
       .from("organizations")
-      .select("id, seat_limit")
+      .select("id, seat_limit, contractor_circle_grant")
       .eq("id", organizationId)
       .single();
     if (orgError) throw new Error(orgError.message);
@@ -433,7 +504,11 @@ export const createTeamInvite = createServerFn({ method: "POST" })
     if (invitesError) throw new Error(invitesError.message);
 
     const claimedSeats = (activeSeats ?? 0) + (pendingInvites ?? 0);
-    if (organization.seat_limit !== null && claimedSeats >= organization.seat_limit) {
+    if (
+      !bool(organization.contractor_circle_grant) &&
+      organization.seat_limit !== null &&
+      claimedSeats >= organization.seat_limit
+    ) {
       throw new Error(
         `This Overwatch team is at its ${organization.seat_limit}-seat limit. Revoke an invite or upgrade before adding another person.`,
       );

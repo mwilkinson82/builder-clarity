@@ -2,6 +2,20 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
+type DynamicSupabaseError = { message: string };
+type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
+type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
+  select(columns?: string): DynamicSupabaseQuery;
+  single(): Promise<DynamicSupabaseResult>;
+  upsert(values: unknown, options?: { onConflict?: string }): DynamicSupabaseQuery;
+};
+type DynamicSupabaseClient = {
+  from(relation: string): DynamicSupabaseQuery;
+};
+
+const dynamicTable = (supabase: unknown, relation: string) =>
+  (supabase as DynamicSupabaseClient).from(relation);
+
 export interface DailyReportAttachment {
   name: string;
   path: string;
@@ -218,13 +232,13 @@ export const upsertDailyReport = createServerFn({ method: "POST" })
       if (!existing) {
         const { data: organization, error: orgError } = await context.supabase
           .from("organizations")
-          .select("daily_report_limit_per_month")
+          .select("daily_report_limit_per_month,contractor_circle_grant")
           .eq("id", project.organization_id)
           .single();
         if (orgError) throw new Error(orgError.message);
 
         const limit = Number(organization.daily_report_limit_per_month ?? 0);
-        if (limit > 0) {
+        if (!bool(organization.contractor_circle_grant) && limit > 0) {
           const { data: organizationProjects, error: orgProjectsError } = await context.supabase
             .from("projects")
             .select("id")
@@ -254,8 +268,7 @@ export const upsertDailyReport = createServerFn({ method: "POST" })
       }
     }
 
-    const { data: row, error } = await (context.supabase as any)
-      .from("daily_reports")
+    const { data: row, error } = await dynamicTable(context.supabase, "daily_reports")
       .upsert(
         {
           project_id: projectId,

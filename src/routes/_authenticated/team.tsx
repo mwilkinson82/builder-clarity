@@ -5,8 +5,8 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   ArrowLeft,
   BriefcaseBusiness,
-  CheckCircle2,
   ClipboardList,
+  HardDrive,
   LogOut,
   MailPlus,
   Save,
@@ -89,6 +89,45 @@ function shortDate(value: string) {
   return value ? value.replace("T", " ").slice(0, 10) : "";
 }
 
+const numberFormatter = new Intl.NumberFormat("en-US");
+
+function formatNumber(value: number) {
+  return numberFormatter.format(Math.max(0, Math.round(value)));
+}
+
+function formatBytes(bytes: number) {
+  const safeBytes = Math.max(0, bytes);
+  if (safeBytes < 1024) return `${formatNumber(safeBytes)} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = safeBytes / 1024;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size >= 10 ? Math.round(size) : size.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatUsageValue(used: number, limit: number) {
+  const limitLabel = limit > 0 ? formatNumber(limit) : "No cap";
+  return `${formatNumber(used)} / ${limitLabel}`;
+}
+
+function meterPercent(used: number, limit: number) {
+  if (limit <= 0) return 0;
+  return Math.min(100, Math.round((used / limit) * 100));
+}
+
+type UsageTone = "default" | "warning" | "danger";
+
+function usageTone(used: number, limit: number): UsageTone {
+  if (limit <= 0) return "default";
+  const pct = used / limit;
+  if (pct >= 1) return "danger";
+  if (pct >= 0.8) return "warning";
+  return "default";
+}
+
 function TeamPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -138,14 +177,22 @@ function TeamPage() {
   const usage = useMemo(() => {
     if (!team) return null;
     const seatsUsed = team.usage.activeSeats + team.usage.pendingInvites;
+    const storageLimitBytes = team.organization.storage_limit_mb * 1024 * 1024;
     return {
+      activeSeats: team.usage.activeSeats,
+      pendingInvites: team.usage.pendingInvites,
       seatsUsed,
       seatLimit: team.organization.seat_limit,
       projectsUsed: team.usage.projects,
       projectLimit: team.organization.project_limit,
-      dailyReports: team.usage.dailyReports,
+      dailyReports: team.usage.dailyReportsThisMonth,
+      dailyReportsTotal: team.usage.dailyReports,
       dailyReportLimit: team.organization.daily_report_limit_per_month,
-      storageLimitGb: Math.round(team.organization.storage_limit_mb / 1024),
+      attachmentCount: team.usage.dailyReportAttachmentCount,
+      storageBytes: team.usage.dailyReportStorageBytes,
+      storageLimitBytes,
+      storageUsedLabel: formatBytes(team.usage.dailyReportStorageBytes),
+      storageLimitLabel: formatBytes(storageLimitBytes),
     };
   }, [team]);
 
@@ -214,8 +261,11 @@ function TeamPage() {
   });
 
   const memberMutation = useMutation({
-    mutationFn: (payload: { membershipId: string; role?: AccountRole; status?: "active" | "disabled" }) =>
-      updateMember({ data: payload }),
+    mutationFn: (payload: {
+      membershipId: string;
+      role?: AccountRole;
+      status?: "active" | "disabled";
+    }) => updateMember({ data: payload }),
     onSuccess: async () => {
       await refreshWorkspace();
       toast.success("Team member updated");
@@ -343,33 +393,64 @@ function TeamPage() {
                     ? "Circle grant"
                     : team.organization.plan_code
                 }
-                sub={team.organization.billing_status}
+                sub={
+                  team.organization.contractor_circle_grant
+                    ? "advisory limits"
+                    : team.organization.billing_status
+                }
               />
               <UsageCard
                 icon={<Users className="h-4 w-4" />}
                 label="Seats"
-                value={`${usage?.seatsUsed ?? 0}/${usage?.seatLimit ?? 0}`}
-                sub={`${team.usage.pendingInvites} pending invites`}
+                value={
+                  usage
+                    ? formatUsageValue(usage.seatsUsed, usage.seatLimit)
+                    : formatUsageValue(0, 0)
+                }
+                sub={`${usage?.activeSeats ?? 0} active, ${usage?.pendingInvites ?? 0} pending`}
+                meterValue={usage ? meterPercent(usage.seatsUsed, usage.seatLimit) : 0}
+                tone={usage ? usageTone(usage.seatsUsed, usage.seatLimit) : "default"}
               />
               <UsageCard
                 icon={<BriefcaseBusiness className="h-4 w-4" />}
                 label="Projects"
-                value={`${usage?.projectsUsed ?? 0}/${usage?.projectLimit ?? 0}`}
+                value={
+                  usage
+                    ? formatUsageValue(usage.projectsUsed, usage.projectLimit)
+                    : formatUsageValue(0, 0)
+                }
                 sub="active jobs"
+                meterValue={usage ? meterPercent(usage.projectsUsed, usage.projectLimit) : 0}
+                tone={usage ? usageTone(usage.projectsUsed, usage.projectLimit) : "default"}
               />
               <UsageCard
                 icon={<ClipboardList className="h-4 w-4" />}
                 label="Daily reports"
-                value={`${usage?.dailyReports ?? 0}`}
-                sub={`limit ${usage?.dailyReportLimit ?? 0}/mo`}
+                value={
+                  usage
+                    ? formatUsageValue(usage.dailyReports, usage.dailyReportLimit)
+                    : formatUsageValue(0, 0)
+                }
+                sub={`${usage?.dailyReportsTotal ?? 0} all-time logs`}
+                meterValue={usage ? meterPercent(usage.dailyReports, usage.dailyReportLimit) : 0}
+                tone={usage ? usageTone(usage.dailyReports, usage.dailyReportLimit) : "default"}
               />
               <UsageCard
-                icon={<CheckCircle2 className="h-4 w-4" />}
+                icon={<HardDrive className="h-4 w-4" />}
                 label="Storage plan"
-                value={`${usage?.storageLimitGb ?? 0} GB`}
-                sub="soft meter"
+                value={`${usage?.storageUsedLabel ?? "0 B"} / ${usage?.storageLimitLabel ?? "0 B"}`}
+                sub={`${usage?.attachmentCount ?? 0} attachments`}
+                meterValue={usage ? meterPercent(usage.storageBytes, usage.storageLimitBytes) : 0}
+                tone={usage ? usageTone(usage.storageBytes, usage.storageLimitBytes) : "default"}
               />
             </section>
+
+            {team.organization.contractor_circle_grant && (
+              <div className="rounded-lg border border-success/25 bg-success/10 px-4 py-3 text-sm text-success">
+                Contractor Circle grant is active, so usage is visible here without blocking project
+                work.
+              </div>
+            )}
 
             {!team.canManageTeam && (
               <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
@@ -812,14 +893,28 @@ function UsageCard({
   label,
   value,
   sub,
+  meterValue,
+  tone = "default",
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   sub: string;
+  meterValue?: number;
+  tone?: UsageTone;
 }) {
+  const toneClass =
+    tone === "danger"
+      ? "border-danger/35 bg-danger/10"
+      : tone === "warning"
+        ? "border-warning/35 bg-warning/10"
+        : "border-hairline bg-card";
+  const meterClass =
+    tone === "danger" ? "bg-danger" : tone === "warning" ? "bg-warning" : "bg-success";
   return (
-    <div className="flex min-h-[96px] flex-col justify-between rounded-lg border border-hairline bg-card p-4 shadow-card">
+    <div
+      className={`flex min-h-[112px] flex-col justify-between rounded-lg border p-4 shadow-card ${toneClass}`}
+    >
       <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {icon}
         {label}
@@ -827,6 +922,14 @@ function UsageCard({
       <div>
         <div className="text-xl font-medium tabular text-foreground">{value}</div>
         <div className="mt-1 text-xs text-muted-foreground">{sub}</div>
+        {meterValue !== undefined && (
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className={`h-full rounded-full ${meterClass}`}
+              style={{ width: `${Math.max(0, Math.min(100, meterValue))}%` }}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

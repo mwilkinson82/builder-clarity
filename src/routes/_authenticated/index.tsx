@@ -61,6 +61,16 @@ import { fmtUSD, fmtPct } from "@/lib/format";
 import { computeScheduleVarianceWeeks } from "@/lib/ior";
 import { toast } from "sonner";
 
+const numberFormatter = new Intl.NumberFormat("en-US");
+
+function formatNumber(value: number) {
+  return numberFormatter.format(Math.max(0, Math.round(value)));
+}
+
+function formatUsageValue(used: number, limit: number) {
+  return `${formatNumber(used)} / ${limit > 0 ? formatNumber(limit) : "No cap"}`;
+}
+
 export const Route = createFileRoute("/_authenticated/")({
   head: () => ({
     meta: [
@@ -1191,7 +1201,9 @@ function InviteByMagicLinkButton() {
                 Projects
               </div>
               <div className="mt-1 font-medium">
-                {team ? `${team.usage.projects}/${team.organization.project_limit}` : "-"}
+                {team
+                  ? formatUsageValue(team.usage.projects, team.organization.project_limit)
+                  : "-"}
               </div>
             </div>
             <div>
@@ -1200,15 +1212,25 @@ function InviteByMagicLinkButton() {
               </div>
               <div className="mt-1 font-medium">
                 {team
-                  ? `${team.usage.activeSeats + team.usage.pendingInvites}/${team.organization.seat_limit}`
+                  ? formatUsageValue(
+                      team.usage.activeSeats + team.usage.pendingInvites,
+                      team.organization.seat_limit,
+                    )
                   : "-"}
               </div>
             </div>
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Daily logs
+                Daily logs this month
               </div>
-              <div className="mt-1 font-medium">{team ? team.usage.dailyReports : "-"}</div>
+              <div className="mt-1 font-medium">
+                {team
+                  ? formatUsageValue(
+                      team.usage.dailyReportsThisMonth,
+                      team.organization.daily_report_limit_per_month,
+                    )
+                  : "-"}
+              </div>
             </div>
           </div>
 
