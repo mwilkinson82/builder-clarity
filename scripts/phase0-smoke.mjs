@@ -197,6 +197,19 @@ await expectContains(
 );
 
 await expectContains(
+  "src/routes/_authenticated/team.tsx",
+  [
+    /PlanReadinessPanel/,
+    /Plan and usage controls/,
+    /Commercial readiness/,
+    /usageStatus/,
+    /Contractor Circle grant keeps users working/,
+    /Storage and attachments/,
+  ],
+  "team workspace exposes plan usage controls without blocking Contractor Circle access",
+);
+
+await expectContains(
   "src/lib/invoice-pdf.ts",
   [/PDFDocument/, /OVERWATCH BILLING/, /Billing summary/, /Payment history/, /Job #/],
   "invoice PDF generator includes branded invoice summary and payment history",

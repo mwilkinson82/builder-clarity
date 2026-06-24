@@ -3,9 +3,12 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
+  AlertTriangle,
   ArrowLeft,
   BriefcaseBusiness,
+  CheckCircle2,
   ClipboardList,
+  Gauge,
   HardDrive,
   LogOut,
   MailPlus,
@@ -126,6 +129,88 @@ function usageTone(used: number, limit: number): UsageTone {
   if (pct >= 1) return "danger";
   if (pct >= 0.8) return "warning";
   return "default";
+}
+
+type TeamUsageSnapshot = {
+  activeSeats: number;
+  pendingInvites: number;
+  seatsUsed: number;
+  seatLimit: number;
+  projectsUsed: number;
+  projectLimit: number;
+  dailyReports: number;
+  dailyReportsTotal: number;
+  dailyReportLimit: number;
+  attachmentCount: number;
+  storageBytes: number;
+  storageLimitBytes: number;
+  storageUsedLabel: string;
+  storageLimitLabel: string;
+};
+
+type UsageStatus = {
+  tone: UsageTone;
+  label: string;
+  detail: string;
+};
+
+function titleizeCode(value: string) {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatPlanCode(value: string) {
+  if (!value) return "Plan not set";
+  if (value === "contractor_circle_free") return "Contractor Circle";
+  return titleizeCode(value);
+}
+
+function formatBillingStatus(value: string) {
+  if (!value) return "Billing not set";
+  return titleizeCode(value);
+}
+
+function formatPercent(value: number) {
+  if (!Number.isFinite(value)) return "0%";
+  return `${Math.max(0, Math.round(value))}%`;
+}
+
+function usageStatus(used: number, limit: number, grantActive: boolean): UsageStatus {
+  if (limit <= 0) {
+    return {
+      tone: "default",
+      label: "No cap",
+      detail: "No plan limit is set for this account yet.",
+    };
+  }
+
+  const pct = used / limit;
+  if (pct >= 1) {
+    return {
+      tone: grantActive ? "warning" : "danger",
+      label: grantActive ? "Over advisory limit" : "Limit reached",
+      detail: grantActive
+        ? "Contractor Circle grant keeps users working while this is priced for conversion."
+        : "Upgrade or reduce usage before adding more work here.",
+    };
+  }
+
+  if (pct >= 0.8) {
+    return {
+      tone: "warning",
+      label: "Near limit",
+      detail: "This account is close enough to plan ahead before onboarding more work.",
+    };
+  }
+
+  return {
+    tone: "default",
+    label: "Healthy",
+    detail: "Usage is inside the current plan guidance.",
+  };
 }
 
 function TeamPage() {
@@ -445,11 +530,13 @@ function TeamPage() {
               />
             </section>
 
-            {team.organization.contractor_circle_grant && (
-              <div className="rounded-lg border border-success/25 bg-success/10 px-4 py-3 text-sm text-success">
-                Contractor Circle grant is active, so usage is visible here without blocking project
-                work.
-              </div>
+            {usage && (
+              <PlanReadinessPanel
+                planCode={team.organization.plan_code}
+                billingStatus={team.organization.billing_status}
+                grantActive={team.organization.contractor_circle_grant}
+                usage={usage}
+              />
             )}
 
             {!team.canManageTeam && (
@@ -864,6 +951,174 @@ function TeamPage() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function PlanReadinessPanel({
+  planCode,
+  billingStatus,
+  grantActive,
+  usage,
+}: {
+  planCode: string;
+  billingStatus: string;
+  grantActive: boolean;
+  usage: TeamUsageSnapshot;
+}) {
+  const planLabel = formatPlanCode(planCode);
+  const billingLabel = formatBillingStatus(billingStatus);
+  const rows = [
+    {
+      label: "Seats",
+      value: formatUsageValue(usage.seatsUsed, usage.seatLimit),
+      detail: `${usage.activeSeats} active, ${usage.pendingInvites} pending invite${
+        usage.pendingInvites === 1 ? "" : "s"
+      }`,
+      percent: meterPercent(usage.seatsUsed, usage.seatLimit),
+      status: usageStatus(usage.seatsUsed, usage.seatLimit, grantActive),
+    },
+    {
+      label: "Active projects",
+      value: formatUsageValue(usage.projectsUsed, usage.projectLimit),
+      detail: "Open jobs currently attached to this company workspace.",
+      percent: meterPercent(usage.projectsUsed, usage.projectLimit),
+      status: usageStatus(usage.projectsUsed, usage.projectLimit, grantActive),
+    },
+    {
+      label: "Daily reports this month",
+      value: formatUsageValue(usage.dailyReports, usage.dailyReportLimit),
+      detail: `${formatNumber(usage.dailyReportsTotal)} lifetime job log${
+        usage.dailyReportsTotal === 1 ? "" : "s"
+      }`,
+      percent: meterPercent(usage.dailyReports, usage.dailyReportLimit),
+      status: usageStatus(usage.dailyReports, usage.dailyReportLimit, grantActive),
+    },
+    {
+      label: "Storage and attachments",
+      value: `${usage.storageUsedLabel} / ${usage.storageLimitLabel}`,
+      detail: `${formatNumber(usage.attachmentCount)} uploaded attachment${
+        usage.attachmentCount === 1 ? "" : "s"
+      } from daily reports.`,
+      percent: meterPercent(usage.storageBytes, usage.storageLimitBytes),
+      status: usageStatus(usage.storageBytes, usage.storageLimitBytes, grantActive),
+    },
+  ];
+
+  const highestPressure = rows.reduce((highest, row) =>
+    row.percent > highest.percent ? row : highest,
+  );
+
+  return (
+    <section className="rounded-lg border border-hairline bg-card shadow-card">
+      <div className="grid gap-0 lg:grid-cols-[0.85fr_1.15fr]">
+        <div className="border-b border-hairline p-5 lg:border-b-0 lg:border-r">
+          <SectionHeader
+            icon={<Gauge className="h-4 w-4" />}
+            eyebrow="Plan and usage controls"
+            title="Commercial readiness"
+          />
+          <div className="mt-5 grid gap-3 text-sm">
+            <PlanFact label="Plan" value={planLabel} />
+            <PlanFact label="Billing status" value={billingLabel} />
+            <PlanFact
+              label="Current access"
+              value={grantActive ? "Contractor Circle grant" : "Plan enforcement"}
+            />
+          </div>
+          <div
+            className={`mt-5 rounded-md border px-4 py-3 text-sm ${
+              grantActive
+                ? "border-success/25 bg-success/10 text-success"
+                : "border-warning/30 bg-warning/10 text-warning"
+            }`}
+          >
+            {grantActive
+              ? "Contractor Circle grant keeps users working. These meters are advisory until paid plans are turned on."
+              : "Plan limits can enforce seats, jobs, reports, and storage once billing is active."}
+          </div>
+          <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Highest pressure
+            </div>
+            <div className="mt-1 flex items-baseline justify-between gap-3">
+              <div className="font-medium text-foreground">{highestPressure.label}</div>
+              <div className="text-sm font-semibold tabular-nums text-foreground">
+                {formatPercent(highestPressure.percent)}
+              </div>
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {highestPressure.status.detail}
+            </div>
+          </div>
+        </div>
+
+        <div className="divide-y divide-hairline">
+          {rows.map((row) => (
+            <UsageReadinessRow key={row.label} {...row} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PlanFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-hairline pb-2 last:border-b-0 last:pb-0">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="text-right font-medium text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function UsageReadinessRow({
+  label,
+  value,
+  detail,
+  percent,
+  status,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  percent: number;
+  status: UsageStatus;
+}) {
+  const statusClass =
+    status.tone === "danger"
+      ? "border-danger/30 bg-danger/10 text-danger"
+      : status.tone === "warning"
+        ? "border-warning/30 bg-warning/10 text-warning"
+        : "border-success/25 bg-success/10 text-success";
+  const meterClass =
+    status.tone === "danger" ? "bg-danger" : status.tone === "warning" ? "bg-warning" : "bg-success";
+  const Icon = status.tone === "default" ? CheckCircle2 : AlertTriangle;
+
+  return (
+    <div className="grid gap-3 px-5 py-4 md:grid-cols-[minmax(160px,1fr)_170px_180px] md:items-center">
+      <div>
+        <div className="font-medium text-foreground">{label}</div>
+        <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+      </div>
+      <div>
+        <div className="text-lg font-medium tabular-nums text-foreground">{value}</div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            className={`h-full rounded-full ${meterClass}`}
+            style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
+          />
+        </div>
+      </div>
+      <div className={`inline-flex min-h-10 items-center gap-2 rounded-md border px-3 py-2 ${statusClass}`}>
+        <Icon className="h-4 w-4 shrink-0" />
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.1em]">{status.label}</div>
+          <div className="mt-0.5 text-[11px] leading-snug opacity-85">{formatPercent(percent)}</div>
+        </div>
+      </div>
     </div>
   );
 }
