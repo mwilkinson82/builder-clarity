@@ -102,6 +102,7 @@ await expectFile("src/routes/_authenticated/projects.$projectId.tsx", "project r
 await expectFile("src/routes/_authenticated/client.projects.$projectId.tsx", "client portal route");
 await expectFile("src/routes/_authenticated/team.tsx", "team workspace route");
 await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF generator");
+await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
 
 await expectContains(
   "src/routeTree.gen.ts",
@@ -181,6 +182,9 @@ await expectContains(
     /ClientPortalWorkspace/,
     /Invoice & payment ledger/,
     /Record payment/,
+    /generateInvoicePdf/,
+    /Invoice PDF downloaded/,
+    /Invoice email draft opened/,
     /toast\.success\("Linked to-do created/,
     /toast\.success\("Risk deleted/,
     /toast\.success\("Pay app added/,
@@ -190,6 +194,12 @@ await expectContains(
     /toast\.success\("SOV imported/,
   ],
   "project route wires core Phase 0 write paths and success toasts",
+);
+
+await expectContains(
+  "src/lib/invoice-pdf.ts",
+  [/PDFDocument/, /OVERWATCH BILLING/, /Billing summary/, /Payment history/, /Job #/],
+  "invoice PDF generator includes branded invoice summary and payment history",
 );
 
 await expectContains(

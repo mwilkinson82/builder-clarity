@@ -82,6 +82,7 @@ import {
   type Rollup,
 } from "@/lib/ior";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
+import { generateInvoicePdf } from "@/lib/invoice-pdf";
 import { toast } from "sonner";
 import {
   CalendarClock,
@@ -92,6 +93,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  Mail,
   Pencil,
   Plus,
   ReceiptText,
@@ -1386,6 +1388,42 @@ function formatShortDateTime(value: string) {
   return compact || "Date not recorded";
 }
 
+function invoiceFilename(project: ProjectRow, invoice: BillingInvoiceRow) {
+  const projectPart = (project.job_number || project.name || "project")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 42);
+  const invoicePart = (invoice.invoice_number || invoice.title || "invoice")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 42);
+  return `Overwatch-Invoice-${projectPart || "project"}-${invoicePart || "invoice"}.pdf`;
+}
+
+function buildInvoiceEmail(project: ProjectRow, invoice: BillingInvoiceRow) {
+  const subject =
+    `Invoice ${invoice.invoice_number || invoice.title || ""} - ${project.name}`.trim();
+  const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
+  const body = [
+    `Hi,`,
+    ``,
+    `Attached is the current invoice for ${project.name}${project.job_number ? `, job ${project.job_number}` : ""}.`,
+    ``,
+    `Invoice: ${invoice.invoice_number || invoice.title || "Invoice"}`,
+    `Status: ${invoiceStatusLabel(invoice.status)}`,
+    `Total due: ${fmtUSD(invoice.total_due)}`,
+    `Paid to date: ${fmtUSD(invoice.paid_amount)}`,
+    `Open balance: ${fmtUSD(openBalance)}`,
+    invoice.due_date ? `Due date: ${invoice.due_date}` : "",
+    ``,
+    `Please review and let us know if you have any questions.`,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+
+  return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 function responseAction(path: import("@/lib/ior").ResponsePath) {
   if (path === "eliminate") return "Eliminate";
   if (path === "recover") return "Recover";
@@ -1983,7 +2021,7 @@ function BillingWorkspace({
           </div>
 
           <div className="overflow-x-auto rounded-md border border-hairline">
-            <table className="min-w-[1120px] w-full text-sm">
+            <table className="min-w-[1280px] w-full text-sm">
               <thead className="bg-surface text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 text-left">Invoice</th>
@@ -1994,7 +2032,7 @@ function BillingWorkspace({
                   <th className="px-3 py-2 text-right">Open</th>
                   <th className="px-3 py-2 text-left">Client</th>
                   <th className="px-3 py-2 text-left">Status</th>
-                  <th className="w-[170px] px-3 py-2 text-right">Actions</th>
+                  <th className="w-[300px] px-3 py-2 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
@@ -2013,6 +2051,7 @@ function BillingWorkspace({
                     return (
                       <BillingInvoiceRowEditor
                         key={invoice.id}
+                        project={project}
                         invoice={invoice}
                         linkedPayApp={linkedPayApp}
                         savingPayment={savingPayment}
@@ -2232,6 +2271,7 @@ function BillingApplicationRowEditor({
 }
 
 function BillingInvoiceRowEditor({
+  project,
   invoice,
   linkedPayApp,
   savingPayment,
@@ -2239,6 +2279,7 @@ function BillingInvoiceRowEditor({
   onDelete,
   onRecordPayment,
 }: {
+  project: ProjectRow;
   invoice: BillingInvoiceRow;
   linkedPayApp?: BillingApplicationRow;
   savingPayment?: boolean;
@@ -2249,6 +2290,7 @@ function BillingInvoiceRowEditor({
   const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
   const today = new Date().toISOString().slice(0, 10);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [invoiceAction, setInvoiceAction] = useState<"pdf" | "email" | null>(null);
   const [paymentDraft, setPaymentDraft] = useState<PaymentDraft>({
     invoiceId: invoice.id,
     amount: openBalance,
@@ -2283,6 +2325,37 @@ function BillingInvoiceRowEditor({
   const savePayment = () => {
     onRecordPayment(paymentDraft);
     setPaymentOpen(false);
+  };
+
+  const downloadInvoice = async () => {
+    setInvoiceAction("pdf");
+    try {
+      const bytes = await generateInvoicePdf({ project, invoice, linkedPayApp });
+      downloadPdfBytes(bytes, invoiceFilename(project, invoice));
+      toast.success("Invoice PDF downloaded");
+    } catch (error) {
+      toast.error("Invoice PDF did not generate", {
+        description: error instanceof Error ? error.message : "Please try again.",
+      });
+    } finally {
+      setInvoiceAction(null);
+    }
+  };
+
+  const emailInvoice = () => {
+    setInvoiceAction("email");
+    try {
+      window.location.href = buildInvoiceEmail(project, invoice);
+      toast.success("Invoice email draft opened", {
+        description: "Attach the downloaded invoice PDF before sending.",
+      });
+    } catch (error) {
+      toast.error("Invoice email did not open", {
+        description: error instanceof Error ? error.message : "Please try again.",
+      });
+    } finally {
+      window.setTimeout(() => setInvoiceAction(null), 300);
+    }
   };
 
   return (
@@ -2374,11 +2447,33 @@ function BillingInvoiceRowEditor({
         </div>
       </td>
       <td className="px-3 py-2 text-right align-top">
-        <div className="flex justify-end gap-1">
+        <div className="flex flex-wrap justify-end gap-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5"
+            onClick={downloadInvoice}
+            disabled={invoiceAction === "pdf"}
+          >
+            <Download className="h-3.5 w-3.5" />
+            {invoiceAction === "pdf" ? "PDF..." : "PDF"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5"
+            onClick={emailInvoice}
+            disabled={invoiceAction === "email"}
+          >
+            <Mail className="h-3.5 w-3.5" />
+            Email
+          </Button>
           <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
             <DialogTrigger asChild>
-              <Button size="sm" variant="outline" onClick={openPaymentDialog}>
-                Record payment
+              <Button size="sm" variant="outline" className="h-8" onClick={openPaymentDialog}>
+                Payment
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-2xl">
