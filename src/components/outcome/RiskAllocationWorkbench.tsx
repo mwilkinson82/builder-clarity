@@ -91,12 +91,12 @@ export function RiskAllocationWorkbench({
   }, null);
 
   return (
-    <section className="space-y-5" aria-label="Risk tally workspace">
-      <div className="rounded-lg border border-hairline bg-card shadow-card">
+    <section className="min-w-0 space-y-5" aria-label="Risk tally workspace">
+      <div className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
         <div className="grid gap-px bg-hairline lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="bg-card p-6 lg:p-8">
+          <div className="min-w-0 bg-card p-6 lg:p-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                   <span className="inline-block h-px w-7 bg-danger" />
                   Risk Tally
@@ -109,7 +109,7 @@ export function RiskAllocationWorkbench({
                   exposure is gone.
                 </p>
               </div>
-              <div className="grid min-w-[240px] grid-cols-2 gap-2">
+              <div className="grid w-full grid-cols-2 gap-2 sm:max-w-sm lg:w-[260px] lg:shrink-0">
                 <MetricTile label="Live remaining risk" value={fmtUSD(activeRisk)} tone="danger" />
                 <MetricTile label="Released / closed" value={fmtUSD(releasedRisk)} tone="success" />
                 <MetricTile label="Exposure Hold" value={fmtUSD(rollup.exposureHolds)} />
@@ -189,10 +189,13 @@ export function RiskAllocationWorkbench({
         </div>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_0.34fr]">
-        <div id="risk-ledger" className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+      <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,1fr)_260px]">
+        <div
+          id="risk-ledger"
+          className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card"
+        >
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
+            <div className="min-w-0">
               <h3 className="font-serif text-3xl text-foreground">Open risk tally</h3>
               <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
                 This is the running project meeting ledger for dollars currently held against the
@@ -200,9 +203,9 @@ export function RiskAllocationWorkbench({
               </p>
             </div>
             {topRisk && (
-              <div className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-xs">
+              <div className="w-full rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-xs sm:w-auto sm:min-w-[220px]">
                 <div className="font-medium text-danger">Largest remaining item</div>
-                <div className="mt-0.5 text-foreground">{topRisk.title}</div>
+                <div className="mt-0.5 truncate text-foreground">{topRisk.title}</div>
                 <div className="tabular text-muted-foreground">{fmtUSD(remaining(topRisk))}</div>
               </div>
             )}
@@ -291,7 +294,7 @@ function HoldGuide({
   cActual: number;
 }) {
   return (
-    <aside className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+    <aside className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card">
       <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
         <ListChecks className="h-3.5 w-3.5" />
         Hold Guide

@@ -216,15 +216,15 @@ export function ExposuresTable({
     .sort((a, b) => releasedValue(b) - releasedValue(a));
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <div className="flex justify-end">
         <Button onClick={openNew} size="sm" className="gap-1.5">
           <Plus className="h-3.5 w-3.5" /> Add risk
         </Button>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-hairline bg-card">
-        <Table className="min-w-[1120px]">
+      <div className="max-w-full overflow-x-auto overflow-y-hidden rounded-lg border border-hairline bg-card">
+        <Table className="min-w-[1120px] w-full">
           <TableHeader>
             <TableRow className="bg-surface">
               <TableHead className="min-w-[290px]">Risk / exposure</TableHead>

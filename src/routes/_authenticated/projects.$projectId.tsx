@@ -858,7 +858,7 @@ function ProjectPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen overflow-x-hidden bg-background text-foreground">
       <header className="relative border-b border-hairline bg-surface-elevated">
         <div className="absolute inset-0 grid-bg opacity-40" />
         <div className="relative mx-auto max-w-[1400px] px-6 py-5 lg:px-10 lg:py-6">
@@ -974,10 +974,10 @@ function ProjectPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8">
+      <main className="mx-auto w-full max-w-[1500px] min-w-0 px-4 py-6 sm:px-6 lg:px-8">
         <Tabs
           defaultValue="dashboard"
-          className="grid gap-6 lg:grid-cols-[238px_minmax(0,1fr)] lg:items-start"
+          className="grid min-w-0 gap-6 lg:grid-cols-[238px_minmax(0,1fr)] lg:items-start"
         >
           <aside className="lg:sticky lg:top-6">
             <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1 shadow-card lg:flex-col lg:items-stretch lg:overflow-visible">
