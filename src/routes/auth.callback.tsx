@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import type { EmailOtpType } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { sendTransactionalEmail } from "@/lib/email/send";
 
@@ -61,10 +62,34 @@ function callbackFailureMessage(err: unknown) {
   return message;
 }
 
+const EMAIL_OTP_TYPES = new Set<EmailOtpType>([
+  "signup",
+  "invite",
+  "magiclink",
+  "recovery",
+  "email_change",
+  "email",
+]);
+
+function emailOtpTypeFromUrl(type: string | null): EmailOtpType {
+  if (type && EMAIL_OTP_TYPES.has(type as EmailOtpType)) return type as EmailOtpType;
+  return "magiclink";
+}
+
 async function establishSessionFromUrl(url: URL) {
   const code = url.searchParams.get("code");
   if (code) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error) throw error;
+    return data.session ?? null;
+  }
+
+  const tokenHash = url.searchParams.get("token_hash");
+  if (tokenHash) {
+    const { data, error } = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: emailOtpTypeFromUrl(url.searchParams.get("type")),
+    });
     if (error) throw error;
     return data.session ?? null;
   }

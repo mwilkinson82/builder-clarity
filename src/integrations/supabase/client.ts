@@ -2,6 +2,66 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
+type SupabaseAuthStorage = {
+  getItem: (key: string) => string | null | Promise<string | null>;
+  setItem: (key: string, value: string) => void | Promise<void>;
+  removeItem: (key: string) => void | Promise<void>;
+};
+
+function createMemoryStorage(): SupabaseAuthStorage {
+  const store = new Map<string, string>();
+
+  return {
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => {
+      store.set(key, value);
+    },
+    removeItem: (key) => {
+      store.delete(key);
+    },
+  };
+}
+
+const memoryAuthStorage = createMemoryStorage();
+
+function canUseWebStorage(storage: Storage, label: string) {
+  try {
+    const testKey = "__overwatch_supabase_storage_test__";
+    storage.setItem(testKey, "1");
+    storage.removeItem(testKey);
+    return true;
+  } catch (err) {
+    console.warn(`[Supabase] ${label} is unavailable; trying the next auth storage option.`, err);
+    return false;
+  }
+}
+
+function getAuthStorage(): SupabaseAuthStorage | undefined {
+  if (typeof window === "undefined") return undefined;
+
+  const candidates: Array<[string, () => Storage]> = [
+    ["localStorage", () => window.localStorage],
+    ["sessionStorage", () => window.sessionStorage],
+  ];
+
+  for (const [label, getStorage] of candidates) {
+    try {
+      const storage = getStorage();
+      if (canUseWebStorage(storage, label)) return storage;
+    } catch (err) {
+      console.warn(
+        `[Supabase] ${label} cannot be accessed; trying the next auth storage option.`,
+        err,
+      );
+    }
+  }
+
+  console.warn(
+    "[Supabase] Browser storage is unavailable; using in-memory auth storage for this tab.",
+  );
+  return memoryAuthStorage;
+}
+
 function readRuntimeEnv(name: string) {
   const viteValue = import.meta.env[name];
   if (viteValue) return viteValue;
@@ -35,7 +95,7 @@ function createSupabaseClient() {
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
-      storage: typeof window !== "undefined" ? localStorage : undefined,
+      storage: getAuthStorage(),
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
