@@ -125,15 +125,26 @@ function shortDate(value: string | null) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown error";
+}
+
 function PortfolioPage() {
   const list = useServerFn(listProjects);
   const seed = useServerFn(seedDemoIfEmpty);
   const qc = useQueryClient();
-  const { data: projects = [], isLoading } = useQuery({
+  const {
+    data: projects = [],
+    error: projectsError,
+    isError: projectsDidError,
+    isLoading,
+    refetch: refetchProjects,
+  } = useQuery({
     queryKey: ["projects"],
     queryFn: () => list(),
   });
   const [search, setSearch] = useState("");
+  const [seedError, setSeedError] = useState<string | null>(null);
   const [companyFilter, setCompanyFilter] = useState("all");
   const [managerFilter, setManagerFilter] = useState("all");
   const [riskFilter, setRiskFilter] = useState<PortfolioRiskFilter>("all");
@@ -249,9 +260,15 @@ function PortfolioPage() {
     seededRef.current = true;
     seed()
       .then((r) => {
+        setSeedError(null);
         if (r.seeded) qc.invalidateQueries({ queryKey: ["projects"] });
       })
-      .catch(() => {
+      .catch((error) => {
+        const message = errorMessage(error);
+        setSeedError(message);
+        toast.error("Harbor Residence demo did not load", {
+          description: message,
+        });
         seededRef.current = false;
       });
   }, [isLoading, seed, qc]);
@@ -292,8 +309,27 @@ function PortfolioPage() {
       </header>
 
       <main className="mx-auto max-w-[1400px] px-6 py-10 lg:px-10">
+        {seedError && (
+          <PortfolioLoadError
+            title="Harbor Residence demo did not load"
+            description="The demo project is supposed to be prepared automatically for each workspace. This error is visible now so we can fix the underlying database rule instead of quietly showing an empty portfolio."
+            detail={seedError}
+            onRetry={() => {
+              setSeedError(null);
+              seededRef.current = false;
+              qc.invalidateQueries({ queryKey: ["projects"] });
+            }}
+          />
+        )}
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : projectsDidError ? (
+          <PortfolioLoadError
+            title="Portfolio did not load"
+            description="Your projects were not deleted. The app could not read the portfolio from the database with the current access context."
+            detail={errorMessage(projectsError)}
+            onRetry={() => refetchProjects()}
+          />
         ) : projects.length === 0 ? (
           <EmptyState />
         ) : (
@@ -964,6 +1000,39 @@ function PortfolioSignal({
         {label}
       </div>
       <div className="mt-2 text-2xl font-medium tabular">{value}</div>
+    </div>
+  );
+}
+
+function PortfolioLoadError({
+  title,
+  description,
+  detail,
+  onRetry,
+}: {
+  title: string;
+  description: string;
+  detail: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="mb-6 rounded-lg border border-danger/30 bg-danger/10 p-5 text-danger">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="flex gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+          <div>
+            <h2 className="font-serif text-2xl text-danger">{title}</h2>
+            <p className="mt-1 max-w-2xl text-sm text-danger/80">{description}</p>
+            <pre className="mt-3 max-w-3xl overflow-auto rounded-md border border-danger/20 bg-background/70 p-3 text-left text-xs text-foreground">
+              {detail}
+            </pre>
+          </div>
+        </div>
+        <Button type="button" variant="outline" onClick={onRetry} className="shrink-0 gap-1.5">
+          <RotateCcw className="h-3.5 w-3.5" />
+          Retry
+        </Button>
+      </div>
     </div>
   );
 }
