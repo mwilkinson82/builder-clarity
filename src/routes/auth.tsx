@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate, Link, Outlet } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export const Route = createFileRoute("/auth")({
-  ssr: false,
   head: () => ({
     meta: [
       { title: "Sign in — Project Outcome Review" },
@@ -26,7 +25,8 @@ function safeNextFromLocation() {
 const LIVE_AUTH_ORIGIN = "https://overwatch.alpcontractorcircle.com";
 
 function authRedirectTo(next: string) {
-  if (typeof window === "undefined") return `${LIVE_AUTH_ORIGIN}/auth/callback?next=${encodeURIComponent(next)}`;
+  if (typeof window === "undefined")
+    return `${LIVE_AUTH_ORIGIN}/auth/callback?next=${encodeURIComponent(next)}`;
   const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   const origin = isLocal ? window.location.origin : LIVE_AUTH_ORIGIN;
   return `${origin}/auth/callback?next=${encodeURIComponent(next)}`;
@@ -41,8 +41,8 @@ function goAfterAuth(next: string, navigate: ReturnType<typeof useNavigate>) {
 }
 
 function AuthPage() {
-  const isCallbackRoute =
-    typeof window !== "undefined" && window.location.pathname.startsWith("/auth/callback");
+  const location = useLocation();
+  const isCallbackRoute = location.pathname.startsWith("/auth/callback");
 
   if (isCallbackRoute) return <Outlet />;
 

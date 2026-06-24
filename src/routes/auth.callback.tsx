@@ -22,7 +22,6 @@ async function notifyLogin(session: { user: { id: string; email?: string | null 
 }
 
 export const Route = createFileRoute("/auth/callback")({
-  ssr: false,
   head: () => ({
     meta: [
       { title: "Signing in — Project Outcome Review" },
