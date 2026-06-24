@@ -326,8 +326,15 @@ const normalizeSovMappingProfile = (row: Record<string, unknown>): SovMappingPro
   updated_at: str(row.updated_at),
 });
 
-const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) =>
-  error?.code === "PGRST204" && (error.message ?? "").includes(`'${column}' column`);
+const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) => {
+  const message = (error?.message ?? "").toLowerCase();
+  const target = column.toLowerCase();
+  return (
+    (error?.code === "PGRST204" && message.includes(`'${target}' column`)) ||
+    message.includes(`column ${target} does not exist`) ||
+    message.includes(`.${target} does not exist`)
+  );
+};
 
 const isMissingRestRelation = (
   error: { code?: string; message?: string } | null,
@@ -531,16 +538,13 @@ export const listProjects = createServerFn({ method: "GET" })
 
     let dailyReportRows: Record<string, unknown>[] = [];
     const dailyReportsRes = await dynamicTable(context.supabase, "daily_reports")
-      .select("project_id,report_date,client_visible,attachment_count,attachment_bytes")
+      .select("project_id,report_date,client_visible")
       .in("project_id", ids);
     if (dailyReportsRes.error) {
-      if (
-        isMissingRestColumn(dailyReportsRes.error, "attachment_count") ||
-        isMissingRestColumn(dailyReportsRes.error, "attachment_bytes")
-      ) {
+      if (isMissingRestColumn(dailyReportsRes.error, "client_visible")) {
         const fallbackRes = await context.supabase
           .from("daily_reports")
-          .select("project_id,report_date,client_visible")
+          .select("project_id,report_date")
           .in("project_id", ids);
         if (fallbackRes.error && !isMissingRestRelation(fallbackRes.error, "daily_reports")) {
           throw new Error(fallbackRes.error.message);

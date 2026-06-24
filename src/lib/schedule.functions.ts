@@ -82,8 +82,15 @@ const RISK_EXPOSURE_CATEGORY: Record<ScheduleRiskKind, ExposureCategory> = {
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
-const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) =>
-  error?.code === "PGRST204" && (error.message ?? "").includes(`'${column}' column`);
+const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) => {
+  const message = (error?.message ?? "").toLowerCase();
+  const target = column.toLowerCase();
+  return (
+    (error?.code === "PGRST204" && message.includes(`'${target}' column`)) ||
+    message.includes(`column ${target} does not exist`) ||
+    message.includes(`.${target} does not exist`)
+  );
+};
 
 const normalizeScheduleRisk = (r: Record<string, unknown>): ScheduleRiskRow => ({
   id: r.id as string,

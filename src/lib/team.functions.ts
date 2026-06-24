@@ -85,8 +85,15 @@ export interface TeamProjectMember {
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const bool = (v: unknown) => (typeof v === "boolean" ? v : Boolean(v));
-const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) =>
-  error?.code === "PGRST204" && (error.message ?? "").includes(`'${column}' column`);
+const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) => {
+  const message = (error?.message ?? "").toLowerCase();
+  const target = column.toLowerCase();
+  return (
+    (error?.code === "PGRST204" && message.includes(`'${target}' column`)) ||
+    message.includes(`column ${target} does not exist`) ||
+    message.includes(`.${target} does not exist`)
+  );
+};
 
 type DailyReportUsageRow = {
   id?: string;
@@ -145,7 +152,7 @@ async function loadDailyReportUsage(context: TeamServerContext, projectIds: stri
 
   const reportRes = await context.supabase
     .from("daily_reports")
-    .select("id,report_date,attachment_count,attachment_bytes")
+    .select("id,report_date")
     .in("project_id", projectIds);
 
   let rows: DailyReportUsageRow[];
