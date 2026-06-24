@@ -785,19 +785,23 @@ function buildPortfolioTotals(projects: PortfolioProject[]): PortfolioTotals {
 
 function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
   return (
-    <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            <BriefcaseBusiness className="h-3.5 w-3.5" />
-            Portfolio Dashboard
+    <section className="rounded-lg border border-hairline bg-card p-5 shadow-card md:p-6">
+      <div className="grid gap-5 xl:grid-cols-[minmax(260px,0.9fr)_minmax(520px,1.35fr)] xl:items-stretch">
+        <div className="flex min-h-[132px] flex-col justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <BriefcaseBusiness className="h-3.5 w-3.5" />
+              Portfolio Dashboard
+            </div>
+            <h2 className="mt-2 font-serif text-4xl leading-none text-foreground">
+              Company-wide IOR posture.
+            </h2>
           </div>
-          <h2 className="mt-2 font-serif text-4xl text-foreground">Company-wide IOR posture.</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+          <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
             Rollup of active jobs, margin at risk, current indicated profit, and schedule pressure.
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3 2xl:min-w-[640px] 2xl:grid-cols-6">
+        <div className="grid gap-2 sm:grid-cols-3 2xl:grid-cols-6">
           <PortfolioSignal
             icon={<Activity className="h-3.5 w-3.5" />}
             label="Open projects"
@@ -838,7 +842,7 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
         </div>
       </div>
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
+      <div className="mt-4 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(136px,1fr))]">
         <PortfolioMetric label="Original GP" value={fmtUSD(totals.originalGP)} />
         <PortfolioMetric label="GP at risk" value={fmtUSD(totals.gpAtRisk)} tone="danger" />
         <PortfolioMetric
@@ -966,7 +970,7 @@ function PortfolioMetric({
           ? "text-warning"
           : "text-foreground";
   return (
-    <div className="flex h-[96px] min-w-0 flex-col rounded-md border border-hairline bg-surface p-3">
+    <div className="flex min-h-[96px] min-w-0 flex-col justify-between rounded-md border border-hairline bg-surface p-3">
       <div className="min-h-[28px] text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
@@ -1000,7 +1004,9 @@ function PortfolioSignal({
           ? "border-success/30 bg-success/10 text-success"
           : "border-hairline bg-surface text-foreground";
   return (
-    <div className={`flex h-[86px] min-w-0 flex-col rounded-md border p-3 ${toneClass}`}>
+    <div
+      className={`flex min-h-[86px] min-w-0 flex-col justify-between rounded-md border p-3 ${toneClass}`}
+    >
       <div className="flex min-h-[28px] items-start gap-1.5 text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.12em]">
         <span className="mt-0.5 shrink-0">{icon}</span>
         <span>{label}</span>
