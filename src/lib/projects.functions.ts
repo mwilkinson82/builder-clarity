@@ -228,6 +228,13 @@ export type InvoiceStatus =
   | "void";
 
 export type PaymentStatus = "pending" | "succeeded" | "failed" | "refunded" | "void";
+export type OnlinePaymentStatus =
+  | "not_enabled"
+  | "pending"
+  | "paid"
+  | "expired"
+  | "failed"
+  | "refunded";
 
 export interface BillingInvoiceRow {
   id: string;
@@ -243,6 +250,12 @@ export interface BillingInvoiceRow {
   paid_amount: number;
   status: InvoiceStatus;
   client_visible: boolean;
+  payment_enabled: boolean;
+  payment_url: string;
+  stripe_checkout_session_id: string;
+  stripe_payment_intent_id: string;
+  online_payment_status: OnlinePaymentStatus;
+  payment_link_sent_at: string | null;
   sent_at: string | null;
   paid_at: string | null;
   notes: string;
@@ -263,6 +276,10 @@ export interface PaymentLedgerRow {
   payment_method: string;
   processor: string;
   processor_payment_id: string;
+  stripe_checkout_session_id: string;
+  stripe_payment_intent_id: string;
+  stripe_charge_id: string;
+  receipt_url: string;
   status: PaymentStatus;
   paid_at: string;
   notes: string;
@@ -437,6 +454,10 @@ const normalizePaymentLedger = (row: Record<string, unknown>): PaymentLedgerRow 
   payment_method: str(row.payment_method, "manual"),
   processor: str(row.processor, "manual"),
   processor_payment_id: str(row.processor_payment_id),
+  stripe_checkout_session_id: str(row.stripe_checkout_session_id),
+  stripe_payment_intent_id: str(row.stripe_payment_intent_id),
+  stripe_charge_id: str(row.stripe_charge_id),
+  receipt_url: str(row.receipt_url),
   status: str(row.status, "succeeded") as PaymentStatus,
   paid_at: str(row.paid_at, new Date().toISOString()),
   notes: str(row.notes),
@@ -459,6 +480,12 @@ const normalizeBillingInvoice = (row: Record<string, unknown>): BillingInvoiceRo
   paid_amount: num(row.paid_amount),
   status: str(row.status, "draft") as InvoiceStatus,
   client_visible: Boolean(row.client_visible ?? false),
+  payment_enabled: Boolean(row.payment_enabled ?? false),
+  payment_url: str(row.payment_url),
+  stripe_checkout_session_id: str(row.stripe_checkout_session_id),
+  stripe_payment_intent_id: str(row.stripe_payment_intent_id),
+  online_payment_status: str(row.online_payment_status, "not_enabled") as OnlinePaymentStatus,
+  payment_link_sent_at: (row.payment_link_sent_at as string | null) ?? null,
   sent_at: (row.sent_at as string | null) ?? null,
   paid_at: (row.paid_at as string | null) ?? null,
   notes: str(row.notes),

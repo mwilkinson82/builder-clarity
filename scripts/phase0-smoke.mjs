@@ -104,6 +104,10 @@ await expectFile("src/routes/_authenticated/team.tsx", "team workspace route");
 await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF generator");
 await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
 await expectFile("src/lib/email-templates/invoice-notification.tsx", "invoice email template");
+await expectFile("src/lib/stripe.server.ts", "Stripe server helper");
+await expectFile("src/routes/api/stripe/checkout/invoice.ts", "invoice Stripe Checkout route");
+await expectFile("src/routes/api/stripe/checkout/subscription.ts", "subscription Stripe Checkout route");
+await expectFile("src/routes/api/stripe/webhook.ts", "Stripe webhook route");
 
 await expectContains(
   "src/routeTree.gen.ts",
@@ -113,8 +117,11 @@ await expectContains(
     /fullPath:\s*'\/team'/,
     /fullPath:\s*'\/projects\/\$projectId'/,
     /fullPath:\s*'\/client\/projects\/\$projectId'/,
+    /fullPath:\s*'\/api\/stripe\/checkout\/invoice'/,
+    /fullPath:\s*'\/api\/stripe\/checkout\/subscription'/,
+    /fullPath:\s*'\/api\/stripe\/webhook'/,
   ],
-  "generated route tree includes auth, team, project, and client portal routes",
+  "generated route tree includes auth, team, project, client portal, and Stripe API routes",
 );
 
 await expectContains(
@@ -249,6 +256,67 @@ await expectContains(
   "src/lib/email-templates/invoice-notification.tsx",
   [/OVERWATCH BILLING/, /Open client portal/, /totalDue/, /openBalance/],
   "invoice notification email includes client portal CTA and billing totals",
+);
+
+await expectContains(
+  "src/lib/stripe.server.ts",
+  [
+    /STRIPE_API_VERSION/,
+    /2026-02-25\.clover/,
+    /STRIPE_SECRET_KEY/,
+    /STRIPE_WEBHOOK_SECRET/,
+    /https:\/\/api\.stripe\.com\/v1\//,
+    /verifyStripeWebhookPayload/,
+    /stripePost/,
+    /createSupabaseAdminClient/,
+    /requireAuthedStripeContext/,
+    /can_manage_project/,
+    /can_manage_org/,
+  ],
+  "Stripe server helper keeps secrets server-side and verifies project/org access",
+);
+
+await expectContains(
+  "src/routes/api/stripe/checkout/invoice.ts",
+  [
+    /mode",\s*"payment"/,
+    /payment_enabled/,
+    /payment_url/,
+    /stripe_checkout_session_id/,
+    /online_payment_status/,
+    /payment_link_sent_at/,
+    /payment_intent_data\[metadata\]\[invoice_id\]/,
+  ],
+  "invoice checkout route creates guarded payment sessions and records payment link state",
+);
+
+await expectContains(
+  "src/routes/api/stripe/checkout/subscription.ts",
+  [
+    /mode",\s*"subscription"/,
+    /subscription_plans/,
+    /checkout_enabled/,
+    /stripe_price_id/,
+    /billing_status/,
+    /checkout_pending/,
+  ],
+  "subscription checkout route uses configured Stripe prices and updates billing posture",
+);
+
+await expectContains(
+  "src/routes/api/stripe/webhook.ts",
+  [
+    /checkout\.session\.completed/,
+    /checkout\.session\.expired/,
+    /payment_intent\.payment_failed/,
+    /charge\.refunded/,
+    /customer\.subscription\.updated/,
+    /payment_ledger/,
+    /online_payment_status/,
+    /stripe_checkout_session_id/,
+    /stripe_payment_intent_id/,
+  ],
+  "Stripe webhook route records invoice, payment ledger, refund, and subscription outcomes",
 );
 
 await expectContains(

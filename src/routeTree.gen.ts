@@ -16,10 +16,13 @@ import { Route as EmailUnsubscribeRouteImport } from './routes/email/unsubscribe
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
 import { Route as LovableEmailSuppressionRouteImport } from './routes/lovable/email/suppression'
+import { Route as ApiStripeWebhookRouteImport } from './routes/api/stripe/webhook'
 import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_authenticated/projects.$projectId'
 import { Route as LovableEmailTransactionalSendRouteImport } from './routes/lovable/email/transactional/send'
 import { Route as LovableEmailTransactionalPreviewRouteImport } from './routes/lovable/email/transactional/preview'
 import { Route as LovableEmailQueueProcessRouteImport } from './routes/lovable/email/queue/process'
+import { Route as ApiStripeCheckoutSubscriptionRouteImport } from './routes/api/stripe/checkout/subscription'
+import { Route as ApiStripeCheckoutInvoiceRouteImport } from './routes/api/stripe/checkout/invoice'
 import { Route as AuthenticatedClientProjectsProjectIdRouteImport } from './routes/_authenticated/client.projects.$projectId'
 
 const AuthRoute = AuthRouteImport.update({
@@ -56,6 +59,11 @@ const LovableEmailSuppressionRoute = LovableEmailSuppressionRouteImport.update({
   path: '/lovable/email/suppression',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiStripeWebhookRoute = ApiStripeWebhookRouteImport.update({
+  id: '/api/stripe/webhook',
+  path: '/api/stripe/webhook',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedProjectsProjectIdRoute =
   AuthenticatedProjectsProjectIdRouteImport.update({
     id: '/projects/$projectId',
@@ -80,6 +88,18 @@ const LovableEmailQueueProcessRoute =
     path: '/lovable/email/queue/process',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiStripeCheckoutSubscriptionRoute =
+  ApiStripeCheckoutSubscriptionRouteImport.update({
+    id: '/api/stripe/checkout/subscription',
+    path: '/api/stripe/checkout/subscription',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiStripeCheckoutInvoiceRoute =
+  ApiStripeCheckoutInvoiceRouteImport.update({
+    id: '/api/stripe/checkout/invoice',
+    path: '/api/stripe/checkout/invoice',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AuthenticatedClientProjectsProjectIdRoute =
   AuthenticatedClientProjectsProjectIdRouteImport.update({
     id: '/client/projects/$projectId',
@@ -94,8 +114,11 @@ export interface FileRoutesByFullPath {
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
+  '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
+  '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
+  '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/lovable/email/transactional/send': typeof LovableEmailTransactionalSendRoute
@@ -107,8 +130,11 @@ export interface FileRoutesByTo {
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/': typeof AuthenticatedIndexRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
+  '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
+  '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
+  '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/lovable/email/transactional/send': typeof LovableEmailTransactionalSendRoute
@@ -122,8 +148,11 @@ export interface FileRoutesById {
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
+  '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/_authenticated/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
+  '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
+  '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/lovable/email/transactional/send': typeof LovableEmailTransactionalSendRoute
@@ -137,8 +166,11 @@ export interface FileRouteTypes {
     | '/auth/callback'
     | '/email/unsubscribe'
     | '/projects/$projectId'
+    | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
+    | '/api/stripe/checkout/invoice'
+    | '/api/stripe/checkout/subscription'
     | '/lovable/email/queue/process'
     | '/lovable/email/transactional/preview'
     | '/lovable/email/transactional/send'
@@ -150,8 +182,11 @@ export interface FileRouteTypes {
     | '/email/unsubscribe'
     | '/'
     | '/projects/$projectId'
+    | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
+    | '/api/stripe/checkout/invoice'
+    | '/api/stripe/checkout/subscription'
     | '/lovable/email/queue/process'
     | '/lovable/email/transactional/preview'
     | '/lovable/email/transactional/send'
@@ -164,8 +199,11 @@ export interface FileRouteTypes {
     | '/email/unsubscribe'
     | '/_authenticated/'
     | '/_authenticated/projects/$projectId'
+    | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/_authenticated/client/projects/$projectId'
+    | '/api/stripe/checkout/invoice'
+    | '/api/stripe/checkout/subscription'
     | '/lovable/email/queue/process'
     | '/lovable/email/transactional/preview'
     | '/lovable/email/transactional/send'
@@ -175,7 +213,10 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRouteWithChildren
   EmailUnsubscribeRoute: typeof EmailUnsubscribeRoute
+  ApiStripeWebhookRoute: typeof ApiStripeWebhookRoute
   LovableEmailSuppressionRoute: typeof LovableEmailSuppressionRoute
+  ApiStripeCheckoutInvoiceRoute: typeof ApiStripeCheckoutInvoiceRoute
+  ApiStripeCheckoutSubscriptionRoute: typeof ApiStripeCheckoutSubscriptionRoute
   LovableEmailQueueProcessRoute: typeof LovableEmailQueueProcessRoute
   LovableEmailTransactionalPreviewRoute: typeof LovableEmailTransactionalPreviewRoute
   LovableEmailTransactionalSendRoute: typeof LovableEmailTransactionalSendRoute
@@ -232,6 +273,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LovableEmailSuppressionRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/stripe/webhook': {
+      id: '/api/stripe/webhook'
+      path: '/api/stripe/webhook'
+      fullPath: '/api/stripe/webhook'
+      preLoaderRoute: typeof ApiStripeWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/projects/$projectId': {
       id: '/_authenticated/projects/$projectId'
       path: '/projects/$projectId'
@@ -258,6 +306,20 @@ declare module '@tanstack/react-router' {
       path: '/lovable/email/queue/process'
       fullPath: '/lovable/email/queue/process'
       preLoaderRoute: typeof LovableEmailQueueProcessRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stripe/checkout/subscription': {
+      id: '/api/stripe/checkout/subscription'
+      path: '/api/stripe/checkout/subscription'
+      fullPath: '/api/stripe/checkout/subscription'
+      preLoaderRoute: typeof ApiStripeCheckoutSubscriptionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stripe/checkout/invoice': {
+      id: '/api/stripe/checkout/invoice'
+      path: '/api/stripe/checkout/invoice'
+      fullPath: '/api/stripe/checkout/invoice'
+      preLoaderRoute: typeof ApiStripeCheckoutInvoiceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/client/projects/$projectId': {
@@ -302,7 +364,10 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRouteWithChildren,
   EmailUnsubscribeRoute: EmailUnsubscribeRoute,
+  ApiStripeWebhookRoute: ApiStripeWebhookRoute,
   LovableEmailSuppressionRoute: LovableEmailSuppressionRoute,
+  ApiStripeCheckoutInvoiceRoute: ApiStripeCheckoutInvoiceRoute,
+  ApiStripeCheckoutSubscriptionRoute: ApiStripeCheckoutSubscriptionRoute,
   LovableEmailQueueProcessRoute: LovableEmailQueueProcessRoute,
   LovableEmailTransactionalPreviewRoute: LovableEmailTransactionalPreviewRoute,
   LovableEmailTransactionalSendRoute: LovableEmailTransactionalSendRoute,

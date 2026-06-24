@@ -193,12 +193,15 @@ Deliverables:
 These are the next repo-backed moves after the SOV intake work:
 
 1. Run the Phase 0 smoke gate before each push/publish: `npm run smoke:phase0`, `npm run build`, then `npm run smoke:phase0:live` after Lovable publishes.
-2. Add live Stripe Checkout Session server routes for subscriptions and client invoice payments once production Stripe keys, webhook secret, and Connect decision are ready.
-3. Add Stripe webhook processing for subscription status, invoice payment success/failure, refund state, and customer portal changes.
-4. Harden invoice/client billing smoke coverage against the live Lovable publish.
+2. Configure production secrets in Lovable Cloud before any live payment button is exposed: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and the final app URL if different from `https://overwatch.alpcontractorcircle.com`.
+3. Decide payment money movement before charging clients: direct platform payments first, Stripe Connect destination charges, or separate connected accounts per contractor.
+4. Wire the contractor billing UI to the guarded invoice checkout route, then test one invoice payment end-to-end through Stripe test mode and the webhook.
+5. Wire the Team workspace upgrade CTA to the subscription checkout route only after plan prices are confirmed.
+6. Harden invoice/client billing smoke coverage against the live Lovable publish.
 
 Recently completed:
 
+- Guarded Stripe Checkout route foundation for client invoices and subscriptions, plus webhook processing for invoice payment success/failure, refunds, and subscription status changes.
 - Stripe commercial-readiness foundation: plan price IDs, organization billing contact fields, subscription/customer/connect status, invoice payment URL fields, and Team workspace readiness display.
 - Contractor-side invoice PDF export and email-ready handoff from the invoice ledger.
 - Transactional invoice email queue from the billing ledger to client seats with Billing On.
