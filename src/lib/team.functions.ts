@@ -26,6 +26,17 @@ export interface TeamOrganization {
   slug: string;
   plan_code: string;
   billing_status: string;
+  billing_email: string;
+  billing_contact_name: string;
+  stripe_customer_id: string;
+  stripe_subscription_id: string;
+  stripe_price_id: string;
+  stripe_checkout_session_id: string;
+  stripe_connect_account_id: string;
+  stripe_connect_status: string;
+  subscription_current_period_end: string;
+  subscription_cancel_at_period_end: boolean;
+  payment_processor_ready: boolean;
   project_limit: number;
   seat_limit: number;
   storage_limit_mb: number;
@@ -85,6 +96,26 @@ export interface TeamProjectMember {
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const bool = (v: unknown) => (typeof v === "boolean" ? v : Boolean(v));
+
+const ORGANIZATION_BASE_SELECT =
+  "id,name,slug,plan_code,billing_status,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month,contractor_circle_grant";
+
+const ORGANIZATION_COMMERCIAL_COLUMNS = [
+  "billing_email",
+  "billing_contact_name",
+  "stripe_customer_id",
+  "stripe_subscription_id",
+  "stripe_price_id",
+  "stripe_checkout_session_id",
+  "stripe_connect_account_id",
+  "stripe_connect_status",
+  "subscription_current_period_end",
+  "subscription_cancel_at_period_end",
+  "payment_processor_ready",
+] as const;
+
+const ORGANIZATION_SELECT = `${ORGANIZATION_BASE_SELECT},${ORGANIZATION_COMMERCIAL_COLUMNS.join(",")}`;
+
 const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) => {
   const message = (error?.message ?? "").toLowerCase();
   const target = column.toLowerCase();
@@ -94,6 +125,36 @@ const isMissingRestColumn = (error: { code?: string; message?: string } | null, 
     message.includes(`.${target} does not exist`)
   );
 };
+
+function missingCommercialOrganizationColumn(error: { code?: string; message?: string } | null) {
+  return ORGANIZATION_COMMERCIAL_COLUMNS.some((column) => isMissingRestColumn(error, column));
+}
+
+function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
+  return {
+    id: row.id as string,
+    name: str(row.name),
+    slug: str(row.slug),
+    plan_code: str(row.plan_code),
+    billing_status: str(row.billing_status),
+    billing_email: str(row.billing_email),
+    billing_contact_name: str(row.billing_contact_name),
+    stripe_customer_id: str(row.stripe_customer_id),
+    stripe_subscription_id: str(row.stripe_subscription_id),
+    stripe_price_id: str(row.stripe_price_id),
+    stripe_checkout_session_id: str(row.stripe_checkout_session_id),
+    stripe_connect_account_id: str(row.stripe_connect_account_id),
+    stripe_connect_status: str(row.stripe_connect_status, "not_connected"),
+    subscription_current_period_end: str(row.subscription_current_period_end),
+    subscription_cancel_at_period_end: bool(row.subscription_cancel_at_period_end),
+    payment_processor_ready: bool(row.payment_processor_ready),
+    project_limit: num(row.project_limit),
+    seat_limit: num(row.seat_limit),
+    storage_limit_mb: num(row.storage_limit_mb),
+    daily_report_limit_per_month: num(row.daily_report_limit_per_month),
+    contractor_circle_grant: bool(row.contractor_circle_grant),
+  };
+}
 
 type DailyReportUsageRow = {
   id?: string;
@@ -128,6 +189,25 @@ async function requireCanManageProject(context: TeamServerContext, projectId: st
   });
   if (error) throw new Error(error.message);
   if (!canManage) throw new Error("You do not have permission to manage this project.");
+}
+
+async function loadOrganization(context: TeamServerContext, organizationId: string) {
+  const extended = await context.supabase
+    .from("organizations")
+    .select(ORGANIZATION_SELECT)
+    .eq("id", organizationId)
+    .single();
+
+  if (!extended.error) return normalizeOrganization(extended.data as Record<string, unknown>);
+  if (!missingCommercialOrganizationColumn(extended.error)) throw new Error(extended.error.message);
+
+  const fallback = await context.supabase
+    .from("organizations")
+    .select(ORGANIZATION_BASE_SELECT)
+    .eq("id", organizationId)
+    .single();
+  if (fallback.error) throw new Error(fallback.error.message);
+  return normalizeOrganization(fallback.data as Record<string, unknown>);
 }
 
 function currentMonthBounds() {
@@ -243,13 +323,7 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
     const organizationId = await ensureCurrentOrganization(context);
 
     const [orgRes, membersRes, invitesRes, projectsRes] = await Promise.all([
-      context.supabase
-        .from("organizations")
-        .select(
-          "id,name,slug,plan_code,billing_status,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month,contractor_circle_grant",
-        )
-        .eq("id", organizationId)
-        .single(),
+      loadOrganization(context, organizationId),
       context.supabase
         .from("organization_memberships")
         .select("*")
@@ -269,7 +343,6 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
         .order("name", { ascending: true }),
     ]);
 
-    if (orgRes.error) throw new Error(orgRes.error.message);
     if (membersRes.error) throw new Error(membersRes.error.message);
     if (invitesRes.error) throw new Error(invitesRes.error.message);
     if (projectsRes.error) throw new Error(projectsRes.error.message);
@@ -319,18 +392,7 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       ]),
     );
 
-    const organization: TeamOrganization = {
-      id: orgRes.data.id as string,
-      name: str(orgRes.data.name),
-      slug: str(orgRes.data.slug),
-      plan_code: str(orgRes.data.plan_code),
-      billing_status: str(orgRes.data.billing_status),
-      project_limit: num(orgRes.data.project_limit),
-      seat_limit: num(orgRes.data.seat_limit),
-      storage_limit_mb: num(orgRes.data.storage_limit_mb),
-      daily_report_limit_per_month: num(orgRes.data.daily_report_limit_per_month),
-      contractor_circle_grant: bool(orgRes.data.contractor_circle_grant),
-    };
+    const organization = orgRes;
 
     const members: TeamMember[] = memberRows.map((m) => {
       const profile = profilesById.get(m.user_id as string);
@@ -439,6 +501,8 @@ export const updateMyProfile = createServerFn({ method: "POST" })
 const organizationUpdateInput = z.object({
   name: z.string().min(1, "Enter a company name.").max(160),
   slug: z.string().max(120).default(""),
+  billing_email: z.string().email("Enter a valid billing email.").or(z.literal("")).default(""),
+  billing_contact_name: z.string().max(160).default(""),
 });
 
 export const updateOrganization = createServerFn({ method: "POST" })
@@ -456,20 +520,34 @@ export const updateOrganization = createServerFn({ method: "POST" })
       .replace(/[^a-z0-9-]+/g, "-")
       .replace(/^-+|-+$/g, "");
 
+    const updatePayload = {
+      name: data.name.trim(),
+      slug: cleanSlug,
+      billing_email: data.billing_email.trim().toLowerCase(),
+      billing_contact_name: data.billing_contact_name.trim(),
+    };
+
     const { data: updated, error } = await context.supabase
       .from("organizations")
-      .update({
-        name: data.name.trim(),
-        slug: cleanSlug,
-      })
+      .update(updatePayload)
       .eq("id", organizationId)
-      .select(
-        "id,name,slug,plan_code,billing_status,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month,contractor_circle_grant",
-      )
+      .select(ORGANIZATION_SELECT)
       .single();
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (!missingCommercialOrganizationColumn(error)) throw new Error(error.message);
 
-    return { organization: updated as TeamOrganization };
+      const { data: fallback, error: fallbackError } = await context.supabase
+        .from("organizations")
+        .update({ name: updatePayload.name, slug: updatePayload.slug })
+        .eq("id", organizationId)
+        .select(ORGANIZATION_BASE_SELECT)
+        .single();
+      if (fallbackError) throw new Error(fallbackError.message);
+
+      return { organization: normalizeOrganization(fallback as Record<string, unknown>) };
+    }
+
+    return { organization: normalizeOrganization(updated as Record<string, unknown>) };
   });
 
 const teamInviteInput = z.object({

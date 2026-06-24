@@ -193,11 +193,13 @@ Deliverables:
 These are the next repo-backed moves after the SOV intake work:
 
 1. Run the Phase 0 smoke gate before each push/publish: `npm run smoke:phase0`, `npm run build`, then `npm run smoke:phase0:live` after Lovable publishes.
-2. Add Stripe subscription and payment planning now that the invoice/payment data model is in place.
-3. Harden invoice/client billing smoke coverage against the live Lovable publish.
+2. Add live Stripe Checkout Session server routes for subscriptions and client invoice payments once production Stripe keys, webhook secret, and Connect decision are ready.
+3. Add Stripe webhook processing for subscription status, invoice payment success/failure, refund state, and customer portal changes.
+4. Harden invoice/client billing smoke coverage against the live Lovable publish.
 
 Recently completed:
 
+- Stripe commercial-readiness foundation: plan price IDs, organization billing contact fields, subscription/customer/connect status, invoice payment URL fields, and Team workspace readiness display.
 - Contractor-side invoice PDF export and email-ready handoff from the invoice ledger.
 - Transactional invoice email queue from the billing ledger to client seats with Billing On.
 - Daily report packet PDF export for internal filtered reports and client-visible portal reports.

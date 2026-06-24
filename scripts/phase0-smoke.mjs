@@ -204,13 +204,33 @@ await expectContains(
   "src/routes/_authenticated/team.tsx",
   [
     /PlanReadinessPanel/,
-    /Plan and usage controls/,
+    /Plan and Stripe readiness/,
     /Commercial readiness/,
+    /Stripe readiness/,
+    /Subscription checkout/,
+    /Client invoice payments/,
+    /Billing contact/,
+    /Checkout Sessions/,
     /usageStatus/,
     /Contractor Circle grant keeps users working/,
     /Storage and attachments/,
   ],
-  "team workspace exposes plan usage controls without blocking Contractor Circle access",
+  "team workspace exposes plan, Stripe, and usage controls without blocking Contractor Circle access",
+);
+
+await expectContains(
+  "src/lib/team.functions.ts",
+  [
+    /ORGANIZATION_COMMERCIAL_COLUMNS/,
+    /billing_email/,
+    /billing_contact_name/,
+    /stripe_customer_id/,
+    /stripe_subscription_id/,
+    /stripe_connect_account_id/,
+    /payment_processor_ready/,
+    /missingCommercialOrganizationColumn/,
+  ],
+  "team server functions expose commercial billing readiness with schema-cache fallback",
 );
 
 await expectContains(
@@ -382,6 +402,22 @@ expectSql(
     /payment_ledger_client_select/i,
   ],
   "invoice/payment ledger foundation exists with client-visible billing policies",
+);
+
+expectSql(
+  sql,
+  [
+    /alter table public\.subscription_plans[\s\S]*stripe_price_id/i,
+    /alter table public\.organizations[\s\S]*billing_email/i,
+    /alter table public\.organizations[\s\S]*stripe_connect_account_id/i,
+    /alter table public\.organizations[\s\S]*payment_processor_ready/i,
+    /alter table public\.billing_invoices[\s\S]*payment_url/i,
+    /alter table public\.billing_invoices[\s\S]*stripe_checkout_session_id/i,
+    /alter table public\.payment_ledger[\s\S]*stripe_payment_intent_id/i,
+    /Stripe Price ID used by Checkout Sessions/i,
+    /Contractor Circle users working/i,
+  ],
+  "Stripe commercial readiness migration stages subscription and invoice payment fields",
 );
 
 expectSql(

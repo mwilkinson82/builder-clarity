@@ -8,6 +8,7 @@ import {
   BriefcaseBusiness,
   CheckCircle2,
   ClipboardList,
+  CreditCard,
   Gauge,
   HardDrive,
   LogOut,
@@ -237,7 +238,12 @@ function TeamPage() {
     phone: "",
     company_title: "",
   });
-  const [orgForm, setOrgForm] = useState({ name: "", slug: "" });
+  const [orgForm, setOrgForm] = useState({
+    name: "",
+    slug: "",
+    billing_email: "",
+    billing_contact_name: "",
+  });
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<AccountRole>("project_manager");
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -251,7 +257,12 @@ function TeamPage() {
       phone: team.currentProfile.phone,
       company_title: team.currentProfile.company_title,
     });
-    setOrgForm({ name: team.organization.name, slug: team.organization.slug });
+    setOrgForm({
+      name: team.organization.name,
+      slug: team.organization.slug,
+      billing_email: team.organization.billing_email,
+      billing_contact_name: team.organization.billing_contact_name,
+    });
     setSelectedProjectId((current) => current || team.projects[0]?.id || "");
     setSelectedUserId(
       (current) =>
@@ -536,6 +547,18 @@ function TeamPage() {
                 billingStatus={team.organization.billing_status}
                 grantActive={team.organization.contractor_circle_grant}
                 usage={usage}
+                billingEmail={team.organization.billing_email}
+                stripeCustomerId={team.organization.stripe_customer_id}
+                stripeSubscriptionId={team.organization.stripe_subscription_id}
+                stripePriceId={team.organization.stripe_price_id}
+                stripeConnectStatus={team.organization.stripe_connect_status}
+                paymentProcessorReady={team.organization.payment_processor_ready}
+                subscriptionCurrentPeriodEnd={
+                  team.organization.subscription_current_period_end
+                }
+                subscriptionCancelAtPeriodEnd={
+                  team.organization.subscription_cancel_at_period_end
+                }
               />
             )}
 
@@ -625,9 +648,48 @@ function TeamPage() {
                       />
                     </div>
                   </div>
-                  <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Billing contact</Label>
+                      <Input
+                        value={orgForm.billing_contact_name}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) =>
+                          setOrgForm({ ...orgForm, billing_contact_name: event.target.value })
+                        }
+                        placeholder="Owner or accounting contact"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Billing email</Label>
+                      <Input
+                        type="email"
+                        value={orgForm.billing_email}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) =>
+                          setOrgForm({ ...orgForm, billing_email: event.target.value })
+                        }
+                        placeholder="billing@company.com"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-3 xl:grid-cols-6">
                     <MiniStat label="Plan" value={team.organization.plan_code} />
                     <MiniStat label="Billing" value={team.organization.billing_status} />
+                    <MiniStat
+                      label="Stripe"
+                      value={
+                        team.organization.stripe_customer_id ? "Customer linked" : "Not connected"
+                      }
+                    />
+                    <MiniStat
+                      label="Payments"
+                      value={
+                        team.organization.payment_processor_ready
+                          ? "Online ready"
+                          : "Manual only"
+                      }
+                    />
                     <MiniStat label="Role" value={roleLabel(team.currentUserRole ?? "member")} />
                     <MiniStat
                       label="Grant"
@@ -960,14 +1022,66 @@ function PlanReadinessPanel({
   billingStatus,
   grantActive,
   usage,
+  billingEmail,
+  stripeCustomerId,
+  stripeSubscriptionId,
+  stripePriceId,
+  stripeConnectStatus,
+  paymentProcessorReady,
+  subscriptionCurrentPeriodEnd,
+  subscriptionCancelAtPeriodEnd,
 }: {
   planCode: string;
   billingStatus: string;
   grantActive: boolean;
   usage: TeamUsageSnapshot;
+  billingEmail: string;
+  stripeCustomerId: string;
+  stripeSubscriptionId: string;
+  stripePriceId: string;
+  stripeConnectStatus: string;
+  paymentProcessorReady: boolean;
+  subscriptionCurrentPeriodEnd: string;
+  subscriptionCancelAtPeriodEnd: boolean;
 }) {
   const planLabel = formatPlanCode(planCode);
   const billingLabel = formatBillingStatus(billingStatus);
+  const subscriptionReady = Boolean(stripeCustomerId && stripeSubscriptionId);
+  const connectReady = paymentProcessorReady || stripeConnectStatus === "active";
+  const checkoutConfigured = Boolean(stripePriceId);
+  const commerceRows = [
+    {
+      label: "Subscription checkout",
+      value: subscriptionReady ? "Connected" : checkoutConfigured ? "Price staged" : "Not connected",
+      detail: subscriptionReady
+        ? `Stripe customer and subscription are recorded${
+            subscriptionCurrentPeriodEnd ? ` through ${shortDate(subscriptionCurrentPeriodEnd)}` : ""
+          }.`
+        : "Ready for Stripe Checkout Sessions once live plan prices are connected.",
+      tone: subscriptionReady ? "default" : "warning",
+    },
+    {
+      label: "Client invoice payments",
+      value: connectReady ? "Online ready" : "Manual only",
+      detail: connectReady
+        ? "Client invoices can use hosted payment links when enabled per invoice."
+        : "Invoices still support PDF and email. Online payment links stay hidden until Stripe is connected.",
+      tone: connectReady ? "default" : "warning",
+    },
+    {
+      label: "Billing contact",
+      value: billingEmail || "Not set",
+      detail: billingEmail
+        ? "This is the account email for subscription and payment notices."
+        : "Add a billing email before moving this company out of the Contractor Circle grant.",
+      tone: billingEmail ? "default" : "warning",
+    },
+  ] satisfies {
+    label: string;
+    value: string;
+    detail: string;
+    tone: UsageTone;
+  }[];
   const rows = [
     {
       label: "Seats",
@@ -1015,7 +1129,7 @@ function PlanReadinessPanel({
         <div className="border-b border-hairline p-5 lg:border-b-0 lg:border-r">
           <SectionHeader
             icon={<Gauge className="h-4 w-4" />}
-            eyebrow="Plan and usage controls"
+            eyebrow="Plan and Stripe readiness"
             title="Commercial readiness"
           />
           <div className="mt-5 grid gap-3 text-sm">
@@ -1024,6 +1138,16 @@ function PlanReadinessPanel({
             <PlanFact
               label="Current access"
               value={grantActive ? "Contractor Circle grant" : "Plan enforcement"}
+            />
+            <PlanFact
+              label="Renewal posture"
+              value={
+                subscriptionCancelAtPeriodEnd
+                  ? "Cancels at period end"
+                  : subscriptionCurrentPeriodEnd
+                    ? `Current through ${shortDate(subscriptionCurrentPeriodEnd)}`
+                    : "No paid cycle"
+              }
             />
           </div>
           <div
@@ -1036,6 +1160,15 @@ function PlanReadinessPanel({
             {grantActive
               ? "Contractor Circle grant keeps users working. These meters are advisory until paid plans are turned on."
               : "Plan limits can enforce seats, jobs, reports, and storage once billing is active."}
+          </div>
+          <div className="mt-4 grid gap-2">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              <CreditCard className="h-3.5 w-3.5" />
+              Stripe readiness
+            </div>
+            {commerceRows.map((row) => (
+              <CommerceReadinessItem key={row.label} {...row} />
+            ))}
           </div>
           <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1070,6 +1203,41 @@ function PlanFact({ label, value }: { label: string; value: string }) {
         {label}
       </div>
       <div className="text-right font-medium text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function CommerceReadinessItem({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  tone: UsageTone;
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "border-danger/30 bg-danger/10 text-danger"
+      : tone === "warning"
+        ? "border-warning/30 bg-warning/10 text-warning"
+        : "border-success/25 bg-success/10 text-success";
+  const Icon = tone === "default" ? CheckCircle2 : AlertTriangle;
+
+  return (
+    <div className={`rounded-md border px-3 py-2 text-sm ${toneClass}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Icon className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate font-medium">{label}</span>
+        </div>
+        <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.08em]">
+          {value}
+        </span>
+      </div>
+      <div className="mt-1 pl-5 text-xs leading-snug opacity-85">{detail}</div>
     </div>
   );
 }
