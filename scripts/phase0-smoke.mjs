@@ -105,6 +105,10 @@ await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF 
 await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
 await expectFile("src/lib/email-templates/invoice-notification.tsx", "invoice email template");
 await expectFile("src/lib/stripe.server.ts", "Stripe server helper");
+await expectFile(
+  "src/routes/api/stripe/connect/account-link.ts",
+  "Stripe Connect onboarding route",
+);
 await expectFile("src/routes/api/stripe/checkout/invoice.ts", "invoice Stripe Checkout route");
 await expectFile(
   "src/routes/api/stripe/checkout/subscription.ts",
@@ -120,6 +124,7 @@ await expectContains(
     /fullPath:\s*'\/team'/,
     /fullPath:\s*'\/projects\/\$projectId'/,
     /fullPath:\s*'\/client\/projects\/\$projectId'/,
+    /fullPath:\s*'\/api\/stripe\/connect\/account-link'/,
     /fullPath:\s*'\/api\/stripe\/checkout\/invoice'/,
     /fullPath:\s*'\/api\/stripe\/checkout\/subscription'/,
     /fullPath:\s*'\/api\/stripe\/webhook'/,
@@ -222,6 +227,10 @@ await expectContains(
     /Overwatch subscription/,
     /Client invoice payments/,
     /Billing contact/,
+    /stripeConnectMutation/,
+    /Connect Stripe/,
+    /stripe\/connect\/account-link/,
+    /stripe=return/,
     /Checkout Sessions/,
     /usageStatus/,
     /Contractor Circle grant keeps this company working/,
@@ -297,12 +306,30 @@ await expectContains(
     /https:\/\/api\.stripe\.com\/v1\//,
     /verifyStripeWebhookPayload/,
     /stripePost/,
+    /stripeGet/,
     /createSupabaseAdminClient/,
     /requireAuthedStripeContext/,
     /can_manage_project/,
     /can_manage_org/,
   ],
   "Stripe server helper keeps secrets server-side and verifies project/org access",
+);
+
+await expectContains(
+  "src/routes/api/stripe/connect/account-link.ts",
+  [
+    /createFileRoute\("\/api\/stripe\/connect\/account-link"\)/,
+    /account_links/,
+    /account_onboarding/,
+    /controller\[fees\]\[payer\]/,
+    /controller\[stripe_dashboard\]\[type\]/,
+    /capabilities\[card_payments\]\[requested\]/,
+    /capabilities\[transfers\]\[requested\]/,
+    /stripe_connect_account_id/,
+    /payment_processor_ready/,
+    /requireCanManageOrganization/,
+  ],
+  "Stripe Connect onboarding route creates account links and updates company readiness",
 );
 
 await expectContains(
@@ -351,6 +378,10 @@ await expectContains(
     /overwatch_fee_amount_cents/,
     /overwatch_fee/,
     /net_payout/,
+    /account\.updated/,
+    /charges_enabled/,
+    /payouts_enabled/,
+    /details_submitted/,
   ],
   "Stripe webhook route records invoice, payment ledger, refund, and subscription outcomes",
 );

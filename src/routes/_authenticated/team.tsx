@@ -150,6 +150,14 @@ type TeamUsageSnapshot = {
   storageLimitLabel: string;
 };
 
+type StripeConnectPayload = {
+  accountId: string;
+  accountLinkUrl: string;
+  connectStatus: string;
+  organizationId: string;
+  paymentProcessorReady: boolean;
+};
+
 type UsageStatus = {
   tone: UsageTone;
   label: string;
@@ -321,6 +329,47 @@ function TeamPage() {
     },
     onError: (error) => {
       toast.error("Company did not save", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    },
+  });
+
+  const stripeConnectMutation = useMutation({
+    mutationFn: async () => {
+      if (!team?.organization.id) throw new Error("Company workspace is still loading.");
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Sign in again before connecting Stripe.");
+
+      const response = await fetch("/api/stripe/connect/account-link", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          organizationId: team.organization.id,
+          returnPath: "/team?stripe=return",
+          refreshPath: "/team?stripe=refresh",
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as
+        | (StripeConnectPayload & { ok?: boolean; error?: string })
+        | { ok?: boolean; error?: string };
+      if (!response.ok || !payload.ok || !("accountLinkUrl" in payload)) {
+        throw new Error(payload.error || "Stripe setup did not open.");
+      }
+      return payload;
+    },
+    onSuccess: (payload) => {
+      toast.success("Stripe setup opened", {
+        description:
+          "Finish the secure Stripe onboarding screen to enable online invoice payments.",
+      });
+      window.location.assign(payload.accountLinkUrl);
+    },
+    onError: (error) => {
+      toast.error("Stripe setup did not open", {
         description: error instanceof Error ? error.message : "Try again.",
       });
     },
@@ -556,6 +605,9 @@ function TeamPage() {
                 paymentProcessorReady={team.organization.payment_processor_ready}
                 subscriptionCurrentPeriodEnd={team.organization.subscription_current_period_end}
                 subscriptionCancelAtPeriodEnd={team.organization.subscription_cancel_at_period_end}
+                canManageTeam={team.canManageTeam}
+                onStartStripeConnect={() => stripeConnectMutation.mutate()}
+                stripeConnectPending={stripeConnectMutation.isPending}
               />
             )}
 
@@ -676,7 +728,13 @@ function TeamPage() {
                     <MiniStat
                       label="Stripe"
                       value={
-                        team.organization.stripe_customer_id ? "Customer linked" : "Not connected"
+                        team.organization.payment_processor_ready
+                          ? "Connect ready"
+                          : team.organization.stripe_connect_account_id
+                            ? "Setup started"
+                            : team.organization.stripe_customer_id
+                              ? "Customer linked"
+                              : "Not connected"
                       }
                     />
                     <MiniStat
@@ -1025,6 +1083,9 @@ function PlanReadinessPanel({
   paymentProcessorReady,
   subscriptionCurrentPeriodEnd,
   subscriptionCancelAtPeriodEnd,
+  canManageTeam,
+  onStartStripeConnect,
+  stripeConnectPending,
 }: {
   planCode: string;
   billingStatus: string;
@@ -1038,12 +1099,22 @@ function PlanReadinessPanel({
   paymentProcessorReady: boolean;
   subscriptionCurrentPeriodEnd: string;
   subscriptionCancelAtPeriodEnd: boolean;
+  canManageTeam: boolean;
+  onStartStripeConnect: () => void;
+  stripeConnectPending: boolean;
 }) {
   const planLabel = formatPlanCode(planCode);
   const billingLabel = formatBillingStatus(billingStatus);
   const subscriptionReady = Boolean(stripeCustomerId && stripeSubscriptionId);
   const connectReady = paymentProcessorReady || stripeConnectStatus === "active";
   const checkoutConfigured = Boolean(stripePriceId);
+  const connectInProgress =
+    stripeConnectStatus === "onboarding_started" || stripeConnectStatus === "pending_review";
+  const connectButtonLabel = connectReady
+    ? "Stripe connected"
+    : connectInProgress
+      ? "Continue Stripe setup"
+      : "Connect Stripe";
   const commerceRows = [
     {
       label: "Overwatch subscription",
@@ -1170,6 +1241,33 @@ function PlanReadinessPanel({
             {commerceRows.map((row) => (
               <CommerceReadinessItem key={row.label} {...row} />
             ))}
+          </div>
+          <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-medium text-foreground">Contractor payout account</div>
+                <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Connect the contractor&apos;s Stripe account before client invoices can include
+                  online payment links.
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                className="gap-1.5 sm:shrink-0"
+                variant={connectReady ? "outline" : "default"}
+                disabled={!canManageTeam || connectReady || stripeConnectPending}
+                onClick={onStartStripeConnect}
+              >
+                <CreditCard className="h-3.5 w-3.5" />
+                {stripeConnectPending ? "Opening..." : connectButtonLabel}
+              </Button>
+            </div>
+            {!canManageTeam && (
+              <div className="mt-2 text-xs text-muted-foreground">
+                Ask an owner or admin to connect Stripe for this company.
+              </div>
+            )}
           </div>
           <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3 text-xs leading-relaxed text-muted-foreground">
             Overwatch subscriptions and client invoice payments are separate. Client payments should

@@ -152,7 +152,8 @@ export async function requireAuthedStripeContext(request: Request): Promise<Auth
   }
 
   const token = authHeader.slice("Bearer ".length).trim();
-  if (!token) throw new RouteError("unauthorized", "Sign in before using this billing action.", 401);
+  if (!token)
+    throw new RouteError("unauthorized", "Sign in before using this billing action.", 401);
 
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin.auth.getUser(token);
@@ -182,7 +183,10 @@ export async function requireCanManageProject(context: AuthedStripeContext, proj
   }
 }
 
-export async function requireCanManageOrganization(context: AuthedStripeContext, organizationId: string) {
+export async function requireCanManageOrganization(
+  context: AuthedStripeContext,
+  organizationId: string,
+) {
   const { data, error } = await context.authed.rpc("can_manage_org", {
     p_org_id: organizationId,
   });
@@ -231,10 +235,41 @@ export async function stripePost<T>(
 
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
-    const stripeError = payload.error as { message?: string; type?: string; code?: string } | undefined;
+    const stripeError = payload.error as
+      | { message?: string; type?: string; code?: string }
+      | undefined;
     throw new RouteError(
       "stripe_api_error",
       stripeError?.message || "Stripe rejected the checkout request.",
+      response.status,
+      {
+        type: stripeError?.type,
+        code: stripeError?.code,
+      },
+    );
+  }
+
+  return payload as T;
+}
+
+export async function stripeGet<T>(path: string): Promise<T> {
+  const secretKey = requireStripeSecretKey();
+  const response = await fetch(`https://api.stripe.com/v1/${path.replace(/^\//, "")}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      "Stripe-Version": STRIPE_API_VERSION,
+    },
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    const stripeError = payload.error as
+      | { message?: string; type?: string; code?: string }
+      | undefined;
+    throw new RouteError(
+      "stripe_api_error",
+      stripeError?.message || "Stripe rejected the request.",
       response.status,
       {
         type: stripeError?.type,
@@ -292,7 +327,11 @@ export async function verifyStripeWebhookPayload(rawBody: string, signatureHeade
   const expected = await hmacSha256Hex(webhookSecret, `${timestamp}.${rawBody}`);
   const matched = signatures.some((signature) => timingSafeEqual(signature, expected));
   if (!matched) {
-    throw new RouteError("stripe_signature_invalid", "Stripe webhook signature verification failed.", 400);
+    throw new RouteError(
+      "stripe_signature_invalid",
+      "Stripe webhook signature verification failed.",
+      400,
+    );
   }
 
   return JSON.parse(rawBody) as {

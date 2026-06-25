@@ -35,6 +35,22 @@ function subscriptionStatus(value: string) {
   return value || "unknown";
 }
 
+function connectAccountStatus(object: StripeObject) {
+  const chargesEnabled = Boolean(object.charges_enabled);
+  const payoutsEnabled = Boolean(object.payouts_enabled);
+  const detailsSubmitted = Boolean(object.details_submitted);
+
+  if (chargesEnabled && payoutsEnabled && detailsSubmitted) {
+    return { status: "active", ready: true };
+  }
+
+  if (detailsSubmitted) {
+    return { status: "pending_review", ready: false };
+  }
+
+  return { status: "onboarding_started", ready: false };
+}
+
 async function handleCheckoutCompleted(object: StripeObject) {
   const metadata = sessionMetadata(object);
   if (metadata.kind === "client_invoice") {
@@ -243,6 +259,22 @@ async function markSubscriptionUpdated(object: StripeObject) {
   if (error) throw new Error(error.message);
 }
 
+async function markConnectAccountUpdated(object: StripeObject) {
+  const accountId = str(object.id);
+  if (!accountId) return;
+
+  const admin = createSupabaseAdminClient();
+  const status = connectAccountStatus(object);
+  const { error } = await admin
+    .from("organizations")
+    .update({
+      stripe_connect_status: status.status,
+      payment_processor_ready: status.ready,
+    })
+    .eq("stripe_connect_account_id", accountId);
+  if (error) throw new Error(error.message);
+}
+
 export const Route = createFileRoute("/api/stripe/webhook")({
   server: {
     handlers: {
@@ -272,6 +304,9 @@ export const Route = createFileRoute("/api/stripe/webhook")({
             case "customer.subscription.updated":
             case "customer.subscription.deleted":
               await markSubscriptionUpdated(object);
+              break;
+            case "account.updated":
+              await markConnectAccountUpdated(object);
               break;
             default:
               break;
