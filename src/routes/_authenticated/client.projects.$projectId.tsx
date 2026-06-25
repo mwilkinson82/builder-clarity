@@ -530,6 +530,18 @@ function ClientProjectPage() {
                                     Last payment {formatClientDate(latestPayment.paid_at)}
                                   </div>
                                 ) : null}
+                                {invoice.payment_enabled && invoice.payment_url && open > 0 ? (
+                                  <Button
+                                    asChild
+                                    size="sm"
+                                    className="mt-2 h-8 gap-1.5 whitespace-nowrap"
+                                  >
+                                    <a href={invoice.payment_url} target="_blank" rel="noreferrer">
+                                      <ExternalLink className="h-3.5 w-3.5" />
+                                      Pay online
+                                    </a>
+                                  </Button>
+                                ) : null}
                               </td>
                             </tr>
                           );

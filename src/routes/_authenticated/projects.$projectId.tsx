@@ -92,6 +92,7 @@ import {
   CalendarClock,
   ClipboardList,
   Download,
+  ExternalLink,
   FileText,
   FileSpreadsheet,
   LayoutDashboard,
@@ -114,6 +115,15 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
 
 const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
 const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
+
+type InvoiceCheckoutPayload = {
+  ok?: boolean;
+  code?: string;
+  error?: string;
+  checkoutUrl?: string;
+  sessionId?: string;
+  invoiceId?: string;
+};
 
 function isBillingStatus(value: unknown): value is BillingApplicationRow["status"] {
   return typeof value === "string" && BILLING_STATUS_VALUES.includes(value as never);
@@ -401,6 +411,63 @@ function ProjectPage() {
   const invoiceUpdate = useServerMutation<Record<string, unknown>>(updateInvoiceFn as never);
   const invoiceDelete = useServerMutation<{ id: string }>(deleteInvoiceFn);
   const paymentRecord = useServerMutation<Record<string, unknown>>(recordPaymentFn as never);
+  const [checkoutInvoiceId, setCheckoutInvoiceId] = useState<string | null>(null);
+  const invoiceCheckout = useMutation({
+    mutationFn: async (invoice: BillingInvoiceRow) => {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (sessionError || !accessToken) {
+        throw new Error("Your session expired. Sign in again before enabling online payment.");
+      }
+
+      const response = await fetch("/api/stripe/checkout/invoice", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          invoiceId: invoice.id,
+          successPath: `/projects/${projectId}?tab=billing&payment=success&invoice=${invoice.id}`,
+          cancelPath: `/projects/${projectId}?tab=billing&payment=cancelled&invoice=${invoice.id}`,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as InvoiceCheckoutPayload;
+      if (!response.ok || !payload.ok) {
+        const error = new Error(
+          payload.error || `Online payment link failed with status ${response.status}.`,
+        ) as Error & { code?: string; status?: number };
+        error.code = payload.code;
+        error.status = response.status;
+        throw error;
+      }
+      return payload;
+    },
+    onMutate: (invoice) => setCheckoutInvoiceId(invoice.id),
+    onSuccess: (payload) => {
+      toast.success("Payment link ready", {
+        description: payload.checkoutUrl
+          ? "Stripe Checkout is enabled for this invoice. The client portal can now show the pay button."
+          : "Online payment is enabled for this invoice.",
+      });
+      invalidate();
+    },
+    onError: (err) => {
+      const error = err as Error & { code?: string };
+      if (error.code === "stripe_not_configured") {
+        toast.error("Stripe is not connected yet", {
+          description:
+            "Invoice PDFs and email still work. Add STRIPE_SECRET_KEY in Lovable before enabling live checkout.",
+        });
+        return;
+      }
+      toast.error("Payment link did not save", {
+        description: error.message || "Try again after checking the invoice and Stripe setup.",
+      });
+    },
+    onSettled: () => setCheckoutInvoiceId(null),
+  });
   const listScheduleFn = useServerFn(listSchedule);
   const { data: scheduleData } = useQuery({
     queryKey: ["schedule", projectId],
@@ -736,6 +803,17 @@ function ProjectPage() {
         });
       },
     });
+  };
+
+  const handleEnableInvoicePayment = (invoice: BillingInvoiceRow) => {
+    const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
+    if (openBalance <= 0) {
+      toast.info("Invoice is already paid", {
+        description: "There is no open balance to collect online.",
+      });
+      return;
+    }
+    invoiceCheckout.mutate(invoice);
   };
 
   const handleDeleteExposure = (id: string) => {
@@ -1167,6 +1245,8 @@ function ProjectPage() {
                 onUpdateInvoice={handleUpdateInvoice}
                 onDeleteInvoice={handleDeleteInvoice}
                 onRecordPayment={handleRecordPayment}
+                onEnableInvoicePayment={handleEnableInvoicePayment}
+                enablingInvoicePaymentId={checkoutInvoiceId}
               />
             </TabsContent>
 
@@ -1446,6 +1526,7 @@ async function enqueueInvoiceEmail(input: {
         openBalance: fmtUSD(openBalance),
         dueDate: invoice.due_date,
         portalUrl: invoicePortalUrl(project.id),
+        paymentUrl: invoice.payment_enabled ? invoice.payment_url : "",
         notes:
           invoice.notes ||
           linkedPayApp?.notes ||
@@ -1511,6 +1592,8 @@ function BillingWorkspace({
   onUpdateInvoice,
   onDeleteInvoice,
   onRecordPayment,
+  onEnableInvoicePayment,
+  enablingInvoicePaymentId,
 }: {
   project: ProjectRow;
   rollup: Rollup;
@@ -1527,6 +1610,8 @@ function BillingWorkspace({
   onUpdateInvoice: (id: string, patch: Partial<BillingInvoiceRow>) => void;
   onDeleteInvoice: (id: string) => void;
   onRecordPayment: (input: PaymentDraft) => void;
+  onEnableInvoicePayment: (invoice: BillingInvoiceRow) => void;
+  enablingInvoicePaymentId: string | null;
 }) {
   const earnedToDate = rollup.forecastedFinalContract * (project.percent_complete / 100);
   const pendingCOs = changeOrders.filter((co) => co.status === "Pending");
@@ -2130,6 +2215,8 @@ function BillingWorkspace({
                         onPatch={(patch) => onUpdateInvoice(invoice.id, patch)}
                         onDelete={() => onDeleteInvoice(invoice.id)}
                         onRecordPayment={onRecordPayment}
+                        onEnablePayment={() => onEnableInvoicePayment(invoice)}
+                        enablingPayment={enablingInvoicePaymentId === invoice.id}
                       />
                     );
                   })
@@ -2353,6 +2440,8 @@ function BillingInvoiceRowEditor({
   onPatch,
   onDelete,
   onRecordPayment,
+  onEnablePayment,
+  enablingPayment,
 }: {
   project: ProjectRow;
   invoice: BillingInvoiceRow;
@@ -2364,8 +2453,14 @@ function BillingInvoiceRowEditor({
   onPatch: (patch: Partial<BillingInvoiceRow>) => void;
   onDelete: () => void;
   onRecordPayment: (input: PaymentDraft) => void;
+  onEnablePayment: () => void;
+  enablingPayment?: boolean;
 }) {
   const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
+  const paymentLinkReady = Boolean(
+    invoice.payment_enabled && invoice.payment_url && openBalance > 0,
+  );
+  const onlinePaymentLabel = invoice.online_payment_status.replace("_", " ");
   const today = new Date().toISOString().slice(0, 10);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [invoiceAction, setInvoiceAction] = useState<"pdf" | "email" | null>(null);
@@ -2595,6 +2690,23 @@ function BillingInvoiceRowEditor({
             <Mail className="h-3.5 w-3.5" />
             {invoiceAction === "email" ? "Sending..." : "Send"}
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={paymentLinkReady ? "default" : "outline"}
+            className="h-8 gap-1.5"
+            onClick={() => {
+              if (paymentLinkReady) {
+                window.open(invoice.payment_url, "_blank", "noopener,noreferrer");
+                return;
+              }
+              onEnablePayment();
+            }}
+            disabled={enablingPayment || invoice.status === "void" || openBalance <= 0}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            {paymentLinkReady ? "Open link" : enablingPayment ? "Enabling..." : "Enable pay link"}
+          </Button>
           <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
             <DialogTrigger asChild>
               <Button size="sm" variant="outline" className="h-8" onClick={openPaymentDialog}>
@@ -2704,6 +2816,11 @@ function BillingInvoiceRowEditor({
           <div className="mt-2 text-right text-[11px] text-muted-foreground">
             Last payment {fmtUSD(invoice.payment_events[0].amount)} ·{" "}
             {formatShortDateTime(invoice.payment_events[0].paid_at)}
+          </div>
+        ) : null}
+        {invoice.payment_enabled ? (
+          <div className="mt-1 text-right text-[11px] capitalize text-muted-foreground">
+            Online payment {onlinePaymentLabel || "enabled"}
           </div>
         ) : null}
       </td>
