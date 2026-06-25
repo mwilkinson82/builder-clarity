@@ -300,11 +300,31 @@ function writeLocalBillingApplications(projectId: string, apps: BillingApplicati
   window.localStorage.setItem(localBillingStorageKey(projectId), JSON.stringify(apps));
 }
 
+function exposureCategoryFromChangeOrder(coType: ChangeOrderRow["co_type"]): ExposureCategory {
+  switch (coType) {
+    case "owner_change":
+      return "owner_decision";
+    case "design_error":
+    case "design_omission":
+      return "design_drift";
+    case "unforeseen_condition":
+      return "field_change";
+    case "missed_scope":
+      return "other";
+    case "sub_issued":
+      return "trade_performance";
+    case "other":
+    default:
+      return "other";
+  }
+}
+
 function ProjectPage() {
   const { projectId } = Route.useParams();
   const get = useServerFn(getProject);
   const list = useServerFn(listProjects);
   const qc = useQueryClient();
+  const [creatingCoRiskId, setCreatingCoRiskId] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["project", projectId],
@@ -616,6 +636,67 @@ function ProjectPage() {
       email_recipients: [],
     });
     // PDF was already downloaded by the wizard itself.
+  };
+
+  const handleCreateRiskFromChangeOrder = (co: ChangeOrderRow) => {
+    const dollarExposure = co.cost_amount > 0 ? co.cost_amount : co.contract_amount;
+
+    if (co.status === "Approved") {
+      toast.info("Approved CO already affects the forecast", {
+        description: "Use this action for pending or denied change orders that still need to be protected in the risk tally.",
+      });
+      return;
+    }
+
+    if (dollarExposure <= 0) {
+      toast.error("CO needs a dollar value before it can become a risk", {
+        description: "Add a cost amount or contract amount, then send it to the risk tally.",
+      });
+      return;
+    }
+
+    setCreatingCoRiskId(co.id);
+    expCreate.mutate(
+      {
+        projectId,
+        title: `${co.number ? `${co.number} - ` : ""}${co.description}`,
+        description: co.notes || co.description,
+        category: exposureCategoryFromChangeOrder(co.co_type),
+        dollar_exposure: dollarExposure,
+        probability: co.status === "Pending" ? co.probability : 100,
+        schedule_impact_weeks: null,
+        owner: co.owner || "PM",
+        response_path: "recover",
+        hold_class: "E-Hold",
+        status: "active",
+        due_date: null,
+        next_review_at: null,
+        release_condition: co.status === "Pending"
+          ? `Change order ${co.number || co.description} is approved or formally denied.`
+          : `Denied change order ${co.number || co.description} is recovered, offset, accepted, or eliminated.`,
+        notes: [
+          `Created from Change Orders.`,
+          `CO status: ${co.status}.`,
+          `Contract value: ${fmtUSD(co.contract_amount)}.`,
+          `Cost exposure: ${fmtUSD(co.cost_amount)}.`,
+          `Likely exposure: ${fmtUSD(dollarExposure * ((co.status === "Pending" ? co.probability : 100) / 100))}.`,
+          co.notes ? `CO notes: ${co.notes}` : "",
+        ].filter(Boolean).join("\n"),
+      },
+      {
+        onSuccess: () => {
+          toast.success("CO sent to risk tally", {
+            description: `${co.number || "Change order"} is now an E-Hold exposure to recover.`,
+          });
+        },
+        onError: (err) => {
+          toast.error("CO risk allocation did not save", {
+            description: err instanceof Error ? err.message : "Try again.",
+          });
+        },
+        onSettled: () => setCreatingCoRiskId(null),
+      },
+    );
   };
 
   const milestones = scheduleData?.milestones ?? [];
@@ -1315,6 +1396,8 @@ function ProjectPage() {
                 onCreate={(d) => coCreate.mutate({ projectId, ...d })}
                 onUpdate={(id, patch) => coUpdate.mutate({ id, ...patch })}
                 onDelete={(id) => coDelete.mutate({ id })}
+                onCreateRisk={handleCreateRiskFromChangeOrder}
+                creatingRiskId={creatingCoRiskId}
               />
             </TabsContent>
 
@@ -1623,7 +1706,6 @@ function BillingWorkspace({
   onEnableInvoicePayment: (invoice: BillingInvoiceRow) => void;
   enablingInvoicePaymentId: string | null;
 }) {
-  const earnedToDate = rollup.forecastedFinalContract * (project.percent_complete / 100);
   const pendingCOs = changeOrders.filter((co) => co.status === "Pending");
   const weightedPending = pendingCOs.reduce(
     (sum, co) => sum + co.contract_amount * (co.probability / 100),
@@ -1631,8 +1713,18 @@ function BillingWorkspace({
   );
   const holds = rollup.exposureHolds + rollup.contingencyHold;
   const totalBilled = billingApplications.reduce((sum, app) => sum + app.amount_billed, 0);
-  const contractRemaining = Math.max(0, rollup.forecastedFinalContract - totalBilled);
   const paidToDate = billingApplications.reduce((sum, app) => sum + app.paid_to_date, 0);
+  const percentCompleteEarned = rollup.forecastedFinalContract * (project.percent_complete / 100);
+  const ledgerEarnedToDate = billingApplications.reduce(
+    (sum, app) => sum + Math.max(app.amount_billed, app.paid_to_date),
+    0,
+  );
+  const earnedToDate =
+    billingApplications.length > 0
+      ? Math.max(percentCompleteEarned, ledgerEarnedToDate)
+      : percentCompleteEarned;
+  const unbilledEarnedToDate = Math.max(0, earnedToDate - totalBilled);
+  const contractRemaining = Math.max(0, rollup.forecastedFinalContract - totalBilled);
   const retainage = billingApplications.reduce((sum, app) => sum + app.retainage, 0);
   const outstanding = billingApplications.reduce(
     (sum, app) => sum + Math.max(0, app.amount_billed - app.paid_to_date - app.retainage),
@@ -1700,9 +1792,9 @@ function BillingWorkspace({
       billing_period: "Current cycle",
       contract_amount: project.original_contract,
       change_order_amount: rollup.approvedCOContract,
-      amount_billed: earnedToDate,
+      amount_billed: unbilledEarnedToDate,
       paid_to_date: 0,
-      retainage: earnedToDate * 0.1,
+      retainage: unbilledEarnedToDate * 0.1,
       status: "draft",
       notes: "",
       sort_order: billingApplications.length + 1,
@@ -1715,7 +1807,7 @@ function BillingWorkspace({
       (project.job_number
         ? `${project.job_number}-${String(sourceIndex).padStart(3, "0")}`
         : `INV-${String(sourceIndex).padStart(3, "0")}`);
-    const subtotal = app?.amount_billed ?? earnedToDate;
+    const subtotal = app?.amount_billed ?? unbilledEarnedToDate;
     const invoiceRetainage = app?.retainage ?? subtotal * 0.1;
     const paidAmount = app?.paid_to_date ?? 0;
     const totalDue = Math.max(0, subtotal - invoiceRetainage);

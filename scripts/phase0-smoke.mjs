@@ -199,11 +199,15 @@ await expectContains(
     /Invoice & payment ledger/,
     /Client payment readiness/,
     /Record payment/,
+    /ledgerEarnedToDate/,
+    /unbilledEarnedToDate/,
     /generateInvoicePdf/,
     /Invoice PDF downloaded/,
     /enqueueInvoiceEmail/,
     /invoice-notification/,
     /Billing recipients/,
+    /exposureCategoryFromChangeOrder/,
+    /toast\.success\("CO sent to risk tally/,
     /Finish payment setup/,
     /Invoice email queued/,
     /toast\.success\("Linked to-do created/,
@@ -219,6 +223,12 @@ await expectContains(
     /toast\.success\("SOV imported/,
   ],
   "project route wires core Phase 0 write paths and success toasts",
+);
+
+await expectContains(
+  "src/components/outcome/ChangeOrdersTable.tsx",
+  [/onCreateRisk/, /creatingRiskId/, /Send to risk tally/],
+  "change order table exposes a risk-tally action",
 );
 
 await expectContains(

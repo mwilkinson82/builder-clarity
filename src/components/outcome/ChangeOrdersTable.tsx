@@ -8,7 +8,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, ShieldAlert, Trash2 } from "lucide-react";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
 import type { ChangeOrderRow, COStatus, COType } from "@/lib/projects.functions";
@@ -59,11 +59,15 @@ export function ChangeOrdersTable({
   onCreate,
   onUpdate,
   onDelete,
+  onCreateRisk,
+  creatingRiskId,
 }: {
   changeOrders: ChangeOrderRow[];
   onCreate: (d: Draft) => void;
   onUpdate: (id: string, p: Partial<Draft>) => void;
   onDelete: (id: string) => void;
+  onCreateRisk?: (changeOrder: ChangeOrderRow) => void;
+  creatingRiskId?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -130,7 +134,7 @@ export function ChangeOrdersTable({
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Prob.</TableHead>
               <TableHead className="hidden md:table-cell">Owner</TableHead>
-              <TableHead className="w-[120px] text-right">Actions</TableHead>
+              <TableHead className="w-[150px] text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -153,6 +157,17 @@ export function ChangeOrdersTable({
 
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() => onCreateRisk?.(c)}
+                      disabled={!onCreateRisk || creatingRiskId === c.id}
+                      title="Send to risk tally"
+                      aria-label={`Send ${c.number || c.description} to risk tally`}
+                    >
+                      <ShieldAlert className="h-3.5 w-3.5" />
+                    </Button>
                     <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(c)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
