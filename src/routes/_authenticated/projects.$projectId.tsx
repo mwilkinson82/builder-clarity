@@ -1359,11 +1359,11 @@ function WorkspaceHeader({
 
 function SovMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+    <div className="flex min-h-[72px] flex-col justify-between rounded-md border border-hairline bg-surface px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase leading-snug tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
-      <div className="mt-1 text-lg font-medium tabular text-foreground">{value}</div>
+      <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">{value}</div>
     </div>
   );
 }
@@ -1663,6 +1663,30 @@ function BillingWorkspace({
         .map((access: ProjectClientAccessRow) => [access.email.trim().toLowerCase(), access]),
     ).values(),
   );
+  const onlinePayReadyInvoices = billingInvoices.filter(
+    (invoice) =>
+      invoice.payment_enabled &&
+      invoice.payment_url &&
+      invoice.status !== "void" &&
+      invoice.total_due > invoice.paid_amount,
+  );
+  const onlinePayReadyBalance = onlinePayReadyInvoices.reduce(
+    (sum, invoice) => sum + Math.max(0, invoice.total_due - invoice.paid_amount),
+    0,
+  );
+  const recipientStatus = clientPortalQuery.isLoading
+    ? "Loading"
+    : clientPortalQuery.error
+      ? "Needs review"
+      : String(invoiceRecipients.length);
+  const billingReadinessMessage =
+    billingInvoices.length === 0
+      ? "Create an invoice from a pay app or direct billing item before sharing with the client."
+      : invoiceRecipients.length === 0
+        ? "Turn Billing On for at least one client seat in Client Portal before emailing invoices."
+        : onlinePayReadyInvoices.length === 0
+          ? "PDF and email are ready. Online pay links unlock after Stripe Connect is finished in Your Company."
+          : `${onlinePayReadyInvoices.length} invoice${onlinePayReadyInvoices.length === 1 ? "" : "s"} can be paid online by the client.`;
 
   const buildDraft = (): BillingDraft => {
     const nextNumber = String(billingApplications.length + 1).padStart(3, "0");
@@ -2177,7 +2201,41 @@ function BillingWorkspace({
             <SovMetric label="Invoice paid" value={fmtUSD(invoicePaid)} />
             <SovMetric label="Invoice open" value={fmtUSD(invoiceOpenBalance)} />
             <SovMetric label="Client-visible" value={String(clientVisibleInvoices)} />
-            <SovMetric label="Billing recipients" value={String(invoiceRecipients.length)} />
+            <SovMetric label="Billing recipients" value={recipientStatus} />
+          </div>
+
+          <div className="mb-4 rounded-md border border-hairline bg-surface p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Client payment readiness
+                </div>
+                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                  {billingReadinessMessage}
+                </p>
+              </div>
+              <div className="grid w-full min-w-0 gap-2 sm:grid-cols-3 lg:max-w-[460px]">
+                <div className="rounded-md border border-hairline bg-card px-3 py-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Online links
+                  </div>
+                  <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">
+                    {onlinePayReadyInvoices.length}
+                  </div>
+                </div>
+                <div className="rounded-md border border-hairline bg-card px-3 py-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Online balance
+                  </div>
+                  <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">
+                    {fmtUSD(onlinePayReadyBalance)}
+                  </div>
+                </div>
+                <Button asChild variant="outline" className="h-full min-h-[58px] justify-start">
+                  <Link to="/team">Finish payment setup</Link>
+                </Button>
+              </div>
+            </div>
           </div>
 
           <div className="overflow-x-auto rounded-md border border-hairline">
@@ -2471,6 +2529,30 @@ function BillingInvoiceRowEditor({
     invoice.payment_enabled && invoice.payment_url && openBalance > 0,
   );
   const onlinePaymentLabel = invoice.online_payment_status.replace("_", " ");
+  const paymentReadiness =
+    invoice.status === "void"
+      ? { label: "Void invoice", className: "border-hairline bg-surface text-muted-foreground" }
+      : openBalance <= 0
+        ? { label: "No open balance", className: "border-success/30 bg-success/10 text-success" }
+        : paymentLinkReady
+          ? {
+              label: "Client can pay online",
+              className: "border-success/30 bg-success/10 text-success",
+            }
+          : invoice.payment_enabled
+            ? {
+                label: `Online payment ${onlinePaymentLabel || "pending"}`,
+                className: "border-warning/30 bg-warning/10 text-warning",
+              }
+            : !invoice.client_visible
+              ? {
+                  label: "Hidden from client",
+                  className: "border-hairline bg-surface text-muted-foreground",
+                }
+              : {
+                  label: "Manual/email only",
+                  className: "border-warning/30 bg-warning/10 text-warning",
+                };
   const today = new Date().toISOString().slice(0, 10);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [invoiceAction, setInvoiceAction] = useState<"pdf" | "email" | null>(null);
@@ -2715,7 +2797,7 @@ function BillingInvoiceRowEditor({
             disabled={enablingPayment || invoice.status === "void" || openBalance <= 0}
           >
             <ExternalLink className="h-3.5 w-3.5" />
-            {paymentLinkReady ? "Open link" : enablingPayment ? "Enabling..." : "Enable pay link"}
+            {paymentLinkReady ? "Open link" : enablingPayment ? "Enabling..." : "Enable online pay"}
           </Button>
           <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
             <DialogTrigger asChild>
@@ -2828,11 +2910,11 @@ function BillingInvoiceRowEditor({
             {formatShortDateTime(invoice.payment_events[0].paid_at)}
           </div>
         ) : null}
-        {invoice.payment_enabled ? (
-          <div className="mt-1 text-right text-[11px] capitalize text-muted-foreground">
-            Online payment {onlinePaymentLabel || "enabled"}
-          </div>
-        ) : null}
+        <div
+          className={`ml-auto mt-2 w-fit rounded-sm border px-2 py-1 text-right text-[10px] font-semibold uppercase tracking-[0.12em] ${paymentReadiness.className}`}
+        >
+          {paymentReadiness.label}
+        </div>
       </td>
     </tr>
   );
