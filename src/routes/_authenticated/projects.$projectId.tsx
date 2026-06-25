@@ -462,6 +462,16 @@ function ProjectPage() {
         });
         return;
       }
+      if (
+        error.code === "stripe_connect_not_ready" ||
+        error.code === "payment_processor_not_configured"
+      ) {
+        toast.error("Company payments are not ready", {
+          description:
+            "Finish the payment setup in Your Company before enabling online payment links for client invoices.",
+        });
+        return;
+      }
       toast.error("Payment link did not save", {
         description: error.message || "Try again after checking the invoice and Stripe setup.",
       });

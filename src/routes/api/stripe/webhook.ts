@@ -93,6 +93,8 @@ async function markInvoicePaid(object: StripeObject) {
     chargeAmount > 0
       ? chargeAmount
       : Math.max(0, num(invoice.total_due) - num(invoice.paid_amount));
+  const overwatchFee = Math.max(0, num(metadata.overwatch_fee_amount_cents) / 100);
+  const netPayout = Math.max(0, amount - overwatchFee);
 
   const { data: existingPayment, error: existingError } = await admin
     .from("payment_ledger")
@@ -108,8 +110,8 @@ async function markInvoicePaid(object: StripeObject) {
       billing_application_id: invoice.billing_application_id,
       amount,
       processor_fee: 0,
-      overwatch_fee: 0,
-      net_payout: amount,
+      overwatch_fee: overwatchFee,
+      net_payout: netPayout,
       payment_method: "stripe_checkout",
       processor: "stripe",
       processor_payment_id: paymentIntentId || sessionId,

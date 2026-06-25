@@ -5,8 +5,10 @@ import {
   getAppOrigin,
   jsonError,
   jsonOk,
+  readServerEnv,
   requireAuthedStripeContext,
   requireCanManageProject,
+  RouteError,
   stripePost,
   type StripeCheckoutSession,
 } from "@/lib/stripe.server";
@@ -39,6 +41,13 @@ type ProjectRecord = {
   organization_id: string | null;
 };
 
+type OrganizationPaymentRecord = {
+  id: string;
+  stripe_connect_account_id: string;
+  stripe_connect_status: string;
+  payment_processor_ready: boolean;
+};
+
 function normalizedInternalPath(value: string | undefined, fallback: string) {
   if (!value) return fallback;
   if (!value.startsWith("/")) return fallback;
@@ -48,6 +57,13 @@ function normalizedInternalPath(value: string | undefined, fallback: string) {
 
 function cents(value: number) {
   return Math.max(0, Math.round(value * 100));
+}
+
+function applicationFeeCents(openBalance: number) {
+  const rawBps = Number(readServerEnv("OVERWATCH_INVOICE_APPLICATION_FEE_BPS") || 0);
+  if (!Number.isFinite(rawBps) || rawBps <= 0) return 0;
+  const safeBps = Math.min(rawBps, 3000);
+  return cents((openBalance * safeBps) / 10000);
 }
 
 export const Route = createFileRoute("/api/stripe/checkout/invoice")({
@@ -80,6 +96,35 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           if (!project) throw new Error("Project not found.");
 
           const projectRecord = project as ProjectRecord;
+          if (!projectRecord.organization_id) {
+            throw new RouteError(
+              "payment_processor_not_configured",
+              "Assign this project to a company before enabling online payments.",
+              409,
+            );
+          }
+
+          const { data: organization, error: organizationError } = await context.admin
+            .from("organizations")
+            .select("id,stripe_connect_account_id,stripe_connect_status,payment_processor_ready")
+            .eq("id", projectRecord.organization_id)
+            .single();
+          if (organizationError) throw new Error(organizationError.message);
+          if (!organization) throw new Error("Organization not found.");
+
+          const orgPayment = organization as OrganizationPaymentRecord;
+          const connectReady =
+            orgPayment.payment_processor_ready &&
+            orgPayment.stripe_connect_status === "active" &&
+            Boolean(orgPayment.stripe_connect_account_id);
+          if (!connectReady) {
+            throw new RouteError(
+              "stripe_connect_not_ready",
+              "Online payments are not ready for this company. Finish Stripe Connect setup in Your Company before enabling invoice pay links.",
+              409,
+            );
+          }
+
           const openBalance = Math.max(0, invoiceRecord.total_due - invoiceRecord.paid_amount);
           if (openBalance <= 0) {
             return Response.json(
@@ -110,9 +155,7 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           );
 
           const label =
-            invoiceRecord.invoice_number ||
-            invoiceRecord.title ||
-            `${projectRecord.name} invoice`;
+            invoiceRecord.invoice_number || invoiceRecord.title || `${projectRecord.name} invoice`;
           const form = new URLSearchParams();
           appendStripeForm(form, "mode", "payment");
           appendStripeForm(form, "client_reference_id", invoiceRecord.id);
@@ -131,7 +174,13 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           appendStripeForm(form, "metadata[invoice_id]", invoiceRecord.id);
           appendStripeForm(form, "metadata[project_id]", projectRecord.id);
           appendStripeForm(form, "metadata[organization_id]", projectRecord.organization_id);
-          appendStripeForm(form, "metadata[billing_application_id]", invoiceRecord.billing_application_id);
+          appendStripeForm(
+            form,
+            "metadata[billing_application_id]",
+            invoiceRecord.billing_application_id,
+          );
+          const feeCents = applicationFeeCents(openBalance);
+          appendStripeForm(form, "metadata[overwatch_fee_amount_cents]", feeCents);
           appendStripeForm(form, "payment_intent_data[metadata][kind]", "client_invoice");
           appendStripeForm(form, "payment_intent_data[metadata][invoice_id]", invoiceRecord.id);
           appendStripeForm(form, "payment_intent_data[metadata][project_id]", projectRecord.id);
@@ -140,6 +189,19 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
             "payment_intent_data[metadata][billing_application_id]",
             invoiceRecord.billing_application_id,
           );
+          appendStripeForm(
+            form,
+            "payment_intent_data[transfer_data][destination]",
+            orgPayment.stripe_connect_account_id,
+          );
+          if (feeCents > 0) {
+            appendStripeForm(form, "payment_intent_data[application_fee_amount]", feeCents);
+            appendStripeForm(
+              form,
+              "payment_intent_data[metadata][overwatch_fee_amount_cents]",
+              feeCents,
+            );
+          }
 
           const session = await stripePost<StripeCheckoutSession>(
             "checkout/sessions",

@@ -315,8 +315,12 @@ await expectContains(
     /online_payment_status/,
     /payment_link_sent_at/,
     /payment_intent_data\[metadata\]\[invoice_id\]/,
+    /stripe_connect_not_ready/,
+    /payment_processor_ready/,
+    /payment_intent_data\[transfer_data\]\[destination\]/,
+    /payment_intent_data\[application_fee_amount\]/,
   ],
-  "invoice checkout route creates guarded payment sessions and records payment link state",
+  "invoice checkout route creates guarded Connect payment sessions and records payment link state",
 );
 
 await expectContains(
@@ -344,6 +348,9 @@ await expectContains(
     /online_payment_status/,
     /stripe_checkout_session_id/,
     /stripe_payment_intent_id/,
+    /overwatch_fee_amount_cents/,
+    /overwatch_fee/,
+    /net_payout/,
   ],
   "Stripe webhook route records invoice, payment ledger, refund, and subscription outcomes",
 );
