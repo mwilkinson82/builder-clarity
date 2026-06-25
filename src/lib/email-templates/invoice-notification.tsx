@@ -23,6 +23,7 @@ interface Props {
   openBalance?: string;
   dueDate?: string | null;
   portalUrl?: string;
+  paymentUrl?: string;
   notes?: string;
 }
 
@@ -38,6 +39,7 @@ const InvoiceNotificationEmail = ({
   openBalance = "$0",
   dueDate,
   portalUrl,
+  paymentUrl,
   notes,
 }: Props) => (
   <Html lang="en" dir="ltr">
@@ -66,9 +68,15 @@ const InvoiceNotificationEmail = ({
 
         {notes ? <Text style={note}>{notes}</Text> : null}
 
+        {paymentUrl ? (
+          <Button href={paymentUrl} style={button}>
+            Pay invoice online
+          </Button>
+        ) : null}
+
         {portalUrl ? (
           <Button href={portalUrl} style={button}>
-            Open client portal
+            {paymentUrl ? "Open client portal" : "Open invoice in client portal"}
           </Button>
         ) : null}
 
@@ -80,15 +88,7 @@ const InvoiceNotificationEmail = ({
   </Html>
 );
 
-const Row = ({
-  label,
-  value,
-  strong,
-}: {
-  label: string;
-  value: string;
-  strong?: boolean;
-}) => (
+const Row = ({ label, value, strong }: { label: string; value: string; strong?: boolean }) => (
   <Section style={row}>
     <Text style={rowLabel}>{label}</Text>
     <Text style={strong ? rowValueStrong : rowValue}>{value}</Text>
@@ -97,7 +97,7 @@ const Row = ({
 
 export const template = {
   component: InvoiceNotificationEmail,
-  subject: (data: Record<string, any>) =>
+  subject: (data: Record<string, string | null | undefined>) =>
     `Invoice ${data?.invoiceNumber ?? ""} - ${data?.projectName ?? "Overwatch"}`.trim(),
   displayName: "Invoice notification",
   previewData: {
@@ -112,14 +112,14 @@ export const template = {
     openBalance: "$708,225",
     dueDate: "2026-07-21",
     portalUrl: "https://overwatch.alpcontractorcircle.com/client/projects/example",
+    paymentUrl: "https://checkout.stripe.com/c/pay/example",
     notes: "Current billing cycle invoice.",
   },
 } satisfies TemplateEntry;
 
 const main = {
   backgroundColor: "#f8f5ee",
-  fontFamily:
-    "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Arial, sans-serif",
+  fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Arial, sans-serif",
   color: "#1e1713",
 };
 const container = { padding: "34px 28px", maxWidth: "600px" };

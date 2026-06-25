@@ -204,6 +204,8 @@ await expectContains(
     /toast\.success\("Pay app added/,
     /toast\.success\("Invoice created/,
     /toast\.success\("Payment recorded/,
+    /toast\.success\("Payment link ready/,
+    /Enable pay link/,
     /toast\.success\("SOV mapping saved/,
     /toast\.success\("SOV imported/,
   ],
@@ -281,8 +283,8 @@ await expectContains(
 
 await expectContains(
   "src/lib/email-templates/invoice-notification.tsx",
-  [/OVERWATCH BILLING/, /Open client portal/, /totalDue/, /openBalance/],
-  "invoice notification email includes client portal CTA and billing totals",
+  [/OVERWATCH BILLING/, /Pay invoice online/, /paymentUrl/, /totalDue/, /openBalance/],
+  "invoice notification email includes payment CTA and billing totals",
 );
 
 await expectContains(
@@ -380,6 +382,7 @@ await expectContains(
     /Download packet/,
     /billingInvoices/,
     /Invoice total/,
+    /Pay online/,
     /Billing shared with client/,
     /Daily reports shared with client/,
   ],
