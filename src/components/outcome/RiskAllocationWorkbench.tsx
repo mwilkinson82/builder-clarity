@@ -189,7 +189,7 @@ export function RiskAllocationWorkbench({
         </div>
       </div>
 
-      <div className="grid min-w-0 gap-5 min-[1800px]:grid-cols-[minmax(0,1fr)_260px]">
+      <div className="grid min-w-0 gap-5">
         <div
           id="risk-ledger"
           className="min-w-0 rounded-lg border border-hairline bg-card p-5 shadow-card"
@@ -299,7 +299,7 @@ function HoldGuide({
         <ListChecks className="h-3.5 w-3.5" />
         Hold Guide
       </div>
-      <div className="mt-4 space-y-4">
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
         <HoldRow
           label="Exposure Hold"
           description="Specific known risk with a dollar value."

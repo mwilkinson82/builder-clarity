@@ -145,6 +145,7 @@ export function ExposuresTable({
   onCreateTodo?: (exposure: ExposureRow) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [viewing, setViewing] = useState<ExposureRow | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<ExposureDraft>(empty);
   const [errors, setErrors] = useState<{ dollar?: string; response?: string; title?: string }>({});
@@ -223,21 +224,17 @@ export function ExposuresTable({
         </Button>
       </div>
 
-      <div className="w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden rounded-lg border border-hairline bg-card">
-        <Table className="min-w-[1120px] w-full">
+      <div className="w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden rounded-lg border border-hairline bg-card xl:overflow-x-hidden">
+        <Table className="w-full min-w-[880px] table-fixed xl:min-w-0">
           <TableHeader>
             <TableRow className="bg-surface">
-              <TableHead className="min-w-[290px]">Risk / exposure</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead className="text-right">Dollar</TableHead>
-              <TableHead className="text-right">Prob.</TableHead>
-              <TableHead className="text-right">Likely $</TableHead>
+              <TableHead className="w-[38%]">Risk / exposure</TableHead>
+              <TableHead className="w-[14%] text-right">Exposure</TableHead>
               <TableHead className="text-right">Released</TableHead>
               <TableHead className="text-right">Remaining</TableHead>
               <TableHead>Hold</TableHead>
               <TableHead>Owner</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Treatment</TableHead>
+              <TableHead>Status / treatment</TableHead>
               <TableHead className="w-[80px] text-right" />
             </TableRow>
           </TableHeader>
@@ -248,6 +245,7 @@ export function ExposuresTable({
                 key={e.id}
                 exposure={e}
                 highlightLabel={e.id === topEHoldId ? "Top E-Hold" : undefined}
+                onView={setViewing}
                 onEdit={openEdit}
                 onDelete={onDelete}
                 onCreateTodo={onCreateTodo}
@@ -263,6 +261,7 @@ export function ExposuresTable({
                 key={e.id}
                 exposure={e}
                 highlightLabel={e.id === topCHoldId ? "Top C-Hold" : undefined}
+                onView={setViewing}
                 onEdit={openEdit}
                 onDelete={onDelete}
                 onCreateTodo={onCreateTodo}
@@ -280,6 +279,7 @@ export function ExposuresTable({
                 key={e.id}
                 exposure={e}
                 highlightLabel={e.id === topUnclassifiedId ? "Top risk" : undefined}
+                onView={setViewing}
                 onEdit={openEdit}
                 onDelete={onDelete}
                 onCreateTodo={onCreateTodo}
@@ -296,6 +296,7 @@ export function ExposuresTable({
               <RiskRow
                 key={e.id}
                 exposure={e}
+                onView={setViewing}
                 onEdit={openEdit}
                 onDelete={onDelete}
                 onCreateTodo={onCreateTodo}
@@ -303,7 +304,7 @@ export function ExposuresTable({
             ))}
             {exposures.length === 0 && (
               <TableRow>
-                <TableCell colSpan={12} className="py-10 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                   No risk allocations yet. Every emerging problem has a dollar consequence - add the
                   first one to begin protecting margin.
                 </TableCell>
@@ -312,6 +313,115 @@ export function ExposuresTable({
           </TableBody>
         </Table>
       </div>
+
+      <Dialog open={Boolean(viewing)} onOpenChange={(next) => !next && setViewing(null)}>
+        <DialogContent className="sm:max-w-3xl">
+          {viewing && (
+            <>
+              <DialogHeader>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-danger">
+                      Risk detail
+                    </p>
+                    <DialogTitle className="mt-1 font-serif text-3xl">
+                      {viewing.title}
+                    </DialogTitle>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <StatusBadge status={viewing.status} />
+                    <TreatmentBadge path={viewing.response_path} />
+                    <span className="inline-flex items-center rounded-md border border-hairline px-2 py-1 font-mono text-[10px]">
+                      {viewing.hold_class}
+                    </span>
+                  </div>
+                </div>
+              </DialogHeader>
+
+              <div className="grid gap-4 py-2">
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <RiskDetailMetric label="Dollar risk" value={fmtUSD(viewing.dollar_exposure)} />
+                  <RiskDetailMetric label="Probability" value={`${viewing.probability}%`} />
+                  <RiskDetailMetric label="Likely exposure" value={fmtUSD(likelyValue(viewing))} />
+                  <RiskDetailMetric
+                    label="Remaining hold"
+                    value={fmtUSD(remainingValue(viewing))}
+                    tone="danger"
+                  />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <RiskDetailMetric
+                    label="Released"
+                    value={fmtUSD(releasedValue(viewing))}
+                    tone="success"
+                  />
+                  <RiskDetailMetric label="Owner" value={viewing.owner || "Unassigned"} />
+                  <RiskDetailMetric
+                    label="Schedule impact"
+                    value={
+                      viewing.schedule_impact_weeks
+                        ? `${viewing.schedule_impact_weeks} wk`
+                        : "No schedule impact"
+                    }
+                  />
+                </div>
+
+                <div className="rounded-lg border border-hairline bg-surface p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    What changed
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                    {viewing.description || "No description has been entered yet."}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-hairline bg-card p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Course of action
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                    {viewing.notes ||
+                      "No action plan has been entered yet. Add the recovery, offset, elimination, or acceptance plan from the edit screen."}
+                  </p>
+                </div>
+
+                {(viewing.release_condition || viewing.release_note || viewing.next_review_at) && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <RiskDetailMetric
+                      label="Release condition"
+                      value={viewing.release_condition || "Not set"}
+                    />
+                    <RiskDetailMetric
+                      label="Release note"
+                      value={viewing.release_note || "No release note"}
+                    />
+                    <RiskDetailMetric
+                      label="Next review"
+                      value={viewing.next_review_at || "Not scheduled"}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setViewing(null)}>
+                  Close
+                </Button>
+                <Button
+                  className="gap-1.5"
+                  onClick={() => {
+                    openEdit(viewing);
+                    setViewing(null);
+                  }}
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Edit risk
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
@@ -541,10 +651,31 @@ function remainingValue(e: ExposureRow) {
   return remainingExposureValue(e);
 }
 
+function RiskDetailMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "danger" | "success";
+}) {
+  const toneClass =
+    tone === "danger" ? "text-danger" : tone === "success" ? "text-success" : "text-foreground";
+  return (
+    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 text-sm font-semibold leading-snug ${toneClass}`}>{value}</div>
+    </div>
+  );
+}
+
 function RiskGroupRow({ label, detail, count }: { label: string; detail: string; count: number }) {
   return (
     <TableRow className="bg-surface/80 hover:bg-surface/80">
-      <TableCell colSpan={12} className="py-2">
+      <TableCell colSpan={8} className="py-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-baseline gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">
@@ -564,12 +695,14 @@ function RiskGroupRow({ label, detail, count }: { label: string; detail: string;
 function RiskRow({
   exposure,
   highlightLabel,
+  onView,
   onEdit,
   onDelete,
   onCreateTodo,
 }: {
   exposure: ExposureRow;
   highlightLabel?: string;
+  onView: (exposure: ExposureRow) => void;
   onEdit: (exposure: ExposureRow) => void;
   onDelete: (id: string) => void;
   onCreateTodo?: (exposure: ExposureRow) => void;
@@ -578,30 +711,41 @@ function RiskRow({
   const highlighted = Boolean(highlightLabel);
   return (
     <TableRow
-      onDoubleClick={() => onEdit(exposure)}
+      tabIndex={0}
+      onClick={() => onView(exposure)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onView(exposure);
+        }
+      }}
       className={[
+        "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         closed ? "opacity-65" : "",
         highlighted ? "border-l-4 border-l-danger bg-danger/8 hover:bg-danger/10" : "",
       ]
         .filter(Boolean)
         .join(" ")}
     >
-      <TableCell className="min-w-[290px]">
+      <TableCell className="align-top">
         <div className="flex items-center gap-2">
-          <div className="font-medium text-foreground">{exposure.title}</div>
+          <div className="font-semibold leading-snug text-foreground">{exposure.title}</div>
           {highlightLabel && (
             <span className="rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-danger">
               {highlightLabel}
             </span>
           )}
         </div>
+        <div className="mt-1 text-[11px] font-medium text-muted-foreground">
+          {CATEGORY_LABELS[exposure.category]}
+        </div>
         {exposure.description && (
-          <div className="mt-0.5 max-w-md text-xs text-muted-foreground">
+          <div className="mt-1 line-clamp-3 text-sm leading-snug text-muted-foreground">
             {exposure.description}
           </div>
         )}
         {exposure.notes && (
-          <div className="mt-2 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-foreground">
+          <div className="mt-2 line-clamp-3 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs leading-snug text-foreground">
             <span className="font-medium">Plan: </span>
             {exposure.notes}
           </div>
@@ -613,35 +757,31 @@ function RiskRow({
           </div>
         )}
       </TableCell>
-      <TableCell className="text-xs text-muted-foreground">
-        {CATEGORY_LABELS[exposure.category]}
+      <TableCell className="align-top text-right tabular">
+        <div className="font-semibold text-foreground">{fmtUSD(likelyValue(exposure))}</div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {fmtUSD(exposure.dollar_exposure)} at {exposure.probability}%
+        </div>
       </TableCell>
-      <TableCell className="text-right tabular">{fmtUSD(exposure.dollar_exposure)}</TableCell>
-      <TableCell className="text-right tabular text-muted-foreground">
-        {exposure.probability}%
-      </TableCell>
-      <TableCell className="text-right tabular font-medium">
-        {fmtUSD(likelyValue(exposure))}
-      </TableCell>
-      <TableCell className="text-right tabular text-success">
+      <TableCell className="align-top text-right tabular text-success">
         {releasedValue(exposure) > 0 ? fmtUSD(releasedValue(exposure)) : "$0"}
       </TableCell>
-      <TableCell className="text-right tabular font-semibold text-foreground">
+      <TableCell className="align-top text-right tabular font-semibold text-foreground">
         {fmtUSD(remainingValue(exposure))}
       </TableCell>
-      <TableCell>
+      <TableCell className="align-top">
         <span className="inline-flex items-center rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[10px]">
           {exposure.hold_class}
         </span>
       </TableCell>
-      <TableCell className="text-sm">{exposure.owner}</TableCell>
-      <TableCell>
-        <StatusBadge status={exposure.status} />
+      <TableCell className="align-top text-sm">{exposure.owner}</TableCell>
+      <TableCell className="align-top">
+        <div className="flex flex-col items-start gap-2">
+          <StatusBadge status={exposure.status} />
+          <TreatmentBadge path={exposure.response_path} />
+        </div>
       </TableCell>
-      <TableCell>
-        <TreatmentBadge path={exposure.response_path} />
-      </TableCell>
-      <TableCell className="text-right">
+      <TableCell className="align-top text-right">
         <div className="flex justify-end gap-1">
           {onCreateTodo && (
             <Button
@@ -658,7 +798,15 @@ function RiskRow({
               <ListChecks className="h-3.5 w-3.5" />
             </Button>
           )}
-          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onEdit(exposure)}>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7"
+            onClick={(event) => {
+              event.stopPropagation();
+              onEdit(exposure);
+            }}
+          >
             <Pencil className="h-3.5 w-3.5" />
           </Button>
           <Button

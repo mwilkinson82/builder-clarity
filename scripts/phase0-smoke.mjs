@@ -257,16 +257,21 @@ await expectContains(
   "src/components/outcome/RiskAllocationWorkbench.tsx",
   [
     /grid-cols-\[minmax\(0,1\.15fr\)_minmax\(0,0\.85fr\)\]/,
-    /min-\[1800px\]:grid-cols-\[minmax\(0,1fr\)_260px\]/,
+    /<div className="grid min-w-0 gap-5">/,
     /aria-label="Risk tally workspace"/,
   ],
-  "risk tally layout keeps its wide ledger inside the workspace instead of forcing viewport scroll",
+  "risk tally layout gives the open ledger full workspace width instead of adding a side rail",
 );
 
 await expectContains(
   "src/components/outcome/ExposuresTable.tsx",
-  [/w-full min-w-0 max-w-full overflow-x-auto/, /min-w-\[1120px\]/],
-  "risk exposure table scrolls internally when the ledger is wider than the screen",
+  [
+    /xl:overflow-x-hidden/,
+    /min-w-\[880px\] table-fixed xl:min-w-0/,
+    /onClick=\{\(\) => onView\(exposure\)\}/,
+    /Risk detail/,
+  ],
+  "risk exposure table fits desktop presentations and opens row-level detail",
 );
 
 await expectContains(
