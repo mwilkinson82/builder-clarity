@@ -1726,7 +1726,7 @@ function BillingWorkspace({
   const unbilledEarnedToDate = Math.max(0, earnedToDate - totalBilled);
   const contractRemaining = Math.max(0, rollup.forecastedFinalContract - totalBilled);
   const retainage = billingApplications.reduce((sum, app) => sum + app.retainage, 0);
-  const outstanding = billingApplications.reduce(
+  const openReceivable = billingApplications.reduce(
     (sum, app) => sum + Math.max(0, app.amount_billed - app.paid_to_date - app.retainage),
     0,
   );
@@ -1871,7 +1871,7 @@ function BillingWorkspace({
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <WorkspaceHeader
             title="Billing"
-            subtitle="Pay applications, invoice status, paid-to-date, retainage, outstanding balances, and pending COs."
+            subtitle="Pay applications, invoice status, remaining-to-bill, retainage, open receivables, and pending COs."
             compact
           />
           <Dialog open={payAppOpen} onOpenChange={setPayAppOpen}>
@@ -2026,12 +2026,13 @@ function BillingWorkspace({
             </DialogContent>
           </Dialog>
         </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <div className="mt-5 grid gap-3 md:grid-cols-4 xl:grid-cols-7">
           <SovMetric label="Forecasted contract" value={fmtUSD(rollup.forecastedFinalContract)} />
           <SovMetric label="Earned to date" value={fmtUSD(earnedToDate)} />
           <SovMetric label="Billed to date" value={fmtUSD(totalBilled)} />
+          <SovMetric label="Remaining to bill" value={fmtUSD(contractRemaining)} />
           <SovMetric label="Paid to date" value={fmtUSD(paidToDate)} />
-          <SovMetric label="Outstanding" value={fmtUSD(outstanding)} />
+          <SovMetric label="Open AR" value={fmtUSD(openReceivable)} />
           <SovMetric label="Retainage" value={fmtUSD(retainage)} />
         </div>
       </div>
@@ -2049,7 +2050,7 @@ function BillingWorkspace({
               </p>
             </div>
             <div className="text-sm tabular text-muted-foreground">
-              Remaining contract {fmtUSD(contractRemaining)} · Holds {fmtUSD(holds)}
+              Remaining to bill {fmtUSD(contractRemaining)} · Holds {fmtUSD(holds)}
             </div>
           </div>
           <div className="overflow-x-auto rounded-md border border-hairline">
@@ -2064,7 +2065,7 @@ function BillingWorkspace({
                   <th className="px-3 py-2 text-right">Billed</th>
                   <th className="px-3 py-2 text-right">Paid</th>
                   <th className="px-3 py-2 text-right">Retainage</th>
-                  <th className="px-3 py-2 text-right">Outstanding</th>
+                  <th className="px-3 py-2 text-right">Open AR</th>
                   <th className="px-3 py-2 text-left">Status</th>
                   <th className="w-10 px-3 py-2" />
                 </tr>
@@ -2461,7 +2462,7 @@ function BillingApplicationRowEditor({
   onPatch: (patch: Partial<BillingApplicationRow>) => void;
   onDelete: () => void;
 }) {
-  const outstanding = Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
+  const openReceivable = Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
   const events = app.status_events.slice(0, 3);
 
   return (
@@ -2541,7 +2542,7 @@ function BillingApplicationRowEditor({
           />
         </td>
         <td className="px-3 py-3 text-right align-top tabular font-medium">
-          {fmtUSD(outstanding)}
+          {fmtUSD(openReceivable)}
         </td>
         <td className="px-3 py-2 align-top">
           <Select
