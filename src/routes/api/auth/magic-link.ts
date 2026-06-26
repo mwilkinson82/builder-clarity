@@ -163,7 +163,8 @@ export const Route = createFileRoute("/api/auth/magic-link")({
               label,
               idempotency_key: idempotencyKey,
               message_id: messageId,
-            },
+              unsubscribe_token: crypto.randomUUID(),
+            } as Parameters<typeof sendLovableEmail>[0],
             { apiKey, sendUrl: process.env.LOVABLE_SEND_URL },
           );
 
