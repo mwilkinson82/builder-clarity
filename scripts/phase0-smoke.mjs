@@ -597,6 +597,20 @@ expectSql(
 expectSql(
   sql,
   [
+    /lower\(name\) = 'harbor residence'/i,
+    /activity_id,\s*name,\s*division,\s*start_date,\s*finish_date/i,
+    /'01-010'/,
+    /'99-010'/,
+    /predecessor_activity_ids/i,
+    /successor_activity_ids/i,
+    /cross join demo_activities/i,
+  ],
+  "existing Harbor Residence demo projects are backfilled with CPM activities",
+);
+
+expectSql(
+  sql,
+  [
     /create table if not exists public\.sov_imports/i,
     /grant select, insert on public\.sov_imports to authenticated/i,
     /alter table public\.sov_imports enable row level security/i,
