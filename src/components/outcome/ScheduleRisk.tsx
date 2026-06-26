@@ -138,6 +138,7 @@ export function ScheduleRisk({
   const [scheduleMoneyRecovery, setScheduleMoneyRecovery] = useState(0);
   const [moneyNotes, setMoneyNotes] = useState("");
   const [updateNotes, setUpdateNotes] = useState("");
+  const [milestoneView, setMilestoneView] = useState<MilestoneView>("active");
 
   const { data, isLoading } = useQuery({
     queryKey: ["schedule", projectId],
@@ -265,6 +266,9 @@ export function ScheduleRisk({
   const risks = data?.risks ?? [];
   const updates = data?.updates ?? [];
   const milestoneUpdates = data?.milestoneUpdates ?? [];
+  const visibleMilestones = filterMilestones(milestones, milestoneView);
+  const activeMilestoneCount = milestones.filter((m) => m.status !== "complete").length;
+  const completedMilestoneCount = milestones.filter((m) => m.status === "complete").length;
   const lastScheduleUpdate = updates[0] ?? null;
   const lastMovementWeeks = lastScheduleUpdate
     ? lastScheduleUpdate.movement_weeks
@@ -393,7 +397,13 @@ export function ScheduleRisk({
         </div>
       </section>
 
-      <ScheduleSnapshotTimeline project={project} updates={updates} milestones={milestones} />
+      <ScheduleSnapshotTimeline
+        project={project}
+        updates={updates}
+        milestones={milestones}
+        milestoneView={milestoneView}
+        onMilestoneViewChange={setMilestoneView}
+      />
 
       <ScheduleUpdateLedger updates={updates} milestoneUpdates={milestoneUpdates} />
 
@@ -404,13 +414,21 @@ export function ScheduleRisk({
             <h3 className="font-serif text-2xl text-foreground">Interim milestones</h3>
             <p className="mt-1 text-sm text-muted-foreground">
               Dry-in, rough-ins, owner-furnished deliveries, substantial completion — anything
-              between today and project completion. Log the reason whenever something slips.
+              between today and project completion. Completed items stay in history without taking
+              over the working page.
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {activeMilestoneCount} active · {completedMilestoneCount} complete ·{" "}
+              {milestones.length} total
             </p>
           </div>
-          <AddInline
-            placeholder="Add interim milestone (e.g. Roof dry-in)"
-            onAdd={(name) => msCreate.mutate({ projectId, name })}
-          />
+          <div className="flex w-full flex-col gap-2 md:w-auto md:min-w-[520px] md:flex-row">
+            <MilestoneViewSelect value={milestoneView} onChange={setMilestoneView} />
+            <AddInline
+              placeholder="Add interim milestone (e.g. Roof dry-in)"
+              onAdd={(name) => msCreate.mutate({ projectId, name })}
+            />
+          </div>
         </div>
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
@@ -418,9 +436,13 @@ export function ScheduleRisk({
           <p className="text-sm text-muted-foreground">
             No interim milestones yet. Add your first one above.
           </p>
+        ) : visibleMilestones.length === 0 ? (
+          <p className="rounded-md border border-dashed border-hairline bg-surface/60 px-3 py-5 text-sm text-muted-foreground">
+            No {milestoneView === "complete" ? "completed" : milestoneView} milestones to show.
+          </p>
         ) : (
           <div className="space-y-3">
-            {milestones.map((m) => (
+            {visibleMilestones.map((m) => (
               <MilestoneRowEditor
                 key={m.id}
                 row={m}
@@ -453,6 +475,35 @@ export function ScheduleRisk({
 }
 
 const weeksBetween = computeScheduleVarianceWeeks;
+
+type MilestoneView = "active" | "complete" | "all";
+
+function filterMilestones(milestones: MilestoneRow[], view: MilestoneView) {
+  if (view === "all") return milestones;
+  if (view === "complete") return milestones.filter((m) => m.status === "complete");
+  return milestones.filter((m) => m.status !== "complete");
+}
+
+function MilestoneViewSelect({
+  value,
+  onChange,
+}: {
+  value: MilestoneView;
+  onChange: (value: MilestoneView) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={(next) => onChange(next as MilestoneView)}>
+      <SelectTrigger className="h-9 md:w-[150px]">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="active">Active</SelectItem>
+        <SelectItem value="complete">Complete</SelectItem>
+        <SelectItem value="all">All</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
 
 function varianceLabel(value: number | null) {
   if (value == null) return "Set dates";
@@ -541,11 +592,22 @@ function ScheduleSnapshotTimeline({
   project,
   updates,
   milestones,
+  milestoneView,
+  onMilestoneViewChange,
 }: {
   project: ProjectRow;
   updates: ScheduleUpdateRow[];
   milestones: MilestoneRow[];
+  milestoneView: MilestoneView;
+  onMilestoneViewChange: (value: MilestoneView) => void;
 }) {
+  const latestUpdate = updates[0] ?? null;
+  const visibleMilestones = filterMilestones(milestones, milestoneView);
+  const activeMilestoneCount = milestones.filter((m) => m.status !== "complete").length;
+  const completedMilestoneCount = milestones.filter((m) => m.status === "complete").length;
+  const schedulePressureCount = milestones.filter(
+    (m) => m.status === "delayed" || m.status === "at_risk",
+  ).length;
   const dateValues = [
     project.baseline_completion_date,
     project.forecast_completion_date,
@@ -555,6 +617,7 @@ function ScheduleSnapshotTimeline({
   const bounds = getTimelineBounds(dateValues);
   const completionBaseline = timelinePosition(project.baseline_completion_date, bounds);
   const currentCompletion = timelinePosition(project.forecast_completion_date, bounds);
+  const dataDatePosition = timelinePosition(latestUpdate?.data_date, bounds);
   const recentUpdates = updates.slice(0, 6).reverse();
   const completionVariance =
     computeScheduleVarianceWeeks(
@@ -564,22 +627,50 @@ function ScheduleSnapshotTimeline({
 
   return (
     <section className="rounded-lg border border-hairline bg-card p-6">
-      <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <h3 className="font-serif text-2xl text-foreground">Baseline vs updates</h3>
+          <h3 className="font-serif text-2xl text-foreground">Construction schedule</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            The baseline stays fixed. Each saved update is a data-date snapshot of where the job
-            stood at that point in time.
+            Baseline dates stay fixed. Current bars move with each data-date update so the team can
+            see the schedule snapshot without opening another scheduling tool.
           </p>
         </div>
-        <div className="text-xs text-muted-foreground">
-          {recentUpdates.length > 0
-            ? `${recentUpdates.length} latest update${recentUpdates.length === 1 ? "" : "s"} shown`
-            : "No updates saved yet"}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <MilestoneViewSelect value={milestoneView} onChange={onMilestoneViewChange} />
+          <div className="text-xs text-muted-foreground">
+            {recentUpdates.length > 0
+              ? `${recentUpdates.length} latest update${recentUpdates.length === 1 ? "" : "s"} shown`
+              : "No updates saved yet"}
+          </div>
         </div>
       </div>
 
       <div className="space-y-5">
+        <div className="grid gap-3 md:grid-cols-4">
+          <ScheduleStat
+            label="Latest data date"
+            value={shortDate(latestUpdate?.data_date)}
+            sub={latestUpdate ? `Update #${latestUpdate.update_number}` : "No update saved"}
+          />
+          <ScheduleStat
+            label="Active milestones"
+            value={String(activeMilestoneCount)}
+            sub={`${completedMilestoneCount} complete`}
+          />
+          <ScheduleStat
+            label="Delayed / at risk"
+            value={String(schedulePressureCount)}
+            sub="Needs meeting attention"
+            tone={schedulePressureCount > 0 ? "danger" : "success"}
+          />
+          <ScheduleStat
+            label="Schedule dollars"
+            value={fmtUSD(latestUpdate?.schedule_money_net ?? 0)}
+            sub="Latest update net"
+            tone={(latestUpdate?.schedule_money_net ?? 0) > 0 ? "danger" : "success"}
+          />
+        </div>
+
         <div className="rounded-md border border-hairline bg-surface p-4">
           <div className="mb-3 flex items-center justify-between gap-3 text-xs">
             <div>
@@ -594,6 +685,16 @@ function ScheduleSnapshotTimeline({
             </div>
           </div>
           <div className="relative h-10 rounded-full bg-muted">
+            {dataDatePosition != null && (
+              <div
+                className="absolute inset-y-1 w-px bg-foreground/35"
+                style={{ left: `${dataDatePosition}%` }}
+              >
+                <span className="absolute -top-5 -translate-x-1/2 whitespace-nowrap text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  Data date
+                </span>
+              </div>
+            )}
             {completionBaseline != null && (
               <TimelineMarker
                 left={completionBaseline}
@@ -613,6 +714,49 @@ function ScheduleSnapshotTimeline({
             <span>{shortDate(bounds.startLabel)}</span>
             <span>{shortDate(bounds.endLabel)}</span>
           </div>
+        </div>
+
+        <div className="rounded-md border border-hairline bg-surface">
+          <div className="border-b border-hairline px-4 py-3">
+            <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Baseline vs current milestone plan
+                </div>
+                <div className="mt-1 text-sm text-muted-foreground">
+                  Showing {visibleMilestones.length} of {milestones.length} milestones. Use this as
+                  the simple Gantt view for meeting review.
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2.5 w-2.5 rounded-full border border-foreground bg-card" />
+                  Baseline
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2.5 w-2.5 rounded-full border border-accent bg-accent" />
+                  Current
+                </span>
+              </div>
+            </div>
+          </div>
+          {visibleMilestones.length === 0 ? (
+            <div className="px-4 py-8 text-sm text-muted-foreground">
+              No {milestoneView === "complete" ? "completed" : milestoneView} milestones to show.
+              Add schedule milestones below to build the plan.
+            </div>
+          ) : (
+            <div className="max-h-[560px] overflow-y-auto">
+              {visibleMilestones.map((milestone) => (
+                <SchedulePlanRow
+                  key={milestone.id}
+                  milestone={milestone}
+                  bounds={bounds}
+                  dataDatePosition={dataDatePosition}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {recentUpdates.length > 0 && (
@@ -648,19 +792,32 @@ function ScheduleSnapshotTimeline({
             ))}
           </div>
         )}
-
-        {milestones.length > 0 && (
-          <div className="space-y-2">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              Interim milestone movement
-            </div>
-            {milestones.slice(0, 5).map((milestone) => (
-              <TimelineMilestone key={milestone.id} milestone={milestone} bounds={bounds} />
-            ))}
-          </div>
-        )}
       </div>
     </section>
+  );
+}
+
+function ScheduleStat({
+  label,
+  value,
+  sub,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  tone?: "default" | "danger" | "success";
+}) {
+  const toneClass =
+    tone === "danger" ? "text-danger" : tone === "success" ? "text-success" : "text-foreground";
+  return (
+    <div className="rounded-md border border-hairline bg-surface px-3 py-3">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 text-lg font-semibold tabular ${toneClass}`}>{value}</div>
+      <div className="mt-0.5 min-h-4 text-xs text-muted-foreground">{sub}</div>
+    </div>
   );
 }
 
@@ -724,12 +881,14 @@ function TimelineMarker({
   );
 }
 
-function TimelineMilestone({
+function SchedulePlanRow({
   milestone,
   bounds,
+  dataDatePosition,
 }: {
   milestone: MilestoneRow;
   bounds: TimelineBounds;
+  dataDatePosition: number | null;
 }) {
   const baseline = timelinePosition(milestone.baseline_date, bounds);
   const current = timelinePosition(milestone.forecast_date, bounds);
@@ -737,38 +896,55 @@ function TimelineMilestone({
   const end = current ?? baseline ?? 0;
   const left = Math.min(start, end);
   const width = Math.max(2, Math.abs(end - start));
+  const variance = computeScheduleVarianceWeeks(milestone.baseline_date, milestone.forecast_date);
+  const isLate = (variance ?? 0) > 0 || milestone.status === "delayed";
+  const isPressure = isLate || milestone.status === "at_risk";
   return (
-    <div className="grid gap-2 rounded-md border border-hairline bg-surface px-3 py-2 md:grid-cols-[220px_minmax(0,1fr)_120px] md:items-center">
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-foreground">{milestone.name}</div>
-        <div className="text-xs text-muted-foreground">
-          {shortDate(milestone.baseline_date)} to {shortDate(milestone.forecast_date)}
+    <div className="grid gap-3 border-b border-hairline px-4 py-3 last:border-b-0 lg:grid-cols-[minmax(180px,1.25fr)_minmax(280px,2fr)_92px_92px_86px_116px] lg:items-center">
+      <div className="min-w-0 lg:pr-2">
+        <div className="text-sm font-medium leading-snug text-foreground">{milestone.name}</div>
+        <div className="mt-1 text-xs text-muted-foreground">{milestone.owner || "Unassigned"}</div>
+        {milestone.delay_reason && (
+          <div className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">
+            {milestone.delay_reason}
+          </div>
+        )}
+      </div>
+      <div>
+        <div className="relative h-9 rounded-md bg-muted">
+          {dataDatePosition != null && (
+            <div
+              className="absolute inset-y-1 w-px bg-foreground/25"
+              style={{ left: `${dataDatePosition}%` }}
+            />
+          )}
+          {(baseline != null || current != null) && (
+            <div
+              className={`absolute top-1/2 h-2 -translate-y-1/2 rounded-full ${
+                isPressure ? "bg-danger/60" : "bg-success/60"
+              }`}
+              style={{ left: `${left}%`, width: `${width}%` }}
+            />
+          )}
+          {baseline != null && (
+            <span
+              className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-foreground bg-card"
+              style={{ left: `${baseline}%` }}
+            />
+          )}
+          {current != null && (
+            <span
+              className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-accent bg-accent"
+              style={{ left: `${current}%` }}
+            />
+          )}
         </div>
       </div>
-      <div className="relative h-5 rounded-full bg-muted">
-        <div
-          className={`absolute top-1/2 h-2 -translate-y-1/2 rounded-full ${
-            milestone.status === "delayed" || milestone.status === "at_risk"
-              ? "bg-danger/60"
-              : "bg-success/60"
-          }`}
-          style={{ left: `${left}%`, width: `${width}%` }}
-        />
-        {baseline != null && (
-          <span
-            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-foreground bg-card"
-            style={{ left: `${baseline}%` }}
-          />
-        )}
-        {current != null && (
-          <span
-            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-accent bg-accent"
-            style={{ left: `${current}%` }}
-          />
-        )}
-      </div>
+      <CompactField label="Baseline" value={shortDate(milestone.baseline_date)} />
+      <CompactField label="Current" value={shortDate(milestone.forecast_date)} />
+      <CompactField label="Variance" value={varianceLabel(variance)} />
       <span
-        className={`inline-flex justify-center rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${STATUS_STYLES[milestone.status]}`}
+        className={`inline-flex min-h-8 items-center justify-center rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${STATUS_STYLES[milestone.status]}`}
       >
         {STATUS_LABEL[milestone.status]}
       </span>
