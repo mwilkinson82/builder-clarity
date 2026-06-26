@@ -18,14 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { ListChecks, Plus, Pencil, Trash2 } from "lucide-react";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
@@ -224,94 +216,85 @@ export function ExposuresTable({
         </Button>
       </div>
 
-      <div className="w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden rounded-lg border border-hairline bg-card xl:overflow-x-hidden">
-        <Table className="w-full min-w-[880px] table-fixed xl:min-w-0">
-          <TableHeader>
-            <TableRow className="bg-surface">
-              <TableHead className="w-[38%]">Risk / exposure</TableHead>
-              <TableHead className="w-[14%] text-right">Exposure</TableHead>
-              <TableHead className="text-right">Released</TableHead>
-              <TableHead className="text-right">Remaining</TableHead>
-              <TableHead>Hold</TableHead>
-              <TableHead>Owner</TableHead>
-              <TableHead>Status / treatment</TableHead>
-              <TableHead className="w-[80px] text-right" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <RiskGroupRow label="E-Holds" detail="Known exposure now" count={eHolds.length} />
-            {eHolds.map((e) => (
-              <RiskRow
-                key={e.id}
-                exposure={e}
-                highlightLabel={e.id === topEHoldId ? "Top E-Hold" : undefined}
-                onView={setViewing}
-                onEdit={openEdit}
-                onDelete={onDelete}
-                onCreateTodo={onCreateTodo}
-              />
-            ))}
-            <RiskGroupRow
-              label="C-Holds"
-              detail="Contingency still being gardened"
-              count={cHolds.length}
+      <div className="w-full min-w-0 max-w-full overflow-hidden rounded-lg border border-hairline bg-card">
+        <div className="hidden grid-cols-[minmax(0,1.7fr)_minmax(112px,0.48fr)_minmax(150px,0.64fr)_minmax(150px,0.62fr)_92px] gap-4 border-b border-hairline bg-surface px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground lg:grid">
+          <div>Risk / exposure</div>
+          <div className="text-right">Likely exposure</div>
+          <div className="text-right">Released / remaining</div>
+          <div>Status / owner</div>
+          <div className="text-right">Actions</div>
+        </div>
+        <div className="divide-y divide-hairline">
+          <RiskGroupRow label="E-Holds" detail="Known exposure now" count={eHolds.length} />
+          {eHolds.map((e) => (
+            <RiskRow
+              key={e.id}
+              exposure={e}
+              highlightLabel={e.id === topEHoldId ? "Top E-Hold" : undefined}
+              onView={setViewing}
+              onEdit={openEdit}
+              onDelete={onDelete}
+              onCreateTodo={onCreateTodo}
             />
-            {cHolds.map((e) => (
-              <RiskRow
-                key={e.id}
-                exposure={e}
-                highlightLabel={e.id === topCHoldId ? "Top C-Hold" : undefined}
-                onView={setViewing}
-                onEdit={openEdit}
-                onDelete={onDelete}
-                onCreateTodo={onCreateTodo}
-              />
-            ))}
-            {unclassifiedLive.length > 0 && (
-              <RiskGroupRow
-                label="Unclassified live risk"
-                detail="Still active but not assigned to E-Hold or C-Hold"
-                count={unclassifiedLive.length}
-              />
-            )}
-            {unclassifiedLive.map((e) => (
-              <RiskRow
-                key={e.id}
-                exposure={e}
-                highlightLabel={e.id === topUnclassifiedId ? "Top risk" : undefined}
-                onView={setViewing}
-                onEdit={openEdit}
-                onDelete={onDelete}
-                onCreateTodo={onCreateTodo}
-              />
-            ))}
-            {closed.length > 0 && (
-              <RiskGroupRow
-                label="Closed / released"
-                detail="No remaining hold against indicated GP"
-                count={closed.length}
-              />
-            )}
-            {closed.map((e) => (
-              <RiskRow
-                key={e.id}
-                exposure={e}
-                onView={setViewing}
-                onEdit={openEdit}
-                onDelete={onDelete}
-                onCreateTodo={onCreateTodo}
-              />
-            ))}
-            {exposures.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
-                  No risk allocations yet. Every emerging problem has a dollar consequence - add the
-                  first one to begin protecting margin.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+          ))}
+          <RiskGroupRow
+            label="C-Holds"
+            detail="Contingency still being gardened"
+            count={cHolds.length}
+          />
+          {cHolds.map((e) => (
+            <RiskRow
+              key={e.id}
+              exposure={e}
+              highlightLabel={e.id === topCHoldId ? "Top C-Hold" : undefined}
+              onView={setViewing}
+              onEdit={openEdit}
+              onDelete={onDelete}
+              onCreateTodo={onCreateTodo}
+            />
+          ))}
+          {unclassifiedLive.length > 0 && (
+            <RiskGroupRow
+              label="Unclassified live risk"
+              detail="Still active but not assigned to E-Hold or C-Hold"
+              count={unclassifiedLive.length}
+            />
+          )}
+          {unclassifiedLive.map((e) => (
+            <RiskRow
+              key={e.id}
+              exposure={e}
+              highlightLabel={e.id === topUnclassifiedId ? "Top risk" : undefined}
+              onView={setViewing}
+              onEdit={openEdit}
+              onDelete={onDelete}
+              onCreateTodo={onCreateTodo}
+            />
+          ))}
+          {closed.length > 0 && (
+            <RiskGroupRow
+              label="Closed / released"
+              detail="No remaining hold against indicated GP"
+              count={closed.length}
+            />
+          )}
+          {closed.map((e) => (
+            <RiskRow
+              key={e.id}
+              exposure={e}
+              onView={setViewing}
+              onEdit={openEdit}
+              onDelete={onDelete}
+              onCreateTodo={onCreateTodo}
+            />
+          ))}
+          {exposures.length === 0 && (
+            <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+              No risk allocations yet. Every emerging problem has a dollar consequence - add the
+              first one to begin protecting margin.
+            </div>
+          )}
+        </div>
       </div>
 
       <Dialog open={Boolean(viewing)} onOpenChange={(next) => !next && setViewing(null)}>
@@ -324,9 +307,7 @@ export function ExposuresTable({
                     <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-danger">
                       Risk detail
                     </p>
-                    <DialogTitle className="mt-1 font-serif text-3xl">
-                      {viewing.title}
-                    </DialogTitle>
+                    <DialogTitle className="mt-1 font-serif text-3xl">{viewing.title}</DialogTitle>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <StatusBadge status={viewing.status} />
@@ -674,21 +655,19 @@ function RiskDetailMetric({
 
 function RiskGroupRow({ label, detail, count }: { label: string; detail: string; count: number }) {
   return (
-    <TableRow className="bg-surface/80 hover:bg-surface/80">
-      <TableCell colSpan={8} className="py-2">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-baseline gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">
-              {label}
-            </span>
-            <span className="text-xs text-muted-foreground">{detail}</span>
-          </div>
-          <span className="rounded-full border border-hairline bg-card px-2 py-0.5 text-[10px] text-muted-foreground">
-            {count}
+    <div className="bg-surface/80 px-4 py-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground">
+            {label}
           </span>
+          <span className="text-xs text-muted-foreground">{detail}</span>
         </div>
-      </TableCell>
-    </TableRow>
+        <span className="shrink-0 rounded-full border border-hairline bg-card px-2 py-0.5 text-[10px] text-muted-foreground">
+          {count}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -710,7 +689,8 @@ function RiskRow({
   const closed = remainingValue(exposure) === 0;
   const highlighted = Boolean(highlightLabel);
   return (
-    <TableRow
+    <div
+      role="button"
       tabIndex={0}
       onClick={() => onView(exposure)}
       onKeyDown={(event) => {
@@ -720,18 +700,20 @@ function RiskRow({
         }
       }}
       className={[
-        "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "grid cursor-pointer gap-4 px-4 py-4 transition-colors hover:bg-surface/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:grid-cols-[minmax(0,1.7fr)_minmax(112px,0.48fr)_minmax(150px,0.64fr)_minmax(150px,0.62fr)_92px]",
         closed ? "opacity-65" : "",
-        highlighted ? "border-l-4 border-l-danger bg-danger/8 hover:bg-danger/10" : "",
+        highlighted ? "border-l-4 border-l-danger bg-danger/10 hover:bg-danger/10" : "",
       ]
         .filter(Boolean)
         .join(" ")}
     >
-      <TableCell className="align-top">
-        <div className="flex items-center gap-2">
-          <div className="font-semibold leading-snug text-foreground">{exposure.title}</div>
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="min-w-0 text-base font-semibold leading-snug text-foreground">
+            {exposure.title}
+          </div>
           {highlightLabel && (
-            <span className="rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-danger">
+            <span className="shrink-0 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-danger">
               {highlightLabel}
             </span>
           )}
@@ -756,74 +738,87 @@ function RiskRow({
             {exposure.release_note}
           </div>
         )}
-      </TableCell>
-      <TableCell className="align-top text-right tabular">
-        <div className="font-semibold text-foreground">{fmtUSD(likelyValue(exposure))}</div>
+      </div>
+      <div className="tabular lg:text-right">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground lg:hidden">
+          Likely exposure
+        </div>
+        <div className="mt-1 font-semibold text-foreground lg:mt-0">
+          {fmtUSD(likelyValue(exposure))}
+        </div>
         <div className="mt-1 text-xs text-muted-foreground">
           {fmtUSD(exposure.dollar_exposure)} at {exposure.probability}%
         </div>
-      </TableCell>
-      <TableCell className="align-top text-right tabular text-success">
-        {releasedValue(exposure) > 0 ? fmtUSD(releasedValue(exposure)) : "$0"}
-      </TableCell>
-      <TableCell className="align-top text-right tabular font-semibold text-foreground">
-        {fmtUSD(remainingValue(exposure))}
-      </TableCell>
-      <TableCell className="align-top">
-        <span className="inline-flex items-center rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[10px]">
-          {exposure.hold_class}
-        </span>
-      </TableCell>
-      <TableCell className="align-top text-sm">{exposure.owner}</TableCell>
-      <TableCell className="align-top">
-        <div className="flex flex-col items-start gap-2">
+      </div>
+      <div className="grid grid-cols-2 gap-2 tabular lg:block lg:text-right">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Released
+          </div>
+          <div className="mt-1 font-medium text-success">
+            {releasedValue(exposure) > 0 ? fmtUSD(releasedValue(exposure)) : "$0"}
+          </div>
+        </div>
+        <div className="lg:mt-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Remaining
+          </div>
+          <div className="mt-1 font-semibold text-foreground">
+            {fmtUSD(remainingValue(exposure))}
+          </div>
+        </div>
+      </div>
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="inline-flex items-center rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[10px]">
+            {exposure.hold_class}
+          </span>
           <StatusBadge status={exposure.status} />
           <TreatmentBadge path={exposure.response_path} />
         </div>
-      </TableCell>
-      <TableCell className="align-top text-right">
-        <div className="flex justify-end gap-1">
-          {onCreateTodo && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-7 w-7"
-              title="Create linked to-do"
-              aria-label={`Create linked to-do for ${exposure.title}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onCreateTodo(exposure);
-              }}
-            >
-              <ListChecks className="h-3.5 w-3.5" />
-            </Button>
-          )}
+        <div className="mt-2 text-sm text-foreground">{exposure.owner || "Unassigned"}</div>
+      </div>
+      <div className="flex items-start justify-end gap-1 lg:justify-end">
+        {onCreateTodo && (
           <Button
             size="icon"
             variant="ghost"
             className="h-7 w-7"
+            title="Create linked to-do"
+            aria-label={`Create linked to-do for ${exposure.title}`}
             onClick={(event) => {
               event.stopPropagation();
-              onEdit(exposure);
+              onCreateTodo(exposure);
             }}
           >
-            <Pencil className="h-3.5 w-3.5" />
+            <ListChecks className="h-3.5 w-3.5" />
           </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7"
-            aria-label={`Delete risk ${exposure.title}`}
-            title="Delete risk"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete(exposure.id);
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </TableCell>
-    </TableRow>
+        )}
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit(exposure);
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7"
+          aria-label={`Delete risk ${exposure.title}`}
+          title="Delete risk"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete(exposure.id);
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
   );
 }

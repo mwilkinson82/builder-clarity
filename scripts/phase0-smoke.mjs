@@ -270,8 +270,9 @@ await expectContains(
 await expectContains(
   "src/components/outcome/ExposuresTable.tsx",
   [
-    /xl:overflow-x-hidden/,
-    /min-w-\[880px\] table-fixed xl:min-w-0/,
+    /overflow-hidden rounded-lg border border-hairline bg-card/,
+    /lg:grid-cols-\[minmax\(0,1\.7fr\)_minmax\(112px,0\.48fr\)_minmax\(150px,0\.64fr\)_minmax\(150px,0\.62fr\)_92px\]/,
+    /role="button"/,
     /onClick=\{\(\) => onView\(exposure\)\}/,
     /Risk detail/,
   ],
