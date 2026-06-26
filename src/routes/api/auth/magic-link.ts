@@ -79,7 +79,7 @@ export const Route = createFileRoute("/api/auth/magic-link")({
 
         const isInvite = body.kind === "invite";
         const subject = isInvite ? "You've been invited to Overwatch" : "Your Overwatch login link";
-        const component = isInvite ? InviteEmail : MagicLinkEmail;
+        const component: React.ComponentType<any> = isInvite ? InviteEmail : MagicLinkEmail;
         const element = React.createElement(component, {
           siteName: SITE_NAME,
           siteUrl: `https://${ROOT_DOMAIN}`,
