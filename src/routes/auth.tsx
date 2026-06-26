@@ -92,14 +92,15 @@ function AuthForm() {
     setNotice(null);
     setMagicLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo: authRedirectTo(next),
-          shouldCreateUser: true,
-        },
+      const response = await fetch("/api/auth/magic-link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, redirectTo: authRedirectTo(next), kind: "login" }),
       });
-      if (error) throw error;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error || "Could not send magic link");
+      }
       setNotice("Check your email. Your secure sign-in link is on the way.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send magic link");
