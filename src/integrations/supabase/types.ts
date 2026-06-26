@@ -1307,11 +1307,16 @@ export type Database = {
           baseline_completion_date: string | null
           created_at: string
           created_by: string | null
+          data_date: string | null
           forecast_completion_date: string
           id: string
+          money_notes: string
           movement_weeks: number
           notes: string
           project_id: string
+          schedule_money_exposure: number
+          schedule_money_net: number
+          schedule_money_recovery: number
           update_date: string
           update_number: number
           updated_at: string
@@ -1321,11 +1326,16 @@ export type Database = {
           baseline_completion_date?: string | null
           created_at?: string
           created_by?: string | null
+          data_date?: string | null
           forecast_completion_date: string
           id?: string
+          money_notes?: string
           movement_weeks?: number
           notes?: string
           project_id: string
+          schedule_money_exposure?: number
+          schedule_money_net?: number
+          schedule_money_recovery?: number
           update_date?: string
           update_number: number
           updated_at?: string
@@ -1335,11 +1345,16 @@ export type Database = {
           baseline_completion_date?: string | null
           created_at?: string
           created_by?: string | null
+          data_date?: string | null
           forecast_completion_date?: string
           id?: string
+          money_notes?: string
           movement_weeks?: number
           notes?: string
           project_id?: string
+          schedule_money_exposure?: number
+          schedule_money_net?: number
+          schedule_money_recovery?: number
           update_date?: string
           update_number?: number
           updated_at?: string

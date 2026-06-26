@@ -104,7 +104,10 @@ await expectFile("src/routes/_authenticated/team.tsx", "company workspace route"
 await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF generator");
 await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
 await expectFile("src/lib/email-templates/invoice-notification.tsx", "invoice email template");
-await expectFile("src/lib/email-templates/ior-report-notification.tsx", "IOR report email template");
+await expectFile(
+  "src/lib/email-templates/ior-report-notification.tsx",
+  "IOR report email template",
+);
 await expectFile("src/lib/stripe.server.ts", "Stripe server helper");
 await expectFile(
   "src/routes/api/stripe/connect/account-link.ts",
@@ -306,7 +309,12 @@ await expectContains(
 
 await expectContains(
   "src/lib/email-templates/registry.ts",
-  [/invoice-notification/, /invoiceNotification/, /ior-report-notification/, /iorReportNotification/],
+  [
+    /invoice-notification/,
+    /invoiceNotification/,
+    /ior-report-notification/,
+    /iorReportNotification/,
+  ],
   "transactional invoice and IOR report email templates are registered",
 );
 
@@ -318,7 +326,12 @@ await expectContains(
 
 await expectContains(
   "src/components/outcome/ReviewsTab.tsx",
-  [/EmailReviewDialog/, /sendTransactionalEmail/, /ior-report-notification/, /Send through Overwatch/],
+  [
+    /EmailReviewDialog/,
+    /sendTransactionalEmail/,
+    /ior-report-notification/,
+    /Send through Overwatch/,
+  ],
   "IOR report emails queue through Overwatch instead of external mail clients",
 );
 
@@ -418,10 +431,15 @@ await expectContains(
     /createScheduleUpdate/,
     /createScheduleRisk/,
     /createExposure/,
+    /Baseline vs schedule updates/,
+    /Data date/,
+    /Money exposure in update/,
+    /schedule_money_exposure/,
+    /Baseline vs updates/,
     /toast\.success\("Risk allocation created/,
     /toast\.success\("Schedule update saved/,
   ],
-  "schedule workspace creates schedule updates and pushes schedule risk into risk tally",
+  "schedule workspace creates data-date updates with money movement and pushes schedule risk into risk tally",
 );
 
 await expectContains(
@@ -512,6 +530,9 @@ expectSql(
     /grant select, insert, update, delete on public\.schedule_updates to authenticated/i,
     /alter table public\.schedule_updates enable row level security/i,
     /schedule_update_id uuid references public\.schedule_updates/i,
+    /alter table public\.schedule_updates[\s\S]*data_date/i,
+    /schedule_money_exposure/i,
+    /tg_schedule_updates_data_date_money/i,
   ],
   "schedule updates and schedule-risk linkage migrations exist with RLS/grants",
 );

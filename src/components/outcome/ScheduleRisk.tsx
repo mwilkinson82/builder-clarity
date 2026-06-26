@@ -130,8 +130,13 @@ export function ScheduleRisk({
   const createUpdate = useServerFn(createScheduleUpdate);
   const createExposureFn = useServerFn(createExposure);
   const updateFin = useServerFn(updateProjectFinancials);
-  const [forecastDraft, setForecastDraft] = useState(project.forecast_completion_date ?? "");
-  const [updateDate, setUpdateDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [completionUpdateDraft, setCompletionUpdateDraft] = useState(
+    project.forecast_completion_date ?? "",
+  );
+  const [dataDate, setDataDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [scheduleMoneyExposure, setScheduleMoneyExposure] = useState(0);
+  const [scheduleMoneyRecovery, setScheduleMoneyRecovery] = useState(0);
+  const [moneyNotes, setMoneyNotes] = useState("");
   const [updateNotes, setUpdateNotes] = useState("");
 
   const { data, isLoading } = useQuery({
@@ -266,10 +271,10 @@ export function ScheduleRisk({
     : weeksBetween(lastReviewForecast, project.forecast_completion_date);
   const scheduleVariance = computeScheduleVarianceWeeks(
     project.baseline_completion_date,
-    forecastDraft || project.forecast_completion_date,
+    completionUpdateDraft || project.forecast_completion_date,
   );
   useEffect(() => {
-    setForecastDraft(project.forecast_completion_date ?? "");
+    setCompletionUpdateDraft(project.forecast_completion_date ?? "");
   }, [project.forecast_completion_date]);
 
   const scheduleUpdate = useMutation({
@@ -277,22 +282,29 @@ export function ScheduleRisk({
       createUpdate({
         data: {
           projectId,
-          forecast_completion_date: forecastDraft,
-          update_date: updateDate,
+          forecast_completion_date: completionUpdateDraft,
+          data_date: dataDate,
+          update_date: dataDate,
+          schedule_money_exposure: scheduleMoneyExposure,
+          schedule_money_recovery: scheduleMoneyRecovery,
+          money_notes: moneyNotes,
           notes: updateNotes,
         },
       }),
     onSuccess: async () => {
       setUpdateNotes("");
+      setMoneyNotes("");
+      setScheduleMoneyExposure(0);
+      setScheduleMoneyRecovery(0);
       await Promise.all([invalidateSchedule(), invalidateProject()]);
       toast.success("Schedule update saved", {
-        description: "Forecast movement has been added to the schedule history.",
+        description: "The data-date snapshot was added to the schedule update history.",
       });
     },
     onError: (error) => {
       toast.error("Schedule update did not save", {
         description:
-          error instanceof Error ? error.message : "Check the forecast date and try again.",
+          error instanceof Error ? error.message : "Check the completion update and try again.",
       });
     },
   });
@@ -302,10 +314,10 @@ export function ScheduleRisk({
       {/* Top: editable completion summary */}
       <section className="rounded-lg border border-hairline bg-card p-6">
         <div className="mb-4">
-          <h3 className="font-serif text-2xl text-foreground">Project completion</h3>
+          <h3 className="font-serif text-2xl text-foreground">Baseline vs schedule updates</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            Baseline is what you committed to. Forecast is what you actually believe. Both feed the
-            IOR report.
+            Create the committed baseline, then save dated updates with a data date. Each update is
+            a snapshot in time and can carry schedule-related dollars.
           </p>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
@@ -321,40 +333,67 @@ export function ScheduleRisk({
             }
           />
           <DateField
-            label="Forecast completion"
-            value={forecastDraft}
+            label="Current completion update"
+            value={completionUpdateDraft}
             accent
-            onCommit={(v) => setForecastDraft(v ?? "")}
+            onCommit={(v) => setCompletionUpdateDraft(v ?? "")}
           />
           <ScheduleVarianceCard value={scheduleVariance} />
           <ScheduleDeltaCard value={lastMovementWeeks} />
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
+        <div className="mt-4 grid gap-3 md:grid-cols-4 md:items-end">
           <div className="space-y-1.5">
             <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Update date
+              Data date
             </Label>
-            <Input type="date" value={updateDate} onChange={(e) => setUpdateDate(e.target.value)} />
+            <Input type="date" value={dataDate} onChange={(e) => setDataDate(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Schedule movement note
+              Money exposure in update
+            </Label>
+            <MoneyInput value={scheduleMoneyExposure} onValueChange={setScheduleMoneyExposure} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Recovered / offset
+            </Label>
+            <MoneyInput value={scheduleMoneyRecovery} onValueChange={setScheduleMoneyRecovery} />
+          </div>
+          <ScheduleMoneyNetCard exposure={scheduleMoneyExposure} recovery={scheduleMoneyRecovery} />
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+          <div className="space-y-1.5">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Update explanation
             </Label>
             <Input
               value={updateNotes}
               onChange={(e) => setUpdateNotes(e.target.value)}
-              placeholder="What changed since the last schedule update?"
+              placeholder="What changed since the prior schedule update?"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Money note
+            </Label>
+            <Input
+              value={moneyNotes}
+              onChange={(e) => setMoneyNotes(e.target.value)}
+              placeholder="What dollar impact belongs to this update?"
             />
           </div>
           <Button
             type="button"
-            disabled={!forecastDraft || scheduleUpdate.isPending}
+            disabled={!completionUpdateDraft || scheduleUpdate.isPending}
             onClick={() => scheduleUpdate.mutate()}
           >
-            {scheduleUpdate.isPending ? "Saving..." : "Save schedule update"}
+            {scheduleUpdate.isPending ? "Saving..." : "Save update"}
           </Button>
         </div>
       </section>
+
+      <ScheduleSnapshotTimeline project={project} updates={updates} milestones={milestones} />
 
       <ScheduleUpdateLedger updates={updates} milestoneUpdates={milestoneUpdates} />
 
@@ -429,6 +468,12 @@ function varianceTone(value: number | null) {
   return "text-foreground";
 }
 
+function moneyTone(value: number) {
+  if (value > 0) return "text-danger";
+  if (value < 0) return "text-success";
+  return "text-foreground";
+}
+
 function ScheduleVarianceCard({ value }: { value: number | null }) {
   return (
     <div className="space-y-1.5">
@@ -447,7 +492,7 @@ function ScheduleVarianceCard({ value }: { value: number | null }) {
 function ScheduleDeltaCard({ value }: { value: number | null }) {
   const label =
     value == null
-      ? "No prior IOR"
+      ? "No prior update"
       : value > 0
         ? `+${value} wk`
         : value < 0
@@ -465,13 +510,268 @@ function ScheduleDeltaCard({ value }: { value: number | null }) {
   return (
     <div className="space-y-1.5">
       <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        Since last schedule update
+        Movement from prior update
       </Label>
       <div
         className={`flex h-9 items-center rounded-md border border-input px-3 text-sm tabular ${tone}`}
       >
         {label}
       </div>
+    </div>
+  );
+}
+
+function ScheduleMoneyNetCard({ exposure, recovery }: { exposure: number; recovery: number }) {
+  const net = exposure - recovery;
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        Net schedule dollars
+      </Label>
+      <div
+        className={`flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm font-semibold tabular ${moneyTone(net)}`}
+      >
+        {fmtUSD(net)}
+      </div>
+    </div>
+  );
+}
+
+function ScheduleSnapshotTimeline({
+  project,
+  updates,
+  milestones,
+}: {
+  project: ProjectRow;
+  updates: ScheduleUpdateRow[];
+  milestones: MilestoneRow[];
+}) {
+  const dateValues = [
+    project.baseline_completion_date,
+    project.forecast_completion_date,
+    ...updates.flatMap((update) => [update.data_date, update.forecast_completion_date]),
+    ...milestones.flatMap((milestone) => [milestone.baseline_date, milestone.forecast_date]),
+  ];
+  const bounds = getTimelineBounds(dateValues);
+  const completionBaseline = timelinePosition(project.baseline_completion_date, bounds);
+  const currentCompletion = timelinePosition(project.forecast_completion_date, bounds);
+  const recentUpdates = updates.slice(0, 6).reverse();
+  const completionVariance =
+    computeScheduleVarianceWeeks(
+      project.baseline_completion_date,
+      project.forecast_completion_date,
+    ) ?? 0;
+
+  return (
+    <section className="rounded-lg border border-hairline bg-card p-6">
+      <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h3 className="font-serif text-2xl text-foreground">Baseline vs updates</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The baseline stays fixed. Each saved update is a data-date snapshot of where the job
+            stood at that point in time.
+          </p>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {recentUpdates.length > 0
+            ? `${recentUpdates.length} latest update${recentUpdates.length === 1 ? "" : "s"} shown`
+            : "No updates saved yet"}
+        </div>
+      </div>
+
+      <div className="space-y-5">
+        <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="mb-3 flex items-center justify-between gap-3 text-xs">
+            <div>
+              <div className="font-semibold text-foreground">Project completion path</div>
+              <div className="text-muted-foreground">
+                Baseline {shortDate(project.baseline_completion_date)} · Current update{" "}
+                {shortDate(project.forecast_completion_date)}
+              </div>
+            </div>
+            <div className={`font-semibold tabular ${varianceTone(completionVariance)}`}>
+              {varianceLabel(completionVariance)}
+            </div>
+          </div>
+          <div className="relative h-10 rounded-full bg-muted">
+            {completionBaseline != null && (
+              <TimelineMarker
+                left={completionBaseline}
+                label="Baseline"
+                className="border-foreground bg-foreground"
+              />
+            )}
+            {currentCompletion != null && (
+              <TimelineMarker
+                left={currentCompletion}
+                label="Current"
+                className="border-accent bg-accent"
+              />
+            )}
+          </div>
+          <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
+            <span>{shortDate(bounds.startLabel)}</span>
+            <span>{shortDate(bounds.endLabel)}</span>
+          </div>
+        </div>
+
+        {recentUpdates.length > 0 && (
+          <div className="grid gap-3 md:grid-cols-3">
+            {recentUpdates.map((update) => (
+              <div key={update.id} className="rounded-md border border-hairline bg-surface p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Update #{update.update_number}
+                    </div>
+                    <div className="mt-1 font-medium text-foreground">
+                      Data date {shortDate(update.data_date)}
+                    </div>
+                  </div>
+                  <div
+                    className={`text-sm font-semibold tabular ${moneyTone(
+                      update.schedule_money_net,
+                    )}`}
+                  >
+                    {fmtUSD(update.schedule_money_net)}
+                  </div>
+                </div>
+                <div className="mt-2 text-sm text-muted-foreground">
+                  Current completion {shortDate(update.forecast_completion_date)}
+                </div>
+                {(update.notes || update.money_notes) && (
+                  <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">
+                    {update.notes || update.money_notes}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {milestones.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Interim milestone movement
+            </div>
+            {milestones.slice(0, 5).map((milestone) => (
+              <TimelineMilestone key={milestone.id} milestone={milestone} bounds={bounds} />
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+type TimelineBounds = {
+  start: number;
+  end: number;
+  startLabel: string | null;
+  endLabel: string | null;
+};
+
+function parseDateMs(value?: string | null) {
+  if (!value) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return Date.UTC(year, month - 1, day);
+}
+
+function isoDateFromMs(ms: number) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function getTimelineBounds(values: Array<string | null | undefined>): TimelineBounds {
+  const parsed = values
+    .map((value) => parseDateMs(value))
+    .filter((value): value is number => value != null);
+  const today = parseDateMs(new Date().toISOString().slice(0, 10)) ?? Date.now();
+  const oneWeek = 7 * 24 * 60 * 60 * 1000;
+  const start = Math.min(...parsed, today) - oneWeek;
+  const end = Math.max(...parsed, today) + oneWeek;
+  return {
+    start,
+    end,
+    startLabel: isoDateFromMs(start),
+    endLabel: isoDateFromMs(end),
+  };
+}
+
+function timelinePosition(value: string | null | undefined, bounds: TimelineBounds) {
+  const ms = parseDateMs(value);
+  if (ms == null || bounds.end <= bounds.start) return null;
+  const pct = ((ms - bounds.start) / (bounds.end - bounds.start)) * 100;
+  return Math.max(0, Math.min(100, pct));
+}
+
+function TimelineMarker({
+  left,
+  label,
+  className,
+}: {
+  left: number;
+  label: string;
+  className: string;
+}) {
+  return (
+    <div className="absolute top-1/2 -translate-y-1/2" style={{ left: `${left}%` }}>
+      <div className={`h-4 w-4 -translate-x-1/2 rounded-full border-2 ${className}`} />
+      <div className="-translate-x-1/2 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function TimelineMilestone({
+  milestone,
+  bounds,
+}: {
+  milestone: MilestoneRow;
+  bounds: TimelineBounds;
+}) {
+  const baseline = timelinePosition(milestone.baseline_date, bounds);
+  const current = timelinePosition(milestone.forecast_date, bounds);
+  const start = baseline ?? current ?? 0;
+  const end = current ?? baseline ?? 0;
+  const left = Math.min(start, end);
+  const width = Math.max(2, Math.abs(end - start));
+  return (
+    <div className="grid gap-2 rounded-md border border-hairline bg-surface px-3 py-2 md:grid-cols-[220px_minmax(0,1fr)_120px] md:items-center">
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium text-foreground">{milestone.name}</div>
+        <div className="text-xs text-muted-foreground">
+          {shortDate(milestone.baseline_date)} to {shortDate(milestone.forecast_date)}
+        </div>
+      </div>
+      <div className="relative h-5 rounded-full bg-muted">
+        <div
+          className={`absolute top-1/2 h-2 -translate-y-1/2 rounded-full ${
+            milestone.status === "delayed" || milestone.status === "at_risk"
+              ? "bg-danger/60"
+              : "bg-success/60"
+          }`}
+          style={{ left: `${left}%`, width: `${width}%` }}
+        />
+        {baseline != null && (
+          <span
+            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-foreground bg-card"
+            style={{ left: `${baseline}%` }}
+          />
+        )}
+        {current != null && (
+          <span
+            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-accent bg-accent"
+            style={{ left: `${current}%` }}
+          />
+        )}
+      </div>
+      <span
+        className={`inline-flex justify-center rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${STATUS_STYLES[milestone.status]}`}
+      >
+        {STATUS_LABEL[milestone.status]}
+      </span>
     </div>
   );
 }
@@ -488,7 +788,8 @@ function ScheduleUpdateLedger({
       <section className="rounded-lg border border-hairline bg-card p-6">
         <h3 className="font-serif text-2xl text-foreground">Schedule update history</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          No formal schedule updates have been saved yet. The next saved forecast becomes update 1.
+          No formal schedule updates have been saved yet. The next saved data-date snapshot becomes
+          update 1.
         </p>
       </section>
     );
@@ -502,36 +803,33 @@ function ScheduleUpdateLedger({
       <div className="mb-4">
         <h3 className="font-serif text-2xl text-foreground">Schedule update history</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Each saved update records forecast movement against the baseline and the prior update.
+          Each saved update records a data date, current completion date, variance against baseline,
+          movement from the prior update, and schedule-dollar movement.
         </p>
       </div>
       <div className="overflow-hidden rounded-md border border-hairline">
-        <div className="grid grid-cols-[64px_100px_120px_1fr_100px_100px_84px] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        <div className="grid grid-cols-[64px_100px_120px_140px_100px_100px_110px_minmax(180px,1fr)] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           <div>Update</div>
-          <div>Date</div>
+          <div>Data date</div>
           <div>Baseline</div>
-          <div>Forecast</div>
+          <div>Current completion</div>
           <div>Variance</div>
           <div>Movement</div>
-          <div>Milestones</div>
+          <div>Net $</div>
+          <div>Notes</div>
         </div>
         {updates.map((update) => (
           <div
             key={update.id}
-            className="grid grid-cols-[64px_100px_120px_1fr_100px_100px_84px] items-start border-t border-hairline px-3 py-3 text-sm"
+            className="grid grid-cols-[64px_100px_120px_140px_100px_100px_110px_minmax(180px,1fr)] items-start border-t border-hairline px-3 py-3 text-sm"
           >
             <div className="font-medium tabular text-foreground">#{update.update_number}</div>
-            <div className="text-muted-foreground">{shortDate(update.update_date)}</div>
+            <div className="text-muted-foreground">{shortDate(update.data_date)}</div>
             <div className="tabular text-muted-foreground">
               {shortDate(update.baseline_completion_date)}
             </div>
-            <div>
-              <div className="font-medium text-foreground">
-                {shortDate(update.forecast_completion_date)}
-              </div>
-              {update.notes && (
-                <div className="mt-1 max-w-2xl text-xs text-muted-foreground">{update.notes}</div>
-              )}
+            <div className="font-medium text-foreground">
+              {shortDate(update.forecast_completion_date)}
             </div>
             <div className={`tabular ${varianceTone(update.variance_weeks)}`}>
               {varianceLabel(update.variance_weeks)}
@@ -539,8 +837,21 @@ function ScheduleUpdateLedger({
             <div className={`tabular ${varianceTone(update.movement_weeks)}`}>
               {varianceLabel(update.movement_weeks)}
             </div>
-            <div className="tabular text-muted-foreground">
-              {milestoneCountByUpdate[update.update_number] ?? 0}
+            <div className={`font-semibold tabular ${moneyTone(update.schedule_money_net)}`}>
+              {fmtUSD(update.schedule_money_net)}
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground">
+                {milestoneCountByUpdate[update.update_number] ?? 0} milestone snapshots
+              </div>
+              {update.notes && (
+                <div className="mt-1 max-w-2xl text-xs text-muted-foreground">{update.notes}</div>
+              )}
+              {update.money_notes && (
+                <div className="mt-1 max-w-2xl text-xs text-muted-foreground">
+                  {update.money_notes}
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -652,7 +963,7 @@ function MilestoneRowEditor({
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs md:min-w-[440px] md:grid-cols-4">
             <CompactField label="Baseline" value={shortDate(local.baseline_date)} />
-            <CompactField label="Forecast" value={shortDate(local.forecast_date)} />
+            <CompactField label="Current" value={shortDate(local.forecast_date)} />
             <CompactField label="Owner" value={local.owner || "Unassigned"} />
             <div className="flex items-center justify-end gap-1">
               <Button
@@ -704,7 +1015,7 @@ function MilestoneRowEditor({
         </div>
         <div className="space-y-1 md:col-span-2">
           <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            Forecast
+            Current
           </Label>
           <Input
             type="date"

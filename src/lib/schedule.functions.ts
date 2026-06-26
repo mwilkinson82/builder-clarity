@@ -49,10 +49,15 @@ export interface ScheduleUpdateRow {
   project_id: string;
   update_number: number;
   update_date: string;
+  data_date: string;
   baseline_completion_date: string | null;
   forecast_completion_date: string;
   variance_weeks: number;
   movement_weeks: number;
+  schedule_money_exposure: number;
+  schedule_money_recovery: number;
+  schedule_money_net: number;
+  money_notes: string;
   notes: string;
 }
 
@@ -112,17 +117,31 @@ const normalizeScheduleRisk = (r: Record<string, unknown>): ScheduleRiskRow => (
   sort_order: num(r.sort_order),
 });
 
-const normalizeScheduleUpdate = (r: Record<string, unknown>): ScheduleUpdateRow => ({
-  id: r.id as string,
-  project_id: r.project_id as string,
-  update_number: num(r.update_number),
-  update_date: str(r.update_date),
-  baseline_completion_date: (r.baseline_completion_date as string | null) ?? null,
-  forecast_completion_date: str(r.forecast_completion_date),
-  variance_weeks: num(r.variance_weeks),
-  movement_weeks: num(r.movement_weeks),
-  notes: str(r.notes),
-});
+const normalizeScheduleUpdate = (r: Record<string, unknown>): ScheduleUpdateRow => {
+  const updateDate = str(r.update_date, str(r.data_date));
+  const dataDate = str(r.data_date, updateDate);
+  const scheduleMoneyExposure = num(r.schedule_money_exposure);
+  const scheduleMoneyRecovery = num(r.schedule_money_recovery);
+  return {
+    id: r.id as string,
+    project_id: r.project_id as string,
+    update_number: num(r.update_number),
+    update_date: updateDate,
+    data_date: dataDate,
+    baseline_completion_date: (r.baseline_completion_date as string | null) ?? null,
+    forecast_completion_date: str(r.forecast_completion_date),
+    variance_weeks: num(r.variance_weeks),
+    movement_weeks: num(r.movement_weeks),
+    schedule_money_exposure: scheduleMoneyExposure,
+    schedule_money_recovery: scheduleMoneyRecovery,
+    schedule_money_net:
+      r.schedule_money_net == null
+        ? scheduleMoneyExposure - scheduleMoneyRecovery
+        : num(r.schedule_money_net),
+    money_notes: str(r.money_notes),
+    notes: str(r.notes),
+  };
+};
 
 const normalizeMilestoneUpdate = (r: Record<string, unknown>): ScheduleMilestoneUpdateRow => ({
   id: r.id as string,
@@ -219,7 +238,11 @@ export const listSchedule = createServerFn({ method: "GET" })
 const createScheduleUpdateInput = z.object({
   projectId: z.string().uuid(),
   forecast_completion_date: z.string().min(1),
+  data_date: z.string().optional(),
   update_date: z.string().optional(),
+  schedule_money_exposure: z.number().min(0).default(0),
+  schedule_money_recovery: z.number().min(0).default(0),
+  money_notes: z.string().max(4000).default(""),
   notes: z.string().max(4000).default(""),
 });
 
@@ -245,7 +268,7 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       .maybeSingle();
 
     const baseline = (project.baseline_completion_date as string | null) ?? null;
-    const previousForecast =
+    const previousCompletion =
       (last?.forecast_completion_date as string | null) ??
       (project.forecast_completion_date as string | null) ??
       null;
@@ -253,22 +276,45 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
     const varianceWeeks =
       computeScheduleVarianceWeeks(baseline, data.forecast_completion_date) ?? 0;
     const movementWeeks =
-      computeScheduleVarianceWeeks(previousForecast, data.forecast_completion_date) ?? 0;
+      computeScheduleVarianceWeeks(previousCompletion, data.forecast_completion_date) ?? 0;
+    const dataDate = data.data_date ?? data.update_date ?? new Date().toISOString().slice(0, 10);
 
-    const { data: update, error: insertError } = await context.supabase
+    const baseUpdatePayload = {
+      project_id: data.projectId,
+      update_number: updateNumber,
+      update_date: dataDate,
+      baseline_completion_date: baseline,
+      forecast_completion_date: data.forecast_completion_date,
+      variance_weeks: varianceWeeks,
+      movement_weeks: movementWeeks,
+      notes: data.notes,
+    };
+    const extendedUpdatePayload = {
+      ...baseUpdatePayload,
+      data_date: dataDate,
+      schedule_money_exposure: data.schedule_money_exposure,
+      schedule_money_recovery: data.schedule_money_recovery,
+      money_notes: data.money_notes,
+    };
+
+    let { data: update, error: insertError } = await context.supabase
       .from("schedule_updates")
-      .insert({
-        project_id: data.projectId,
-        update_number: updateNumber,
-        update_date: data.update_date ?? new Date().toISOString().slice(0, 10),
-        baseline_completion_date: baseline,
-        forecast_completion_date: data.forecast_completion_date,
-        variance_weeks: varianceWeeks,
-        movement_weeks: movementWeeks,
-        notes: data.notes,
-      })
+      .insert(extendedUpdatePayload)
       .select("*")
       .single();
+    if (
+      insertError &&
+      (isMissingRestColumn(insertError, "data_date") ||
+        isMissingRestColumn(insertError, "schedule_money_exposure") ||
+        isMissingRestColumn(insertError, "schedule_money_recovery") ||
+        isMissingRestColumn(insertError, "money_notes"))
+    ) {
+      ({ data: update, error: insertError } = await context.supabase
+        .from("schedule_updates")
+        .insert(baseUpdatePayload)
+        .select("*")
+        .single());
+    }
     if (insertError) throw new Error(insertError.message);
 
     const { error: projectUpdateError } = await context.supabase
