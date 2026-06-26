@@ -2,6 +2,14 @@ import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -115,6 +123,21 @@ const RISK_META: Record<
   },
 };
 
+type ActivityCreateInput = { name: string } & Partial<
+  Pick<
+    ScheduleActivityRow,
+    | "activity_id"
+    | "division"
+    | "start_date"
+    | "finish_date"
+    | "percent_complete"
+    | "predecessor_activity_ids"
+    | "successor_activity_ids"
+    | "notes"
+    | "sort_order"
+  >
+>;
+
 export function ScheduleRisk({
   project,
   lastReviewForecast,
@@ -197,12 +220,31 @@ export function ScheduleRisk({
     successTitle: "Milestone deleted",
     errorTitle: "Milestone did not delete",
   });
-  const activityCreate = useScheduleMutation<
-    { projectId: string; name: string } & Partial<ScheduleActivityRow>
-  >(createActivity as never, {
-    successTitle: "Activity added",
-    successDescription: "The CPM activity is now in the schedule table and Gantt.",
-    errorTitle: "Activity did not save",
+  const activityCreate = useScheduleMutation<{ projectId: string } & ActivityCreateInput>(
+    createActivity as never,
+    {
+      successTitle: "Activity added",
+      successDescription: "The CPM activity is now in the schedule table and Gantt.",
+      errorTitle: "Activity did not save",
+    },
+  );
+  const activitySeed = useMutation({
+    mutationFn: async (items: ActivityCreateInput[]) => {
+      for (const item of items) {
+        await createActivity({ data: { projectId, ...item } });
+      }
+    },
+    onSuccess: async (_result, items) => {
+      await invalidateSchedule();
+      toast.success("CPM rows created", {
+        description: `${items.length} milestone ${items.length === 1 ? "row" : "rows"} added to the schedule workbench.`,
+      });
+    },
+    onError: (error) => {
+      toast.error("CPM rows did not save", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
   });
   const activityUpdate = useScheduleMutation<{ id: string; patch: Partial<ScheduleActivityRow> }>(
     updateActivity as never,
@@ -429,6 +471,8 @@ export function ScheduleRisk({
         milestoneView={milestoneView}
         onMilestoneViewChange={setMilestoneView}
         onAddActivity={(activity) => activityCreate.mutate({ projectId, ...activity })}
+        onSeedActivities={(items) => activitySeed.mutate(items)}
+        isSeedingActivities={activitySeed.isPending}
         onPatchActivity={(id, patch) => activityUpdate.mutate({ id, patch })}
         onDeleteActivity={(id) => activityDelete.mutate({ id })}
       />
@@ -624,6 +668,8 @@ function ScheduleSnapshotTimeline({
   milestoneView,
   onMilestoneViewChange,
   onAddActivity,
+  onSeedActivities,
+  isSeedingActivities,
   onPatchActivity,
   onDeleteActivity,
 }: {
@@ -633,21 +679,9 @@ function ScheduleSnapshotTimeline({
   activities: ScheduleActivityRow[];
   milestoneView: MilestoneView;
   onMilestoneViewChange: (value: MilestoneView) => void;
-  onAddActivity: (
-    activity: { name: string } & Partial<
-      Pick<
-        ScheduleActivityRow,
-        | "activity_id"
-        | "division"
-        | "start_date"
-        | "finish_date"
-        | "percent_complete"
-        | "predecessor_activity_ids"
-        | "successor_activity_ids"
-        | "notes"
-      >
-    >,
-  ) => void;
+  onAddActivity: (activity: ActivityCreateInput) => void;
+  onSeedActivities: (activities: ActivityCreateInput[]) => void;
+  isSeedingActivities: boolean;
   onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
   onDeleteActivity: (id: string) => void;
 }) {
@@ -768,9 +802,12 @@ function ScheduleSnapshotTimeline({
 
         <CpmActivityPlanner
           activities={activities}
+          milestones={milestones}
           project={project}
           latestDataDate={latestUpdate?.data_date ?? null}
           onAddActivity={onAddActivity}
+          onSeedActivities={onSeedActivities}
+          isSeedingActivities={isSeedingActivities}
           onPatchActivity={onPatchActivity}
           onDeleteActivity={onDeleteActivity}
         />
@@ -880,37 +917,42 @@ const emptyActivityDraft = (): ActivityDraft => ({
   notes: "",
 });
 
+const activityDraftFromRow = (activity: ScheduleActivityRow): ActivityDraft => ({
+  activity_id: activity.activity_id,
+  name: activity.name,
+  division: activity.division || "General",
+  start_date: activity.start_date ?? "",
+  finish_date: activity.finish_date ?? "",
+  percent_complete: String(activity.percent_complete),
+  predecessor_activity_ids: formatActivityIds(activity.predecessor_activity_ids),
+  successor_activity_ids: formatActivityIds(activity.successor_activity_ids),
+  notes: activity.notes ?? "",
+});
+
 function CpmActivityPlanner({
   activities,
+  milestones,
   project,
   latestDataDate,
   onAddActivity,
+  onSeedActivities,
+  isSeedingActivities,
   onPatchActivity,
   onDeleteActivity,
 }: {
   activities: ScheduleActivityRow[];
+  milestones: MilestoneRow[];
   project: ProjectRow;
   latestDataDate: string | null;
-  onAddActivity: (
-    activity: { name: string } & Partial<
-      Pick<
-        ScheduleActivityRow,
-        | "activity_id"
-        | "division"
-        | "start_date"
-        | "finish_date"
-        | "percent_complete"
-        | "predecessor_activity_ids"
-        | "successor_activity_ids"
-        | "notes"
-      >
-    >,
-  ) => void;
+  onAddActivity: (activity: ActivityCreateInput) => void;
+  onSeedActivities: (activities: ActivityCreateInput[]) => void;
+  isSeedingActivities: boolean;
   onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
   onDeleteActivity: (id: string) => void;
 }) {
   const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
   const [showDraft, setShowDraft] = useState(false);
+  const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const sortedActivities = useMemo(
     () =>
       [...activities].sort((a, b) => {
@@ -937,6 +979,18 @@ function CpmActivityPlanner({
       project.forecast_completion_date,
     ],
   );
+  const selectedActivity = useMemo(
+    () => sortedActivities.find((activity) => activity.id === selectedActivityId) ?? null,
+    [selectedActivityId, sortedActivities],
+  );
+  const milestoneSeedRows = useMemo(
+    () => buildActivityRowsFromMilestones(milestones, sortedActivities),
+    [milestones, sortedActivities],
+  );
+
+  useEffect(() => {
+    if (selectedActivityId && !selectedActivity) setSelectedActivityId(null);
+  }, [selectedActivity, selectedActivityId]);
 
   const addActivity = () => {
     const name = draft.name.trim();
@@ -985,6 +1039,16 @@ function CpmActivityPlanner({
             type="button"
             variant="outline"
             className="gap-2"
+            disabled={milestoneSeedRows.length === 0 || isSeedingActivities}
+            onClick={() => onSeedActivities(milestoneSeedRows)}
+          >
+            <ClipboardList className="h-4 w-4" />
+            {isSeedingActivities ? "Building..." : "Build from milestones"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2"
             onClick={() => typeof window !== "undefined" && window.print()}
           >
             <Printer className="h-4 w-4" />
@@ -1021,6 +1085,15 @@ function CpmActivityPlanner({
           sub={`${shortDate(bounds.startLabel)} to ${shortDate(bounds.endLabel)}`}
         />
       </div>
+
+      {milestones.length > 0 && milestoneSeedRows.length > 0 && (
+        <div className="mt-4 rounded-md border border-hairline bg-card p-3 text-sm text-muted-foreground">
+          <span className="font-semibold text-foreground">Milestone bridge:</span>{" "}
+          {milestoneSeedRows.length} milestone {milestoneSeedRows.length === 1 ? "is" : "are"} ready
+          to become CPM activity rows. Build them once, then add logic ties and update percent
+          complete from the schedule workbench.
+        </div>
+      )}
 
       {showDraft && (
         <div className="mt-5 rounded-md border border-hairline bg-card p-4 shadow-sm">
@@ -1137,15 +1210,33 @@ function CpmActivityPlanner({
 
       <ActivityRegister
         grouped={grouped}
+        onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
         onPatchActivity={onPatchActivity}
-        onDeleteActivity={onDeleteActivity}
+        onDeleteActivity={(id) => {
+          if (selectedActivityId === id) setSelectedActivityId(null);
+          onDeleteActivity(id);
+        }}
       />
 
       <ActivityGanttPanel
         grouped={grouped}
         bounds={bounds}
         dataDatePosition={timelinePosition(latestDataDate, bounds)}
+        onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
       />
+
+      {selectedActivity && (
+        <ActivityDetailDialog
+          activity={selectedActivity}
+          onClose={() => setSelectedActivityId(null)}
+          onSave={(patch) => onPatchActivity(selectedActivity.id, patch)}
+          onDelete={() => {
+            const id = selectedActivity.id;
+            setSelectedActivityId(null);
+            onDeleteActivity(id);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1187,16 +1278,18 @@ function LabeledField({ label, children }: { label: string; children: ReactNode 
 
 function ActivityRegister({
   grouped,
+  onOpenActivity,
   onPatchActivity,
   onDeleteActivity,
 }: {
   grouped: Array<{ division: string; activities: ScheduleActivityRow[] }>;
+  onOpenActivity: (activity: ScheduleActivityRow) => void;
   onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
   onDeleteActivity: (id: string) => void;
 }) {
   return (
     <div className="mt-5 overflow-hidden rounded-md border border-hairline bg-card">
-      <div className="grid grid-cols-[100px_minmax(220px,1fr)_130px_130px_90px_130px_130px_44px] gap-3 border-b border-hairline bg-muted/55 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground max-xl:hidden">
+      <div className="grid grid-cols-[100px_minmax(220px,1fr)_130px_130px_90px_130px_130px_84px] gap-3 border-b border-hairline bg-muted/55 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground max-xl:hidden">
         <div>ID</div>
         <div>Activity</div>
         <div>Division</div>
@@ -1219,6 +1312,7 @@ function ActivityRegister({
           <ActivityRegisterGroup
             key={group.division}
             group={group}
+            onOpenActivity={onOpenActivity}
             onPatchActivity={onPatchActivity}
             onDeleteActivity={onDeleteActivity}
           />
@@ -1230,10 +1324,12 @@ function ActivityRegister({
 
 function ActivityRegisterGroup({
   group,
+  onOpenActivity,
   onPatchActivity,
   onDeleteActivity,
 }: {
   group: { division: string; activities: ScheduleActivityRow[] };
+  onOpenActivity: (activity: ScheduleActivityRow) => void;
   onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
   onDeleteActivity: (id: string) => void;
 }) {
@@ -1246,6 +1342,7 @@ function ActivityRegisterGroup({
         <ActivityRegisterRow
           key={activity.id}
           activity={activity}
+          onOpen={() => onOpenActivity(activity)}
           onPatch={(patch) => onPatchActivity(activity.id, patch)}
           onDelete={() => onDeleteActivity(activity.id)}
         />
@@ -1256,10 +1353,12 @@ function ActivityRegisterGroup({
 
 function ActivityRegisterRow({
   activity,
+  onOpen,
   onPatch,
   onDelete,
 }: {
   activity: ScheduleActivityRow;
+  onOpen: () => void;
   onPatch: (patch: Partial<ScheduleActivityRow>) => void;
   onDelete: () => void;
 }) {
@@ -1281,7 +1380,7 @@ function ActivityRegisterRow({
 
   return (
     <div className="border-b border-hairline px-4 py-3 last:border-b-0">
-      <div className="grid gap-3 xl:grid-cols-[100px_minmax(220px,1fr)_130px_130px_90px_130px_130px_44px] xl:items-start">
+      <div className="grid gap-3 xl:grid-cols-[100px_minmax(220px,1fr)_130px_130px_90px_130px_130px_84px] xl:items-start">
         <LabeledField label="ID">
           <Input
             defaultValue={activity.activity_id}
@@ -1350,16 +1449,28 @@ function ActivityRegisterRow({
             className="h-10 tabular"
           />
         </LabeledField>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="mt-5 h-10 w-10 justify-self-end text-muted-foreground hover:text-danger xl:mt-4"
-          onClick={onDelete}
-          aria-label={`Delete activity ${activity.activity_id || activity.name}`}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
+        <div className="mt-5 flex justify-end gap-1 xl:mt-4">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-10 w-10 text-muted-foreground hover:text-foreground"
+            onClick={onOpen}
+            aria-label={`Open activity ${activity.activity_id || activity.name}`}
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-10 w-10 text-muted-foreground hover:text-danger"
+            onClick={onDelete}
+            aria-label={`Delete activity ${activity.activity_id || activity.name}`}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
       <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
         <div className="rounded-md border border-hairline bg-surface p-3">
@@ -1380,8 +1491,6 @@ function ActivityRegisterRow({
 }
 
 function ActivityLogicSummary({ activity }: { activity: ScheduleActivityRow }) {
-  const predecessors = formatActivityIds(activity.predecessor_activity_ids);
-  const successors = formatActivityIds(activity.successor_activity_ids);
   const duration = getActivityDurationDays(activity);
   return (
     <div className="rounded-md border border-hairline bg-surface p-3">
@@ -1401,19 +1510,33 @@ function ActivityLogicSummary({ activity }: { activity: ScheduleActivityRow }) {
           <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             Predecessors
           </div>
-          <div className="mt-1 truncate font-semibold tabular text-foreground">
-            {predecessors || "None"}
-          </div>
+          <ActivityIdPills ids={activity.predecessor_activity_ids} emptyLabel="None" />
         </div>
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             Successors
           </div>
-          <div className="mt-1 truncate font-semibold tabular text-foreground">
-            {successors || "None"}
-          </div>
+          <ActivityIdPills ids={activity.successor_activity_ids} emptyLabel="None" />
         </div>
       </div>
+    </div>
+  );
+}
+
+function ActivityIdPills({ ids, emptyLabel }: { ids: string[]; emptyLabel: string }) {
+  if (ids.length === 0) {
+    return <div className="mt-1 text-sm font-semibold text-muted-foreground">{emptyLabel}</div>;
+  }
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {ids.map((id) => (
+        <span
+          key={id}
+          className="rounded border border-hairline bg-card px-1.5 py-0.5 text-[11px] font-semibold tabular text-foreground"
+        >
+          {id}
+        </span>
+      ))}
     </div>
   );
 }
@@ -1422,10 +1545,12 @@ function ActivityGanttPanel({
   grouped,
   bounds,
   dataDatePosition,
+  onOpenActivity,
 }: {
   grouped: Array<{ division: string; activities: ScheduleActivityRow[] }>;
   bounds: TimelineBounds;
   dataDatePosition: number | null;
+  onOpenActivity: (activity: ScheduleActivityRow) => void;
 }) {
   return (
     <div className="mt-5 overflow-hidden rounded-md border border-hairline bg-card">
@@ -1468,6 +1593,7 @@ function ActivityGanttPanel({
                   activity={activity}
                   bounds={bounds}
                   dataDatePosition={dataDatePosition}
+                  onOpen={() => onOpenActivity(activity)}
                 />
               ))}
             </div>
@@ -1486,10 +1612,12 @@ function ActivityGanttRow({
   activity,
   bounds,
   dataDatePosition,
+  onOpen,
 }: {
   activity: ScheduleActivityRow;
   bounds: TimelineBounds;
   dataDatePosition: number | null;
+  onOpen: () => void;
 }) {
   const start = timelinePosition(activity.start_date, bounds);
   const finish = timelinePosition(activity.finish_date, bounds);
@@ -1503,7 +1631,11 @@ function ActivityGanttRow({
   const finishMs = parseDateMs(activity.finish_date);
   const isLate = percent < 100 && finishMs != null && dataDateMs != null && finishMs < dataDateMs;
   return (
-    <div className="grid gap-3 border-b border-hairline px-4 py-3 last:border-b-0 lg:grid-cols-[260px_minmax(0,1fr)_88px] lg:items-center">
+    <button
+      type="button"
+      className="grid w-full gap-3 border-b border-hairline px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/40 lg:grid-cols-[260px_minmax(0,1fr)_88px] lg:items-center"
+      onClick={onOpen}
+    >
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold tabular text-foreground">
           {activity.activity_id || "No ID"}
@@ -1536,7 +1668,204 @@ function ActivityGanttRow({
       >
         {percent}%
       </div>
-    </div>
+    </button>
+  );
+}
+
+function ActivityDetailDialog({
+  activity,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  activity: ScheduleActivityRow;
+  onClose: () => void;
+  onSave: (patch: Partial<ScheduleActivityRow>) => void;
+  onDelete: () => void;
+}) {
+  const [draft, setDraft] = useState<ActivityDraft>(() => activityDraftFromRow(activity));
+  const duration = getActivityDurationDays(activity);
+
+  useEffect(() => {
+    setDraft(activityDraftFromRow(activity));
+  }, [activity]);
+
+  const saveActivity = () => {
+    const name = draft.name.trim();
+    if (!name) return;
+    onSave({
+      activity_id: draft.activity_id.trim(),
+      name,
+      division: draft.division.trim() || "General",
+      start_date: draft.start_date || null,
+      finish_date: draft.finish_date || null,
+      percent_complete: parsePercent(draft.percent_complete),
+      predecessor_activity_ids: parseActivityIds(draft.predecessor_activity_ids),
+      successor_activity_ids: parseActivityIds(draft.successor_activity_ids),
+      notes: draft.notes.trim(),
+    });
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="font-serif text-2xl">CPM activity detail</DialogTitle>
+          <DialogDescription>
+            Review the full activity, dependency logic, dates, percent complete, and field notes.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <ScheduleWorkbenchStat
+            label="Activity ID"
+            value={activity.activity_id || "No ID"}
+            sub={activity.division || "General"}
+          />
+          <ScheduleWorkbenchStat
+            label="Duration"
+            value={duration == null ? "No dates" : String(duration)}
+            sub={duration == null ? "start / finish needed" : "calendar days"}
+          />
+          <ScheduleWorkbenchStat
+            label="Progress"
+            value={`${activity.percent_complete}%`}
+            sub={activity.percent_complete >= 100 ? "complete" : "remaining"}
+            tone={activity.percent_complete >= 100 ? "success" : "default"}
+          />
+          <ScheduleWorkbenchStat
+            label="Logic"
+            value={String(
+              activity.predecessor_activity_ids.length + activity.successor_activity_ids.length,
+            )}
+            sub="pred / succ ties"
+            tone={
+              activity.predecessor_activity_ids.length + activity.successor_activity_ids.length > 0
+                ? "success"
+                : "warning"
+            }
+          />
+        </div>
+
+        <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="grid gap-3 lg:grid-cols-[130px_minmax(240px,1fr)_180px_150px_150px_110px]">
+            <LabeledField label="Activity ID">
+              <Input
+                value={draft.activity_id}
+                onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
+                className="h-10 font-semibold tabular"
+              />
+            </LabeledField>
+            <LabeledField label="Activity">
+              <Input
+                value={draft.name}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                className="h-10"
+              />
+            </LabeledField>
+            <LabeledField label="Division">
+              <Input
+                value={draft.division}
+                onChange={(e) => setDraft({ ...draft, division: e.target.value })}
+                className="h-10"
+              />
+            </LabeledField>
+            <LabeledField label="Start">
+              <Input
+                type="date"
+                value={draft.start_date}
+                onChange={(e) => setDraft({ ...draft, start_date: e.target.value })}
+                className="h-10"
+              />
+            </LabeledField>
+            <LabeledField label="Finish">
+              <Input
+                type="date"
+                value={draft.finish_date}
+                onChange={(e) => setDraft({ ...draft, finish_date: e.target.value })}
+                className="h-10"
+              />
+            </LabeledField>
+            <LabeledField label="% done">
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={draft.percent_complete}
+                onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
+                className="h-10 tabular"
+              />
+            </LabeledField>
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-[200px_200px_minmax(240px,1fr)]">
+            <LabeledField label="Predecessors">
+              <Input
+                value={draft.predecessor_activity_ids}
+                onChange={(e) => setDraft({ ...draft, predecessor_activity_ids: e.target.value })}
+                placeholder="A-001, A-002"
+                className="h-10 tabular"
+              />
+            </LabeledField>
+            <LabeledField label="Successors">
+              <Input
+                value={draft.successor_activity_ids}
+                onChange={(e) => setDraft({ ...draft, successor_activity_ids: e.target.value })}
+                placeholder="A-030"
+                className="h-10 tabular"
+              />
+            </LabeledField>
+            <div className="rounded-md border border-hairline bg-card p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Dependency readout
+              </div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <div className="text-xs font-semibold text-muted-foreground">Predecessors</div>
+                  <ActivityIdPills
+                    ids={parseActivityIds(draft.predecessor_activity_ids)}
+                    emptyLabel="No predecessor logic"
+                  />
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-muted-foreground">Successors</div>
+                  <ActivityIdPills
+                    ids={parseActivityIds(draft.successor_activity_ids)}
+                    emptyLabel="No successor logic"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <LabeledField label="Notes / constraint">
+              <Textarea
+                value={draft.notes}
+                onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+                placeholder="Sequencing constraint, procurement issue, field note, or CPM update narrative."
+                className="min-h-28 resize-y bg-card"
+              />
+            </LabeledField>
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
+          <Button type="button" variant="outline" className="gap-2 text-danger" onClick={onDelete}>
+            <Trash2 className="h-4 w-4" />
+            Delete activity
+          </Button>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Close
+            </Button>
+            <Button type="button" onClick={saveActivity} disabled={!draft.name.trim()}>
+              Save activity
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1547,6 +1876,59 @@ function groupActivitiesByDivision(activities: ScheduleActivityRow[]) {
     groups.set(division, [...(groups.get(division) ?? []), activity]);
   }
   return Array.from(groups.entries()).map(([division, rows]) => ({ division, activities: rows }));
+}
+
+function buildActivityRowsFromMilestones(
+  milestones: MilestoneRow[],
+  activities: ScheduleActivityRow[],
+): ActivityCreateInput[] {
+  const existingNames = new Set(activities.map((activity) => normalizeActivityName(activity.name)));
+  const existingIds = new Set(activities.map((activity) => activity.activity_id).filter(Boolean));
+
+  return milestones
+    .map((milestone, index) => ({ milestone, index }))
+    .filter(({ milestone }) => {
+      const name = milestone.name.trim();
+      return name && !existingNames.has(normalizeActivityName(name));
+    })
+    .map(({ milestone, index }) => {
+      const activityId = uniqueActivityId(`MS-${String(index + 1).padStart(3, "0")}`, existingIds);
+      const finishDate = milestone.forecast_date || milestone.baseline_date || null;
+      return {
+        activity_id: activityId,
+        name: milestone.name.trim(),
+        division: "Milestones",
+        start_date: milestone.baseline_date,
+        finish_date: finishDate,
+        percent_complete: milestone.status === "complete" ? 100 : 0,
+        predecessor_activity_ids: [],
+        successor_activity_ids: [],
+        notes: milestoneActivityNotes(milestone),
+      };
+    });
+}
+
+function normalizeActivityName(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function uniqueActivityId(base: string, existingIds: Set<string>) {
+  let next = base;
+  let suffix = 2;
+  while (existingIds.has(next)) {
+    next = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  existingIds.add(next);
+  return next;
+}
+
+function milestoneActivityNotes(milestone: MilestoneRow) {
+  const pieces = [`Created from interim milestone: ${milestone.name}.`];
+  if (milestone.owner) pieces.push(`Owner: ${milestone.owner}.`);
+  pieces.push(`Milestone status: ${STATUS_LABEL[milestone.status]}.`);
+  if (milestone.delay_reason) pieces.push(`Milestone note: ${milestone.delay_reason}`);
+  return pieces.join(" ");
 }
 
 function parsePercent(value: string | number | null | undefined) {
