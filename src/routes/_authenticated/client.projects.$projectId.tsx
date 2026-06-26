@@ -155,7 +155,7 @@ function ClientProjectPage() {
       totalBilled,
       paidToDate,
       retainage,
-      outstanding: Math.max(0, totalBilled - paidToDate - retainage),
+      openReceivable: Math.max(0, totalBilled - paidToDate - retainage),
       invoiceDue,
       invoicePaid,
       invoiceOpen: Math.max(0, invoiceDue - invoicePaid),
@@ -465,9 +465,9 @@ function ClientProjectPage() {
                   />
                   <ClientMetric label="Retainage" value={fmtUSD(totals.retainage)} />
                   <ClientMetric
-                    label="Outstanding"
+                    label="Open balance"
                     value={fmtUSD(
-                      billingInvoices.length > 0 ? totals.invoiceOpen : totals.outstanding,
+                      billingInvoices.length > 0 ? totals.invoiceOpen : totals.openReceivable,
                     )}
                   />
                 </dl>

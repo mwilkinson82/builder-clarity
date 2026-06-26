@@ -643,7 +643,8 @@ function ProjectPage() {
 
     if (co.status === "Approved") {
       toast.info("Approved CO already affects the forecast", {
-        description: "Use this action for pending or denied change orders that still need to be protected in the risk tally.",
+        description:
+          "Use this action for pending or denied change orders that still need to be protected in the risk tally.",
       });
       return;
     }
@@ -671,9 +672,10 @@ function ProjectPage() {
         status: "active",
         due_date: null,
         next_review_at: null,
-        release_condition: co.status === "Pending"
-          ? `Change order ${co.number || co.description} is approved or formally denied.`
-          : `Denied change order ${co.number || co.description} is recovered, offset, accepted, or eliminated.`,
+        release_condition:
+          co.status === "Pending"
+            ? `Change order ${co.number || co.description} is approved or formally denied.`
+            : `Denied change order ${co.number || co.description} is recovered, offset, accepted, or eliminated.`,
         notes: [
           `Created from Change Orders.`,
           `CO status: ${co.status}.`,
@@ -681,7 +683,9 @@ function ProjectPage() {
           `Cost exposure: ${fmtUSD(co.cost_amount)}.`,
           `Likely exposure: ${fmtUSD(dollarExposure * ((co.status === "Pending" ? co.probability : 100) / 100))}.`,
           co.notes ? `CO notes: ${co.notes}` : "",
-        ].filter(Boolean).join("\n"),
+        ]
+          .filter(Boolean)
+          .join("\n"),
       },
       {
         onSuccess: () => {
@@ -1838,7 +1842,10 @@ function BillingWorkspace({
   const [draft, setDraft] = useState<BillingDraft>(() => buildDraft());
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(() => buildInvoiceDraft());
-  const draftOutstanding = Math.max(0, draft.amount_billed - draft.paid_to_date - draft.retainage);
+  const draftOpenReceivable = Math.max(
+    0,
+    draft.amount_billed - draft.paid_to_date - draft.retainage,
+  );
 
   const openPayAppDialog = () => {
     setDraft(buildDraft());
@@ -2004,10 +2011,10 @@ function BillingWorkspace({
                   </div>
                   <div className="rounded-md border border-hairline bg-surface p-3">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Open balance
+                      Open A/R
                     </div>
                     <div className="mt-2 text-2xl font-medium tabular text-foreground">
-                      {fmtUSD(draftOutstanding)}
+                      {fmtUSD(draftOpenReceivable)}
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">
                       Billed less paid and retainage.
@@ -2032,9 +2039,13 @@ function BillingWorkspace({
           <SovMetric label="Billed to date" value={fmtUSD(totalBilled)} />
           <SovMetric label="Remaining to bill" value={fmtUSD(contractRemaining)} />
           <SovMetric label="Paid to date" value={fmtUSD(paidToDate)} />
-          <SovMetric label="Open AR" value={fmtUSD(openReceivable)} />
+          <SovMetric label="Open A/R" value={fmtUSD(openReceivable)} />
           <SovMetric label="Retainage" value={fmtUSD(retainage)} />
         </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Remaining to bill is forecasted contract less billed to date. Open A/R is billed less paid
+          and retainage.
+        </p>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
@@ -2046,11 +2057,12 @@ function BillingWorkspace({
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
                 Contract billing, change-order billing, invoice dates, paid-to-date, retainage, and
-                open balance.
+                open A/R.
               </p>
             </div>
             <div className="text-sm tabular text-muted-foreground">
-              Remaining to bill {fmtUSD(contractRemaining)} · Holds {fmtUSD(holds)}
+              Remaining to bill {fmtUSD(contractRemaining)} · Open A/R {fmtUSD(openReceivable)} ·
+              Holds {fmtUSD(holds)}
             </div>
           </div>
           <div className="overflow-x-auto rounded-md border border-hairline">
@@ -2065,7 +2077,7 @@ function BillingWorkspace({
                   <th className="px-3 py-2 text-right">Billed</th>
                   <th className="px-3 py-2 text-right">Paid</th>
                   <th className="px-3 py-2 text-right">Retainage</th>
-                  <th className="px-3 py-2 text-right">Open AR</th>
+                  <th className="px-3 py-2 text-right">Open A/R</th>
                   <th className="px-3 py-2 text-left">Status</th>
                   <th className="w-10 px-3 py-2" />
                 </tr>
