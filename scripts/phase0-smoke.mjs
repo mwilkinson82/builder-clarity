@@ -174,8 +174,12 @@ await expectContains(
     /seedHarborDemoCpmActivities/,
     /ensureHarborDemoCpmActivitiesForProject/,
     /HARBOR_DEMO_FIRST_CPM_ACTIVITY_ID/,
+    /isHarborDemoProject/,
+    /job_number/,
+    /client/,
+    /includes\(HARBOR_DEMO_NAME\.toLowerCase\(\)\)/,
   ],
-  "Harbor Residence demo seeds a full CPM activity plan with predecessor and successor logic",
+  "Harbor Residence demo seeds and self-detects a full CPM activity plan with predecessor and successor logic",
 );
 
 await expectContains(

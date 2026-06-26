@@ -793,7 +793,7 @@ export const getProject = createServerFn({ method: "GET" })
       .order("created_at", { ascending: false });
     if (pRes.error) throw new Error(pRes.error.message);
     if (!pRes.data) throw new Error("Project not found");
-    if (isHarborDemoProjectName((pRes.data as Record<string, unknown>).name)) {
+    if (isHarborDemoProject(pRes.data as Record<string, unknown>)) {
       await seedHarborDemoCpmActivities(context.supabase, pid, []);
     }
     if (eRes.error) throw new Error(eRes.error.message);
@@ -2813,8 +2813,29 @@ const isScheduleActivitiesSchemaError = (error: DynamicSupabaseError | null) => 
   return message.includes("schedule_activities") || message.includes("schema cache");
 };
 
-export const isHarborDemoProjectName = (name: unknown) =>
-  typeof name === "string" && name.trim().toLowerCase() === HARBOR_DEMO_NAME.toLowerCase();
+const normalizeDemoText = (value: unknown) =>
+  typeof value === "string" ? value.trim().toLowerCase() : "";
+
+export const isHarborDemoProjectName = (name: unknown) => {
+  const normalizedName = normalizeDemoText(name);
+  return (
+    normalizedName === HARBOR_DEMO_NAME.toLowerCase() ||
+    normalizedName.includes(HARBOR_DEMO_NAME.toLowerCase())
+  );
+};
+
+export const isHarborDemoProject = (project: Record<string, unknown> | null | undefined) => {
+  if (!project) return false;
+  const jobNumber = normalizeDemoText(project.job_number);
+  const client = normalizeDemoText(project.client);
+
+  return (
+    isHarborDemoProjectName(project.name) ||
+    jobNumber === HARBOR_DEMO_JOB_NUMBER.toLowerCase() ||
+    jobNumber.includes("harbor") ||
+    client === HARBOR_DEMO_CLIENT.toLowerCase()
+  );
+};
 
 const seedHarborDemoCpmActivities = async (
   supabase: unknown,
@@ -2905,7 +2926,7 @@ export const ensureHarborDemoCpmActivitiesForProject = async (
   seedWarnings: string[] = [],
 ) => {
   const { data: projectRow, error: projectError } = await dynamicTable(supabase, "projects")
-    .select("name")
+    .select("name,job_number,client")
     .eq("id", projectId)
     .maybeSingle();
 
@@ -2914,7 +2935,7 @@ export const ensureHarborDemoCpmActivitiesForProject = async (
     return { ensured: false, insertedCount: 0, seedWarnings };
   }
 
-  if (!isHarborDemoProjectName((projectRow as Record<string, unknown> | null)?.name)) {
+  if (!isHarborDemoProject(projectRow as Record<string, unknown> | null)) {
     return { ensured: false, insertedCount: 0, seedWarnings };
   }
 
