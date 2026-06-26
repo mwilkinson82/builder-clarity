@@ -31,7 +31,7 @@ const EMAIL_TEMPLATES: Record<string, React.ComponentType<any>> = {
 }
 
 // Configuration
-const SITE_NAME = "builder-clarity"
+const SITE_NAME = "Overwatch"
 const SENDER_DOMAIN = "notify.overwatch.alpcontractorcircle.com"
 const ROOT_DOMAIN = "overwatch.alpcontractorcircle.com"
 const FROM_DOMAIN = "overwatch.alpcontractorcircle.com"
@@ -41,6 +41,14 @@ function redactEmail(email: string | null | undefined): string {
   const [localPart, domain] = email.split('@')
   if (!localPart || !domain) return '***'
   return `${localPart[0]}***@${domain}`
+}
+
+function randomToken() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 export const Route = createFileRoute("/lovable/email/auth/webhook")({
@@ -184,6 +192,7 @@ export const Route = createFileRoute("/lovable/email/auth/webhook")({
             text,
             purpose: 'transactional',
             label: emailType,
+            unsubscribe_token: randomToken(),
             queued_at: new Date().toISOString(),
           },
         })

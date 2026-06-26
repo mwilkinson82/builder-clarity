@@ -17,6 +17,7 @@ import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
 import { Route as LovableEmailSuppressionRouteImport } from './routes/lovable/email/suppression'
 import { Route as ApiStripeWebhookRouteImport } from './routes/api/stripe/webhook'
+import { Route as ApiAuthMagicLinkRouteImport } from './routes/api/auth/magic-link'
 import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_authenticated/projects.$projectId'
 import { Route as LovableEmailTransactionalSendRouteImport } from './routes/lovable/email/transactional/send'
 import { Route as LovableEmailTransactionalPreviewRouteImport } from './routes/lovable/email/transactional/preview'
@@ -65,6 +66,11 @@ const LovableEmailSuppressionRoute = LovableEmailSuppressionRouteImport.update({
 const ApiStripeWebhookRoute = ApiStripeWebhookRouteImport.update({
   id: '/api/stripe/webhook',
   path: '/api/stripe/webhook',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthMagicLinkRoute = ApiAuthMagicLinkRouteImport.update({
+  id: '/api/auth/magic-link',
+  path: '/api/auth/magic-link',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedProjectsProjectIdRoute =
@@ -133,6 +139,7 @@ export interface FileRoutesByFullPath {
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
+  '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
@@ -152,6 +159,7 @@ export interface FileRoutesByTo {
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/': typeof AuthenticatedIndexRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
+  '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
@@ -173,6 +181,7 @@ export interface FileRoutesById {
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
+  '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/_authenticated/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
@@ -194,6 +203,7 @@ export interface FileRouteTypes {
     | '/auth/callback'
     | '/email/unsubscribe'
     | '/projects/$projectId'
+    | '/api/auth/magic-link'
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
@@ -213,6 +223,7 @@ export interface FileRouteTypes {
     | '/email/unsubscribe'
     | '/'
     | '/projects/$projectId'
+    | '/api/auth/magic-link'
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
@@ -233,6 +244,7 @@ export interface FileRouteTypes {
     | '/email/unsubscribe'
     | '/_authenticated/'
     | '/_authenticated/projects/$projectId'
+    | '/api/auth/magic-link'
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/_authenticated/client/projects/$projectId'
@@ -250,6 +262,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRouteWithChildren
   EmailUnsubscribeRoute: typeof EmailUnsubscribeRoute
+  ApiAuthMagicLinkRoute: typeof ApiAuthMagicLinkRoute
   ApiStripeWebhookRoute: typeof ApiStripeWebhookRoute
   LovableEmailSuppressionRoute: typeof LovableEmailSuppressionRoute
   ApiStripeCheckoutInvoiceRoute: typeof ApiStripeCheckoutInvoiceRoute
@@ -318,6 +331,13 @@ declare module '@tanstack/react-router' {
       path: '/api/stripe/webhook'
       fullPath: '/api/stripe/webhook'
       preLoaderRoute: typeof ApiStripeWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/magic-link': {
+      id: '/api/auth/magic-link'
+      path: '/api/auth/magic-link'
+      fullPath: '/api/auth/magic-link'
+      preLoaderRoute: typeof ApiAuthMagicLinkRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/projects/$projectId': {
@@ -425,6 +445,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRouteWithChildren,
   EmailUnsubscribeRoute: EmailUnsubscribeRoute,
+  ApiAuthMagicLinkRoute: ApiAuthMagicLinkRoute,
   ApiStripeWebhookRoute: ApiStripeWebhookRoute,
   LovableEmailSuppressionRoute: LovableEmailSuppressionRoute,
   ApiStripeCheckoutInvoiceRoute: ApiStripeCheckoutInvoiceRoute,
