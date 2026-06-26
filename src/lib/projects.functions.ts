@@ -2558,11 +2558,315 @@ const harborDemoChangeOrders = [
   },
 ] as const;
 
+const HARBOR_DEMO_CPM_ACTIVITIES = [
+  {
+    activity_id: "01-010",
+    name: "Contract award and preconstruction complete",
+    division: "00 - Procurement / Preconstruction",
+    start_date: "2026-02-03",
+    finish_date: "2026-02-07",
+    percent_complete: 100,
+    predecessor_activity_ids: [],
+    successor_activity_ids: ["01-020", "12-010"],
+    notes:
+      "Baseline launch activity. This anchors the CPM network before site mobilization and long-lead procurement.",
+  },
+  {
+    activity_id: "01-020",
+    name: "Site mobilization and layout",
+    division: "01 - General Requirements",
+    start_date: "2026-02-10",
+    finish_date: "2026-02-14",
+    percent_complete: 100,
+    predecessor_activity_ids: ["01-010"],
+    successor_activity_ids: ["31-010"],
+    notes:
+      "Mobilization, layout, temporary protection, and trade coordination before field production begins.",
+  },
+  {
+    activity_id: "31-010",
+    name: "Sitework, utilities, and erosion control",
+    division: "31 - Earthwork / Sitework",
+    start_date: "2026-02-17",
+    finish_date: "2026-02-28",
+    percent_complete: 100,
+    predecessor_activity_ids: ["01-020"],
+    successor_activity_ids: ["03-010"],
+    notes:
+      "Site readiness activity. Completing this cleanly protects foundation start and early project momentum.",
+  },
+  {
+    activity_id: "03-010",
+    name: "Foundations and slab",
+    division: "03 - Concrete",
+    start_date: "2026-03-03",
+    finish_date: "2026-03-21",
+    percent_complete: 100,
+    predecessor_activity_ids: ["31-010"],
+    successor_activity_ids: ["06-010"],
+    notes: "Foundation and slab work complete. This drives the structural shell.",
+  },
+  {
+    activity_id: "06-010",
+    name: "Framing and structural shell",
+    division: "06 - Wood / Framing",
+    start_date: "2026-03-24",
+    finish_date: "2026-04-18",
+    percent_complete: 100,
+    predecessor_activity_ids: ["03-010"],
+    successor_activity_ids: ["07-010", "22-010", "23-010", "26-010"],
+    notes:
+      "Structural shell complete. Multiple rough-in and dry-in paths start once this is released.",
+  },
+  {
+    activity_id: "07-010",
+    name: "Dry-in envelope and roof",
+    division: "07 - Thermal / Moisture",
+    start_date: "2026-04-21",
+    finish_date: "2026-05-09",
+    percent_complete: 100,
+    predecessor_activity_ids: ["06-010"],
+    successor_activity_ids: ["08-010", "32-010"],
+    notes:
+      "Dry-in finished one week later than baseline, which contributes to later rough-in and finish pressure.",
+  },
+  {
+    activity_id: "08-010",
+    name: "Windows and exterior doors",
+    division: "08 - Openings",
+    start_date: "2026-05-12",
+    finish_date: "2026-06-02",
+    percent_complete: 80,
+    predecessor_activity_ids: ["07-010"],
+    successor_activity_ids: ["09-010"],
+    notes:
+      "Window delivery moved five weeks. The PM is tracking resequencing before acceleration costs become real exposure.",
+  },
+  {
+    activity_id: "22-010",
+    name: "Plumbing rough-in",
+    division: "22 - Plumbing",
+    start_date: "2026-04-28",
+    finish_date: "2026-05-16",
+    percent_complete: 100,
+    predecessor_activity_ids: ["06-010"],
+    successor_activity_ids: ["09-010"],
+    notes: "Plumbing rough-in complete and ready for inspection closeout.",
+  },
+  {
+    activity_id: "23-010",
+    name: "HVAC rough-in",
+    division: "23 - HVAC",
+    start_date: "2026-04-28",
+    finish_date: "2026-05-16",
+    percent_complete: 100,
+    predecessor_activity_ids: ["06-010"],
+    successor_activity_ids: ["09-010"],
+    notes: "HVAC rough-in complete. Coordination hold is now on appliance and opening decisions.",
+  },
+  {
+    activity_id: "26-010",
+    name: "Electrical rough-in",
+    division: "26 - Electrical",
+    start_date: "2026-04-29",
+    finish_date: "2026-05-20",
+    percent_complete: 100,
+    predecessor_activity_ids: ["06-010"],
+    successor_activity_ids: ["09-010"],
+    notes:
+      "Electrical rough-in complete. Lighting allowance exposure remains in the IOR because selections exceeded allowance.",
+  },
+  {
+    activity_id: "09-010",
+    name: "Rough inspections and insulation",
+    division: "09 - Finishes",
+    start_date: "2026-05-23",
+    finish_date: "2026-06-05",
+    percent_complete: 65,
+    predecessor_activity_ids: ["08-010", "22-010", "23-010", "26-010"],
+    successor_activity_ids: ["09-020"],
+    notes:
+      "Rough inspections and insulation are the current handoff point into drywall. This is where the late appliance and window issues show up in the schedule.",
+  },
+  {
+    activity_id: "09-020",
+    name: "Drywall hang and finish",
+    division: "09 - Finishes",
+    start_date: "2026-06-06",
+    finish_date: "2026-06-28",
+    percent_complete: 40,
+    predecessor_activity_ids: ["09-010"],
+    successor_activity_ids: ["09-030", "12-020"],
+    notes:
+      "Drywall is active and under performance watch. If quality slips, the E-Hold becomes a trade-performance recovery action.",
+  },
+  {
+    activity_id: "09-030",
+    name: "Tile and interior finish start",
+    division: "09 - Finishes",
+    start_date: "2026-06-24",
+    finish_date: "2026-07-15",
+    percent_complete: 20,
+    predecessor_activity_ids: ["09-020"],
+    successor_activity_ids: ["09-040"],
+    notes:
+      "Interior finish activity overlaps late drywall areas where possible so the team can claw back schedule without buying full acceleration.",
+  },
+  {
+    activity_id: "12-010",
+    name: "Cabinet fabrication and delivery",
+    division: "12 - Furnishings / Casework",
+    start_date: "2026-04-20",
+    finish_date: "2026-07-03",
+    percent_complete: 50,
+    predecessor_activity_ids: ["01-010"],
+    successor_activity_ids: ["12-020"],
+    notes:
+      "Cabinets were misassembled and damaged. This is a long-lead procurement activity tied directly to a recoverable E-Hold.",
+  },
+  {
+    activity_id: "12-020",
+    name: "Cabinet install and built-ins",
+    division: "12 - Furnishings / Casework",
+    start_date: "2026-07-06",
+    finish_date: "2026-07-17",
+    percent_complete: 0,
+    predecessor_activity_ids: ["09-020", "12-010"],
+    successor_activity_ids: ["22-020", "26-020", "09-040"],
+    notes:
+      "Install cannot start until drywall areas and replacement cabinet delivery are released.",
+  },
+  {
+    activity_id: "22-020",
+    name: "Trim plumbing and fixtures",
+    division: "22 - Plumbing",
+    start_date: "2026-07-20",
+    finish_date: "2026-07-28",
+    percent_complete: 0,
+    predecessor_activity_ids: ["12-020"],
+    successor_activity_ids: ["99-010"],
+    notes:
+      "Trim plumbing follows cabinet and finish release. This should be watched for owner-furnished fixture decisions.",
+  },
+  {
+    activity_id: "26-020",
+    name: "Trim electrical and lighting package",
+    division: "26 - Electrical",
+    start_date: "2026-07-20",
+    finish_date: "2026-07-31",
+    percent_complete: 0,
+    predecessor_activity_ids: ["12-020"],
+    successor_activity_ids: ["99-010"],
+    notes:
+      "Lighting selections drove allowance exposure. This activity shows how financial exposure and CPM logic meet.",
+  },
+  {
+    activity_id: "09-040",
+    name: "Paint, final finishes, and punch prep",
+    division: "09 - Finishes",
+    start_date: "2026-07-18",
+    finish_date: "2026-08-01",
+    percent_complete: 0,
+    predecessor_activity_ids: ["09-030", "12-020"],
+    successor_activity_ids: ["99-010"],
+    notes:
+      "Final finishes are the point where the C-Hold for finish-phase uncertainty should be gardened and then released.",
+  },
+  {
+    activity_id: "32-010",
+    name: "Exterior hardscape and pool coordination",
+    division: "32 - Exterior Improvements",
+    start_date: "2026-06-17",
+    finish_date: "2026-08-07",
+    percent_complete: 30,
+    predecessor_activity_ids: ["07-010"],
+    successor_activity_ids: ["99-010"],
+    notes:
+      "Pool equipment relocation and outdoor kitchen change orders are shown here as schedule-adjacent scope exposure.",
+  },
+  {
+    activity_id: "99-010",
+    name: "Final punch, owner walk, and substantial completion",
+    division: "99 - Closeout",
+    start_date: "2026-08-10",
+    finish_date: "2026-08-21",
+    percent_complete: 0,
+    predecessor_activity_ids: ["22-020", "26-020", "09-040", "32-010"],
+    successor_activity_ids: [],
+    notes:
+      "Closeout milestone. This rolls the CPM story into the IOR: current schedule is later than baseline, and risk decisions decide how much margin is protected.",
+  },
+] as const;
+
 const safeErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown error";
 
 const roundWeeks = (baseline: string | null, forecast: string | null) =>
   computeScheduleVarianceWeeks(baseline, forecast) ?? 0;
+
+const isScheduleActivitiesSchemaError = (error: DynamicSupabaseError | null) => {
+  const message = (error?.message ?? "").toLowerCase();
+  return message.includes("schedule_activities") || message.includes("schema cache");
+};
+
+const seedHarborDemoCpmActivities = async (
+  supabase: unknown,
+  projectId: string,
+  seedWarnings: string[],
+) => {
+  const { data: existingRows, error: lookupError } = await dynamicTable(
+    supabase,
+    "schedule_activities",
+  )
+    .select("id,activity_id")
+    .eq("project_id", projectId)
+    .limit(50);
+
+  if (lookupError) {
+    if (isScheduleActivitiesSchemaError(lookupError)) {
+      seedWarnings.push(`CPM demo skipped: ${lookupError.message}`);
+      return;
+    }
+    throw new Error(lookupError.message);
+  }
+
+  const rows = Array.isArray(existingRows)
+    ? (existingRows as Array<{ activity_id?: string | null }>)
+    : [];
+  const alreadySeeded = rows.some(
+    (row) => row.activity_id === HARBOR_DEMO_CPM_ACTIVITIES[0].activity_id,
+  );
+  if (alreadySeeded) return;
+
+  if (rows.length > 0) {
+    const { error: deleteError } = await dynamicTable(supabase, "schedule_activities")
+      .delete()
+      .eq("project_id", projectId);
+    if (deleteError) {
+      if (isScheduleActivitiesSchemaError(deleteError)) {
+        seedWarnings.push(`CPM demo refresh skipped: ${deleteError.message}`);
+        return;
+      }
+      throw new Error(deleteError.message);
+    }
+  }
+
+  const { error: insertError } = await dynamicTable(supabase, "schedule_activities").insert(
+    HARBOR_DEMO_CPM_ACTIVITIES.map((activity, index) => ({
+      project_id: projectId,
+      ...activity,
+      sort_order: index + 1,
+    })),
+  );
+
+  if (insertError) {
+    if (isScheduleActivitiesSchemaError(insertError)) {
+      seedWarnings.push(`CPM demo insert skipped: ${insertError.message}`);
+      return;
+    }
+    throw new Error(insertError.message);
+  }
+};
 
 export const seedDemoIfEmpty = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -2571,7 +2875,8 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       "ensure_current_user_account",
     );
     if (accountError) throw new Error(accountError.message);
-    if (!ensuredOrganizationId) throw new Error("No Overwatch company workspace is available for this user.");
+    if (!ensuredOrganizationId)
+      throw new Error("No Overwatch company workspace is available for this user.");
 
     let organizationId = ensuredOrganizationId as string;
     const { data: memberships, error: membershipsError } = await context.supabase
@@ -2584,6 +2889,8 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
     const activeOrganizationId = memberships?.find((m) => m.organization_id)?.organization_id;
     if (activeOrganizationId) organizationId = activeOrganizationId as string;
 
+    const seedWarnings: string[] = [];
+
     const { data: existingDemo, error: demoLookupError } = await context.supabase
       .from("projects")
       .select("id")
@@ -2592,7 +2899,13 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       .maybeSingle();
     if (demoLookupError) throw new Error(demoLookupError.message);
     if (existingDemo?.id) {
-      return { seeded: false as const, exists: true, demoProjectId: existingDemo.id as string };
+      await seedHarborDemoCpmActivities(context.supabase, existingDemo.id as string, seedWarnings);
+      return {
+        seeded: false as const,
+        exists: true,
+        demoProjectId: existingDemo.id as string,
+        seedWarnings,
+      };
     }
 
     const { data: existingHarbor, error: harborLookupError } = await context.supabase
@@ -2605,7 +2918,17 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       .maybeSingle();
     if (harborLookupError) throw new Error(harborLookupError.message);
     if (existingHarbor?.id) {
-      return { seeded: false as const, exists: true, demoProjectId: existingHarbor.id as string };
+      await seedHarborDemoCpmActivities(
+        context.supabase,
+        existingHarbor.id as string,
+        seedWarnings,
+      );
+      return {
+        seeded: false as const,
+        exists: true,
+        demoProjectId: existingHarbor.id as string,
+        seedWarnings,
+      };
     }
 
     const projectInsert = {
@@ -2644,7 +2967,13 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         .maybeSingle();
       if (retryError) throw new Error(retryError.message);
       if (retryDemo?.id) {
-        return { seeded: false as const, exists: true, demoProjectId: retryDemo.id as string };
+        await seedHarborDemoCpmActivities(context.supabase, retryDemo.id as string, seedWarnings);
+        return {
+          seeded: false as const,
+          exists: true,
+          demoProjectId: retryDemo.id as string,
+          seedWarnings,
+        };
       }
     }
     throwIfProjectSchemaError(projectError);
@@ -2652,7 +2981,6 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
     if (!projectRow?.id) throw new Error("Harbor demo project did not save.");
 
     const projectId = projectRow.id as string;
-    const seedWarnings: string[] = [];
 
     const { error: bucketError } = await context.supabase.from("cost_buckets").insert(
       harborDemoBuckets.map((bucket, index) => ({
@@ -2839,6 +3167,8 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         })),
       );
     if (milestoneUpdateError) throw new Error(milestoneUpdateError.message);
+
+    await seedHarborDemoCpmActivities(context.supabase, projectId, seedWarnings);
 
     const { error: scheduleRiskError } = await context.supabase.from("schedule_risks").insert([
       {

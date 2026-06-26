@@ -164,6 +164,19 @@ await expectContains(
 );
 
 await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /HARBOR_DEMO_CPM_ACTIVITIES/,
+    /activity_id:\s*"01-010"/,
+    /activity_id:\s*"99-010"/,
+    /predecessor_activity_ids/,
+    /successor_activity_ids/,
+    /seedHarborDemoCpmActivities/,
+  ],
+  "Harbor Residence demo seeds a full CPM activity plan with predecessor and successor logic",
+);
+
+await expectContains(
   "src/integrations/supabase/client.ts",
   [
     /readRuntimeEnv/,
