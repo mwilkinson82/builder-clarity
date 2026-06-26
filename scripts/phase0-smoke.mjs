@@ -429,6 +429,8 @@ await expectContains(
   "src/components/outcome/ScheduleRisk.tsx",
   [
     /createScheduleUpdate/,
+    /createScheduleActivity/,
+    /updateScheduleActivity/,
     /createScheduleRisk/,
     /createExposure/,
     /Baseline vs schedule updates/,
@@ -436,6 +438,11 @@ await expectContains(
     /Money exposure in update/,
     /schedule_money_exposure/,
     /Construction schedule/,
+    /CPM activity plan/,
+    /Gantt chart/,
+    /predecessor_activity_ids/,
+    /successor_activity_ids/,
+    /Print schedule/,
     /Baseline vs current milestone plan/,
     /MilestoneViewSelect/,
     /SchedulePlanRow/,
@@ -538,6 +545,20 @@ expectSql(
     /tg_schedule_updates_data_date_money/i,
   ],
   "schedule updates and schedule-risk linkage migrations exist with RLS/grants",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.schedule_activities/i,
+    /activity_id text not null/i,
+    /predecessor_activity_ids text\[\]/i,
+    /successor_activity_ids text\[\]/i,
+    /grant select, insert, update, delete on public\.schedule_activities to authenticated/i,
+    /alter table public\.schedule_activities enable row level security/i,
+    /schedule_activities_team_select/i,
+  ],
+  "CPM activity schedule table exists with dependencies, grants, and RLS",
 );
 
 expectSql(

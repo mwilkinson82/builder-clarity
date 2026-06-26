@@ -24,6 +24,21 @@ export interface MilestoneRow {
   sort_order: number;
 }
 
+export interface ScheduleActivityRow {
+  id: string;
+  project_id: string;
+  activity_id: string;
+  name: string;
+  division: string;
+  start_date: string | null;
+  finish_date: string | null;
+  percent_complete: number;
+  predecessor_activity_ids: string[];
+  successor_activity_ids: string[];
+  notes: string;
+  sort_order: number;
+}
+
 export interface ScheduleRiskRow {
   id: string;
   project_id: string;
@@ -156,6 +171,25 @@ const normalizeMilestoneUpdate = (r: Record<string, unknown>): ScheduleMilestone
   notes: str(r.notes),
 });
 
+const normalizeScheduleActivity = (r: Record<string, unknown>): ScheduleActivityRow => ({
+  id: r.id as string,
+  project_id: r.project_id as string,
+  activity_id: str(r.activity_id),
+  name: str(r.name),
+  division: str(r.division, "General"),
+  start_date: (r.start_date as string | null) ?? null,
+  finish_date: (r.finish_date as string | null) ?? null,
+  percent_complete: num(r.percent_complete),
+  predecessor_activity_ids: Array.isArray(r.predecessor_activity_ids)
+    ? r.predecessor_activity_ids.map(String)
+    : [],
+  successor_activity_ids: Array.isArray(r.successor_activity_ids)
+    ? r.successor_activity_ids.map(String)
+    : [],
+  notes: str(r.notes),
+  sort_order: num(r.sort_order),
+});
+
 // ---------- LIST ----------
 export const listSchedule = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -163,7 +197,7 @@ export const listSchedule = createServerFn({ method: "GET" })
     z.object({ projectId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const [mRes, rRes] = await Promise.all([
+    const [mRes, rRes, aRes] = await Promise.all([
       context.supabase
         .from("schedule_milestones")
         .select("*")
@@ -174,6 +208,12 @@ export const listSchedule = createServerFn({ method: "GET" })
         .select("*")
         .eq("project_id", data.projectId)
         .order("sort_order"),
+      context.supabase
+        .from("schedule_activities")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("sort_order")
+        .order("activity_id"),
     ]);
     const [uRes, muRes] = await Promise.all([
       context.supabase
@@ -189,6 +229,10 @@ export const listSchedule = createServerFn({ method: "GET" })
     ]);
     if (mRes.error) throw new Error(mRes.error.message);
     if (rRes.error) throw new Error(rRes.error.message);
+    const activitiesMissing =
+      aRes.error &&
+      (aRes.error.message.includes("schedule_activities") ||
+        aRes.error.message.includes("schema cache"));
     const updatesMissing =
       uRes.error &&
       (uRes.error.message.includes("schedule_updates") ||
@@ -197,6 +241,7 @@ export const listSchedule = createServerFn({ method: "GET" })
       muRes.error &&
       (muRes.error.message.includes("schedule_milestone_updates") ||
         muRes.error.message.includes("schema cache"));
+    if (aRes.error && !activitiesMissing) throw new Error(aRes.error.message);
     if (uRes.error && !updatesMissing) throw new Error(uRes.error.message);
     if (muRes.error && !milestoneUpdatesMissing) throw new Error(muRes.error.message);
     const risks = (rRes.data ?? []).map((r) => normalizeScheduleRisk(r as Record<string, unknown>));
@@ -224,6 +269,9 @@ export const listSchedule = createServerFn({ method: "GET" })
     }
     return {
       milestones: (mRes.data ?? []) as unknown as MilestoneRow[],
+      activities: activitiesMissing
+        ? []
+        : (aRes.data ?? []).map((r) => normalizeScheduleActivity(r as Record<string, unknown>)),
       risks,
       updates: updatesMissing
         ? []
@@ -316,6 +364,7 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
         .single());
     }
     if (insertError) throw new Error(insertError.message);
+    if (!update) throw new Error("Schedule update did not save.");
 
     const { error: projectUpdateError } = await context.supabase
       .from("projects")
@@ -411,6 +460,80 @@ export const deleteMilestone = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { error } = await context.supabase.from("schedule_milestones").delete().eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ---------- CPM ACTIVITIES ----------
+const activityPatch = z.object({
+  activity_id: z.string().max(50).optional(),
+  name: z.string().min(1).max(240).optional(),
+  division: z.string().max(120).optional(),
+  start_date: z.string().nullable().optional(),
+  finish_date: z.string().nullable().optional(),
+  percent_complete: z.number().min(0).max(100).optional(),
+  predecessor_activity_ids: z.array(z.string().max(50)).optional(),
+  successor_activity_ids: z.array(z.string().max(50)).optional(),
+  notes: z.string().max(4000).optional(),
+  sort_order: z.number().int().optional(),
+});
+
+export const createScheduleActivity = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (
+      input: { projectId: string } & Partial<z.input<typeof activityPatch>> & {
+          name: string;
+        },
+    ) =>
+      z
+        .object({
+          projectId: z.string().uuid(),
+          name: z.string().min(1).max(240),
+        })
+        .merge(activityPatch.omit({ name: true }).partial())
+        .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { projectId, ...rest } = data;
+    const { data: last } = await context.supabase
+      .from("schedule_activities")
+      .select("sort_order")
+      .eq("project_id", projectId)
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const sortOrder = rest.sort_order ?? ((last?.sort_order as number | undefined) ?? 0) + 1;
+    const activityId = rest.activity_id || `A-${String(sortOrder).padStart(3, "0")}`;
+    const { error } = await context.supabase.from("schedule_activities").insert({
+      project_id: projectId,
+      ...rest,
+      activity_id: activityId,
+      sort_order: sortOrder,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const updateScheduleActivity = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string; patch: z.input<typeof activityPatch> }) =>
+    z.object({ id: z.string().uuid(), patch: activityPatch }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("schedule_activities")
+      .update(data.patch)
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteScheduleActivity = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("schedule_activities").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });

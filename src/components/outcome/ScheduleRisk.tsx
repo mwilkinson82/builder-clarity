@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import {
   ClipboardList,
   Pencil,
   CheckCircle2,
+  Printer,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -29,6 +30,9 @@ import {
   createMilestone,
   updateMilestone,
   deleteMilestone,
+  createScheduleActivity,
+  updateScheduleActivity,
+  deleteScheduleActivity,
   createScheduleRisk,
   updateScheduleRisk,
   deleteScheduleRisk,
@@ -37,6 +41,7 @@ import {
   type ScheduleRiskKind,
   type ScheduleRiskStatus,
   type MilestoneRow,
+  type ScheduleActivityRow,
   type ScheduleRiskRow,
   type ScheduleUpdateRow,
   type ScheduleMilestoneUpdateRow,
@@ -124,6 +129,9 @@ export function ScheduleRisk({
   const createMs = useServerFn(createMilestone);
   const updateMs = useServerFn(updateMilestone);
   const deleteMs = useServerFn(deleteMilestone);
+  const createActivity = useServerFn(createScheduleActivity);
+  const updateActivity = useServerFn(updateScheduleActivity);
+  const deleteActivity = useServerFn(deleteScheduleActivity);
   const createRisk = useServerFn(createScheduleRisk);
   const updateRisk = useServerFn(updateScheduleRisk);
   const deleteRisk = useServerFn(deleteScheduleRisk);
@@ -188,6 +196,21 @@ export function ScheduleRisk({
   const msDelete = useScheduleMutation<{ id: string }>(deleteMs, {
     successTitle: "Milestone deleted",
     errorTitle: "Milestone did not delete",
+  });
+  const activityCreate = useScheduleMutation<
+    { projectId: string; name: string } & Partial<ScheduleActivityRow>
+  >(createActivity as never, {
+    successTitle: "Activity added",
+    successDescription: "The CPM activity is now in the schedule table and Gantt.",
+    errorTitle: "Activity did not save",
+  });
+  const activityUpdate = useScheduleMutation<{ id: string; patch: Partial<ScheduleActivityRow> }>(
+    updateActivity as never,
+    { errorTitle: "Activity did not update" },
+  );
+  const activityDelete = useScheduleMutation<{ id: string }>(deleteActivity, {
+    successTitle: "Activity deleted",
+    errorTitle: "Activity did not delete",
   });
   const rCreate = useScheduleMutation<{ projectId: string; kind: ScheduleRiskKind; title: string }>(
     createRisk,
@@ -263,6 +286,7 @@ export function ScheduleRisk({
   });
 
   const milestones = data?.milestones ?? [];
+  const activities = data?.activities ?? [];
   const risks = data?.risks ?? [];
   const updates = data?.updates ?? [];
   const milestoneUpdates = data?.milestoneUpdates ?? [];
@@ -401,8 +425,12 @@ export function ScheduleRisk({
         project={project}
         updates={updates}
         milestones={milestones}
+        activities={activities}
         milestoneView={milestoneView}
         onMilestoneViewChange={setMilestoneView}
+        onAddActivity={(activity) => activityCreate.mutate({ projectId, ...activity })}
+        onPatchActivity={(id, patch) => activityUpdate.mutate({ id, patch })}
+        onDeleteActivity={(id) => activityDelete.mutate({ id })}
       />
 
       <ScheduleUpdateLedger updates={updates} milestoneUpdates={milestoneUpdates} />
@@ -592,14 +620,36 @@ function ScheduleSnapshotTimeline({
   project,
   updates,
   milestones,
+  activities,
   milestoneView,
   onMilestoneViewChange,
+  onAddActivity,
+  onPatchActivity,
+  onDeleteActivity,
 }: {
   project: ProjectRow;
   updates: ScheduleUpdateRow[];
   milestones: MilestoneRow[];
+  activities: ScheduleActivityRow[];
   milestoneView: MilestoneView;
   onMilestoneViewChange: (value: MilestoneView) => void;
+  onAddActivity: (
+    activity: { name: string } & Partial<
+      Pick<
+        ScheduleActivityRow,
+        | "activity_id"
+        | "division"
+        | "start_date"
+        | "finish_date"
+        | "percent_complete"
+        | "predecessor_activity_ids"
+        | "successor_activity_ids"
+        | "notes"
+      >
+    >,
+  ) => void;
+  onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
+  onDeleteActivity: (id: string) => void;
 }) {
   const latestUpdate = updates[0] ?? null;
   const visibleMilestones = filterMilestones(milestones, milestoneView);
@@ -716,6 +766,15 @@ function ScheduleSnapshotTimeline({
           </div>
         </div>
 
+        <CpmActivityPlanner
+          activities={activities}
+          project={project}
+          latestDataDate={latestUpdate?.data_date ?? null}
+          onAddActivity={onAddActivity}
+          onPatchActivity={onPatchActivity}
+          onDeleteActivity={onDeleteActivity}
+        />
+
         <div className="rounded-md border border-hairline bg-surface">
           <div className="border-b border-hairline px-4 py-3">
             <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
@@ -795,6 +854,551 @@ function ScheduleSnapshotTimeline({
       </div>
     </section>
   );
+}
+
+type ActivityDraft = {
+  activity_id: string;
+  name: string;
+  division: string;
+  start_date: string;
+  finish_date: string;
+  percent_complete: string;
+  predecessor_activity_ids: string;
+  successor_activity_ids: string;
+  notes: string;
+};
+
+const emptyActivityDraft = (): ActivityDraft => ({
+  activity_id: "",
+  name: "",
+  division: "General",
+  start_date: "",
+  finish_date: "",
+  percent_complete: "0",
+  predecessor_activity_ids: "",
+  successor_activity_ids: "",
+  notes: "",
+});
+
+function CpmActivityPlanner({
+  activities,
+  project,
+  latestDataDate,
+  onAddActivity,
+  onPatchActivity,
+  onDeleteActivity,
+}: {
+  activities: ScheduleActivityRow[];
+  project: ProjectRow;
+  latestDataDate: string | null;
+  onAddActivity: (
+    activity: { name: string } & Partial<
+      Pick<
+        ScheduleActivityRow,
+        | "activity_id"
+        | "division"
+        | "start_date"
+        | "finish_date"
+        | "percent_complete"
+        | "predecessor_activity_ids"
+        | "successor_activity_ids"
+        | "notes"
+      >
+    >,
+  ) => void;
+  onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
+  onDeleteActivity: (id: string) => void;
+}) {
+  const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
+  const sortedActivities = useMemo(
+    () =>
+      [...activities].sort((a, b) => {
+        const division = a.division.localeCompare(b.division);
+        if (division !== 0) return division;
+        if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+        return a.activity_id.localeCompare(b.activity_id);
+      }),
+    [activities],
+  );
+  const grouped = useMemo(() => groupActivitiesByDivision(sortedActivities), [sortedActivities]);
+  const bounds = useMemo(
+    () =>
+      getTimelineBounds([
+        project.baseline_completion_date,
+        project.forecast_completion_date,
+        latestDataDate,
+        ...activities.flatMap((activity) => [activity.start_date, activity.finish_date]),
+      ]),
+    [
+      activities,
+      latestDataDate,
+      project.baseline_completion_date,
+      project.forecast_completion_date,
+    ],
+  );
+
+  const addActivity = () => {
+    const name = draft.name.trim();
+    if (!name) return;
+    onAddActivity({
+      activity_id: draft.activity_id.trim() || undefined,
+      name,
+      division: draft.division.trim() || "General",
+      start_date: draft.start_date || null,
+      finish_date: draft.finish_date || null,
+      percent_complete: parsePercent(draft.percent_complete),
+      predecessor_activity_ids: parseActivityIds(draft.predecessor_activity_ids),
+      successor_activity_ids: parseActivityIds(draft.successor_activity_ids),
+      notes: draft.notes.trim(),
+    });
+    setDraft(emptyActivityDraft());
+  };
+
+  return (
+    <div className="rounded-md border border-hairline bg-surface">
+      <div className="flex flex-col gap-3 border-b border-hairline px-4 py-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            CPM activity plan
+          </div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            Build the working schedule by division with activity IDs, start/finish dates, percent
+            complete, and predecessor/successor logic.
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="gap-2 print:hidden"
+          onClick={() => typeof window !== "undefined" && window.print()}
+        >
+          <Printer className="h-4 w-4" />
+          Print schedule
+        </Button>
+      </div>
+
+      <div className="grid gap-4 p-4 2xl:grid-cols-[minmax(0,1.08fr)_minmax(420px,0.92fr)]">
+        <div className="min-w-0 overflow-hidden rounded-md border border-hairline bg-card">
+          <table className="w-full table-fixed text-left text-xs">
+            <colgroup>
+              <col className="w-[8%]" />
+              <col className="w-[22%]" />
+              <col className="w-[12%]" />
+              <col className="w-[11%]" />
+              <col className="w-[11%]" />
+              <col className="w-[8%]" />
+              <col className="w-[10%]" />
+              <col className="w-[10%]" />
+              <col className="w-[8%]" />
+            </colgroup>
+            <thead className="bg-muted/60 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+              <tr>
+                <th className="px-2 py-2 font-semibold">ID</th>
+                <th className="px-2 py-2 font-semibold">Activity</th>
+                <th className="px-2 py-2 font-semibold">Division</th>
+                <th className="px-2 py-2 font-semibold">Start</th>
+                <th className="px-2 py-2 font-semibold">Finish</th>
+                <th className="px-2 py-2 font-semibold">% done</th>
+                <th className="px-2 py-2 font-semibold">Pred.</th>
+                <th className="px-2 py-2 font-semibold">Succ.</th>
+                <th className="px-2 py-2 text-right font-semibold">Add</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-hairline bg-surface/70 align-top">
+                <td className="px-2 py-2">
+                  <Input
+                    value={draft.activity_id}
+                    onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
+                    placeholder="A-010"
+                    className="h-8 min-w-0 px-2 text-xs"
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <Input
+                    value={draft.name}
+                    onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                    placeholder="Frame exterior walls"
+                    className="h-8 min-w-0 px-2 text-xs"
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <Input
+                    value={draft.division}
+                    onChange={(e) => setDraft({ ...draft, division: e.target.value })}
+                    placeholder="06 Wood"
+                    className="h-8 min-w-0 px-2 text-xs"
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <Input
+                    type="date"
+                    value={draft.start_date}
+                    onChange={(e) => setDraft({ ...draft, start_date: e.target.value })}
+                    className="h-8 min-w-0 px-1 text-xs"
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <Input
+                    type="date"
+                    value={draft.finish_date}
+                    onChange={(e) => setDraft({ ...draft, finish_date: e.target.value })}
+                    className="h-8 min-w-0 px-1 text-xs"
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={draft.percent_complete}
+                    onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
+                    className="h-8 min-w-0 px-2 text-xs"
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <Input
+                    value={draft.predecessor_activity_ids}
+                    onChange={(e) =>
+                      setDraft({ ...draft, predecessor_activity_ids: e.target.value })
+                    }
+                    placeholder="A-001"
+                    className="h-8 min-w-0 px-2 text-xs"
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <Input
+                    value={draft.successor_activity_ids}
+                    onChange={(e) => setDraft({ ...draft, successor_activity_ids: e.target.value })}
+                    placeholder="A-030"
+                    className="h-8 min-w-0 px-2 text-xs"
+                  />
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8 w-full px-2"
+                    disabled={!draft.name.trim()}
+                    onClick={addActivity}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </Button>
+                </td>
+              </tr>
+              {grouped.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    No CPM activities yet. Add activity rows above, or import the CPM schedule in a
+                    later pass.
+                  </td>
+                </tr>
+              ) : (
+                grouped.map((group) => (
+                  <ActivityTableGroup
+                    key={group.division}
+                    group={group}
+                    onPatchActivity={onPatchActivity}
+                    onDeleteActivity={onDeleteActivity}
+                  />
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <ActivityGanttPanel
+          grouped={grouped}
+          bounds={bounds}
+          dataDatePosition={timelinePosition(latestDataDate, bounds)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ActivityTableGroup({
+  group,
+  onPatchActivity,
+  onDeleteActivity,
+}: {
+  group: { division: string; activities: ScheduleActivityRow[] };
+  onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
+  onDeleteActivity: (id: string) => void;
+}) {
+  return (
+    <>
+      <tr className="border-t border-hairline bg-muted/40">
+        <td
+          colSpan={9}
+          className="px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+        >
+          {group.division} · {group.activities.length} activities
+        </td>
+      </tr>
+      {group.activities.map((activity) => (
+        <ActivityTableRow
+          key={activity.id}
+          activity={activity}
+          onPatch={(patch) => onPatchActivity(activity.id, patch)}
+          onDelete={() => onDeleteActivity(activity.id)}
+        />
+      ))}
+    </>
+  );
+}
+
+function ActivityTableRow({
+  activity,
+  onPatch,
+  onDelete,
+}: {
+  activity: ScheduleActivityRow;
+  onPatch: (patch: Partial<ScheduleActivityRow>) => void;
+  onDelete: () => void;
+}) {
+  const commitString = (key: keyof ScheduleActivityRow, value: string) => {
+    if (String(activity[key] ?? "") !== value)
+      onPatch({ [key]: value } as Partial<ScheduleActivityRow>);
+  };
+  const commitDate = (key: "start_date" | "finish_date", value: string) => {
+    const next = value || null;
+    if ((activity[key] ?? null) !== next) onPatch({ [key]: next });
+  };
+  const commitActivityIds = (
+    key: "predecessor_activity_ids" | "successor_activity_ids",
+    value: string,
+  ) => {
+    const next = parseActivityIds(value);
+    if (formatActivityIds(activity[key]) !== formatActivityIds(next)) onPatch({ [key]: next });
+  };
+
+  return (
+    <tr className="border-t border-hairline align-top">
+      <td className="px-2 py-2">
+        <Input
+          defaultValue={activity.activity_id}
+          onBlur={(e) => commitString("activity_id", e.target.value.trim())}
+          className="h-8 min-w-0 px-2 text-xs font-semibold tabular"
+        />
+      </td>
+      <td className="px-2 py-2">
+        <Input
+          defaultValue={activity.name}
+          onBlur={(e) => commitString("name", e.target.value.trim())}
+          className="h-8 min-w-0 px-2 text-xs"
+        />
+        {activity.notes && (
+          <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+            {activity.notes}
+          </div>
+        )}
+      </td>
+      <td className="px-2 py-2">
+        <Input
+          defaultValue={activity.division}
+          onBlur={(e) => commitString("division", e.target.value.trim() || "General")}
+          className="h-8 min-w-0 px-2 text-xs"
+        />
+      </td>
+      <td className="px-2 py-2">
+        <Input
+          type="date"
+          defaultValue={activity.start_date ?? ""}
+          onBlur={(e) => commitDate("start_date", e.target.value)}
+          className="h-8 min-w-0 px-1 text-xs"
+        />
+      </td>
+      <td className="px-2 py-2">
+        <Input
+          type="date"
+          defaultValue={activity.finish_date ?? ""}
+          onBlur={(e) => commitDate("finish_date", e.target.value)}
+          className="h-8 min-w-0 px-1 text-xs"
+        />
+      </td>
+      <td className="px-2 py-2">
+        <Input
+          type="number"
+          min={0}
+          max={100}
+          defaultValue={activity.percent_complete}
+          onBlur={(e) => {
+            const next = parsePercent(e.target.value);
+            if (next !== activity.percent_complete) onPatch({ percent_complete: next });
+          }}
+          className="h-8 min-w-0 px-2 text-xs tabular"
+        />
+      </td>
+      <td className="px-2 py-2">
+        <Input
+          defaultValue={formatActivityIds(activity.predecessor_activity_ids)}
+          onBlur={(e) => commitActivityIds("predecessor_activity_ids", e.target.value)}
+          className="h-8 min-w-0 px-2 text-xs tabular"
+        />
+      </td>
+      <td className="px-2 py-2">
+        <Input
+          defaultValue={formatActivityIds(activity.successor_activity_ids)}
+          onBlur={(e) => commitActivityIds("successor_activity_ids", e.target.value)}
+          className="h-8 min-w-0 px-2 text-xs tabular"
+        />
+      </td>
+      <td className="px-2 py-2 text-right">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={onDelete}
+          aria-label={`Delete activity ${activity.activity_id || activity.name}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </td>
+    </tr>
+  );
+}
+
+function ActivityGanttPanel({
+  grouped,
+  bounds,
+  dataDatePosition,
+}: {
+  grouped: Array<{ division: string; activities: ScheduleActivityRow[] }>;
+  bounds: TimelineBounds;
+  dataDatePosition: number | null;
+}) {
+  return (
+    <div className="min-w-0 rounded-md border border-hairline bg-card">
+      <div className="flex items-end justify-between gap-3 border-b border-hairline px-3 py-3">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Gantt chart
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {shortDate(bounds.startLabel)} to {shortDate(bounds.endLabel)}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-5 rounded-full bg-accent/70" />
+            Duration
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-5 rounded-full bg-success" />
+            Complete
+          </span>
+        </div>
+      </div>
+      {grouped.length === 0 ? (
+        <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+          Add activities to draw the Gantt chart.
+        </div>
+      ) : (
+        <div className="max-h-[560px] overflow-y-auto">
+          {grouped.map((group) => (
+            <div key={group.division}>
+              <div className="border-b border-hairline bg-muted/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                {group.division}
+              </div>
+              {group.activities.map((activity) => (
+                <ActivityGanttRow
+                  key={activity.id}
+                  activity={activity}
+                  bounds={bounds}
+                  dataDatePosition={dataDatePosition}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex justify-between border-t border-hairline px-3 py-2 text-[11px] text-muted-foreground">
+        <span>{shortDate(bounds.startLabel)}</span>
+        <span>{shortDate(bounds.endLabel)}</span>
+      </div>
+    </div>
+  );
+}
+
+function ActivityGanttRow({
+  activity,
+  bounds,
+  dataDatePosition,
+}: {
+  activity: ScheduleActivityRow;
+  bounds: TimelineBounds;
+  dataDatePosition: number | null;
+}) {
+  const start = timelinePosition(activity.start_date, bounds);
+  const finish = timelinePosition(activity.finish_date, bounds);
+  const left = Math.min(start ?? finish ?? 0, finish ?? start ?? 0);
+  const width =
+    start == null && finish == null
+      ? 0
+      : Math.max(1.5, Math.abs((finish ?? start ?? 0) - (start ?? finish ?? 0)));
+  const percent = Math.max(0, Math.min(100, activity.percent_complete));
+  const dataDateMs = parseDateMs(new Date().toISOString().slice(0, 10));
+  const finishMs = parseDateMs(activity.finish_date);
+  const isLate = percent < 100 && finishMs != null && dataDateMs != null && finishMs < dataDateMs;
+  return (
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-3 border-b border-hairline px-3 py-2 last:border-b-0">
+      <div className="min-w-0">
+        <div className="truncate text-xs font-semibold tabular text-foreground">
+          {activity.activity_id || "No ID"}
+        </div>
+        <div className="truncate text-[11px] text-muted-foreground">{activity.name}</div>
+      </div>
+      <div className="relative h-8 rounded-md bg-muted">
+        {dataDatePosition != null && (
+          <div
+            className="absolute inset-y-1 z-10 w-px bg-foreground/30"
+            style={{ left: `${dataDatePosition}%` }}
+          />
+        )}
+        {width > 0 && (
+          <div
+            className={`absolute top-1/2 h-3 -translate-y-1/2 overflow-hidden rounded-full ${
+              isLate ? "bg-danger/35" : "bg-accent/35"
+            }`}
+            style={{ left: `${left}%`, width: `${width}%` }}
+          >
+            <div
+              className={`h-full rounded-full ${isLate ? "bg-danger" : "bg-success"}`}
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function groupActivitiesByDivision(activities: ScheduleActivityRow[]) {
+  const groups = new Map<string, ScheduleActivityRow[]>();
+  for (const activity of activities) {
+    const division = activity.division || "General";
+    groups.set(division, [...(groups.get(division) ?? []), activity]);
+  }
+  return Array.from(groups.entries()).map(([division, rows]) => ({ division, activities: rows }));
+}
+
+function parsePercent(value: string | number | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
+function parseActivityIds(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatActivityIds(value: string[]) {
+  return value.join(", ");
 }
 
 function ScheduleStat({
