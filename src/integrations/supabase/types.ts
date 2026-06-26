@@ -1104,65 +1104,6 @@ export type Database = {
           },
         ]
       }
-      schedule_activities: {
-        Row: {
-          activity_id: string
-          created_at: string
-          division: string
-          finish_date: string | null
-          id: string
-          name: string
-          notes: string
-          percent_complete: number
-          predecessor_activity_ids: string[]
-          project_id: string
-          sort_order: number
-          start_date: string | null
-          successor_activity_ids: string[]
-          updated_at: string
-        }
-        Insert: {
-          activity_id?: string
-          created_at?: string
-          division?: string
-          finish_date?: string | null
-          id?: string
-          name: string
-          notes?: string
-          percent_complete?: number
-          predecessor_activity_ids?: string[]
-          project_id: string
-          sort_order?: number
-          start_date?: string | null
-          successor_activity_ids?: string[]
-          updated_at?: string
-        }
-        Update: {
-          activity_id?: string
-          created_at?: string
-          division?: string
-          finish_date?: string | null
-          id?: string
-          name?: string
-          notes?: string
-          percent_complete?: number
-          predecessor_activity_ids?: string[]
-          project_id?: string
-          sort_order?: number
-          start_date?: string | null
-          successor_activity_ids?: string[]
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "schedule_activities_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       schedule_milestone_updates: {
         Row: {
           baseline_date: string | null
@@ -1366,16 +1307,11 @@ export type Database = {
           baseline_completion_date: string | null
           created_at: string
           created_by: string | null
-          data_date: string | null
           forecast_completion_date: string
           id: string
-          money_notes: string
           movement_weeks: number
           notes: string
           project_id: string
-          schedule_money_exposure: number
-          schedule_money_net: number
-          schedule_money_recovery: number
           update_date: string
           update_number: number
           updated_at: string
@@ -1385,16 +1321,11 @@ export type Database = {
           baseline_completion_date?: string | null
           created_at?: string
           created_by?: string | null
-          data_date?: string | null
           forecast_completion_date: string
           id?: string
-          money_notes?: string
           movement_weeks?: number
           notes?: string
           project_id: string
-          schedule_money_exposure?: number
-          schedule_money_net?: number
-          schedule_money_recovery?: number
           update_date?: string
           update_number: number
           updated_at?: string
@@ -1404,16 +1335,11 @@ export type Database = {
           baseline_completion_date?: string | null
           created_at?: string
           created_by?: string | null
-          data_date?: string | null
           forecast_completion_date?: string
           id?: string
-          money_notes?: string
           movement_weeks?: number
           notes?: string
           project_id?: string
-          schedule_money_exposure?: number
-          schedule_money_net?: number
-          schedule_money_recovery?: number
           update_date?: string
           update_number?: number
           updated_at?: string
