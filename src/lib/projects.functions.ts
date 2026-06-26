@@ -2920,6 +2920,14 @@ const seedHarborDemoCpmActivities = async (
   };
 };
 
+export const getHarborDemoCpmActivityRows = (projectId: string) =>
+  HARBOR_DEMO_CPM_ACTIVITIES.map((activity, index) => ({
+    id: `harbor-demo-${activity.activity_id}`,
+    project_id: projectId,
+    ...activity,
+    sort_order: index + 1,
+  }));
+
 export const ensureHarborDemoCpmActivitiesForProject = async (
   supabase: unknown,
   projectId: string,

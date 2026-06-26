@@ -7,7 +7,10 @@ import {
   type HoldClass,
   type ResponsePath,
 } from "@/lib/ior";
-import { ensureHarborDemoCpmActivitiesForProject } from "@/lib/projects.functions";
+import {
+  ensureHarborDemoCpmActivitiesForProject,
+  getHarborDemoCpmActivityRows,
+} from "@/lib/projects.functions";
 
 export type MilestoneStatus = "on_track" | "at_risk" | "delayed" | "complete";
 export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_decision";
@@ -255,10 +258,7 @@ export const listSchedule = createServerFn({ method: "GET" })
         context.supabase,
         data.projectId,
       );
-      if (
-        ensureResult.ensured &&
-        (ensureResult.insertedCount > 0 || ensureResult.refreshedPlaceholders)
-      ) {
+      if (ensureResult.ensured) {
         const refreshedActivities = await context.supabase
           .from("schedule_activities" as any)
           .select("*")
@@ -267,6 +267,9 @@ export const listSchedule = createServerFn({ method: "GET" })
           .order("activity_id");
         if (refreshedActivities.error) throw new Error(refreshedActivities.error.message);
         activityRows = (refreshedActivities.data ?? []) as unknown as Array<Record<string, unknown>>;
+        if (!activityRows.some((row) => row.activity_id === "01-010")) {
+          activityRows = getHarborDemoCpmActivityRows(data.projectId);
+        }
       }
     }
 

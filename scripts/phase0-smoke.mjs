@@ -175,6 +175,7 @@ await expectContains(
     /ensureHarborDemoCpmActivitiesForProject/,
     /HARBOR_DEMO_FIRST_CPM_ACTIVITY_ID/,
     /isHarborDemoProject/,
+    /getHarborDemoCpmActivityRows/,
     /job_number/,
     /client/,
     /includes\(HARBOR_DEMO_NAME\.toLowerCase\(\)\)/,
@@ -186,6 +187,7 @@ await expectContains(
   "src/lib/schedule.functions.ts",
   [
     /ensureHarborDemoCpmActivitiesForProject/,
+    /getHarborDemoCpmActivityRows/,
     /hasHarborDemoCpmRows/,
     /refreshedActivities/,
   ],
@@ -614,6 +616,9 @@ expectSql(
   sql,
   [
     /lower\(name\) = 'harbor residence'/i,
+    /lower\(coalesce\(name, ''\)\) like '%harbor residence%'/i,
+    /lower\(coalesce\(job_number, ''\)\) like '%harbor%'/i,
+    /lower\(coalesce\(client, ''\)\) like '%private luxury residence%'/i,
     /activity_id,\s*name,\s*division,\s*start_date,\s*finish_date/i,
     /'01-010'/,
     /'99-010'/,
