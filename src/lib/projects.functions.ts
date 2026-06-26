@@ -793,6 +793,9 @@ export const getProject = createServerFn({ method: "GET" })
       .order("created_at", { ascending: false });
     if (pRes.error) throw new Error(pRes.error.message);
     if (!pRes.data) throw new Error("Project not found");
+    if (isHarborDemoProjectName((pRes.data as Record<string, unknown>).name)) {
+      await seedHarborDemoCpmActivities(context.supabase, pid, []);
+    }
     if (eRes.error) throw new Error(eRes.error.message);
     if (cRes.error) throw new Error(cRes.error.message);
     if (bRes.error) throw new Error(bRes.error.message);
@@ -2296,6 +2299,7 @@ export const importCostBuckets = createServerFn({ method: "POST" })
 const HARBOR_DEMO_JOB_NUMBER = "DEMO-HARBOR";
 const HARBOR_DEMO_NAME = "Harbor Residence";
 const HARBOR_DEMO_CLIENT = "Private Luxury Residence";
+const HARBOR_DEMO_FIRST_CPM_ACTIVITY_ID = "01-010";
 
 const harborDemoBuckets = [
   {
@@ -2809,6 +2813,9 @@ const isScheduleActivitiesSchemaError = (error: DynamicSupabaseError | null) => 
   return message.includes("schedule_activities") || message.includes("schema cache");
 };
 
+export const isHarborDemoProjectName = (name: unknown) =>
+  typeof name === "string" && name.trim().toLowerCase() === HARBOR_DEMO_NAME.toLowerCase();
+
 const seedHarborDemoCpmActivities = async (
   supabase: unknown,
   projectId: string,
@@ -2818,7 +2825,7 @@ const seedHarborDemoCpmActivities = async (
     supabase,
     "schedule_activities",
   )
-    .select("id,activity_id")
+    .select("id,activity_id,division")
     .eq("project_id", projectId)
     .limit(50);
 
@@ -2831,41 +2838,93 @@ const seedHarborDemoCpmActivities = async (
   }
 
   const rows = Array.isArray(existingRows)
-    ? (existingRows as Array<{ activity_id?: string | null }>)
+    ? (existingRows as Array<{ activity_id?: string | null; division?: string | null }>)
     : [];
-  const alreadySeeded = rows.some(
-    (row) => row.activity_id === HARBOR_DEMO_CPM_ACTIVITIES[0].activity_id,
+  const existingActivityIds = new Set(
+    rows.map((row) => row.activity_id).filter((id): id is string => Boolean(id)),
   );
-  if (alreadySeeded) return;
+  const alreadySeeded = existingActivityIds.has(HARBOR_DEMO_FIRST_CPM_ACTIVITY_ID);
+  if (alreadySeeded) return { insertedCount: 0, refreshedPlaceholders: false };
 
-  if (rows.length > 0) {
+  const onlyGeneratedMilestonePlaceholders =
+    rows.length > 0 &&
+    rows.every(
+      (row) =>
+        (row.activity_id ?? "").startsWith("A-") &&
+        ((row.division ?? "").toLowerCase() === "milestones" || !row.division),
+    );
+
+  if (onlyGeneratedMilestonePlaceholders) {
     const { error: deleteError } = await dynamicTable(supabase, "schedule_activities")
       .delete()
       .eq("project_id", projectId);
     if (deleteError) {
       if (isScheduleActivitiesSchemaError(deleteError)) {
         seedWarnings.push(`CPM demo refresh skipped: ${deleteError.message}`);
-        return;
+        return { insertedCount: 0, refreshedPlaceholders: false };
       }
       throw new Error(deleteError.message);
     }
+    existingActivityIds.clear();
+  }
+
+  const rowsToInsert = HARBOR_DEMO_CPM_ACTIVITIES.filter(
+    (activity) => !existingActivityIds.has(activity.activity_id),
+  );
+  if (rowsToInsert.length === 0) {
+    return { insertedCount: 0, refreshedPlaceholders: onlyGeneratedMilestonePlaceholders };
   }
 
   const { error: insertError } = await dynamicTable(supabase, "schedule_activities").insert(
-    HARBOR_DEMO_CPM_ACTIVITIES.map((activity, index) => ({
+    rowsToInsert.map((activity) => ({
       project_id: projectId,
       ...activity,
-      sort_order: index + 1,
+      sort_order:
+        HARBOR_DEMO_CPM_ACTIVITIES.findIndex((demo) => demo.activity_id === activity.activity_id) +
+        1,
     })),
   );
 
   if (insertError) {
     if (isScheduleActivitiesSchemaError(insertError)) {
       seedWarnings.push(`CPM demo insert skipped: ${insertError.message}`);
-      return;
+      return { insertedCount: 0, refreshedPlaceholders: onlyGeneratedMilestonePlaceholders };
     }
     throw new Error(insertError.message);
   }
+
+  return {
+    insertedCount: rowsToInsert.length,
+    refreshedPlaceholders: onlyGeneratedMilestonePlaceholders,
+  };
+};
+
+export const ensureHarborDemoCpmActivitiesForProject = async (
+  supabase: unknown,
+  projectId: string,
+  seedWarnings: string[] = [],
+) => {
+  const { data: projectRow, error: projectError } = await dynamicTable(supabase, "projects")
+    .select("name")
+    .eq("id", projectId)
+    .maybeSingle();
+
+  if (projectError) {
+    seedWarnings.push(`CPM demo project check skipped: ${projectError.message}`);
+    return { ensured: false, insertedCount: 0, seedWarnings };
+  }
+
+  if (!isHarborDemoProjectName((projectRow as Record<string, unknown> | null)?.name)) {
+    return { ensured: false, insertedCount: 0, seedWarnings };
+  }
+
+  const result = await seedHarborDemoCpmActivities(supabase, projectId, seedWarnings);
+  return {
+    ensured: true,
+    insertedCount: result?.insertedCount ?? 0,
+    refreshedPlaceholders: result?.refreshedPlaceholders ?? false,
+    seedWarnings,
+  };
 };
 
 export const seedDemoIfEmpty = createServerFn({ method: "POST" })

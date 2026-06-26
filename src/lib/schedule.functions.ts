@@ -7,6 +7,7 @@ import {
   type HoldClass,
   type ResponsePath,
 } from "@/lib/ior";
+import { ensureHarborDemoCpmActivitiesForProject } from "@/lib/projects.functions";
 
 export type MilestoneStatus = "on_track" | "at_risk" | "delayed" | "complete";
 export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_decision";
@@ -244,6 +245,31 @@ export const listSchedule = createServerFn({ method: "GET" })
     if (aRes.error && !activitiesMissing) throw new Error(aRes.error.message);
     if (uRes.error && !updatesMissing) throw new Error(uRes.error.message);
     if (muRes.error && !milestoneUpdatesMissing) throw new Error(muRes.error.message);
+
+    let activityRows = activitiesMissing
+      ? []
+      : ((aRes.data ?? []) as unknown as Array<Record<string, unknown>>);
+    const hasHarborDemoCpmRows = activityRows.some((row) => row.activity_id === "01-010");
+    if (!activitiesMissing && !hasHarborDemoCpmRows) {
+      const ensureResult = await ensureHarborDemoCpmActivitiesForProject(
+        context.supabase,
+        data.projectId,
+      );
+      if (
+        ensureResult.ensured &&
+        (ensureResult.insertedCount > 0 || ensureResult.refreshedPlaceholders)
+      ) {
+        const refreshedActivities = await context.supabase
+          .from("schedule_activities" as any)
+          .select("*")
+          .eq("project_id", data.projectId)
+          .order("sort_order")
+          .order("activity_id");
+        if (refreshedActivities.error) throw new Error(refreshedActivities.error.message);
+        activityRows = (refreshedActivities.data ?? []) as unknown as Array<Record<string, unknown>>;
+      }
+    }
+
     const risks = (rRes.data ?? []).map((r) => normalizeScheduleRisk(r as Record<string, unknown>));
     const unlinkedTitles = Array.from(
       new Set(risks.filter((r) => !r.linked_exposure_id && r.title).map((r) => r.title)),
@@ -271,7 +297,7 @@ export const listSchedule = createServerFn({ method: "GET" })
       milestones: (mRes.data ?? []) as unknown as MilestoneRow[],
       activities: activitiesMissing
         ? []
-        : (aRes.data ?? []).map((r) => normalizeScheduleActivity(r as unknown as Record<string, unknown>)),
+        : activityRows.map((r) => normalizeScheduleActivity(r)),
       risks,
       updates: updatesMissing
         ? []

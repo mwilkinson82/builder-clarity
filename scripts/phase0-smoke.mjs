@@ -172,8 +172,20 @@ await expectContains(
     /predecessor_activity_ids/,
     /successor_activity_ids/,
     /seedHarborDemoCpmActivities/,
+    /ensureHarborDemoCpmActivitiesForProject/,
+    /HARBOR_DEMO_FIRST_CPM_ACTIVITY_ID/,
   ],
   "Harbor Residence demo seeds a full CPM activity plan with predecessor and successor logic",
+);
+
+await expectContains(
+  "src/lib/schedule.functions.ts",
+  [
+    /ensureHarborDemoCpmActivitiesForProject/,
+    /hasHarborDemoCpmRows/,
+    /refreshedActivities/,
+  ],
+  "Schedule loader self-heals missing Harbor Residence CPM demo rows",
 );
 
 await expectContains(
