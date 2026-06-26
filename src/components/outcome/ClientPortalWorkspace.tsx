@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
 import {
   getClientPortalManagement,
   grantClientProjectAccess,
@@ -76,11 +77,6 @@ function latestApprovalFor(
 
 function buildClientPath(projectId: string) {
   return `/client/projects/${projectId}`;
-}
-
-function buildCallbackUrl(projectId: string) {
-  const next = buildClientPath(projectId);
-  return `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
 }
 
 export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps) {
@@ -157,19 +153,11 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
 
   const sendLinkMutation = useMutation({
     mutationFn: async (access: ProjectClientAccessRow) => {
-      const response = await fetch("/api/auth/magic-link", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          email: access.email,
-          redirectTo: buildCallbackUrl(projectId),
-          kind: "client",
-        }),
+      await sendOverwatchMagicLink({
+        email: access.email,
+        next: buildClientPath(projectId),
+        context: "client_portal",
       });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.error || "Client magic link did not send");
-      }
       await updateAccess({
         data: {
           accessId: access.id,

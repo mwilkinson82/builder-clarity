@@ -16,6 +16,7 @@ import { Route as EmailUnsubscribeRouteImport } from './routes/email/unsubscribe
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
 import { Route as LovableEmailSuppressionRouteImport } from './routes/lovable/email/suppression'
+import { Route as ApiAuthMagicLinkRouteImport } from './routes/api/auth/magic-link'
 import { Route as ApiStripeWebhookRouteImport } from './routes/api/stripe/webhook'
 import { Route as ApiAuthMagicLinkRouteImport } from './routes/api/auth/magic-link'
 import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_authenticated/projects.$projectId'
@@ -61,6 +62,11 @@ const AuthenticatedTeamRoute = AuthenticatedTeamRouteImport.update({
 const LovableEmailSuppressionRoute = LovableEmailSuppressionRouteImport.update({
   id: '/lovable/email/suppression',
   path: '/lovable/email/suppression',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthMagicLinkRoute = ApiAuthMagicLinkRouteImport.update({
+  id: '/api/auth/magic-link',
+  path: '/api/auth/magic-link',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiStripeWebhookRoute = ApiStripeWebhookRouteImport.update({
@@ -141,6 +147,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
+  '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
@@ -161,6 +168,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
+  '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
@@ -183,6 +191,7 @@ export interface FileRoutesById {
   '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
+  '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/_authenticated/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
@@ -205,6 +214,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/api/auth/magic-link'
     | '/api/stripe/webhook'
+    | '/api/auth/magic-link'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
     | '/api/stripe/checkout/invoice'
@@ -225,6 +235,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/api/auth/magic-link'
     | '/api/stripe/webhook'
+    | '/api/auth/magic-link'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
     | '/api/stripe/checkout/invoice'
@@ -246,6 +257,7 @@ export interface FileRouteTypes {
     | '/_authenticated/projects/$projectId'
     | '/api/auth/magic-link'
     | '/api/stripe/webhook'
+    | '/api/auth/magic-link'
     | '/lovable/email/suppression'
     | '/_authenticated/client/projects/$projectId'
     | '/api/stripe/checkout/invoice'
@@ -264,6 +276,7 @@ export interface RootRouteChildren {
   EmailUnsubscribeRoute: typeof EmailUnsubscribeRoute
   ApiAuthMagicLinkRoute: typeof ApiAuthMagicLinkRoute
   ApiStripeWebhookRoute: typeof ApiStripeWebhookRoute
+  ApiAuthMagicLinkRoute: typeof ApiAuthMagicLinkRoute
   LovableEmailSuppressionRoute: typeof LovableEmailSuppressionRoute
   ApiStripeCheckoutInvoiceRoute: typeof ApiStripeCheckoutInvoiceRoute
   ApiStripeCheckoutSubscriptionRoute: typeof ApiStripeCheckoutSubscriptionRoute
@@ -447,6 +460,7 @@ const rootRouteChildren: RootRouteChildren = {
   EmailUnsubscribeRoute: EmailUnsubscribeRoute,
   ApiAuthMagicLinkRoute: ApiAuthMagicLinkRoute,
   ApiStripeWebhookRoute: ApiStripeWebhookRoute,
+  ApiAuthMagicLinkRoute: ApiAuthMagicLinkRoute,
   LovableEmailSuppressionRoute: LovableEmailSuppressionRoute,
   ApiStripeCheckoutInvoiceRoute: ApiStripeCheckoutInvoiceRoute,
   ApiStripeCheckoutSubscriptionRoute: ApiStripeCheckoutSubscriptionRoute,

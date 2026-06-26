@@ -97,6 +97,8 @@ async function expectLiveRoute(urlPath, expectedStatus, label) {
 
 await expectFile("src/routes/auth.tsx", "magic-link auth route");
 await expectFile("src/routes/auth.callback.tsx", "auth callback route");
+await expectFile("src/routes/api/auth/magic-link.ts", "Overwatch-owned magic-link sender route");
+await expectFile("src/lib/auth/magic-link.ts", "magic-link sender client helper");
 await expectFile("src/routes/_authenticated/index.tsx", "portfolio route");
 await expectFile("src/routes/_authenticated/projects.$projectId.tsx", "project route");
 await expectFile("src/routes/_authenticated/client.projects.$projectId.tsx", "client portal route");
@@ -125,6 +127,7 @@ await expectContains(
   [
     /fullPath:\s*'\/auth'/,
     /fullPath:\s*'\/auth\/callback'/,
+    /fullPath:\s*'\/api\/auth\/magic-link'/,
     /fullPath:\s*'\/team'/,
     /fullPath:\s*'\/projects\/\$projectId'/,
     /fullPath:\s*'\/client\/projects\/\$projectId'/,
@@ -133,7 +136,19 @@ await expectContains(
     /fullPath:\s*'\/api\/stripe\/checkout\/subscription'/,
     /fullPath:\s*'\/api\/stripe\/webhook'/,
   ],
-  "generated route tree includes auth, company workspace, project, client portal, and Stripe API routes",
+  "generated route tree includes auth, app-owned magic links, company workspace, project, client portal, and Stripe API routes",
+);
+
+await expectContains(
+  "src/routes/auth.tsx",
+  [/sendOverwatchMagicLink/, /context:\s*"login"/],
+  "public auth page sends magic links through Overwatch email route",
+);
+
+await expectContains(
+  "src/components/outcome/ClientPortalWorkspace.tsx",
+  [/sendOverwatchMagicLink/, /context:\s*"client_portal"/],
+  "client portal access sends magic links through Overwatch email route",
 );
 
 await expectContains(

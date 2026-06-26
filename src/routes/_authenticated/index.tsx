@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
+import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
 import { createProject, listProjects, seedDemoIfEmpty } from "@/lib/projects.functions";
 import {
   assignProjectMember,
@@ -1134,20 +1135,7 @@ function InviteByMagicLinkButton() {
       if (!inviteEmail) throw new Error("Enter an email address.");
 
       await createInvite({ data: { email: inviteEmail, role } });
-
-      const response = await fetch("/api/auth/magic-link", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          email: inviteEmail,
-          redirectTo: `${window.location.origin}/auth/callback`,
-          kind: "invite",
-        }),
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.error || "Invite email did not send");
-      }
+      await sendOverwatchMagicLink({ email: inviteEmail, next: "/", context: "portfolio_invite" });
 
       return inviteEmail;
     },

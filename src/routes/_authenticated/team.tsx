@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
+import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
 import {
   assignProjectMember,
   createTeamInvite,
@@ -380,20 +381,7 @@ function TeamPage() {
       const email = inviteEmail.trim().toLowerCase();
       if (!email) throw new Error("Enter an email address.");
       await createInvite({ data: { email, role: inviteRole } });
-
-      const response = await fetch("/api/auth/magic-link", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          email,
-          redirectTo: `${window.location.origin}/auth/callback`,
-          kind: "invite",
-        }),
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.error || "Invite email did not send");
-      }
+      await sendOverwatchMagicLink({ email, next: "/", context: "company_invite" });
       return email;
     },
     onSuccess: async (email) => {

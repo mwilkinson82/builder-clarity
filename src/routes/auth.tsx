@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
@@ -92,15 +93,7 @@ function AuthForm() {
     setNotice(null);
     setMagicLoading(true);
     try {
-      const response = await fetch("/api/auth/magic-link", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, redirectTo: authRedirectTo(next), kind: "login" }),
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.error || "Could not send magic link");
-      }
+      await sendOverwatchMagicLink({ email, next, context: "login" });
       setNotice("Check your email. Your secure sign-in link is on the way.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send magic link");
