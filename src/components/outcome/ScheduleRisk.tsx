@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -910,6 +910,7 @@ function CpmActivityPlanner({
   onDeleteActivity: (id: string) => void;
 }) {
   const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
+  const [showDraft, setShowDraft] = useState(false);
   const sortedActivities = useMemo(
     () =>
       [...activities].sort((a, b) => {
@@ -952,172 +953,282 @@ function CpmActivityPlanner({
       notes: draft.notes.trim(),
     });
     setDraft(emptyActivityDraft());
+    setShowDraft(false);
   };
+  const completedActivities = sortedActivities.filter(
+    (activity) => activity.percent_complete >= 100,
+  ).length;
+  const activitiesWithLogic = sortedActivities.filter(
+    (activity) =>
+      activity.predecessor_activity_ids.length > 0 || activity.successor_activity_ids.length > 0,
+  ).length;
+  const activitiesWithDates = sortedActivities.filter(
+    (activity) => activity.start_date || activity.finish_date,
+  ).length;
 
   return (
-    <div className="rounded-md border border-hairline bg-surface">
-      <div className="flex flex-col gap-3 border-b border-hairline px-4 py-3 lg:flex-row lg:items-end lg:justify-between">
+    <div className="rounded-lg border border-hairline bg-surface p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            CPM activity plan
+            Schedule workbench
           </div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            Build the working schedule by division with activity IDs, start/finish dates, percent
-            complete, and predecessor/successor logic.
-          </div>
+          <h4 className="mt-1 font-serif text-2xl text-foreground">Activity table + Gantt</h4>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Build the working job schedule with activity IDs, divisions, start/finish dates,
+            progress, and predecessor/successor logic. Baseline and update milestones can still roll
+            up into the IOR view above.
+          </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="gap-2 print:hidden"
-          onClick={() => typeof window !== "undefined" && window.print()}
-        >
-          <Printer className="h-4 w-4" />
-          Print schedule
-        </Button>
+        <div className="flex flex-wrap gap-2 print:hidden">
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2"
+            onClick={() => typeof window !== "undefined" && window.print()}
+          >
+            <Printer className="h-4 w-4" />
+            Print
+          </Button>
+          <Button type="button" className="gap-2" onClick={() => setShowDraft((open) => !open)}>
+            <Plus className="h-4 w-4" />
+            Add activity
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-4 p-4 2xl:grid-cols-[minmax(0,1.08fr)_minmax(420px,0.92fr)]">
-        <div className="min-w-0 overflow-hidden rounded-md border border-hairline bg-card">
-          <table className="w-full table-fixed text-left text-xs">
-            <colgroup>
-              <col className="w-[8%]" />
-              <col className="w-[22%]" />
-              <col className="w-[12%]" />
-              <col className="w-[11%]" />
-              <col className="w-[11%]" />
-              <col className="w-[8%]" />
-              <col className="w-[10%]" />
-              <col className="w-[10%]" />
-              <col className="w-[8%]" />
-            </colgroup>
-            <thead className="bg-muted/60 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-              <tr>
-                <th className="px-2 py-2 font-semibold">ID</th>
-                <th className="px-2 py-2 font-semibold">Activity</th>
-                <th className="px-2 py-2 font-semibold">Division</th>
-                <th className="px-2 py-2 font-semibold">Start</th>
-                <th className="px-2 py-2 font-semibold">Finish</th>
-                <th className="px-2 py-2 font-semibold">% done</th>
-                <th className="px-2 py-2 font-semibold">Pred.</th>
-                <th className="px-2 py-2 font-semibold">Succ.</th>
-                <th className="px-2 py-2 text-right font-semibold">Add</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-t border-hairline bg-surface/70 align-top">
-                <td className="px-2 py-2">
-                  <Input
-                    value={draft.activity_id}
-                    onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
-                    placeholder="A-010"
-                    className="h-8 min-w-0 px-2 text-xs"
-                  />
-                </td>
-                <td className="px-2 py-2">
-                  <Input
-                    value={draft.name}
-                    onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                    placeholder="Frame exterior walls"
-                    className="h-8 min-w-0 px-2 text-xs"
-                  />
-                </td>
-                <td className="px-2 py-2">
-                  <Input
-                    value={draft.division}
-                    onChange={(e) => setDraft({ ...draft, division: e.target.value })}
-                    placeholder="06 Wood"
-                    className="h-8 min-w-0 px-2 text-xs"
-                  />
-                </td>
-                <td className="px-2 py-2">
-                  <Input
-                    type="date"
-                    value={draft.start_date}
-                    onChange={(e) => setDraft({ ...draft, start_date: e.target.value })}
-                    className="h-8 min-w-0 px-1 text-xs"
-                  />
-                </td>
-                <td className="px-2 py-2">
-                  <Input
-                    type="date"
-                    value={draft.finish_date}
-                    onChange={(e) => setDraft({ ...draft, finish_date: e.target.value })}
-                    className="h-8 min-w-0 px-1 text-xs"
-                  />
-                </td>
-                <td className="px-2 py-2">
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={draft.percent_complete}
-                    onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
-                    className="h-8 min-w-0 px-2 text-xs"
-                  />
-                </td>
-                <td className="px-2 py-2">
-                  <Input
-                    value={draft.predecessor_activity_ids}
-                    onChange={(e) =>
-                      setDraft({ ...draft, predecessor_activity_ids: e.target.value })
-                    }
-                    placeholder="A-001"
-                    className="h-8 min-w-0 px-2 text-xs"
-                  />
-                </td>
-                <td className="px-2 py-2">
-                  <Input
-                    value={draft.successor_activity_ids}
-                    onChange={(e) => setDraft({ ...draft, successor_activity_ids: e.target.value })}
-                    placeholder="A-030"
-                    className="h-8 min-w-0 px-2 text-xs"
-                  />
-                </td>
-                <td className="px-2 py-2 text-right">
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-8 w-full px-2"
-                    disabled={!draft.name.trim()}
-                    onClick={addActivity}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </Button>
-                </td>
-              </tr>
-              {grouped.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    No CPM activities yet. Add activity rows above, or import the CPM schedule in a
-                    later pass.
-                  </td>
-                </tr>
-              ) : (
-                grouped.map((group) => (
-                  <ActivityTableGroup
-                    key={group.division}
-                    group={group}
-                    onPatchActivity={onPatchActivity}
-                    onDeleteActivity={onDeleteActivity}
-                  />
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <ActivityGanttPanel
-          grouped={grouped}
-          bounds={bounds}
-          dataDatePosition={timelinePosition(latestDataDate, bounds)}
+      <div className="mt-5 grid gap-3 md:grid-cols-4">
+        <ScheduleWorkbenchStat
+          label="Activities"
+          value={String(sortedActivities.length)}
+          sub="in plan"
+        />
+        <ScheduleWorkbenchStat
+          label="Complete"
+          value={`${completedActivities}/${sortedActivities.length || 0}`}
+          sub="progress count"
+          tone={completedActivities > 0 ? "success" : "default"}
+        />
+        <ScheduleWorkbenchStat
+          label="Logic ties"
+          value={String(activitiesWithLogic)}
+          sub="pred / succ"
+          tone={activitiesWithLogic > 0 ? "success" : "warning"}
+        />
+        <ScheduleWorkbenchStat
+          label="Dated"
+          value={`${activitiesWithDates}/${sortedActivities.length || 0}`}
+          sub={`${shortDate(bounds.startLabel)} to ${shortDate(bounds.endLabel)}`}
         />
       </div>
+
+      {showDraft && (
+        <div className="mt-5 rounded-md border border-hairline bg-card p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                New activity
+              </div>
+              <div className="mt-1 text-sm text-muted-foreground">
+                Add one schedule row now. Dependencies can be typed as comma-separated activity IDs.
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              className="print:hidden"
+              onClick={() => {
+                setDraft(emptyActivityDraft());
+                setShowDraft(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[130px_minmax(240px,1fr)_170px_150px_150px_110px]">
+            <LabeledField label="Activity ID">
+              <Input
+                value={draft.activity_id}
+                onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
+                placeholder="A-010"
+                className="h-10"
+              />
+            </LabeledField>
+            <LabeledField label="Activity">
+              <Input
+                value={draft.name}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                placeholder="Frame exterior walls"
+                className="h-10"
+              />
+            </LabeledField>
+            <LabeledField label="Division">
+              <Input
+                value={draft.division}
+                onChange={(e) => setDraft({ ...draft, division: e.target.value })}
+                placeholder="06 Wood"
+                className="h-10"
+              />
+            </LabeledField>
+            <LabeledField label="Start">
+              <Input
+                type="date"
+                value={draft.start_date}
+                onChange={(e) => setDraft({ ...draft, start_date: e.target.value })}
+                className="h-10"
+              />
+            </LabeledField>
+            <LabeledField label="Finish">
+              <Input
+                type="date"
+                value={draft.finish_date}
+                onChange={(e) => setDraft({ ...draft, finish_date: e.target.value })}
+                className="h-10"
+              />
+            </LabeledField>
+            <LabeledField label="% done">
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={draft.percent_complete}
+                onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
+                className="h-10 tabular"
+              />
+            </LabeledField>
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-[180px_180px_minmax(260px,1fr)_auto] lg:items-end">
+            <LabeledField label="Predecessors">
+              <Input
+                value={draft.predecessor_activity_ids}
+                onChange={(e) => setDraft({ ...draft, predecessor_activity_ids: e.target.value })}
+                placeholder="A-001, A-002"
+                className="h-10 tabular"
+              />
+            </LabeledField>
+            <LabeledField label="Successors">
+              <Input
+                value={draft.successor_activity_ids}
+                onChange={(e) => setDraft({ ...draft, successor_activity_ids: e.target.value })}
+                placeholder="A-030"
+                className="h-10 tabular"
+              />
+            </LabeledField>
+            <LabeledField label="Notes">
+              <Textarea
+                value={draft.notes}
+                onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+                placeholder="Scope, sequencing constraint, crew assumption, or schedule risk."
+                className="min-h-10 resize-y"
+              />
+            </LabeledField>
+            <Button
+              type="button"
+              className="h-10 gap-2"
+              disabled={!draft.name.trim()}
+              onClick={addActivity}
+            >
+              <Plus className="h-4 w-4" />
+              Add activity
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <ActivityRegister
+        grouped={grouped}
+        onPatchActivity={onPatchActivity}
+        onDeleteActivity={onDeleteActivity}
+      />
+
+      <ActivityGanttPanel
+        grouped={grouped}
+        bounds={bounds}
+        dataDatePosition={timelinePosition(latestDataDate, bounds)}
+      />
     </div>
   );
 }
 
-function ActivityTableGroup({
+function ScheduleWorkbenchStat({
+  label,
+  value,
+  sub,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  tone?: "default" | "success" | "warning";
+}) {
+  const toneClass =
+    tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-foreground";
+  return (
+    <div className="rounded-md border border-hairline bg-card p-3">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 text-xl font-semibold tabular ${toneClass}`}>{value}</div>
+      <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
+    </div>
+  );
+}
+
+function LabeledField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="block space-y-1">
+      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function ActivityRegister({
+  grouped,
+  onPatchActivity,
+  onDeleteActivity,
+}: {
+  grouped: Array<{ division: string; activities: ScheduleActivityRow[] }>;
+  onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
+  onDeleteActivity: (id: string) => void;
+}) {
+  return (
+    <div className="mt-5 overflow-hidden rounded-md border border-hairline bg-card">
+      <div className="grid grid-cols-[100px_minmax(220px,1fr)_130px_130px_90px_130px_130px_44px] gap-3 border-b border-hairline bg-muted/55 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground max-xl:hidden">
+        <div>ID</div>
+        <div>Activity</div>
+        <div>Division</div>
+        <div>Dates</div>
+        <div>% done</div>
+        <div>Pred.</div>
+        <div>Succ.</div>
+        <div />
+      </div>
+      {grouped.length === 0 ? (
+        <div className="px-6 py-10 text-center">
+          <div className="font-serif text-xl text-foreground">No CPM activities yet.</div>
+          <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
+            Add the first activity to start building the working schedule. This is where the PM will
+            eventually manage activity IDs, dates, progress, divisions, and logic ties.
+          </p>
+        </div>
+      ) : (
+        grouped.map((group) => (
+          <ActivityRegisterGroup
+            key={group.division}
+            group={group}
+            onPatchActivity={onPatchActivity}
+            onDeleteActivity={onDeleteActivity}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+
+function ActivityRegisterGroup({
   group,
   onPatchActivity,
   onDeleteActivity,
@@ -1127,28 +1238,23 @@ function ActivityTableGroup({
   onDeleteActivity: (id: string) => void;
 }) {
   return (
-    <>
-      <tr className="border-t border-hairline bg-muted/40">
-        <td
-          colSpan={9}
-          className="px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground"
-        >
-          {group.division} · {group.activities.length} activities
-        </td>
-      </tr>
+    <div>
+      <div className="border-b border-hairline bg-muted/35 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {group.division} · {group.activities.length} activities
+      </div>
       {group.activities.map((activity) => (
-        <ActivityTableRow
+        <ActivityRegisterRow
           key={activity.id}
           activity={activity}
           onPatch={(patch) => onPatchActivity(activity.id, patch)}
           onDelete={() => onDeleteActivity(activity.id)}
         />
       ))}
-    </>
+    </div>
   );
 }
 
-function ActivityTableRow({
+function ActivityRegisterRow({
   activity,
   onPatch,
   onDelete,
@@ -1174,89 +1280,141 @@ function ActivityTableRow({
   };
 
   return (
-    <tr className="border-t border-hairline align-top">
-      <td className="px-2 py-2">
-        <Input
-          defaultValue={activity.activity_id}
-          onBlur={(e) => commitString("activity_id", e.target.value.trim())}
-          className="h-8 min-w-0 px-2 text-xs font-semibold tabular"
-        />
-      </td>
-      <td className="px-2 py-2">
-        <Input
-          defaultValue={activity.name}
-          onBlur={(e) => commitString("name", e.target.value.trim())}
-          className="h-8 min-w-0 px-2 text-xs"
-        />
-        {activity.notes && (
-          <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
-            {activity.notes}
-          </div>
-        )}
-      </td>
-      <td className="px-2 py-2">
-        <Input
-          defaultValue={activity.division}
-          onBlur={(e) => commitString("division", e.target.value.trim() || "General")}
-          className="h-8 min-w-0 px-2 text-xs"
-        />
-      </td>
-      <td className="px-2 py-2">
-        <Input
-          type="date"
-          defaultValue={activity.start_date ?? ""}
-          onBlur={(e) => commitDate("start_date", e.target.value)}
-          className="h-8 min-w-0 px-1 text-xs"
-        />
-      </td>
-      <td className="px-2 py-2">
-        <Input
-          type="date"
-          defaultValue={activity.finish_date ?? ""}
-          onBlur={(e) => commitDate("finish_date", e.target.value)}
-          className="h-8 min-w-0 px-1 text-xs"
-        />
-      </td>
-      <td className="px-2 py-2">
-        <Input
-          type="number"
-          min={0}
-          max={100}
-          defaultValue={activity.percent_complete}
-          onBlur={(e) => {
-            const next = parsePercent(e.target.value);
-            if (next !== activity.percent_complete) onPatch({ percent_complete: next });
-          }}
-          className="h-8 min-w-0 px-2 text-xs tabular"
-        />
-      </td>
-      <td className="px-2 py-2">
-        <Input
-          defaultValue={formatActivityIds(activity.predecessor_activity_ids)}
-          onBlur={(e) => commitActivityIds("predecessor_activity_ids", e.target.value)}
-          className="h-8 min-w-0 px-2 text-xs tabular"
-        />
-      </td>
-      <td className="px-2 py-2">
-        <Input
-          defaultValue={formatActivityIds(activity.successor_activity_ids)}
-          onBlur={(e) => commitActivityIds("successor_activity_ids", e.target.value)}
-          className="h-8 min-w-0 px-2 text-xs tabular"
-        />
-      </td>
-      <td className="px-2 py-2 text-right">
+    <div className="border-b border-hairline px-4 py-3 last:border-b-0">
+      <div className="grid gap-3 xl:grid-cols-[100px_minmax(220px,1fr)_130px_130px_90px_130px_130px_44px] xl:items-start">
+        <LabeledField label="ID">
+          <Input
+            defaultValue={activity.activity_id}
+            onBlur={(e) => commitString("activity_id", e.target.value.trim())}
+            className="h-10 font-semibold tabular"
+          />
+        </LabeledField>
+        <LabeledField label="Activity">
+          <Input
+            defaultValue={activity.name}
+            onBlur={(e) => commitString("name", e.target.value.trim())}
+            className="h-10"
+          />
+        </LabeledField>
+        <LabeledField label="Division">
+          <Input
+            defaultValue={activity.division}
+            onBlur={(e) => commitString("division", e.target.value.trim() || "General")}
+            className="h-10"
+          />
+        </LabeledField>
+        <div className="grid grid-cols-2 gap-2 xl:block xl:space-y-2">
+          <LabeledField label="Start">
+            <Input
+              type="date"
+              defaultValue={activity.start_date ?? ""}
+              onBlur={(e) => commitDate("start_date", e.target.value)}
+              className="h-10"
+            />
+          </LabeledField>
+          <LabeledField label="Finish">
+            <Input
+              type="date"
+              defaultValue={activity.finish_date ?? ""}
+              onBlur={(e) => commitDate("finish_date", e.target.value)}
+              className="h-10"
+            />
+          </LabeledField>
+        </div>
+        <LabeledField label="% done">
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            defaultValue={activity.percent_complete}
+            onBlur={(e) => {
+              const next = parsePercent(e.target.value);
+              if (next !== activity.percent_complete) onPatch({ percent_complete: next });
+            }}
+            className="h-10 tabular"
+          />
+        </LabeledField>
+        <LabeledField label="Pred.">
+          <Input
+            defaultValue={formatActivityIds(activity.predecessor_activity_ids)}
+            onBlur={(e) => commitActivityIds("predecessor_activity_ids", e.target.value)}
+            placeholder="A-001"
+            className="h-10 tabular"
+          />
+        </LabeledField>
+        <LabeledField label="Succ.">
+          <Input
+            defaultValue={formatActivityIds(activity.successor_activity_ids)}
+            onBlur={(e) => commitActivityIds("successor_activity_ids", e.target.value)}
+            placeholder="A-030"
+            className="h-10 tabular"
+          />
+        </LabeledField>
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="h-8 w-8"
+          className="mt-5 h-10 w-10 justify-self-end text-muted-foreground hover:text-danger xl:mt-4"
           onClick={onDelete}
           aria-label={`Delete activity ${activity.activity_id || activity.name}`}
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 className="h-4 w-4" />
         </Button>
-      </td>
-    </tr>
+      </div>
+      <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
+        <div className="rounded-md border border-hairline bg-surface p-3">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Notes / constraint
+          </div>
+          <Textarea
+            defaultValue={activity.notes ?? ""}
+            onBlur={(e) => commitString("notes", e.target.value.trim())}
+            placeholder="Sequencing constraint, crew assumption, schedule risk, or field note."
+            className="min-h-16 resize-y bg-card"
+          />
+        </div>
+        <ActivityLogicSummary activity={activity} />
+      </div>
+    </div>
+  );
+}
+
+function ActivityLogicSummary({ activity }: { activity: ScheduleActivityRow }) {
+  const predecessors = formatActivityIds(activity.predecessor_activity_ids);
+  const successors = formatActivityIds(activity.successor_activity_ids);
+  const duration = getActivityDurationDays(activity);
+  return (
+    <div className="rounded-md border border-hairline bg-surface p-3">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        Logic summary
+      </div>
+      <div className="grid gap-2 text-sm sm:grid-cols-3">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Duration
+          </div>
+          <div className="mt-1 font-semibold tabular text-foreground">
+            {duration == null ? "No dates" : `${duration} day${duration === 1 ? "" : "s"}`}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Predecessors
+          </div>
+          <div className="mt-1 truncate font-semibold tabular text-foreground">
+            {predecessors || "None"}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Successors
+          </div>
+          <div className="mt-1 truncate font-semibold tabular text-foreground">
+            {successors || "None"}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1270,17 +1428,18 @@ function ActivityGanttPanel({
   dataDatePosition: number | null;
 }) {
   return (
-    <div className="min-w-0 rounded-md border border-hairline bg-card">
-      <div className="flex items-end justify-between gap-3 border-b border-hairline px-3 py-3">
+    <div className="mt-5 overflow-hidden rounded-md border border-hairline bg-card">
+      <div className="flex flex-col gap-3 border-b border-hairline px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
             Gantt chart
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">
+          <div className="mt-1 font-serif text-xl text-foreground">Schedule timeline</div>
+          <div className="mt-1 text-sm text-muted-foreground">
             {shortDate(bounds.startLabel)} to {shortDate(bounds.endLabel)}
           </div>
         </div>
-        <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap gap-4 text-[12px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <span className="h-2 w-5 rounded-full bg-accent/70" />
             Duration
@@ -1292,14 +1451,15 @@ function ActivityGanttPanel({
         </div>
       </div>
       {grouped.length === 0 ? (
-        <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-          Add activities to draw the Gantt chart.
+        <div className="px-6 py-10 text-center text-sm text-muted-foreground">
+          Add activities to draw the Gantt chart. The chart will show each activity duration,
+          percent-complete overlay, and the latest data-date marker.
         </div>
       ) : (
-        <div className="max-h-[560px] overflow-y-auto">
+        <div className="max-h-[620px] overflow-y-auto">
           {grouped.map((group) => (
             <div key={group.division}>
-              <div className="border-b border-hairline bg-muted/40 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              <div className="border-b border-hairline bg-muted/40 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 {group.division}
               </div>
               {group.activities.map((activity) => (
@@ -1314,7 +1474,7 @@ function ActivityGanttPanel({
           ))}
         </div>
       )}
-      <div className="flex justify-between border-t border-hairline px-3 py-2 text-[11px] text-muted-foreground">
+      <div className="flex justify-between border-t border-hairline px-4 py-2 text-[11px] text-muted-foreground">
         <span>{shortDate(bounds.startLabel)}</span>
         <span>{shortDate(bounds.endLabel)}</span>
       </div>
@@ -1343,14 +1503,14 @@ function ActivityGanttRow({
   const finishMs = parseDateMs(activity.finish_date);
   const isLate = percent < 100 && finishMs != null && dataDateMs != null && finishMs < dataDateMs;
   return (
-    <div className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-3 border-b border-hairline px-3 py-2 last:border-b-0">
+    <div className="grid gap-3 border-b border-hairline px-4 py-3 last:border-b-0 lg:grid-cols-[260px_minmax(0,1fr)_88px] lg:items-center">
       <div className="min-w-0">
-        <div className="truncate text-xs font-semibold tabular text-foreground">
+        <div className="truncate text-sm font-semibold tabular text-foreground">
           {activity.activity_id || "No ID"}
         </div>
-        <div className="truncate text-[11px] text-muted-foreground">{activity.name}</div>
+        <div className="mt-1 truncate text-xs text-muted-foreground">{activity.name}</div>
       </div>
-      <div className="relative h-8 rounded-md bg-muted">
+      <div className="relative h-10 rounded-md bg-muted">
         {dataDatePosition != null && (
           <div
             className="absolute inset-y-1 z-10 w-px bg-foreground/30"
@@ -1370,6 +1530,11 @@ function ActivityGanttRow({
             />
           </div>
         )}
+      </div>
+      <div
+        className={`text-right text-sm font-semibold tabular ${isLate ? "text-danger" : "text-muted-foreground"}`}
+      >
+        {percent}%
       </div>
     </div>
   );
@@ -1441,6 +1606,14 @@ function parseDateMs(value?: string | null) {
 
 function isoDateFromMs(ms: number) {
   return new Date(ms).toISOString().slice(0, 10);
+}
+
+function getActivityDurationDays(activity: ScheduleActivityRow) {
+  const start = parseDateMs(activity.start_date);
+  const finish = parseDateMs(activity.finish_date);
+  if (start == null || finish == null) return null;
+  const oneDay = 24 * 60 * 60 * 1000;
+  return Math.max(1, Math.round((finish - start) / oneDay) + 1);
 }
 
 function getTimelineBounds(values: Array<string | null | undefined>): TimelineBounds {
