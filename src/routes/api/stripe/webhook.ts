@@ -24,6 +24,9 @@ function epochToIso(value: unknown) {
   return seconds > 0 ? new Date(seconds * 1000).toISOString() : null;
 }
 
+const dynamicTable = (supabase: unknown, relation: string) =>
+  (supabase as { from(table: string): any }).from(relation);
+
 function sessionMetadata(object: StripeObject) {
   return object.metadata ?? {};
 }
@@ -68,8 +71,7 @@ async function handleCheckoutExpired(object: StripeObject) {
   const metadata = sessionMetadata(object);
 
   if (metadata.kind === "client_invoice" && metadata.invoice_id) {
-    await admin
-      .from("billing_invoices")
+    await dynamicTable(admin, "billing_invoices")
       .update({
         online_payment_status: "expired",
       })
@@ -79,8 +81,7 @@ async function handleCheckoutExpired(object: StripeObject) {
   }
 
   if (metadata.kind === "subscription" && metadata.organization_id) {
-    await admin
-      .from("organizations")
+    await dynamicTable(admin, "organizations")
       .update({
         billing_status: "checkout_expired",
       })
@@ -95,8 +96,7 @@ async function markInvoicePaid(object: StripeObject) {
   const invoiceId = metadata.invoice_id;
   if (!invoiceId) return;
 
-  const { data: invoice, error: invoiceError } = await admin
-    .from("billing_invoices")
+  const { data: invoice, error: invoiceError } = await dynamicTable(admin, "billing_invoices")
     .select("id,project_id,billing_application_id,total_due,paid_amount")
     .eq("id", invoiceId)
     .single();
@@ -112,15 +112,14 @@ async function markInvoicePaid(object: StripeObject) {
   const overwatchFee = Math.max(0, num(metadata.overwatch_fee_amount_cents) / 100);
   const netPayout = Math.max(0, amount - overwatchFee);
 
-  const { data: existingPayment, error: existingError } = await admin
-    .from("payment_ledger")
+  const { data: existingPayment, error: existingError } = await dynamicTable(admin, "payment_ledger")
     .select("id")
     .eq("stripe_checkout_session_id", sessionId)
     .maybeSingle();
   if (existingError) throw new Error(existingError.message);
 
   if (!existingPayment) {
-    const { error: insertError } = await admin.from("payment_ledger").insert({
+    const { error: insertError } = await dynamicTable(admin, "payment_ledger").insert({
       project_id: invoice.project_id,
       invoice_id: invoice.id,
       billing_application_id: invoice.billing_application_id,
@@ -143,8 +142,7 @@ async function markInvoicePaid(object: StripeObject) {
   const paidAmount = num(invoice.paid_amount) + amount;
   const status = paidAmount >= num(invoice.total_due) ? "paid" : "partially_paid";
   const paidAt = status === "paid" ? new Date().toISOString() : null;
-  const { error: updateInvoiceError } = await admin
-    .from("billing_invoices")
+  const { error: updateInvoiceError } = await dynamicTable(admin, "billing_invoices")
     .update({
       paid_amount: paidAmount,
       status,
@@ -156,8 +154,7 @@ async function markInvoicePaid(object: StripeObject) {
   if (updateInvoiceError) throw new Error(updateInvoiceError.message);
 
   if (invoice.billing_application_id) {
-    const { error: updatePayAppError } = await admin
-      .from("billing_applications")
+    const { error: updatePayAppError } = await dynamicTable(admin, "billing_applications")
       .update({
         paid_to_date: paidAmount,
         status: status === "paid" ? "paid" : "partial",
@@ -173,8 +170,7 @@ async function markInvoiceFailed(object: StripeObject) {
   if (!invoiceId) return;
 
   const admin = createSupabaseAdminClient();
-  const { error } = await admin
-    .from("billing_invoices")
+  const { error } = await dynamicTable(admin, "billing_invoices")
     .update({
       online_payment_status: "failed",
       stripe_payment_intent_id: str(object.id),
@@ -188,16 +184,14 @@ async function markChargeRefunded(object: StripeObject) {
   if (!paymentIntentId) return;
 
   const admin = createSupabaseAdminClient();
-  const { data: payment, error: paymentError } = await admin
-    .from("payment_ledger")
+  const { data: payment, error: paymentError } = await dynamicTable(admin, "payment_ledger")
     .select("id,invoice_id")
     .eq("stripe_payment_intent_id", paymentIntentId)
     .maybeSingle();
   if (paymentError) throw new Error(paymentError.message);
   if (!payment) return;
 
-  const { error: updatePaymentError } = await admin
-    .from("payment_ledger")
+  const { error: updatePaymentError } = await dynamicTable(admin, "payment_ledger")
     .update({
       status: "refunded",
       stripe_charge_id: str(object.id),
@@ -207,8 +201,7 @@ async function markChargeRefunded(object: StripeObject) {
     .eq("id", payment.id);
   if (updatePaymentError) throw new Error(updatePaymentError.message);
 
-  const { error: updateInvoiceError } = await admin
-    .from("billing_invoices")
+  const { error: updateInvoiceError } = await dynamicTable(admin, "billing_invoices")
     .update({
       online_payment_status: "refunded",
     })
@@ -222,8 +215,7 @@ async function markSubscriptionCheckoutComplete(object: StripeObject) {
   if (!organizationId) return;
 
   const admin = createSupabaseAdminClient();
-  const { error } = await admin
-    .from("organizations")
+  const { error } = await dynamicTable(admin, "organizations")
     .update({
       stripe_customer_id: str(object.customer),
       stripe_subscription_id: str(object.subscription),
@@ -250,7 +242,7 @@ async function markSubscriptionUpdated(object: StripeObject) {
     subscription_cancel_at_period_end: Boolean(object.cancel_at_period_end),
   };
 
-  let query = admin.from("organizations").update(patch);
+  let query = dynamicTable(admin, "organizations").update(patch);
   if (organizationId) query = query.eq("id", organizationId);
   else if (subscriptionId) query = query.eq("stripe_subscription_id", subscriptionId);
   else query = query.eq("stripe_customer_id", customerId);
@@ -265,8 +257,7 @@ async function markConnectAccountUpdated(object: StripeObject) {
 
   const admin = createSupabaseAdminClient();
   const status = connectAccountStatus(object);
-  const { error } = await admin
-    .from("organizations")
+  const { error } = await dynamicTable(admin, "organizations")
     .update({
       stripe_connect_status: status.status,
       payment_processor_ready: status.ready,

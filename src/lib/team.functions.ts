@@ -214,7 +214,7 @@ async function loadOrganization(context: TeamServerContext, organizationId: stri
     .eq("id", organizationId)
     .single();
 
-  if (!extended.error) return normalizeOrganization(extended.data as Record<string, unknown>);
+  if (!extended.error) return normalizeOrganization(extended.data as unknown as Record<string, unknown>);
   if (!missingCommercialOrganizationColumn(extended.error)) throw new Error(extended.error.message);
 
   const fallback = await context.supabase
@@ -545,7 +545,7 @@ export const updateOrganization = createServerFn({ method: "POST" })
 
     const { data: updated, error } = await context.supabase
       .from("organizations")
-      .update(updatePayload)
+      .update(updatePayload as any)
       .eq("id", organizationId)
       .select(ORGANIZATION_SELECT)
       .single();
@@ -563,7 +563,7 @@ export const updateOrganization = createServerFn({ method: "POST" })
       return { organization: normalizeOrganization(fallback as Record<string, unknown>) };
     }
 
-    return { organization: normalizeOrganization(updated as Record<string, unknown>) };
+    return { organization: normalizeOrganization(updated as unknown as Record<string, unknown>) };
   });
 
 const teamInviteInput = z.object({

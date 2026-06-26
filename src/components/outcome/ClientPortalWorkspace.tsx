@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { supabase } from "@/integrations/supabase/client";
 import {
   getClientPortalManagement,
   grantClientProjectAccess,
@@ -158,14 +157,19 @@ export function ClientPortalWorkspace({ projectId }: ClientPortalWorkspaceProps)
 
   const sendLinkMutation = useMutation({
     mutationFn: async (access: ProjectClientAccessRow) => {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: access.email,
-        options: {
-          emailRedirectTo: buildCallbackUrl(projectId),
-          shouldCreateUser: true,
-        },
+      const response = await fetch("/api/auth/magic-link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: access.email,
+          redirectTo: buildCallbackUrl(projectId),
+          kind: "client",
+        }),
       });
-      if (error) throw error;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error || "Client magic link did not send");
+      }
       await updateAccess({
         data: {
           accessId: access.id,

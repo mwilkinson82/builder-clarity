@@ -27,6 +27,9 @@ type OrganizationRecord = {
   stripe_price_id: string;
 };
 
+const dynamicTable = (supabase: unknown, relation: string) =>
+  (supabase as { from(table: string): any }).from(relation);
+
 function normalizedInternalPath(value: string | undefined, fallback: string) {
   if (!value) return fallback;
   if (!value.startsWith("/")) return fallback;
@@ -53,16 +56,15 @@ async function resolvePriceId(
   if (bodyPriceId) return bodyPriceId;
   if (organization.stripe_price_id) return organization.stripe_price_id;
 
-  const { data: plan, error } = await context.admin
-    .from("subscription_plans")
+  const { data: plan, error } = await dynamicTable(context.admin, "subscription_plans")
     .select("stripe_price_id,checkout_enabled")
     .eq("code", organization.plan_code)
     .maybeSingle();
   if (error) throw new Error(error.message);
 
   const planPriceId =
-    plan && typeof plan.stripe_price_id === "string" && plan.checkout_enabled
-      ? plan.stripe_price_id
+    plan && typeof (plan as any).stripe_price_id === "string" && (plan as any).checkout_enabled
+      ? (plan as any).stripe_price_id
       : "";
 
   if (!planPriceId) {
@@ -84,15 +86,14 @@ export const Route = createFileRoute("/api/stripe/checkout/subscription")({
           const organizationId = await resolveOrganizationId(body.organizationId, context);
           await requireCanManageOrganization(context, organizationId);
 
-          const { data: organization, error: orgError } = await context.admin
-            .from("organizations")
+          const { data: organization, error: orgError } = await dynamicTable(context.admin, "organizations")
             .select("id,name,plan_code,billing_email,stripe_customer_id,stripe_price_id")
             .eq("id", organizationId)
             .single();
           if (orgError) throw new Error(orgError.message);
           if (!organization) throw new Error("Organization not found.");
 
-          const orgRecord = organization as OrganizationRecord;
+          const orgRecord = organization as unknown as OrganizationRecord;
           const priceId = await resolvePriceId(body.priceId, orgRecord, context);
           const origin = getAppOrigin(request);
           const successUrl = new URL(
@@ -127,8 +128,7 @@ export const Route = createFileRoute("/api/stripe/checkout/subscription")({
             `subscription-checkout:${orgRecord.id}:${priceId}`,
           );
 
-          const { error: updateError } = await context.admin
-            .from("organizations")
+          const { error: updateError } = await dynamicTable(context.admin, "organizations")
             .update({
               stripe_price_id: priceId,
               stripe_checkout_session_id: session.id,

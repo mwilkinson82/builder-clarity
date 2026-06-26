@@ -381,14 +381,19 @@ function TeamPage() {
       if (!email) throw new Error("Enter an email address.");
       await createInvite({ data: { email, role: inviteRole } });
 
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-          shouldCreateUser: true,
-        },
+      const response = await fetch("/api/auth/magic-link", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email,
+          redirectTo: `${window.location.origin}/auth/callback`,
+          kind: "invite",
+        }),
       });
-      if (error) throw error;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error || "Invite email did not send");
+      }
       return email;
     },
     onSuccess: async (email) => {

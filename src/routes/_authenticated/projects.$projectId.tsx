@@ -1659,7 +1659,19 @@ function responseAction(path: import("@/lib/ior").ResponsePath) {
 type BillingDraft = Omit<BillingApplicationRow, "id" | "project_id" | "status_events">;
 type InvoiceDraft = Omit<
   BillingInvoiceRow,
-  "id" | "project_id" | "payment_events" | "created_at" | "updated_at" | "sent_at" | "paid_at"
+  | "id"
+  | "project_id"
+  | "payment_events"
+  | "created_at"
+  | "updated_at"
+  | "sent_at"
+  | "paid_at"
+  | "payment_enabled"
+  | "payment_url"
+  | "stripe_checkout_session_id"
+  | "stripe_payment_intent_id"
+  | "online_payment_status"
+  | "payment_link_sent_at"
 >;
 type PaymentDraft = {
   invoiceId: string;
@@ -1749,9 +1761,10 @@ function BillingWorkspace({
     enabled: billingInvoices.length > 0,
     staleTime: 30_000,
   });
+  const clientPortalAccess = (clientPortalQuery.data?.access ?? []) as ProjectClientAccessRow[];
   const invoiceRecipients = Array.from(
     new Map(
-      (clientPortalQuery.data?.access ?? [])
+      clientPortalAccess
         .filter(
           (access: ProjectClientAccessRow) =>
             access.status !== "revoked" && access.can_view_billing && access.email,

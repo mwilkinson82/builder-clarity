@@ -48,6 +48,9 @@ type OrganizationPaymentRecord = {
   payment_processor_ready: boolean;
 };
 
+const dynamicTable = (supabase: unknown, relation: string) =>
+  (supabase as { from(table: string): any }).from(relation);
+
 function normalizedInternalPath(value: string | undefined, fallback: string) {
   if (!value) return fallback;
   if (!value.startsWith("/")) return fallback;
@@ -74,8 +77,7 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           const body = invoiceCheckoutInput.parse(await request.json());
           const context = await requireAuthedStripeContext(request);
 
-          const { data: invoice, error: invoiceError } = await context.admin
-            .from("billing_invoices")
+          const { data: invoice, error: invoiceError } = await dynamicTable(context.admin, "billing_invoices")
             .select(
               "id,project_id,billing_application_id,invoice_number,title,subtotal,retainage,total_due,paid_amount,status,sent_at",
             )
@@ -84,7 +86,7 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           if (invoiceError) throw new Error(invoiceError.message);
           if (!invoice) throw new Error("Invoice not found.");
 
-          const invoiceRecord = invoice as InvoiceRecord;
+          const invoiceRecord = invoice as unknown as InvoiceRecord;
           await requireCanManageProject(context, invoiceRecord.project_id);
 
           const { data: project, error: projectError } = await context.admin
@@ -104,15 +106,14 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
             );
           }
 
-          const { data: organization, error: organizationError } = await context.admin
-            .from("organizations")
+          const { data: organization, error: organizationError } = await dynamicTable(context.admin, "organizations")
             .select("id,stripe_connect_account_id,stripe_connect_status,payment_processor_ready")
             .eq("id", projectRecord.organization_id)
             .single();
           if (organizationError) throw new Error(organizationError.message);
           if (!organization) throw new Error("Organization not found.");
 
-          const orgPayment = organization as OrganizationPaymentRecord;
+          const orgPayment = organization as unknown as OrganizationPaymentRecord;
           const connectReady =
             orgPayment.payment_processor_ready &&
             orgPayment.stripe_connect_status === "active" &&
@@ -210,8 +211,7 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           );
 
           const now = new Date().toISOString();
-          const { error: updateError } = await context.admin
-            .from("billing_invoices")
+          const { error: updateError } = await dynamicTable(context.admin, "billing_invoices")
             .update({
               payment_enabled: true,
               payment_url: session.url ?? "",
