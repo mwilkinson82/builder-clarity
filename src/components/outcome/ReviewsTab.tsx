@@ -10,7 +10,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Download, Pencil, Mail, FileText } from "lucide-react";
+import { Download, Pencil, Mail, FileText, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { sendTransactionalEmail } from "@/lib/email/send";
+import { fmtPct, fmtUSD } from "@/lib/format";
 import type { ReviewRow, ProjectRow } from "@/lib/projects.functions";
 import {
   generateIorPdf,
@@ -42,6 +45,7 @@ export function ReviewsTab({
   pending?: boolean;
 }) {
   const [editing, setEditing] = useState<ReviewRow | null>(null);
+  const [emailing, setEmailing] = useState<ReviewRow | null>(null);
 
   const downloadReview = async (r: ReviewRow) => {
     const input = buildPdfInput(r);
@@ -52,20 +56,6 @@ export function ReviewsTab({
     );
     const date = new Date(r.reviewed_at).toISOString().slice(0, 10);
     downloadPdfBytes(bytes, `IOR_${project.name.replace(/\s+/g, "_")}_${date}.pdf`);
-  };
-
-  const emailReview = async (r: ReviewRow) => {
-    const subject = encodeURIComponent(
-      `IOR Report — ${project.name} — ${new Date(r.reviewed_at).toLocaleDateString()}`,
-    );
-    const body = encodeURIComponent(
-      `Indicated Outcome Report for ${project.name}.\n\n` +
-        `Reviewer: ${r.reviewer || "—"}\n` +
-        `Reviewed: ${new Date(r.reviewed_at).toLocaleString()}\n\n` +
-        `${r.body_markdown || r.summary_notes || "(See attached PDF — download from the IOR portal and attach.)"}`,
-    );
-    const to = (r.email_recipients ?? []).join(",");
-    window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
   };
 
   if (reviews.length === 0) {
@@ -123,7 +113,7 @@ export function ReviewsTab({
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => emailReview(r)}
+                    onClick={() => setEmailing(r)}
                     className="gap-1.5"
                   >
                     <Mail className="h-3.5 w-3.5" /> Email
@@ -163,8 +153,177 @@ export function ReviewsTab({
           pending={pending}
         />
       )}
+
+      {emailing && (
+        <EmailReviewDialog
+          review={emailing}
+          project={project}
+          buildPdfInput={buildPdfInput}
+          onClose={() => setEmailing(null)}
+          onSent={(recipients) => {
+            onUpdate(emailing.id, { email_recipients: recipients });
+            setEmailing(null);
+          }}
+        />
+      )}
     </>
   );
+}
+
+function EmailReviewDialog({
+  review,
+  project,
+  buildPdfInput,
+  onClose,
+  onSent,
+}: {
+  review: ReviewRow;
+  project: ProjectRow;
+  buildPdfInput: (review: ReviewRow | null) => IorPdfInput;
+  onClose: () => void;
+  onSent: (recipients: string[]) => void;
+}) {
+  const [emails, setEmails] = useState((review.email_recipients ?? []).join(", "));
+  const [note, setNote] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const input = buildPdfInput(review);
+  const narrative = review.body_markdown || review.summary_notes || "";
+
+  const send = async () => {
+    const recipients = parseRecipients(emails);
+    if (recipients.length === 0) {
+      toast.error("Add at least one recipient", {
+        description: "Enter one or more team email addresses before sending.",
+      });
+      return;
+    }
+
+    setSending(true);
+    try {
+      const reviewedAt = formatDateTime(review.reviewed_at);
+      await Promise.all(
+        recipients.map(async (recipient, index) => {
+          const result = await sendTransactionalEmail({
+            templateName: "ior-report-notification",
+            recipientEmail: recipient,
+            idempotencyKey: `ior-report:${review.id}:${recipient}:${Date.now()}:${index}`,
+            templateData: {
+              projectName: project.name,
+              clientName: project.client,
+              jobNumber: project.job_number,
+              reviewedAt,
+              reviewer: review.reviewer || "PM",
+              indicatedGp: fmtUSD(input.rollup.indicatedGP),
+              indicatedGpPct: fmtPct(input.rollup.indicatedGPpct),
+              gpAtRisk: fmtUSD(input.rollup.gpAtRisk),
+              forecastBefore: formatDate(review.forecast_completion_date_before),
+              forecastAfter: formatDate(review.forecast_completion_date_after),
+              narrative,
+              portalUrl: projectUrl(project.id),
+              note,
+            },
+          });
+
+          if (result && typeof result === "object" && "success" in result && !result.success) {
+            throw new Error("The email service did not queue one of the report emails.");
+          }
+        }),
+      );
+
+      toast.success("IOR report email queued", {
+        description: `${recipients.length} recipient${recipients.length === 1 ? "" : "s"} will receive it from Overwatch.`,
+      });
+      onSent(recipients);
+    } catch (error) {
+      toast.error("IOR report email did not queue", {
+        description: error instanceof Error ? error.message : "The email service rejected it.",
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="font-serif text-2xl">Email IOR report</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="rounded-md border border-hairline bg-muted/35 p-3 text-sm">
+            <div className="font-medium text-foreground">{project.name}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {formatDateTime(review.reviewed_at)} | Indicated GP{" "}
+              <span className="tabular">{fmtUSD(input.rollup.indicatedGP)}</span> | GP at risk{" "}
+              <span className="tabular">{fmtUSD(input.rollup.gpAtRisk)}</span>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>
+              Team recipients <span className="text-muted-foreground">(comma-separated)</span>
+            </Label>
+            <Input
+              value={emails}
+              onChange={(e) => setEmails(e.target.value)}
+              placeholder="pm@company.com, owner@company.com"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Optional note</Label>
+            <Textarea
+              rows={3}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Add meeting context or what you want the team to review."
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={sending}>
+            Cancel
+          </Button>
+          <Button onClick={send} disabled={sending}>
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+            {sending ? "Queueing..." : "Send through Overwatch"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function parseRecipients(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/[,\n;]/)
+        .map((item) => item.trim().toLowerCase())
+        .filter((item) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item)),
+    ),
+  );
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "";
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "Date not recorded";
+  return new Date(value).toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function projectUrl(projectId: string) {
+  if (typeof window === "undefined") return `/projects/${projectId}`;
+  return `${window.location.origin}/projects/${projectId}`;
 }
 
 function EditReviewDialog({

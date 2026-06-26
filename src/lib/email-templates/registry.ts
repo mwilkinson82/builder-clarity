@@ -18,9 +18,11 @@ export interface TemplateEntry {
  *   // then add to TEMPLATES: 'welcome': welcomeTemplate
  */
 import { template as invoiceNotification } from "./invoice-notification";
+import { template as iorReportNotification } from "./ior-report-notification";
 import { template as loginNotification } from "./login-notification";
 
 export const TEMPLATES: Record<string, TemplateEntry> = {
   "login-notification": loginNotification,
   "invoice-notification": invoiceNotification,
+  "ior-report-notification": iorReportNotification,
 }

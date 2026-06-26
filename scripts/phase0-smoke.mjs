@@ -104,6 +104,7 @@ await expectFile("src/routes/_authenticated/team.tsx", "company workspace route"
 await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF generator");
 await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
 await expectFile("src/lib/email-templates/invoice-notification.tsx", "invoice email template");
+await expectFile("src/lib/email-templates/ior-report-notification.tsx", "IOR report email template");
 await expectFile("src/lib/stripe.server.ts", "Stripe server helper");
 await expectFile(
   "src/routes/api/stripe/connect/account-link.ts",
@@ -305,14 +306,20 @@ await expectContains(
 
 await expectContains(
   "src/lib/email-templates/registry.ts",
-  [/invoice-notification/, /invoiceNotification/],
-  "transactional invoice email template is registered",
+  [/invoice-notification/, /invoiceNotification/, /ior-report-notification/, /iorReportNotification/],
+  "transactional invoice and IOR report email templates are registered",
 );
 
 await expectContains(
   "src/lib/email-templates/invoice-notification.tsx",
   [/OVERWATCH BILLING/, /Pay invoice online/, /paymentUrl/, /totalDue/, /openBalance/],
   "invoice notification email includes payment CTA and billing totals",
+);
+
+await expectContains(
+  "src/components/outcome/ReviewsTab.tsx",
+  [/EmailReviewDialog/, /sendTransactionalEmail/, /ior-report-notification/, /Send through Overwatch/],
+  "IOR report emails queue through Overwatch instead of external mail clients",
 );
 
 await expectContains(
