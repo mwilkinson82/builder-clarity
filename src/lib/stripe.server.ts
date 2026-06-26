@@ -5,7 +5,7 @@ import type { Database } from "@/integrations/supabase/types";
 export const STRIPE_API_VERSION = "2026-02-25.clover";
 export const DEFAULT_APP_ORIGIN = "https://overwatch.alpcontractorcircle.com";
 
-type SupabaseAdmin = SupabaseClient<Database>;
+type SupabaseAdmin = SupabaseClient<any>;
 type SupabaseAuthed = SupabaseClient<Database>;
 
 export class RouteError extends Error {

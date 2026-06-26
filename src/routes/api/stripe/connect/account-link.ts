@@ -40,6 +40,9 @@ type StripeAccountLink = {
   expires_at?: number;
 };
 
+const dynamicTable = (supabase: unknown, relation: string) =>
+  (supabase as { from(table: string): any }).from(relation);
+
 function normalizedInternalPath(value: string | undefined, fallback: string) {
   if (!value) return fallback;
   if (!value.startsWith("/")) return fallback;
@@ -76,8 +79,7 @@ async function syncConnectAccountStatus(
   account: StripeConnectAccount,
 ) {
   const status = connectStatus(account);
-  const { error } = await context.admin
-    .from("organizations")
+  const { error } = await dynamicTable(context.admin, "organizations")
     .update({
       stripe_connect_account_id: account.id,
       stripe_connect_status: status.status,
@@ -119,8 +121,7 @@ export const Route = createFileRoute("/api/stripe/connect/account-link")({
           const organizationId = await resolveOrganizationId(body.organizationId, context);
           await requireCanManageOrganization(context, organizationId);
 
-          const { data: organization, error: orgError } = await context.admin
-            .from("organizations")
+          const { data: organization, error: orgError } = await dynamicTable(context.admin, "organizations")
             .select(
               "id,name,billing_email,stripe_connect_account_id,stripe_connect_status,payment_processor_ready",
             )
@@ -129,7 +130,7 @@ export const Route = createFileRoute("/api/stripe/connect/account-link")({
           if (orgError) throw new Error(orgError.message);
           if (!organization) throw new Error("Organization not found.");
 
-          const orgRecord = organization as OrganizationRecord;
+          const orgRecord = organization as unknown as OrganizationRecord;
           const account = orgRecord.stripe_connect_account_id
             ? await stripeGet<StripeConnectAccount>(
                 `accounts/${orgRecord.stripe_connect_account_id}`,

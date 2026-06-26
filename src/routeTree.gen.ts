@@ -21,6 +21,8 @@ import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_au
 import { Route as LovableEmailTransactionalSendRouteImport } from './routes/lovable/email/transactional/send'
 import { Route as LovableEmailTransactionalPreviewRouteImport } from './routes/lovable/email/transactional/preview'
 import { Route as LovableEmailQueueProcessRouteImport } from './routes/lovable/email/queue/process'
+import { Route as LovableEmailAuthWebhookRouteImport } from './routes/lovable/email/auth/webhook'
+import { Route as LovableEmailAuthPreviewRouteImport } from './routes/lovable/email/auth/preview'
 import { Route as ApiStripeConnectAccountLinkRouteImport } from './routes/api/stripe/connect/account-link'
 import { Route as ApiStripeCheckoutSubscriptionRouteImport } from './routes/api/stripe/checkout/subscription'
 import { Route as ApiStripeCheckoutInvoiceRouteImport } from './routes/api/stripe/checkout/invoice'
@@ -89,6 +91,16 @@ const LovableEmailQueueProcessRoute =
     path: '/lovable/email/queue/process',
     getParentRoute: () => rootRouteImport,
   } as any)
+const LovableEmailAuthWebhookRoute = LovableEmailAuthWebhookRouteImport.update({
+  id: '/lovable/email/auth/webhook',
+  path: '/lovable/email/auth/webhook',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LovableEmailAuthPreviewRoute = LovableEmailAuthPreviewRouteImport.update({
+  id: '/lovable/email/auth/preview',
+  path: '/lovable/email/auth/preview',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiStripeConnectAccountLinkRoute =
   ApiStripeConnectAccountLinkRouteImport.update({
     id: '/api/stripe/connect/account-link',
@@ -127,6 +139,8 @@ export interface FileRoutesByFullPath {
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
+  '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
+  '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/lovable/email/transactional/send': typeof LovableEmailTransactionalSendRoute
@@ -144,6 +158,8 @@ export interface FileRoutesByTo {
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
+  '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
+  '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/lovable/email/transactional/send': typeof LovableEmailTransactionalSendRoute
@@ -163,6 +179,8 @@ export interface FileRoutesById {
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
+  '/lovable/email/auth/preview': typeof LovableEmailAuthPreviewRoute
+  '/lovable/email/auth/webhook': typeof LovableEmailAuthWebhookRoute
   '/lovable/email/queue/process': typeof LovableEmailQueueProcessRoute
   '/lovable/email/transactional/preview': typeof LovableEmailTransactionalPreviewRoute
   '/lovable/email/transactional/send': typeof LovableEmailTransactionalSendRoute
@@ -182,6 +200,8 @@ export interface FileRouteTypes {
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
+    | '/lovable/email/auth/preview'
+    | '/lovable/email/auth/webhook'
     | '/lovable/email/queue/process'
     | '/lovable/email/transactional/preview'
     | '/lovable/email/transactional/send'
@@ -199,6 +219,8 @@ export interface FileRouteTypes {
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
+    | '/lovable/email/auth/preview'
+    | '/lovable/email/auth/webhook'
     | '/lovable/email/queue/process'
     | '/lovable/email/transactional/preview'
     | '/lovable/email/transactional/send'
@@ -217,6 +239,8 @@ export interface FileRouteTypes {
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
+    | '/lovable/email/auth/preview'
+    | '/lovable/email/auth/webhook'
     | '/lovable/email/queue/process'
     | '/lovable/email/transactional/preview'
     | '/lovable/email/transactional/send'
@@ -231,6 +255,8 @@ export interface RootRouteChildren {
   ApiStripeCheckoutInvoiceRoute: typeof ApiStripeCheckoutInvoiceRoute
   ApiStripeCheckoutSubscriptionRoute: typeof ApiStripeCheckoutSubscriptionRoute
   ApiStripeConnectAccountLinkRoute: typeof ApiStripeConnectAccountLinkRoute
+  LovableEmailAuthPreviewRoute: typeof LovableEmailAuthPreviewRoute
+  LovableEmailAuthWebhookRoute: typeof LovableEmailAuthWebhookRoute
   LovableEmailQueueProcessRoute: typeof LovableEmailQueueProcessRoute
   LovableEmailTransactionalPreviewRoute: typeof LovableEmailTransactionalPreviewRoute
   LovableEmailTransactionalSendRoute: typeof LovableEmailTransactionalSendRoute
@@ -322,6 +348,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LovableEmailQueueProcessRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/lovable/email/auth/webhook': {
+      id: '/lovable/email/auth/webhook'
+      path: '/lovable/email/auth/webhook'
+      fullPath: '/lovable/email/auth/webhook'
+      preLoaderRoute: typeof LovableEmailAuthWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/lovable/email/auth/preview': {
+      id: '/lovable/email/auth/preview'
+      path: '/lovable/email/auth/preview'
+      fullPath: '/lovable/email/auth/preview'
+      preLoaderRoute: typeof LovableEmailAuthPreviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/stripe/connect/account-link': {
       id: '/api/stripe/connect/account-link'
       path: '/api/stripe/connect/account-link'
@@ -390,6 +430,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiStripeCheckoutInvoiceRoute: ApiStripeCheckoutInvoiceRoute,
   ApiStripeCheckoutSubscriptionRoute: ApiStripeCheckoutSubscriptionRoute,
   ApiStripeConnectAccountLinkRoute: ApiStripeConnectAccountLinkRoute,
+  LovableEmailAuthPreviewRoute: LovableEmailAuthPreviewRoute,
+  LovableEmailAuthWebhookRoute: LovableEmailAuthWebhookRoute,
   LovableEmailQueueProcessRoute: LovableEmailQueueProcessRoute,
   LovableEmailTransactionalPreviewRoute: LovableEmailTransactionalPreviewRoute,
   LovableEmailTransactionalSendRoute: LovableEmailTransactionalSendRoute,

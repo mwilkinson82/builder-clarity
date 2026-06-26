@@ -209,7 +209,7 @@ export const listSchedule = createServerFn({ method: "GET" })
         .eq("project_id", data.projectId)
         .order("sort_order"),
       context.supabase
-        .from("schedule_activities")
+        .from("schedule_activities" as any)
         .select("*")
         .eq("project_id", data.projectId)
         .order("sort_order")
@@ -271,7 +271,7 @@ export const listSchedule = createServerFn({ method: "GET" })
       milestones: (mRes.data ?? []) as unknown as MilestoneRow[],
       activities: activitiesMissing
         ? []
-        : (aRes.data ?? []).map((r) => normalizeScheduleActivity(r as Record<string, unknown>)),
+        : (aRes.data ?? []).map((r) => normalizeScheduleActivity(r as unknown as Record<string, unknown>)),
       risks,
       updates: updatesMissing
         ? []
@@ -347,7 +347,7 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
 
     let { data: update, error: insertError } = await context.supabase
       .from("schedule_updates")
-      .insert(extendedUpdatePayload)
+      .insert(extendedUpdatePayload as any)
       .select("*")
       .single();
     if (
@@ -497,15 +497,15 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
     const { data: last } = await context.supabase
-      .from("schedule_activities")
+      .from("schedule_activities" as any)
       .select("sort_order")
       .eq("project_id", projectId)
       .order("sort_order", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const sortOrder = rest.sort_order ?? ((last?.sort_order as number | undefined) ?? 0) + 1;
+    const sortOrder = rest.sort_order ?? (((last as any)?.sort_order as number | undefined) ?? 0) + 1;
     const activityId = rest.activity_id || `A-${String(sortOrder).padStart(3, "0")}`;
-    const { error } = await context.supabase.from("schedule_activities").insert({
+    const { error } = await context.supabase.from("schedule_activities" as any).insert({
       project_id: projectId,
       ...rest,
       activity_id: activityId,
@@ -522,8 +522,8 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { error } = await context.supabase
-      .from("schedule_activities")
-      .update(data.patch)
+      .from("schedule_activities" as any)
+      .update(data.patch as any)
       .eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -533,7 +533,7 @@ export const deleteScheduleActivity = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase.from("schedule_activities").delete().eq("id", data.id);
+    const { error } = await context.supabase.from("schedule_activities" as any).delete().eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });
