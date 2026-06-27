@@ -35,6 +35,8 @@ import {
   GitBranch,
   Gauge,
   Layers,
+  Maximize2,
+  Minimize2,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -139,6 +141,7 @@ const CONSTRUCTLINE_ZOOM_LEVELS = [
   { label: "Week", dayPx: 10 },
   { label: "Day", dayPx: 22 },
 ] as const;
+const CONSTRUCTLINE_FIT_DAY_PX = CONSTRUCTLINE_ZOOM_LEVELS[0].dayPx;
 
 export type ActivityCreateInput = { name: string } & Partial<
   Pick<
@@ -983,7 +986,10 @@ export function CpmActivityPlanner({
   const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
   const [showDraft, setShowDraft] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
-  const [dayPx, setDayPx] = useState<(typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]>(4);
+  const [dayPx, setDayPx] =
+    useState<(typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]>(CONSTRUCTLINE_FIT_DAY_PX);
+  const [showLogicLines, setShowLogicLines] = useState(false);
+  const [isFocusOpen, setIsFocusOpen] = useState(false);
   const sortedActivities = useMemo(
     () =>
       [...activities].sort((a, b) => {
@@ -1030,6 +1036,24 @@ export function CpmActivityPlanner({
   useEffect(() => {
     if (selectedActivityId && !selectedActivity) setSelectedActivityId(null);
   }, [selectedActivity, selectedActivityId]);
+
+  useEffect(() => {
+    if (!isFocusOpen || typeof document === "undefined") return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isFocusOpen]);
+
+  useEffect(() => {
+    if (!isFocusOpen || typeof window === "undefined") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsFocusOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isFocusOpen]);
 
   const addActivity = () => {
     const name = draft.name.trim();
@@ -1079,25 +1103,26 @@ export function CpmActivityPlanner({
             </p>
           </div>
           <div className="flex flex-wrap gap-2 print:hidden">
-            <div className="flex overflow-hidden rounded-md border border-hairline bg-card">
-              {CONSTRUCTLINE_ZOOM_LEVELS.map((level) => (
-                <button
-                  key={level.label}
-                  type="button"
-                  className={cn(
-                    "h-9 border-r border-hairline px-3 text-xs font-semibold text-muted-foreground last:border-r-0 hover:bg-muted/60",
-                    dayPx === level.dayPx && "bg-foreground text-background hover:bg-foreground",
-                  )}
-                  onClick={() => setDayPx(level.dayPx)}
-                >
-                  <span className="inline-flex items-center gap-1.5">
-                    {level.label === "Fit" && <ZoomOut className="h-3.5 w-3.5" />}
-                    {level.label === "Day" && <ZoomIn className="h-3.5 w-3.5" />}
-                    {level.label}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <ScheduleZoomControls dayPx={dayPx} onChange={setDayPx} />
+            <Button
+              type="button"
+              variant={showLogicLines ? "default" : "outline"}
+              className="gap-2"
+              aria-pressed={showLogicLines}
+              onClick={() => setShowLogicLines((visible) => !visible)}
+            >
+              <GitBranch className="h-4 w-4" />
+              Logic lines
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              onClick={() => setIsFocusOpen(true)}
+            >
+              <Maximize2 className="h-4 w-4" />
+              Expand
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -1341,26 +1366,81 @@ export function CpmActivityPlanner({
           model={cpmModel}
           dayPx={dayPx}
           dataDate={latestDataDate}
+          showLogicLines={showLogicLines}
           onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
           onDeleteActivity={(id) => {
             if (selectedActivityId === id) setSelectedActivityId(null);
             onDeleteActivity(id);
           }}
         />
+      </div>
 
-        {selectedActivity && (
-          <ActivityDetailDialog
-            activity={selectedActivity}
-            onClose={() => setSelectedActivityId(null)}
-            onSave={(patch) => onPatchActivity(selectedActivity.id, patch)}
-            onDelete={() => {
-              const id = selectedActivity.id;
-              setSelectedActivityId(null);
+      {isFocusOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background p-3 text-foreground print:hidden sm:p-5">
+          <div className="mb-3 flex flex-col gap-3 rounded-md border border-hairline bg-card px-4 py-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                ConstructLine CPM grid
+              </div>
+              <div className="mt-1 font-serif text-2xl text-foreground">
+                {project.name} schedule
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <ScheduleZoomControls dayPx={dayPx} onChange={setDayPx} />
+              <Button
+                type="button"
+                variant={showLogicLines ? "default" : "outline"}
+                className="gap-2"
+                aria-pressed={showLogicLines}
+                onClick={() => setShowLogicLines((visible) => !visible)}
+              >
+                <GitBranch className="h-4 w-4" />
+                Logic lines
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                onClick={() => typeof window !== "undefined" && window.print()}
+              >
+                <Printer className="h-4 w-4" />
+                Print
+              </Button>
+              <Button type="button" className="gap-2" onClick={() => setIsFocusOpen(false)}>
+                <Minimize2 className="h-4 w-4" />
+                Close
+              </Button>
+            </div>
+          </div>
+
+          <ActivityScheduleMatrix
+            model={cpmModel}
+            dayPx={dayPx}
+            dataDate={latestDataDate}
+            showLogicLines={showLogicLines}
+            isFocusMode
+            onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
+            onDeleteActivity={(id) => {
+              if (selectedActivityId === id) setSelectedActivityId(null);
               onDeleteActivity(id);
             }}
           />
-        )}
-      </div>
+        </div>
+      )}
+
+      {selectedActivity && (
+        <ActivityDetailDialog
+          activity={selectedActivity}
+          onClose={() => setSelectedActivityId(null)}
+          onSave={(patch) => onPatchActivity(selectedActivity.id, patch)}
+          onDelete={() => {
+            const id = selectedActivity.id;
+            setSelectedActivityId(null);
+            onDeleteActivity(id);
+          }}
+        />
+      )}
     </>
   );
 }
@@ -1391,6 +1471,37 @@ function ScheduleWorkbenchStat({
       </div>
       <div className={`mt-1 text-xl font-semibold tabular ${toneClass}`}>{value}</div>
       <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
+    </div>
+  );
+}
+
+function ScheduleZoomControls({
+  dayPx,
+  onChange,
+}: {
+  dayPx: (typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"];
+  onChange: (dayPx: (typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]) => void;
+}) {
+  return (
+    <div className="flex overflow-hidden rounded-md border border-hairline bg-card">
+      {CONSTRUCTLINE_ZOOM_LEVELS.map((level) => (
+        <button
+          key={level.label}
+          type="button"
+          aria-pressed={dayPx === level.dayPx}
+          className={cn(
+            "h-9 border-r border-hairline px-3 text-xs font-semibold text-muted-foreground last:border-r-0 hover:bg-muted/60",
+            dayPx === level.dayPx && "bg-foreground text-background hover:bg-foreground",
+          )}
+          onClick={() => onChange(level.dayPx)}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            {level.label === "Fit" && <ZoomOut className="h-3.5 w-3.5" />}
+            {level.label === "Day" && <ZoomIn className="h-3.5 w-3.5" />}
+            {level.label}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -1651,21 +1762,31 @@ function ActivityScheduleMatrix({
   model,
   dayPx,
   dataDate,
+  showLogicLines = false,
+  isFocusMode = false,
   onOpenActivity,
   onDeleteActivity,
 }: {
   model: ConstructLineCpmModel;
   dayPx: number;
   dataDate: string | null;
+  showLogicLines?: boolean;
+  isFocusMode?: boolean;
   onOpenActivity: (activity: ScheduleActivityRow) => void;
   onDeleteActivity: (id: string) => void;
 }) {
   const totalActivities = model.tasks.length;
-  const tableWidth = 760;
+  const isFitZoom = dayPx === CONSTRUCTLINE_FIT_DAY_PX;
+  const tableWidth = isFitZoom ? 680 : 760;
+  const tableColumns = isFitZoom
+    ? "72px minmax(180px,1fr) 52px 58px 58px 52px 44px 44px"
+    : "78px minmax(0,1fr) 70px 70px 70px 58px 54px 54px";
   const rowHeight = 64;
   const groupHeight = 32;
   const headerHeight = 48;
-  const timelineWidth = Math.max(720, model.totalTimelineDays * dayPx);
+  const timelineWidth = isFitZoom
+    ? Math.max(480, model.totalTimelineDays * dayPx)
+    : Math.max(720, model.totalTimelineDays * dayPx);
   const monthBands = buildConstructLineMonthBands(
     model.timelineStartDate,
     model.totalTimelineDays,
@@ -1673,16 +1794,68 @@ function ActivityScheduleMatrix({
   );
   const dataDateX =
     dataDate == null ? null : offsetFromTimelineStart(dataDate, model.timelineStartDate) * dayPx;
-  const rows = model.groups.flatMap<
-    | { kind: "group"; division: string; tasks: ConstructLineCpmTask[] }
-    | { kind: "task"; task: ConstructLineCpmTask }
-  >((group) => [
-    { kind: "group", division: group.division, tasks: group.tasks },
-    ...group.tasks.map((task) => ({ kind: "task" as const, task })),
-  ]);
+  const rows = useMemo(
+    () =>
+      model.groups.flatMap<
+        | { kind: "group"; division: string; tasks: ConstructLineCpmTask[] }
+        | { kind: "task"; task: ConstructLineCpmTask }
+      >((group) => [
+        { kind: "group", division: group.division, tasks: group.tasks },
+        ...group.tasks.map((task) => ({ kind: "task" as const, task })),
+      ]),
+    [model.groups],
+  );
+  const { bodyHeight, rowPositions } = useMemo(() => {
+    const positions = new Map<string, number>();
+    let height = 0;
+    for (const row of rows) {
+      if (row.kind === "group") {
+        height += groupHeight;
+      } else {
+        positions.set(row.task.activityKey, height + rowHeight / 2);
+        height += rowHeight;
+      }
+    }
+    return { bodyHeight: height, rowPositions: positions };
+  }, [rows]);
+  const taskByKey = useMemo(
+    () => new Map(model.tasks.map((task) => [task.activityKey, task])),
+    [model.tasks],
+  );
+  const logicLines = useMemo(() => {
+    if (!showLogicLines) return [];
+    return model.tasks.flatMap((task) =>
+      task.predecessorKeys.flatMap((predecessorKey) => {
+        const predecessor = taskByKey.get(predecessorKey);
+        const fromY = predecessor ? rowPositions.get(predecessor.activityKey) : null;
+        const toY = rowPositions.get(task.activityKey);
+        if (!predecessor || fromY == null || toY == null) return [];
+        const fromX =
+          (offsetFromTimelineStart(predecessor.visualFinishDate, model.timelineStartDate) + 1) *
+          dayPx;
+        const toX = offsetFromTimelineStart(task.visualStartDate, model.timelineStartDate) * dayPx;
+        return [
+          {
+            id: `${predecessor.activityKey}->${task.activityKey}`,
+            fromX,
+            fromY,
+            toX,
+            toY,
+            isCritical: predecessor.isCritical && task.isCritical,
+            isOutOfSequence: toX < fromX,
+          },
+        ];
+      }),
+    );
+  }, [dayPx, model.tasks, model.timelineStartDate, rowPositions, showLogicLines, taskByKey]);
 
   return (
-    <div className="mt-5 min-w-0 overflow-hidden rounded-md border border-hairline bg-card">
+    <div
+      className={cn(
+        "min-w-0 overflow-hidden rounded-md border border-hairline bg-card",
+        isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : "mt-5",
+      )}
+    >
       <div className="flex flex-col gap-3 border-b border-hairline px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1710,6 +1883,12 @@ function ActivityScheduleMatrix({
           <span className="font-semibold tabular text-foreground">
             {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
           </span>
+          {showLogicLines && (
+            <span className="inline-flex items-center gap-1 font-semibold text-foreground">
+              <GitBranch className="h-3.5 w-3.5" />
+              {logicLines.length} ties shown
+            </span>
+          )}
         </div>
       </div>
 
@@ -1721,7 +1900,12 @@ function ActivityScheduleMatrix({
           </p>
         </div>
       ) : (
-        <div className="max-h-[clamp(460px,calc(100vh-330px),820px)] overflow-auto overscroll-contain print:max-h-none print:overflow-visible">
+        <div
+          className={cn(
+            "overflow-auto overscroll-contain print:max-h-none print:overflow-visible",
+            isFocusMode ? "min-h-0 flex-1" : "max-h-[clamp(460px,calc(100vh-330px),820px)]",
+          )}
+        >
           <div
             className="relative min-h-full"
             style={{ width: tableWidth + timelineWidth, minWidth: "100%" }}
@@ -1731,8 +1915,8 @@ function ActivityScheduleMatrix({
               style={{ height: headerHeight }}
             >
               <div
-                className="sticky left-0 z-40 grid shrink-0 grid-cols-[78px_minmax(0,1fr)_70px_70px_70px_58px_54px_54px] border-r border-hairline bg-muted/80 px-3"
-                style={{ width: tableWidth }}
+                className="sticky left-0 z-40 grid shrink-0 border-r border-hairline bg-muted/80 px-3"
+                style={{ width: tableWidth, gridTemplateColumns: tableColumns }}
               >
                 <div className="flex items-center">ID</div>
                 <div className="flex items-center">Activity</div>
@@ -1807,6 +1991,7 @@ function ActivityScheduleMatrix({
                   task={row.task}
                   rowHeight={rowHeight}
                   tableWidth={tableWidth}
+                  tableColumns={tableColumns}
                   timelineWidth={timelineWidth}
                   timelineStartDate={model.timelineStartDate}
                   dayPx={dayPx}
@@ -1817,6 +2002,15 @@ function ActivityScheduleMatrix({
                 />
               );
             })}
+            {showLogicLines && (
+              <ConstructLineLogicOverlay
+                lines={logicLines}
+                tableWidth={tableWidth}
+                timelineWidth={timelineWidth}
+                headerHeight={headerHeight}
+                bodyHeight={bodyHeight}
+              />
+            )}
           </div>
         </div>
       )}
@@ -1829,10 +2023,95 @@ function ActivityScheduleMatrix({
   );
 }
 
+function ConstructLineLogicOverlay({
+  lines,
+  tableWidth,
+  timelineWidth,
+  headerHeight,
+  bodyHeight,
+}: {
+  lines: Array<{
+    id: string;
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    isCritical: boolean;
+    isOutOfSequence: boolean;
+  }>;
+  tableWidth: number;
+  timelineWidth: number;
+  headerHeight: number;
+  bodyHeight: number;
+}) {
+  if (lines.length === 0) return null;
+
+  return (
+    <svg
+      className="pointer-events-none absolute z-10 overflow-visible"
+      style={{
+        left: tableWidth,
+        top: headerHeight,
+        width: timelineWidth,
+        height: bodyHeight,
+      }}
+      viewBox={`0 0 ${timelineWidth} ${bodyHeight}`}
+      aria-hidden="true"
+    >
+      <defs>
+        <marker
+          id="constructline-logic-arrow"
+          markerWidth="8"
+          markerHeight="8"
+          refX="7"
+          refY="4"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M 0 0 L 8 4 L 0 8 z" fill="#6f675c" />
+        </marker>
+        <marker
+          id="constructline-logic-arrow-critical"
+          markerWidth="8"
+          markerHeight="8"
+          refX="7"
+          refY="4"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M 0 0 L 8 4 L 0 8 z" fill="#d53c31" />
+        </marker>
+      </defs>
+      {lines.map((line) => {
+        const distance = line.toX - line.fromX;
+        const bend = Math.max(24, Math.min(96, Math.abs(distance) / 2));
+        const midX = distance >= 0 ? line.fromX + bend : line.fromX - bend;
+        const stroke = line.isCritical ? "#d53c31" : line.isOutOfSequence ? "#c68a18" : "#6f675c";
+        const opacity = line.isCritical ? 0.72 : line.isOutOfSequence ? 0.58 : 0.36;
+        return (
+          <path
+            key={line.id}
+            d={`M ${line.fromX} ${line.fromY} C ${midX} ${line.fromY}, ${midX} ${line.toY}, ${line.toX} ${line.toY}`}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={line.isCritical ? 1.8 : 1.25}
+            strokeDasharray={line.isOutOfSequence ? "5 4" : undefined}
+            opacity={opacity}
+            markerEnd={`url(#${
+              line.isCritical ? "constructline-logic-arrow-critical" : "constructline-logic-arrow"
+            })`}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 function ConstructLineTaskRow({
   task,
   rowHeight,
   tableWidth,
+  tableColumns,
   timelineWidth,
   timelineStartDate,
   dayPx,
@@ -1844,6 +2123,7 @@ function ConstructLineTaskRow({
   task: ConstructLineCpmTask;
   rowHeight: number;
   tableWidth: number;
+  tableColumns: string;
   timelineWidth: number;
   timelineStartDate: string;
   dayPx: number;
@@ -1875,8 +2155,8 @@ function ConstructLineTaskRow({
       <div
         role="button"
         tabIndex={0}
-        className="sticky left-0 z-20 grid shrink-0 cursor-pointer grid-cols-[78px_minmax(0,1fr)_70px_70px_70px_58px_54px_54px] border-r border-hairline bg-card px-3 text-xs hover:bg-muted/45"
-        style={{ width: tableWidth }}
+        className="sticky left-0 z-20 grid shrink-0 cursor-pointer border-r border-hairline bg-card px-3 text-xs hover:bg-muted/45"
+        style={{ width: tableWidth, gridTemplateColumns: tableColumns }}
         onClick={onOpen}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
@@ -1902,10 +2182,10 @@ function ConstructLineTaskRow({
           {task.durationDays}
         </div>
         <div className="flex items-center justify-end tabular text-muted-foreground">
-          {shortDate(activity.start_date ?? task.visualStartDate)}
+          {shortPrintDate(activity.start_date ?? task.visualStartDate)}
         </div>
         <div className="flex items-center justify-end tabular text-muted-foreground">
-          {shortDate(activity.finish_date ?? task.visualFinishDate)}
+          {shortPrintDate(activity.finish_date ?? task.visualFinishDate)}
         </div>
         <div className="flex items-center justify-end font-semibold tabular text-foreground">
           {percent}%
