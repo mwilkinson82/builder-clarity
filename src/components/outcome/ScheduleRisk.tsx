@@ -32,8 +32,14 @@ import {
   CheckCircle2,
   Printer,
   ExternalLink,
+  GitBranch,
+  Gauge,
+  Layers,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import {
   listSchedule,
   createMilestone,
@@ -60,6 +66,12 @@ import {
   type HoldClass,
   type ResponsePath,
 } from "@/lib/ior";
+import {
+  buildConstructLineCpmModel,
+  offsetFromTimelineStart,
+  type ConstructLineCpmModel,
+  type ConstructLineCpmTask,
+} from "@/lib/constructline-cpm";
 
 const STATUS_LABEL: Record<MilestoneStatus, string> = {
   on_track: "On track",
@@ -120,6 +132,13 @@ const RISK_META: Record<
       "What's actually happening on site, evidence, sub's response, supplemental crew options, and dollar risk if it continues.",
   },
 };
+
+const CONSTRUCTLINE_ZOOM_LEVELS = [
+  { label: "Fit", dayPx: 2 },
+  { label: "Month", dayPx: 4 },
+  { label: "Week", dayPx: 10 },
+  { label: "Day", dayPx: 22 },
+] as const;
 
 export type ActivityCreateInput = { name: string } & Partial<
   Pick<
@@ -845,7 +864,9 @@ function ScheduleWorkspaceLaunch({
   milestones: MilestoneRow[];
   latestDataDate: string | null;
 }) {
-  const completedActivities = activities.filter((activity) => activity.percent_complete >= 100).length;
+  const completedActivities = activities.filter(
+    (activity) => activity.percent_complete >= 100,
+  ).length;
   const activitiesWithLogic = activities.filter(
     (activity) =>
       activity.predecessor_activity_ids.length > 0 || activity.successor_activity_ids.length > 0,
@@ -962,6 +983,7 @@ export function CpmActivityPlanner({
   const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
   const [showDraft, setShowDraft] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
+  const [dayPx, setDayPx] = useState<(typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]>(4);
   const sortedActivities = useMemo(
     () =>
       [...activities].sort((a, b) => {
@@ -973,6 +995,14 @@ export function CpmActivityPlanner({
     [activities],
   );
   const grouped = useMemo(() => groupActivitiesByDivision(sortedActivities), [sortedActivities]);
+  const cpmModel = useMemo(
+    () =>
+      buildConstructLineCpmModel(sortedActivities, {
+        dataDate: latestDataDate,
+        nearCriticalFloat: 5,
+      }),
+    [latestDataDate, sortedActivities],
+  );
   const bounds = useMemo(
     () =>
       getTimelineBounds([
@@ -1034,16 +1064,34 @@ export function CpmActivityPlanner({
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Schedule workbench
+            ConstructLine beta
           </div>
-          <h4 className="mt-1 font-serif text-2xl text-foreground">Activity table + Gantt</h4>
+          <h4 className="mt-1 font-serif text-2xl text-foreground">CPM schedule workbench</h4>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Build the working job schedule with activity IDs, divisions, start/finish dates,
-            progress, and predecessor/successor logic. Baseline and update milestones can still roll
-            up into the IOR view above.
+            progress, predecessor/successor logic, float, critical path, and activity stacking.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 print:hidden">
+          <div className="flex overflow-hidden rounded-md border border-hairline bg-card">
+            {CONSTRUCTLINE_ZOOM_LEVELS.map((level) => (
+              <button
+                key={level.label}
+                type="button"
+                className={cn(
+                  "h-9 border-r border-hairline px-3 text-xs font-semibold text-muted-foreground last:border-r-0 hover:bg-muted/60",
+                  dayPx === level.dayPx && "bg-foreground text-background hover:bg-foreground",
+                )}
+                onClick={() => setDayPx(level.dayPx)}
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  {level.label === "Fit" && <ZoomOut className="h-3.5 w-3.5" />}
+                  {level.label === "Day" && <ZoomIn className="h-3.5 w-3.5" />}
+                  {level.label}
+                </span>
+              </button>
+            ))}
+          </div>
           <Button
             type="button"
             variant="outline"
@@ -1067,6 +1115,69 @@ export function CpmActivityPlanner({
             <Plus className="h-4 w-4" />
             Add activity
           </Button>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-4">
+        <ScheduleWorkbenchStat
+          label="CPM health"
+          value={`${cpmModel.healthScore}%`}
+          sub="logic quality"
+          tone={cpmModel.healthTone}
+        />
+        <ScheduleWorkbenchStat
+          label="Critical"
+          value={String(cpmModel.criticalCount)}
+          sub={`${cpmModel.nearCriticalCount} near-critical`}
+          tone={cpmModel.criticalCount > 0 ? "danger" : "default"}
+        />
+        <ScheduleWorkbenchStat
+          label="Open ends"
+          value={`${cpmModel.openStartCount}/${cpmModel.openFinishCount}`}
+          sub="starts / finishes"
+          tone={cpmModel.openStartCount > 1 || cpmModel.openFinishCount > 1 ? "warning" : "success"}
+        />
+        <ScheduleWorkbenchStat
+          label="Max stack"
+          value={String(cpmModel.maxStack)}
+          sub={cpmModel.maxStackLabel}
+          tone={cpmModel.maxStack >= 4 ? "warning" : "default"}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="rounded-md border border-hairline bg-card p-4">
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <Gauge className="h-3.5 w-3.5" />
+            Schedule intelligence
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {cpmModel.recommendations.slice(0, 4).map((item) => (
+              <div
+                key={item}
+                className="rounded border border-hairline bg-surface px-3 py-2 text-sm text-foreground"
+              >
+                {item}
+              </div>
+            ))}
+          </div>
+          {cpmModel.diagnostics.length > 0 && (
+            <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
+              {cpmModel.diagnostics.slice(0, 2).join(" ")}
+            </div>
+          )}
+        </div>
+        <div className="rounded-md border border-hairline bg-card p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              <Layers className="h-3.5 w-3.5" />
+              Activity stacking
+            </div>
+            <div className="text-xs font-semibold tabular text-foreground">
+              {cpmModel.maxStack} peak
+            </div>
+          </div>
+          <StackingMiniMap model={cpmModel} />
         </div>
       </div>
 
@@ -1218,9 +1329,9 @@ export function CpmActivityPlanner({
       )}
 
       <ActivityScheduleMatrix
-        grouped={grouped}
-        bounds={bounds}
-        dataDatePosition={timelinePosition(latestDataDate, bounds)}
+        model={cpmModel}
+        dayPx={dayPx}
+        dataDate={latestDataDate}
         onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
         onDeleteActivity={(id) => {
           if (selectedActivityId === id) setSelectedActivityId(null);
@@ -1253,10 +1364,16 @@ function ScheduleWorkbenchStat({
   label: string;
   value: string;
   sub: string;
-  tone?: "default" | "success" | "warning";
+  tone?: "default" | "success" | "warning" | "danger";
 }) {
   const toneClass =
-    tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-foreground";
+    tone === "success"
+      ? "text-success"
+      : tone === "warning"
+        ? "text-warning"
+        : tone === "danger"
+          ? "text-danger"
+          : "text-foreground";
   return (
     <div className="rounded-md border border-hairline bg-card p-3">
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1280,6 +1397,427 @@ function LabeledField({ label, children }: { label: string; children: ReactNode 
 }
 
 function ActivityScheduleMatrix({
+  model,
+  dayPx,
+  dataDate,
+  onOpenActivity,
+  onDeleteActivity,
+}: {
+  model: ConstructLineCpmModel;
+  dayPx: number;
+  dataDate: string | null;
+  onOpenActivity: (activity: ScheduleActivityRow) => void;
+  onDeleteActivity: (id: string) => void;
+}) {
+  const totalActivities = model.tasks.length;
+  const tableWidth = 760;
+  const rowHeight = 64;
+  const groupHeight = 32;
+  const headerHeight = 48;
+  const timelineWidth = Math.max(720, model.totalTimelineDays * dayPx);
+  const monthBands = buildConstructLineMonthBands(
+    model.timelineStartDate,
+    model.totalTimelineDays,
+    dayPx,
+  );
+  const dataDateX =
+    dataDate == null ? null : offsetFromTimelineStart(dataDate, model.timelineStartDate) * dayPx;
+  const rows = model.groups.flatMap<
+    | { kind: "group"; division: string; tasks: ConstructLineCpmTask[] }
+    | { kind: "task"; task: ConstructLineCpmTask }
+  >((group) => [
+    { kind: "group", division: group.division, tasks: group.tasks },
+    ...group.tasks.map((task) => ({ kind: "task" as const, task })),
+  ]);
+
+  return (
+    <div className="mt-5 min-w-0 overflow-hidden rounded-md border border-hairline bg-card">
+      <div className="flex flex-col gap-3 border-b border-hairline px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <GitBranch className="h-3.5 w-3.5" />
+            ConstructLine CPM grid
+          </div>
+          <div className="mt-1 font-serif text-xl text-foreground">Activity table + Gantt</div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-4 text-[12px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-5 rounded-full bg-danger" />
+            Critical
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-5 rounded-full bg-warning" />
+            Near critical
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-5 rounded-full bg-success" />
+            Complete
+          </span>
+          <span className="font-semibold tabular text-foreground">
+            {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
+          </span>
+        </div>
+      </div>
+
+      {model.groups.length === 0 ? (
+        <div className="px-6 py-10 text-center">
+          <div className="font-serif text-xl text-foreground">No CPM activities yet.</div>
+          <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
+            Add the first activity to start building the working schedule.
+          </p>
+        </div>
+      ) : (
+        <div className="max-h-[clamp(460px,calc(100vh-330px),820px)] overflow-auto overscroll-contain print:max-h-none print:overflow-visible">
+          <div
+            className="relative min-h-full"
+            style={{ width: tableWidth + timelineWidth, minWidth: "100%" }}
+          >
+            <div
+              className="sticky top-0 z-30 flex border-b border-hairline bg-muted/65 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"
+              style={{ height: headerHeight }}
+            >
+              <div
+                className="sticky left-0 z-40 grid shrink-0 grid-cols-[78px_minmax(0,1fr)_70px_70px_70px_58px_54px_54px] border-r border-hairline bg-muted/80 px-3"
+                style={{ width: tableWidth }}
+              >
+                <div className="flex items-center">ID</div>
+                <div className="flex items-center">Activity</div>
+                <div className="flex items-center justify-end">Dur</div>
+                <div className="flex items-center justify-end">Start</div>
+                <div className="flex items-center justify-end">Finish</div>
+                <div className="flex items-center justify-end">% done</div>
+                <div className="flex items-center justify-end">TF</div>
+                <div className="flex items-center justify-end">Logic</div>
+              </div>
+              <div className="relative shrink-0 bg-muted/45" style={{ width: timelineWidth }}>
+                {monthBands.map((band) => (
+                  <div
+                    key={`${band.label}-${band.x}`}
+                    className="absolute inset-y-0 border-l border-hairline/80 px-2"
+                    style={{ left: band.x, width: band.width }}
+                  >
+                    <div className="flex h-full items-center truncate text-muted-foreground">
+                      {band.label}
+                    </div>
+                  </div>
+                ))}
+                {dataDateX != null && (
+                  <div
+                    className="absolute inset-y-0 z-10 w-px bg-foreground/50"
+                    style={{ left: dataDateX }}
+                  />
+                )}
+              </div>
+            </div>
+
+            {rows.map((row) => {
+              if (row.kind === "group") {
+                const groupStart = Math.min(
+                  ...row.tasks.map((task) =>
+                    offsetFromTimelineStart(task.visualStartDate, model.timelineStartDate),
+                  ),
+                );
+                const groupFinish = Math.max(
+                  ...row.tasks.map((task) =>
+                    offsetFromTimelineStart(task.visualFinishDate, model.timelineStartDate),
+                  ),
+                );
+                return (
+                  <div
+                    key={`group-${row.division}`}
+                    className="flex border-b border-hairline bg-muted/35"
+                    style={{ height: groupHeight }}
+                  >
+                    <div
+                      className="sticky left-0 z-20 flex shrink-0 items-center border-r border-hairline bg-muted/55 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+                      style={{ width: tableWidth }}
+                    >
+                      {row.division} · {row.tasks.length} activities
+                    </div>
+                    <div className="relative shrink-0" style={{ width: timelineWidth }}>
+                      <div
+                        className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-foreground/35"
+                        style={{
+                          left: groupStart * dayPx,
+                          width: Math.max(8, (groupFinish - groupStart + 1) * dayPx),
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <ConstructLineTaskRow
+                  key={row.task.activity.id}
+                  task={row.task}
+                  rowHeight={rowHeight}
+                  tableWidth={tableWidth}
+                  timelineWidth={timelineWidth}
+                  timelineStartDate={model.timelineStartDate}
+                  dayPx={dayPx}
+                  monthBands={monthBands}
+                  dataDateX={dataDateX}
+                  onOpen={() => onOpenActivity(row.task.activity)}
+                  onDelete={() => onDeleteActivity(row.task.activity.id)}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-between border-t border-hairline px-4 py-2 text-[11px] text-muted-foreground">
+        <span>{shortDate(model.timelineStartDate)}</span>
+        <span>{shortDate(model.timelineFinishDate)}</span>
+      </div>
+    </div>
+  );
+}
+
+function ConstructLineTaskRow({
+  task,
+  rowHeight,
+  tableWidth,
+  timelineWidth,
+  timelineStartDate,
+  dayPx,
+  monthBands,
+  dataDateX,
+  onOpen,
+  onDelete,
+}: {
+  task: ConstructLineCpmTask;
+  rowHeight: number;
+  tableWidth: number;
+  timelineWidth: number;
+  timelineStartDate: string;
+  dayPx: number;
+  monthBands: ReturnType<typeof buildConstructLineMonthBands>;
+  dataDateX: number | null;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const activity = task.activity;
+  const percent = Math.max(0, Math.min(100, activity.percent_complete));
+  const startOffset = offsetFromTimelineStart(task.visualStartDate, timelineStartDate);
+  const finishOffset = offsetFromTimelineStart(task.visualFinishDate, timelineStartDate);
+  const barLeft = startOffset * dayPx;
+  const barWidth = Math.max(8, (finishOffset - startOffset + 1) * dayPx);
+  const logicCount = task.predecessorKeys.length + task.successorKeys.length;
+  const barClass = task.isCritical
+    ? "bg-danger"
+    : task.isNearCritical
+      ? "bg-warning"
+      : percent >= 100
+        ? "bg-success"
+        : "bg-accent";
+
+  return (
+    <div
+      className="flex border-b border-hairline bg-card hover:bg-muted/30"
+      style={{ height: rowHeight }}
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        className="sticky left-0 z-20 grid shrink-0 cursor-pointer grid-cols-[78px_minmax(0,1fr)_70px_70px_70px_58px_54px_54px] border-r border-hairline bg-card px-3 text-xs hover:bg-muted/45"
+        style={{ width: tableWidth }}
+        onClick={onOpen}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onOpen();
+          }
+        }}
+      >
+        <div className="flex items-center font-semibold tabular text-foreground">
+          {activity.activity_id || "No ID"}
+        </div>
+        <div className="flex min-w-0 flex-col justify-center pr-3">
+          <div className="truncate text-sm font-semibold text-foreground">{activity.name}</div>
+          <div className="mt-0.5 flex flex-wrap gap-1">
+            {task.isCritical && <ScheduleFlag tone="danger">critical</ScheduleFlag>}
+            {task.isNearCritical && <ScheduleFlag tone="warning">near critical</ScheduleFlag>}
+            {task.isLate && <ScheduleFlag tone="danger">late</ScheduleFlag>}
+            {task.isOutOfSequence && <ScheduleFlag tone="warning">out of seq</ScheduleFlag>}
+            {task.hasMissingDates && <ScheduleFlag tone="warning">missing dates</ScheduleFlag>}
+          </div>
+        </div>
+        <div className="flex items-center justify-end tabular text-muted-foreground">
+          {task.durationDays}
+        </div>
+        <div className="flex items-center justify-end tabular text-muted-foreground">
+          {shortDate(activity.start_date ?? task.visualStartDate)}
+        </div>
+        <div className="flex items-center justify-end tabular text-muted-foreground">
+          {shortDate(activity.finish_date ?? task.visualFinishDate)}
+        </div>
+        <div className="flex items-center justify-end font-semibold tabular text-foreground">
+          {percent}%
+        </div>
+        <div
+          className={cn(
+            "flex items-center justify-end font-semibold tabular",
+            task.isCritical
+              ? "text-danger"
+              : task.isNearCritical
+                ? "text-warning"
+                : "text-muted-foreground",
+          )}
+        >
+          {task.totalFloat}
+        </div>
+        <div className="flex items-center justify-end gap-1 tabular text-muted-foreground">
+          <span>{logicCount}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-danger"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete();
+            }}
+            aria-label={`Delete activity ${activity.activity_id || activity.name}`}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        className="relative shrink-0 text-left"
+        style={{ width: timelineWidth }}
+        onClick={onOpen}
+      >
+        {monthBands.map((band) => (
+          <div
+            key={`${activity.id}-${band.label}-${band.x}`}
+            className="absolute inset-y-0 border-l border-hairline/50"
+            style={{ left: band.x }}
+          />
+        ))}
+        {dataDateX != null && (
+          <div
+            className="absolute inset-y-0 z-10 w-px bg-foreground/35"
+            style={{ left: dataDateX }}
+          />
+        )}
+        <div
+          className={cn(
+            "absolute top-1/2 h-4 -translate-y-1/2 rounded-full border",
+            task.isCritical
+              ? "border-danger/40 bg-danger/20"
+              : task.isNearCritical
+                ? "border-warning/40 bg-warning/20"
+                : "border-accent/30 bg-accent/15",
+          )}
+          style={{ left: barLeft, width: barWidth }}
+        >
+          <div className={cn("h-full rounded-full", barClass)} style={{ width: `${percent}%` }} />
+        </div>
+      </button>
+    </div>
+  );
+}
+
+function ScheduleFlag({ children, tone }: { children: ReactNode; tone: "danger" | "warning" }) {
+  return (
+    <span
+      className={cn(
+        "rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em]",
+        tone === "danger"
+          ? "border-danger/25 bg-danger/10 text-danger"
+          : "border-warning/25 bg-warning/10 text-warning",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function buildConstructLineMonthBands(startDate: string, totalDays: number, dayPx: number) {
+  const start = parseDateMs(startDate);
+  if (start == null) return [];
+  const bands: Array<{ x: number; width: number; label: string }> = [];
+  let cursor = 0;
+  while (cursor < totalDays) {
+    const cursorMs = start + cursor * 24 * 60 * 60 * 1000;
+    const d = new Date(cursorMs);
+    const month = d.getUTCMonth();
+    const year = d.getUTCFullYear();
+    let length = 0;
+    while (cursor + length < totalDays) {
+      const next = new Date(start + (cursor + length) * 24 * 60 * 60 * 1000);
+      if (next.getUTCMonth() !== month || next.getUTCFullYear() !== year) break;
+      length += 1;
+    }
+    bands.push({
+      x: cursor * dayPx,
+      width: Math.max(dayPx, length * dayPx),
+      label: `${MONTH_LABELS[month]} ${String(year).slice(2)}`,
+    });
+    cursor += Math.max(1, length);
+  }
+  return bands;
+}
+
+function StackingMiniMap({ model }: { model: ConstructLineCpmModel }) {
+  const max = Math.max(1, model.maxStack);
+  const buckets = model.stackBuckets.slice(0, 18);
+  if (buckets.length === 0) {
+    return <div className="mt-4 text-sm text-muted-foreground">No dated activities to stack.</div>;
+  }
+  return (
+    <div className="mt-4 flex h-24 items-end gap-1">
+      {buckets.map((bucket) => (
+        <div key={bucket.key} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+          <div
+            className={cn(
+              "w-full rounded-t",
+              bucket.criticalCount > 0
+                ? "bg-danger"
+                : bucket.count >= 4
+                  ? "bg-warning"
+                  : "bg-accent",
+            )}
+            style={{ height: `${Math.max(10, (bucket.count / max) * 72)}px` }}
+            title={`${bucket.label}: ${bucket.count} active`}
+          />
+          <div className="w-full truncate text-center text-[10px] text-muted-foreground">
+            {bucket.label.replace(" wk", "")}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+function LegacyActivityScheduleMatrixReference() {
+  return null;
+}
+
+function LegacyActivityScheduleMatrix({
   grouped,
   bounds,
   dataDatePosition,
