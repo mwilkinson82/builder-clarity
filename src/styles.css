@@ -50,10 +50,10 @@
   --radius: 0.5rem;
 
   /* Warm off-white editorial palette */
-  --background: oklch(0.978 0.008 80);          /* warm off-white #f8f5ef-ish */
+  --background: oklch(0.978 0.008 80); /* warm off-white #f8f5ef-ish */
   --surface: oklch(0.962 0.01 80);
   --surface-elevated: oklch(0.992 0.005 80);
-  --foreground: oklch(0.215 0.012 60);          /* deep charcoal */
+  --foreground: oklch(0.215 0.012 60); /* deep charcoal */
 
   --card: oklch(0.995 0.004 80);
   --card-foreground: oklch(0.215 0.012 60);
@@ -122,7 +122,8 @@
     border-color: var(--color-border);
   }
 
-  html, body {
+  html,
+  body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
@@ -150,5 +151,342 @@
       linear-gradient(to right, oklch(0.215 0.012 60 / 0.04) 1px, transparent 1px),
       linear-gradient(to bottom, oklch(0.215 0.012 60 / 0.04) 1px, transparent 1px);
     background-size: 56px 56px;
+  }
+}
+
+.constructline-print-report {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: letter landscape;
+    margin: 0.28in;
+  }
+
+  html,
+  body {
+    background: white !important;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .constructline-schedule-page {
+    min-height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+
+  .constructline-schedule-page header,
+  .constructline-screen-summary,
+  .constructline-screen-workbench {
+    display: none !important;
+  }
+
+  .constructline-schedule-page main {
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .constructline-print-report {
+    display: block !important;
+    color: #221f1b;
+    font-family: Inter, Arial, sans-serif;
+    font-size: 8px;
+    line-height: 1.2;
+  }
+
+  .constructline-print-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 0.92in;
+    gap: 0.12in;
+    align-items: start;
+    border-bottom: 1px solid #d8d1c5;
+    padding-bottom: 0.08in;
+  }
+
+  .constructline-print-kicker,
+  .constructline-print-section-title {
+    color: #6f6a60;
+    font-size: 6px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+  }
+
+  .constructline-print-header h1 {
+    margin: 0.02in 0 0;
+    font-family: Georgia, serif;
+    font-size: 20px;
+    font-weight: 400;
+    line-height: 1;
+  }
+
+  .constructline-print-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.08in;
+    margin-top: 0.05in;
+    color: #5a554c;
+    font-size: 7px;
+  }
+
+  .constructline-print-status {
+    border: 1px solid #d8d1c5;
+    padding: 0.06in;
+    text-align: right;
+  }
+
+  .constructline-print-status div {
+    color: #c7931d;
+    font-size: 19px;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .constructline-print-status span {
+    color: #6f6a60;
+    font-size: 6px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .constructline-print-kpis {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0.06in;
+    margin-top: 0.08in;
+  }
+
+  .constructline-print-kpis div,
+  .constructline-print-summary,
+  .constructline-print-grid {
+    border: 1px solid #d8d1c5;
+    background: #fbfaf7;
+  }
+
+  .constructline-print-kpis div {
+    min-height: 0.42in;
+    padding: 0.05in 0.06in;
+  }
+
+  .constructline-print-kpis span {
+    display: block;
+    color: #6f6a60;
+    font-size: 6px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .constructline-print-kpis strong {
+    display: block;
+    margin-top: 0.02in;
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  .constructline-print-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 2.2in;
+    gap: 0.08in;
+    margin-top: 0.07in;
+    padding: 0.06in;
+  }
+
+  .constructline-print-notes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.04in;
+    margin-top: 0.04in;
+  }
+
+  .constructline-print-notes span {
+    border: 1px solid #e4ded3;
+    background: white;
+    padding: 0.035in 0.045in;
+    font-size: 7px;
+  }
+
+  .constructline-print-stack {
+    display: flex;
+    align-items: end;
+    gap: 2px;
+    height: 0.46in;
+    margin-top: 0.04in;
+  }
+
+  .constructline-print-stack span {
+    flex: 1;
+    min-width: 2px;
+    background: #d39a1d;
+  }
+
+  .constructline-print-stack span.is-critical {
+    background: #d53c31;
+  }
+
+  .constructline-print-grid {
+    margin-top: 0.07in;
+    overflow: hidden;
+  }
+
+  .constructline-print-grid-head,
+  .constructline-print-months,
+  .constructline-print-row {
+    display: grid;
+    grid-template-columns: 0.58in minmax(1.25in, 1.8in) 0.85in 0.34in 0.3in minmax(0, 1fr);
+  }
+
+  .constructline-print-grid-head {
+    min-height: 0.21in;
+    background: #ece7de;
+    color: #6f6a60;
+    font-size: 6px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .constructline-print-grid-head span,
+  .constructline-print-row > span {
+    border-right: 1px solid #e0d9ce;
+    padding: 0.035in 0.04in;
+  }
+
+  .constructline-print-grid-head span:last-child,
+  .constructline-print-row > span:last-child {
+    border-right: 0;
+  }
+
+  .constructline-print-months {
+    height: 0.18in;
+    border-bottom: 1px solid #d8d1c5;
+    color: #6f6a60;
+    font-size: 6px;
+  }
+
+  .constructline-print-row {
+    min-height: 0.205in;
+    border-bottom: 1px solid #e5ded3;
+    background: white;
+    break-inside: avoid;
+  }
+
+  .constructline-print-row:nth-child(odd) {
+    background: #fbfaf7;
+  }
+
+  .constructline-print-id,
+  .constructline-print-dates,
+  .constructline-print-row > span:nth-child(4),
+  .constructline-print-row > span:nth-child(5) {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .constructline-print-name {
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .constructline-print-name em {
+    display: inline-block;
+    margin-left: 0.04in;
+    color: #d39a1d;
+    font-size: 5.5px;
+    font-style: normal;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .constructline-print-group {
+    display: grid;
+    grid-template-columns: minmax(0, 3.87in) minmax(0, 1fr);
+    min-height: 0.18in;
+    border-bottom: 1px solid #d8d1c5;
+    background: #f2eee7;
+    color: #6f6a60;
+    font-size: 6px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    break-inside: avoid;
+  }
+
+  .constructline-print-group > span {
+    padding: 0.035in 0.04in;
+  }
+
+  .constructline-print-timeline {
+    position: relative;
+    min-height: 100%;
+    background-image: linear-gradient(to right, #e8e1d6 1px, transparent 1px);
+    background-size: 0.5in 100%;
+  }
+
+  .constructline-print-month {
+    position: absolute;
+    inset-block: 0;
+    overflow: hidden;
+    border-left: 1px solid #d8d1c5;
+    padding-left: 0.025in;
+    white-space: nowrap;
+  }
+
+  .constructline-print-data-date {
+    position: absolute;
+    inset-block: 0;
+    z-index: 2;
+    width: 1px;
+    background: #221f1b;
+    opacity: 0.45;
+  }
+
+  .constructline-print-bar,
+  .constructline-print-group-bar {
+    position: absolute;
+    top: 50%;
+    height: 0.055in;
+    min-width: 0.04in;
+    transform: translateY(-50%);
+    border-radius: 999px;
+    background: #e3e0d8;
+  }
+
+  .constructline-print-group-bar {
+    height: 0.025in;
+    background: #787067;
+    opacity: 0.8;
+  }
+
+  .constructline-print-bar.is-critical {
+    background: #f0c8c3;
+  }
+
+  .constructline-print-bar.is-near-critical {
+    background: #eed9a6;
+  }
+
+  .constructline-print-bar > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: #2f7d5c;
+  }
+
+  .constructline-print-bar.is-critical > span {
+    background: #d53c31;
+  }
+
+  .constructline-print-bar.is-near-critical > span {
+    background: #d39a1d;
   }
 }

@@ -1060,298 +1060,308 @@ export function CpmActivityPlanner({
   ).length;
 
   return (
-    <div className="rounded-lg border border-hairline bg-surface p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            ConstructLine beta
-          </div>
-          <h4 className="mt-1 font-serif text-2xl text-foreground">CPM schedule workbench</h4>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Build the working job schedule with activity IDs, divisions, start/finish dates,
-            progress, predecessor/successor logic, float, critical path, and activity stacking.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 print:hidden">
-          <div className="flex overflow-hidden rounded-md border border-hairline bg-card">
-            {CONSTRUCTLINE_ZOOM_LEVELS.map((level) => (
-              <button
-                key={level.label}
-                type="button"
-                className={cn(
-                  "h-9 border-r border-hairline px-3 text-xs font-semibold text-muted-foreground last:border-r-0 hover:bg-muted/60",
-                  dayPx === level.dayPx && "bg-foreground text-background hover:bg-foreground",
-                )}
-                onClick={() => setDayPx(level.dayPx)}
-              >
-                <span className="inline-flex items-center gap-1.5">
-                  {level.label === "Fit" && <ZoomOut className="h-3.5 w-3.5" />}
-                  {level.label === "Day" && <ZoomIn className="h-3.5 w-3.5" />}
-                  {level.label}
-                </span>
-              </button>
-            ))}
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            className="gap-2"
-            disabled={milestoneSeedRows.length === 0 || isSeedingActivities}
-            onClick={() => onSeedActivities(milestoneSeedRows)}
-          >
-            <ClipboardList className="h-4 w-4" />
-            {isSeedingActivities ? "Building..." : "Build from milestones"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="gap-2"
-            onClick={() => typeof window !== "undefined" && window.print()}
-          >
-            <Printer className="h-4 w-4" />
-            Print
-          </Button>
-          <Button type="button" className="gap-2" onClick={() => setShowDraft((open) => !open)}>
-            <Plus className="h-4 w-4" />
-            Add activity
-          </Button>
-        </div>
-      </div>
-
-      <div className="mt-5 grid gap-3 md:grid-cols-4">
-        <ScheduleWorkbenchStat
-          label="CPM health"
-          value={`${cpmModel.healthScore}%`}
-          sub="logic quality"
-          tone={cpmModel.healthTone}
-        />
-        <ScheduleWorkbenchStat
-          label="Critical"
-          value={String(cpmModel.criticalCount)}
-          sub={`${cpmModel.nearCriticalCount} near-critical`}
-          tone={cpmModel.criticalCount > 0 ? "danger" : "default"}
-        />
-        <ScheduleWorkbenchStat
-          label="Open ends"
-          value={`${cpmModel.openStartCount}/${cpmModel.openFinishCount}`}
-          sub="starts / finishes"
-          tone={cpmModel.openStartCount > 1 || cpmModel.openFinishCount > 1 ? "warning" : "success"}
-        />
-        <ScheduleWorkbenchStat
-          label="Max stack"
-          value={String(cpmModel.maxStack)}
-          sub={cpmModel.maxStackLabel}
-          tone={cpmModel.maxStack >= 4 ? "warning" : "default"}
-        />
-      </div>
-
-      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="rounded-md border border-hairline bg-card p-4">
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            <Gauge className="h-3.5 w-3.5" />
-            Schedule intelligence
-          </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
-            {cpmModel.recommendations.slice(0, 4).map((item) => (
-              <div
-                key={item}
-                className="rounded border border-hairline bg-surface px-3 py-2 text-sm text-foreground"
-              >
-                {item}
-              </div>
-            ))}
-          </div>
-          {cpmModel.diagnostics.length > 0 && (
-            <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
-              {cpmModel.diagnostics.slice(0, 2).join(" ")}
+    <>
+      <ConstructLinePrintReport
+        model={cpmModel}
+        project={project}
+        latestDataDate={latestDataDate}
+      />
+      <div className="constructline-screen-workbench rounded-lg border border-hairline bg-surface p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              ConstructLine beta
             </div>
-          )}
-        </div>
-        <div className="rounded-md border border-hairline bg-card p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              <Layers className="h-3.5 w-3.5" />
-              Activity stacking
-            </div>
-            <div className="text-xs font-semibold tabular text-foreground">
-              {cpmModel.maxStack} peak
-            </div>
+            <h4 className="mt-1 font-serif text-2xl text-foreground">CPM schedule workbench</h4>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Build the working job schedule with activity IDs, divisions, start/finish dates,
+              progress, predecessor/successor logic, float, critical path, and activity stacking.
+            </p>
           </div>
-          <StackingMiniMap model={cpmModel} />
-        </div>
-      </div>
-
-      <div className="mt-5 grid gap-3 md:grid-cols-4">
-        <ScheduleWorkbenchStat
-          label="Activities"
-          value={String(sortedActivities.length)}
-          sub="in plan"
-        />
-        <ScheduleWorkbenchStat
-          label="Complete"
-          value={`${completedActivities}/${sortedActivities.length || 0}`}
-          sub="progress count"
-          tone={completedActivities > 0 ? "success" : "default"}
-        />
-        <ScheduleWorkbenchStat
-          label="Logic ties"
-          value={String(activitiesWithLogic)}
-          sub="pred / succ"
-          tone={activitiesWithLogic > 0 ? "success" : "warning"}
-        />
-        <ScheduleWorkbenchStat
-          label="Dated"
-          value={`${activitiesWithDates}/${sortedActivities.length || 0}`}
-          sub={`${shortDate(bounds.startLabel)} to ${shortDate(bounds.endLabel)}`}
-        />
-      </div>
-
-      {milestones.length > 0 && milestoneSeedRows.length > 0 && (
-        <div className="mt-4 rounded-md border border-hairline bg-card p-3 text-sm text-muted-foreground">
-          <span className="font-semibold text-foreground">Milestone bridge:</span>{" "}
-          {milestoneSeedRows.length} milestone {milestoneSeedRows.length === 1 ? "is" : "are"} ready
-          to become CPM activity rows. Build them once, then add logic ties and update percent
-          complete from the schedule workbench.
-        </div>
-      )}
-
-      {showDraft && (
-        <div className="mt-5 rounded-md border border-hairline bg-card p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                New activity
-              </div>
-              <div className="mt-1 text-sm text-muted-foreground">
-                Add one schedule row now. Dependencies can be typed as comma-separated activity IDs.
-              </div>
+          <div className="flex flex-wrap gap-2 print:hidden">
+            <div className="flex overflow-hidden rounded-md border border-hairline bg-card">
+              {CONSTRUCTLINE_ZOOM_LEVELS.map((level) => (
+                <button
+                  key={level.label}
+                  type="button"
+                  className={cn(
+                    "h-9 border-r border-hairline px-3 text-xs font-semibold text-muted-foreground last:border-r-0 hover:bg-muted/60",
+                    dayPx === level.dayPx && "bg-foreground text-background hover:bg-foreground",
+                  )}
+                  onClick={() => setDayPx(level.dayPx)}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    {level.label === "Fit" && <ZoomOut className="h-3.5 w-3.5" />}
+                    {level.label === "Day" && <ZoomIn className="h-3.5 w-3.5" />}
+                    {level.label}
+                  </span>
+                </button>
+              ))}
             </div>
             <Button
               type="button"
-              variant="ghost"
-              className="print:hidden"
-              onClick={() => {
-                setDraft(emptyActivityDraft());
-                setShowDraft(false);
-              }}
+              variant="outline"
+              className="gap-2"
+              disabled={milestoneSeedRows.length === 0 || isSeedingActivities}
+              onClick={() => onSeedActivities(milestoneSeedRows)}
             >
-              Cancel
+              <ClipboardList className="h-4 w-4" />
+              {isSeedingActivities ? "Building..." : "Build from milestones"}
             </Button>
-          </div>
-          <div className="grid gap-3 lg:grid-cols-[130px_minmax(240px,1fr)_170px_150px_150px_110px]">
-            <LabeledField label="Activity ID">
-              <Input
-                value={draft.activity_id}
-                onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
-                placeholder="A-010"
-                className="h-10"
-              />
-            </LabeledField>
-            <LabeledField label="Activity">
-              <Input
-                value={draft.name}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                placeholder="Frame exterior walls"
-                className="h-10"
-              />
-            </LabeledField>
-            <LabeledField label="Division">
-              <Input
-                value={draft.division}
-                onChange={(e) => setDraft({ ...draft, division: e.target.value })}
-                placeholder="06 Wood"
-                className="h-10"
-              />
-            </LabeledField>
-            <LabeledField label="Start">
-              <Input
-                type="date"
-                value={draft.start_date}
-                onChange={(e) => setDraft({ ...draft, start_date: e.target.value })}
-                className="h-10"
-              />
-            </LabeledField>
-            <LabeledField label="Finish">
-              <Input
-                type="date"
-                value={draft.finish_date}
-                onChange={(e) => setDraft({ ...draft, finish_date: e.target.value })}
-                className="h-10"
-              />
-            </LabeledField>
-            <LabeledField label="% done">
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                value={draft.percent_complete}
-                onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
-                className="h-10 tabular"
-              />
-            </LabeledField>
-          </div>
-          <div className="mt-3 grid gap-3 lg:grid-cols-[180px_180px_minmax(260px,1fr)_auto] lg:items-end">
-            <LabeledField label="Predecessors">
-              <Input
-                value={draft.predecessor_activity_ids}
-                onChange={(e) => setDraft({ ...draft, predecessor_activity_ids: e.target.value })}
-                placeholder="A-001, A-002"
-                className="h-10 tabular"
-              />
-            </LabeledField>
-            <LabeledField label="Successors">
-              <Input
-                value={draft.successor_activity_ids}
-                onChange={(e) => setDraft({ ...draft, successor_activity_ids: e.target.value })}
-                placeholder="A-030"
-                className="h-10 tabular"
-              />
-            </LabeledField>
-            <LabeledField label="Notes">
-              <Textarea
-                value={draft.notes}
-                onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
-                placeholder="Scope, sequencing constraint, crew assumption, or schedule risk."
-                className="min-h-10 resize-y"
-              />
-            </LabeledField>
             <Button
               type="button"
-              className="h-10 gap-2"
-              disabled={!draft.name.trim()}
-              onClick={addActivity}
+              variant="outline"
+              className="gap-2"
+              onClick={() => typeof window !== "undefined" && window.print()}
             >
+              <Printer className="h-4 w-4" />
+              Print
+            </Button>
+            <Button type="button" className="gap-2" onClick={() => setShowDraft((open) => !open)}>
               <Plus className="h-4 w-4" />
               Add activity
             </Button>
           </div>
         </div>
-      )}
 
-      <ActivityScheduleMatrix
-        model={cpmModel}
-        dayPx={dayPx}
-        dataDate={latestDataDate}
-        onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
-        onDeleteActivity={(id) => {
-          if (selectedActivityId === id) setSelectedActivityId(null);
-          onDeleteActivity(id);
-        }}
-      />
+        <div className="mt-5 grid gap-3 md:grid-cols-4">
+          <ScheduleWorkbenchStat
+            label="CPM health"
+            value={`${cpmModel.healthScore}%`}
+            sub="logic quality"
+            tone={cpmModel.healthTone}
+          />
+          <ScheduleWorkbenchStat
+            label="Critical"
+            value={String(cpmModel.criticalCount)}
+            sub={`${cpmModel.nearCriticalCount} near-critical`}
+            tone={cpmModel.criticalCount > 0 ? "danger" : "default"}
+          />
+          <ScheduleWorkbenchStat
+            label="Open ends"
+            value={`${cpmModel.openStartCount}/${cpmModel.openFinishCount}`}
+            sub="starts / finishes"
+            tone={
+              cpmModel.openStartCount > 1 || cpmModel.openFinishCount > 1 ? "warning" : "success"
+            }
+          />
+          <ScheduleWorkbenchStat
+            label="Max stack"
+            value={String(cpmModel.maxStack)}
+            sub={cpmModel.maxStackLabel}
+            tone={cpmModel.maxStack >= 4 ? "warning" : "default"}
+          />
+        </div>
 
-      {selectedActivity && (
-        <ActivityDetailDialog
-          activity={selectedActivity}
-          onClose={() => setSelectedActivityId(null)}
-          onSave={(patch) => onPatchActivity(selectedActivity.id, patch)}
-          onDelete={() => {
-            const id = selectedActivity.id;
-            setSelectedActivityId(null);
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="rounded-md border border-hairline bg-card p-4">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              <Gauge className="h-3.5 w-3.5" />
+              Schedule intelligence
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {cpmModel.recommendations.slice(0, 4).map((item) => (
+                <div
+                  key={item}
+                  className="rounded border border-hairline bg-surface px-3 py-2 text-sm text-foreground"
+                >
+                  {item}
+                </div>
+              ))}
+            </div>
+            {cpmModel.diagnostics.length > 0 && (
+              <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
+                {cpmModel.diagnostics.slice(0, 2).join(" ")}
+              </div>
+            )}
+          </div>
+          <div className="rounded-md border border-hairline bg-card p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                <Layers className="h-3.5 w-3.5" />
+                Activity stacking
+              </div>
+              <div className="text-xs font-semibold tabular text-foreground">
+                {cpmModel.maxStack} peak
+              </div>
+            </div>
+            <StackingMiniMap model={cpmModel} />
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-4">
+          <ScheduleWorkbenchStat
+            label="Activities"
+            value={String(sortedActivities.length)}
+            sub="in plan"
+          />
+          <ScheduleWorkbenchStat
+            label="Complete"
+            value={`${completedActivities}/${sortedActivities.length || 0}`}
+            sub="progress count"
+            tone={completedActivities > 0 ? "success" : "default"}
+          />
+          <ScheduleWorkbenchStat
+            label="Logic ties"
+            value={String(activitiesWithLogic)}
+            sub="pred / succ"
+            tone={activitiesWithLogic > 0 ? "success" : "warning"}
+          />
+          <ScheduleWorkbenchStat
+            label="Dated"
+            value={`${activitiesWithDates}/${sortedActivities.length || 0}`}
+            sub={`${shortDate(bounds.startLabel)} to ${shortDate(bounds.endLabel)}`}
+          />
+        </div>
+
+        {milestones.length > 0 && milestoneSeedRows.length > 0 && (
+          <div className="mt-4 rounded-md border border-hairline bg-card p-3 text-sm text-muted-foreground">
+            <span className="font-semibold text-foreground">Milestone bridge:</span>{" "}
+            {milestoneSeedRows.length} milestone {milestoneSeedRows.length === 1 ? "is" : "are"}{" "}
+            ready to become CPM activity rows. Build them once, then add logic ties and update
+            percent complete from the schedule workbench.
+          </div>
+        )}
+
+        {showDraft && (
+          <div className="mt-5 rounded-md border border-hairline bg-card p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  New activity
+                </div>
+                <div className="mt-1 text-sm text-muted-foreground">
+                  Add one schedule row now. Dependencies can be typed as comma-separated activity
+                  IDs.
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                className="print:hidden"
+                onClick={() => {
+                  setDraft(emptyActivityDraft());
+                  setShowDraft(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-[130px_minmax(240px,1fr)_170px_150px_150px_110px]">
+              <LabeledField label="Activity ID">
+                <Input
+                  value={draft.activity_id}
+                  onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
+                  placeholder="A-010"
+                  className="h-10"
+                />
+              </LabeledField>
+              <LabeledField label="Activity">
+                <Input
+                  value={draft.name}
+                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                  placeholder="Frame exterior walls"
+                  className="h-10"
+                />
+              </LabeledField>
+              <LabeledField label="Division">
+                <Input
+                  value={draft.division}
+                  onChange={(e) => setDraft({ ...draft, division: e.target.value })}
+                  placeholder="06 Wood"
+                  className="h-10"
+                />
+              </LabeledField>
+              <LabeledField label="Start">
+                <Input
+                  type="date"
+                  value={draft.start_date}
+                  onChange={(e) => setDraft({ ...draft, start_date: e.target.value })}
+                  className="h-10"
+                />
+              </LabeledField>
+              <LabeledField label="Finish">
+                <Input
+                  type="date"
+                  value={draft.finish_date}
+                  onChange={(e) => setDraft({ ...draft, finish_date: e.target.value })}
+                  className="h-10"
+                />
+              </LabeledField>
+              <LabeledField label="% done">
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={draft.percent_complete}
+                  onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
+                  className="h-10 tabular"
+                />
+              </LabeledField>
+            </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-[180px_180px_minmax(260px,1fr)_auto] lg:items-end">
+              <LabeledField label="Predecessors">
+                <Input
+                  value={draft.predecessor_activity_ids}
+                  onChange={(e) => setDraft({ ...draft, predecessor_activity_ids: e.target.value })}
+                  placeholder="A-001, A-002"
+                  className="h-10 tabular"
+                />
+              </LabeledField>
+              <LabeledField label="Successors">
+                <Input
+                  value={draft.successor_activity_ids}
+                  onChange={(e) => setDraft({ ...draft, successor_activity_ids: e.target.value })}
+                  placeholder="A-030"
+                  className="h-10 tabular"
+                />
+              </LabeledField>
+              <LabeledField label="Notes">
+                <Textarea
+                  value={draft.notes}
+                  onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+                  placeholder="Scope, sequencing constraint, crew assumption, or schedule risk."
+                  className="min-h-10 resize-y"
+                />
+              </LabeledField>
+              <Button
+                type="button"
+                className="h-10 gap-2"
+                disabled={!draft.name.trim()}
+                onClick={addActivity}
+              >
+                <Plus className="h-4 w-4" />
+                Add activity
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <ActivityScheduleMatrix
+          model={cpmModel}
+          dayPx={dayPx}
+          dataDate={latestDataDate}
+          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
+          onDeleteActivity={(id) => {
+            if (selectedActivityId === id) setSelectedActivityId(null);
             onDeleteActivity(id);
           }}
         />
-      )}
-    </div>
+
+        {selectedActivity && (
+          <ActivityDetailDialog
+            activity={selectedActivity}
+            onClose={() => setSelectedActivityId(null)}
+            onSave={(patch) => onPatchActivity(selectedActivity.id, patch)}
+            onDelete={() => {
+              const id = selectedActivity.id;
+              setSelectedActivityId(null);
+              onDeleteActivity(id);
+            }}
+          />
+        )}
+      </div>
+    </>
   );
 }
 
@@ -1381,6 +1391,247 @@ function ScheduleWorkbenchStat({
       </div>
       <div className={`mt-1 text-xl font-semibold tabular ${toneClass}`}>{value}</div>
       <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
+    </div>
+  );
+}
+
+function ConstructLinePrintReport({
+  model,
+  project,
+  latestDataDate,
+}: {
+  model: ConstructLineCpmModel;
+  project: ProjectRow;
+  latestDataDate: string | null;
+}) {
+  const monthBands = buildConstructLineMonthBands(
+    model.timelineStartDate,
+    model.totalTimelineDays,
+    1,
+  );
+  const printRows = model.groups.flatMap<
+    | { kind: "group"; division: string; tasks: ConstructLineCpmTask[] }
+    | { kind: "task"; task: ConstructLineCpmTask }
+  >((group) => [
+    { kind: "group", division: group.division, tasks: group.tasks },
+    ...group.tasks.map((task) => ({ kind: "task" as const, task })),
+  ]);
+  const dataDatePct =
+    latestDataDate == null
+      ? null
+      : timelinePrintPercent(latestDataDate, model.timelineStartDate, model.totalTimelineDays);
+
+  return (
+    <section className="constructline-print-report" aria-label="Printable ConstructLine schedule">
+      <header className="constructline-print-header">
+        <div>
+          <div className="constructline-print-kicker">ConstructLine CPM schedule</div>
+          <h1>{project.name}</h1>
+          <div className="constructline-print-meta">
+            {project.job_number && <span>Job # {project.job_number}</span>}
+            {project.client && <span>{project.client}</span>}
+            {project.project_manager && <span>PM {project.project_manager}</span>}
+            <span>
+              {shortDate(model.projectStartDate)} to {shortDate(model.projectFinishDate)}
+            </span>
+          </div>
+        </div>
+        <div className="constructline-print-status">
+          <div>{model.healthScore}%</div>
+          <span>CPM health</span>
+        </div>
+      </header>
+
+      <div className="constructline-print-kpis">
+        <PrintKpi label="Activities" value={String(model.tasks.length)} />
+        <PrintKpi label="Critical" value={String(model.criticalCount)} />
+        <PrintKpi label="Near Critical" value={String(model.nearCriticalCount)} />
+        <PrintKpi
+          label="Open Starts / Finishes"
+          value={`${model.openStartCount}/${model.openFinishCount}`}
+        />
+        <PrintKpi label="Max Stack" value={String(model.maxStack)} />
+        <PrintKpi
+          label="Data Date"
+          value={latestDataDate ? shortDate(latestDataDate) : "Not set"}
+        />
+      </div>
+
+      <div className="constructline-print-summary">
+        <div>
+          <div className="constructline-print-section-title">Schedule intelligence</div>
+          <div className="constructline-print-notes">
+            {model.recommendations.slice(0, 4).map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="constructline-print-section-title">Activity stacking</div>
+          <div className="constructline-print-stack">
+            {model.stackBuckets.slice(0, 24).map((bucket) => (
+              <span
+                key={bucket.key}
+                className={cn(bucket.criticalCount > 0 && "is-critical")}
+                style={{
+                  height: `${Math.max(8, (bucket.count / Math.max(1, model.maxStack)) * 44)}px`,
+                }}
+                title={`${bucket.label}: ${bucket.count}`}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="constructline-print-grid">
+        <div className="constructline-print-grid-head">
+          <span>ID</span>
+          <span>Activity</span>
+          <span>Dates</span>
+          <span>%</span>
+          <span>TF</span>
+          <span>Schedule Timeline</span>
+        </div>
+        <div className="constructline-print-months">
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+          <div className="constructline-print-timeline">
+            {monthBands.map((band) => (
+              <span
+                key={`${band.label}-${band.x}`}
+                className="constructline-print-month"
+                style={{
+                  left: `${(band.x / model.totalTimelineDays) * 100}%`,
+                  width: `${(band.width / model.totalTimelineDays) * 100}%`,
+                }}
+              >
+                {band.label}
+              </span>
+            ))}
+            {dataDatePct != null && (
+              <span className="constructline-print-data-date" style={{ left: `${dataDatePct}%` }} />
+            )}
+          </div>
+        </div>
+        {printRows.map((row) => {
+          if (row.kind === "group") {
+            const groupStartPct = Math.min(
+              ...row.tasks.map((task) =>
+                timelinePrintPercent(
+                  task.visualStartDate,
+                  model.timelineStartDate,
+                  model.totalTimelineDays,
+                ),
+              ),
+            );
+            const groupFinishPct = Math.max(
+              ...row.tasks.map((task) =>
+                timelinePrintPercent(
+                  task.visualFinishDate,
+                  model.timelineStartDate,
+                  model.totalTimelineDays,
+                ),
+              ),
+            );
+            return (
+              <div key={`print-${row.division}`} className="constructline-print-group">
+                <span>
+                  {row.division} · {row.tasks.length} activities
+                </span>
+                <div className="constructline-print-timeline">
+                  <span
+                    className="constructline-print-group-bar"
+                    style={{
+                      left: `${Math.min(groupStartPct, groupFinishPct)}%`,
+                      width: `${Math.max(1, Math.abs(groupFinishPct - groupStartPct))}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <ConstructLinePrintTaskRow
+              key={`print-${row.task.activity.id}`}
+              model={model}
+              task={row.task}
+              dataDatePct={dataDatePct}
+            />
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function PrintKpi({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ConstructLinePrintTaskRow({
+  model,
+  task,
+  dataDatePct,
+}: {
+  model: ConstructLineCpmModel;
+  task: ConstructLineCpmTask;
+  dataDatePct: number | null;
+}) {
+  const percent = Math.max(0, Math.min(100, task.activity.percent_complete));
+  const startPct = timelinePrintPercent(
+    task.visualStartDate,
+    model.timelineStartDate,
+    model.totalTimelineDays,
+  );
+  const finishPct = timelinePrintPercent(
+    task.visualFinishDate,
+    model.timelineStartDate,
+    model.totalTimelineDays,
+  );
+  const left = Math.min(startPct, finishPct);
+  const width = Math.max(0.8, Math.abs(finishPct - startPct));
+  const tone = task.isCritical ? "is-critical" : task.isNearCritical ? "is-near-critical" : "";
+  const flag = task.isCritical
+    ? "Critical"
+    : task.isNearCritical
+      ? "Near critical"
+      : task.isLate
+        ? "Late"
+        : "";
+
+  return (
+    <div className="constructline-print-row">
+      <span className="constructline-print-id">{task.dependencyKey}</span>
+      <span className="constructline-print-name">
+        {task.activity.name}
+        {flag && <em>{flag}</em>}
+      </span>
+      <span className="constructline-print-dates">
+        {shortPrintDate(task.activity.start_date ?? task.visualStartDate)}-
+        {shortPrintDate(task.activity.finish_date ?? task.visualFinishDate)}
+      </span>
+      <span>{percent}%</span>
+      <span>{task.totalFloat}</span>
+      <span className="constructline-print-timeline">
+        {dataDatePct != null && (
+          <span className="constructline-print-data-date" style={{ left: `${dataDatePct}%` }} />
+        )}
+        <span
+          className={cn("constructline-print-bar", tone)}
+          style={{ left: `${left}%`, width: `${width}%` }}
+        >
+          <span style={{ width: `${percent}%` }} />
+        </span>
+      </span>
     </div>
   );
 }
@@ -1765,6 +2016,14 @@ function buildConstructLineMonthBands(startDate: string, totalDays: number, dayP
     cursor += Math.max(1, length);
   }
   return bands;
+}
+
+function timelinePrintPercent(value: string, timelineStartDate: string, totalTimelineDays: number) {
+  const start = parseDateMs(timelineStartDate);
+  const current = parseDateMs(value);
+  if (start == null || current == null) return 0;
+  const days = Math.max(0, Math.round((current - start) / (24 * 60 * 60 * 1000)));
+  return Math.max(0, Math.min(100, (days / Math.max(1, totalTimelineDays)) * 100));
 }
 
 function StackingMiniMap({ model }: { model: ConstructLineCpmModel }) {
@@ -2706,6 +2965,13 @@ function shortDate(value?: string | null) {
   const [year, month, day] = value.split("-");
   if (!year || !month || !day) return value;
   return `${month}/${day}/${year}`;
+}
+
+function shortPrintDate(value?: string | null) {
+  if (!value) return "Not set";
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) return value;
+  return `${month}/${day}/${year.slice(2)}`;
 }
 
 function isBareMilestone(row: MilestoneRow) {

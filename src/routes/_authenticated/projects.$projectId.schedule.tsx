@@ -5,10 +5,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { ArrowLeft, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  CpmActivityPlanner,
-  type ActivityCreateInput,
-} from "@/components/outcome/ScheduleRisk";
+import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/outcome/ScheduleRisk";
 import { getProject, type ProjectRow } from "@/lib/projects.functions";
 import {
   createScheduleActivity,
@@ -46,9 +43,18 @@ function ScheduleWorkspacePage() {
   });
 
   const project = projectQuery.data?.project as ProjectRow | undefined;
-  const activities = (scheduleQuery.data?.activities ?? []) as ScheduleActivityRow[];
-  const milestones = (scheduleQuery.data?.milestones ?? []) as MilestoneRow[];
-  const updates = (scheduleQuery.data?.updates ?? []) as ScheduleUpdateRow[];
+  const activities = useMemo(
+    () => (scheduleQuery.data?.activities ?? []) as ScheduleActivityRow[],
+    [scheduleQuery.data?.activities],
+  );
+  const milestones = useMemo(
+    () => (scheduleQuery.data?.milestones ?? []) as MilestoneRow[],
+    [scheduleQuery.data?.milestones],
+  );
+  const updates = useMemo(
+    () => (scheduleQuery.data?.updates ?? []) as ScheduleUpdateRow[],
+    [scheduleQuery.data?.updates],
+  );
   const latestUpdate = updates[0] ?? null;
 
   const refreshSchedule = async () => {
@@ -161,7 +167,7 @@ function ScheduleWorkspacePage() {
 
   return (
     <ScheduleWorkspaceShell project={project}>
-      <section className="mb-4 grid gap-3 lg:grid-cols-[minmax(360px,1.35fr)_repeat(4,minmax(160px,0.5fr))]">
+      <section className="constructline-screen-summary mb-4 grid gap-3 lg:grid-cols-[minmax(360px,1.35fr)_repeat(4,minmax(160px,0.5fr))]">
         <div className="rounded-lg border border-hairline bg-card p-4">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
             Project construction schedule
@@ -219,7 +225,7 @@ function ScheduleWorkspaceShell({
   children: ReactNode;
 }) {
   return (
-    <div className="min-h-screen overflow-x-hidden bg-background text-foreground print:bg-white">
+    <div className="constructline-schedule-page min-h-screen overflow-x-hidden bg-background text-foreground print:bg-white">
       <header className="sticky top-0 z-30 border-b border-hairline bg-background/95 backdrop-blur print:static">
         <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-3 px-4 py-4 lg:px-8 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
