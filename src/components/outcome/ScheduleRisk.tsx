@@ -1089,6 +1089,7 @@ export function CpmActivityPlanner({
         model={cpmModel}
         project={project}
         latestDataDate={latestDataDate}
+        showLogicLines={showLogicLines}
       />
       <div className="constructline-screen-workbench rounded-lg border border-hairline bg-surface p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1510,23 +1511,28 @@ function ConstructLinePrintReport({
   model,
   project,
   latestDataDate,
+  showLogicLines,
 }: {
   model: ConstructLineCpmModel;
   project: ProjectRow;
   latestDataDate: string | null;
+  showLogicLines: boolean;
 }) {
-  const monthBands = buildConstructLineMonthBands(
-    model.timelineStartDate,
-    model.totalTimelineDays,
-    1,
+  const monthBands = useMemo(
+    () => buildConstructLineMonthBands(model.timelineStartDate, model.totalTimelineDays, 1),
+    [model.timelineStartDate, model.totalTimelineDays],
   );
-  const printRows = model.groups.flatMap<
-    | { kind: "group"; division: string; tasks: ConstructLineCpmTask[] }
-    | { kind: "task"; task: ConstructLineCpmTask }
-  >((group) => [
-    { kind: "group", division: group.division, tasks: group.tasks },
-    ...group.tasks.map((task) => ({ kind: "task" as const, task })),
-  ]);
+  const printRows = useMemo(
+    () =>
+      model.groups.flatMap<
+        | { kind: "group"; division: string; tasks: ConstructLineCpmTask[] }
+        | { kind: "task"; task: ConstructLineCpmTask }
+      >((group) => [
+        { kind: "group", division: group.division, tasks: group.tasks },
+        ...group.tasks.map((task) => ({ kind: "task" as const, task })),
+      ]),
+    [model.groups],
+  );
   const dataDatePct =
     latestDataDate == null
       ? null
@@ -1545,6 +1551,7 @@ function ConstructLinePrintReport({
             <span>
               {shortDate(model.projectStartDate)} to {shortDate(model.projectFinishDate)}
             </span>
+            {showLogicLines && <span>Logic lines shown</span>}
           </div>
         </div>
         <div className="constructline-print-status">
@@ -1674,8 +1681,135 @@ function ConstructLinePrintReport({
             />
           );
         })}
+        {showLogicLines && <ConstructLinePrintLogicOverlay rows={printRows} model={model} />}
       </div>
     </section>
+  );
+}
+
+function ConstructLinePrintLogicOverlay({
+  rows,
+  model,
+}: {
+  rows: Array<
+    | { kind: "group"; division: string; tasks: ConstructLineCpmTask[] }
+    | { kind: "task"; task: ConstructLineCpmTask }
+  >;
+  model: ConstructLineCpmModel;
+}) {
+  const groupHeight = 18;
+  const taskHeight = 20.5;
+  const { bodyHeight, rowPositions } = useMemo(() => {
+    const positions = new Map<string, number>();
+    let height = 0;
+
+    for (const row of rows) {
+      if (row.kind === "group") {
+        height += groupHeight;
+      } else {
+        positions.set(row.task.activityKey, height + taskHeight / 2);
+        height += taskHeight;
+      }
+    }
+
+    return { bodyHeight: height, rowPositions: positions };
+  }, [rows]);
+  const taskByKey = useMemo(
+    () => new Map(model.tasks.map((task) => [task.activityKey, task])),
+    [model.tasks],
+  );
+  const lines = useMemo(
+    () =>
+      model.tasks.flatMap((task) =>
+        task.predecessorKeys.flatMap((predecessorKey) => {
+          const predecessor = taskByKey.get(predecessorKey);
+          const fromY = predecessor ? rowPositions.get(predecessor.activityKey) : null;
+          const toY = rowPositions.get(task.activityKey);
+          if (!predecessor || fromY == null || toY == null) return [];
+          const fromX = timelinePrintPercent(
+            predecessor.visualFinishDate,
+            model.timelineStartDate,
+            model.totalTimelineDays,
+          );
+          const toX = timelinePrintPercent(
+            task.visualStartDate,
+            model.timelineStartDate,
+            model.totalTimelineDays,
+          );
+          return [
+            {
+              id: `print-${predecessor.activityKey}->${task.activityKey}`,
+              fromX,
+              fromY,
+              toX,
+              toY,
+              isCritical: predecessor.isCritical && task.isCritical,
+              isOutOfSequence: toX < fromX,
+            },
+          ];
+        }),
+      ),
+    [model.tasks, model.timelineStartDate, model.totalTimelineDays, rowPositions, taskByKey],
+  );
+
+  if (lines.length === 0) return null;
+
+  return (
+    <svg
+      className="constructline-print-logic-overlay"
+      viewBox={`0 0 100 ${bodyHeight}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <defs>
+        <marker
+          id="constructline-print-logic-arrow"
+          markerWidth="2.5"
+          markerHeight="2.5"
+          refX="2.2"
+          refY="1.25"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M 0 0 L 2.5 1.25 L 0 2.5 z" fill="#6f675c" />
+        </marker>
+        <marker
+          id="constructline-print-logic-arrow-critical"
+          markerWidth="2.5"
+          markerHeight="2.5"
+          refX="2.2"
+          refY="1.25"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M 0 0 L 2.5 1.25 L 0 2.5 z" fill="#d53c31" />
+        </marker>
+      </defs>
+      {lines.map((line) => {
+        const distance = line.toX - line.fromX;
+        const bend = Math.max(3, Math.min(14, Math.abs(distance) / 2));
+        const midX = distance >= 0 ? line.fromX + bend : line.fromX - bend;
+        const stroke = line.isCritical ? "#d53c31" : line.isOutOfSequence ? "#c68a18" : "#6f675c";
+        const opacity = line.isCritical ? 0.72 : line.isOutOfSequence ? 0.6 : 0.42;
+        return (
+          <path
+            key={line.id}
+            d={`M ${line.fromX} ${line.fromY} C ${midX} ${line.fromY}, ${midX} ${line.toY}, ${line.toX} ${line.toY}`}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={line.isCritical ? 0.42 : 0.3}
+            strokeDasharray={line.isOutOfSequence ? "1.2 1.1" : undefined}
+            opacity={opacity}
+            vectorEffect="non-scaling-stroke"
+            markerEnd={`url(#${
+              line.isCritical
+                ? "constructline-print-logic-arrow-critical"
+                : "constructline-print-logic-arrow"
+            })`}
+          />
+        );
+      })}
+    </svg>
   );
 }
 

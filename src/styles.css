@@ -332,6 +332,7 @@
   }
 
   .constructline-print-grid {
+    position: relative;
     margin-top: 0.07in;
     overflow: hidden;
   }
@@ -448,6 +449,19 @@
     width: 1px;
     background: #221f1b;
     opacity: 0.45;
+  }
+
+  .constructline-print-logic-overlay {
+    position: absolute;
+    top: 0.39in;
+    right: 0;
+    bottom: 0;
+    left: 3.87in;
+    z-index: 3;
+    width: auto;
+    height: auto;
+    pointer-events: none;
+    overflow: visible;
   }
 
   .constructline-print-bar,
