@@ -1,4 +1,11 @@
-import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Link,
+  Outlet,
+  useChildMatches,
+  useNavigate,
+  useRouter,
+} from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -110,7 +117,7 @@ import {
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   ssr: false,
   head: () => ({ meta: [{ title: "Project IOR — Overwatch" }] }),
-  component: ProjectPage,
+  component: ProjectRoute,
 });
 
 const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
@@ -317,6 +324,11 @@ function exposureCategoryFromChangeOrder(coType: ChangeOrderRow["co_type"]): Exp
     default:
       return "other";
   }
+}
+
+function ProjectRoute() {
+  const childMatches = useChildMatches();
+  return childMatches.length > 0 ? <Outlet /> : <ProjectPage />;
 }
 
 function ProjectPage() {
