@@ -321,6 +321,16 @@ const createScheduleUpdateInput = z.object({
   schedule_money_recovery: z.number().min(0).default(0),
   money_notes: z.string().max(4000).default(""),
   notes: z.string().max(4000).default(""),
+  milestone_forecasts: z
+    .array(
+      z.object({
+        milestone_id: z.string().uuid(),
+        forecast_date: z.string().nullable(),
+        status: z.enum(MILESTONE_STATUSES),
+        delay_reason: z.string().max(2000).optional(),
+      }),
+    )
+    .default([]),
 });
 
 export const createScheduleUpdate = createServerFn({ method: "POST" })
@@ -403,6 +413,24 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       })
       .eq("id", data.projectId);
     if (projectUpdateError) throw new Error(projectUpdateError.message);
+
+    if (data.milestone_forecasts.length > 0) {
+      const milestoneResults = await Promise.all(
+        data.milestone_forecasts.map((forecast) =>
+          context.supabase
+            .from("schedule_milestones")
+            .update({
+              forecast_date: forecast.forecast_date,
+              status: forecast.status,
+              delay_reason: forecast.delay_reason ?? "",
+            })
+            .eq("id", forecast.milestone_id)
+            .eq("project_id", data.projectId),
+        ),
+      );
+      const milestoneError = milestoneResults.find((result) => result.error)?.error;
+      if (milestoneError) throw new Error(milestoneError.message);
+    }
 
     const { data: milestones, error: milestoneError } = await context.supabase
       .from("schedule_milestones")

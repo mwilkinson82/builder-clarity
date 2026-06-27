@@ -188,6 +188,7 @@ export function ScheduleRisk({
   const [scheduleMoneyRecovery, setScheduleMoneyRecovery] = useState(0);
   const [moneyNotes, setMoneyNotes] = useState("");
   const [updateNotes, setUpdateNotes] = useState("");
+  const [cpmMilestoneForecasts, setCpmMilestoneForecasts] = useState<CpmMilestoneForecast[]>([]);
   const [milestoneView, setMilestoneView] = useState<MilestoneView>("active");
 
   const { data, isLoading } = useQuery({
@@ -328,9 +329,50 @@ export function ScheduleRisk({
     project.baseline_completion_date,
     completionUpdateDraft || project.forecast_completion_date,
   );
+  const scheduleCpmModel = useMemo(
+    () =>
+      buildConstructLineCpmModel(activities, {
+        dataDate,
+        nearCriticalFloat: 5,
+      }),
+    [activities, dataDate],
+  );
+  const cpmScheduleDraft = useMemo(
+    () =>
+      buildCpmScheduleUpdateDraft({
+        dataDate,
+        milestones,
+        model: scheduleCpmModel,
+        previousUpdate: lastScheduleUpdate,
+        project,
+      }),
+    [dataDate, lastScheduleUpdate, milestones, project, scheduleCpmModel],
+  );
   useEffect(() => {
     setCompletionUpdateDraft(project.forecast_completion_date ?? "");
   }, [project.forecast_completion_date]);
+
+  const applyCpmDraft = () => {
+    if (activities.length === 0) {
+      toast.warning("CPM schedule is empty", {
+        description: "Add activities before generating a schedule update.",
+      });
+      return;
+    }
+    setCompletionUpdateDraft(cpmScheduleDraft.forecast_completion_date);
+    setDataDate(cpmScheduleDraft.data_date);
+    setUpdateNotes(cpmScheduleDraft.notes);
+    setCpmMilestoneForecasts(cpmScheduleDraft.milestone_forecasts);
+    if (!moneyNotes.trim()) setMoneyNotes(cpmScheduleDraft.money_notes);
+    toast.success("CPM update draft applied", {
+      description:
+        cpmScheduleDraft.milestone_forecasts.length > 0
+          ? `${cpmScheduleDraft.milestone_forecasts.length} milestone forecast ${
+              cpmScheduleDraft.milestone_forecasts.length === 1 ? "change is" : "changes are"
+            } staged.`
+          : "Completion and narrative fields were drafted from the CPM schedule.",
+    });
+  };
 
   const scheduleUpdate = useMutation({
     mutationFn: () =>
@@ -344,11 +386,13 @@ export function ScheduleRisk({
           schedule_money_recovery: scheduleMoneyRecovery,
           money_notes: moneyNotes,
           notes: updateNotes,
+          milestone_forecasts: cpmMilestoneForecasts,
         },
       }),
     onSuccess: async () => {
       setUpdateNotes("");
       setMoneyNotes("");
+      setCpmMilestoneForecasts([]);
       setScheduleMoneyExposure(0);
       setScheduleMoneyRecovery(0);
       await Promise.all([invalidateSchedule(), invalidateProject()]);
@@ -396,6 +440,63 @@ export function ScheduleRisk({
           <ScheduleVarianceCard value={scheduleVariance} />
           <ScheduleDeltaCard value={lastMovementWeeks} />
         </div>
+        <div className="mt-4 rounded-md border border-hairline bg-surface p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                <Gauge className="h-3.5 w-3.5" />
+                CPM schedule intelligence
+              </div>
+              <div className="mt-2 grid gap-3 text-sm md:grid-cols-4">
+                <ScheduleIntelligenceMetric
+                  label="CPM forecast"
+                  value={shortDate(cpmScheduleDraft.forecast_completion_date)}
+                />
+                <ScheduleIntelligenceMetric
+                  label="CPM variance"
+                  value={varianceLabel(cpmScheduleDraft.variance_weeks)}
+                  tone={varianceTone(cpmScheduleDraft.variance_weeks)}
+                />
+                <ScheduleIntelligenceMetric
+                  label="Critical basis"
+                  value={scheduleCpmModel.criticalPathReliable ? "Valid" : "Provisional"}
+                  tone={
+                    scheduleCpmModel.criticalPathReliable ? "text-success" : "text-warning"
+                  }
+                />
+                <ScheduleIntelligenceMetric
+                  label="Milestone forecasts"
+                  value={String(cpmScheduleDraft.milestone_forecasts.length)}
+                  tone={
+                    cpmScheduleDraft.milestone_forecasts.length > 0
+                      ? "text-foreground"
+                      : "text-muted-foreground"
+                  }
+                />
+              </div>
+              <div className="mt-3 max-w-5xl text-xs text-muted-foreground">
+                {cpmScheduleDraft.preview}
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2 lg:shrink-0"
+              disabled={activities.length === 0}
+              onClick={applyCpmDraft}
+            >
+              <GitBranch className="h-4 w-4" />
+              Draft from CPM
+            </Button>
+          </div>
+          {cpmMilestoneForecasts.length > 0 && (
+            <div className="mt-3 rounded border border-accent/25 bg-accent/10 px-3 py-2 text-xs font-medium text-foreground">
+              {cpmMilestoneForecasts.length} milestone forecast{" "}
+              {cpmMilestoneForecasts.length === 1 ? "change is" : "changes are"} staged for the
+              next saved update.
+            </div>
+          )}
+        </div>
         <div className="mt-4 grid gap-3 md:grid-cols-4 md:items-end">
           <div className="space-y-1.5">
             <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -417,15 +518,16 @@ export function ScheduleRisk({
           </div>
           <ScheduleMoneyNetCard exposure={scheduleMoneyExposure} recovery={scheduleMoneyRecovery} />
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] md:items-end">
           <div className="space-y-1.5">
             <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
               Update explanation
             </Label>
-            <Input
+            <Textarea
               value={updateNotes}
               onChange={(e) => setUpdateNotes(e.target.value)}
               placeholder="What changed since the prior schedule update?"
+              className="min-h-20 resize-y"
             />
           </div>
           <div className="space-y-1.5">
@@ -438,13 +540,23 @@ export function ScheduleRisk({
               placeholder="What dollar impact belongs to this update?"
             />
           </div>
-          <Button
-            type="button"
-            disabled={!completionUpdateDraft || scheduleUpdate.isPending}
-            onClick={() => scheduleUpdate.mutate()}
-          >
-            {scheduleUpdate.isPending ? "Saving..." : "Save update"}
-          </Button>
+          <div className="flex flex-col gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={activities.length === 0}
+              onClick={applyCpmDraft}
+            >
+              Draft from CPM
+            </Button>
+            <Button
+              type="button"
+              disabled={!completionUpdateDraft || scheduleUpdate.isPending}
+              onClick={() => scheduleUpdate.mutate()}
+            >
+              {scheduleUpdate.isPending ? "Saving..." : "Save update"}
+            </Button>
+          </div>
         </div>
       </section>
 
@@ -530,10 +642,165 @@ const weeksBetween = computeScheduleVarianceWeeks;
 
 type MilestoneView = "active" | "complete" | "all";
 
+type CpmMilestoneForecast = {
+  milestone_id: string;
+  forecast_date: string | null;
+  status: MilestoneStatus;
+  delay_reason: string;
+};
+
+type CpmScheduleUpdateDraft = {
+  data_date: string;
+  forecast_completion_date: string;
+  variance_weeks: number | null;
+  movement_weeks: number | null;
+  milestone_forecasts: CpmMilestoneForecast[];
+  money_notes: string;
+  notes: string;
+  preview: string;
+};
+
 function filterMilestones(milestones: MilestoneRow[], view: MilestoneView) {
   if (view === "all") return milestones;
   if (view === "complete") return milestones.filter((m) => m.status === "complete");
   return milestones.filter((m) => m.status !== "complete");
+}
+
+function buildCpmScheduleUpdateDraft({
+  dataDate,
+  milestones,
+  model,
+  previousUpdate,
+  project,
+}: {
+  dataDate: string;
+  milestones: MilestoneRow[];
+  model: ConstructLineCpmModel;
+  previousUpdate: ScheduleUpdateRow | null;
+  project: ProjectRow;
+}): CpmScheduleUpdateDraft {
+  const forecastCompletion =
+    model.tasks.length > 0 ? model.cpmFinishDate : project.forecast_completion_date || dataDate;
+  const previousCompletion =
+    previousUpdate?.forecast_completion_date ?? project.forecast_completion_date ?? null;
+  const varianceWeeks = computeScheduleVarianceWeeks(
+    project.baseline_completion_date,
+    forecastCompletion,
+  );
+  const movementWeeks = computeScheduleVarianceWeeks(previousCompletion, forecastCompletion);
+  const milestoneForecasts = buildCpmMilestoneForecasts(model, milestones);
+  const criticalDrivers = model.tasks
+    .filter((task) => task.isCritical && task.activity.percent_complete < 100)
+    .slice(0, 3)
+    .map((task) => task.dependencyKey || task.activity.name);
+  const qualityParts = model.criticalPathReliable
+    ? [`${model.criticalCount} critical`, `${model.nearCriticalCount} near-critical`]
+    : [`Critical path provisional: ${model.criticalPathReliabilityNote}`];
+  if (model.openStartCount > 1 || model.openFinishCount > 1) {
+    qualityParts.push(`${model.openStartCount}/${model.openFinishCount} open starts/finishes`);
+  }
+  if (model.lateCount > 0) qualityParts.push(`${model.lateCount} late`);
+  if (model.outOfSequenceCount > 0) {
+    qualityParts.push(`${model.outOfSequenceCount} out-of-sequence`);
+  }
+  if (model.maxStack >= 4) {
+    qualityParts.push(`${model.maxStack} peak stack at ${model.maxStackLabel}`);
+  }
+
+  const previewParts = [
+    `CPM forecast ${shortDate(forecastCompletion)} (${varianceLabel(
+      varianceWeeks,
+    )} vs baseline, ${varianceLabel(movementWeeks)} movement).`,
+    qualityParts.join("; ") + ".",
+    criticalDrivers.length > 0 ? `Drivers: ${criticalDrivers.join(", ")}.` : null,
+    milestoneForecasts.length > 0
+      ? `${milestoneForecasts.length} milestone forecast ${
+          milestoneForecasts.length === 1 ? "update" : "updates"
+        } matched from CPM diamonds.`
+      : null,
+  ].filter(Boolean);
+  const preview = previewParts.join(" ");
+
+  return {
+    data_date: dataDate,
+    forecast_completion_date: forecastCompletion,
+    variance_weeks: varianceWeeks,
+    movement_weeks: movementWeeks,
+    milestone_forecasts: milestoneForecasts,
+    money_notes: "No schedule dollars auto-calculated from CPM.",
+    notes: preview,
+    preview,
+  };
+}
+
+function buildCpmMilestoneForecasts(
+  model: ConstructLineCpmModel,
+  milestones: MilestoneRow[],
+): CpmMilestoneForecast[] {
+  const milestoneByName = new Map(
+    milestones.map((milestone) => [normalizeScheduleMatchName(milestone.name), milestone]),
+  );
+  const seen = new Set<string>();
+
+  return model.tasks.flatMap((task) => {
+    if (!task.isMilestone) return [];
+    const milestone = milestoneByName.get(normalizeScheduleMatchName(task.activity.name));
+    if (!milestone || seen.has(milestone.id)) return [];
+    seen.add(milestone.id);
+    const forecastDate = task.visualFinishDate;
+    const varianceWeeks = computeScheduleVarianceWeeks(milestone.baseline_date, forecastDate);
+    const status = cpmMilestoneStatus(task, varianceWeeks);
+    const delayReason = cpmMilestoneReason(task, forecastDate, varianceWeeks);
+    if (
+      milestone.forecast_date === forecastDate &&
+      milestone.status === status &&
+      milestone.delay_reason === delayReason
+    ) {
+      return [];
+    }
+    return [
+      {
+        milestone_id: milestone.id,
+        forecast_date: forecastDate,
+        status,
+        delay_reason: delayReason,
+      },
+    ];
+  });
+}
+
+function cpmMilestoneStatus(
+  task: ConstructLineCpmTask,
+  varianceWeeks: number | null,
+): MilestoneStatus {
+  if (task.activity.percent_complete >= 100) return "complete";
+  if ((varianceWeeks ?? 0) > 0 || task.isLate) return "delayed";
+  if (task.isOutOfSequence || task.totalFloat <= 5) return "at_risk";
+  return "on_track";
+}
+
+function cpmMilestoneReason(
+  task: ConstructLineCpmTask,
+  forecastDate: string,
+  varianceWeeks: number | null,
+) {
+  const parts = [`CPM forecast ${shortDate(forecastDate)}`];
+  if (varianceWeeks != null) parts.push(`${varianceLabel(varianceWeeks)} vs baseline`);
+  if (task.isCritical) parts.push("critical path");
+  else if (task.isNearCritical) parts.push(`${task.totalFloat}d total float`);
+  if (task.isLate) parts.push("past data date");
+  if (task.isOutOfSequence) parts.push("out-of-sequence progress");
+  if (task.isOpenStart || task.isOpenFinish) parts.push("open-end logic");
+  return `${parts.join("; ")}.`;
+}
+
+function normalizeScheduleMatchName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\bmilestone\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function MilestoneViewSelect({
@@ -636,6 +903,25 @@ function ScheduleMoneyNetCard({ exposure, recovery }: { exposure: number; recove
       >
         {fmtUSD(net)}
       </div>
+    </div>
+  );
+}
+
+function ScheduleIntelligenceMetric({
+  label,
+  value,
+  tone = "text-foreground",
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded border border-hairline bg-card px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 font-semibold tabular ${tone}`}>{value}</div>
     </div>
   );
 }
@@ -1598,7 +1884,7 @@ function ConstructLinePrintReport({
             {project.client && <span>{project.client}</span>}
             {project.project_manager && <span>PM {project.project_manager}</span>}
             <span>
-              {shortDate(model.projectStartDate)} to {shortDate(model.projectFinishDate)}
+              {shortDate(model.projectStartDate)} to {shortDate(model.cpmFinishDate)}
             </span>
             {showLogicLines && <span>Logic lines shown</span>}
           </div>

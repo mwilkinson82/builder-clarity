@@ -46,6 +46,7 @@ export interface ConstructLineCpmModel {
   healthTone: "success" | "warning" | "danger";
   projectStartDate: string;
   projectFinishDate: string;
+  cpmFinishDate: string;
   timelineStartDate: string;
   timelineFinishDate: string;
   totalTimelineDays: number;
@@ -295,6 +296,11 @@ export function buildConstructLineCpmModel(
   ).length;
   const lateCount = modelTasks.filter((task) => task.isLate).length;
   const outOfSequenceCount = modelTasks.filter((task) => task.isOutOfSequence).length;
+  const cpmFinishMs = Math.max(
+    projectFinishMs,
+    ...modelTasks.map((task) => parseDateMs(task.visualFinishDate) ?? projectFinishMs),
+  );
+  const cpmFinishDate = isoDateFromMs(cpmFinishMs);
   const healthScore = scoreSchedule({
     taskCount: modelTasks.length,
     missingDateCount,
@@ -314,6 +320,7 @@ export function buildConstructLineCpmModel(
     healthTone: healthScore >= 82 ? "success" : healthScore >= 62 ? "warning" : "danger",
     projectStartDate,
     projectFinishDate,
+    cpmFinishDate,
     timelineStartDate,
     timelineFinishDate,
     totalTimelineDays,
