@@ -1801,11 +1801,11 @@ function ScheduleWorkbenchStat({
           ? "text-danger"
           : "text-foreground";
   return (
-    <div className="rounded-md border border-hairline bg-card p-3">
+    <div className="min-w-0 rounded-md border border-hairline bg-card p-3">
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
-      <div className={`mt-1 text-xl font-semibold tabular ${toneClass}`}>{value}</div>
+      <div className={`mt-1 truncate text-xl font-semibold tabular ${toneClass}`}>{value}</div>
       <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
     </div>
   );
@@ -2236,7 +2236,7 @@ function ConstructLinePrintTaskRow({
 
 function LabeledField({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="block space-y-1">
+    <label className="block min-w-0 space-y-1">
       <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </span>
@@ -3125,7 +3125,7 @@ function ActivityIdPills({ ids, emptyLabel }: { ids: string[]; emptyLabel: strin
       {ids.map((id) => (
         <span
           key={id}
-          className="rounded border border-hairline bg-card px-1.5 py-0.5 text-[11px] font-semibold tabular text-foreground"
+          className="max-w-full break-all rounded border border-hairline bg-card px-1.5 py-0.5 text-[11px] font-semibold tabular text-foreground"
         >
           {id}
         </span>
@@ -3236,167 +3236,175 @@ function ActivityDetailDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:w-[min(calc(100vw-2rem),68rem)] sm:max-w-[68rem]">
+        <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
           <DialogTitle className="font-serif text-2xl">CPM activity detail</DialogTitle>
           <DialogDescription>
             Review the full activity, dependency logic, dates, percent complete, and field notes.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-3 md:grid-cols-4">
-          <ScheduleWorkbenchStat
-            label="Activity ID"
-            value={activity.activity_id || "No ID"}
-            sub={activity.division || "General"}
-          />
-          <ScheduleWorkbenchStat
-            label="Duration"
-            value={isMilestone ? "Milestone" : duration == null ? "No dates" : String(duration)}
-            sub={
-              isMilestone
-                ? "schedule point"
-                : duration == null
-                  ? "start / finish needed"
-                  : "calendar days"
-            }
-          />
-          <ScheduleWorkbenchStat
-            label="Progress"
-            value={`${activity.percent_complete}%`}
-            sub={activity.percent_complete >= 100 ? "complete" : "remaining"}
-            tone={activity.percent_complete >= 100 ? "success" : "default"}
-          />
-          <ScheduleWorkbenchStat
-            label="Logic"
-            value={String(
-              activity.predecessor_activity_ids.length + activity.successor_activity_ids.length,
-            )}
-            sub="pred / succ ties"
-            tone={
-              activity.predecessor_activity_ids.length + activity.successor_activity_ids.length > 0
-                ? "success"
-                : "warning"
-            }
-          />
-        </div>
-
-        <div className="rounded-md border border-hairline bg-surface p-4">
-          <div className="mb-3 flex justify-end">
-            <Button
-              type="button"
-              variant={draft.is_milestone ? "default" : "outline"}
-              className="gap-2"
-              aria-pressed={draft.is_milestone}
-              onClick={() => setDraft(toggleMilestoneDraft(draft, !draft.is_milestone))}
-            >
-              <Diamond className="h-4 w-4" />
-              Milestone
-            </Button>
-          </div>
-          <div className="grid gap-3 lg:grid-cols-[130px_minmax(240px,1fr)_180px_150px_150px_110px]">
-            <LabeledField label="Activity ID">
-              <Input
-                value={draft.activity_id}
-                onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
-                className="h-10 font-semibold tabular"
-              />
-            </LabeledField>
-            <LabeledField label="Activity">
-              <Input
-                value={draft.name}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                className="h-10"
-              />
-            </LabeledField>
-            <LabeledField label="Division">
-              <Input
-                value={draft.division}
-                onChange={(e) => setDraft({ ...draft, division: e.target.value })}
-                className="h-10"
-              />
-            </LabeledField>
-            <LabeledField label="Start">
-              <Input
-                type="date"
-                value={draft.start_date}
-                onChange={(e) => setDraft(updateDraftStartDate(draft, e.target.value))}
-                className="h-10"
-              />
-            </LabeledField>
-            <LabeledField label="Finish">
-              <Input
-                type="date"
-                value={draft.finish_date}
-                onChange={(e) => setDraft(updateDraftFinishDate(draft, e.target.value))}
-                className="h-10"
-              />
-            </LabeledField>
-            <LabeledField label="% done">
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                value={draft.percent_complete}
-                onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
-                className="h-10 tabular"
-              />
-            </LabeledField>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <ScheduleWorkbenchStat
+              label="Activity ID"
+              value={activity.activity_id || "No ID"}
+              sub={activity.division || "General"}
+            />
+            <ScheduleWorkbenchStat
+              label="Duration"
+              value={isMilestone ? "Milestone" : duration == null ? "No dates" : String(duration)}
+              sub={
+                isMilestone
+                  ? "schedule point"
+                  : duration == null
+                    ? "start / finish needed"
+                    : "calendar days"
+              }
+            />
+            <ScheduleWorkbenchStat
+              label="Progress"
+              value={`${activity.percent_complete}%`}
+              sub={activity.percent_complete >= 100 ? "complete" : "remaining"}
+              tone={activity.percent_complete >= 100 ? "success" : "default"}
+            />
+            <ScheduleWorkbenchStat
+              label="Logic"
+              value={String(
+                activity.predecessor_activity_ids.length + activity.successor_activity_ids.length,
+              )}
+              sub="pred / succ ties"
+              tone={
+                activity.predecessor_activity_ids.length +
+                  activity.successor_activity_ids.length >
+                0
+                  ? "success"
+                  : "warning"
+              }
+            />
           </div>
 
-          <div className="mt-3 grid gap-3 lg:grid-cols-[200px_200px_minmax(240px,1fr)]">
-            <LabeledField label="Predecessors">
-              <Input
-                value={draft.predecessor_activity_ids}
-                onChange={(e) => setDraft({ ...draft, predecessor_activity_ids: e.target.value })}
-                placeholder="A-001, A-002"
-                className="h-10 tabular"
-              />
-            </LabeledField>
-            <LabeledField label="Successors">
-              <Input
-                value={draft.successor_activity_ids}
-                onChange={(e) => setDraft({ ...draft, successor_activity_ids: e.target.value })}
-                placeholder="A-030"
-                className="h-10 tabular"
-              />
-            </LabeledField>
-            <div className="rounded-md border border-hairline bg-card p-3">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Dependency readout
-              </div>
-              <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                <div>
-                  <div className="text-xs font-semibold text-muted-foreground">Predecessors</div>
-                  <ActivityIdPills
-                    ids={parseActivityIds(draft.predecessor_activity_ids)}
-                    emptyLabel="No predecessor logic"
-                  />
+          <div className="rounded-md border border-hairline bg-surface p-4">
+            <div className="mb-3 flex justify-end">
+              <Button
+                type="button"
+                variant={draft.is_milestone ? "default" : "outline"}
+                className="gap-2"
+                aria-pressed={draft.is_milestone}
+                onClick={() => setDraft(toggleMilestoneDraft(draft, !draft.is_milestone))}
+              >
+                <Diamond className="h-4 w-4" />
+                Milestone
+              </Button>
+            </div>
+            <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[130px_minmax(0,1.4fr)_minmax(0,1fr)_145px_145px_105px]">
+              <LabeledField label="Activity ID">
+                <Input
+                  value={draft.activity_id}
+                  onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
+                  className="h-10 min-w-0 font-semibold tabular"
+                />
+              </LabeledField>
+              <LabeledField label="Activity">
+                <Input
+                  value={draft.name}
+                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                  className="h-10 min-w-0"
+                />
+              </LabeledField>
+              <LabeledField label="Division">
+                <Input
+                  value={draft.division}
+                  onChange={(e) => setDraft({ ...draft, division: e.target.value })}
+                  className="h-10 min-w-0"
+                />
+              </LabeledField>
+              <LabeledField label="Start">
+                <Input
+                  type="date"
+                  value={draft.start_date}
+                  onChange={(e) => setDraft(updateDraftStartDate(draft, e.target.value))}
+                  className="h-10 min-w-0"
+                />
+              </LabeledField>
+              <LabeledField label="Finish">
+                <Input
+                  type="date"
+                  value={draft.finish_date}
+                  onChange={(e) => setDraft(updateDraftFinishDate(draft, e.target.value))}
+                  className="h-10 min-w-0"
+                />
+              </LabeledField>
+              <LabeledField label="% done">
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={draft.percent_complete}
+                  onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
+                  className="h-10 min-w-0 tabular"
+                />
+              </LabeledField>
+            </div>
+
+            <div className="mt-3 grid min-w-0 gap-3 lg:grid-cols-[minmax(0,200px)_minmax(0,200px)_minmax(0,1fr)]">
+              <LabeledField label="Predecessors">
+                <Input
+                  value={draft.predecessor_activity_ids}
+                  onChange={(e) =>
+                    setDraft({ ...draft, predecessor_activity_ids: e.target.value })
+                  }
+                  placeholder="A-001, A-002"
+                  className="h-10 min-w-0 tabular"
+                />
+              </LabeledField>
+              <LabeledField label="Successors">
+                <Input
+                  value={draft.successor_activity_ids}
+                  onChange={(e) =>
+                    setDraft({ ...draft, successor_activity_ids: e.target.value })
+                  }
+                  placeholder="A-030"
+                  className="h-10 min-w-0 tabular"
+                />
+              </LabeledField>
+              <div className="min-w-0 rounded-md border border-hairline bg-card p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  Dependency readout
                 </div>
-                <div>
-                  <div className="text-xs font-semibold text-muted-foreground">Successors</div>
-                  <ActivityIdPills
-                    ids={parseActivityIds(draft.successor_activity_ids)}
-                    emptyLabel="No successor logic"
-                  />
+                <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-muted-foreground">Predecessors</div>
+                    <ActivityIdPills
+                      ids={parseActivityIds(draft.predecessor_activity_ids)}
+                      emptyLabel="No predecessor logic"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-muted-foreground">Successors</div>
+                    <ActivityIdPills
+                      ids={parseActivityIds(draft.successor_activity_ids)}
+                      emptyLabel="No successor logic"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <div className="mt-3">
-            <LabeledField label="Notes / constraint">
-              <Textarea
-                value={draft.notes}
-                onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
-                placeholder="Sequencing constraint, procurement issue, field note, or CPM update narrative."
-                className="min-h-28 resize-y bg-card"
-              />
-            </LabeledField>
+            <div className="mt-3">
+              <LabeledField label="Notes / constraint">
+                <Textarea
+                  value={draft.notes}
+                  onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+                  placeholder="Sequencing constraint, procurement issue, field note, or CPM update narrative."
+                  className="min-h-28 min-w-0 resize-y bg-card"
+                />
+              </LabeledField>
+            </div>
           </div>
         </div>
 
-        <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
+        <DialogFooter className="gap-2 border-t border-hairline px-4 py-4 sm:justify-between sm:space-x-0 sm:px-6">
           <Button type="button" variant="outline" className="gap-2 text-danger" onClick={onDelete}>
             <Trash2 className="h-4 w-4" />
             Delete activity
