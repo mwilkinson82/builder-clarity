@@ -31,6 +31,7 @@ import {
   Pencil,
   CheckCircle2,
   Printer,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -38,9 +39,6 @@ import {
   createMilestone,
   updateMilestone,
   deleteMilestone,
-  createScheduleActivity,
-  updateScheduleActivity,
-  deleteScheduleActivity,
   createScheduleRisk,
   updateScheduleRisk,
   deleteScheduleRisk,
@@ -123,7 +121,7 @@ const RISK_META: Record<
   },
 };
 
-type ActivityCreateInput = { name: string } & Partial<
+export type ActivityCreateInput = { name: string } & Partial<
   Pick<
     ScheduleActivityRow,
     | "activity_id"
@@ -152,9 +150,6 @@ export function ScheduleRisk({
   const createMs = useServerFn(createMilestone);
   const updateMs = useServerFn(updateMilestone);
   const deleteMs = useServerFn(deleteMilestone);
-  const createActivity = useServerFn(createScheduleActivity);
-  const updateActivity = useServerFn(updateScheduleActivity);
-  const deleteActivity = useServerFn(deleteScheduleActivity);
   const createRisk = useServerFn(createScheduleRisk);
   const updateRisk = useServerFn(updateScheduleRisk);
   const deleteRisk = useServerFn(deleteScheduleRisk);
@@ -219,40 +214,6 @@ export function ScheduleRisk({
   const msDelete = useScheduleMutation<{ id: string }>(deleteMs, {
     successTitle: "Milestone deleted",
     errorTitle: "Milestone did not delete",
-  });
-  const activityCreate = useScheduleMutation<{ projectId: string } & ActivityCreateInput>(
-    createActivity as never,
-    {
-      successTitle: "Activity added",
-      successDescription: "The CPM activity is now in the schedule table and Gantt.",
-      errorTitle: "Activity did not save",
-    },
-  );
-  const activitySeed = useMutation({
-    mutationFn: async (items: ActivityCreateInput[]) => {
-      for (const item of items) {
-        await createActivity({ data: { projectId, ...item } });
-      }
-    },
-    onSuccess: async (_result, items) => {
-      await invalidateSchedule();
-      toast.success("CPM rows created", {
-        description: `${items.length} milestone ${items.length === 1 ? "row" : "rows"} added to the schedule workbench.`,
-      });
-    },
-    onError: (error) => {
-      toast.error("CPM rows did not save", {
-        description: error instanceof Error ? error.message : "Refresh and try again.",
-      });
-    },
-  });
-  const activityUpdate = useScheduleMutation<{ id: string; patch: Partial<ScheduleActivityRow> }>(
-    updateActivity as never,
-    { errorTitle: "Activity did not update" },
-  );
-  const activityDelete = useScheduleMutation<{ id: string }>(deleteActivity, {
-    successTitle: "Activity deleted",
-    errorTitle: "Activity did not delete",
   });
   const rCreate = useScheduleMutation<{ projectId: string; kind: ScheduleRiskKind; title: string }>(
     createRisk,
@@ -470,11 +431,6 @@ export function ScheduleRisk({
         activities={activities}
         milestoneView={milestoneView}
         onMilestoneViewChange={setMilestoneView}
-        onAddActivity={(activity) => activityCreate.mutate({ projectId, ...activity })}
-        onSeedActivities={(items) => activitySeed.mutate(items)}
-        isSeedingActivities={activitySeed.isPending}
-        onPatchActivity={(id, patch) => activityUpdate.mutate({ id, patch })}
-        onDeleteActivity={(id) => activityDelete.mutate({ id })}
       />
 
       <ScheduleUpdateLedger updates={updates} milestoneUpdates={milestoneUpdates} />
@@ -667,11 +623,6 @@ function ScheduleSnapshotTimeline({
   activities,
   milestoneView,
   onMilestoneViewChange,
-  onAddActivity,
-  onSeedActivities,
-  isSeedingActivities,
-  onPatchActivity,
-  onDeleteActivity,
 }: {
   project: ProjectRow;
   updates: ScheduleUpdateRow[];
@@ -679,11 +630,6 @@ function ScheduleSnapshotTimeline({
   activities: ScheduleActivityRow[];
   milestoneView: MilestoneView;
   onMilestoneViewChange: (value: MilestoneView) => void;
-  onAddActivity: (activity: ActivityCreateInput) => void;
-  onSeedActivities: (activities: ActivityCreateInput[]) => void;
-  isSeedingActivities: boolean;
-  onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
-  onDeleteActivity: (id: string) => void;
 }) {
   const latestUpdate = updates[0] ?? null;
   const visibleMilestones = filterMilestones(milestones, milestoneView);
@@ -800,16 +746,11 @@ function ScheduleSnapshotTimeline({
           </div>
         </div>
 
-        <CpmActivityPlanner
+        <ScheduleWorkspaceLaunch
           activities={activities}
           milestones={milestones}
           project={project}
           latestDataDate={latestUpdate?.data_date ?? null}
-          onAddActivity={onAddActivity}
-          onSeedActivities={onSeedActivities}
-          isSeedingActivities={isSeedingActivities}
-          onPatchActivity={onPatchActivity}
-          onDeleteActivity={onDeleteActivity}
         />
 
         <div className="rounded-md border border-hairline bg-surface">
@@ -893,6 +834,74 @@ function ScheduleSnapshotTimeline({
   );
 }
 
+function ScheduleWorkspaceLaunch({
+  project,
+  activities,
+  milestones,
+  latestDataDate,
+}: {
+  project: ProjectRow;
+  activities: ScheduleActivityRow[];
+  milestones: MilestoneRow[];
+  latestDataDate: string | null;
+}) {
+  const completedActivities = activities.filter((activity) => activity.percent_complete >= 100).length;
+  const activitiesWithLogic = activities.filter(
+    (activity) =>
+      activity.predecessor_activity_ids.length > 0 || activity.successor_activity_ids.length > 0,
+  ).length;
+  const activeMilestones = milestones.filter((milestone) => milestone.status !== "complete").length;
+
+  return (
+    <div className="rounded-md border border-hairline bg-surface p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Schedule workspace
+          </div>
+          <h4 className="mt-1 font-serif text-2xl text-foreground">
+            Full activity table and Gantt
+          </h4>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Build and manage the project construction schedule in a dedicated full-width workspace.
+            This IOR page keeps the schedule signal, baseline variance, and milestone rollup clean.
+          </p>
+        </div>
+        <Button asChild className="gap-2 print:hidden">
+          <a href={`/projects/${project.id}/schedule`} target="_blank" rel="noreferrer">
+            <ExternalLink className="h-4 w-4" />
+            Open full schedule workspace
+          </a>
+        </Button>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <ScheduleWorkbenchStat
+          label="Activities"
+          value={String(activities.length)}
+          sub={`${completedActivities} complete`}
+          tone={completedActivities > 0 ? "success" : "default"}
+        />
+        <ScheduleWorkbenchStat
+          label="Logic ties"
+          value={String(activitiesWithLogic)}
+          sub="pred / succ"
+          tone={activitiesWithLogic > 0 ? "success" : "warning"}
+        />
+        <ScheduleWorkbenchStat
+          label="Milestones"
+          value={String(activeMilestones)}
+          sub={`${milestones.length} total`}
+        />
+        <ScheduleWorkbenchStat
+          label="Latest data date"
+          value={shortDate(latestDataDate)}
+          sub="current snapshot"
+        />
+      </div>
+    </div>
+  );
+}
+
 type ActivityDraft = {
   activity_id: string;
   name: string;
@@ -929,7 +938,7 @@ const activityDraftFromRow = (activity: ScheduleActivityRow): ActivityDraft => (
   notes: activity.notes ?? "",
 });
 
-function CpmActivityPlanner({
+export function CpmActivityPlanner({
   activities,
   milestones,
   project,
@@ -1208,7 +1217,7 @@ function CpmActivityPlanner({
         </div>
       )}
 
-      <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,0.98fr)_minmax(360px,1.02fr)]">
+      <div className="mt-5 grid gap-4 2xl:grid-cols-[minmax(760px,1.05fr)_minmax(680px,0.95fr)]">
         <ActivityRegister
           grouped={grouped}
           onOpenActivity={(activity) => setSelectedActivityId(activity.id)}

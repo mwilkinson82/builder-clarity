@@ -27,6 +27,7 @@ import { Route as LovableEmailAuthPreviewRouteImport } from './routes/lovable/em
 import { Route as ApiStripeConnectAccountLinkRouteImport } from './routes/api/stripe/connect/account-link'
 import { Route as ApiStripeCheckoutSubscriptionRouteImport } from './routes/api/stripe/checkout/subscription'
 import { Route as ApiStripeCheckoutInvoiceRouteImport } from './routes/api/stripe/checkout/invoice'
+import { Route as AuthenticatedProjectsProjectIdScheduleRouteImport } from './routes/_authenticated/projects.$projectId.schedule'
 import { Route as AuthenticatedClientProjectsProjectIdRouteImport } from './routes/_authenticated/client.projects.$projectId'
 
 const AuthRoute = AuthRouteImport.update({
@@ -125,6 +126,12 @@ const ApiStripeCheckoutInvoiceRoute =
     path: '/api/stripe/checkout/invoice',
     getParentRoute: () => rootRouteImport,
   } as any)
+const AuthenticatedProjectsProjectIdScheduleRoute =
+  AuthenticatedProjectsProjectIdScheduleRouteImport.update({
+    id: '/schedule',
+    path: '/schedule',
+    getParentRoute: () => AuthenticatedProjectsProjectIdRoute,
+  } as any)
 const AuthenticatedClientProjectsProjectIdRoute =
   AuthenticatedClientProjectsProjectIdRouteImport.update({
     id: '/client/projects/$projectId',
@@ -138,11 +145,12 @@ export interface FileRoutesByFullPath {
   '/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
-  '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
+  '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
+  '/projects/$projectId/schedule': typeof AuthenticatedProjectsProjectIdScheduleRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
@@ -158,11 +166,12 @@ export interface FileRoutesByTo {
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/': typeof AuthenticatedIndexRoute
-  '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
+  '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
+  '/projects/$projectId/schedule': typeof AuthenticatedProjectsProjectIdScheduleRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
@@ -180,11 +189,12 @@ export interface FileRoutesById {
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
-  '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRoute
+  '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/_authenticated/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
+  '/_authenticated/projects/$projectId/schedule': typeof AuthenticatedProjectsProjectIdScheduleRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
@@ -207,6 +217,7 @@ export interface FileRouteTypes {
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
+    | '/projects/$projectId/schedule'
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
@@ -227,6 +238,7 @@ export interface FileRouteTypes {
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
+    | '/projects/$projectId/schedule'
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
@@ -248,6 +260,7 @@ export interface FileRouteTypes {
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/_authenticated/client/projects/$projectId'
+    | '/_authenticated/projects/$projectId/schedule'
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
@@ -403,6 +416,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiStripeCheckoutInvoiceRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/projects/$projectId/schedule': {
+      id: '/_authenticated/projects/$projectId/schedule'
+      path: '/schedule'
+      fullPath: '/projects/$projectId/schedule'
+      preLoaderRoute: typeof AuthenticatedProjectsProjectIdScheduleRouteImport
+      parentRoute: typeof AuthenticatedProjectsProjectIdRoute
+    }
     '/_authenticated/client/projects/$projectId': {
       id: '/_authenticated/client/projects/$projectId'
       path: '/client/projects/$projectId'
@@ -413,17 +433,33 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedProjectsProjectIdRouteChildren {
+  AuthenticatedProjectsProjectIdScheduleRoute: typeof AuthenticatedProjectsProjectIdScheduleRoute
+}
+
+const AuthenticatedProjectsProjectIdRouteChildren: AuthenticatedProjectsProjectIdRouteChildren =
+  {
+    AuthenticatedProjectsProjectIdScheduleRoute:
+      AuthenticatedProjectsProjectIdScheduleRoute,
+  }
+
+const AuthenticatedProjectsProjectIdRouteWithChildren =
+  AuthenticatedProjectsProjectIdRoute._addFileChildren(
+    AuthenticatedProjectsProjectIdRouteChildren,
+  )
+
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
-  AuthenticatedProjectsProjectIdRoute: typeof AuthenticatedProjectsProjectIdRoute
+  AuthenticatedProjectsProjectIdRoute: typeof AuthenticatedProjectsProjectIdRouteWithChildren
   AuthenticatedClientProjectsProjectIdRoute: typeof AuthenticatedClientProjectsProjectIdRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedTeamRoute: AuthenticatedTeamRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
-  AuthenticatedProjectsProjectIdRoute: AuthenticatedProjectsProjectIdRoute,
+  AuthenticatedProjectsProjectIdRoute:
+    AuthenticatedProjectsProjectIdRouteWithChildren,
   AuthenticatedClientProjectsProjectIdRoute:
     AuthenticatedClientProjectsProjectIdRoute,
 }
@@ -460,3 +496,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
