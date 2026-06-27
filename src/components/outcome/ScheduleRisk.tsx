@@ -1208,22 +1208,23 @@ function CpmActivityPlanner({
         </div>
       )}
 
-      <ActivityRegister
-        grouped={grouped}
-        onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
-        onPatchActivity={onPatchActivity}
-        onDeleteActivity={(id) => {
-          if (selectedActivityId === id) setSelectedActivityId(null);
-          onDeleteActivity(id);
-        }}
-      />
+      <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,0.98fr)_minmax(360px,1.02fr)]">
+        <ActivityRegister
+          grouped={grouped}
+          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
+          onDeleteActivity={(id) => {
+            if (selectedActivityId === id) setSelectedActivityId(null);
+            onDeleteActivity(id);
+          }}
+        />
 
-      <ActivityGanttPanel
-        grouped={grouped}
-        bounds={bounds}
-        dataDatePosition={timelinePosition(latestDataDate, bounds)}
-        onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
-      />
+        <ActivityGanttPanel
+          grouped={grouped}
+          bounds={bounds}
+          dataDatePosition={timelinePosition(latestDataDate, bounds)}
+          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
+        />
+      </div>
 
       {selectedActivity && (
         <ActivityDetailDialog
@@ -1279,24 +1280,33 @@ function LabeledField({ label, children }: { label: string; children: ReactNode 
 function ActivityRegister({
   grouped,
   onOpenActivity,
-  onPatchActivity,
   onDeleteActivity,
 }: {
   grouped: Array<{ division: string; activities: ScheduleActivityRow[] }>;
   onOpenActivity: (activity: ScheduleActivityRow) => void;
-  onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
   onDeleteActivity: (id: string) => void;
 }) {
+  const totalActivities = grouped.reduce((sum, group) => sum + group.activities.length, 0);
   return (
-    <div className="mt-5 overflow-hidden rounded-md border border-hairline bg-card">
-      <div className="grid grid-cols-[100px_minmax(220px,1fr)_130px_130px_90px_130px_130px_84px] gap-3 border-b border-hairline bg-muted/55 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground max-xl:hidden">
+    <div className="min-w-0 overflow-hidden rounded-md border border-hairline bg-card">
+      <div className="flex flex-col gap-2 border-b border-hairline px-4 py-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Activity register
+          </div>
+          <div className="mt-1 font-serif text-xl text-foreground">CPM activity table</div>
+        </div>
+        <div className="text-sm font-semibold tabular text-muted-foreground">
+          {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
+        </div>
+      </div>
+      <div className="hidden grid-cols-[64px_minmax(0,1.35fr)_104px_116px_58px_76px_52px] gap-3 border-b border-hairline bg-muted/55 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground lg:grid">
         <div>ID</div>
         <div>Activity</div>
         <div>Division</div>
         <div>Dates</div>
         <div>% done</div>
-        <div>Pred.</div>
-        <div>Succ.</div>
+        <div>Logic</div>
         <div />
       </div>
       {grouped.length === 0 ? (
@@ -1313,7 +1323,6 @@ function ActivityRegister({
             key={group.division}
             group={group}
             onOpenActivity={onOpenActivity}
-            onPatchActivity={onPatchActivity}
             onDeleteActivity={onDeleteActivity}
           />
         ))
@@ -1325,12 +1334,10 @@ function ActivityRegister({
 function ActivityRegisterGroup({
   group,
   onOpenActivity,
-  onPatchActivity,
   onDeleteActivity,
 }: {
   group: { division: string; activities: ScheduleActivityRow[] };
   onOpenActivity: (activity: ScheduleActivityRow) => void;
-  onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
   onDeleteActivity: (id: string) => void;
 }) {
   return (
@@ -1343,7 +1350,6 @@ function ActivityRegisterGroup({
           key={activity.id}
           activity={activity}
           onOpen={() => onOpenActivity(activity)}
-          onPatch={(patch) => onPatchActivity(activity.id, patch)}
           onDelete={() => onDeleteActivity(activity.id)}
         />
       ))}
@@ -1354,137 +1360,93 @@ function ActivityRegisterGroup({
 function ActivityRegisterRow({
   activity,
   onOpen,
-  onPatch,
   onDelete,
 }: {
   activity: ScheduleActivityRow;
   onOpen: () => void;
-  onPatch: (patch: Partial<ScheduleActivityRow>) => void;
   onDelete: () => void;
 }) {
-  const commitString = (key: keyof ScheduleActivityRow, value: string) => {
-    if (String(activity[key] ?? "") !== value)
-      onPatch({ [key]: value } as Partial<ScheduleActivityRow>);
-  };
-  const commitDate = (key: "start_date" | "finish_date", value: string) => {
-    const next = value || null;
-    if ((activity[key] ?? null) !== next) onPatch({ [key]: next });
-  };
-  const commitActivityIds = (
-    key: "predecessor_activity_ids" | "successor_activity_ids",
-    value: string,
-  ) => {
-    const next = parseActivityIds(value);
-    if (formatActivityIds(activity[key]) !== formatActivityIds(next)) onPatch({ [key]: next });
-  };
+  const duration = getActivityDurationDays(activity);
+  const logicCount =
+    activity.predecessor_activity_ids.length + activity.successor_activity_ids.length;
+  const percent = Math.max(0, Math.min(100, activity.percent_complete));
 
   return (
-    <div className="border-b border-hairline px-4 py-3 last:border-b-0">
-      <div className="grid gap-3 xl:grid-cols-[100px_minmax(220px,1fr)_130px_130px_90px_130px_130px_84px] xl:items-start">
-        <LabeledField label="ID">
-          <Input
-            defaultValue={activity.activity_id}
-            onBlur={(e) => commitString("activity_id", e.target.value.trim())}
-            className="h-10 font-semibold tabular"
-          />
-        </LabeledField>
-        <LabeledField label="Activity">
-          <Input
-            defaultValue={activity.name}
-            onBlur={(e) => commitString("name", e.target.value.trim())}
-            className="h-10"
-          />
-        </LabeledField>
-        <LabeledField label="Division">
-          <Input
-            defaultValue={activity.division}
-            onBlur={(e) => commitString("division", e.target.value.trim() || "General")}
-            className="h-10"
-          />
-        </LabeledField>
-        <div className="grid grid-cols-2 gap-2 xl:block xl:space-y-2">
-          <LabeledField label="Start">
-            <Input
-              type="date"
-              defaultValue={activity.start_date ?? ""}
-              onBlur={(e) => commitDate("start_date", e.target.value)}
-              className="h-10"
-            />
-          </LabeledField>
-          <LabeledField label="Finish">
-            <Input
-              type="date"
-              defaultValue={activity.finish_date ?? ""}
-              onBlur={(e) => commitDate("finish_date", e.target.value)}
-              className="h-10"
-            />
-          </LabeledField>
+    <div
+      role="button"
+      tabIndex={0}
+      className="grid cursor-pointer gap-3 border-b border-hairline px-4 py-3 transition-colors last:border-b-0 hover:bg-muted/45 lg:grid-cols-[64px_minmax(0,1.35fr)_104px_116px_58px_76px_52px] lg:items-center"
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <div className="font-semibold tabular text-foreground">{activity.activity_id || "No ID"}</div>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-semibold text-foreground">{activity.name}</div>
+        {activity.notes && (
+          <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">
+            {activity.notes}
+          </div>
+        )}
+      </div>
+      <div className="truncate text-xs font-semibold text-muted-foreground">
+        {activity.division || "General"}
+      </div>
+      <div className="text-xs text-muted-foreground">
+        <div className="font-semibold tabular text-foreground">
+          {shortDate(activity.start_date)} → {shortDate(activity.finish_date)}
         </div>
-        <LabeledField label="% done">
-          <Input
-            type="number"
-            min={0}
-            max={100}
-            defaultValue={activity.percent_complete}
-            onBlur={(e) => {
-              const next = parsePercent(e.target.value);
-              if (next !== activity.percent_complete) onPatch({ percent_complete: next });
-            }}
-            className="h-10 tabular"
-          />
-        </LabeledField>
-        <LabeledField label="Pred.">
-          <Input
-            defaultValue={formatActivityIds(activity.predecessor_activity_ids)}
-            onBlur={(e) => commitActivityIds("predecessor_activity_ids", e.target.value)}
-            placeholder="A-001"
-            className="h-10 tabular"
-          />
-        </LabeledField>
-        <LabeledField label="Succ.">
-          <Input
-            defaultValue={formatActivityIds(activity.successor_activity_ids)}
-            onBlur={(e) => commitActivityIds("successor_activity_ids", e.target.value)}
-            placeholder="A-030"
-            className="h-10 tabular"
-          />
-        </LabeledField>
-        <div className="mt-5 flex justify-end gap-1 xl:mt-4">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 text-muted-foreground hover:text-foreground"
-            onClick={onOpen}
-            aria-label={`Open activity ${activity.activity_id || activity.name}`}
-          >
-            <Pencil className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 text-muted-foreground hover:text-danger"
-            onClick={onDelete}
-            aria-label={`Delete activity ${activity.activity_id || activity.name}`}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+        <div className="mt-0.5 tabular">
+          {duration == null ? "No duration" : `${duration} day${duration === 1 ? "" : "s"}`}
         </div>
       </div>
-      <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
-        <div className="rounded-md border border-hairline bg-surface p-3">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Notes / constraint
-          </div>
-          <Textarea
-            defaultValue={activity.notes ?? ""}
-            onBlur={(e) => commitString("notes", e.target.value.trim())}
-            placeholder="Sequencing constraint, crew assumption, schedule risk, or field note."
-            className="min-h-16 resize-y bg-card"
+      <div className="text-sm font-semibold tabular text-foreground">
+        <div>{percent}%</div>
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            className={`h-full rounded-full ${percent >= 100 ? "bg-success" : "bg-accent"}`}
+            style={{ width: `${percent}%` }}
           />
         </div>
-        <ActivityLogicSummary activity={activity} />
+      </div>
+      <div className="min-w-0 text-xs text-muted-foreground">
+        <div className="font-semibold tabular text-foreground">{logicCount} ties</div>
+        <div className="mt-1 hidden flex-wrap gap-1 xl:flex">
+          <ActivityIdPills ids={activity.predecessor_activity_ids.slice(0, 2)} emptyLabel="" />
+          <ActivityIdPills ids={activity.successor_activity_ids.slice(0, 2)} emptyLabel="" />
+        </div>
+      </div>
+      <div className="flex justify-end gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen();
+          }}
+          aria-label={`Open activity ${activity.activity_id || activity.name}`}
+        >
+          <Pencil className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-danger"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          aria-label={`Delete activity ${activity.activity_id || activity.name}`}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
       </div>
     </div>
   );
@@ -1525,6 +1487,7 @@ function ActivityLogicSummary({ activity }: { activity: ScheduleActivityRow }) {
 
 function ActivityIdPills({ ids, emptyLabel }: { ids: string[]; emptyLabel: string }) {
   if (ids.length === 0) {
+    if (!emptyLabel) return null;
     return <div className="mt-1 text-sm font-semibold text-muted-foreground">{emptyLabel}</div>;
   }
   return (
@@ -1553,7 +1516,7 @@ function ActivityGanttPanel({
   onOpenActivity: (activity: ScheduleActivityRow) => void;
 }) {
   return (
-    <div className="mt-5 overflow-hidden rounded-md border border-hairline bg-card">
+    <div className="min-w-0 overflow-hidden rounded-md border border-hairline bg-card">
       <div className="flex flex-col gap-3 border-b border-hairline px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1581,7 +1544,7 @@ function ActivityGanttPanel({
           percent-complete overlay, and the latest data-date marker.
         </div>
       ) : (
-        <div className="max-h-[620px] overflow-y-auto">
+        <div className="max-h-[760px] overflow-y-auto">
           {grouped.map((group) => (
             <div key={group.division}>
               <div className="border-b border-hairline bg-muted/40 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1633,7 +1596,7 @@ function ActivityGanttRow({
   return (
     <button
       type="button"
-      className="grid w-full gap-3 border-b border-hairline px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/40 lg:grid-cols-[260px_minmax(0,1fr)_88px] lg:items-center"
+      className="grid w-full gap-3 border-b border-hairline px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/40 lg:grid-cols-[172px_minmax(150px,1fr)_58px] lg:items-center"
       onClick={onOpen}
     >
       <div className="min-w-0">
