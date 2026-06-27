@@ -1217,23 +1217,16 @@ export function CpmActivityPlanner({
         </div>
       )}
 
-      <div className="mt-5 grid gap-4 2xl:grid-cols-[minmax(760px,1.05fr)_minmax(680px,0.95fr)]">
-        <ActivityRegister
-          grouped={grouped}
-          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
-          onDeleteActivity={(id) => {
-            if (selectedActivityId === id) setSelectedActivityId(null);
-            onDeleteActivity(id);
-          }}
-        />
-
-        <ActivityGanttPanel
-          grouped={grouped}
-          bounds={bounds}
-          dataDatePosition={timelinePosition(latestDataDate, bounds)}
-          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
-        />
-      </div>
+      <ActivityScheduleMatrix
+        grouped={grouped}
+        bounds={bounds}
+        dataDatePosition={timelinePosition(latestDataDate, bounds)}
+        onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
+        onDeleteActivity={(id) => {
+          if (selectedActivityId === id) setSelectedActivityId(null);
+          onDeleteActivity(id);
+        }}
+      />
 
       {selectedActivity && (
         <ActivityDetailDialog
@@ -1286,38 +1279,75 @@ function LabeledField({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-function ActivityRegister({
+function ActivityScheduleMatrix({
   grouped,
+  bounds,
+  dataDatePosition,
   onOpenActivity,
   onDeleteActivity,
 }: {
   grouped: Array<{ division: string; activities: ScheduleActivityRow[] }>;
+  bounds: TimelineBounds;
+  dataDatePosition: number | null;
   onOpenActivity: (activity: ScheduleActivityRow) => void;
   onDeleteActivity: (id: string) => void;
 }) {
   const totalActivities = grouped.reduce((sum, group) => sum + group.activities.length, 0);
+
   return (
-    <div className="min-w-0 overflow-hidden rounded-md border border-hairline bg-card">
-      <div className="flex flex-col gap-2 border-b border-hairline px-4 py-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Activity register
+    <div className="mt-5 min-w-0 overflow-hidden rounded-md border border-hairline bg-card">
+      <div className="grid border-b border-hairline 2xl:grid-cols-[minmax(760px,1.05fr)_minmax(680px,0.95fr)]">
+        <div className="flex flex-col gap-2 border-b border-hairline px-4 py-4 sm:flex-row sm:items-end sm:justify-between 2xl:border-b-0 2xl:border-r 2xl:border-hairline">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Activity register
+            </div>
+            <div className="mt-1 font-serif text-xl text-foreground">CPM activity table</div>
           </div>
-          <div className="mt-1 font-serif text-xl text-foreground">CPM activity table</div>
+          <div className="text-sm font-semibold tabular text-muted-foreground">
+            {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
+          </div>
         </div>
-        <div className="text-sm font-semibold tabular text-muted-foreground">
-          {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
+        <div className="flex flex-col gap-3 px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Gantt chart
+            </div>
+            <div className="mt-1 font-serif text-xl text-foreground">Schedule timeline</div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              {shortDate(bounds.startLabel)} to {shortDate(bounds.endLabel)}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-4 text-[12px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-5 rounded-full bg-accent/70" />
+              Duration
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-5 rounded-full bg-success" />
+              Complete
+            </span>
+          </div>
         </div>
       </div>
-      <div className="hidden grid-cols-[64px_minmax(0,1.35fr)_104px_116px_58px_76px_52px] gap-3 border-b border-hairline bg-muted/55 px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground lg:grid">
-        <div>ID</div>
-        <div>Activity</div>
-        <div>Division</div>
-        <div>Dates</div>
-        <div>% done</div>
-        <div>Logic</div>
-        <div />
+
+      <div className="hidden border-b border-hairline bg-muted/55 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground 2xl:grid 2xl:grid-cols-[minmax(760px,1.05fr)_minmax(680px,0.95fr)]">
+        <div className="grid grid-cols-[64px_minmax(0,1.35fr)_104px_116px_58px_76px_52px] gap-3 border-r border-hairline px-4 py-3">
+          <div>ID</div>
+          <div>Activity</div>
+          <div>Division</div>
+          <div>Dates</div>
+          <div>% done</div>
+          <div>Logic</div>
+          <div />
+        </div>
+        <div className="grid grid-cols-[172px_minmax(150px,1fr)_58px] gap-3 px-4 py-3">
+          <div>Activity</div>
+          <div>Timeline</div>
+          <div className="text-right">Done</div>
+        </div>
       </div>
+
       {grouped.length === 0 ? (
         <div className="px-6 py-10 text-center">
           <div className="font-serif text-xl text-foreground">No CPM activities yet.</div>
@@ -1327,41 +1357,42 @@ function ActivityRegister({
           </p>
         </div>
       ) : (
-        grouped.map((group) => (
-          <ActivityRegisterGroup
-            key={group.division}
-            group={group}
-            onOpenActivity={onOpenActivity}
-            onDeleteActivity={onDeleteActivity}
-          />
-        ))
+        <div className="max-h-[clamp(420px,calc(100vh-310px),760px)] overflow-y-auto overscroll-contain">
+          {grouped.map((group) => (
+            <div key={group.division}>
+              <div className="grid border-b border-hairline bg-muted/35 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground 2xl:grid-cols-[minmax(760px,1.05fr)_minmax(680px,0.95fr)]">
+                <div className="px-4 py-2 2xl:border-r 2xl:border-hairline">
+                  {group.division} · {group.activities.length} activities
+                </div>
+                <div className="hidden px-4 py-2 2xl:block">{group.division}</div>
+              </div>
+              {group.activities.map((activity) => (
+                <div
+                  key={activity.id}
+                  className="grid border-b border-hairline last:border-b-0 2xl:grid-cols-[minmax(760px,1.05fr)_minmax(680px,0.95fr)]"
+                >
+                  <ActivityRegisterRow
+                    activity={activity}
+                    onOpen={() => onOpenActivity(activity)}
+                    onDelete={() => onDeleteActivity(activity.id)}
+                  />
+                  <ActivityGanttRow
+                    activity={activity}
+                    bounds={bounds}
+                    dataDatePosition={dataDatePosition}
+                    onOpen={() => onOpenActivity(activity)}
+                  />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       )}
-    </div>
-  );
-}
 
-function ActivityRegisterGroup({
-  group,
-  onOpenActivity,
-  onDeleteActivity,
-}: {
-  group: { division: string; activities: ScheduleActivityRow[] };
-  onOpenActivity: (activity: ScheduleActivityRow) => void;
-  onDeleteActivity: (id: string) => void;
-}) {
-  return (
-    <div>
-      <div className="border-b border-hairline bg-muted/35 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-        {group.division} · {group.activities.length} activities
+      <div className="flex justify-between border-t border-hairline px-4 py-2 text-[11px] text-muted-foreground">
+        <span>{shortDate(bounds.startLabel)}</span>
+        <span>{shortDate(bounds.endLabel)}</span>
       </div>
-      {group.activities.map((activity) => (
-        <ActivityRegisterRow
-          key={activity.id}
-          activity={activity}
-          onOpen={() => onOpenActivity(activity)}
-          onDelete={() => onDeleteActivity(activity.id)}
-        />
-      ))}
     </div>
   );
 }
@@ -1384,7 +1415,7 @@ function ActivityRegisterRow({
     <div
       role="button"
       tabIndex={0}
-      className="grid cursor-pointer gap-3 border-b border-hairline px-4 py-3 transition-colors last:border-b-0 hover:bg-muted/45 lg:grid-cols-[64px_minmax(0,1.35fr)_104px_116px_58px_76px_52px] lg:items-center"
+      className="grid h-full min-h-[92px] cursor-pointer gap-3 px-4 py-3 transition-colors hover:bg-muted/45 lg:grid-cols-[64px_minmax(0,1.35fr)_104px_116px_58px_76px_52px] lg:items-center 2xl:border-r 2xl:border-hairline"
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -1513,73 +1544,6 @@ function ActivityIdPills({ ids, emptyLabel }: { ids: string[]; emptyLabel: strin
   );
 }
 
-function ActivityGanttPanel({
-  grouped,
-  bounds,
-  dataDatePosition,
-  onOpenActivity,
-}: {
-  grouped: Array<{ division: string; activities: ScheduleActivityRow[] }>;
-  bounds: TimelineBounds;
-  dataDatePosition: number | null;
-  onOpenActivity: (activity: ScheduleActivityRow) => void;
-}) {
-  return (
-    <div className="min-w-0 overflow-hidden rounded-md border border-hairline bg-card">
-      <div className="flex flex-col gap-3 border-b border-hairline px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Gantt chart
-          </div>
-          <div className="mt-1 font-serif text-xl text-foreground">Schedule timeline</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            {shortDate(bounds.startLabel)} to {shortDate(bounds.endLabel)}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-4 text-[12px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1">
-            <span className="h-2 w-5 rounded-full bg-accent/70" />
-            Duration
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="h-2 w-5 rounded-full bg-success" />
-            Complete
-          </span>
-        </div>
-      </div>
-      {grouped.length === 0 ? (
-        <div className="px-6 py-10 text-center text-sm text-muted-foreground">
-          Add activities to draw the Gantt chart. The chart will show each activity duration,
-          percent-complete overlay, and the latest data-date marker.
-        </div>
-      ) : (
-        <div className="max-h-[760px] overflow-y-auto">
-          {grouped.map((group) => (
-            <div key={group.division}>
-              <div className="border-b border-hairline bg-muted/40 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                {group.division}
-              </div>
-              {group.activities.map((activity) => (
-                <ActivityGanttRow
-                  key={activity.id}
-                  activity={activity}
-                  bounds={bounds}
-                  dataDatePosition={dataDatePosition}
-                  onOpen={() => onOpenActivity(activity)}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="flex justify-between border-t border-hairline px-4 py-2 text-[11px] text-muted-foreground">
-        <span>{shortDate(bounds.startLabel)}</span>
-        <span>{shortDate(bounds.endLabel)}</span>
-      </div>
-    </div>
-  );
-}
-
 function ActivityGanttRow({
   activity,
   bounds,
@@ -1605,7 +1569,7 @@ function ActivityGanttRow({
   return (
     <button
       type="button"
-      className="grid w-full gap-3 border-b border-hairline px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted/40 lg:grid-cols-[172px_minmax(150px,1fr)_58px] lg:items-center"
+      className="grid h-full min-h-[92px] w-full gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 lg:grid-cols-[172px_minmax(150px,1fr)_58px] lg:items-center"
       onClick={onOpen}
     >
       <div className="min-w-0">
