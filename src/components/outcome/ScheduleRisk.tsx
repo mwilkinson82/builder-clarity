@@ -39,6 +39,7 @@ import {
   Minimize2,
   ZoomIn,
   ZoomOut,
+  Diamond,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -70,6 +71,7 @@ import {
 } from "@/lib/ior";
 import {
   buildConstructLineCpmModel,
+  isConstructLineMilestoneActivity,
   offsetFromTimelineStart,
   type ConstructLineCpmModel,
   type ConstructLineCpmTask,
@@ -936,6 +938,7 @@ type ActivityDraft = {
   predecessor_activity_ids: string;
   successor_activity_ids: string;
   notes: string;
+  is_milestone: boolean;
 };
 
 const emptyActivityDraft = (): ActivityDraft => ({
@@ -948,6 +951,7 @@ const emptyActivityDraft = (): ActivityDraft => ({
   predecessor_activity_ids: "",
   successor_activity_ids: "",
   notes: "",
+  is_milestone: false,
 });
 
 const activityDraftFromRow = (activity: ScheduleActivityRow): ActivityDraft => ({
@@ -960,6 +964,7 @@ const activityDraftFromRow = (activity: ScheduleActivityRow): ActivityDraft => (
   predecessor_activity_ids: formatActivityIds(activity.predecessor_activity_ids),
   successor_activity_ids: formatActivityIds(activity.successor_activity_ids),
   notes: activity.notes ?? "",
+  is_milestone: isConstructLineMilestoneActivity(activity),
 });
 
 export function CpmActivityPlanner({
@@ -1058,12 +1063,13 @@ export function CpmActivityPlanner({
   const addActivity = () => {
     const name = draft.name.trim();
     if (!name) return;
+    const milestoneDate = getMilestoneDraftDate(draft);
     onAddActivity({
       activity_id: draft.activity_id.trim() || undefined,
       name,
-      division: draft.division.trim() || "General",
-      start_date: draft.start_date || null,
-      finish_date: draft.finish_date || null,
+      division: draft.is_milestone ? "Milestones" : draft.division.trim() || "General",
+      start_date: draft.is_milestone ? milestoneDate : draft.start_date || null,
+      finish_date: draft.is_milestone ? milestoneDate : draft.finish_date || null,
       percent_complete: parsePercent(draft.percent_complete),
       predecessor_activity_ids: parseActivityIds(draft.predecessor_activity_ids),
       successor_activity_ids: parseActivityIds(draft.successor_activity_ids),
@@ -1071,6 +1077,19 @@ export function CpmActivityPlanner({
     });
     setDraft(emptyActivityDraft());
     setShowDraft(false);
+  };
+  const openMilestoneDraft = () => {
+    const existingIds = new Set(sortedActivities.map((activity) => activity.activity_id));
+    setDraft({
+      ...emptyActivityDraft(),
+      activity_id: uniqueActivityId(
+        `MS-${String(milestones.length + 1).padStart(3, "0")}`,
+        existingIds,
+      ),
+      division: "Milestones",
+      is_milestone: true,
+    });
+    setShowDraft(true);
   };
   const completedActivities = sortedActivities.filter(
     (activity) => activity.percent_complete >= 100,
@@ -1147,6 +1166,10 @@ export function CpmActivityPlanner({
               <Plus className="h-4 w-4" />
               Add activity
             </Button>
+            <Button type="button" variant="outline" className="gap-2" onClick={openMilestoneDraft}>
+              <Diamond className="h-4 w-4" />
+              Add milestone
+            </Button>
           </div>
         </div>
 
@@ -1160,8 +1183,18 @@ export function CpmActivityPlanner({
           <ScheduleWorkbenchStat
             label="Critical"
             value={String(cpmModel.criticalCount)}
-            sub={`${cpmModel.nearCriticalCount} near-critical`}
-            tone={cpmModel.criticalCount > 0 ? "danger" : "default"}
+            sub={
+              cpmModel.criticalPathReliable
+                ? `${cpmModel.nearCriticalCount} near-critical`
+                : "provisional until open ends close"
+            }
+            tone={
+              cpmModel.criticalPathReliable
+                ? cpmModel.criticalCount > 0
+                  ? "danger"
+                  : "default"
+                : "warning"
+            }
           />
           <ScheduleWorkbenchStat
             label="Open ends"
@@ -1254,24 +1287,36 @@ export function CpmActivityPlanner({
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  New activity
+                  {draft.is_milestone ? "New milestone" : "New activity"}
                 </div>
                 <div className="mt-1 text-sm text-muted-foreground">
                   Add one schedule row now. Dependencies can be typed as comma-separated activity
                   IDs.
                 </div>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                className="print:hidden"
-                onClick={() => {
-                  setDraft(emptyActivityDraft());
-                  setShowDraft(false);
-                }}
-              >
-                Cancel
-              </Button>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  type="button"
+                  variant={draft.is_milestone ? "default" : "outline"}
+                  className="gap-2 print:hidden"
+                  aria-pressed={draft.is_milestone}
+                  onClick={() => setDraft(toggleMilestoneDraft(draft, !draft.is_milestone))}
+                >
+                  <Diamond className="h-4 w-4" />
+                  Milestone
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="print:hidden"
+                  onClick={() => {
+                    setDraft(emptyActivityDraft());
+                    setShowDraft(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
             </div>
             <div className="grid gap-3 lg:grid-cols-[130px_minmax(240px,1fr)_170px_150px_150px_110px]">
               <LabeledField label="Activity ID">
@@ -1302,7 +1347,7 @@ export function CpmActivityPlanner({
                 <Input
                   type="date"
                   value={draft.start_date}
-                  onChange={(e) => setDraft({ ...draft, start_date: e.target.value })}
+                  onChange={(e) => setDraft(updateDraftStartDate(draft, e.target.value))}
                   className="h-10"
                 />
               </LabeledField>
@@ -1310,7 +1355,7 @@ export function CpmActivityPlanner({
                 <Input
                   type="date"
                   value={draft.finish_date}
-                  onChange={(e) => setDraft({ ...draft, finish_date: e.target.value })}
+                  onChange={(e) => setDraft(updateDraftFinishDate(draft, e.target.value))}
                   className="h-10"
                 />
               </LabeledField>
@@ -1356,8 +1401,12 @@ export function CpmActivityPlanner({
                 disabled={!draft.name.trim()}
                 onClick={addActivity}
               >
-                <Plus className="h-4 w-4" />
-                Add activity
+                {draft.is_milestone ? (
+                  <Diamond className="h-4 w-4" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                {draft.is_milestone ? "Add milestone" : "Add activity"}
               </Button>
             </div>
           </div>
@@ -1562,12 +1611,15 @@ function ConstructLinePrintReport({
 
       <div className="constructline-print-kpis">
         <PrintKpi label="Activities" value={String(model.tasks.length)} />
-        <PrintKpi label="Critical" value={String(model.criticalCount)} />
-        <PrintKpi label="Near Critical" value={String(model.nearCriticalCount)} />
+        <PrintKpi
+          label="Critical / Near"
+          value={`${model.criticalCount}/${model.nearCriticalCount}`}
+        />
         <PrintKpi
           label="Open Starts / Finishes"
           value={`${model.openStartCount}/${model.openFinishCount}`}
         />
+        <PrintKpi label="CPM Basis" value={model.criticalPathReliable ? "Valid" : "Provisional"} />
         <PrintKpi label="Max Stack" value={String(model.maxStack)} />
         <PrintKpi
           label="Data Date"
@@ -1844,21 +1896,29 @@ function ConstructLinePrintTaskRow({
   );
   const left = Math.min(startPct, finishPct);
   const width = Math.max(0.8, Math.abs(finishPct - startPct));
-  const tone = task.isCritical ? "is-critical" : task.isNearCritical ? "is-near-critical" : "";
-  const flag = task.isCritical
-    ? "Critical"
+  const tone = task.isCritical
+    ? "is-critical"
     : task.isNearCritical
-      ? "Near critical"
-      : task.isLate
-        ? "Late"
+      ? "is-near-critical"
+      : percent >= 100
+        ? "is-complete"
         : "";
+  const flags = [
+    task.isMilestone ? "Milestone" : null,
+    task.isCritical ? "Critical" : task.isNearCritical ? "Near critical" : null,
+    task.isLate ? "Late" : null,
+    task.isOpenStart ? "Open start" : null,
+    task.isOpenFinish ? "Open finish" : null,
+  ].filter(Boolean);
 
   return (
     <div className="constructline-print-row">
       <span className="constructline-print-id">{task.dependencyKey}</span>
       <span className="constructline-print-name">
         {task.activity.name}
-        {flag && <em>{flag}</em>}
+        {flags.slice(0, 2).map((flag) => (
+          <em key={flag}>{flag}</em>
+        ))}
       </span>
       <span className="constructline-print-dates">
         {shortPrintDate(task.activity.start_date ?? task.visualStartDate)}-
@@ -1870,12 +1930,19 @@ function ConstructLinePrintTaskRow({
         {dataDatePct != null && (
           <span className="constructline-print-data-date" style={{ left: `${dataDatePct}%` }} />
         )}
-        <span
-          className={cn("constructline-print-bar", tone)}
-          style={{ left: `${left}%`, width: `${width}%` }}
-        >
-          <span style={{ width: `${percent}%` }} />
-        </span>
+        {task.isMilestone ? (
+          <span
+            className={cn("constructline-print-milestone", tone)}
+            style={{ left: `${left}%` }}
+          />
+        ) : (
+          <span
+            className={cn("constructline-print-bar", tone)}
+            style={{ left: `${left}%`, width: `${width}%` }}
+          >
+            <span style={{ width: `${percent}%` }} />
+          </span>
+        )}
       </span>
     </div>
   );
@@ -1964,9 +2031,11 @@ function ActivityScheduleMatrix({
         const fromY = predecessor ? rowPositions.get(predecessor.activityKey) : null;
         const toY = rowPositions.get(task.activityKey);
         if (!predecessor || fromY == null || toY == null) return [];
-        const fromX =
-          (offsetFromTimelineStart(predecessor.visualFinishDate, model.timelineStartDate) + 1) *
-          dayPx;
+        const predecessorFinishOffset = offsetFromTimelineStart(
+          predecessor.visualFinishDate,
+          model.timelineStartDate,
+        );
+        const fromX = (predecessorFinishOffset + (predecessor.isMilestone ? 0 : 1)) * dayPx;
         const toX = offsetFromTimelineStart(task.visualStartDate, model.timelineStartDate) * dayPx;
         return [
           {
@@ -2013,6 +2082,10 @@ function ActivityScheduleMatrix({
           <span className="inline-flex items-center gap-1">
             <span className="h-2 w-5 rounded-full bg-success" />
             Complete
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2.5 w-2.5 rotate-45 rounded-[1px] border border-foreground/45 bg-card" />
+            Milestone
           </span>
           <span className="font-semibold tabular text-foreground">
             {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
@@ -2280,6 +2353,13 @@ function ConstructLineTaskRow({
       : percent >= 100
         ? "bg-success"
         : "bg-accent";
+  const milestoneClass = task.isCritical
+    ? "border-danger bg-danger"
+    : task.isNearCritical
+      ? "border-warning bg-warning"
+      : percent >= 100
+        ? "border-success bg-success"
+        : "border-accent bg-card";
 
   return (
     <div
@@ -2305,15 +2385,18 @@ function ConstructLineTaskRow({
         <div className="flex min-w-0 flex-col justify-center pr-3">
           <div className="truncate text-sm font-semibold text-foreground">{activity.name}</div>
           <div className="mt-0.5 flex flex-wrap gap-1">
+            {task.isMilestone && <ScheduleFlag tone="warning">milestone</ScheduleFlag>}
             {task.isCritical && <ScheduleFlag tone="danger">critical</ScheduleFlag>}
             {task.isNearCritical && <ScheduleFlag tone="warning">near critical</ScheduleFlag>}
             {task.isLate && <ScheduleFlag tone="danger">late</ScheduleFlag>}
             {task.isOutOfSequence && <ScheduleFlag tone="warning">out of seq</ScheduleFlag>}
+            {task.isOpenStart && <ScheduleFlag tone="warning">open start</ScheduleFlag>}
+            {task.isOpenFinish && <ScheduleFlag tone="warning">open finish</ScheduleFlag>}
             {task.hasMissingDates && <ScheduleFlag tone="warning">missing dates</ScheduleFlag>}
           </div>
         </div>
         <div className="flex items-center justify-end tabular text-muted-foreground">
-          {task.durationDays}
+          {task.isMilestone ? "M" : task.durationDays}
         </div>
         <div className="flex items-center justify-end tabular text-muted-foreground">
           {shortPrintDate(activity.start_date ?? task.visualStartDate)}
@@ -2373,19 +2456,29 @@ function ConstructLineTaskRow({
             style={{ left: dataDateX }}
           />
         )}
-        <div
-          className={cn(
-            "absolute top-1/2 h-4 -translate-y-1/2 rounded-full border",
-            task.isCritical
-              ? "border-danger/40 bg-danger/20"
-              : task.isNearCritical
-                ? "border-warning/40 bg-warning/20"
-                : "border-accent/30 bg-accent/15",
-          )}
-          style={{ left: barLeft, width: barWidth }}
-        >
-          <div className={cn("h-full rounded-full", barClass)} style={{ width: `${percent}%` }} />
-        </div>
+        {task.isMilestone ? (
+          <div
+            className={cn(
+              "absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] border-2 shadow-sm",
+              milestoneClass,
+            )}
+            style={{ left: barLeft }}
+          />
+        ) : (
+          <div
+            className={cn(
+              "absolute top-1/2 h-4 -translate-y-1/2 rounded-full border",
+              task.isCritical
+                ? "border-danger/40 bg-danger/20"
+                : task.isNearCritical
+                  ? "border-warning/40 bg-warning/20"
+                  : "border-accent/30 bg-accent/15",
+            )}
+            style={{ left: barLeft, width: barWidth }}
+          >
+            <div className={cn("h-full rounded-full", barClass)} style={{ width: `${percent}%` }} />
+          </div>
+        )}
       </button>
     </div>
   );
@@ -2832,6 +2925,7 @@ function ActivityDetailDialog({
 }) {
   const [draft, setDraft] = useState<ActivityDraft>(() => activityDraftFromRow(activity));
   const duration = getActivityDurationDays(activity);
+  const isMilestone = isConstructLineMilestoneActivity(activity);
 
   useEffect(() => {
     setDraft(activityDraftFromRow(activity));
@@ -2840,12 +2934,13 @@ function ActivityDetailDialog({
   const saveActivity = () => {
     const name = draft.name.trim();
     if (!name) return;
+    const milestoneDate = getMilestoneDraftDate(draft);
     onSave({
       activity_id: draft.activity_id.trim(),
       name,
-      division: draft.division.trim() || "General",
-      start_date: draft.start_date || null,
-      finish_date: draft.finish_date || null,
+      division: draft.is_milestone ? "Milestones" : draft.division.trim() || "General",
+      start_date: draft.is_milestone ? milestoneDate : draft.start_date || null,
+      finish_date: draft.is_milestone ? milestoneDate : draft.finish_date || null,
       percent_complete: parsePercent(draft.percent_complete),
       predecessor_activity_ids: parseActivityIds(draft.predecessor_activity_ids),
       successor_activity_ids: parseActivityIds(draft.successor_activity_ids),
@@ -2871,8 +2966,14 @@ function ActivityDetailDialog({
           />
           <ScheduleWorkbenchStat
             label="Duration"
-            value={duration == null ? "No dates" : String(duration)}
-            sub={duration == null ? "start / finish needed" : "calendar days"}
+            value={isMilestone ? "Milestone" : duration == null ? "No dates" : String(duration)}
+            sub={
+              isMilestone
+                ? "schedule point"
+                : duration == null
+                  ? "start / finish needed"
+                  : "calendar days"
+            }
           />
           <ScheduleWorkbenchStat
             label="Progress"
@@ -2895,6 +2996,18 @@ function ActivityDetailDialog({
         </div>
 
         <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="mb-3 flex justify-end">
+            <Button
+              type="button"
+              variant={draft.is_milestone ? "default" : "outline"}
+              className="gap-2"
+              aria-pressed={draft.is_milestone}
+              onClick={() => setDraft(toggleMilestoneDraft(draft, !draft.is_milestone))}
+            >
+              <Diamond className="h-4 w-4" />
+              Milestone
+            </Button>
+          </div>
           <div className="grid gap-3 lg:grid-cols-[130px_minmax(240px,1fr)_180px_150px_150px_110px]">
             <LabeledField label="Activity ID">
               <Input
@@ -2921,7 +3034,7 @@ function ActivityDetailDialog({
               <Input
                 type="date"
                 value={draft.start_date}
-                onChange={(e) => setDraft({ ...draft, start_date: e.target.value })}
+                onChange={(e) => setDraft(updateDraftStartDate(draft, e.target.value))}
                 className="h-10"
               />
             </LabeledField>
@@ -2929,7 +3042,7 @@ function ActivityDetailDialog({
               <Input
                 type="date"
                 value={draft.finish_date}
-                onChange={(e) => setDraft({ ...draft, finish_date: e.target.value })}
+                onChange={(e) => setDraft(updateDraftFinishDate(draft, e.target.value))}
                 className="h-10"
               />
             </LabeledField>
@@ -3045,7 +3158,7 @@ function buildActivityRowsFromMilestones(
         activity_id: activityId,
         name: milestone.name.trim(),
         division: "Milestones",
-        start_date: milestone.baseline_date,
+        start_date: finishDate,
         finish_date: finishDate,
         percent_complete: milestone.status === "complete" ? 100 : 0,
         predecessor_activity_ids: [],
@@ -3093,6 +3206,39 @@ function parseActivityIds(value: string) {
 
 function formatActivityIds(value: string[]) {
   return value.join(", ");
+}
+
+function getMilestoneDraftDate(draft: ActivityDraft) {
+  return draft.finish_date || draft.start_date || null;
+}
+
+function toggleMilestoneDraft(draft: ActivityDraft, isMilestone: boolean): ActivityDraft {
+  if (!isMilestone) {
+    return {
+      ...draft,
+      is_milestone: false,
+      division: draft.division.trim().toLowerCase() === "milestones" ? "General" : draft.division,
+    };
+  }
+
+  const milestoneDate = draft.finish_date || draft.start_date;
+  return {
+    ...draft,
+    is_milestone: true,
+    division: "Milestones",
+    start_date: milestoneDate,
+    finish_date: milestoneDate,
+  };
+}
+
+function updateDraftStartDate(draft: ActivityDraft, value: string): ActivityDraft {
+  if (!draft.is_milestone) return { ...draft, start_date: value };
+  return { ...draft, start_date: value, finish_date: value };
+}
+
+function updateDraftFinishDate(draft: ActivityDraft, value: string): ActivityDraft {
+  if (!draft.is_milestone) return { ...draft, finish_date: value };
+  return { ...draft, start_date: value, finish_date: value };
 }
 
 function ScheduleStat({

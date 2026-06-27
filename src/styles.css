@@ -160,7 +160,7 @@
 
 @media print {
   @page {
-    size: letter landscape;
+    size: 17in 11in;
     margin: 0.28in;
   }
 
@@ -465,7 +465,8 @@
   }
 
   .constructline-print-bar,
-  .constructline-print-group-bar {
+  .constructline-print-group-bar,
+  .constructline-print-milestone {
     position: absolute;
     top: 50%;
     height: 0.055in;
@@ -481,12 +482,37 @@
     opacity: 0.8;
   }
 
+  .constructline-print-milestone {
+    width: 0.075in;
+    height: 0.075in;
+    min-width: 0;
+    transform: translate(-50%, -50%) rotate(45deg);
+    border: 1px solid #6f675c;
+    border-radius: 1px;
+    background: #fbfaf7;
+  }
+
   .constructline-print-bar.is-critical {
     background: #f0c8c3;
   }
 
+  .constructline-print-milestone.is-critical {
+    border-color: #d53c31;
+    background: #d53c31;
+  }
+
   .constructline-print-bar.is-near-critical {
     background: #eed9a6;
+  }
+
+  .constructline-print-milestone.is-near-critical {
+    border-color: #d39a1d;
+    background: #d39a1d;
+  }
+
+  .constructline-print-milestone.is-complete {
+    border-color: #2f7d5c;
+    background: #2f7d5c;
   }
 
   .constructline-print-bar > span {

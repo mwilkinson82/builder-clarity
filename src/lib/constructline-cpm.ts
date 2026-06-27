@@ -19,6 +19,7 @@ export interface ConstructLineCpmTask {
   successorKeys: string[];
   missingPredecessorKeys: string[];
   missingSuccessorKeys: string[];
+  isMilestone: boolean;
   isCritical: boolean;
   isNearCritical: boolean;
   isLate: boolean;
@@ -50,6 +51,8 @@ export interface ConstructLineCpmModel {
   totalTimelineDays: number;
   criticalCount: number;
   nearCriticalCount: number;
+  criticalPathReliable: boolean;
+  criticalPathReliabilityNote: string;
   openStartCount: number;
   openFinishCount: number;
   missingDateCount: number;
@@ -84,6 +87,7 @@ interface WorkingTask {
   successorKeys: string[];
   missingPredecessorKeys: string[];
   missingSuccessorKeys: string[];
+  isMilestone: boolean;
 }
 
 export function buildConstructLineCpmModel(
@@ -108,13 +112,14 @@ export function buildConstructLineCpmModel(
   const tasks: WorkingTask[] = sorted.map((activity, index) => {
     const activityKey = activity.id;
     const dependencyKey = activity.activity_id?.trim() || `A-${String(index + 1).padStart(3, "0")}`;
+    const isMilestone = isConstructLineMilestoneActivity(activity);
     keyLookup.set(normalizeDependencyKey(activity.id), activityKey);
     keyLookup.set(normalizeDependencyKey(dependencyKey), activityKey);
     return {
       activity,
       activityKey,
       dependencyKey,
-      durationDays: getDurationDays(activity),
+      durationDays: isMilestone ? 1 : getDurationDays(activity),
       startOffset: getDayOffset(projectStartMs, activity.start_date),
       finishOffset: getDayOffset(projectStartMs, activity.finish_date),
       earlyStart: 0,
@@ -127,6 +132,7 @@ export function buildConstructLineCpmModel(
       successorKeys: [],
       missingPredecessorKeys: [],
       missingSuccessorKeys: [],
+      isMilestone,
     };
   });
   const taskMap = new Map(tasks.map((task) => [task.activityKey, task]));
@@ -232,6 +238,7 @@ export function buildConstructLineCpmModel(
       successorKeys: task.successorKeys,
       missingPredecessorKeys: task.missingPredecessorKeys,
       missingSuccessorKeys: task.missingSuccessorKeys,
+      isMilestone: task.isMilestone,
       isCritical: task.totalFloat <= 0,
       isNearCritical: task.totalFloat > 0 && task.totalFloat <= nearCriticalFloat,
       isLate,
@@ -272,6 +279,16 @@ export function buildConstructLineCpmModel(
   const nearCriticalCount = modelTasks.filter((task) => task.isNearCritical).length;
   const openStartCount = modelTasks.filter((task) => task.isOpenStart).length;
   const openFinishCount = modelTasks.filter((task) => task.isOpenFinish).length;
+  const criticalPathReliabilityIssues = buildCriticalPathReliabilityIssues({
+    topoOk: topo.ok,
+    diagnosticsCount: diagnostics.length,
+    openStartCount,
+    openFinishCount,
+  });
+  const criticalPathReliable = modelTasks.length > 0 && criticalPathReliabilityIssues.length === 0;
+  const criticalPathReliabilityNote = criticalPathReliable
+    ? "Forward and backward pass complete."
+    : criticalPathReliabilityIssues.join(" ");
   const missingDateCount = modelTasks.filter((task) => task.hasMissingDates).length;
   const missingLogicCount = modelTasks.filter(
     (task) => task.predecessorKeys.length === 0 && task.successorKeys.length === 0,
@@ -302,6 +319,8 @@ export function buildConstructLineCpmModel(
     totalTimelineDays,
     criticalCount,
     nearCriticalCount,
+    criticalPathReliable,
+    criticalPathReliabilityNote,
     openStartCount,
     openFinishCount,
     missingDateCount,
@@ -312,6 +331,7 @@ export function buildConstructLineCpmModel(
     maxStackLabel: maxStackBucket?.label ?? "No stacking",
     stackBuckets,
     recommendations: buildRecommendations({
+      taskCount: modelTasks.length,
       missingDateCount,
       missingLogicCount,
       openStartCount,
@@ -319,6 +339,8 @@ export function buildConstructLineCpmModel(
       lateCount,
       outOfSequenceCount,
       diagnostics,
+      criticalPathReliable,
+      criticalPathReliabilityNote,
       maxStack: maxStackBucket?.count ?? 0,
       maxStackLabel: maxStackBucket?.label ?? "No stacking",
     }),
@@ -327,6 +349,23 @@ export function buildConstructLineCpmModel(
 
 export function parseCpmDateMs(value?: string | null) {
   return parseDateMs(value);
+}
+
+export function isConstructLineMilestoneActivity(
+  activity: Pick<ScheduleActivityRow, "activity_id" | "division" | "name" | "notes">,
+) {
+  const division = activity.division.trim().toLowerCase();
+  const activityId = activity.activity_id.trim().toLowerCase();
+  const name = activity.name.trim().toLowerCase();
+  const notes = activity.notes.trim().toLowerCase();
+  return (
+    division === "milestones" ||
+    division === "milestone" ||
+    activityId.startsWith("ms-") ||
+    notes.includes("constructline milestone") ||
+    notes.includes("created from interim milestone") ||
+    (name.includes("milestone") && activityId.startsWith("m"))
+  );
 }
 
 export function offsetFromTimelineStart(value: string, timelineStartDate: string) {
@@ -476,7 +515,29 @@ function scoreSchedule({
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
+function buildCriticalPathReliabilityIssues({
+  topoOk,
+  diagnosticsCount,
+  openStartCount,
+  openFinishCount,
+}: {
+  topoOk: boolean;
+  diagnosticsCount: number;
+  openStartCount: number;
+  openFinishCount: number;
+}) {
+  const issues: string[] = [];
+  if (!topoOk) issues.push("Logic cycle blocks a reliable backward pass.");
+  if (diagnosticsCount > 0) issues.push("Missing dependency references must be resolved.");
+  if (openStartCount > 1)
+    issues.push(`Reduce open starts from ${openStartCount} to one project start.`);
+  if (openFinishCount > 1)
+    issues.push(`Reduce open finishes from ${openFinishCount} to one project finish.`);
+  return issues;
+}
+
 function buildRecommendations({
+  taskCount,
   missingDateCount,
   missingLogicCount,
   openStartCount,
@@ -484,9 +545,12 @@ function buildRecommendations({
   lateCount,
   outOfSequenceCount,
   diagnostics,
+  criticalPathReliable,
+  criticalPathReliabilityNote,
   maxStack,
   maxStackLabel,
 }: {
+  taskCount: number;
   missingDateCount: number;
   missingLogicCount: number;
   openStartCount: number;
@@ -494,10 +558,14 @@ function buildRecommendations({
   lateCount: number;
   outOfSequenceCount: number;
   diagnostics: string[];
+  criticalPathReliable: boolean;
+  criticalPathReliabilityNote: string;
   maxStack: number;
   maxStackLabel: string;
 }) {
   const items: string[] = [];
+  if (taskCount > 0 && !criticalPathReliable)
+    items.push(`Treat critical path as provisional. ${criticalPathReliabilityNote}`);
   if (missingDateCount > 0) items.push(`Add start/finish dates to ${missingDateCount} activities.`);
   if (missingLogicCount > 0)
     items.push(`Tie ${missingLogicCount} isolated activities into the plan.`);
