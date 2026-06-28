@@ -2290,10 +2290,10 @@ function ActivityScheduleMatrix({
 }) {
   const totalActivities = model.tasks.length;
   const isFitZoom = dayPx === CONSTRUCTLINE_FIT_DAY_PX;
-  const tableWidth = isFitZoom ? 680 : 760;
+  const tableWidth = isFitZoom ? 760 : 860;
   const tableColumns = isFitZoom
-    ? "72px minmax(180px,1fr) 52px 58px 58px 52px 44px 44px"
-    : "78px minmax(0,1fr) 70px 70px 70px 58px 54px 54px";
+    ? "76px minmax(220px,1fr) 58px 78px 78px 70px 54px 58px"
+    : "82px minmax(260px,1fr) 64px 86px 86px 74px 56px 64px";
   const rowHeight = 64;
   const groupHeight = 32;
   const headerHeight = 48;
@@ -2434,17 +2434,29 @@ function ActivityScheduleMatrix({
               style={{ height: headerHeight }}
             >
               <div
-                className="sticky left-0 z-40 grid shrink-0 border-r border-hairline bg-muted/80 px-3"
+                className="sticky left-0 z-40 grid shrink-0 border-r border-hairline bg-muted/80"
                 style={{ width: tableWidth, gridTemplateColumns: tableColumns }}
               >
-                <div className="flex items-center">ID</div>
-                <div className="flex items-center">Activity</div>
-                <div className="flex items-center justify-end">Dur</div>
-                <div className="flex items-center justify-end">Start</div>
-                <div className="flex items-center justify-end">Finish</div>
-                <div className="flex items-center justify-end">% done</div>
-                <div className="flex items-center justify-end">TF</div>
-                <div className="flex items-center justify-end">Logic</div>
+                <div className="flex items-center px-3">ID</div>
+                <div className="flex min-w-0 items-center px-3">Activity</div>
+                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
+                  Dur
+                </div>
+                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
+                  Start
+                </div>
+                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
+                  Finish
+                </div>
+                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
+                  % done
+                </div>
+                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
+                  TF
+                </div>
+                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
+                  Logic
+                </div>
               </div>
               <div className="relative shrink-0 bg-muted/45" style={{ width: timelineWidth }}>
                 {monthBands.map((band) => (
@@ -2681,7 +2693,7 @@ function ConstructLineTaskRow({
       <div
         role="button"
         tabIndex={0}
-        className="sticky left-0 z-20 grid shrink-0 cursor-pointer border-r border-hairline bg-card px-3 text-xs hover:bg-muted/45"
+        className="sticky left-0 z-20 grid shrink-0 cursor-pointer border-r border-hairline bg-card text-xs hover:bg-muted/45"
         style={{ width: tableWidth, gridTemplateColumns: tableColumns }}
         onClick={onOpen}
         onKeyDown={(event) => {
@@ -2691,10 +2703,10 @@ function ConstructLineTaskRow({
           }
         }}
       >
-        <div className="flex items-center font-semibold tabular text-foreground">
+        <div className="flex items-center px-3 font-semibold tabular text-foreground">
           {activity.activity_id || "No ID"}
         </div>
-        <div className="flex min-w-0 flex-col justify-center pr-3">
+        <div className="flex min-w-0 flex-col justify-center px-3">
           <div className="truncate text-sm font-semibold text-foreground">{activity.name}</div>
           <div className="mt-0.5 flex flex-wrap gap-1">
             {task.isMilestone && <ScheduleFlag tone="warning">milestone</ScheduleFlag>}
@@ -2707,21 +2719,21 @@ function ConstructLineTaskRow({
             {task.hasMissingDates && <ScheduleFlag tone="warning">missing dates</ScheduleFlag>}
           </div>
         </div>
-        <div className="flex items-center justify-end tabular text-muted-foreground">
+        <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
           {task.isMilestone ? "M" : task.durationDays}
         </div>
-        <div className="flex items-center justify-end tabular text-muted-foreground">
+        <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
           {shortPrintDate(activity.start_date ?? task.visualStartDate)}
         </div>
-        <div className="flex items-center justify-end tabular text-muted-foreground">
+        <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
           {shortPrintDate(activity.finish_date ?? task.visualFinishDate)}
         </div>
-        <div className="flex items-center justify-end font-semibold tabular text-foreground">
+        <div className="flex items-center justify-end border-l border-hairline/50 px-2 font-semibold tabular text-foreground">
           {percent}%
         </div>
         <div
           className={cn(
-            "flex items-center justify-end font-semibold tabular",
+            "flex items-center justify-end border-l border-hairline/50 px-2 font-semibold tabular",
             task.isCritical
               ? "text-danger"
               : task.isNearCritical
@@ -2731,7 +2743,7 @@ function ConstructLineTaskRow({
         >
           {task.totalFloat}
         </div>
-        <div className="flex items-center justify-end gap-1 tabular text-muted-foreground">
+        <div className="flex items-center justify-end gap-1 border-l border-hairline/50 px-1.5 tabular text-muted-foreground">
           <span>{logicCount}</span>
           <Button
             type="button"
