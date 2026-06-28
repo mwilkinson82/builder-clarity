@@ -21,6 +21,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Plus,
   Trash2,
@@ -40,6 +49,9 @@ import {
   ZoomIn,
   ZoomOut,
   Diamond,
+  Check,
+  ChevronsUpDown,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -364,7 +376,7 @@ export function ScheduleRisk({
     setUpdateNotes(cpmScheduleDraft.notes);
     setCpmMilestoneForecasts(cpmScheduleDraft.milestone_forecasts);
     if (!moneyNotes.trim()) setMoneyNotes(cpmScheduleDraft.money_notes);
-    toast.success("CPM update draft applied", {
+    toast.success("CPM forecast staged", {
       description:
         cpmScheduleDraft.milestone_forecasts.length > 0
           ? `${cpmScheduleDraft.milestone_forecasts.length} milestone forecast ${
@@ -445,7 +457,18 @@ export function ScheduleRisk({
             <div>
               <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 <Gauge className="h-3.5 w-3.5" />
-                CPM schedule intelligence
+                CPM schedule update assistant
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                <span className="rounded border border-hairline bg-card px-2 py-1">
+                  1 Review CPM signal
+                </span>
+                <span className="rounded border border-hairline bg-card px-2 py-1">
+                  2 Use CPM forecast
+                </span>
+                <span className="rounded border border-hairline bg-card px-2 py-1">
+                  3 Save schedule update
+                </span>
               </div>
               <div className="mt-2 grid gap-3 text-sm md:grid-cols-4">
                 <ScheduleIntelligenceMetric
@@ -459,13 +482,13 @@ export function ScheduleRisk({
                 />
                 <ScheduleIntelligenceMetric
                   label="Critical basis"
-                  value={scheduleCpmModel.criticalPathReliable ? "Valid" : "Provisional"}
+                  value={scheduleCpmModel.criticalPathReliable ? "Reliable" : "Needs logic cleanup"}
                   tone={
                     scheduleCpmModel.criticalPathReliable ? "text-success" : "text-warning"
                   }
                 />
                 <ScheduleIntelligenceMetric
-                  label="Milestone forecasts"
+                  label="Milestone matches"
                   value={String(cpmScheduleDraft.milestone_forecasts.length)}
                   tone={
                     cpmScheduleDraft.milestone_forecasts.length > 0
@@ -486,14 +509,14 @@ export function ScheduleRisk({
               onClick={applyCpmDraft}
             >
               <GitBranch className="h-4 w-4" />
-              Draft from CPM
+              Use CPM forecast
             </Button>
           </div>
           {cpmMilestoneForecasts.length > 0 && (
             <div className="mt-3 rounded border border-accent/25 bg-accent/10 px-3 py-2 text-xs font-medium text-foreground">
+              CPM draft staged. Review the fields below, then save the schedule update.{" "}
               {cpmMilestoneForecasts.length} milestone forecast{" "}
-              {cpmMilestoneForecasts.length === 1 ? "change is" : "changes are"} staged for the
-              next saved update.
+              {cpmMilestoneForecasts.length === 1 ? "change is" : "changes are"} included.
             </div>
           )}
         </div>
@@ -521,7 +544,7 @@ export function ScheduleRisk({
         <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] md:items-end">
           <div className="space-y-1.5">
             <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Update explanation
+              Schedule update narrative
             </Label>
             <Textarea
               value={updateNotes}
@@ -547,14 +570,14 @@ export function ScheduleRisk({
               disabled={activities.length === 0}
               onClick={applyCpmDraft}
             >
-              Draft from CPM
+              Use CPM forecast
             </Button>
             <Button
               type="button"
               disabled={!completionUpdateDraft || scheduleUpdate.isPending}
               onClick={() => scheduleUpdate.mutate()}
             >
-              {scheduleUpdate.isPending ? "Saving..." : "Save update"}
+              {scheduleUpdate.isPending ? "Saving..." : "Save schedule update"}
             </Button>
           </div>
         </div>
@@ -1576,8 +1599,8 @@ export function CpmActivityPlanner({
                   {draft.is_milestone ? "New milestone" : "New activity"}
                 </div>
                 <div className="mt-1 text-sm text-muted-foreground">
-                  Add one schedule row now. Dependencies can be typed as comma-separated activity
-                  IDs.
+                  Add one schedule row now. Choose predecessors and successors from the current
+                  activity list.
                 </div>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
@@ -1656,23 +1679,25 @@ export function CpmActivityPlanner({
                 />
               </LabeledField>
             </div>
-            <div className="mt-3 grid gap-3 lg:grid-cols-[180px_180px_minmax(260px,1fr)_auto] lg:items-end">
-              <LabeledField label="Predecessors">
-                <Input
-                  value={draft.predecessor_activity_ids}
-                  onChange={(e) => setDraft({ ...draft, predecessor_activity_ids: e.target.value })}
-                  placeholder="A-001, A-002"
-                  className="h-10 tabular"
-                />
-              </LabeledField>
-              <LabeledField label="Successors">
-                <Input
-                  value={draft.successor_activity_ids}
-                  onChange={(e) => setDraft({ ...draft, successor_activity_ids: e.target.value })}
-                  placeholder="A-030"
-                  className="h-10 tabular"
-                />
-              </LabeledField>
+            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(220px,0.8fr)_minmax(220px,0.8fr)_minmax(260px,1fr)_auto] lg:items-end">
+              <ActivityDependencyPicker
+                label="Predecessors"
+                emptyLabel="Choose activities that must finish first"
+                selectedIds={draft.predecessor_activity_ids}
+                activities={sortedActivities}
+                blockedActivityId={draft.activity_id}
+                blockedIds={parseActivityIds(draft.successor_activity_ids)}
+                onChange={(value) => setDraft({ ...draft, predecessor_activity_ids: value })}
+              />
+              <ActivityDependencyPicker
+                label="Successors"
+                emptyLabel="Choose activities that follow this one"
+                selectedIds={draft.successor_activity_ids}
+                activities={sortedActivities}
+                blockedActivityId={draft.activity_id}
+                blockedIds={parseActivityIds(draft.predecessor_activity_ids)}
+                onChange={(value) => setDraft({ ...draft, successor_activity_ids: value })}
+              />
               <LabeledField label="Notes">
                 <Textarea
                   value={draft.notes}
@@ -1768,6 +1793,7 @@ export function CpmActivityPlanner({
       {selectedActivity && (
         <ActivityDetailDialog
           activity={selectedActivity}
+          activities={sortedActivities}
           onClose={() => setSelectedActivityId(null)}
           onSave={(patch) => onPatchActivity(selectedActivity.id, patch)}
           onDelete={() => {
@@ -3134,6 +3160,140 @@ function ActivityIdPills({ ids, emptyLabel }: { ids: string[]; emptyLabel: strin
   );
 }
 
+function ActivityDependencyPicker({
+  label,
+  emptyLabel,
+  selectedIds,
+  activities,
+  blockedActivityId,
+  blockedIds = [],
+  onChange,
+}: {
+  label: string;
+  emptyLabel: string;
+  selectedIds: string;
+  activities: ScheduleActivityRow[];
+  blockedActivityId?: string;
+  blockedIds?: string[];
+  onChange: (value: string) => void;
+}) {
+  const selectedActivityIds = parseActivityIds(selectedIds);
+  const selectedIdSet = new Set(selectedActivityIds);
+  const blockedIdSet = new Set(
+    [blockedActivityId, ...blockedIds].map((id) => id?.trim()).filter(Boolean),
+  );
+  const activitiesById = new Map(
+    activities
+      .map((activity) => [activity.activity_id.trim(), activity] as const)
+      .filter(([activityId]) => activityId.length > 0),
+  );
+  const options = activities.filter((activity) => {
+    const activityId = activity.activity_id.trim();
+    return activityId.length > 0 && !blockedIdSet.has(activityId);
+  });
+
+  const toggleActivity = (activityId: string) => {
+    const nextIds = selectedIdSet.has(activityId)
+      ? selectedActivityIds.filter((id) => id !== activityId)
+      : [...selectedActivityIds, activityId];
+    onChange(formatActivityIds(nextIds));
+  };
+  const removeActivity = (activityId: string) => {
+    onChange(formatActivityIds(selectedActivityIds.filter((id) => id !== activityId)));
+  };
+
+  return (
+    <div className="min-w-0 space-y-1">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-auto min-h-10 w-full justify-between gap-2 px-3 py-2 text-left"
+          >
+            <span className="min-w-0 truncate text-sm font-medium">
+              {selectedActivityIds.length > 0
+                ? `${selectedActivityIds.length} selected`
+                : emptyLabel}
+            </span>
+            <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-0"
+        >
+          <Command>
+            <CommandInput placeholder={`Search ${label.toLowerCase()}...`} />
+            <CommandList>
+              <CommandEmpty>No activities found.</CommandEmpty>
+              <CommandGroup>
+                {options.map((activity) => {
+                  const activityId = activity.activity_id.trim();
+                  const isSelected = selectedIdSet.has(activityId);
+                  return (
+                    <CommandItem
+                      key={activity.id}
+                      value={`${activityId} ${activity.name} ${activity.division}`}
+                      onSelect={() => toggleActivity(activityId)}
+                      className="items-start gap-3"
+                    >
+                      <Check
+                        className={cn(
+                          "mt-0.5 h-4 w-4 text-success",
+                          isSelected ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="shrink-0 font-semibold tabular text-foreground">
+                            {activityId}
+                          </span>
+                          <span className="truncate font-medium text-foreground">
+                            {activity.name}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {activity.division || "General"} · {shortDate(activity.start_date)} to{" "}
+                          {shortDate(activity.finish_date)}
+                        </div>
+                      </div>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+      {selectedActivityIds.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {selectedActivityIds.map((activityId) => {
+            const activity = activitiesById.get(activityId);
+            return (
+              <button
+                key={activityId}
+                type="button"
+                className="inline-flex max-w-full items-center gap-1 rounded border border-hairline bg-card px-1.5 py-1 text-left text-[11px] font-semibold text-foreground hover:bg-muted"
+                onClick={() => removeActivity(activityId)}
+              >
+                <span className="shrink-0 tabular">{activityId}</span>
+                {activity && (
+                  <span className="max-w-36 truncate text-muted-foreground">{activity.name}</span>
+                )}
+                <X className="h-3 w-3 shrink-0" />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ActivityGanttRow({
   activity,
   bounds,
@@ -3200,11 +3360,13 @@ function ActivityGanttRow({
 
 function ActivityDetailDialog({
   activity,
+  activities,
   onClose,
   onSave,
   onDelete,
 }: {
   activity: ScheduleActivityRow;
+  activities: ScheduleActivityRow[];
   onClose: () => void;
   onSave: (patch: Partial<ScheduleActivityRow>) => void;
   onDelete: () => void;
@@ -3347,27 +3509,25 @@ function ActivityDetailDialog({
               </LabeledField>
             </div>
 
-            <div className="mt-3 grid min-w-0 gap-3 lg:grid-cols-[minmax(0,200px)_minmax(0,200px)_minmax(0,1fr)]">
-              <LabeledField label="Predecessors">
-                <Input
-                  value={draft.predecessor_activity_ids}
-                  onChange={(e) =>
-                    setDraft({ ...draft, predecessor_activity_ids: e.target.value })
-                  }
-                  placeholder="A-001, A-002"
-                  className="h-10 min-w-0 tabular"
-                />
-              </LabeledField>
-              <LabeledField label="Successors">
-                <Input
-                  value={draft.successor_activity_ids}
-                  onChange={(e) =>
-                    setDraft({ ...draft, successor_activity_ids: e.target.value })
-                  }
-                  placeholder="A-030"
-                  className="h-10 min-w-0 tabular"
-                />
-              </LabeledField>
+            <div className="mt-3 grid min-w-0 gap-3 lg:grid-cols-[minmax(0,230px)_minmax(0,230px)_minmax(0,1fr)]">
+              <ActivityDependencyPicker
+                label="Predecessors"
+                emptyLabel="Choose activities that must finish first"
+                selectedIds={draft.predecessor_activity_ids}
+                activities={activities}
+                blockedActivityId={draft.activity_id || activity.activity_id}
+                blockedIds={parseActivityIds(draft.successor_activity_ids)}
+                onChange={(value) => setDraft({ ...draft, predecessor_activity_ids: value })}
+              />
+              <ActivityDependencyPicker
+                label="Successors"
+                emptyLabel="Choose activities that follow this one"
+                selectedIds={draft.successor_activity_ids}
+                activities={activities}
+                blockedActivityId={draft.activity_id || activity.activity_id}
+                blockedIds={parseActivityIds(draft.predecessor_activity_ids)}
+                onChange={(value) => setDraft({ ...draft, successor_activity_ids: value })}
+              />
               <div className="min-w-0 rounded-md border border-hairline bg-card p-3">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                   Dependency readout
