@@ -56,6 +56,7 @@ import {
   ListTree,
   ArrowUp,
   ArrowDown,
+  GripVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -1509,6 +1510,12 @@ export function CpmActivityPlanner({
     );
     setActivityOrder("wbs");
   };
+  const reorderWbsDivisions = (orderedDivisions: string[]) => {
+    setWbsDivisionOrder((current) =>
+      mergeWbsDivisionOrder(orderedDivisions, mergeWbsDivisionOrder(current, knownWbsDivisions)),
+    );
+    setActivityOrder("wbs");
+  };
   const completedActivities = sortedActivities.filter(
     (activity) => activity.percent_complete >= 100,
   ).length;
@@ -1979,6 +1986,7 @@ export function CpmActivityPlanner({
         onAddDivision={addWbsDivision}
         onRenameDivision={renameWbsDivision}
         onMoveDivision={moveWbsDivision}
+        onReorderDivisions={reorderWbsDivisions}
       />
     </>
   );
@@ -2095,6 +2103,7 @@ function WbsManagerDialog({
   onAddDivision,
   onRenameDivision,
   onMoveDivision,
+  onReorderDivisions,
 }: {
   open: boolean;
   divisions: WbsDivisionRow[];
@@ -2103,15 +2112,20 @@ function WbsManagerDialog({
   onAddDivision: (division: string) => void;
   onRenameDivision: (fromDivision: string, toDivision: string) => Promise<void>;
   onMoveDivision: (division: string, direction: -1 | 1) => void;
+  onReorderDivisions: (orderedDivisions: string[]) => void;
 }) {
   const [newDivision, setNewDivision] = useState("");
   const [draftNames, setDraftNames] = useState<Record<string, string>>({});
   const [savingDivision, setSavingDivision] = useState<string | null>(null);
+  const [draggingDivision, setDraggingDivision] = useState<string | null>(null);
+  const [dropTargetDivision, setDropTargetDivision] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setDraftNames(Object.fromEntries(divisions.map((row) => [row.division, row.division])));
     setSavingDivision(null);
+    setDraggingDivision(null);
+    setDropTargetDivision(null);
   }, [divisions, open]);
 
   const addDivision = () => {
@@ -2130,6 +2144,22 @@ function WbsManagerDialog({
     } finally {
       setSavingDivision(null);
     }
+  };
+  const reorderDivision = (targetDivision: string) => {
+    if (!draggingDivision || draggingDivision === targetDivision) return;
+    const orderedDivisions = divisions.map((row) => row.division);
+    const fromIndex = orderedDivisions.indexOf(draggingDivision);
+    const toIndex = orderedDivisions.indexOf(targetDivision);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const nextOrder = [...orderedDivisions];
+    const [movedDivision] = nextOrder.splice(fromIndex, 1);
+    if (!movedDivision) return;
+    nextOrder.splice(toIndex, 0, movedDivision);
+    onReorderDivisions(nextOrder);
+  };
+  const resetDragState = () => {
+    setDraggingDivision(null);
+    setDropTargetDivision(null);
   };
 
   return (
@@ -2187,8 +2217,51 @@ function WbsManagerDialog({
                 return (
                   <div
                     key={row.division}
-                    className="grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 md:grid-cols-[minmax(0,1fr)_124px_122px_88px]"
+                    className={cn(
+                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition md:grid-cols-[40px_minmax(0,1fr)_124px_122px_88px]",
+                      draggingDivision === row.division && "opacity-55",
+                      dropTargetDivision === row.division &&
+                        draggingDivision !== row.division &&
+                        "border-foreground/35 bg-muted/40 shadow-sm",
+                    )}
+                    onDragOver={(event) => {
+                      if (!draggingDivision || draggingDivision === row.division || isSaving)
+                        return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      setDropTargetDivision(row.division);
+                    }}
+                    onDragLeave={(event) => {
+                      const nextTarget = event.relatedTarget as Node | null;
+                      if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
+                        setDropTargetDivision((current) =>
+                          current === row.division ? null : current,
+                        );
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      reorderDivision(row.division);
+                      resetDragState();
+                    }}
                   >
+                    <button
+                      type="button"
+                      draggable={!isSaving}
+                      className="flex h-9 w-9 cursor-grab items-center justify-center self-end rounded border border-hairline bg-surface text-muted-foreground transition hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label={`Drag ${row.division} to reorder WBS`}
+                      title="Drag to reorder"
+                      disabled={isSaving}
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", row.division);
+                        setDraggingDivision(row.division);
+                        setDropTargetDivision(null);
+                      }}
+                      onDragEnd={resetDragState}
+                    >
+                      <GripVertical className="h-4 w-4" />
+                    </button>
                     <div className="min-w-0">
                       <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                         WBS title
