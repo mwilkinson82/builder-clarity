@@ -1998,54 +1998,56 @@ function ConstructLinePrintReport({
             )}
           </div>
         </div>
-        {printRows.map((row) => {
-          if (row.kind === "group") {
-            const groupStartPct = Math.min(
-              ...row.tasks.map((task) =>
-                timelinePrintPercent(
-                  task.visualStartDate,
-                  model.timelineStartDate,
-                  model.totalTimelineDays,
+        <div className="constructline-print-body">
+          {printRows.map((row) => {
+            if (row.kind === "group") {
+              const groupStartPct = Math.min(
+                ...row.tasks.map((task) =>
+                  timelinePrintPercent(
+                    task.visualStartDate,
+                    model.timelineStartDate,
+                    model.totalTimelineDays,
+                  ),
                 ),
-              ),
-            );
-            const groupFinishPct = Math.max(
-              ...row.tasks.map((task) =>
-                timelinePrintPercent(
-                  task.visualFinishDate,
-                  model.timelineStartDate,
-                  model.totalTimelineDays,
+              );
+              const groupFinishPct = Math.max(
+                ...row.tasks.map((task) =>
+                  timelinePrintPercent(
+                    task.visualFinishDate,
+                    model.timelineStartDate,
+                    model.totalTimelineDays,
+                  ),
                 ),
-              ),
-            );
-            return (
-              <div key={`print-${row.division}`} className="constructline-print-group">
-                <span>
-                  {row.division} · {row.tasks.length} activities
-                </span>
-                <div className="constructline-print-timeline">
-                  <span
-                    className="constructline-print-group-bar"
-                    style={{
-                      left: `${Math.min(groupStartPct, groupFinishPct)}%`,
-                      width: `${Math.max(1, Math.abs(groupFinishPct - groupStartPct))}%`,
-                    }}
-                  />
+              );
+              return (
+                <div key={`print-${row.division}`} className="constructline-print-group">
+                  <span>
+                    {row.division} · {row.tasks.length} activities
+                  </span>
+                  <div className="constructline-print-timeline">
+                    <span
+                      className="constructline-print-group-bar"
+                      style={{
+                        left: `${Math.min(groupStartPct, groupFinishPct)}%`,
+                        width: `${Math.max(1, Math.abs(groupFinishPct - groupStartPct))}%`,
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
-            );
-          }
+              );
+            }
 
-          return (
-            <ConstructLinePrintTaskRow
-              key={`print-${row.task.activity.id}`}
-              model={model}
-              task={row.task}
-              dataDatePct={dataDatePct}
-            />
-          );
-        })}
-        {showLogicLines && <ConstructLinePrintLogicOverlay rows={printRows} model={model} />}
+            return (
+              <ConstructLinePrintTaskRow
+                key={`print-${row.task.activity.id}`}
+                model={model}
+                task={row.task}
+                dataDatePct={dataDatePct}
+              />
+            );
+          })}
+          {showLogicLines && <ConstructLinePrintLogicOverlay rows={printRows} model={model} />}
+        </div>
       </div>
     </section>
   );
@@ -2090,9 +2092,11 @@ function ConstructLinePrintLogicOverlay({
           const fromY = predecessor ? rowPositions.get(predecessor.activityKey) : null;
           const toY = rowPositions.get(task.activityKey);
           if (!predecessor || fromY == null || toY == null) return [];
-          const fromX = timelinePrintPercent(
-            predecessor.visualFinishDate,
-            model.timelineStartDate,
+          const predecessorFinishOffset =
+            offsetFromTimelineStart(predecessor.visualFinishDate, model.timelineStartDate) +
+            (predecessor.isMilestone ? 0 : 1);
+          const fromX = timelinePrintOffsetPercent(
+            predecessorFinishOffset,
             model.totalTimelineDays,
           );
           const toX = timelinePrintPercent(
@@ -2854,6 +2858,11 @@ function timelinePrintPercent(value: string, timelineStartDate: string, totalTim
   const current = parseDateMs(value);
   if (start == null || current == null) return 0;
   const days = Math.max(0, Math.round((current - start) / (24 * 60 * 60 * 1000)));
+  return timelinePrintOffsetPercent(days, totalTimelineDays);
+}
+
+function timelinePrintOffsetPercent(dayOffset: number, totalTimelineDays: number) {
+  const days = Math.max(0, dayOffset);
   return Math.max(0, Math.min(100, (days / Math.max(1, totalTimelineDays)) * 100));
 }
 

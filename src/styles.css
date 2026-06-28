@@ -341,7 +341,7 @@
   .constructline-print-months,
   .constructline-print-row {
     display: grid;
-    grid-template-columns: 0.58in minmax(1.25in, 1.8in) 0.85in 0.34in 0.3in minmax(0, 1fr);
+    grid-template-columns: 0.58in 1.8in 0.85in 0.34in 0.3in minmax(0, 1fr);
   }
 
   .constructline-print-grid-head {
@@ -381,6 +381,10 @@
 
   .constructline-print-row:nth-child(odd) {
     background: #fbfaf7;
+  }
+
+  .constructline-print-body {
+    position: relative;
   }
 
   .constructline-print-id,
@@ -453,7 +457,7 @@
 
   .constructline-print-logic-overlay {
     position: absolute;
-    top: 0.39in;
+    top: 0;
     right: 0;
     bottom: 0;
     left: 3.87in;
