@@ -156,6 +156,8 @@ const CONSTRUCTLINE_ZOOM_LEVELS = [
   { label: "Day", dayPx: 22 },
 ] as const;
 const CONSTRUCTLINE_FIT_DAY_PX = CONSTRUCTLINE_ZOOM_LEVELS[0].dayPx;
+const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 500;
+const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 980;
 
 export type ActivityCreateInput = { name: string } & Partial<
   Pick<
@@ -483,9 +485,7 @@ export function ScheduleRisk({
                 <ScheduleIntelligenceMetric
                   label="Critical basis"
                   value={scheduleCpmModel.criticalPathReliable ? "Reliable" : "Needs logic cleanup"}
-                  tone={
-                    scheduleCpmModel.criticalPathReliable ? "text-success" : "text-warning"
-                  }
+                  tone={scheduleCpmModel.criticalPathReliable ? "text-success" : "text-warning"}
                 />
                 <ScheduleIntelligenceMetric
                   label="Milestone matches"
@@ -1413,12 +1413,38 @@ export function CpmActivityPlanner({
 
   return (
     <>
-      <ConstructLinePrintReport
-        model={cpmModel}
-        project={project}
-        latestDataDate={latestDataDate}
-        showLogicLines={showLogicLines}
-      />
+      <section className="constructline-cpm-print-shell" aria-label="Printable CPM schedule">
+        <div className="constructline-cpm-print-titlebar">
+          <div>
+            <div className="constructline-cpm-print-kicker">ConstructLine CPM grid</div>
+            <h1>{project.name} schedule</h1>
+            <div className="constructline-cpm-print-meta">
+              {project.job_number && <span>Job # {project.job_number}</span>}
+              {project.client && <span>{project.client}</span>}
+              {project.project_manager && <span>PM {project.project_manager}</span>}
+              <span>
+                {shortDate(cpmModel.timelineStartDate)} to {shortDate(cpmModel.timelineFinishDate)}
+              </span>
+              {showLogicLines && (
+                <span>{cpmModel.tasks.length} activities · logic lines shown</span>
+              )}
+            </div>
+          </div>
+          <div className="constructline-cpm-print-status">
+            <span>Critical basis</span>
+            <strong>{cpmModel.criticalPathReliable ? "Valid" : "Provisional"}</strong>
+          </div>
+        </div>
+        <ActivityScheduleMatrix
+          model={cpmModel}
+          dayPx={CONSTRUCTLINE_FIT_DAY_PX}
+          dataDate={latestDataDate}
+          showLogicLines={showLogicLines}
+          isPrintMode
+          onOpenActivity={() => undefined}
+          onDeleteActivity={() => undefined}
+        />
+      </section>
       <div className="constructline-screen-workbench rounded-lg border border-hairline bg-surface p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -2079,7 +2105,7 @@ function ConstructLinePrintLogicOverlay({
     }
 
     return { bodyHeight: height, rowPositions: positions };
-  }, [rows]);
+  }, [groupHeight, rowHeight, rows]);
   const taskByKey = useMemo(
     () => new Map(model.tasks.map((task) => [task.activityKey, task])),
     [model.tasks],
@@ -2289,6 +2315,7 @@ function ActivityScheduleMatrix({
   dataDate,
   showLogicLines = false,
   isFocusMode = false,
+  isPrintMode = false,
   onOpenActivity,
   onDeleteActivity,
 }: {
@@ -2297,28 +2324,37 @@ function ActivityScheduleMatrix({
   dataDate: string | null;
   showLogicLines?: boolean;
   isFocusMode?: boolean;
+  isPrintMode?: boolean;
   onOpenActivity: (activity: ScheduleActivityRow) => void;
   onDeleteActivity: (id: string) => void;
 }) {
   const totalActivities = model.tasks.length;
-  const isFitZoom = dayPx === CONSTRUCTLINE_FIT_DAY_PX;
-  const tableWidth = isFitZoom ? 760 : 860;
-  const tableColumns = isFitZoom
-    ? "76px minmax(220px,1fr) 58px 78px 78px 70px 54px 58px"
-    : "82px minmax(260px,1fr) 64px 86px 86px 74px 56px 64px";
-  const rowHeight = 64;
-  const groupHeight = 32;
-  const headerHeight = 48;
-  const timelineWidth = isFitZoom
-    ? Math.max(480, model.totalTimelineDays * dayPx)
-    : Math.max(720, model.totalTimelineDays * dayPx);
+  const printDayPx = CONSTRUCTLINE_PRINT_TIMELINE_WIDTH / Math.max(1, model.totalTimelineDays);
+  const activeDayPx = isPrintMode ? printDayPx : dayPx;
+  const isFitZoom = !isPrintMode && dayPx === CONSTRUCTLINE_FIT_DAY_PX;
+  const tableWidth = isPrintMode ? CONSTRUCTLINE_PRINT_TABLE_WIDTH : isFitZoom ? 760 : 860;
+  const tableColumns = isPrintMode
+    ? "62px minmax(170px,1fr) 42px 58px 58px 48px 40px 42px"
+    : isFitZoom
+      ? "76px minmax(220px,1fr) 58px 78px 78px 70px 54px 58px"
+      : "82px minmax(260px,1fr) 64px 86px 86px 74px 56px 64px";
+  const rowHeight = isPrintMode ? 22 : 64;
+  const groupHeight = isPrintMode ? 16 : 32;
+  const headerHeight = isPrintMode ? 30 : 48;
+  const timelineWidth = isPrintMode
+    ? CONSTRUCTLINE_PRINT_TIMELINE_WIDTH
+    : isFitZoom
+      ? Math.max(480, model.totalTimelineDays * activeDayPx)
+      : Math.max(720, model.totalTimelineDays * activeDayPx);
   const monthBands = buildConstructLineMonthBands(
     model.timelineStartDate,
     model.totalTimelineDays,
-    dayPx,
+    activeDayPx,
   );
   const dataDateX =
-    dataDate == null ? null : offsetFromTimelineStart(dataDate, model.timelineStartDate) * dayPx;
+    dataDate == null
+      ? null
+      : offsetFromTimelineStart(dataDate, model.timelineStartDate) * activeDayPx;
   const rows = useMemo(
     () =>
       model.groups.flatMap<
@@ -2359,8 +2395,9 @@ function ActivityScheduleMatrix({
           predecessor.visualFinishDate,
           model.timelineStartDate,
         );
-        const fromX = (predecessorFinishOffset + (predecessor.isMilestone ? 0 : 1)) * dayPx;
-        const toX = offsetFromTimelineStart(task.visualStartDate, model.timelineStartDate) * dayPx;
+        const fromX = (predecessorFinishOffset + (predecessor.isMilestone ? 0 : 1)) * activeDayPx;
+        const toX =
+          offsetFromTimelineStart(task.visualStartDate, model.timelineStartDate) * activeDayPx;
         return [
           {
             id: `${predecessor.activityKey}->${task.activityKey}`,
@@ -2374,13 +2411,14 @@ function ActivityScheduleMatrix({
         ];
       }),
     );
-  }, [dayPx, model.tasks, model.timelineStartDate, rowPositions, showLogicLines, taskByKey]);
+  }, [activeDayPx, model.tasks, model.timelineStartDate, rowPositions, showLogicLines, taskByKey]);
 
   return (
     <div
       className={cn(
-        "min-w-0 overflow-hidden rounded-md border border-hairline bg-card",
-        isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : "mt-5",
+        "constructline-cpm-matrix min-w-0 overflow-hidden rounded-md border border-hairline bg-card",
+        isPrintMode && "constructline-cpm-matrix-print",
+        isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : isPrintMode ? "mt-0" : "mt-5",
       )}
     >
       <div className="flex flex-col gap-3 border-b border-hairline px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
@@ -2433,12 +2471,19 @@ function ActivityScheduleMatrix({
       ) : (
         <div
           className={cn(
-            "overflow-auto overscroll-contain print:max-h-none print:overflow-visible",
-            isFocusMode ? "min-h-0 flex-1" : "max-h-[clamp(460px,calc(100vh-330px),820px)]",
+            "constructline-cpm-matrix-scroll",
+            isPrintMode
+              ? "overflow-visible"
+              : "overflow-auto overscroll-contain print:max-h-none print:overflow-visible",
+            isFocusMode
+              ? "min-h-0 flex-1"
+              : isPrintMode
+                ? ""
+                : "max-h-[clamp(460px,calc(100vh-330px),820px)]",
           )}
         >
           <div
-            className="relative min-h-full"
+            className="constructline-cpm-matrix-inner relative min-h-full"
             style={{ width: tableWidth + timelineWidth, minWidth: "100%" }}
           >
             <div
@@ -2519,8 +2564,8 @@ function ActivityScheduleMatrix({
                       <div
                         className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-foreground/35"
                         style={{
-                          left: groupStart * dayPx,
-                          width: Math.max(8, (groupFinish - groupStart + 1) * dayPx),
+                          left: groupStart * activeDayPx,
+                          width: Math.max(8, (groupFinish - groupStart + 1) * activeDayPx),
                         }}
                       />
                     </div>
@@ -2537,7 +2582,8 @@ function ActivityScheduleMatrix({
                   tableColumns={tableColumns}
                   timelineWidth={timelineWidth}
                   timelineStartDate={model.timelineStartDate}
-                  dayPx={dayPx}
+                  dayPx={activeDayPx}
+                  isPrintMode={isPrintMode}
                   monthBands={monthBands}
                   dataDateX={dataDateX}
                   onOpen={() => onOpenActivity(row.task.activity)}
@@ -2658,6 +2704,7 @@ function ConstructLineTaskRow({
   timelineWidth,
   timelineStartDate,
   dayPx,
+  isPrintMode,
   monthBands,
   dataDateX,
   onOpen,
@@ -2670,6 +2717,7 @@ function ConstructLineTaskRow({
   timelineWidth: number;
   timelineStartDate: string;
   dayPx: number;
+  isPrintMode: boolean;
   monthBands: ReturnType<typeof buildConstructLineMonthBands>;
   dataDateX: number | null;
   onOpen: () => void;
@@ -2757,19 +2805,21 @@ function ConstructLineTaskRow({
         </div>
         <div className="flex items-center justify-end gap-1 border-l border-hairline/50 px-1.5 tabular text-muted-foreground">
           <span>{logicCount}</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-danger"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete();
-            }}
-            aria-label={`Delete activity ${activity.activity_id || activity.name}`}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          {!isPrintMode && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-danger"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+              aria-label={`Delete activity ${activity.activity_id || activity.name}`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -3466,8 +3516,7 @@ function ActivityDetailDialog({
               )}
               sub="pred / succ ties"
               tone={
-                activity.predecessor_activity_ids.length +
-                  activity.successor_activity_ids.length >
+                activity.predecessor_activity_ids.length + activity.successor_activity_ids.length >
                 0
                   ? "success"
                   : "warning"

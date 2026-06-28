@@ -158,6 +158,10 @@
   display: none;
 }
 
+.constructline-cpm-print-shell {
+  display: none;
+}
+
 @media print {
   @page {
     size: 17in 11in;
@@ -193,11 +197,128 @@
   }
 
   .constructline-print-report {
+    display: none !important;
+  }
+
+  .constructline-cpm-print-shell {
     display: block !important;
     color: #221f1b;
     font-family: Inter, Arial, sans-serif;
     font-size: 8px;
     line-height: 1.2;
+  }
+
+  .constructline-cpm-print-titlebar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 1.2in;
+    gap: 0.12in;
+    align-items: end;
+    margin-bottom: 0.08in;
+    border-bottom: 1px solid #d8d1c5;
+    padding-bottom: 0.07in;
+  }
+
+  .constructline-cpm-print-kicker {
+    color: #6f6a60;
+    font-size: 6px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .constructline-cpm-print-titlebar h1 {
+    margin: 0.02in 0 0;
+    font-family: Georgia, serif;
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 1;
+  }
+
+  .constructline-cpm-print-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.08in;
+    margin-top: 0.04in;
+    color: #5a554c;
+    font-size: 7px;
+  }
+
+  .constructline-cpm-print-status {
+    border: 1px solid #d8d1c5;
+    padding: 0.05in 0.06in;
+    text-align: right;
+  }
+
+  .constructline-cpm-print-status span {
+    display: block;
+    color: #6f6a60;
+    font-size: 5.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .constructline-cpm-print-status strong {
+    display: block;
+    margin-top: 0.02in;
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  .constructline-cpm-matrix-print {
+    break-inside: avoid;
+    overflow: hidden !important;
+    border-color: #d8d1c5 !important;
+    border-radius: 0 !important;
+    background: white !important;
+    box-shadow: none !important;
+    color: #221f1b !important;
+  }
+
+  .constructline-cpm-matrix-print * {
+    font-size: 6px !important;
+    line-height: 1.08 !important;
+  }
+
+  .constructline-cpm-matrix-print .sticky {
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+  }
+
+  .constructline-cpm-matrix-print .constructline-cpm-matrix-scroll {
+    overflow: visible !important;
+  }
+
+  .constructline-cpm-matrix-print .constructline-cpm-matrix-inner {
+    min-width: 0 !important;
+  }
+
+  .constructline-cpm-matrix-print [class*="px-3"] {
+    padding-left: 5px !important;
+    padding-right: 5px !important;
+  }
+
+  .constructline-cpm-matrix-print [class*="px-2"] {
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+  }
+
+  .constructline-cpm-matrix-print button {
+    appearance: none !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: inherit !important;
+    box-shadow: none !important;
+  }
+
+  .constructline-cpm-matrix-print svg {
+    overflow: visible !important;
+  }
+
+  .constructline-cpm-matrix-print path {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 
   .constructline-print-header {
