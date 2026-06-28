@@ -165,7 +165,7 @@
 @media print {
   @page {
     size: 17in 11in;
-    margin: 0.28in;
+    margin: 0.22in;
   }
 
   html,
@@ -211,11 +211,11 @@
   .constructline-cpm-print-titlebar {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 1.2in;
-    gap: 0.12in;
+    gap: 0.1in;
     align-items: end;
-    margin-bottom: 0.08in;
+    margin-bottom: 0.055in;
     border-bottom: 1px solid #d8d1c5;
-    padding-bottom: 0.07in;
+    padding-bottom: 0.05in;
   }
 
   .constructline-cpm-print-kicker {
@@ -229,7 +229,7 @@
   .constructline-cpm-print-titlebar h1 {
     margin: 0.02in 0 0;
     font-family: Georgia, serif;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 400;
     line-height: 1;
   }
@@ -245,7 +245,7 @@
 
   .constructline-cpm-print-status {
     border: 1px solid #d8d1c5;
-    padding: 0.05in 0.06in;
+    padding: 0.045in 0.055in;
     text-align: right;
   }
 
@@ -261,8 +261,18 @@
   .constructline-cpm-print-status strong {
     display: block;
     margin-top: 0.02in;
-    font-size: 12px;
+    font-size: 10px;
     line-height: 1;
+  }
+
+  .constructline-cpm-print-status em {
+    display: block;
+    margin-top: 0.02in;
+    color: #6f6a60;
+    font-size: 5.5px;
+    font-style: normal;
+    font-weight: 700;
+    text-transform: uppercase;
   }
 
   .constructline-cpm-matrix-print {
@@ -276,8 +286,31 @@
   }
 
   .constructline-cpm-matrix-print * {
-    font-size: 6px !important;
-    line-height: 1.08 !important;
+    font-size: 6.4px !important;
+    line-height: 1.1 !important;
+  }
+
+  .constructline-cpm-matrix-print .constructline-cpm-matrix-head {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 0.06in !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    padding: 0.035in 0.05in !important;
+  }
+
+  .constructline-cpm-matrix-print .constructline-cpm-matrix-title {
+    display: none !important;
+  }
+
+  .constructline-cpm-matrix-print .constructline-cpm-matrix-legend {
+    gap: 0.08in !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+  }
+
+  .constructline-cpm-matrix-print .constructline-cpm-matrix-legend span {
+    white-space: nowrap !important;
   }
 
   .constructline-cpm-matrix-print .sticky {

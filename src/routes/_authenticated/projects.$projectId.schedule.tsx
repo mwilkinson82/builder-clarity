@@ -251,10 +251,11 @@ function ScheduleWorkspaceShell({
               type="button"
               variant="outline"
               className="gap-2"
+              title="Print optimized for Tabloid / 11 x 17 landscape"
               onClick={() => typeof window !== "undefined" && window.print()}
             >
               <Printer className="h-4 w-4" />
-              Print schedule
+              Print 11x17
             </Button>
           </div>
         </div>

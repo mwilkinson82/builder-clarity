@@ -156,8 +156,8 @@ const CONSTRUCTLINE_ZOOM_LEVELS = [
   { label: "Day", dayPx: 22 },
 ] as const;
 const CONSTRUCTLINE_FIT_DAY_PX = CONSTRUCTLINE_ZOOM_LEVELS[0].dayPx;
-const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 500;
-const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 980;
+const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
+const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
 
 export type ActivityCreateInput = { name: string } & Partial<
   Pick<
@@ -1410,6 +1410,10 @@ export function CpmActivityPlanner({
   const activitiesWithDates = sortedActivities.filter(
     (activity) => activity.start_date || activity.finish_date,
   ).length;
+  const printedLogicTieCount = cpmModel.tasks.reduce(
+    (total, task) => total + task.predecessorKeys.length,
+    0,
+  );
 
   return (
     <>
@@ -1426,13 +1430,17 @@ export function CpmActivityPlanner({
                 {shortDate(cpmModel.timelineStartDate)} to {shortDate(cpmModel.timelineFinishDate)}
               </span>
               {showLogicLines && (
-                <span>{cpmModel.tasks.length} activities · logic lines shown</span>
+                <span>
+                  {cpmModel.tasks.length} activities · {printedLogicTieCount} logic ties shown
+                </span>
               )}
+              <span>Optimized for 11 x 17 landscape</span>
             </div>
           </div>
           <div className="constructline-cpm-print-status">
-            <span>Critical basis</span>
-            <strong>{cpmModel.criticalPathReliable ? "Valid" : "Provisional"}</strong>
+            <span>Print setup</span>
+            <strong>11 x 17 landscape</strong>
+            <em>Critical basis: {cpmModel.criticalPathReliable ? "valid" : "provisional"}</em>
           </div>
         </div>
         <ActivityScheduleMatrix
@@ -1492,10 +1500,11 @@ export function CpmActivityPlanner({
               type="button"
               variant="outline"
               className="gap-2"
+              title="Print optimized for Tabloid / 11 x 17 landscape"
               onClick={() => typeof window !== "undefined" && window.print()}
             >
               <Printer className="h-4 w-4" />
-              Print
+              Print 11x17
             </Button>
             <Button type="button" className="gap-2" onClick={() => setShowDraft((open) => !open)}>
               <Plus className="h-4 w-4" />
@@ -1789,10 +1798,11 @@ export function CpmActivityPlanner({
                 type="button"
                 variant="outline"
                 className="gap-2"
+                title="Print optimized for Tabloid / 11 x 17 landscape"
                 onClick={() => typeof window !== "undefined" && window.print()}
               >
                 <Printer className="h-4 w-4" />
-                Print
+                Print 11x17
               </Button>
               <Button type="button" className="gap-2" onClick={() => setIsFocusOpen(false)}>
                 <Minimize2 className="h-4 w-4" />
@@ -2378,7 +2388,7 @@ function ActivityScheduleMatrix({
       }
     }
     return { bodyHeight: height, rowPositions: positions };
-  }, [rows]);
+  }, [groupHeight, rowHeight, rows]);
   const taskByKey = useMemo(
     () => new Map(model.tasks.map((task) => [task.activityKey, task])),
     [model.tasks],
@@ -2421,8 +2431,8 @@ function ActivityScheduleMatrix({
         isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : isPrintMode ? "mt-0" : "mt-5",
       )}
     >
-      <div className="flex flex-col gap-3 border-b border-hairline px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
+      <div className="constructline-cpm-matrix-head flex flex-col gap-3 border-b border-hairline px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="constructline-cpm-matrix-title">
           <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
             <GitBranch className="h-3.5 w-3.5" />
             ConstructLine CPM grid
@@ -2432,7 +2442,7 @@ function ActivityScheduleMatrix({
             {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
           </div>
         </div>
-        <div className="flex flex-wrap gap-4 text-[12px] text-muted-foreground">
+        <div className="constructline-cpm-matrix-legend flex flex-wrap gap-4 text-[12px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <span className="h-2 w-5 rounded-full bg-danger" />
             Critical
