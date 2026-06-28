@@ -373,10 +373,11 @@
   }
 
   .constructline-print-row {
-    min-height: 0.205in;
+    height: 0.205in;
     border-bottom: 1px solid #e5ded3;
     background: white;
     break-inside: avoid;
+    overflow: hidden;
   }
 
   .constructline-print-row:nth-child(odd) {
@@ -415,7 +416,7 @@
   .constructline-print-group {
     display: grid;
     grid-template-columns: minmax(0, 3.87in) minmax(0, 1fr);
-    min-height: 0.18in;
+    height: 0.18in;
     border-bottom: 1px solid #d8d1c5;
     background: #f2eee7;
     color: #6f6a60;
@@ -424,6 +425,7 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     break-inside: avoid;
+    overflow: hidden;
   }
 
   .constructline-print-group > span {

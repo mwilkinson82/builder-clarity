@@ -2155,17 +2155,25 @@ function ConstructLinePrintLogicOverlay({
       </defs>
       {lines.map((line) => {
         const distance = line.toX - line.fromX;
-        const bend = Math.max(3, Math.min(14, Math.abs(distance) / 2));
-        const midX = distance >= 0 ? line.fromX + bend : line.fromX - bend;
+        const routeX =
+          Math.abs(distance) < 1
+            ? line.fromX
+            : distance >= 0
+              ? Math.min(99.4, Math.max(line.fromX, line.toX) + 1.2)
+              : Math.max(0.6, Math.min(line.fromX, line.toX) - 1.2);
         const stroke = line.isCritical ? "#d53c31" : line.isOutOfSequence ? "#c68a18" : "#6f675c";
-        const opacity = line.isCritical ? 0.72 : line.isOutOfSequence ? 0.6 : 0.42;
+        const opacity = line.isCritical ? 0.72 : line.isOutOfSequence ? 0.58 : 0.34;
+        const path =
+          Math.abs(distance) < 1
+            ? `M ${line.fromX} ${line.fromY} V ${line.toY}`
+            : `M ${line.fromX} ${line.fromY} H ${routeX} V ${line.toY} H ${line.toX}`;
         return (
           <path
             key={line.id}
-            d={`M ${line.fromX} ${line.fromY} C ${midX} ${line.fromY}, ${midX} ${line.toY}, ${line.toX} ${line.toY}`}
+            d={path}
             fill="none"
             stroke={stroke}
-            strokeWidth={line.isCritical ? 0.42 : 0.3}
+            strokeWidth={line.isCritical ? 0.32 : 0.22}
             strokeDasharray={line.isOutOfSequence ? "1.2 1.1" : undefined}
             opacity={opacity}
             vectorEffect="non-scaling-stroke"
