@@ -52,6 +52,8 @@ import {
   Check,
   ChevronsUpDown,
   X,
+  CalendarDays,
+  ListTree,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -158,6 +160,7 @@ const CONSTRUCTLINE_ZOOM_LEVELS = [
 const CONSTRUCTLINE_FIT_DAY_PX = CONSTRUCTLINE_ZOOM_LEVELS[0].dayPx;
 const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
+type ScheduleActivityOrder = "start" | "wbs";
 
 export type ActivityCreateInput = { name: string } & Partial<
   Pick<
@@ -1305,6 +1308,7 @@ export function CpmActivityPlanner({
   const [dayPx, setDayPx] =
     useState<(typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]>(CONSTRUCTLINE_FIT_DAY_PX);
   const [showLogicLines, setShowLogicLines] = useState(false);
+  const [activityOrder, setActivityOrder] = useState<ScheduleActivityOrder>("start");
   const [isFocusOpen, setIsFocusOpen] = useState(false);
   const sortedActivities = useMemo(
     () =>
@@ -1317,13 +1321,17 @@ export function CpmActivityPlanner({
     [activities],
   );
   const grouped = useMemo(() => groupActivitiesByDivision(sortedActivities), [sortedActivities]);
-  const cpmModel = useMemo(
+  const baseCpmModel = useMemo(
     () =>
       buildConstructLineCpmModel(sortedActivities, {
         dataDate: latestDataDate,
         nearCriticalFloat: 5,
       }),
     [latestDataDate, sortedActivities],
+  );
+  const cpmModel = useMemo(
+    () => orderConstructLineCpmModel(baseCpmModel, activityOrder),
+    [activityOrder, baseCpmModel],
   );
   const bounds = useMemo(
     () =>
@@ -1437,6 +1445,7 @@ export function CpmActivityPlanner({
                 </span>
               )}
               <span>Optimized for 11 x 17 landscape</span>
+              <span>{activityOrder === "start" ? "Start-date order" : "WBS order"}</span>
             </div>
           </div>
           <div className="constructline-cpm-print-status">
@@ -1468,6 +1477,7 @@ export function CpmActivityPlanner({
             </p>
           </div>
           <div className="flex flex-wrap gap-2 print:hidden">
+            <ScheduleOrderControls value={activityOrder} onChange={setActivityOrder} />
             <ScheduleZoomControls dayPx={dayPx} onChange={setDayPx} />
             <Button
               type="button"
@@ -1785,6 +1795,7 @@ export function CpmActivityPlanner({
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
+              <ScheduleOrderControls value={activityOrder} onChange={setActivityOrder} />
               <ScheduleZoomControls dayPx={dayPx} onChange={setDayPx} />
               <Button
                 type="button"
@@ -1903,6 +1914,48 @@ function ScheduleZoomControls({
           </span>
         </button>
       ))}
+    </div>
+  );
+}
+
+function ScheduleOrderControls({
+  value,
+  onChange,
+}: {
+  value: ScheduleActivityOrder;
+  onChange: (value: ScheduleActivityOrder) => void;
+}) {
+  const options: Array<{
+    value: ScheduleActivityOrder;
+    label: string;
+    icon: typeof CalendarDays;
+  }> = [
+    { value: "start", label: "Start", icon: CalendarDays },
+    { value: "wbs", label: "WBS", icon: ListTree },
+  ];
+
+  return (
+    <div className="flex overflow-hidden rounded-md border border-hairline bg-card">
+      {options.map((option) => {
+        const Icon = option.icon;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={value === option.value}
+            className={cn(
+              "h-9 border-r border-hairline px-3 text-xs font-semibold text-muted-foreground last:border-r-0 hover:bg-muted/60",
+              value === option.value && "bg-foreground text-background hover:bg-foreground",
+            )}
+            onClick={() => onChange(option.value)}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <Icon className="h-3.5 w-3.5" />
+              {option.label}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -2935,6 +2988,68 @@ function timelinePrintPercent(value: string, timelineStartDate: string, totalTim
 function timelinePrintOffsetPercent(dayOffset: number, totalTimelineDays: number) {
   const days = Math.max(0, dayOffset);
   return Math.max(0, Math.min(100, (days / Math.max(1, totalTimelineDays)) * 100));
+}
+
+function orderConstructLineCpmModel(
+  model: ConstructLineCpmModel,
+  order: ScheduleActivityOrder,
+): ConstructLineCpmModel {
+  const orderedTasks = [...model.tasks].sort(
+    order === "start" ? compareCpmTasksByStart : compareCpmTasksByWbsThenStart,
+  );
+
+  return {
+    ...model,
+    tasks: orderedTasks,
+    groups:
+      order === "start"
+        ? [{ division: "Start date order", tasks: orderedTasks }]
+        : groupCpmTasksByWbsDivision(orderedTasks),
+  };
+}
+
+function compareCpmTasksByStart(a: ConstructLineCpmTask, b: ConstructLineCpmTask) {
+  return (
+    a.visualStartDate.localeCompare(b.visualStartDate) ||
+    a.visualFinishDate.localeCompare(b.visualFinishDate) ||
+    naturalScheduleCompare(a.dependencyKey, b.dependencyKey) ||
+    naturalScheduleCompare(a.activity.name, b.activity.name)
+  );
+}
+
+function compareCpmTasksByWbsThenStart(a: ConstructLineCpmTask, b: ConstructLineCpmTask) {
+  return (
+    compareWbsDivision(a.activity.division, b.activity.division) || compareCpmTasksByStart(a, b)
+  );
+}
+
+function groupCpmTasksByWbsDivision(tasks: ConstructLineCpmTask[]) {
+  const groups = new Map<string, ConstructLineCpmTask[]>();
+  for (const task of tasks) {
+    const division = task.activity.division || "General";
+    groups.set(division, [...(groups.get(division) ?? []), task]);
+  }
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => compareWbsDivision(a, b))
+    .map(([division, rows]) => ({ division, tasks: rows.sort(compareCpmTasksByStart) }));
+}
+
+function compareWbsDivision(a: string, b: string) {
+  const left = getWbsDivisionSortKey(a);
+  const right = getWbsDivisionSortKey(b);
+  return left.rank - right.rank || naturalScheduleCompare(left.label, right.label);
+}
+
+function getWbsDivisionSortKey(value?: string | null) {
+  const label = (value || "General").trim() || "General";
+  const numericPrefix = label.match(/^(\d+)/)?.[1];
+  if (numericPrefix) return { rank: Number(numericPrefix), label };
+  if (/milestones?/i.test(label)) return { rank: 900, label };
+  return { rank: 500, label };
+}
+
+function naturalScheduleCompare(a: string, b: string) {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
 function StackingMiniMap({ model }: { model: ConstructLineCpmModel }) {
