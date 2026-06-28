@@ -99,13 +99,21 @@ function ScheduleWorkspacePage() {
   });
 
   const activityUpdate = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: Partial<ScheduleActivityRow> }) =>
-      updateActivityFn({ data: { id, patch } }),
-    onSuccess: async () => {
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: Partial<ScheduleActivityRow>;
+      silent?: boolean;
+    }) => updateActivityFn({ data: { id, patch } }),
+    onSuccess: async (_result, variables) => {
       await refreshSchedule();
-      toast.success("Activity updated", {
-        description: "The CPM row and logic ties were saved.",
-      });
+      if (!variables.silent) {
+        toast.success("Activity updated", {
+          description: "The CPM row and logic ties were saved.",
+        });
+      }
     },
     onError: (error) => {
       toast.error("Activity did not update", {
@@ -215,8 +223,8 @@ function ScheduleWorkspacePage() {
         onAddActivity={(activity) => activityCreate.mutate(activity)}
         onSeedActivities={(items) => activitySeed.mutate(items)}
         isSeedingActivities={activitySeed.isPending}
-        onPatchActivity={async (id, patch) => {
-          await activityUpdate.mutateAsync({ id, patch });
+        onPatchActivity={async (id, patch, options) => {
+          await activityUpdate.mutateAsync({ id, patch, silent: options?.silent });
         }}
         isSavingActivity={activityUpdate.isPending}
         onDeleteActivity={(id) => activityDelete.mutate({ id })}
