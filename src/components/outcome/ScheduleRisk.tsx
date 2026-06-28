@@ -85,10 +85,15 @@ import {
 } from "@/lib/ior";
 import {
   buildConstructLineCpmModel,
+  describeConstructLineDependencyToken,
+  formatConstructLineDependencyToken,
   isConstructLineMilestoneActivity,
   offsetFromTimelineStart,
+  parseConstructLineDependencyToken,
   type ConstructLineCpmModel,
   type ConstructLineCpmTask,
+  type ConstructLineDependencyToken,
+  type ConstructLineRelationshipType,
 } from "@/lib/constructline-cpm";
 
 const STATUS_LABEL: Record<MilestoneStatus, string> = {
@@ -161,6 +166,7 @@ const CONSTRUCTLINE_FIT_DAY_PX = CONSTRUCTLINE_ZOOM_LEVELS[0].dayPx;
 const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
 type ScheduleActivityOrder = "start" | "wbs";
+const CONSTRUCTLINE_RELATIONSHIP_TYPES: ConstructLineRelationshipType[] = ["FS", "SS", "FF", "SF"];
 
 export type ActivityCreateInput = { name: string } & Partial<
   Pick<
@@ -1390,8 +1396,8 @@ export function CpmActivityPlanner({
       start_date: draft.is_milestone ? milestoneDate : draft.start_date || null,
       finish_date: draft.is_milestone ? milestoneDate : draft.finish_date || null,
       percent_complete: parsePercent(draft.percent_complete),
-      predecessor_activity_ids: parseActivityIds(draft.predecessor_activity_ids),
-      successor_activity_ids: parseActivityIds(draft.successor_activity_ids),
+      predecessor_activity_ids: serializeActivityLinksToArray(draft.predecessor_activity_ids),
+      successor_activity_ids: serializeActivityLinksToArray(draft.successor_activity_ids),
       notes: draft.notes.trim(),
     });
     setDraft(emptyActivityDraft());
@@ -2171,7 +2177,7 @@ function ConstructLinePrintLogicOverlay({
     }
 
     return { bodyHeight: height, rowPositions: positions };
-  }, [groupHeight, rowHeight, rows]);
+  }, [groupHeight, taskHeight, rows]);
   const taskByKey = useMemo(
     () => new Map(model.tasks.map((task) => [task.activityKey, task])),
     [model.tasks],
@@ -2179,26 +2185,22 @@ function ConstructLinePrintLogicOverlay({
   const lines = useMemo(
     () =>
       model.tasks.flatMap((task) =>
-        task.predecessorKeys.flatMap((predecessorKey) => {
-          const predecessor = taskByKey.get(predecessorKey);
+        task.predecessorLinks.flatMap((link) => {
+          const predecessor = taskByKey.get(link.predecessorKey);
           const fromY = predecessor ? rowPositions.get(predecessor.activityKey) : null;
           const toY = rowPositions.get(task.activityKey);
           if (!predecessor || fromY == null || toY == null) return [];
-          const predecessorFinishOffset =
-            offsetFromTimelineStart(predecessor.visualFinishDate, model.timelineStartDate) +
-            (predecessor.isMilestone ? 0 : 1);
-          const fromX = timelinePrintOffsetPercent(
-            predecessorFinishOffset,
-            model.totalTimelineDays,
-          );
-          const toX = timelinePrintPercent(
-            task.visualStartDate,
+          const { fromOffset, toOffset } = getLogicLineEndpointOffsets(
+            predecessor,
+            task,
+            link.relationshipType,
             model.timelineStartDate,
-            model.totalTimelineDays,
           );
+          const fromX = timelinePrintOffsetPercent(fromOffset, model.totalTimelineDays);
+          const toX = timelinePrintOffsetPercent(toOffset, model.totalTimelineDays);
           return [
             {
-              id: `print-${predecessor.activityKey}->${task.activityKey}`,
+              id: `print-${predecessor.activityKey}->${task.activityKey}-${link.relationshipType}-${link.lagDays}`,
               fromX,
               fromY,
               toX,
@@ -2452,21 +2454,22 @@ function ActivityScheduleMatrix({
   const logicLines = useMemo(() => {
     if (!showLogicLines) return [];
     return model.tasks.flatMap((task) =>
-      task.predecessorKeys.flatMap((predecessorKey) => {
-        const predecessor = taskByKey.get(predecessorKey);
+      task.predecessorLinks.flatMap((link) => {
+        const predecessor = taskByKey.get(link.predecessorKey);
         const fromY = predecessor ? rowPositions.get(predecessor.activityKey) : null;
         const toY = rowPositions.get(task.activityKey);
         if (!predecessor || fromY == null || toY == null) return [];
-        const predecessorFinishOffset = offsetFromTimelineStart(
-          predecessor.visualFinishDate,
+        const { fromOffset, toOffset } = getLogicLineEndpointOffsets(
+          predecessor,
+          task,
+          link.relationshipType,
           model.timelineStartDate,
         );
-        const fromX = (predecessorFinishOffset + (predecessor.isMilestone ? 0 : 1)) * activeDayPx;
-        const toX =
-          offsetFromTimelineStart(task.visualStartDate, model.timelineStartDate) * activeDayPx;
+        const fromX = fromOffset * activeDayPx;
+        const toX = toOffset * activeDayPx;
         return [
           {
-            id: `${predecessor.activityKey}->${task.activityKey}`,
+            id: `${predecessor.activityKey}->${task.activityKey}-${link.relationshipType}-${link.lagDays}`,
             fromX,
             fromY,
             toX,
@@ -2990,6 +2993,33 @@ function timelinePrintOffsetPercent(dayOffset: number, totalTimelineDays: number
   return Math.max(0, Math.min(100, (days / Math.max(1, totalTimelineDays)) * 100));
 }
 
+function getLogicLineEndpointOffsets(
+  predecessor: ConstructLineCpmTask,
+  successor: ConstructLineCpmTask,
+  relationshipType: ConstructLineRelationshipType,
+  timelineStartDate: string,
+) {
+  const fromDate =
+    relationshipType === "SS" || relationshipType === "SF"
+      ? predecessor.visualStartDate
+      : predecessor.visualFinishDate;
+  const toDate =
+    relationshipType === "FF" || relationshipType === "SF"
+      ? successor.visualFinishDate
+      : successor.visualStartDate;
+  const fromOffset =
+    offsetFromTimelineStart(fromDate, timelineStartDate) +
+    (relationshipType === "FS" || relationshipType === "FF"
+      ? predecessor.isMilestone
+        ? 0
+        : 1
+      : 0);
+  const toOffset =
+    offsetFromTimelineStart(toDate, timelineStartDate) +
+    (relationshipType === "FF" || relationshipType === "SF" ? (successor.isMilestone ? 0 : 1) : 0);
+  return { fromOffset, toOffset };
+}
+
 function orderConstructLineCpmModel(
   model: ConstructLineCpmModel,
   order: ScheduleActivityOrder,
@@ -3360,7 +3390,7 @@ function ActivityIdPills({ ids, emptyLabel }: { ids: string[]; emptyLabel: strin
           key={id}
           className="max-w-full break-all rounded border border-hairline bg-card px-1.5 py-0.5 text-[11px] font-semibold tabular text-foreground"
         >
-          {id}
+          {describeConstructLineDependencyToken(id)}
         </span>
       ))}
     </div>
@@ -3384,7 +3414,8 @@ function ActivityDependencyPicker({
   blockedIds?: string[];
   onChange: (value: string) => void;
 }) {
-  const selectedActivityIds = parseActivityIds(selectedIds);
+  const selectedLinks = parseActivityLinks(selectedIds);
+  const selectedActivityIds = selectedLinks.map((link) => link.activityId);
   const selectedIdSet = new Set(selectedActivityIds);
   const blockedIdSet = new Set(
     [blockedActivityId, ...blockedIds].map((id) => id?.trim()).filter(Boolean),
@@ -3400,13 +3431,32 @@ function ActivityDependencyPicker({
   });
 
   const toggleActivity = (activityId: string) => {
-    const nextIds = selectedIdSet.has(activityId)
-      ? selectedActivityIds.filter((id) => id !== activityId)
-      : [...selectedActivityIds, activityId];
-    onChange(formatActivityIds(nextIds));
+    const nextLinks = selectedIdSet.has(activityId)
+      ? selectedLinks.filter((link) => link.activityId !== activityId)
+      : [...selectedLinks, { activityId, relationshipType: "FS" as const, lagDays: 0 }];
+    onChange(formatActivityLinks(nextLinks));
   };
   const removeActivity = (activityId: string) => {
-    onChange(formatActivityIds(selectedActivityIds.filter((id) => id !== activityId)));
+    onChange(formatActivityLinks(selectedLinks.filter((link) => link.activityId !== activityId)));
+  };
+  const updateActivityLink = (
+    activityId: string,
+    patch: Partial<Pick<ConstructLineDependencyToken, "relationshipType" | "lagDays">>,
+  ) => {
+    onChange(
+      formatActivityLinks(
+        selectedLinks.map((link) =>
+          link.activityId === activityId
+            ? {
+                ...link,
+                ...patch,
+                lagDays: patch.lagDays ?? link.lagDays,
+                relationshipType: patch.relationshipType ?? link.relationshipType,
+              }
+            : link,
+        ),
+      ),
+    );
   };
 
   return (
@@ -3476,23 +3526,62 @@ function ActivityDependencyPicker({
           </Command>
         </PopoverContent>
       </Popover>
-      {selectedActivityIds.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {selectedActivityIds.map((activityId) => {
+      {selectedLinks.length > 0 && (
+        <div className="grid gap-1.5">
+          {selectedLinks.map((link) => {
+            const activityId = link.activityId;
             const activity = activitiesById.get(activityId);
             return (
-              <button
+              <div
                 key={activityId}
-                type="button"
-                className="inline-flex max-w-full items-center gap-1 rounded border border-hairline bg-card px-1.5 py-1 text-left text-[11px] font-semibold text-foreground hover:bg-muted"
-                onClick={() => removeActivity(activityId)}
+                className="grid min-w-0 gap-1.5 rounded border border-hairline bg-card p-1.5 sm:grid-cols-[minmax(0,1fr)_74px_72px_auto] sm:items-center"
               >
-                <span className="shrink-0 tabular">{activityId}</span>
-                {activity && (
-                  <span className="max-w-36 truncate text-muted-foreground">{activity.name}</span>
-                )}
-                <X className="h-3 w-3 shrink-0" />
-              </button>
+                <div className="min-w-0 text-[11px] font-semibold text-foreground">
+                  <span className="shrink-0 tabular">{activityId}</span>
+                  {activity && <span className="ml-1 text-muted-foreground">{activity.name}</span>}
+                </div>
+                <Select
+                  value={link.relationshipType}
+                  onValueChange={(relationshipType) =>
+                    updateActivityLink(activityId, {
+                      relationshipType: relationshipType as ConstructLineRelationshipType,
+                    })
+                  }
+                >
+                  <SelectTrigger className="h-8 min-w-0 px-2 text-xs font-semibold">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CONSTRUCTLINE_RELATIONSHIP_TYPES.map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {type}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="number"
+                  min={-999}
+                  max={999}
+                  value={link.lagDays}
+                  onChange={(event) =>
+                    updateActivityLink(activityId, { lagDays: Number(event.target.value) })
+                  }
+                  title="Lag days. Use negative values for lead."
+                  className="h-8 min-w-0 px-2 text-xs font-semibold tabular"
+                  aria-label={`${activityId} lag days`}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 justify-self-end text-muted-foreground hover:text-danger"
+                  onClick={() => removeActivity(activityId)}
+                  aria-label={`Remove ${activityId}`}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             );
           })}
         </div>
@@ -3606,8 +3695,8 @@ function ActivityDetailDialog({
         start_date: draft.is_milestone ? milestoneDate : draft.start_date || null,
         finish_date: draft.is_milestone ? milestoneDate : draft.finish_date || null,
         percent_complete: parsePercent(draft.percent_complete),
-        predecessor_activity_ids: parseActivityIds(draft.predecessor_activity_ids),
-        successor_activity_ids: parseActivityIds(draft.successor_activity_ids),
+        predecessor_activity_ids: serializeActivityLinksToArray(draft.predecessor_activity_ids),
+        successor_activity_ids: serializeActivityLinksToArray(draft.successor_activity_ids),
         notes: draft.notes.trim(),
       });
       onClose();
@@ -3756,14 +3845,14 @@ function ActivityDetailDialog({
                   <div className="min-w-0">
                     <div className="text-xs font-semibold text-muted-foreground">Predecessors</div>
                     <ActivityIdPills
-                      ids={parseActivityIds(draft.predecessor_activity_ids)}
+                      ids={parseActivityTokens(draft.predecessor_activity_ids)}
                       emptyLabel="No predecessor logic"
                     />
                   </div>
                   <div className="min-w-0">
                     <div className="text-xs font-semibold text-muted-foreground">Successors</div>
                     <ActivityIdPills
-                      ids={parseActivityIds(draft.successor_activity_ids)}
+                      ids={parseActivityTokens(draft.successor_activity_ids)}
                       emptyLabel="No successor logic"
                     />
                   </div>
@@ -3884,14 +3973,37 @@ function parsePercent(value: string | number | null | undefined) {
 }
 
 function parseActivityIds(value: string) {
+  return parseActivityLinks(value).map((item) => item.activityId);
+}
+
+function formatActivityIds(value: string[]) {
+  return formatActivityLinks(value.map(parseConstructLineDependencyToken));
+}
+
+function parseActivityLinks(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map(parseConstructLineDependencyToken);
+}
+
+function formatActivityLinks(value: ConstructLineDependencyToken[]) {
+  return value
+    .filter((item) => item.activityId.trim().length > 0)
+    .map(formatConstructLineDependencyToken)
+    .join(", ");
+}
+
+function parseActivityTokens(value: string) {
   return value
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
 }
 
-function formatActivityIds(value: string[]) {
-  return value.join(", ");
+function serializeActivityLinksToArray(value: string) {
+  return parseActivityTokens(formatActivityLinks(parseActivityLinks(value)));
 }
 
 function getMilestoneDraftDate(draft: ActivityDraft) {

@@ -2,6 +2,21 @@ import type { ScheduleActivityRow } from "@/lib/schedule.functions";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export type ConstructLineRelationshipType = "FS" | "SS" | "FF" | "SF";
+
+export interface ConstructLineDependencyToken {
+  activityId: string;
+  relationshipType: ConstructLineRelationshipType;
+  lagDays: number;
+}
+
+export interface ConstructLineLogicTie {
+  predecessorKey: string;
+  successorKey: string;
+  relationshipType: ConstructLineRelationshipType;
+  lagDays: number;
+}
+
 export interface ConstructLineCpmTask {
   activity: ScheduleActivityRow;
   activityKey: string;
@@ -17,6 +32,8 @@ export interface ConstructLineCpmTask {
   freeFloat: number;
   predecessorKeys: string[];
   successorKeys: string[];
+  predecessorLinks: ConstructLineLogicTie[];
+  successorLinks: ConstructLineLogicTie[];
   missingPredecessorKeys: string[];
   missingSuccessorKeys: string[];
   isMilestone: boolean;
@@ -71,6 +88,8 @@ interface BuildOptions {
   nearCriticalFloat?: number;
 }
 
+const RELATIONSHIP_TYPES = new Set<ConstructLineRelationshipType>(["FS", "SS", "FF", "SF"]);
+
 interface WorkingTask {
   activity: ScheduleActivityRow;
   activityKey: string;
@@ -86,9 +105,55 @@ interface WorkingTask {
   freeFloat: number;
   predecessorKeys: string[];
   successorKeys: string[];
+  predecessorLinks: ConstructLineLogicTie[];
+  successorLinks: ConstructLineLogicTie[];
   missingPredecessorKeys: string[];
   missingSuccessorKeys: string[];
   isMilestone: boolean;
+}
+
+export function parseConstructLineDependencyToken(value: string): ConstructLineDependencyToken {
+  const raw = value.trim();
+  const [pipeActivityId, pipeType, pipeLag] = raw.split("|").map((part) => part.trim());
+  const normalizedPipeType = pipeType?.toUpperCase() as ConstructLineRelationshipType | undefined;
+  if (pipeActivityId && normalizedPipeType && RELATIONSHIP_TYPES.has(normalizedPipeType)) {
+    return {
+      activityId: pipeActivityId,
+      relationshipType: normalizedPipeType,
+      lagDays: parseLagDays(pipeLag),
+    };
+  }
+
+  const inline = raw.match(/^(.+?)\s+(FS|SS|FF|SF)\s*([+-]?\d+)?\s*d?$/i);
+  if (inline) {
+    return {
+      activityId: inline[1].trim(),
+      relationshipType: inline[2].toUpperCase() as ConstructLineRelationshipType,
+      lagDays: parseLagDays(inline[3]),
+    };
+  }
+
+  return { activityId: raw, relationshipType: "FS", lagDays: 0 };
+}
+
+export function formatConstructLineDependencyToken(link: ConstructLineDependencyToken) {
+  const activityId = link.activityId.trim();
+  const relationshipType = RELATIONSHIP_TYPES.has(link.relationshipType)
+    ? link.relationshipType
+    : "FS";
+  return `${activityId}|${relationshipType}|${clampLagDays(link.lagDays)}`;
+}
+
+export function describeConstructLineDependencyToken(value: string) {
+  const link = parseConstructLineDependencyToken(value);
+  return `${link.activityId} ${formatRelationshipLabel(link)}`;
+}
+
+export function formatRelationshipLabel(
+  link: Pick<ConstructLineDependencyToken, "relationshipType" | "lagDays">,
+) {
+  const lag = clampLagDays(link.lagDays);
+  return `${link.relationshipType}${lag === 0 ? "" : lag > 0 ? `+${lag}d` : `${lag}d`}`;
 }
 
 export function buildConstructLineCpmModel(
@@ -131,6 +196,8 @@ export function buildConstructLineCpmModel(
       freeFloat: 0,
       predecessorKeys: [],
       successorKeys: [],
+      predecessorLinks: [],
+      successorLinks: [],
       missingPredecessorKeys: [],
       missingSuccessorKeys: [],
       isMilestone,
@@ -139,25 +206,44 @@ export function buildConstructLineCpmModel(
   const taskMap = new Map(tasks.map((task) => [task.activityKey, task]));
   const dependencySet = new Set<string>();
 
-  const addDependency = (fromKey: string, toKey: string) => {
+  const addDependency = (
+    fromKey: string,
+    toKey: string,
+    relationshipType: ConstructLineRelationshipType,
+    lagDays: number,
+  ) => {
     if (fromKey === toKey) return;
     const key = `${fromKey}->${toKey}`;
     if (dependencySet.has(key)) return;
     dependencySet.add(key);
-    taskMap.get(fromKey)?.successorKeys.push(toKey);
-    taskMap.get(toKey)?.predecessorKeys.push(fromKey);
+    const link: ConstructLineLogicTie = {
+      predecessorKey: fromKey,
+      successorKey: toKey,
+      relationshipType,
+      lagDays: clampLagDays(lagDays),
+    };
+    const predecessor = taskMap.get(fromKey);
+    const successor = taskMap.get(toKey);
+    predecessor?.successorKeys.push(toKey);
+    predecessor?.successorLinks.push(link);
+    successor?.predecessorKeys.push(fromKey);
+    successor?.predecessorLinks.push(link);
   };
 
   for (const task of tasks) {
     for (const predecessor of task.activity.predecessor_activity_ids) {
-      const resolved = keyLookup.get(normalizeDependencyKey(predecessor));
-      if (resolved) addDependency(resolved, task.activityKey);
-      else task.missingPredecessorKeys.push(predecessor);
+      const parsed = parseConstructLineDependencyToken(predecessor);
+      const resolved = keyLookup.get(normalizeDependencyKey(parsed.activityId));
+      if (resolved) {
+        addDependency(resolved, task.activityKey, parsed.relationshipType, parsed.lagDays);
+      } else task.missingPredecessorKeys.push(parsed.activityId);
     }
     for (const successor of task.activity.successor_activity_ids) {
-      const resolved = keyLookup.get(normalizeDependencyKey(successor));
-      if (resolved) addDependency(task.activityKey, resolved);
-      else task.missingSuccessorKeys.push(successor);
+      const parsed = parseConstructLineDependencyToken(successor);
+      const resolved = keyLookup.get(normalizeDependencyKey(parsed.activityId));
+      if (resolved) {
+        addDependency(task.activityKey, resolved, parsed.relationshipType, parsed.lagDays);
+      } else task.missingSuccessorKeys.push(parsed.activityId);
     }
   }
 
@@ -185,7 +271,11 @@ export function buildConstructLineCpmModel(
   for (const task of ordered) {
     const logicStart = Math.max(
       0,
-      ...task.predecessorKeys.map((key) => (taskMap.get(key)?.earlyFinish ?? -1) + 1),
+      ...task.predecessorLinks.map((link) => {
+        const predecessor = taskMap.get(link.predecessorKey);
+        if (!predecessor) return 0;
+        return getRelationshipDrivenEarlyStart(predecessor, task, link);
+      }),
     );
     const constrainedStart = Math.max(logicStart, task.startOffset ?? 0);
     task.earlyStart = constrainedStart;
@@ -194,19 +284,29 @@ export function buildConstructLineCpmModel(
 
   const projectFinishOffset = Math.max(0, ...tasks.map((task) => task.earlyFinish));
   for (const task of [...ordered].reverse()) {
-    const successorLateStart = task.successorKeys
-      .map((key) => taskMap.get(key)?.lateStart)
+    const successorLateStarts = task.successorLinks
+      .map((link) => {
+        const successor = taskMap.get(link.successorKey);
+        if (!successor) return null;
+        return getRelationshipDrivenLateStart(task, successor, link);
+      })
       .filter((value): value is number => typeof value === "number");
-    task.lateFinish =
-      successorLateStart.length > 0 ? Math.min(...successorLateStart) - 1 : projectFinishOffset;
-    task.lateStart = task.lateFinish - task.durationDays + 1;
+    task.lateStart =
+      successorLateStarts.length > 0
+        ? Math.min(...successorLateStarts)
+        : projectFinishOffset - task.durationDays + 1;
+    task.lateFinish = task.lateStart + task.durationDays - 1;
     task.totalFloat = Math.max(0, task.lateStart - task.earlyStart);
-    const successorEarlyStart = task.successorKeys
-      .map((key) => taskMap.get(key)?.earlyStart)
+    const successorEarlyStart = task.successorLinks
+      .map((link) => {
+        const successor = taskMap.get(link.successorKey);
+        if (!successor) return null;
+        return getRelationshipDrivenFreeFloat(task, successor, link);
+      })
       .filter((value): value is number => typeof value === "number");
     task.freeFloat =
       successorEarlyStart.length > 0
-        ? Math.max(0, Math.min(...successorEarlyStart) - task.earlyFinish - 1)
+        ? Math.max(0, Math.min(...successorEarlyStart))
         : task.totalFloat;
   }
 
@@ -220,7 +320,9 @@ export function buildConstructLineCpmModel(
       parseDateMs(task.activity.finish_date)! < dataDateMs;
     const isOutOfSequence =
       task.activity.percent_complete > 0 &&
-      task.predecessorKeys.some((key) => (taskMap.get(key)?.activity.percent_complete ?? 0) < 100);
+      task.predecessorLinks.some(
+        (link) => (taskMap.get(link.predecessorKey)?.activity.percent_complete ?? 0) < 100,
+      );
 
     return {
       activity: task.activity,
@@ -237,6 +339,8 @@ export function buildConstructLineCpmModel(
       freeFloat: task.freeFloat,
       predecessorKeys: task.predecessorKeys,
       successorKeys: task.successorKeys,
+      predecessorLinks: task.predecessorLinks,
+      successorLinks: task.successorLinks,
       missingPredecessorKeys: task.missingPredecessorKeys,
       missingSuccessorKeys: task.missingSuccessorKeys,
       isMilestone: task.isMilestone,
@@ -396,8 +500,76 @@ function sortWorkingTasksByDate(a: WorkingTask, b: WorkingTask) {
   );
 }
 
+function getRelationshipDrivenEarlyStart(
+  predecessor: WorkingTask,
+  successor: WorkingTask,
+  link: ConstructLineLogicTie,
+) {
+  const lag = link.lagDays;
+  switch (link.relationshipType) {
+    case "SS":
+      return predecessor.earlyStart + lag;
+    case "FF":
+      return predecessor.earlyFinish + lag - successor.durationDays + 1;
+    case "SF":
+      return predecessor.earlyStart + lag - successor.durationDays + 1;
+    case "FS":
+    default:
+      return predecessor.earlyFinish + 1 + lag;
+  }
+}
+
+function getRelationshipDrivenLateStart(
+  predecessor: WorkingTask,
+  successor: WorkingTask,
+  link: ConstructLineLogicTie,
+) {
+  const lag = link.lagDays;
+  switch (link.relationshipType) {
+    case "SS":
+      return successor.lateStart - lag;
+    case "FF":
+      return successor.lateFinish - lag - predecessor.durationDays + 1;
+    case "SF":
+      return successor.lateFinish - lag;
+    case "FS":
+    default:
+      return successor.lateStart - lag - predecessor.durationDays;
+  }
+}
+
+function getRelationshipDrivenFreeFloat(
+  predecessor: WorkingTask,
+  successor: WorkingTask,
+  link: ConstructLineLogicTie,
+) {
+  const lag = link.lagDays;
+  switch (link.relationshipType) {
+    case "SS":
+      return successor.earlyStart - (predecessor.earlyStart + lag);
+    case "FF":
+      return successor.earlyFinish - (predecessor.earlyFinish + lag);
+    case "SF":
+      return successor.earlyFinish - (predecessor.earlyStart + lag);
+    case "FS":
+    default:
+      return successor.earlyStart - (predecessor.earlyFinish + 1 + lag);
+  }
+}
+
 function normalizeDependencyKey(value: string) {
-  return value.trim().toLowerCase();
+  return parseConstructLineDependencyToken(value).activityId.trim().toLowerCase();
+}
+
+function parseLagDays(value: string | undefined) {
+  const parsed = Number.parseInt(value ?? "0", 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return clampLagDays(parsed);
+}
+
+function clampLagDays(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(-999, Math.min(999, Math.round(value)));
 }
 
 function parseDateMs(value?: string | null) {
