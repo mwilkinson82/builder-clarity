@@ -1285,6 +1285,7 @@ export function CpmActivityPlanner({
   onSeedActivities,
   isSeedingActivities,
   onPatchActivity,
+  isSavingActivity,
   onDeleteActivity,
 }: {
   activities: ScheduleActivityRow[];
@@ -1294,7 +1295,8 @@ export function CpmActivityPlanner({
   onAddActivity: (activity: ActivityCreateInput) => void;
   onSeedActivities: (activities: ActivityCreateInput[]) => void;
   isSeedingActivities: boolean;
-  onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => void;
+  onPatchActivity: (id: string, patch: Partial<ScheduleActivityRow>) => Promise<void>;
+  isSavingActivity: boolean;
   onDeleteActivity: (id: string) => void;
 }) {
   const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
@@ -1830,6 +1832,7 @@ export function CpmActivityPlanner({
         <ActivityDetailDialog
           activity={selectedActivity}
           activities={sortedActivities}
+          isSaving={isSavingActivity}
           onClose={() => setSelectedActivityId(null)}
           onSave={(patch) => onPatchActivity(selectedActivity.id, patch)}
           onDelete={() => {
@@ -3450,43 +3453,56 @@ function ActivityGanttRow({
 function ActivityDetailDialog({
   activity,
   activities,
+  isSaving,
   onClose,
   onSave,
   onDelete,
 }: {
   activity: ScheduleActivityRow;
   activities: ScheduleActivityRow[];
+  isSaving: boolean;
   onClose: () => void;
-  onSave: (patch: Partial<ScheduleActivityRow>) => void;
+  onSave: (patch: Partial<ScheduleActivityRow>) => Promise<void>;
   onDelete: () => void;
 }) {
   const [draft, setDraft] = useState<ActivityDraft>(() => activityDraftFromRow(activity));
+  const [saveError, setSaveError] = useState<string | null>(null);
   const duration = getActivityDurationDays(activity);
   const isMilestone = isConstructLineMilestoneActivity(activity);
 
   useEffect(() => {
     setDraft(activityDraftFromRow(activity));
+    setSaveError(null);
   }, [activity]);
 
-  const saveActivity = () => {
+  const saveActivity = async () => {
     const name = draft.name.trim();
-    if (!name) return;
+    if (!name) {
+      setSaveError("Activity name is required.");
+      return;
+    }
     const milestoneDate = getMilestoneDraftDate(draft);
-    onSave({
-      activity_id: draft.activity_id.trim(),
-      name,
-      division: draft.is_milestone ? "Milestones" : draft.division.trim() || "General",
-      start_date: draft.is_milestone ? milestoneDate : draft.start_date || null,
-      finish_date: draft.is_milestone ? milestoneDate : draft.finish_date || null,
-      percent_complete: parsePercent(draft.percent_complete),
-      predecessor_activity_ids: parseActivityIds(draft.predecessor_activity_ids),
-      successor_activity_ids: parseActivityIds(draft.successor_activity_ids),
-      notes: draft.notes.trim(),
-    });
+    setSaveError(null);
+    try {
+      await onSave({
+        activity_id: draft.activity_id.trim(),
+        name,
+        division: draft.is_milestone ? "Milestones" : draft.division.trim() || "General",
+        start_date: draft.is_milestone ? milestoneDate : draft.start_date || null,
+        finish_date: draft.is_milestone ? milestoneDate : draft.finish_date || null,
+        percent_complete: parsePercent(draft.percent_complete),
+        predecessor_activity_ids: parseActivityIds(draft.predecessor_activity_ids),
+        successor_activity_ids: parseActivityIds(draft.successor_activity_ids),
+        notes: draft.notes.trim(),
+      });
+      onClose();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Activity did not update.");
+    }
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !isSaving && onClose()}>
       <DialogContent className="flex max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:w-[min(calc(100vw-2rem),68rem)] sm:max-w-[68rem]">
         <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
           <DialogTitle className="font-serif text-2xl">CPM activity detail</DialogTitle>
@@ -3541,6 +3557,7 @@ function ActivityDetailDialog({
                 variant={draft.is_milestone ? "default" : "outline"}
                 className="gap-2"
                 aria-pressed={draft.is_milestone}
+                disabled={isSaving}
                 onClick={() => setDraft(toggleMilestoneDraft(draft, !draft.is_milestone))}
               >
                 <Diamond className="h-4 w-4" />
@@ -3652,17 +3669,29 @@ function ActivityDetailDialog({
           </div>
         </div>
 
+        {saveError && (
+          <div className="border-t border-danger/20 bg-danger/10 px-4 py-2 text-sm text-danger sm:px-6">
+            {saveError}
+          </div>
+        )}
+
         <DialogFooter className="gap-2 border-t border-hairline px-4 py-4 sm:justify-between sm:space-x-0 sm:px-6">
-          <Button type="button" variant="outline" className="gap-2 text-danger" onClick={onDelete}>
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2 text-danger"
+            onClick={onDelete}
+            disabled={isSaving}
+          >
             <Trash2 className="h-4 w-4" />
             Delete activity
           </Button>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button type="button" variant="ghost" onClick={onClose}>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={isSaving}>
               Close
             </Button>
-            <Button type="button" onClick={saveActivity} disabled={!draft.name.trim()}>
-              Save activity
+            <Button type="button" onClick={saveActivity} disabled={!draft.name.trim() || isSaving}>
+              {isSaving ? "Saving..." : "Save activity"}
             </Button>
           </div>
         </DialogFooter>
