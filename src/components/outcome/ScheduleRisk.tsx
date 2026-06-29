@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -3253,10 +3253,17 @@ function ActivityScheduleMatrix({
   onDeleteActivity: (id: string) => void;
 }) {
   const totalActivities = model.tasks.length;
-  const printDayPx = CONSTRUCTLINE_PRINT_TIMELINE_WIDTH / Math.max(1, model.totalTimelineDays);
-  const activeDayPx = isPrintMode ? printDayPx : dayPx;
   const isFitZoom = !isPrintMode && dayPx === CONSTRUCTLINE_FIT_DAY_PX;
   const tableWidth = isPrintMode ? CONSTRUCTLINE_PRINT_TABLE_WIDTH : isFitZoom ? 760 : 860;
+  const matrixScrollRef = useRef<HTMLDivElement | null>(null);
+  const [matrixViewportWidth, setMatrixViewportWidth] = useState(0);
+  const fitTimelineWidth = Math.max(0, matrixViewportWidth - tableWidth);
+  const printDayPx = CONSTRUCTLINE_PRINT_TIMELINE_WIDTH / Math.max(1, model.totalTimelineDays);
+  const fitDayPx = Math.max(
+    CONSTRUCTLINE_FIT_DAY_PX,
+    fitTimelineWidth / Math.max(1, model.totalTimelineDays),
+  );
+  const activeDayPx = isPrintMode ? printDayPx : isFitZoom ? fitDayPx : dayPx;
   const tableColumns = isPrintMode
     ? "62px minmax(170px,1fr) 42px 58px 58px 48px 40px 42px"
     : isFitZoom
@@ -3268,8 +3275,20 @@ function ActivityScheduleMatrix({
   const timelineWidth = isPrintMode
     ? CONSTRUCTLINE_PRINT_TIMELINE_WIDTH
     : isFitZoom
-      ? Math.max(480, model.totalTimelineDays * activeDayPx)
+      ? Math.max(480, fitTimelineWidth, model.totalTimelineDays * activeDayPx)
       : Math.max(720, model.totalTimelineDays * activeDayPx);
+  useEffect(() => {
+    if (isPrintMode || model.groups.length === 0 || typeof ResizeObserver === "undefined") return;
+    const element = matrixScrollRef.current;
+    if (!element) return;
+
+    const updateWidth = () => setMatrixViewportWidth(Math.round(element.clientWidth));
+    updateWidth();
+
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [isPrintMode, model.groups.length]);
   const monthBands = buildConstructLineMonthBands(
     model.timelineStartDate,
     model.totalTimelineDays,
@@ -3414,6 +3433,7 @@ function ActivityScheduleMatrix({
         </div>
       ) : (
         <div
+          ref={matrixScrollRef}
           className={cn(
             "constructline-cpm-matrix-scroll",
             isPrintMode
