@@ -775,8 +775,8 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       if (activityError) throw new Error(activityError.message);
       await ensureScheduleWbsSection(
         context.supabase as any,
-        (activity as Record<string, unknown>).project_id as string,
-        str((activity as Record<string, unknown>).division, "General"),
+        (activity as unknown as Record<string, unknown>).project_id as string,
+        str((activity as unknown as Record<string, unknown>).division, "General"),
       );
     }
     return { ok: true };
