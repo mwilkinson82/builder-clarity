@@ -10,8 +10,12 @@ Overwatch uses the Supabase/database environment managed by Lovable. A GitHub pu
    - `20260626232000_reseed_harbor_residence_cpm_demo.sql`
 2. Apply the WBS persistence migration:
    - `20260629130000_schedule_wbs_sections.sql`
+3. Apply the schedule delay-fragment migration:
+   - `20260629165311_schedule_delay_fragments.sql`
 
 The WBS migration creates `public.schedule_wbs_sections`, enables RLS, grants authenticated access, uses the existing `can_read_project` / `can_manage_project` policies, and seeds each project from the existing `schedule_activities.division` values.
+
+The delay-fragment migration creates `public.schedule_delay_fragments`, enables RLS, grants authenticated access, and stores activity-linked delay records with days, source, status, owner, identified date, and resolved date. The CPM workspace degrades safely until this table exists, but activity-level delay records will not save without it.
 
 ## Why this matters
 
@@ -24,6 +28,7 @@ Run after applying the migrations:
 ```sql
 select to_regclass('public.schedule_activities') as schedule_activities_table;
 select to_regclass('public.schedule_wbs_sections') as schedule_wbs_sections_table;
+select to_regclass('public.schedule_delay_fragments') as schedule_delay_fragments_table;
 
 select
   project_id,
@@ -38,6 +43,14 @@ select
 from public.schedule_wbs_sections
 group by project_id
 order by wbs_section_count desc;
+
+select
+  project_id,
+  count(*) as delay_fragment_count,
+  sum(delay_days) filter (where status in ('active', 'accepted')) as open_delay_days
+from public.schedule_delay_fragments
+group by project_id
+order by delay_fragment_count desc;
 ```
 
-Expected result: both `to_regclass` checks return table names, Harbor/demo projects have CPM activity rows, and projects with CPM activities have seeded WBS sections.
+Expected result: all `to_regclass` checks return table names, Harbor/demo projects have CPM activity rows, projects with CPM activities have seeded WBS sections, and the delay-fragment count query runs even when no delay records exist yet.

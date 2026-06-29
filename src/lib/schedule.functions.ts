@@ -15,6 +15,15 @@ import {
 export type MilestoneStatus = "on_track" | "at_risk" | "delayed" | "complete";
 export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_decision";
 export type ScheduleRiskStatus = "active" | "inactive" | "completed";
+export type ScheduleDelayFragmentStatus = "active" | "mitigated" | "accepted" | "recovered";
+export type ScheduleDelayFragmentSource =
+  | "field"
+  | "trade"
+  | "owner"
+  | "design"
+  | "procurement"
+  | "weather"
+  | "other";
 
 export interface MilestoneRow {
   id: string;
@@ -48,6 +57,21 @@ export interface ScheduleWbsSectionRow {
   project_id: string;
   name: string;
   sort_order: number;
+}
+
+export interface ScheduleDelayFragmentRow {
+  id: string;
+  project_id: string;
+  schedule_activity_id: string | null;
+  activity_id: string;
+  title: string;
+  reason: string;
+  delay_days: number;
+  source: ScheduleDelayFragmentSource;
+  status: ScheduleDelayFragmentStatus;
+  owner: string;
+  identified_on: string;
+  resolved_on: string | null;
 }
 
 export interface ScheduleRiskRow {
@@ -103,6 +127,16 @@ export interface ScheduleMilestoneUpdateRow {
 const MILESTONE_STATUSES = ["on_track", "at_risk", "delayed", "complete"] as const;
 const RISK_KINDS = ["procurement", "trade_performance", "critical_decision"] as const;
 const RISK_STATUSES = ["active", "inactive", "completed"] as const;
+const DELAY_FRAGMENT_STATUSES = ["active", "mitigated", "accepted", "recovered"] as const;
+const DELAY_FRAGMENT_SOURCES = [
+  "field",
+  "trade",
+  "owner",
+  "design",
+  "procurement",
+  "weather",
+  "other",
+] as const;
 const RESPONSE_PATHS = ["eliminate", "recover", "offset", "accept"] as const;
 const HOLD_CLASSES = ["E-Hold", "C-Hold", "Both", "None"] as const;
 const RISK_EXPOSURE_CATEGORY: Record<ScheduleRiskKind, ExposureCategory> = {
@@ -208,6 +242,21 @@ const normalizeScheduleWbsSection = (r: Record<string, unknown>): ScheduleWbsSec
   sort_order: num(r.sort_order),
 });
 
+const normalizeScheduleDelayFragment = (r: Record<string, unknown>): ScheduleDelayFragmentRow => ({
+  id: r.id as string,
+  project_id: r.project_id as string,
+  schedule_activity_id: (r.schedule_activity_id as string | null) ?? null,
+  activity_id: str(r.activity_id),
+  title: str(r.title),
+  reason: str(r.reason),
+  delay_days: num(r.delay_days),
+  source: str(r.source, "field") as ScheduleDelayFragmentSource,
+  status: str(r.status, "active") as ScheduleDelayFragmentStatus,
+  owner: str(r.owner),
+  identified_on: str(r.identified_on, new Date().toISOString().slice(0, 10)),
+  resolved_on: (r.resolved_on as string | null) ?? null,
+});
+
 const scheduleWbsSectionFromActivityDivision = (
   projectId: string,
   division: string,
@@ -226,7 +275,7 @@ export const listSchedule = createServerFn({ method: "GET" })
     z.object({ projectId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const [mRes, rRes, aRes, wRes] = await Promise.all([
+    const [mRes, rRes, aRes, wRes, dRes] = await Promise.all([
       context.supabase
         .from("schedule_milestones")
         .select("*")
@@ -249,6 +298,12 @@ export const listSchedule = createServerFn({ method: "GET" })
         .eq("project_id", data.projectId)
         .order("sort_order")
         .order("name"),
+      context.supabase
+        .from("schedule_delay_fragments" as any)
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("identified_on", { ascending: false })
+        .order("created_at", { ascending: false }),
     ]);
     const [uRes, muRes] = await Promise.all([
       context.supabase
@@ -280,8 +335,13 @@ export const listSchedule = createServerFn({ method: "GET" })
       wRes.error &&
       (wRes.error.message.includes("schedule_wbs_sections") ||
         wRes.error.message.includes("schema cache"));
+    const delayFragmentsMissing =
+      dRes.error &&
+      (dRes.error.message.includes("schedule_delay_fragments") ||
+        dRes.error.message.includes("schema cache"));
     if (aRes.error && !activitiesMissing) throw new Error(aRes.error.message);
     if (wRes.error && !wbsSectionsMissing) throw new Error(wRes.error.message);
+    if (dRes.error && !delayFragmentsMissing) throw new Error(dRes.error.message);
     if (uRes.error && !updatesMissing) throw new Error(uRes.error.message);
     if (muRes.error && !milestoneUpdatesMissing) throw new Error(muRes.error.message);
 
@@ -374,6 +434,12 @@ export const listSchedule = createServerFn({ method: "GET" })
       activities: activitiesMissing ? [] : activityRows.map((r) => normalizeScheduleActivity(r)),
       wbsSections: wbsSectionRows,
       wbsPersistence: wbsSectionsMissing ? "migration_required" : "ready",
+      delayFragments: delayFragmentsMissing
+        ? []
+        : (dRes.data ?? []).map((r) =>
+            normalizeScheduleDelayFragment(r as Record<string, unknown>),
+          ),
+      delayFragmentPersistence: delayFragmentsMissing ? "migration_required" : "ready",
       risks,
       updates: updatesMissing
         ? []
@@ -712,6 +778,85 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
       ),
     );
     const error = updates.find((result) => result.error)?.error;
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ---------- DELAY FRAGMENTS ----------
+const delayFragmentPatch = z.object({
+  schedule_activity_id: z.string().uuid().nullable().optional(),
+  activity_id: z.string().max(50).optional(),
+  title: z.string().min(1).max(200).optional(),
+  reason: z.string().max(2000).optional(),
+  delay_days: z.number().int().min(0).max(365).optional(),
+  source: z.enum(DELAY_FRAGMENT_SOURCES).optional(),
+  status: z.enum(DELAY_FRAGMENT_STATUSES).optional(),
+  owner: z.string().max(200).optional(),
+  identified_on: z.string().min(1).optional(),
+  resolved_on: z.string().nullable().optional(),
+});
+
+export const createScheduleDelayFragment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: { projectId: string; title: string } & Partial<z.input<typeof delayFragmentPatch>>) =>
+      z
+        .object({
+          projectId: z.string().uuid(),
+          title: z.string().min(1).max(200),
+        })
+        .merge(delayFragmentPatch.omit({ title: true }).partial())
+        .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { projectId, ...rest } = data;
+    const payload = {
+      project_id: projectId,
+      schedule_activity_id: rest.schedule_activity_id ?? null,
+      activity_id: rest.activity_id ?? "",
+      title: rest.title,
+      reason: rest.reason ?? "",
+      delay_days: rest.delay_days ?? 0,
+      source: rest.source ?? "field",
+      status: rest.status ?? "active",
+      owner: rest.owner ?? "",
+      identified_on: rest.identified_on ?? new Date().toISOString().slice(0, 10),
+      resolved_on: rest.resolved_on ?? null,
+    };
+    const { data: row, error } = await context.supabase
+      .from("schedule_delay_fragments" as any)
+      .insert(payload)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return {
+      ok: true,
+      delayFragment: normalizeScheduleDelayFragment(row as Record<string, unknown>),
+    };
+  });
+
+export const updateScheduleDelayFragment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string; patch: z.input<typeof delayFragmentPatch> }) =>
+    z.object({ id: z.string().uuid(), patch: delayFragmentPatch }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("schedule_delay_fragments" as any)
+      .update(data.patch as any)
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteScheduleDelayFragment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("schedule_delay_fragments" as any)
+      .delete()
+      .eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });

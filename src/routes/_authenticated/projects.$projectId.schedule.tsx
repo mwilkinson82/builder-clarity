@@ -8,15 +8,19 @@ import { Button } from "@/components/ui/button";
 import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/outcome/ScheduleRisk";
 import { getProject, type ProjectRow } from "@/lib/projects.functions";
 import {
+  createScheduleDelayFragment,
   createScheduleActivity,
   createScheduleWbsSection,
+  deleteScheduleDelayFragment,
   deleteScheduleActivity,
   listSchedule,
   renameScheduleWbsSection,
   reorderScheduleWbsSections,
+  updateScheduleDelayFragment,
   updateScheduleActivity,
   type MilestoneRow,
   type ScheduleActivityRow,
+  type ScheduleDelayFragmentRow,
   type ScheduleUpdateRow,
   type ScheduleWbsSectionRow,
 } from "@/lib/schedule.functions";
@@ -36,6 +40,9 @@ function ScheduleWorkspacePage() {
   const createActivityFn = useServerFn(createScheduleActivity);
   const updateActivityFn = useServerFn(updateScheduleActivity);
   const deleteActivityFn = useServerFn(deleteScheduleActivity);
+  const createDelayFragmentFn = useServerFn(createScheduleDelayFragment);
+  const updateDelayFragmentFn = useServerFn(updateScheduleDelayFragment);
+  const deleteDelayFragmentFn = useServerFn(deleteScheduleDelayFragment);
   const createWbsSectionFn = useServerFn(createScheduleWbsSection);
   const renameWbsSectionFn = useServerFn(renameScheduleWbsSection);
   const reorderWbsSectionsFn = useServerFn(reorderScheduleWbsSections);
@@ -66,8 +73,16 @@ function ScheduleWorkspacePage() {
     () => (scheduleQuery.data?.updates ?? []) as ScheduleUpdateRow[],
     [scheduleQuery.data?.updates],
   );
+  const delayFragments = useMemo(
+    () => (scheduleQuery.data?.delayFragments ?? []) as ScheduleDelayFragmentRow[],
+    [scheduleQuery.data?.delayFragments],
+  );
   const wbsPersistence =
     scheduleQuery.data?.wbsPersistence === "migration_required" ? "migration_required" : "ready";
+  const delayFragmentPersistence =
+    scheduleQuery.data?.delayFragmentPersistence === "migration_required"
+      ? "migration_required"
+      : "ready";
   const latestUpdate = updates[0] ?? null;
 
   const refreshSchedule = async () => {
@@ -192,6 +207,59 @@ function ScheduleWorkspacePage() {
     },
   });
 
+  const delayFragmentCreate = useMutation({
+    mutationFn: (fragment: {
+      schedule_activity_id?: string | null;
+      activity_id?: string;
+      title: string;
+      reason?: string;
+      delay_days?: number;
+      source?: ScheduleDelayFragmentRow["source"];
+      status?: ScheduleDelayFragmentRow["status"];
+      owner?: string;
+      identified_on?: string;
+      resolved_on?: string | null;
+    }) => createDelayFragmentFn({ data: { projectId, ...fragment } }),
+    onSuccess: async () => {
+      await refreshSchedule();
+      toast.success("Delay fragment added", {
+        description: "The delay is now tied to this CPM schedule.",
+      });
+    },
+    onError: (error) => {
+      toast.error("Delay fragment did not save", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+
+  const delayFragmentUpdate = useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<ScheduleDelayFragmentRow> }) =>
+      updateDelayFragmentFn({ data: { id, patch } }),
+    onSuccess: async () => {
+      await refreshSchedule();
+      toast.success("Delay fragment updated");
+    },
+    onError: (error) => {
+      toast.error("Delay fragment did not update", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+
+  const delayFragmentDelete = useMutation({
+    mutationFn: (id: string) => deleteDelayFragmentFn({ data: { id } }),
+    onSuccess: async () => {
+      await refreshSchedule();
+      toast.success("Delay fragment removed");
+    },
+    onError: (error) => {
+      toast.error("Delay fragment did not delete", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+
   const metrics = useMemo(
     () => buildScheduleMetrics(project, activities, milestones, updates),
     [activities, milestones, project, updates],
@@ -276,6 +344,8 @@ function ScheduleWorkspacePage() {
         activities={activities}
         wbsSections={wbsSections}
         wbsPersistence={wbsPersistence}
+        delayFragments={delayFragments}
+        delayFragmentPersistence={delayFragmentPersistence}
         milestones={milestones}
         project={project}
         latestDataDate={latestUpdate?.data_date ?? null}
@@ -287,6 +357,20 @@ function ScheduleWorkspacePage() {
         }}
         isSavingActivity={activityUpdate.isPending}
         onDeleteActivity={(id) => activityDelete.mutate({ id })}
+        onAddDelayFragment={async (fragment) => {
+          await delayFragmentCreate.mutateAsync(fragment);
+        }}
+        onPatchDelayFragment={async (id, patch) => {
+          await delayFragmentUpdate.mutateAsync({ id, patch });
+        }}
+        onDeleteDelayFragment={async (id) => {
+          await delayFragmentDelete.mutateAsync(id);
+        }}
+        isSavingDelayFragment={
+          delayFragmentCreate.isPending ||
+          delayFragmentUpdate.isPending ||
+          delayFragmentDelete.isPending
+        }
         onAddWbsSection={async (name) => {
           await wbsCreate.mutateAsync(name);
         }}

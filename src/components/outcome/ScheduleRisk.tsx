@@ -74,6 +74,7 @@ import {
   type ScheduleRiskStatus,
   type MilestoneRow,
   type ScheduleActivityRow,
+  type ScheduleDelayFragmentRow,
   type ScheduleWbsSectionRow,
   type ScheduleRiskRow,
   type ScheduleUpdateRow,
@@ -182,6 +183,22 @@ type WbsDivisionRow = {
 };
 const CONSTRUCTLINE_RELATIONSHIP_TYPES: ConstructLineRelationshipType[] = ["FS", "SS", "FF", "SF"];
 
+const DELAY_FRAGMENT_STATUS_LABEL: Record<ScheduleDelayFragmentRow["status"], string> = {
+  active: "Active",
+  mitigated: "Mitigated",
+  accepted: "Accepted",
+  recovered: "Recovered",
+};
+const DELAY_FRAGMENT_SOURCE_LABEL: Record<ScheduleDelayFragmentRow["source"], string> = {
+  field: "Field",
+  trade: "Trade",
+  owner: "Owner",
+  design: "Design",
+  procurement: "Procurement",
+  weather: "Weather",
+  other: "Other",
+};
+
 export type ActivityCreateInput = { name: string } & Partial<
   Pick<
     ScheduleActivityRow,
@@ -194,6 +211,37 @@ export type ActivityCreateInput = { name: string } & Partial<
     | "successor_activity_ids"
     | "notes"
     | "sort_order"
+  >
+>;
+
+export type DelayFragmentCreateInput = { title: string } & Partial<
+  Pick<
+    ScheduleDelayFragmentRow,
+    | "schedule_activity_id"
+    | "activity_id"
+    | "reason"
+    | "delay_days"
+    | "source"
+    | "status"
+    | "owner"
+    | "identified_on"
+    | "resolved_on"
+  >
+>;
+
+type DelayFragmentPatchInput = Partial<
+  Pick<
+    ScheduleDelayFragmentRow,
+    | "schedule_activity_id"
+    | "activity_id"
+    | "title"
+    | "reason"
+    | "delay_days"
+    | "source"
+    | "status"
+    | "owner"
+    | "identified_on"
+    | "resolved_on"
   >
 >;
 
@@ -352,6 +400,7 @@ export function ScheduleRisk({
 
   const milestones = data?.milestones ?? [];
   const activities = data?.activities ?? [];
+  const delayFragments = data?.delayFragments ?? [];
   const risks = data?.risks ?? [];
   const updates = data?.updates ?? [];
   const milestoneUpdates = data?.milestoneUpdates ?? [];
@@ -374,16 +423,18 @@ export function ScheduleRisk({
       }),
     [activities, dataDate],
   );
+  const delaySummary = useMemo(() => buildDelayFragmentSummary(delayFragments), [delayFragments]);
   const cpmScheduleDraft = useMemo(
     () =>
       buildCpmScheduleUpdateDraft({
         dataDate,
+        delaySummary,
         milestones,
         model: scheduleCpmModel,
         previousUpdate: lastScheduleUpdate,
         project,
       }),
-    [dataDate, lastScheduleUpdate, milestones, project, scheduleCpmModel],
+    [dataDate, delaySummary, lastScheduleUpdate, milestones, project, scheduleCpmModel],
   );
   useEffect(() => {
     setCompletionUpdateDraft(project.forecast_completion_date ?? "");
@@ -495,7 +546,7 @@ export function ScheduleRisk({
                   3 Save schedule update
                 </span>
               </div>
-              <div className="mt-2 grid gap-3 text-sm md:grid-cols-4">
+              <div className="mt-2 grid gap-3 text-sm md:grid-cols-5">
                 <ScheduleIntelligenceMetric
                   label="CPM forecast"
                   value={shortDate(cpmScheduleDraft.forecast_completion_date)}
@@ -518,6 +569,11 @@ export function ScheduleRisk({
                       ? "text-foreground"
                       : "text-muted-foreground"
                   }
+                />
+                <ScheduleIntelligenceMetric
+                  label="Delay fragments"
+                  value={`${delaySummary.openCount}/${delaySummary.totalCount}`}
+                  tone={delaySummary.openDays > 0 ? "text-danger" : "text-muted-foreground"}
                 />
               </div>
               <div className="mt-3 max-w-5xl text-xs text-muted-foreground">
@@ -706,6 +762,16 @@ type CpmScheduleUpdateDraft = {
   preview: string;
 };
 
+type DelayFragmentSummary = {
+  totalCount: number;
+  openCount: number;
+  openDays: number;
+  activeCount: number;
+  mitigatedCount: number;
+  recoveredCount: number;
+  driverLabels: string[];
+};
+
 function filterMilestones(milestones: MilestoneRow[], view: MilestoneView) {
   if (view === "all") return milestones;
   if (view === "complete") return milestones.filter((m) => m.status === "complete");
@@ -714,12 +780,14 @@ function filterMilestones(milestones: MilestoneRow[], view: MilestoneView) {
 
 function buildCpmScheduleUpdateDraft({
   dataDate,
+  delaySummary,
   milestones,
   model,
   previousUpdate,
   project,
 }: {
   dataDate: string;
+  delaySummary: DelayFragmentSummary;
   milestones: MilestoneRow[];
   model: ConstructLineCpmModel;
   previousUpdate: ScheduleUpdateRow | null;
@@ -752,6 +820,11 @@ function buildCpmScheduleUpdateDraft({
   if (model.maxStack >= 4) {
     qualityParts.push(`${model.maxStack} peak stack at ${model.maxStackLabel}`);
   }
+  if (delaySummary.openCount > 0) {
+    qualityParts.push(
+      `${delaySummary.openCount} open delay fragments / ${delaySummary.openDays} days`,
+    );
+  }
 
   const previewParts = [
     `CPM forecast ${shortDate(forecastCompletion)} (${varianceLabel(
@@ -759,6 +832,9 @@ function buildCpmScheduleUpdateDraft({
     )} vs baseline, ${varianceLabel(movementWeeks)} movement).`,
     qualityParts.join("; ") + ".",
     criticalDrivers.length > 0 ? `Drivers: ${criticalDrivers.join(", ")}.` : null,
+    delaySummary.driverLabels.length > 0
+      ? `Delay ledger: ${delaySummary.driverLabels.join(", ")}.`
+      : null,
     milestoneForecasts.length > 0
       ? `${milestoneForecasts.length} milestone forecast ${
           milestoneForecasts.length === 1 ? "update" : "updates"
@@ -777,6 +853,27 @@ function buildCpmScheduleUpdateDraft({
     notes: preview,
     preview,
   };
+}
+
+function buildDelayFragmentSummary(fragments: ScheduleDelayFragmentRow[]): DelayFragmentSummary {
+  const openFragments = fragments.filter(isOpenDelayFragment);
+  const sortedDrivers = [...openFragments]
+    .sort((a, b) => b.delay_days - a.delay_days)
+    .slice(0, 3)
+    .map((fragment) => `${fragment.activity_id || "Unassigned"} ${fragment.delay_days}d`);
+  return {
+    totalCount: fragments.length,
+    openCount: openFragments.length,
+    openDays: openFragments.reduce((total, fragment) => total + fragment.delay_days, 0),
+    activeCount: fragments.filter((fragment) => fragment.status === "active").length,
+    mitigatedCount: fragments.filter((fragment) => fragment.status === "mitigated").length,
+    recoveredCount: fragments.filter((fragment) => fragment.status === "recovered").length,
+    driverLabels: sortedDrivers,
+  };
+}
+
+function isOpenDelayFragment(fragment: ScheduleDelayFragmentRow) {
+  return fragment.status === "active" || fragment.status === "accepted";
 }
 
 function buildCpmMilestoneForecasts(
@@ -1303,6 +1400,8 @@ export function CpmActivityPlanner({
   activities,
   wbsSections,
   wbsPersistence = "ready",
+  delayFragments,
+  delayFragmentPersistence = "ready",
   milestones,
   project,
   latestDataDate,
@@ -1312,6 +1411,10 @@ export function CpmActivityPlanner({
   onPatchActivity,
   isSavingActivity,
   onDeleteActivity,
+  onAddDelayFragment,
+  onPatchDelayFragment,
+  onDeleteDelayFragment,
+  isSavingDelayFragment,
   onAddWbsSection,
   onRenameWbsSection,
   onReorderWbsSections,
@@ -1320,6 +1423,8 @@ export function CpmActivityPlanner({
   activities: ScheduleActivityRow[];
   wbsSections: ScheduleWbsSectionRow[];
   wbsPersistence?: "ready" | "migration_required";
+  delayFragments: ScheduleDelayFragmentRow[];
+  delayFragmentPersistence?: "ready" | "migration_required";
   milestones: MilestoneRow[];
   project: ProjectRow;
   latestDataDate: string | null;
@@ -1333,6 +1438,10 @@ export function CpmActivityPlanner({
   ) => Promise<void>;
   isSavingActivity: boolean;
   onDeleteActivity: (id: string) => void;
+  onAddDelayFragment: (fragment: DelayFragmentCreateInput) => Promise<void>;
+  onPatchDelayFragment: (id: string, patch: DelayFragmentPatchInput) => Promise<void>;
+  onDeleteDelayFragment: (id: string) => Promise<void>;
+  isSavingDelayFragment: boolean;
   onAddWbsSection: (name: string) => Promise<void>;
   onRenameWbsSection: (id: string, name: string) => Promise<void>;
   onReorderWbsSections: (orderedIds: string[]) => Promise<void>;
@@ -1373,6 +1482,8 @@ export function CpmActivityPlanner({
     [wbsDivisionRows],
   );
   const isWbsMigrationRequired = wbsPersistence === "migration_required";
+  const isDelayFragmentMigrationRequired = delayFragmentPersistence === "migration_required";
+  const delaySummary = useMemo(() => buildDelayFragmentSummary(delayFragments), [delayFragments]);
   const baseCpmModel = useMemo(
     () =>
       buildConstructLineCpmModel(sortedActivities, {
@@ -1633,7 +1744,7 @@ export function CpmActivityPlanner({
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
+        <div className="mt-5 grid gap-3 md:grid-cols-5">
           <ScheduleWorkbenchStat
             label="CPM health"
             value={`${cpmModel.healthScore}%`}
@@ -1670,6 +1781,12 @@ export function CpmActivityPlanner({
             sub={cpmModel.maxStackLabel}
             tone={cpmModel.maxStack >= 4 ? "warning" : "default"}
           />
+          <ScheduleWorkbenchStat
+            label="Delay fragments"
+            value={String(delaySummary.openDays)}
+            sub={`${delaySummary.openCount} open / ${delaySummary.totalCount} total`}
+            tone={delaySummary.openDays > 0 ? "danger" : "success"}
+          />
         </div>
 
         {isWbsMigrationRequired && (
@@ -1677,6 +1794,13 @@ export function CpmActivityPlanner({
             WBS persistence is waiting on the Lovable database migration. Sections are visible from
             activity divisions, but WBS add, rename, and drag reorder will not save until
             `schedule_wbs_sections` exists.
+          </div>
+        )}
+
+        {isDelayFragmentMigrationRequired && (
+          <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
+            Delay fragments are waiting on the Lovable database migration. CPM logic still works,
+            but activity-level delay records will not save until `schedule_delay_fragments` exists.
           </div>
         )}
 
@@ -1699,6 +1823,15 @@ export function CpmActivityPlanner({
             {cpmModel.diagnostics.length > 0 && (
               <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
                 {cpmModel.diagnostics.slice(0, 2).join(" ")}
+              </div>
+            )}
+            {delaySummary.openCount > 0 && (
+              <div className="mt-3 rounded border border-danger/20 bg-danger/10 px-3 py-2 text-xs text-danger">
+                Delay ledger has {delaySummary.openCount} open fragment
+                {delaySummary.openCount === 1 ? "" : "s"} totaling {delaySummary.openDays} days.
+                {delaySummary.driverLabels.length > 0
+                  ? ` Drivers: ${delaySummary.driverLabels.join(", ")}.`
+                  : ""}
               </div>
             )}
           </div>
@@ -1972,6 +2105,12 @@ export function CpmActivityPlanner({
             setSelectedActivityId(null);
             onDeleteActivity(id);
           }}
+          delayFragments={delayFragments}
+          delayFragmentPersistence={delayFragmentPersistence}
+          isSavingDelayFragment={isSavingDelayFragment}
+          onAddDelayFragment={onAddDelayFragment}
+          onPatchDelayFragment={onPatchDelayFragment}
+          onDeleteDelayFragment={onDeleteDelayFragment}
         />
       )}
 
@@ -4192,17 +4331,29 @@ function ActivityGanttRow({
 function ActivityDetailDialog({
   activity,
   activities,
+  delayFragments,
+  delayFragmentPersistence,
   isSaving,
+  isSavingDelayFragment,
   onClose,
   onSave,
   onDelete,
+  onAddDelayFragment,
+  onPatchDelayFragment,
+  onDeleteDelayFragment,
 }: {
   activity: ScheduleActivityRow;
   activities: ScheduleActivityRow[];
+  delayFragments: ScheduleDelayFragmentRow[];
+  delayFragmentPersistence: "ready" | "migration_required";
   isSaving: boolean;
+  isSavingDelayFragment: boolean;
   onClose: () => void;
   onSave: (patch: Partial<ScheduleActivityRow>) => Promise<void>;
   onDelete: () => void;
+  onAddDelayFragment: (fragment: DelayFragmentCreateInput) => Promise<void>;
+  onPatchDelayFragment: (id: string, patch: DelayFragmentPatchInput) => Promise<void>;
+  onDeleteDelayFragment: (id: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<ActivityDraft>(() => activityDraftFromRow(activity));
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -4405,6 +4556,16 @@ function ActivityDetailDialog({
                 />
               </LabeledField>
             </div>
+
+            <ActivityDelayFragmentPanel
+              activity={activity}
+              delayFragments={delayFragments}
+              persistence={delayFragmentPersistence}
+              isSaving={isSavingDelayFragment}
+              onAddDelayFragment={onAddDelayFragment}
+              onPatchDelayFragment={onPatchDelayFragment}
+              onDeleteDelayFragment={onDeleteDelayFragment}
+            />
           </div>
         </div>
 
@@ -4436,6 +4597,289 @@ function ActivityDetailDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type DelayFragmentDraft = {
+  title: string;
+  reason: string;
+  delay_days: string;
+  source: ScheduleDelayFragmentRow["source"];
+  status: ScheduleDelayFragmentRow["status"];
+  owner: string;
+  identified_on: string;
+};
+
+function ActivityDelayFragmentPanel({
+  activity,
+  delayFragments,
+  persistence,
+  isSaving,
+  onAddDelayFragment,
+  onPatchDelayFragment,
+  onDeleteDelayFragment,
+}: {
+  activity: ScheduleActivityRow;
+  delayFragments: ScheduleDelayFragmentRow[];
+  persistence: "ready" | "migration_required";
+  isSaving: boolean;
+  onAddDelayFragment: (fragment: DelayFragmentCreateInput) => Promise<void>;
+  onPatchDelayFragment: (id: string, patch: DelayFragmentPatchInput) => Promise<void>;
+  onDeleteDelayFragment: (id: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<DelayFragmentDraft>(() =>
+    emptyDelayFragmentDraft(activity.name),
+  );
+  const linkedFragments = useMemo(
+    () =>
+      delayFragments.filter(
+        (fragment) =>
+          fragment.schedule_activity_id === activity.id ||
+          Boolean(activity.activity_id && fragment.activity_id === activity.activity_id),
+      ),
+    [activity.activity_id, activity.id, delayFragments],
+  );
+  const linkedSummary = useMemo(
+    () => buildDelayFragmentSummary(linkedFragments),
+    [linkedFragments],
+  );
+
+  useEffect(() => {
+    setDraft(emptyDelayFragmentDraft(activity.name));
+  }, [activity.id, activity.name]);
+
+  const addFragment = async () => {
+    const title = draft.title.trim();
+    if (!title || persistence === "migration_required") return;
+    await onAddDelayFragment({
+      schedule_activity_id: activity.id,
+      activity_id: activity.activity_id,
+      title,
+      reason: draft.reason.trim(),
+      delay_days: parseDelayDays(draft.delay_days),
+      source: draft.source,
+      status: draft.status,
+      owner: draft.owner.trim(),
+      identified_on: draft.identified_on || todayIsoDate(),
+      resolved_on: isOpenDelayStatus(draft.status) ? null : todayIsoDate(),
+    });
+    setDraft(emptyDelayFragmentDraft(activity.name));
+  };
+
+  return (
+    <div className="mt-4 rounded-md border border-hairline bg-card p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Delay fragments
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {linkedSummary.openCount} open · {linkedSummary.openDays} days ·{" "}
+            {linkedSummary.totalCount} total
+          </div>
+        </div>
+      </div>
+
+      {persistence === "migration_required" ? (
+        <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
+          Lovable still needs the `schedule_delay_fragments` migration before delay records can
+          save.
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1fr)_96px_150px_140px_140px]">
+            <LabeledField label="Fragment title">
+              <Input
+                value={draft.title}
+                onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                className="h-9 min-w-0"
+                placeholder="Window delivery slipped"
+                disabled={isSaving}
+              />
+            </LabeledField>
+            <LabeledField label="Days">
+              <Input
+                type="number"
+                min={0}
+                max={365}
+                value={draft.delay_days}
+                onChange={(event) => setDraft({ ...draft, delay_days: event.target.value })}
+                className="h-9 min-w-0 tabular"
+                disabled={isSaving}
+              />
+            </LabeledField>
+            <LabeledField label="Source">
+              <Select
+                value={draft.source}
+                onValueChange={(source) =>
+                  setDraft({ ...draft, source: source as ScheduleDelayFragmentRow["source"] })
+                }
+                disabled={isSaving}
+              >
+                <SelectTrigger className="h-9 min-w-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(
+                    Object.keys(DELAY_FRAGMENT_SOURCE_LABEL) as ScheduleDelayFragmentRow["source"][]
+                  ).map((source) => (
+                    <SelectItem key={source} value={source}>
+                      {DELAY_FRAGMENT_SOURCE_LABEL[source]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </LabeledField>
+            <LabeledField label="Status">
+              <Select
+                value={draft.status}
+                onValueChange={(status) =>
+                  setDraft({ ...draft, status: status as ScheduleDelayFragmentRow["status"] })
+                }
+                disabled={isSaving}
+              >
+                <SelectTrigger className="h-9 min-w-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(
+                    Object.keys(DELAY_FRAGMENT_STATUS_LABEL) as ScheduleDelayFragmentRow["status"][]
+                  ).map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {DELAY_FRAGMENT_STATUS_LABEL[status]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </LabeledField>
+            <LabeledField label="Identified">
+              <Input
+                type="date"
+                value={draft.identified_on}
+                onChange={(event) => setDraft({ ...draft, identified_on: event.target.value })}
+                className="h-9 min-w-0"
+                disabled={isSaving}
+              />
+            </LabeledField>
+          </div>
+
+          <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_220px_auto] lg:items-end">
+            <LabeledField label="Reason / impact">
+              <Textarea
+                value={draft.reason}
+                onChange={(event) => setDraft({ ...draft, reason: event.target.value })}
+                className="min-h-16 min-w-0 resize-y"
+                placeholder="What happened, who owns it, and what path it affects."
+                disabled={isSaving}
+              />
+            </LabeledField>
+            <LabeledField label="Owner">
+              <Input
+                value={draft.owner}
+                onChange={(event) => setDraft({ ...draft, owner: event.target.value })}
+                className="h-9 min-w-0"
+                placeholder="PM / trade / client"
+                disabled={isSaving}
+              />
+            </LabeledField>
+            <Button
+              type="button"
+              className="h-9 gap-2"
+              disabled={!draft.title.trim() || isSaving}
+              onClick={() => void addFragment()}
+            >
+              <Plus className="h-4 w-4" />
+              Add delay
+            </Button>
+          </div>
+
+          <div className="mt-3 grid gap-2">
+            {linkedFragments.length === 0 ? (
+              <div className="rounded border border-dashed border-hairline bg-surface/70 px-3 py-3 text-sm text-muted-foreground">
+                No delay fragments tied to this activity.
+              </div>
+            ) : (
+              linkedFragments.map((fragment) => (
+                <DelayFragmentRow
+                  key={fragment.id}
+                  fragment={fragment}
+                  isSaving={isSaving}
+                  onPatchDelayFragment={onPatchDelayFragment}
+                  onDeleteDelayFragment={onDeleteDelayFragment}
+                />
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DelayFragmentRow({
+  fragment,
+  isSaving,
+  onPatchDelayFragment,
+  onDeleteDelayFragment,
+}: {
+  fragment: ScheduleDelayFragmentRow;
+  isSaving: boolean;
+  onPatchDelayFragment: (id: string, patch: DelayFragmentPatchInput) => Promise<void>;
+  onDeleteDelayFragment: (id: string) => Promise<void>;
+}) {
+  const updateStatus = (status: ScheduleDelayFragmentRow["status"]) => {
+    void onPatchDelayFragment(fragment.id, {
+      status,
+      resolved_on: isOpenDelayStatus(status) ? null : (fragment.resolved_on ?? todayIsoDate()),
+    });
+  };
+  return (
+    <div className="grid min-w-0 gap-2 rounded border border-hairline bg-surface p-2 lg:grid-cols-[minmax(0,1fr)_88px_130px_138px_36px] lg:items-center">
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="truncate text-sm font-semibold text-foreground">{fragment.title}</span>
+          <span className="rounded border border-hairline bg-card px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            {DELAY_FRAGMENT_SOURCE_LABEL[fragment.source]}
+          </span>
+        </div>
+        <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+          {fragment.reason || "No reason entered."}
+        </div>
+      </div>
+      <div className="text-sm font-semibold tabular text-foreground">
+        {fragment.delay_days} days
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {shortDate(fragment.identified_on)}
+        {fragment.resolved_on ? ` to ${shortDate(fragment.resolved_on)}` : ""}
+      </div>
+      <Select value={fragment.status} onValueChange={updateStatus} disabled={isSaving}>
+        <SelectTrigger className="h-9 min-w-0 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {(Object.keys(DELAY_FRAGMENT_STATUS_LABEL) as ScheduleDelayFragmentRow["status"][]).map(
+            (status) => (
+              <SelectItem key={status} value={status}>
+                {DELAY_FRAGMENT_STATUS_LABEL[status]}
+              </SelectItem>
+            ),
+          )}
+        </SelectContent>
+      </Select>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 justify-self-end text-muted-foreground hover:text-danger"
+        disabled={isSaving}
+        onClick={() => void onDeleteDelayFragment(fragment.id)}
+        aria-label={`Delete ${fragment.title}`}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </Button>
+    </div>
   );
 }
 
@@ -4505,6 +4949,32 @@ function parsePercent(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
+function parseDelayDays(value: string | number | null | undefined) {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(365, Math.round(parsed)));
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isOpenDelayStatus(status: ScheduleDelayFragmentRow["status"]) {
+  return status === "active" || status === "accepted";
+}
+
+function emptyDelayFragmentDraft(activityName: string): DelayFragmentDraft {
+  return {
+    title: activityName ? `${activityName} delay` : "Schedule delay",
+    reason: "",
+    delay_days: "0",
+    source: "field",
+    status: "active",
+    owner: "",
+    identified_on: todayIsoDate(),
+  };
 }
 
 function parseActivityIds(value: string) {
