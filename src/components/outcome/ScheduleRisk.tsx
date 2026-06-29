@@ -876,6 +876,33 @@ function isOpenDelayFragment(fragment: ScheduleDelayFragmentRow) {
   return fragment.status === "active" || fragment.status === "accepted";
 }
 
+function groupDelayFragmentsByActivity(fragments: ScheduleDelayFragmentRow[]) {
+  const byKey = new Map<string, ScheduleDelayFragmentRow[]>();
+  for (const fragment of fragments) {
+    const keys = [fragment.schedule_activity_id, fragment.activity_id]
+      .map((key) => key?.trim())
+      .filter((key): key is string => Boolean(key));
+    for (const key of keys) {
+      byKey.set(key, [...(byKey.get(key) ?? []), fragment]);
+    }
+  }
+  return byKey;
+}
+
+function getDelayFragmentsForActivity(
+  activity: ScheduleActivityRow,
+  byKey: Map<string, ScheduleDelayFragmentRow[]>,
+) {
+  const unique = new Map<string, ScheduleDelayFragmentRow>();
+  for (const key of [activity.id, activity.activity_id]) {
+    if (!key) continue;
+    for (const fragment of byKey.get(key) ?? []) {
+      unique.set(fragment.id, fragment);
+    }
+  }
+  return Array.from(unique.values());
+}
+
 function buildCpmMilestoneForecasts(
   model: ConstructLineCpmModel,
   milestones: MilestoneRow[],
@@ -1650,6 +1677,12 @@ export function CpmActivityPlanner({
                   {cpmModel.tasks.length} activities · {printedLogicTieCount} logic ties shown
                 </span>
               )}
+              {delaySummary.openCount > 0 && (
+                <span>
+                  {delaySummary.openCount} open delay fragment
+                  {delaySummary.openCount === 1 ? "" : "s"} · {delaySummary.openDays} days
+                </span>
+              )}
               <span>Optimized for 11 x 17 landscape</span>
               <span>{activityOrder === "start" ? "Start-date order" : "WBS order"}</span>
             </div>
@@ -1662,6 +1695,7 @@ export function CpmActivityPlanner({
         </div>
         <ActivityScheduleMatrix
           model={cpmModel}
+          delayFragments={delayFragments}
           dayPx={CONSTRUCTLINE_FIT_DAY_PX}
           dataDate={latestDataDate}
           showLogicLines={showLogicLines}
@@ -2017,6 +2051,7 @@ export function CpmActivityPlanner({
 
         <ActivityScheduleMatrix
           model={cpmModel}
+          delayFragments={delayFragments}
           dayPx={dayPx}
           dataDate={latestDataDate}
           showLogicLines={showLogicLines}
@@ -2080,6 +2115,7 @@ export function CpmActivityPlanner({
 
           <ActivityScheduleMatrix
             model={cpmModel}
+            delayFragments={delayFragments}
             dayPx={dayPx}
             dataDate={latestDataDate}
             showLogicLines={showLogicLines}
@@ -2902,6 +2938,7 @@ function LabeledField({ label, children }: { label: string; children: ReactNode 
 
 function ActivityScheduleMatrix({
   model,
+  delayFragments,
   dayPx,
   dataDate,
   showLogicLines = false,
@@ -2911,6 +2948,7 @@ function ActivityScheduleMatrix({
   onDeleteActivity,
 }: {
   model: ConstructLineCpmModel;
+  delayFragments: ScheduleDelayFragmentRow[];
   dayPx: number;
   dataDate: string | null;
   showLogicLines?: boolean;
@@ -2946,6 +2984,11 @@ function ActivityScheduleMatrix({
     dataDate == null
       ? null
       : offsetFromTimelineStart(dataDate, model.timelineStartDate) * activeDayPx;
+  const delayFragmentsByActivity = useMemo(
+    () => groupDelayFragmentsByActivity(delayFragments),
+    [delayFragments],
+  );
+  const activeDelayFragmentCount = delayFragments.filter(isOpenDelayFragment).length;
   const rows = useMemo(
     () =>
       model.groups.flatMap<
@@ -3041,6 +3084,12 @@ function ActivityScheduleMatrix({
             <span className="h-2.5 w-2.5 rotate-45 rounded-[1px] border border-foreground/45 bg-card" />
             Milestone
           </span>
+          {activeDelayFragmentCount > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rounded-full bg-danger ring-2 ring-danger/15" />
+              Delay
+            </span>
+          )}
           <span className="font-semibold tabular text-foreground">
             {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
           </span>
@@ -3178,6 +3227,10 @@ function ActivityScheduleMatrix({
                   isPrintMode={isPrintMode}
                   monthBands={monthBands}
                   dataDateX={dataDateX}
+                  delayFragments={getDelayFragmentsForActivity(
+                    row.task.activity,
+                    delayFragmentsByActivity,
+                  )}
                   onOpen={() => onOpenActivity(row.task.activity)}
                   onDelete={() => onDeleteActivity(row.task.activity.id)}
                 />
@@ -3290,6 +3343,7 @@ function ConstructLineLogicOverlay({
 
 function ConstructLineTaskRow({
   task,
+  delayFragments,
   rowHeight,
   tableWidth,
   tableColumns,
@@ -3303,6 +3357,7 @@ function ConstructLineTaskRow({
   onDelete,
 }: {
   task: ConstructLineCpmTask;
+  delayFragments: ScheduleDelayFragmentRow[];
   rowHeight: number;
   tableWidth: number;
   tableColumns: string;
@@ -3322,6 +3377,12 @@ function ConstructLineTaskRow({
   const barLeft = startOffset * dayPx;
   const barWidth = Math.max(8, (finishOffset - startOffset + 1) * dayPx);
   const logicCount = task.predecessorKeys.length + task.successorKeys.length;
+  const delaySummary = buildDelayFragmentSummary(delayFragments);
+  const hasOpenDelay = delaySummary.openCount > 0;
+  const delayMarkerLeft = Math.min(
+    timelineWidth - 10,
+    Math.max(10, barLeft + Math.min(barWidth, Math.max(12, delaySummary.openDays * dayPx))),
+  );
   const barClass = task.isCritical
     ? "bg-danger"
     : task.isNearCritical
@@ -3369,6 +3430,9 @@ function ConstructLineTaskRow({
             {task.isOpenStart && <ScheduleFlag tone="warning">open start</ScheduleFlag>}
             {task.isOpenFinish && <ScheduleFlag tone="warning">open finish</ScheduleFlag>}
             {task.hasMissingDates && <ScheduleFlag tone="warning">missing dates</ScheduleFlag>}
+            {hasOpenDelay && (
+              <ScheduleFlag tone="danger">{delaySummary.openDays}d delay</ScheduleFlag>
+            )}
           </div>
         </div>
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
@@ -3456,6 +3520,13 @@ function ConstructLineTaskRow({
           >
             <div className={cn("h-full rounded-full", barClass)} style={{ width: `${percent}%` }} />
           </div>
+        )}
+        {hasOpenDelay && (
+          <span
+            className="absolute top-1/2 z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-danger bg-danger shadow-sm ring-4 ring-danger/15"
+            style={{ left: delayMarkerLeft }}
+            title={`${delaySummary.openDays} open delay days on ${activity.activity_id || activity.name}`}
+          />
         )}
       </button>
     </div>
