@@ -182,6 +182,12 @@ type WbsDivisionRow = {
   isPersisted: boolean;
 };
 const CONSTRUCTLINE_RELATIONSHIP_TYPES: ConstructLineRelationshipType[] = ["FS", "SS", "FF", "SF"];
+const CONSTRUCTLINE_RELATIONSHIP_LABELS: Record<ConstructLineRelationshipType, string> = {
+  FS: "Finish to start",
+  SS: "Start to start",
+  FF: "Finish to finish",
+  SF: "Start to finish",
+};
 
 const DELAY_FRAGMENT_STATUS_LABEL: Record<ScheduleDelayFragmentRow["status"], string> = {
   active: "Active",
@@ -4253,9 +4259,14 @@ function ActivityDependencyPicker({
   };
 
   return (
-    <div className="min-w-0 space-y-1">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-        {label}
+    <div className="min-w-0 space-y-2">
+      <div>
+        <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          {label}
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          Pick activities from the schedule, then set relationship type and lag days.
+        </div>
       </div>
       <Popover>
         <PopoverTrigger asChild>
@@ -4320,67 +4331,87 @@ function ActivityDependencyPicker({
         </PopoverContent>
       </Popover>
       {selectedLinks.length > 0 && (
-        <div className="grid gap-1.5">
+        <div className="grid gap-2">
           {selectedLinks.map((link) => {
             const activityId = link.activityId;
             const activity = activitiesById.get(activityId);
             return (
               <div
                 key={activityId}
-                className="grid min-w-0 gap-2 rounded border border-hairline bg-card p-2 sm:grid-cols-[minmax(0,1fr)_92px_92px_auto] sm:items-center"
+                className="grid min-w-0 gap-3 rounded-md border border-hairline bg-card p-3 lg:grid-cols-[minmax(220px,1fr)_minmax(150px,180px)_120px_32px] lg:items-end"
               >
                 <div className="min-w-0">
-                  <div className="truncate text-[11px] font-semibold tabular text-foreground">
-                    {activityId}
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="shrink-0 text-xs font-semibold tabular text-foreground">
+                      {activityId}
+                    </span>
+                    <span className="min-w-0 break-words text-sm font-medium text-foreground">
+                      {activity?.name ?? "Activity not found"}
+                    </span>
                   </div>
-                  <div className="truncate text-[11px] text-muted-foreground">
-                    {activity?.name ?? "Activity not found"}
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {activity
+                      ? `${activity.division || "General"} · ${shortDate(activity.start_date)} to ${shortDate(activity.finish_date)}`
+                      : "This saved activity ID is not currently in the schedule list."}
                   </div>
                 </div>
-                <Select
-                  value={link.relationshipType}
-                  onValueChange={(relationshipType) =>
-                    updateActivityLink(activityId, {
-                      relationshipType: relationshipType as ConstructLineRelationshipType,
-                    })
-                  }
-                >
-                  <SelectTrigger
-                    className="h-9 min-w-0 px-2 text-xs font-semibold"
-                    aria-label={`${activityId} relationship type`}
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CONSTRUCTLINE_RELATIONSHIP_TYPES.map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {type}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="relative min-w-0">
-                  <Input
-                    type="number"
-                    min={-999}
-                    max={999}
-                    value={link.lagDays}
-                    onChange={(event) =>
-                      updateActivityLink(activityId, { lagDays: Number(event.target.value) })
+                <div className="min-w-0">
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                    Relationship
+                  </div>
+                  <Select
+                    value={link.relationshipType}
+                    onValueChange={(relationshipType) =>
+                      updateActivityLink(activityId, {
+                        relationshipType: relationshipType as ConstructLineRelationshipType,
+                      })
                     }
-                    title="Lag days. Use negative values for lead."
-                    className="h-9 min-w-0 pr-6 text-xs font-semibold tabular"
-                    aria-label={`${activityId} lag days`}
-                  />
-                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-muted-foreground">
-                    d
-                  </span>
+                  >
+                    <SelectTrigger
+                      className="h-9 min-w-0 px-2 text-xs font-semibold"
+                      aria-label={`${activityId} relationship type`}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CONSTRUCTLINE_RELATIONSHIP_TYPES.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          <span className="font-semibold tabular">{type}</span>
+                          <span className="ml-2 text-muted-foreground">
+                            {CONSTRUCTLINE_RELATIONSHIP_LABELS[type]}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-0">
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                    Lag / lead
+                  </div>
+                  <div className="relative min-w-0">
+                    <Input
+                      type="number"
+                      min={-999}
+                      max={999}
+                      value={link.lagDays}
+                      onChange={(event) =>
+                        updateActivityLink(activityId, { lagDays: Number(event.target.value) })
+                      }
+                      title="Lag days. Use negative values for lead."
+                      className="h-9 min-w-0 pr-6 text-xs font-semibold tabular"
+                      aria-label={`${activityId} lag days`}
+                    />
+                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-muted-foreground">
+                      d
+                    </span>
+                  </div>
                 </div>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 justify-self-end text-muted-foreground hover:text-danger"
+                  className="h-8 w-8 justify-self-end text-muted-foreground hover:text-danger lg:justify-self-center"
                   onClick={() => removeActivity(activityId)}
                   aria-label={`Remove ${activityId}`}
                 >
@@ -4488,15 +4519,26 @@ function ActivityDetailDialog({
 }) {
   const [draft, setDraft] = useState<ActivityDraft>(() => activityDraftFromRow(activity));
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const duration = getActivityDurationDays(activity);
   const isMilestone = isConstructLineMilestoneActivity(activity);
+  const saving = isSaving || isSubmitting;
+  const currentActivityBlockedIds = useMemo(
+    () =>
+      Array.from(
+        new Set([activity.activity_id, draft.activity_id].map((id) => id.trim()).filter(Boolean)),
+      ),
+    [activity.activity_id, draft.activity_id],
+  );
 
   useEffect(() => {
     setDraft(activityDraftFromRow(activity));
     setSaveError(null);
+    setIsSubmitting(false);
   }, [activity]);
 
   const saveActivity = async () => {
+    if (saving) return;
     const name = draft.name.trim();
     if (!name) {
       setSaveError("Activity name is required.");
@@ -4504,6 +4546,7 @@ function ActivityDetailDialog({
     }
     const milestoneDate = getMilestoneDraftDate(draft);
     setSaveError(null);
+    setIsSubmitting(true);
     try {
       await onSave({
         activity_id: draft.activity_id.trim(),
@@ -4519,11 +4562,12 @@ function ActivityDetailDialog({
       onClose();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Activity did not update.");
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !isSaving && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !saving && onClose()}>
       <DialogContent className="flex max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:w-[min(calc(100vw-2rem),80rem)] sm:max-w-[80rem]">
         <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
           <DialogTitle className="font-serif text-2xl">CPM activity detail</DialogTitle>
@@ -4572,13 +4616,21 @@ function ActivityDetailDialog({
           </div>
 
           <div className="rounded-md border border-hairline bg-surface p-4">
-            <div className="mb-3 flex justify-end">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Activity setup
+                </div>
+                <div className="mt-1 text-sm text-muted-foreground">
+                  Edit the row identity, WBS division, dates, progress, and milestone status.
+                </div>
+              </div>
               <Button
                 type="button"
                 variant={draft.is_milestone ? "default" : "outline"}
                 className="gap-2"
                 aria-pressed={draft.is_milestone}
-                disabled={isSaving}
+                disabled={saving}
                 onClick={() => setDraft(toggleMilestoneDraft(draft, !draft.is_milestone))}
               >
                 <Diamond className="h-4 w-4" />
@@ -4635,14 +4687,24 @@ function ActivityDetailDialog({
               </LabeledField>
             </div>
 
-            <div className="mt-3 grid min-w-0 gap-3">
+            <div className="mt-5 grid min-w-0 gap-3">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Logic ties
+                </div>
+                <div className="mt-1 text-sm text-muted-foreground">
+                  Predecessors drive this activity. Successors are the activities this row drives.
+                </div>
+              </div>
               <ActivityDependencyPicker
                 label="Predecessors - work before this activity"
                 emptyLabel="Choose activities that must finish first"
                 selectedIds={draft.predecessor_activity_ids}
                 activities={activities}
-                blockedActivityId={draft.activity_id || activity.activity_id}
-                blockedIds={parseActivityIds(draft.successor_activity_ids)}
+                blockedIds={[
+                  ...currentActivityBlockedIds,
+                  ...parseActivityIds(draft.successor_activity_ids),
+                ]}
                 onChange={(value) => setDraft({ ...draft, predecessor_activity_ids: value })}
               />
               <ActivityDependencyPicker
@@ -4650,8 +4712,10 @@ function ActivityDetailDialog({
                 emptyLabel="Choose activities that follow this one"
                 selectedIds={draft.successor_activity_ids}
                 activities={activities}
-                blockedActivityId={draft.activity_id || activity.activity_id}
-                blockedIds={parseActivityIds(draft.predecessor_activity_ids)}
+                blockedIds={[
+                  ...currentActivityBlockedIds,
+                  ...parseActivityIds(draft.predecessor_activity_ids),
+                ]}
                 onChange={(value) => setDraft({ ...draft, successor_activity_ids: value })}
               />
               <div className="min-w-0 rounded-md border border-hairline bg-card p-3">
@@ -4712,17 +4776,17 @@ function ActivityDetailDialog({
             variant="outline"
             className="gap-2 text-danger"
             onClick={onDelete}
-            disabled={isSaving}
+            disabled={saving}
           >
             <Trash2 className="h-4 w-4" />
             Delete activity
           </Button>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button type="button" variant="ghost" onClick={onClose} disabled={isSaving}>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
               Close
             </Button>
-            <Button type="button" onClick={saveActivity} disabled={!draft.name.trim() || isSaving}>
-              {isSaving ? "Saving..." : "Save activity"}
+            <Button type="button" onClick={saveActivity} disabled={!draft.name.trim() || saving}>
+              {saving ? "Saving..." : "Save activity"}
             </Button>
           </div>
         </DialogFooter>
