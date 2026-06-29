@@ -316,10 +316,35 @@ export const listSchedule = createServerFn({ method: "GET" })
     ).map((division, index) =>
       scheduleWbsSectionFromActivityDivision(data.projectId, division, index),
     );
+    let persistedWbsRows = wbsSectionsMissing
+      ? []
+      : ((wRes.data ?? []) as unknown as Array<Record<string, unknown>>);
+    if (!wbsSectionsMissing && persistedWbsRows.length === 0 && derivedWbsSections.length > 0) {
+      const { error: seedWbsError } = await context.supabase
+        .from("schedule_wbs_sections" as any)
+        .insert(
+          derivedWbsSections.map((section) => ({
+            project_id: section.project_id,
+            name: section.name,
+            sort_order: section.sort_order,
+          })),
+        );
+      if (!seedWbsError) {
+        const seededWbs = await context.supabase
+          .from("schedule_wbs_sections" as any)
+          .select("*")
+          .eq("project_id", data.projectId)
+          .order("sort_order")
+          .order("name");
+        if (!seededWbs.error) {
+          persistedWbsRows = (seededWbs.data ?? []) as unknown as Array<Record<string, unknown>>;
+        }
+      }
+    }
     const wbsSectionRows =
-      wbsSectionsMissing || (wRes.data ?? []).length === 0
+      wbsSectionsMissing || persistedWbsRows.length === 0
         ? derivedWbsSections
-        : (wRes.data ?? []).map((r) => normalizeScheduleWbsSection(r as Record<string, unknown>));
+        : persistedWbsRows.map((r) => normalizeScheduleWbsSection(r));
 
     const risks = (rRes.data ?? []).map((r) => normalizeScheduleRisk(r as Record<string, unknown>));
     const unlinkedTitles = Array.from(
@@ -348,6 +373,7 @@ export const listSchedule = createServerFn({ method: "GET" })
       milestones: (mRes.data ?? []) as unknown as MilestoneRow[],
       activities: activitiesMissing ? [] : activityRows.map((r) => normalizeScheduleActivity(r)),
       wbsSections: wbsSectionRows,
+      wbsPersistence: wbsSectionsMissing ? "migration_required" : "ready",
       risks,
       updates: updatesMissing
         ? []

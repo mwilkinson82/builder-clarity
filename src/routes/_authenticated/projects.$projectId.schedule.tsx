@@ -66,6 +66,8 @@ function ScheduleWorkspacePage() {
     () => (scheduleQuery.data?.updates ?? []) as ScheduleUpdateRow[],
     [scheduleQuery.data?.updates],
   );
+  const wbsPersistence =
+    scheduleQuery.data?.wbsPersistence === "migration_required" ? "migration_required" : "ready";
   const latestUpdate = updates[0] ?? null;
 
   const refreshSchedule = async () => {
@@ -273,6 +275,7 @@ function ScheduleWorkspacePage() {
       <CpmActivityPlanner
         activities={activities}
         wbsSections={wbsSections}
+        wbsPersistence={wbsPersistence}
         milestones={milestones}
         project={project}
         latestDataDate={latestUpdate?.data_date ?? null}

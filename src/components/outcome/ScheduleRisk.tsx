@@ -1302,6 +1302,7 @@ const activityDraftFromRow = (activity: ScheduleActivityRow): ActivityDraft => (
 export function CpmActivityPlanner({
   activities,
   wbsSections,
+  wbsPersistence = "ready",
   milestones,
   project,
   latestDataDate,
@@ -1318,6 +1319,7 @@ export function CpmActivityPlanner({
 }: {
   activities: ScheduleActivityRow[];
   wbsSections: ScheduleWbsSectionRow[];
+  wbsPersistence?: "ready" | "migration_required";
   milestones: MilestoneRow[];
   project: ProjectRow;
   latestDataDate: string | null;
@@ -1370,6 +1372,7 @@ export function CpmActivityPlanner({
     () => wbsDivisionRows.map((row) => row.division),
     [wbsDivisionRows],
   );
+  const isWbsMigrationRequired = wbsPersistence === "migration_required";
   const baseCpmModel = useMemo(
     () =>
       buildConstructLineCpmModel(sortedActivities, {
@@ -1668,6 +1671,14 @@ export function CpmActivityPlanner({
             tone={cpmModel.maxStack >= 4 ? "warning" : "default"}
           />
         </div>
+
+        {isWbsMigrationRequired && (
+          <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
+            WBS persistence is waiting on the Lovable database migration. Sections are visible from
+            activity divisions, but WBS add, rename, and drag reorder will not save until
+            `schedule_wbs_sections` exists.
+          </div>
+        )}
 
         <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="rounded-md border border-hairline bg-card p-4">
