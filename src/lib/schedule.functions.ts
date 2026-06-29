@@ -672,8 +672,8 @@ export const renameScheduleWbsSection = createServerFn({ method: "POST" })
       .eq("id", data.id)
       .single();
     if (sectionError) throw new Error(sectionError.message);
-    const oldName = str((section as Record<string, unknown>).name, "General");
-    const projectId = (section as Record<string, unknown>).project_id as string;
+    const oldName = str((section as unknown as Record<string, unknown>).name, "General");
+    const projectId = (section as unknown as Record<string, unknown>).project_id as string;
 
     const { error: updateError } = await context.supabase
       .from("schedule_wbs_sections" as any)
