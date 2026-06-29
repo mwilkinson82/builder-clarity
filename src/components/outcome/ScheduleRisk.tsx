@@ -170,7 +170,9 @@ const CONSTRUCTLINE_ZOOM_LEVELS = [
 const CONSTRUCTLINE_FIT_DAY_PX = CONSTRUCTLINE_ZOOM_LEVELS[0].dayPx;
 const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
+const CONSTRUCTLINE_LOOKAHEAD_DAYS = 42;
 type ScheduleActivityOrder = "start" | "wbs";
+type ScheduleGridView = "all" | "active" | "lookahead" | "critical" | "issues" | "milestones";
 type ActivityPatchOptions = { silent?: boolean };
 type WbsDivisionRow = {
   id: string | null;
@@ -182,6 +184,14 @@ type WbsDivisionRow = {
   isPersisted: boolean;
 };
 const CONSTRUCTLINE_RELATIONSHIP_TYPES: ConstructLineRelationshipType[] = ["FS", "SS", "FF", "SF"];
+const SCHEDULE_GRID_VIEW_OPTIONS: Array<{ value: ScheduleGridView; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "active", label: "Active" },
+  { value: "lookahead", label: "6 wk lookahead" },
+  { value: "critical", label: "Critical" },
+  { value: "issues", label: "Issues" },
+  { value: "milestones", label: "Milestones" },
+];
 const CONSTRUCTLINE_RELATIONSHIP_LABELS: Record<ConstructLineRelationshipType, string> = {
   FS: "Finish to start",
   SS: "Start to start",
@@ -1487,6 +1497,7 @@ export function CpmActivityPlanner({
     useState<(typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]>(CONSTRUCTLINE_FIT_DAY_PX);
   const [showLogicLines, setShowLogicLines] = useState(false);
   const [activityOrder, setActivityOrder] = useState<ScheduleActivityOrder>("start");
+  const [scheduleView, setScheduleView] = useState<ScheduleGridView>("all");
   const [isWbsManagerOpen, setIsWbsManagerOpen] = useState(false);
   const [isFocusOpen, setIsFocusOpen] = useState(false);
   const wbsDivisionOrder = useMemo(
@@ -1528,6 +1539,22 @@ export function CpmActivityPlanner({
   const cpmModel = useMemo(
     () => orderConstructLineCpmModel(baseCpmModel, activityOrder, wbsDivisionOrder),
     [activityOrder, baseCpmModel, wbsDivisionOrder],
+  );
+  const gridViewReferenceDate = latestDataDate ?? todayIsoDate();
+  const displayedCpmModel = useMemo(
+    () =>
+      filterConstructLineCpmModel(cpmModel, scheduleView, gridViewReferenceDate, delayFragments),
+    [cpmModel, delayFragments, gridViewReferenceDate, scheduleView],
+  );
+  const scheduleViewSummary = useMemo(
+    () =>
+      describeScheduleGridView(
+        scheduleView,
+        displayedCpmModel.tasks.length,
+        cpmModel.tasks.length,
+        gridViewReferenceDate,
+      ),
+    [cpmModel.tasks.length, displayedCpmModel.tasks.length, gridViewReferenceDate, scheduleView],
   );
   const bounds = useMemo(
     () =>
@@ -1659,7 +1686,7 @@ export function CpmActivityPlanner({
   const activitiesWithDates = sortedActivities.filter(
     (activity) => activity.start_date || activity.finish_date,
   ).length;
-  const printedLogicTieCount = cpmModel.tasks.reduce(
+  const printedLogicTieCount = displayedCpmModel.tasks.reduce(
     (total, task) => total + task.predecessorKeys.length,
     0,
   );
@@ -1682,11 +1709,13 @@ export function CpmActivityPlanner({
               {project.client && <span>{project.client}</span>}
               {project.project_manager && <span>PM {project.project_manager}</span>}
               <span>
-                {shortDate(cpmModel.timelineStartDate)} to {shortDate(cpmModel.timelineFinishDate)}
+                {shortDate(displayedCpmModel.timelineStartDate)} to{" "}
+                {shortDate(displayedCpmModel.timelineFinishDate)}
               </span>
               {showLogicLines && (
                 <span>
-                  {cpmModel.tasks.length} activities · {printedLogicTieCount} logic ties shown
+                  {displayedCpmModel.tasks.length} activities · {printedLogicTieCount} logic ties
+                  shown
                 </span>
               )}
               {delaySummary.openCount > 0 && (
@@ -1697,19 +1726,25 @@ export function CpmActivityPlanner({
               )}
               <span>Optimized for 11 x 17 landscape</span>
               <span>{activityOrder === "start" ? "Start-date order" : "WBS order"}</span>
+              <span>{scheduleViewSummary}</span>
             </div>
           </div>
           <div className="constructline-cpm-print-status">
             <span>Print setup</span>
             <strong>11 x 17 landscape</strong>
-            <em>Critical basis: {cpmModel.criticalPathReliable ? "valid" : "provisional"}</em>
+            <em>
+              Critical basis: {displayedCpmModel.criticalPathReliable ? "valid" : "provisional"}
+            </em>
           </div>
         </div>
         <ActivityScheduleMatrix
-          model={cpmModel}
+          model={displayedCpmModel}
           delayFragments={delayFragments}
           dayPx={CONSTRUCTLINE_FIT_DAY_PX}
           dataDate={latestDataDate}
+          viewSummary={scheduleViewSummary}
+          emptyTitle="No activities match this schedule view."
+          emptyDescription="Switch back to All activities or choose a broader view."
           showLogicLines={showLogicLines}
           isPrintMode
           onOpenActivity={() => undefined}
@@ -2001,10 +2036,12 @@ export function CpmActivityPlanner({
         )}
 
         <ActivityScheduleMatrix
-          model={cpmModel}
+          model={displayedCpmModel}
           delayFragments={delayFragments}
           toolbar={
             <CpmGridToolbar
+              scheduleView={scheduleView}
+              onScheduleViewChange={setScheduleView}
               activityOrder={activityOrder}
               onActivityOrderChange={setActivityOrder}
               dayPx={dayPx}
@@ -2021,6 +2058,17 @@ export function CpmActivityPlanner({
               isActivityDraftOpen={showDraft}
               onAddMilestone={openMilestoneDraft}
             />
+          }
+          viewSummary={scheduleViewSummary}
+          emptyTitle={
+            scheduleView === "all"
+              ? "No CPM activities yet."
+              : "No activities match this schedule view."
+          }
+          emptyDescription={
+            scheduleView === "all"
+              ? "Add the first activity to start building the working schedule."
+              : "Switch back to All activities or choose a broader view."
           }
           dayPx={dayPx}
           dataDate={latestDataDate}
@@ -2045,6 +2093,7 @@ export function CpmActivityPlanner({
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
+              <ScheduleViewControls value={scheduleView} onChange={setScheduleView} />
               <ScheduleOrderControls value={activityOrder} onChange={setActivityOrder} />
               <Button
                 type="button"
@@ -2084,10 +2133,21 @@ export function CpmActivityPlanner({
           </div>
 
           <ActivityScheduleMatrix
-            model={cpmModel}
+            model={displayedCpmModel}
             delayFragments={delayFragments}
             dayPx={dayPx}
             dataDate={latestDataDate}
+            viewSummary={scheduleViewSummary}
+            emptyTitle={
+              scheduleView === "all"
+                ? "No CPM activities yet."
+                : "No activities match this schedule view."
+            }
+            emptyDescription={
+              scheduleView === "all"
+                ? "Add the first activity to start building the working schedule."
+                : "Switch back to All activities or choose a broader view."
+            }
             showLogicLines={showLogicLines}
             isFocusMode
             onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
@@ -2165,6 +2225,8 @@ function ScheduleWorkbenchStat({
 }
 
 function CpmGridToolbar({
+  scheduleView,
+  onScheduleViewChange,
   activityOrder,
   onActivityOrderChange,
   dayPx,
@@ -2181,6 +2243,8 @@ function CpmGridToolbar({
   isActivityDraftOpen,
   onAddMilestone,
 }: {
+  scheduleView: ScheduleGridView;
+  onScheduleViewChange: (value: ScheduleGridView) => void;
   activityOrder: ScheduleActivityOrder;
   onActivityOrderChange: (value: ScheduleActivityOrder) => void;
   dayPx: (typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"];
@@ -2199,6 +2263,7 @@ function CpmGridToolbar({
 }) {
   return (
     <>
+      <ScheduleViewControls value={scheduleView} onChange={onScheduleViewChange} />
       <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
       <Button type="button" variant="outline" className="gap-2" onClick={onManageWbs}>
         <ListTree className="h-4 w-4" />
@@ -2276,6 +2341,33 @@ function ScheduleZoomControls({
             {level.label === "Day" && <ZoomIn className="h-3.5 w-3.5" />}
             {level.label}
           </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ScheduleViewControls({
+  value,
+  onChange,
+}: {
+  value: ScheduleGridView;
+  onChange: (value: ScheduleGridView) => void;
+}) {
+  return (
+    <div className="flex max-w-full overflow-x-auto rounded-md border border-hairline bg-card">
+      {SCHEDULE_GRID_VIEW_OPTIONS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={value === option.value}
+          className={cn(
+            "h-9 whitespace-nowrap border-r border-hairline px-3 text-xs font-semibold text-muted-foreground last:border-r-0 hover:bg-muted/60",
+            value === option.value && "bg-foreground text-background hover:bg-foreground",
+          )}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
         </button>
       ))}
     </div>
@@ -2997,6 +3089,9 @@ function ActivityScheduleMatrix({
   model,
   delayFragments,
   toolbar,
+  viewSummary,
+  emptyTitle = "No CPM activities yet.",
+  emptyDescription = "Add the first activity to start building the working schedule.",
   dayPx,
   dataDate,
   showLogicLines = false,
@@ -3008,6 +3103,9 @@ function ActivityScheduleMatrix({
   model: ConstructLineCpmModel;
   delayFragments: ScheduleDelayFragmentRow[];
   toolbar?: ReactNode;
+  viewSummary?: string;
+  emptyTitle?: string;
+  emptyDescription?: string;
   dayPx: number;
   dataDate: string | null;
   showLogicLines?: boolean;
@@ -3126,6 +3224,9 @@ function ActivityScheduleMatrix({
             <div className="mt-1 text-sm text-muted-foreground">
               {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
             </div>
+            {viewSummary && (
+              <div className="mt-1 text-xs font-semibold text-foreground">{viewSummary}</div>
+            )}
           </div>
           {toolbar && (
             <div className="constructline-cpm-matrix-toolbar flex flex-wrap gap-2 print:hidden xl:justify-end">
@@ -3170,10 +3271,8 @@ function ActivityScheduleMatrix({
 
       {model.groups.length === 0 ? (
         <div className="px-6 py-10 text-center">
-          <div className="font-serif text-xl text-foreground">No CPM activities yet.</div>
-          <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
-            Add the first activity to start building the working schedule.
-          </p>
+          <div className="font-serif text-xl text-foreground">{emptyTitle}</div>
+          <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">{emptyDescription}</p>
         </div>
       ) : (
         <div
@@ -3699,6 +3798,101 @@ function orderConstructLineCpmModel(
         ? [{ division: "Start date order", tasks: orderedTasks }]
         : groupCpmTasksByWbsDivision(orderedTasks, wbsDivisionOrder),
   };
+}
+
+function filterConstructLineCpmModel(
+  model: ConstructLineCpmModel,
+  view: ScheduleGridView,
+  referenceDate: string,
+  delayFragments: ScheduleDelayFragmentRow[],
+): ConstructLineCpmModel {
+  if (view === "all") return model;
+  const delayFragmentsByActivity = groupDelayFragmentsByActivity(delayFragments);
+  const tasks = model.tasks.filter((task) =>
+    taskMatchesScheduleGridView(task, view, referenceDate, delayFragmentsByActivity),
+  );
+  const visibleTaskKeys = new Set(tasks.map((task) => task.activityKey));
+  return {
+    ...model,
+    tasks,
+    groups: model.groups
+      .map((group) => ({
+        ...group,
+        tasks: group.tasks.filter((task) => visibleTaskKeys.has(task.activityKey)),
+      }))
+      .filter((group) => group.tasks.length > 0),
+  };
+}
+
+function taskMatchesScheduleGridView(
+  task: ConstructLineCpmTask,
+  view: ScheduleGridView,
+  referenceDate: string,
+  delayFragmentsByActivity: Map<string, ScheduleDelayFragmentRow[]>,
+) {
+  const percent = Math.max(0, Math.min(100, task.activity.percent_complete));
+  const isIncomplete = percent < 100;
+  const isActive = isIncomplete && taskIntersectsDateWindow(task, referenceDate, referenceDate);
+  const hasStartedButIncomplete = percent > 0 && isIncomplete;
+
+  if (view === "active") return isActive || hasStartedButIncomplete;
+  if (view === "lookahead") {
+    const referenceMs = parseDateMs(referenceDate) ?? parseDateMs(todayIsoDate()) ?? Date.now();
+    const finishDate = isoDateFromMs(
+      referenceMs + CONSTRUCTLINE_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000,
+    );
+    return isIncomplete && taskIntersectsDateWindow(task, referenceDate, finishDate);
+  }
+  if (view === "critical") return task.isCritical || task.isNearCritical;
+  if (view === "issues") {
+    return (
+      task.isLate ||
+      task.isOutOfSequence ||
+      task.isOpenStart ||
+      task.isOpenFinish ||
+      task.hasMissingDates ||
+      getDelayFragmentsForActivity(task.activity, delayFragmentsByActivity).some(
+        isOpenDelayFragment,
+      )
+    );
+  }
+  if (view === "milestones") return task.isMilestone;
+  return true;
+}
+
+function taskIntersectsDateWindow(
+  task: ConstructLineCpmTask,
+  windowStartDate: string,
+  windowFinishDate: string,
+) {
+  const taskStart = parseDateMs(task.visualStartDate);
+  const taskFinish = parseDateMs(task.visualFinishDate);
+  const windowStart = parseDateMs(windowStartDate);
+  const windowFinish = parseDateMs(windowFinishDate);
+  if (taskStart == null || taskFinish == null || windowStart == null || windowFinish == null) {
+    return false;
+  }
+  return taskFinish >= windowStart && taskStart <= windowFinish;
+}
+
+function describeScheduleGridView(
+  view: ScheduleGridView,
+  visibleCount: number,
+  totalCount: number,
+  referenceDate: string,
+) {
+  const countText =
+    visibleCount === totalCount
+      ? `${visibleCount} ${visibleCount === 1 ? "activity" : "activities"} shown`
+      : `${visibleCount} of ${totalCount} activities shown`;
+  if (view === "all") return `All activities · ${countText}`;
+  if (view === "active") return `Active as of ${shortDate(referenceDate)} · ${countText}`;
+  if (view === "lookahead")
+    return `6-week lookahead from ${shortDate(referenceDate)} · ${countText}`;
+  if (view === "critical") return `Critical and near-critical path · ${countText}`;
+  if (view === "issues") return `Schedule issues · ${countText}`;
+  if (view === "milestones") return `Milestones only · ${countText}`;
+  return countText;
 }
 
 function compareCpmTasksByStart(a: ConstructLineCpmTask, b: ConstructLineCpmTask) {
