@@ -1490,6 +1490,8 @@ export function CpmActivityPlanner({
   onReorderWbsSections: (orderedIds: string[]) => Promise<void>;
   isSavingWbs: boolean;
 }) {
+  const qc = useQueryClient();
+  const createUpdateFn = useServerFn(createScheduleUpdate);
   const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
   const [showDraft, setShowDraft] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
@@ -1498,8 +1500,10 @@ export function CpmActivityPlanner({
   const [showLogicLines, setShowLogicLines] = useState(true);
   const [activityOrder, setActivityOrder] = useState<ScheduleActivityOrder>("start");
   const [scheduleView, setScheduleView] = useState<ScheduleGridView>("all");
+  const [dataDateDraft, setDataDateDraft] = useState(() => latestDataDate ?? todayIsoDate());
   const [isWbsManagerOpen, setIsWbsManagerOpen] = useState(false);
   const [isFocusOpen, setIsFocusOpen] = useState(false);
+  const effectiveDataDate = dataDateDraft || latestDataDate || null;
   const wbsDivisionOrder = useMemo(
     () => buildWbsDivisionOrder(activities, wbsSections),
     [activities, wbsSections],
@@ -1531,16 +1535,16 @@ export function CpmActivityPlanner({
   const baseCpmModel = useMemo(
     () =>
       buildConstructLineCpmModel(sortedActivities, {
-        dataDate: latestDataDate,
+        dataDate: effectiveDataDate,
         nearCriticalFloat: 5,
       }),
-    [latestDataDate, sortedActivities],
+    [effectiveDataDate, sortedActivities],
   );
   const cpmModel = useMemo(
     () => orderConstructLineCpmModel(baseCpmModel, activityOrder, wbsDivisionOrder),
     [activityOrder, baseCpmModel, wbsDivisionOrder],
   );
-  const gridViewReferenceDate = latestDataDate ?? todayIsoDate();
+  const gridViewReferenceDate = effectiveDataDate ?? todayIsoDate();
   const displayedCpmModel = useMemo(
     () =>
       filterConstructLineCpmModel(cpmModel, scheduleView, gridViewReferenceDate, delayFragments),
@@ -1561,12 +1565,12 @@ export function CpmActivityPlanner({
       getTimelineBounds([
         project.baseline_completion_date,
         project.forecast_completion_date,
-        latestDataDate,
+        effectiveDataDate,
         ...activities.flatMap((activity) => [activity.start_date, activity.finish_date]),
       ]),
     [
       activities,
-      latestDataDate,
+      effectiveDataDate,
       project.baseline_completion_date,
       project.forecast_completion_date,
     ],
@@ -1579,6 +1583,10 @@ export function CpmActivityPlanner({
     () => buildActivityRowsFromMilestones(milestones, sortedActivities),
     [milestones, sortedActivities],
   );
+
+  useEffect(() => {
+    setDataDateDraft(latestDataDate ?? todayIsoDate());
+  }, [latestDataDate]);
 
   useEffect(() => {
     if (selectedActivityId && !selectedActivity) setSelectedActivityId(null);
@@ -1676,6 +1684,43 @@ export function CpmActivityPlanner({
     if (orderedIds.length > 0) void onReorderWbsSections(orderedIds);
     setActivityOrder("wbs");
   };
+  const dataDateUpdate = useMutation({
+    mutationFn: (nextDataDate: string) =>
+      createUpdateFn({
+        data: {
+          projectId: project.id,
+          forecast_completion_date:
+            project.forecast_completion_date ||
+            cpmModel.cpmFinishDate ||
+            project.baseline_completion_date ||
+            todayIsoDate(),
+          data_date: nextDataDate,
+          update_date: nextDataDate,
+          schedule_money_exposure: 0,
+          schedule_money_recovery: 0,
+          money_notes: "No schedule dollars auto-calculated from CPM data-date save.",
+          notes: `Data date set from the CPM schedule workbench. CPM finish: ${shortDate(
+            cpmModel.cpmFinishDate,
+          )}.`,
+          milestone_forecasts: [],
+        },
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["schedule", project.id] }),
+        qc.invalidateQueries({ queryKey: ["project", project.id] }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      ]);
+      toast.success("Data date saved", {
+        description: "The CPM data-date snapshot was added to the schedule update history.",
+      });
+    },
+    onError: (error) => {
+      toast.error("Data date did not save", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
   const completedActivities = sortedActivities.filter(
     (activity) => activity.percent_complete >= 100,
   ).length;
@@ -1696,6 +1741,11 @@ export function CpmActivityPlanner({
   const delayFragmentStatSub = isDelayFragmentMigrationRequired
     ? "migration needed"
     : `${delaySummary.openCount} open / ${delaySummary.totalCount} total`;
+  const isDataDateDirty = dataDateDraft !== (latestDataDate ?? "");
+  const saveDataDate = () => {
+    if (!dataDateDraft || dataDateUpdate.isPending || !isDataDateDirty) return;
+    dataDateUpdate.mutate(dataDateDraft);
+  };
 
   return (
     <>
@@ -1708,6 +1758,7 @@ export function CpmActivityPlanner({
               {project.job_number && <span>Job # {project.job_number}</span>}
               {project.client && <span>{project.client}</span>}
               {project.project_manager && <span>PM {project.project_manager}</span>}
+              <span>Data date {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}</span>
               <span>
                 {shortDate(displayedCpmModel.timelineStartDate)} to{" "}
                 {shortDate(displayedCpmModel.timelineFinishDate)}
@@ -1741,7 +1792,7 @@ export function CpmActivityPlanner({
           model={displayedCpmModel}
           delayFragments={delayFragments}
           dayPx={CONSTRUCTLINE_FIT_DAY_PX}
-          dataDate={latestDataDate}
+          dataDate={effectiveDataDate}
           viewSummary={scheduleViewSummary}
           emptyTitle="No activities match this schedule view."
           emptyDescription="Switch back to All activities or choose a broader view."
@@ -2057,6 +2108,11 @@ export function CpmActivityPlanner({
               onToggleActivityDraft={() => setShowDraft((open) => !open)}
               isActivityDraftOpen={showDraft}
               onAddMilestone={openMilestoneDraft}
+              dataDateDraft={dataDateDraft}
+              latestDataDate={latestDataDate}
+              isSavingDataDate={dataDateUpdate.isPending}
+              onDataDateChange={setDataDateDraft}
+              onSaveDataDate={saveDataDate}
             />
           }
           viewSummary={scheduleViewSummary}
@@ -2071,7 +2127,7 @@ export function CpmActivityPlanner({
               : "Switch back to All activities or choose a broader view."
           }
           dayPx={dayPx}
-          dataDate={latestDataDate}
+          dataDate={effectiveDataDate}
           showLogicLines={showLogicLines}
           onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
           onDeleteActivity={(id) => {
@@ -2093,6 +2149,14 @@ export function CpmActivityPlanner({
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
+              <CpmDataDateControl
+                value={dataDateDraft}
+                savedValue={latestDataDate}
+                isSaving={dataDateUpdate.isPending}
+                onChange={setDataDateDraft}
+                onSave={saveDataDate}
+                className="min-w-[300px]"
+              />
               <ScheduleViewControls value={scheduleView} onChange={setScheduleView} />
               <ScheduleOrderControls value={activityOrder} onChange={setActivityOrder} />
               <Button
@@ -2136,7 +2200,7 @@ export function CpmActivityPlanner({
             model={displayedCpmModel}
             delayFragments={delayFragments}
             dayPx={dayPx}
-            dataDate={latestDataDate}
+            dataDate={effectiveDataDate}
             viewSummary={scheduleViewSummary}
             emptyTitle={
               scheduleView === "all"
@@ -2242,6 +2306,11 @@ function CpmGridToolbar({
   onToggleActivityDraft,
   isActivityDraftOpen,
   onAddMilestone,
+  dataDateDraft,
+  latestDataDate,
+  isSavingDataDate,
+  onDataDateChange,
+  onSaveDataDate,
 }: {
   scheduleView: ScheduleGridView;
   onScheduleViewChange: (value: ScheduleGridView) => void;
@@ -2260,9 +2329,22 @@ function CpmGridToolbar({
   onToggleActivityDraft: () => void;
   isActivityDraftOpen: boolean;
   onAddMilestone: () => void;
+  dataDateDraft: string;
+  latestDataDate: string | null;
+  isSavingDataDate: boolean;
+  onDataDateChange: (value: string) => void;
+  onSaveDataDate: () => void;
 }) {
   return (
     <>
+      <CpmDataDateControl
+        value={dataDateDraft}
+        savedValue={latestDataDate}
+        isSaving={isSavingDataDate}
+        onChange={onDataDateChange}
+        onSave={onSaveDataDate}
+        className="min-w-[300px]"
+      />
       <ScheduleViewControls value={scheduleView} onChange={onScheduleViewChange} />
       <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
       <Button type="button" variant="outline" className="gap-2" onClick={onManageWbs}>
@@ -2313,6 +2395,62 @@ function CpmGridToolbar({
         Add milestone
       </Button>
     </>
+  );
+}
+
+function CpmDataDateControl({
+  value,
+  savedValue,
+  isSaving,
+  onChange,
+  onSave,
+  className,
+}: {
+  value: string;
+  savedValue: string | null;
+  isSaving: boolean;
+  onChange: (value: string) => void;
+  onSave: () => void;
+  className?: string;
+}) {
+  const isDirty = value !== (savedValue ?? "");
+  return (
+    <div
+      className={cn(
+        "flex min-h-9 flex-wrap items-center gap-2 rounded-md border border-hairline bg-card px-2 py-1",
+        className,
+      )}
+    >
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        <CalendarDays className="h-3.5 w-3.5" />
+        Data date
+      </div>
+      <Input
+        type="date"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-8 w-[148px] bg-surface px-2 text-xs tabular"
+        aria-label="Schedule data date"
+      />
+      <Button
+        type="button"
+        size="sm"
+        variant={isDirty ? "default" : "outline"}
+        className="h-8 gap-1.5 px-2.5"
+        disabled={!value || isSaving || !isDirty}
+        onClick={onSave}
+      >
+        <CheckCircle2 className="h-3.5 w-3.5" />
+        {isSaving ? "Saving..." : "Save"}
+      </Button>
+      <div className="basis-full text-[11px] text-muted-foreground sm:basis-auto">
+        {isDirty
+          ? "Unsaved date is driving this CPM view."
+          : savedValue
+            ? `Saved ${shortDate(savedValue)}`
+            : "Not set"}
+      </div>
+    </div>
   );
 }
 
