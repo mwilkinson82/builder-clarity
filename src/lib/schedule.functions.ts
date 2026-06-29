@@ -43,6 +43,13 @@ export interface ScheduleActivityRow {
   sort_order: number;
 }
 
+export interface ScheduleWbsSectionRow {
+  id: string;
+  project_id: string;
+  name: string;
+  sort_order: number;
+}
+
 export interface ScheduleRiskRow {
   id: string;
   project_id: string;
@@ -194,6 +201,24 @@ const normalizeScheduleActivity = (r: Record<string, unknown>): ScheduleActivity
   sort_order: num(r.sort_order),
 });
 
+const normalizeScheduleWbsSection = (r: Record<string, unknown>): ScheduleWbsSectionRow => ({
+  id: r.id as string,
+  project_id: r.project_id as string,
+  name: str(r.name, "General"),
+  sort_order: num(r.sort_order),
+});
+
+const scheduleWbsSectionFromActivityDivision = (
+  projectId: string,
+  division: string,
+  index: number,
+): ScheduleWbsSectionRow => ({
+  id: `derived-${projectId}-${division.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+  project_id: projectId,
+  name: division,
+  sort_order: (index + 1) * 10,
+});
+
 // ---------- LIST ----------
 export const listSchedule = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -201,7 +226,7 @@ export const listSchedule = createServerFn({ method: "GET" })
     z.object({ projectId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const [mRes, rRes, aRes] = await Promise.all([
+    const [mRes, rRes, aRes, wRes] = await Promise.all([
       context.supabase
         .from("schedule_milestones")
         .select("*")
@@ -218,6 +243,12 @@ export const listSchedule = createServerFn({ method: "GET" })
         .eq("project_id", data.projectId)
         .order("sort_order")
         .order("activity_id"),
+      context.supabase
+        .from("schedule_wbs_sections" as any)
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("sort_order")
+        .order("name"),
     ]);
     const [uRes, muRes] = await Promise.all([
       context.supabase
@@ -245,7 +276,12 @@ export const listSchedule = createServerFn({ method: "GET" })
       muRes.error &&
       (muRes.error.message.includes("schedule_milestone_updates") ||
         muRes.error.message.includes("schema cache"));
+    const wbsSectionsMissing =
+      wRes.error &&
+      (wRes.error.message.includes("schedule_wbs_sections") ||
+        wRes.error.message.includes("schema cache"));
     if (aRes.error && !activitiesMissing) throw new Error(aRes.error.message);
+    if (wRes.error && !wbsSectionsMissing) throw new Error(wRes.error.message);
     if (uRes.error && !updatesMissing) throw new Error(uRes.error.message);
     if (muRes.error && !milestoneUpdatesMissing) throw new Error(muRes.error.message);
 
@@ -266,12 +302,24 @@ export const listSchedule = createServerFn({ method: "GET" })
           .order("sort_order")
           .order("activity_id");
         if (refreshedActivities.error) throw new Error(refreshedActivities.error.message);
-        activityRows = (refreshedActivities.data ?? []) as unknown as Array<Record<string, unknown>>;
+        activityRows = (refreshedActivities.data ?? []) as unknown as Array<
+          Record<string, unknown>
+        >;
         if (!activityRows.some((row) => row.activity_id === "01-010")) {
           activityRows = getHarborDemoCpmActivityRows(data.projectId);
         }
       }
     }
+
+    const derivedWbsSections = Array.from(
+      new Set(activityRows.map((row) => str(row.division, "General").trim() || "General")),
+    ).map((division, index) =>
+      scheduleWbsSectionFromActivityDivision(data.projectId, division, index),
+    );
+    const wbsSectionRows =
+      wbsSectionsMissing || (wRes.data ?? []).length === 0
+        ? derivedWbsSections
+        : (wRes.data ?? []).map((r) => normalizeScheduleWbsSection(r as Record<string, unknown>));
 
     const risks = (rRes.data ?? []).map((r) => normalizeScheduleRisk(r as Record<string, unknown>));
     const unlinkedTitles = Array.from(
@@ -298,9 +346,8 @@ export const listSchedule = createServerFn({ method: "GET" })
     }
     return {
       milestones: (mRes.data ?? []) as unknown as MilestoneRow[],
-      activities: activitiesMissing
-        ? []
-        : activityRows.map((r) => normalizeScheduleActivity(r)),
+      activities: activitiesMissing ? [] : activityRows.map((r) => normalizeScheduleActivity(r)),
+      wbsSections: wbsSectionRows,
       risks,
       updates: updatesMissing
         ? []
@@ -535,6 +582,114 @@ const activityPatch = z.object({
   sort_order: z.number().int().optional(),
 });
 
+async function ensureScheduleWbsSection(
+  supabase: {
+    from: (table: string) => any;
+  },
+  projectId: string,
+  name: string,
+) {
+  const sectionName = name.trim() || "General";
+  const existing = await supabase
+    .from("schedule_wbs_sections")
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("name", sectionName)
+    .maybeSingle();
+  if (existing.error && !isMissingRestColumn(existing.error, "schedule_wbs_sections")) {
+    const message = (existing.error.message ?? "").toLowerCase();
+    if (!message.includes("schedule_wbs_sections") && !message.includes("schema cache")) {
+      throw new Error(existing.error.message);
+    }
+  }
+  if (existing.data?.id || existing.error) return;
+
+  const { data: last, error: lastError } = await supabase
+    .from("schedule_wbs_sections")
+    .select("sort_order")
+    .eq("project_id", projectId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastError) throw new Error(lastError.message);
+
+  const { error: insertError } = await supabase.from("schedule_wbs_sections").insert({
+    project_id: projectId,
+    name: sectionName,
+    sort_order: (((last as any)?.sort_order as number | undefined) ?? 0) + 10,
+  });
+  if (insertError) {
+    const message = (insertError.message ?? "").toLowerCase();
+    if (!message.includes("duplicate")) throw new Error(insertError.message);
+  }
+}
+
+export const createScheduleWbsSection = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string; name: string }) =>
+    z.object({ projectId: z.string().uuid(), name: z.string().min(1).max(120) }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await ensureScheduleWbsSection(context.supabase as any, data.projectId, data.name);
+    return { ok: true };
+  });
+
+export const renameScheduleWbsSection = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string; name: string }) =>
+    z.object({ id: z.string().uuid(), name: z.string().min(1).max(120) }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { data: section, error: sectionError } = await context.supabase
+      .from("schedule_wbs_sections" as any)
+      .select("id,project_id,name")
+      .eq("id", data.id)
+      .single();
+    if (sectionError) throw new Error(sectionError.message);
+    const oldName = str((section as Record<string, unknown>).name, "General");
+    const projectId = (section as Record<string, unknown>).project_id as string;
+
+    const { error: updateError } = await context.supabase
+      .from("schedule_wbs_sections" as any)
+      .update({ name: data.name })
+      .eq("id", data.id);
+    if (updateError) throw new Error(updateError.message);
+
+    const { error: activityError } = await context.supabase
+      .from("schedule_activities" as any)
+      .update({ division: data.name })
+      .eq("project_id", projectId)
+      .eq("division", oldName);
+    if (activityError) throw new Error(activityError.message);
+
+    return { ok: true };
+  });
+
+export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string; orderedIds: string[] }) =>
+    z
+      .object({
+        projectId: z.string().uuid(),
+        orderedIds: z.array(z.string().uuid()).min(1),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const updates = await Promise.all(
+      data.orderedIds.map((id, index) =>
+        context.supabase
+          .from("schedule_wbs_sections" as any)
+          .update({ sort_order: (index + 1) * 10 })
+          .eq("id", id)
+          .eq("project_id", data.projectId),
+      ),
+    );
+    const error = updates.find((result) => result.error)?.error;
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 export const createScheduleActivity = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(
@@ -560,7 +715,8 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
       .order("sort_order", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const sortOrder = rest.sort_order ?? (((last as any)?.sort_order as number | undefined) ?? 0) + 1;
+    const sortOrder =
+      rest.sort_order ?? (((last as any)?.sort_order as number | undefined) ?? 0) + 1;
     const activityId = rest.activity_id || `A-${String(sortOrder).padStart(3, "0")}`;
     const { error } = await context.supabase.from("schedule_activities" as any).insert({
       project_id: projectId,
@@ -569,6 +725,7 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
       sort_order: sortOrder,
     });
     if (error) throw new Error(error.message);
+    await ensureScheduleWbsSection(context.supabase as any, projectId, rest.division || "General");
     return { ok: true };
   });
 
@@ -583,6 +740,19 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       .update(data.patch as any)
       .eq("id", data.id);
     if (error) throw new Error(error.message);
+    if (data.patch.division) {
+      const { data: activity, error: activityError } = await context.supabase
+        .from("schedule_activities" as any)
+        .select("project_id,division")
+        .eq("id", data.id)
+        .single();
+      if (activityError) throw new Error(activityError.message);
+      await ensureScheduleWbsSection(
+        context.supabase as any,
+        (activity as Record<string, unknown>).project_id as string,
+        str((activity as Record<string, unknown>).division, "General"),
+      );
+    }
     return { ok: true };
   });
 
@@ -590,7 +760,10 @@ export const deleteScheduleActivity = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase.from("schedule_activities" as any).delete().eq("id", data.id);
+    const { error } = await context.supabase
+      .from("schedule_activities" as any)
+      .delete()
+      .eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });

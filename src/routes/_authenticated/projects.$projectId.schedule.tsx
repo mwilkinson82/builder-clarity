@@ -9,12 +9,16 @@ import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/outco
 import { getProject, type ProjectRow } from "@/lib/projects.functions";
 import {
   createScheduleActivity,
+  createScheduleWbsSection,
   deleteScheduleActivity,
   listSchedule,
+  renameScheduleWbsSection,
+  reorderScheduleWbsSections,
   updateScheduleActivity,
   type MilestoneRow,
   type ScheduleActivityRow,
   type ScheduleUpdateRow,
+  type ScheduleWbsSectionRow,
 } from "@/lib/schedule.functions";
 import { computeScheduleVarianceWeeks } from "@/lib/ior";
 
@@ -32,6 +36,9 @@ function ScheduleWorkspacePage() {
   const createActivityFn = useServerFn(createScheduleActivity);
   const updateActivityFn = useServerFn(updateScheduleActivity);
   const deleteActivityFn = useServerFn(deleteScheduleActivity);
+  const createWbsSectionFn = useServerFn(createScheduleWbsSection);
+  const renameWbsSectionFn = useServerFn(renameScheduleWbsSection);
+  const reorderWbsSectionsFn = useServerFn(reorderScheduleWbsSections);
 
   const projectQuery = useQuery({
     queryKey: ["project", projectId],
@@ -46,6 +53,10 @@ function ScheduleWorkspacePage() {
   const activities = useMemo(
     () => (scheduleQuery.data?.activities ?? []) as ScheduleActivityRow[],
     [scheduleQuery.data?.activities],
+  );
+  const wbsSections = useMemo(
+    () => (scheduleQuery.data?.wbsSections ?? []) as ScheduleWbsSectionRow[],
+    [scheduleQuery.data?.wbsSections],
   );
   const milestones = useMemo(
     () => (scheduleQuery.data?.milestones ?? []) as MilestoneRow[],
@@ -135,6 +146,50 @@ function ScheduleWorkspacePage() {
     },
   });
 
+  const wbsCreate = useMutation({
+    mutationFn: (name: string) => createWbsSectionFn({ data: { projectId, name } }),
+    onSuccess: async () => {
+      await refreshSchedule();
+      toast.success("WBS added", {
+        description: "The section is now saved to this project schedule.",
+      });
+    },
+    onError: (error) => {
+      toast.error("WBS did not save", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+
+  const wbsRename = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      renameWbsSectionFn({ data: { id, name } }),
+    onSuccess: async () => {
+      await refreshSchedule();
+      toast.success("WBS renamed", {
+        description: "Matching activity divisions were updated.",
+      });
+    },
+    onError: (error) => {
+      toast.error("WBS did not update", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+
+  const wbsReorder = useMutation({
+    mutationFn: (orderedIds: string[]) => reorderWbsSectionsFn({ data: { projectId, orderedIds } }),
+    onSuccess: async () => {
+      await refreshSchedule();
+      toast.success("WBS order saved");
+    },
+    onError: (error) => {
+      toast.error("WBS order did not save", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+
   const metrics = useMemo(
     () => buildScheduleMetrics(project, activities, milestones, updates),
     [activities, milestones, project, updates],
@@ -217,6 +272,7 @@ function ScheduleWorkspacePage() {
 
       <CpmActivityPlanner
         activities={activities}
+        wbsSections={wbsSections}
         milestones={milestones}
         project={project}
         latestDataDate={latestUpdate?.data_date ?? null}
@@ -228,6 +284,16 @@ function ScheduleWorkspacePage() {
         }}
         isSavingActivity={activityUpdate.isPending}
         onDeleteActivity={(id) => activityDelete.mutate({ id })}
+        onAddWbsSection={async (name) => {
+          await wbsCreate.mutateAsync(name);
+        }}
+        onRenameWbsSection={async (id, name) => {
+          await wbsRename.mutateAsync({ id, name });
+        }}
+        onReorderWbsSections={async (orderedIds) => {
+          await wbsReorder.mutateAsync(orderedIds);
+        }}
+        isSavingWbs={wbsCreate.isPending || wbsRename.isPending || wbsReorder.isPending}
       />
     </ScheduleWorkspaceShell>
   );

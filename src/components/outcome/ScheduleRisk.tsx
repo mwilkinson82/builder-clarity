@@ -74,6 +74,7 @@ import {
   type ScheduleRiskStatus,
   type MilestoneRow,
   type ScheduleActivityRow,
+  type ScheduleWbsSectionRow,
   type ScheduleRiskRow,
   type ScheduleUpdateRow,
   type ScheduleMilestoneUpdateRow,
@@ -171,11 +172,13 @@ const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
 type ScheduleActivityOrder = "start" | "wbs";
 type ActivityPatchOptions = { silent?: boolean };
 type WbsDivisionRow = {
+  id: string | null;
   division: string;
   activityCount: number;
   firstStart: string | null;
   lastFinish: string | null;
   isPlaceholder: boolean;
+  isPersisted: boolean;
 };
 const CONSTRUCTLINE_RELATIONSHIP_TYPES: ConstructLineRelationshipType[] = ["FS", "SS", "FF", "SF"];
 
@@ -1298,6 +1301,7 @@ const activityDraftFromRow = (activity: ScheduleActivityRow): ActivityDraft => (
 
 export function CpmActivityPlanner({
   activities,
+  wbsSections,
   milestones,
   project,
   latestDataDate,
@@ -1307,8 +1311,13 @@ export function CpmActivityPlanner({
   onPatchActivity,
   isSavingActivity,
   onDeleteActivity,
+  onAddWbsSection,
+  onRenameWbsSection,
+  onReorderWbsSections,
+  isSavingWbs,
 }: {
   activities: ScheduleActivityRow[];
+  wbsSections: ScheduleWbsSectionRow[];
   milestones: MilestoneRow[];
   project: ProjectRow;
   latestDataDate: string | null;
@@ -1322,6 +1331,10 @@ export function CpmActivityPlanner({
   ) => Promise<void>;
   isSavingActivity: boolean;
   onDeleteActivity: (id: string) => void;
+  onAddWbsSection: (name: string) => Promise<void>;
+  onRenameWbsSection: (id: string, name: string) => Promise<void>;
+  onReorderWbsSections: (orderedIds: string[]) => Promise<void>;
+  isSavingWbs: boolean;
 }) {
   const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
   const [showDraft, setShowDraft] = useState(false);
@@ -1331,23 +1344,27 @@ export function CpmActivityPlanner({
   const [showLogicLines, setShowLogicLines] = useState(false);
   const [activityOrder, setActivityOrder] = useState<ScheduleActivityOrder>("start");
   const [isWbsManagerOpen, setIsWbsManagerOpen] = useState(false);
-  const [wbsDivisionOrder, setWbsDivisionOrder] = useState<string[]>([]);
-  const [placeholderWbsDivisions, setPlaceholderWbsDivisions] = useState<string[]>([]);
   const [isFocusOpen, setIsFocusOpen] = useState(false);
+  const wbsDivisionOrder = useMemo(
+    () => buildWbsDivisionOrder(activities, wbsSections),
+    [activities, wbsSections],
+  );
   const sortedActivities = useMemo(
     () =>
       [...activities].sort((a, b) => {
+        if (activityOrder === "start") {
+          return compareScheduleActivitiesByStart(a, b);
+        }
         const division = compareWbsDivision(a.division, b.division, wbsDivisionOrder);
         if (division !== 0) return division;
-        if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-        return a.activity_id.localeCompare(b.activity_id);
+        return compareScheduleActivitiesByStart(a, b);
       }),
-    [activities, wbsDivisionOrder],
+    [activities, activityOrder, wbsDivisionOrder],
   );
   const grouped = useMemo(() => groupActivitiesByDivision(sortedActivities), [sortedActivities]);
   const wbsDivisionRows = useMemo(
-    () => buildWbsDivisionRows(sortedActivities, placeholderWbsDivisions, wbsDivisionOrder),
-    [placeholderWbsDivisions, sortedActivities, wbsDivisionOrder],
+    () => buildWbsDivisionRows(sortedActivities, wbsSections, wbsDivisionOrder),
+    [sortedActivities, wbsDivisionOrder, wbsSections],
   );
   const knownWbsDivisions = useMemo(
     () => wbsDivisionRows.map((row) => row.division),
@@ -1392,10 +1409,6 @@ export function CpmActivityPlanner({
   useEffect(() => {
     if (selectedActivityId && !selectedActivity) setSelectedActivityId(null);
   }, [selectedActivity, selectedActivityId]);
-
-  useEffect(() => {
-    setWbsDivisionOrder((currentOrder) => mergeWbsDivisionOrder(currentOrder, knownWbsDivisions));
-  }, [knownWbsDivisions]);
 
   useEffect(() => {
     if (!isFocusOpen || typeof document === "undefined") return;
@@ -1455,16 +1468,8 @@ export function CpmActivityPlanner({
       });
       return;
     }
-    setPlaceholderWbsDivisions((current) =>
-      hasWbsDivision(current, division) ? current : [...current, division],
-    );
-    setWbsDivisionOrder((current) =>
-      mergeWbsDivisionOrder([...current, division], [...knownWbsDivisions, division]),
-    );
     setActivityOrder("wbs");
-    toast.success("WBS added", {
-      description: "Assign activities to it from the activity detail modal.",
-    });
+    void onAddWbsSection(division);
   };
   const renameWbsDivision = async (fromDivision: string, toDivision: string) => {
     const nextDivision = cleanWbsDivisionInput(toDivision);
@@ -1480,40 +1485,21 @@ export function CpmActivityPlanner({
       });
       return;
     }
-
-    const impactedActivities = sortedActivities.filter(
-      (activity) => normalizeWbsDivisionName(activity.division) === fromDivision,
-    );
-    for (const activity of impactedActivities) {
-      await onPatchActivity(activity.id, { division: nextDivision }, { silent: true });
-    }
-    setPlaceholderWbsDivisions((current) =>
-      current.map((division) => (division === fromDivision ? nextDivision : division)),
-    );
-    setWbsDivisionOrder((current) =>
-      current.map((division) => (division === fromDivision ? nextDivision : division)),
-    );
-    toast.success("WBS renamed", {
-      description:
-        impactedActivities.length === 0
-          ? "The empty WBS placeholder was renamed."
-          : `${impactedActivities.length} ${impactedActivities.length === 1 ? "activity" : "activities"} updated.`,
-    });
+    const row = wbsDivisionRows.find((item) => item.division === fromDivision);
+    if (!row?.id) return;
+    await onRenameWbsSection(row.id, nextDivision);
   };
   const moveWbsDivision = (division: string, direction: -1 | 1) => {
-    setWbsDivisionOrder((current) =>
-      moveWbsDivisionInOrder(
-        mergeWbsDivisionOrder(current, knownWbsDivisions),
-        division,
-        direction,
-      ),
-    );
+    const orderedRows = moveWbsDivisionInOrder(wbsDivisionRows, division, direction);
+    const orderedIds = orderedRows.map((row) => row.id).filter((id): id is string => Boolean(id));
+    if (orderedIds.length > 0) void onReorderWbsSections(orderedIds);
     setActivityOrder("wbs");
   };
   const reorderWbsDivisions = (orderedDivisions: string[]) => {
-    setWbsDivisionOrder((current) =>
-      mergeWbsDivisionOrder(orderedDivisions, mergeWbsDivisionOrder(current, knownWbsDivisions)),
-    );
+    const orderedIds = orderedDivisions
+      .map((division) => wbsDivisionRows.find((row) => row.division === division)?.id)
+      .filter((id): id is string => Boolean(id));
+    if (orderedIds.length > 0) void onReorderWbsSections(orderedIds);
     setActivityOrder("wbs");
   };
   const completedActivities = sortedActivities.filter(
@@ -1981,7 +1967,7 @@ export function CpmActivityPlanner({
       <WbsManagerDialog
         open={isWbsManagerOpen}
         divisions={wbsDivisionRows}
-        isSaving={isSavingActivity}
+        isSaving={isSavingWbs}
         onOpenChange={setIsWbsManagerOpen}
         onAddDivision={addWbsDivision}
         onRenameDivision={renameWbsDivision}
@@ -2214,6 +2200,7 @@ function WbsManagerDialog({
                 const hasNameChange =
                   normalizeWbsDivisionName(draftName) !== normalizeWbsDivisionName(row.division);
                 const isRowSaving = savingDivision === row.division || isSaving;
+                const canPersistRow = Boolean(row.id);
                 return (
                   <div
                     key={row.division}
@@ -2225,7 +2212,12 @@ function WbsManagerDialog({
                         "border-foreground/35 bg-muted/40 shadow-sm",
                     )}
                     onDragOver={(event) => {
-                      if (!draggingDivision || draggingDivision === row.division || isSaving)
+                      if (
+                        !draggingDivision ||
+                        draggingDivision === row.division ||
+                        isSaving ||
+                        !canPersistRow
+                      )
                         return;
                       event.preventDefault();
                       event.dataTransfer.dropEffect = "move";
@@ -2241,17 +2233,21 @@ function WbsManagerDialog({
                     }}
                     onDrop={(event) => {
                       event.preventDefault();
+                      if (!canPersistRow) {
+                        resetDragState();
+                        return;
+                      }
                       reorderDivision(row.division);
                       resetDragState();
                     }}
                   >
                     <button
                       type="button"
-                      draggable={!isSaving}
+                      draggable={!isSaving && canPersistRow}
                       className="flex h-9 w-9 cursor-grab items-center justify-center self-end rounded border border-hairline bg-surface text-muted-foreground transition hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50"
                       aria-label={`Drag ${row.division} to reorder WBS`}
                       title="Drag to reorder"
-                      disabled={isSaving}
+                      disabled={isSaving || !canPersistRow}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = "move";
                         event.dataTransfer.setData("text/plain", row.division);
@@ -2286,16 +2282,18 @@ function WbsManagerDialog({
                         {row.activityCount}
                       </div>
                       <div className="truncate text-[11px] text-muted-foreground">
-                        {row.isPlaceholder
-                          ? "empty"
-                          : `${shortDate(row.firstStart)} to ${shortDate(row.lastFinish)}`}
+                        {!row.isPersisted
+                          ? "derived from activities"
+                          : row.isPlaceholder
+                            ? "empty"
+                            : `${shortDate(row.firstStart)} to ${shortDate(row.lastFinish)}`}
                       </div>
                     </div>
                     <Button
                       type="button"
                       variant="outline"
                       className="h-9 self-end"
-                      disabled={!cleanDraftName || !hasNameChange || isRowSaving}
+                      disabled={!canPersistRow || !cleanDraftName || !hasNameChange || isRowSaving}
                       onClick={() => renameDivision(row.division)}
                     >
                       {savingDivision === row.division ? "Saving..." : "Save title"}
@@ -2306,7 +2304,7 @@ function WbsManagerDialog({
                         variant="outline"
                         size="icon"
                         className="h-9 w-9"
-                        disabled={index === 0 || isSaving}
+                        disabled={index === 0 || isSaving || !canPersistRow}
                         onClick={() => onMoveDivision(row.division, -1)}
                         aria-label={`Move ${row.division} up`}
                       >
@@ -2317,7 +2315,7 @@ function WbsManagerDialog({
                         variant="outline"
                         size="icon"
                         className="h-9 w-9"
-                        disabled={index === divisions.length - 1 || isSaving}
+                        disabled={index === divisions.length - 1 || isSaving || !canPersistRow}
                         onClick={() => onMoveDivision(row.division, 1)}
                         aria-label={`Move ${row.division} down`}
                       >
@@ -3425,6 +3423,19 @@ function compareCpmTasksByStart(a: ConstructLineCpmTask, b: ConstructLineCpmTask
   );
 }
 
+function compareScheduleActivitiesByStart(a: ScheduleActivityRow, b: ScheduleActivityRow) {
+  const aStart = a.start_date ?? a.finish_date ?? "9999-12-31";
+  const bStart = b.start_date ?? b.finish_date ?? "9999-12-31";
+  const aFinish = a.finish_date ?? a.start_date ?? "9999-12-31";
+  const bFinish = b.finish_date ?? b.start_date ?? "9999-12-31";
+  return (
+    aStart.localeCompare(bStart) ||
+    aFinish.localeCompare(bFinish) ||
+    naturalScheduleCompare(a.activity_id || a.name, b.activity_id || b.name) ||
+    naturalScheduleCompare(a.name, b.name)
+  );
+}
+
 function compareCpmTasksByWbsThenStart(
   a: ConstructLineCpmTask,
   b: ConstructLineCpmTask,
@@ -3492,25 +3503,28 @@ function hasWbsDivision(divisions: string[], division: string) {
   return divisions.some((item) => item.toLocaleLowerCase() === target);
 }
 
-function mergeWbsDivisionOrder(currentOrder: string[], divisions: string[]) {
-  const normalizedDivisions = Array.from(new Set(divisions.map(normalizeWbsDivisionName)));
-  const nextOrder = [
-    ...currentOrder.filter((division) => normalizedDivisions.includes(division)),
-    ...normalizedDivisions
-      .filter((division) => !currentOrder.includes(division))
-      .sort((a, b) => compareWbsDivision(a, b)),
+function buildWbsDivisionOrder(
+  activities: ScheduleActivityRow[],
+  sections: ScheduleWbsSectionRow[],
+) {
+  const sectionOrder = [...sections]
+    .sort(
+      (a, b) =>
+        a.sort_order - b.sort_order ||
+        naturalScheduleCompare(normalizeWbsDivisionName(a.name), normalizeWbsDivisionName(b.name)),
+    )
+    .map((section) => normalizeWbsDivisionName(section.name));
+  const activityDivisions = Array.from(
+    new Set(activities.map((activity) => normalizeWbsDivisionName(activity.division))),
+  ).sort((a, b) => compareWbsDivision(a, b));
+  return [
+    ...sectionOrder,
+    ...activityDivisions.filter((division) => !hasWbsDivision(sectionOrder, division)),
   ];
-  if (
-    nextOrder.length === currentOrder.length &&
-    nextOrder.every((division, index) => division === currentOrder[index])
-  ) {
-    return currentOrder;
-  }
-  return nextOrder;
 }
 
-function moveWbsDivisionInOrder(order: string[], division: string, direction: -1 | 1) {
-  const index = order.indexOf(division);
+function moveWbsDivisionInOrder(order: WbsDivisionRow[], division: string, direction: -1 | 1) {
+  const index = order.findIndex((row) => row.division === division);
   const targetIndex = index + direction;
   if (index < 0 || targetIndex < 0 || targetIndex >= order.length) return order;
   const nextOrder = [...order];
@@ -3521,18 +3535,21 @@ function moveWbsDivisionInOrder(order: string[], division: string, direction: -1
 
 function buildWbsDivisionRows(
   activities: ScheduleActivityRow[],
-  placeholderDivisions: string[],
+  sections: ScheduleWbsSectionRow[],
   wbsDivisionOrder: string[] = [],
 ): WbsDivisionRow[] {
   const rows = new Map<string, WbsDivisionRow>();
-  for (const division of placeholderDivisions) {
-    const normalized = normalizeWbsDivisionName(division);
+  for (const section of sections) {
+    const normalized = normalizeWbsDivisionName(section.name);
+    const isDerived = section.id.startsWith("derived-");
     rows.set(normalized, {
+      id: isDerived ? null : section.id,
       division: normalized,
       activityCount: 0,
       firstStart: null,
       lastFinish: null,
       isPlaceholder: true,
+      isPersisted: !isDerived,
     });
   }
   for (const activity of activities) {
@@ -3540,18 +3557,20 @@ function buildWbsDivisionRows(
     const existing =
       rows.get(division) ??
       ({
+        id: null,
         division,
         activityCount: 0,
         firstStart: null,
         lastFinish: null,
         isPlaceholder: false,
+        isPersisted: false,
       } satisfies WbsDivisionRow);
     rows.set(division, {
       ...existing,
       activityCount: existing.activityCount + 1,
       firstStart: earlierDate(existing.firstStart, activity.start_date),
       lastFinish: laterDate(existing.lastFinish, activity.finish_date),
-      isPlaceholder: false,
+      isPlaceholder: existing.isPersisted ? false : existing.activityCount + 1 === 0,
     });
   }
   return Array.from(rows.values()).sort((a, b) =>
@@ -4323,9 +4342,9 @@ function ActivityDetailDialog({
               </LabeledField>
             </div>
 
-            <div className="mt-3 grid min-w-0 gap-3 xl:grid-cols-2">
+            <div className="mt-3 grid min-w-0 gap-3">
               <ActivityDependencyPicker
-                label="Predecessors"
+                label="Predecessors - work before this activity"
                 emptyLabel="Choose activities that must finish first"
                 selectedIds={draft.predecessor_activity_ids}
                 activities={activities}
@@ -4334,7 +4353,7 @@ function ActivityDetailDialog({
                 onChange={(value) => setDraft({ ...draft, predecessor_activity_ids: value })}
               />
               <ActivityDependencyPicker
-                label="Successors"
+                label="Successors - work after this activity"
                 emptyLabel="Choose activities that follow this one"
                 selectedIds={draft.successor_activity_ids}
                 activities={activities}
@@ -4342,7 +4361,7 @@ function ActivityDetailDialog({
                 blockedIds={parseActivityIds(draft.predecessor_activity_ids)}
                 onChange={(value) => setDraft({ ...draft, successor_activity_ids: value })}
               />
-              <div className="min-w-0 rounded-md border border-hairline bg-card p-3 xl:col-span-2">
+              <div className="min-w-0 rounded-md border border-hairline bg-card p-3">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                   Dependency readout
                 </div>
