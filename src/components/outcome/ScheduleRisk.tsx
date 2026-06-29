@@ -1657,6 +1657,12 @@ export function CpmActivityPlanner({
     (total, task) => total + task.predecessorKeys.length,
     0,
   );
+  const delayFragmentStatValue = isDelayFragmentMigrationRequired
+    ? "Pending"
+    : String(delaySummary.openDays);
+  const delayFragmentStatSub = isDelayFragmentMigrationRequired
+    ? "migration needed"
+    : `${delaySummary.openCount} open / ${delaySummary.totalCount} total`;
 
   return (
     <>
@@ -1716,66 +1722,6 @@ export function CpmActivityPlanner({
               progress, predecessor/successor logic, float, critical path, and activity stacking.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2 print:hidden">
-            <ScheduleOrderControls value={activityOrder} onChange={setActivityOrder} />
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2"
-              onClick={() => setIsWbsManagerOpen(true)}
-            >
-              <ListTree className="h-4 w-4" />
-              Manage WBS
-            </Button>
-            <ScheduleZoomControls dayPx={dayPx} onChange={setDayPx} />
-            <Button
-              type="button"
-              variant={showLogicLines ? "default" : "outline"}
-              className="gap-2"
-              aria-pressed={showLogicLines}
-              onClick={() => setShowLogicLines((visible) => !visible)}
-            >
-              <GitBranch className="h-4 w-4" />
-              Logic lines
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2"
-              onClick={() => setIsFocusOpen(true)}
-            >
-              <Maximize2 className="h-4 w-4" />
-              Expand
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2"
-              disabled={milestoneSeedRows.length === 0 || isSeedingActivities}
-              onClick={() => onSeedActivities(milestoneSeedRows)}
-            >
-              <ClipboardList className="h-4 w-4" />
-              {isSeedingActivities ? "Building..." : "Build from milestones"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2"
-              title="Print optimized for Tabloid / 11 x 17 landscape"
-              onClick={() => typeof window !== "undefined" && window.print()}
-            >
-              <Printer className="h-4 w-4" />
-              Print 11x17
-            </Button>
-            <Button type="button" className="gap-2" onClick={() => setShowDraft((open) => !open)}>
-              <Plus className="h-4 w-4" />
-              Add activity
-            </Button>
-            <Button type="button" variant="outline" className="gap-2" onClick={openMilestoneDraft}>
-              <Diamond className="h-4 w-4" />
-              Add milestone
-            </Button>
-          </div>
         </div>
 
         <div className="mt-5 grid gap-3 md:grid-cols-5">
@@ -1817,9 +1763,15 @@ export function CpmActivityPlanner({
           />
           <ScheduleWorkbenchStat
             label="Delay fragments"
-            value={String(delaySummary.openDays)}
-            sub={`${delaySummary.openCount} open / ${delaySummary.totalCount} total`}
-            tone={delaySummary.openDays > 0 ? "danger" : "success"}
+            value={delayFragmentStatValue}
+            sub={delayFragmentStatSub}
+            tone={
+              isDelayFragmentMigrationRequired
+                ? "warning"
+                : delaySummary.openDays > 0
+                  ? "danger"
+                  : "success"
+            }
           />
         </div>
 
@@ -1828,13 +1780,6 @@ export function CpmActivityPlanner({
             WBS persistence is waiting on the Lovable database migration. Sections are visible from
             activity divisions, but WBS add, rename, and drag reorder will not save until
             `schedule_wbs_sections` exists.
-          </div>
-        )}
-
-        {isDelayFragmentMigrationRequired && (
-          <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
-            Delay fragments are waiting on the Lovable database migration. CPM logic still works,
-            but activity-level delay records will not save until `schedule_delay_fragments` exists.
           </div>
         )}
 
@@ -2052,6 +1997,25 @@ export function CpmActivityPlanner({
         <ActivityScheduleMatrix
           model={cpmModel}
           delayFragments={delayFragments}
+          toolbar={
+            <CpmGridToolbar
+              activityOrder={activityOrder}
+              onActivityOrderChange={setActivityOrder}
+              dayPx={dayPx}
+              onZoomChange={setDayPx}
+              showLogicLines={showLogicLines}
+              onToggleLogicLines={() => setShowLogicLines((visible) => !visible)}
+              onManageWbs={() => setIsWbsManagerOpen(true)}
+              onExpand={() => setIsFocusOpen(true)}
+              onSeedActivities={() => onSeedActivities(milestoneSeedRows)}
+              canSeedActivities={milestoneSeedRows.length > 0}
+              isSeedingActivities={isSeedingActivities}
+              onPrint={() => typeof window !== "undefined" && window.print()}
+              onToggleActivityDraft={() => setShowDraft((open) => !open)}
+              isActivityDraftOpen={showDraft}
+              onAddMilestone={openMilestoneDraft}
+            />
+          }
           dayPx={dayPx}
           dataDate={latestDataDate}
           showLogicLines={showLogicLines}
@@ -2191,6 +2155,93 @@ function ScheduleWorkbenchStat({
       <div className={`mt-1 truncate text-xl font-semibold tabular ${toneClass}`}>{value}</div>
       <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
     </div>
+  );
+}
+
+function CpmGridToolbar({
+  activityOrder,
+  onActivityOrderChange,
+  dayPx,
+  onZoomChange,
+  showLogicLines,
+  onToggleLogicLines,
+  onManageWbs,
+  onExpand,
+  onSeedActivities,
+  canSeedActivities,
+  isSeedingActivities,
+  onPrint,
+  onToggleActivityDraft,
+  isActivityDraftOpen,
+  onAddMilestone,
+}: {
+  activityOrder: ScheduleActivityOrder;
+  onActivityOrderChange: (value: ScheduleActivityOrder) => void;
+  dayPx: (typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"];
+  onZoomChange: (dayPx: (typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]) => void;
+  showLogicLines: boolean;
+  onToggleLogicLines: () => void;
+  onManageWbs: () => void;
+  onExpand: () => void;
+  onSeedActivities: () => void;
+  canSeedActivities: boolean;
+  isSeedingActivities: boolean;
+  onPrint: () => void;
+  onToggleActivityDraft: () => void;
+  isActivityDraftOpen: boolean;
+  onAddMilestone: () => void;
+}) {
+  return (
+    <>
+      <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
+      <Button type="button" variant="outline" className="gap-2" onClick={onManageWbs}>
+        <ListTree className="h-4 w-4" />
+        Manage WBS
+      </Button>
+      <ScheduleZoomControls dayPx={dayPx} onChange={onZoomChange} />
+      <Button
+        type="button"
+        variant={showLogicLines ? "default" : "outline"}
+        className="gap-2"
+        aria-pressed={showLogicLines}
+        onClick={onToggleLogicLines}
+      >
+        <GitBranch className="h-4 w-4" />
+        Logic lines
+      </Button>
+      <Button type="button" variant="outline" className="gap-2" onClick={onExpand}>
+        <Maximize2 className="h-4 w-4" />
+        Expand
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        className="gap-2"
+        disabled={!canSeedActivities || isSeedingActivities}
+        onClick={onSeedActivities}
+      >
+        <ClipboardList className="h-4 w-4" />
+        {isSeedingActivities ? "Building..." : "Build from milestones"}
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        className="gap-2"
+        title="Print optimized for Tabloid / 11 x 17 landscape"
+        onClick={onPrint}
+      >
+        <Printer className="h-4 w-4" />
+        Print 11x17
+      </Button>
+      <Button type="button" className="gap-2" onClick={onToggleActivityDraft}>
+        <Plus className="h-4 w-4" />
+        {isActivityDraftOpen ? "Close form" : "Add activity"}
+      </Button>
+      <Button type="button" variant="outline" className="gap-2" onClick={onAddMilestone}>
+        <Diamond className="h-4 w-4" />
+        Add milestone
+      </Button>
+    </>
   );
 }
 
@@ -2939,6 +2990,7 @@ function LabeledField({ label, children }: { label: string; children: ReactNode 
 function ActivityScheduleMatrix({
   model,
   delayFragments,
+  toolbar,
   dayPx,
   dataDate,
   showLogicLines = false,
@@ -2949,6 +3001,7 @@ function ActivityScheduleMatrix({
 }: {
   model: ConstructLineCpmModel;
   delayFragments: ScheduleDelayFragmentRow[];
+  toolbar?: ReactNode;
   dayPx: number;
   dataDate: string | null;
   showLogicLines?: boolean;
@@ -3056,18 +3109,25 @@ function ActivityScheduleMatrix({
         isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : isPrintMode ? "mt-0" : "mt-5",
       )}
     >
-      <div className="constructline-cpm-matrix-head flex flex-col gap-3 border-b border-hairline px-4 py-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="constructline-cpm-matrix-title">
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            <GitBranch className="h-3.5 w-3.5" />
-            ConstructLine CPM grid
+      <div className="constructline-cpm-matrix-head flex flex-col gap-3 border-b border-hairline px-4 py-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div className="constructline-cpm-matrix-title">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              <GitBranch className="h-3.5 w-3.5" />
+              ConstructLine CPM grid
+            </div>
+            <div className="mt-1 font-serif text-xl text-foreground">Activity table + Gantt</div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
+            </div>
           </div>
-          <div className="mt-1 font-serif text-xl text-foreground">Activity table + Gantt</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
-          </div>
+          {toolbar && (
+            <div className="constructline-cpm-matrix-toolbar flex flex-wrap gap-2 print:hidden xl:justify-end">
+              {toolbar}
+            </div>
+          )}
         </div>
-        <div className="constructline-cpm-matrix-legend flex flex-wrap gap-4 text-[12px] text-muted-foreground">
+        <div className="constructline-cpm-matrix-legend flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <span className="h-2 w-5 rounded-full bg-danger" />
             Critical
