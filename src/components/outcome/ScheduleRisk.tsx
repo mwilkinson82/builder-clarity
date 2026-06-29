@@ -1495,7 +1495,7 @@ export function CpmActivityPlanner({
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [dayPx, setDayPx] =
     useState<(typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]>(CONSTRUCTLINE_FIT_DAY_PX);
-  const [showLogicLines, setShowLogicLines] = useState(false);
+  const [showLogicLines, setShowLogicLines] = useState(true);
   const [activityOrder, setActivityOrder] = useState<ScheduleActivityOrder>("start");
   const [scheduleView, setScheduleView] = useState<ScheduleGridView>("all");
   const [isWbsManagerOpen, setIsWbsManagerOpen] = useState(false);
