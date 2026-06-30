@@ -69,8 +69,8 @@
   --muted: oklch(0.948 0.01 75);
   --muted-foreground: oklch(0.5 0.015 65);
 
-  /* Restrained orange-red accent */
-  --accent: oklch(0.62 0.18 35);
+  /* Rationed ALP/AOS orange signal for links, focus, and small highlights */
+  --accent: #f76a16;
   --accent-foreground: oklch(0.985 0.006 80);
 
   --destructive: oklch(0.55 0.2 28);
@@ -83,7 +83,7 @@
   --hairline: oklch(0.89 0.01 75);
   --border: oklch(0.89 0.01 75);
   --input: oklch(0.89 0.01 75);
-  --ring: oklch(0.62 0.18 35);
+  --ring: rgb(247 106 22 / 0.4);
 }
 
 .dark {
@@ -101,14 +101,14 @@
   --secondary-foreground: oklch(0.96 0.005 80);
   --muted: oklch(0.28 0.01 60);
   --muted-foreground: oklch(0.7 0.01 60);
-  --accent: oklch(0.7 0.18 38);
+  --accent: oklch(0.66 0.17 36);
   --accent-foreground: oklch(0.18 0.01 60);
   --destructive: oklch(0.65 0.19 28);
   --destructive-foreground: oklch(0.96 0.005 80);
   --hairline: oklch(1 0 0 / 12%);
   --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.7 0.18 38);
+  --ring: oklch(0.66 0.17 36 / 0.55);
 }
 
 @layer base {

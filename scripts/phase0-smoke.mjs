@@ -197,6 +197,17 @@ await expectContains(
 );
 
 await expectContains(
+  "src/styles.css",
+  [
+    /--accent:\s*#f76a16/,
+    /--ring:\s*rgb\(247 106 22 \/ 0\.4\)/,
+    /--accent:\s*oklch\(0\.66 0\.17 36\)/,
+    /--ring:\s*oklch\(0\.66 0\.17 36 \/ 0\.55\)/,
+  ],
+  "global highlight accent keeps the rationed ALP/AOS orange signal",
+);
+
+await expectContains(
   "src/routes/auth.tsx",
   [/sendOverwatchMagicLink/, /context:\s*"login"/],
   "public auth page sends magic links through Overwatch email route",
@@ -405,6 +416,9 @@ await expectContains(
     /ProjectNavTooltip/,
     /TooltipProvider delayDuration=\{120\}/,
     /aria-label=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
+    /BILLING_WORKSPACE_TAB_TRIGGER_CLASS[\s\S]*data-\[state=active\]:bg-foreground/,
+    /BILLING_WORKSPACE_TAB_TRIGGER_CLASS[\s\S]*data-\[state=active\]:border-accent/,
+    /border border-hairline bg-card p-1\.5 shadow-card ring-1 ring-foreground\/5/,
     /Pay App Detail/,
     /Project Costs/,
     /WIP Analysis/,
