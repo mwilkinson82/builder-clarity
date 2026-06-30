@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 
 import { readFile, readdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
+import { promisify } from "node:util";
 
 const root = process.cwd();
 const live = process.argv.includes("--live");
 const liveBaseUrl = process.env.OVERWATCH_SMOKE_URL ?? "https://overwatch.alpcontractorcircle.com";
+const execFileAsync = promisify(execFile);
 
 const checks = [];
 const warnings = [];
@@ -89,6 +92,46 @@ async function expectLiveRoute(urlPath, expectedStatus, label) {
       pass(label, `${url} returned ${response.status}`);
     } else {
       fail(label, `${url} returned ${response.status}; expected ${expectedStatus.join(" or ")}`);
+    }
+  } catch (error) {
+    fail(label, `${url}: ${error.message}`);
+  }
+}
+
+async function currentGitCommit() {
+  if (process.env.OVERWATCH_EXPECTED_COMMIT) {
+    return process.env.OVERWATCH_EXPECTED_COMMIT.trim();
+  }
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root });
+    return stdout.trim();
+  } catch (error) {
+    fail("current Git commit can be resolved", error.message);
+    return "";
+  }
+}
+
+async function expectLiveCommit(urlPath, label) {
+  const expectedCommit = await currentGitCommit();
+  if (!expectedCommit) return;
+  const url = new URL(urlPath, liveBaseUrl);
+  try {
+    const response = await fetch(url, { redirect: "follow" });
+    if (!response.ok) {
+      fail(label, `${url} returned ${response.status}; expected a readable app shell`);
+      return;
+    }
+    const html = await response.text();
+    const deployedCommit = html.match(/data-commit-sha="([0-9a-f]{7,40})"/i)?.[1] ?? "";
+    if (!deployedCommit) {
+      fail(label, `${url} did not expose data-commit-sha`);
+      return;
+    }
+    const expectedPrefix = expectedCommit.slice(0, 8);
+    if (deployedCommit.startsWith(expectedPrefix)) {
+      pass(label, `${url} is serving ${deployedCommit}`);
+    } else {
+      fail(label, `${url} is serving ${deployedCommit}; expected ${expectedCommit}`);
     }
   } catch (error) {
     fail(label, `${url}: ${error.message}`);
@@ -864,6 +907,7 @@ expectSql(
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");
+  await expectLiveCommit("/estimates", "custom domain is serving the current Git commit");
   await expectLiveRoute(
     "/client/projects/00000000-0000-0000-0000-000000000000",
     [200, 302, 307, 308, 404],
