@@ -3768,33 +3768,90 @@ function ActivityDivisionInput({
   value,
   onChange,
   options,
-  listId,
+  listId: _listId,
 }: {
   value: string;
   onChange: (value: string) => void;
   options: string[];
   listId: string;
 }) {
+  const [customMode, setCustomMode] = useState(false);
   const normalizedOptions = Array.from(
-    new Set(options.map((option) => option.trim()).filter(Boolean)),
+    new Set(options.map((option) => normalizeWbsDivisionName(option)).filter(Boolean)),
   );
-  return (
-    <>
+  const normalizedValue = normalizeWbsDivisionName(value);
+  const selectedOption = normalizedOptions.find(
+    (option) => option.toLocaleLowerCase() === normalizedValue.toLocaleLowerCase(),
+  );
+  const isCustom = customMode || !selectedOption;
+  const selectValue = isCustom ? "__custom__" : (selectedOption ?? "__custom__");
+
+  if (normalizedOptions.length === 0) {
+    return (
       <Input
-        list={normalizedOptions.length > 0 ? listId : undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="Choose WBS / child area"
+        placeholder="Concrete / Northwest corner"
         className="h-10 min-w-0"
       />
-      {normalizedOptions.length > 0 && (
-        <datalist id={listId}>
-          {normalizedOptions.map((option) => (
-            <option key={option} value={option} />
-          ))}
-        </datalist>
+    );
+  }
+
+  return (
+    <div className="grid min-w-0 gap-2">
+      <Select
+        value={selectValue}
+        onValueChange={(nextValue) => {
+          if (nextValue === "__custom__") {
+            setCustomMode(true);
+            return;
+          }
+          setCustomMode(false);
+          onChange(nextValue);
+        }}
+      >
+        <SelectTrigger className="h-10 min-w-0 bg-card">
+          <SelectValue placeholder="Choose WBS / child area" />
+        </SelectTrigger>
+        <SelectContent className="max-h-[22rem]">
+          <SelectItem value="__custom__">Custom WBS / area path</SelectItem>
+          {normalizedOptions.map((option) => {
+            const meta = getWbsDisplayMeta(option);
+            return (
+              <SelectItem key={option} value={option}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <span
+                    className="shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                    style={{ width: `${Math.min(meta.level, 4) * 14}px` }}
+                  />
+                  <span className="min-w-0 truncate">{meta.level > 0 ? meta.title : option}</span>
+                  {meta.parentPath && (
+                    <span className="hidden min-w-0 truncate text-xs text-muted-foreground sm:inline">
+                      {meta.parentPath}
+                    </span>
+                  )}
+                </span>
+              </SelectItem>
+            );
+          })}
+        </SelectContent>
+      </Select>
+      {isCustom ? (
+        <Input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Concrete / Northwest corner"
+          className="h-10 min-w-0"
+        />
+      ) : (
+        <div className="truncate text-xs text-muted-foreground">
+          {getWbsDisplayMeta(selectedOption).parentPath
+            ? `Child area under ${getWbsDisplayMeta(selectedOption).parentPath}`
+            : "Top-level WBS"}
+        </div>
       )}
-    </>
+    </div>
   );
 }
 
