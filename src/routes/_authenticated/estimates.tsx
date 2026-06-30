@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
@@ -55,6 +55,7 @@ function shortDate(value: string) {
 }
 
 function EstimatesPage() {
+  const location = useLocation();
   const navigate = useNavigate();
   const list = useServerFn(listEstimates);
   const create = useServerFn(createEstimate);
@@ -111,6 +112,10 @@ function EstimatesPage() {
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Estimate did not save"),
   });
+
+  if (/^\/estimates\/[^/]+\/?$/.test(location.pathname)) {
+    return <Outlet />;
+  }
 
   return (
     <div className="min-h-screen bg-background">
