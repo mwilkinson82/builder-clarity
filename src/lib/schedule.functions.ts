@@ -1114,7 +1114,7 @@ export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
     const updatePayload: ScheduleWbsSectionUpdate = {
       parent_id: nextParentId,
       sort_order: sortOrder,
-    };
+    } as any;
     const { error: updateError } = await context.supabase
       .from("schedule_wbs_sections")
       .update(updatePayload)
