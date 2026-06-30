@@ -701,6 +701,9 @@ await expectContains(
     /cost items added/,
     /updated/,
     /source === "system"/,
+    /aria-label="Save custom item"/,
+    /aria-label="Delete custom item"/,
+    /aria-label="Copy to custom library"/,
   ],
   "cost library UI can copy system rows and bulk import custom contractor pricing",
 );
