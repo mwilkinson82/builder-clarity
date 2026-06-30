@@ -1491,7 +1491,7 @@ function ScheduleWorkspaceLaunch({
           </p>
         </div>
         <Button asChild className="gap-2 print:hidden">
-          <a href={`/projects/${project.id}/schedule`} target="_blank" rel="noreferrer">
+          <a href={`/projects/${project.id}/schedule#cpm-grid`} target="_blank" rel="noreferrer">
             <ExternalLink className="h-4 w-4" />
             Open full schedule workspace
           </a>
@@ -1628,6 +1628,7 @@ export function CpmActivityPlanner({
   const [dataDateDraft, setDataDateDraft] = useState(() => latestDataDate ?? todayIsoDate());
   const [isWbsManagerOpen, setIsWbsManagerOpen] = useState(false);
   const [isFocusOpen, setIsFocusOpen] = useState(false);
+  const didScrollToGridRef = useRef(false);
   const effectiveDataDate = dataDateDraft || latestDataDate || null;
   const wbsDivisionOrder = useMemo(
     () => buildWbsDivisionOrder(activities, wbsSections),
@@ -1735,6 +1736,22 @@ export function CpmActivityPlanner({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isFocusOpen]);
+
+  useEffect(() => {
+    if (
+      didScrollToGridRef.current ||
+      typeof window === "undefined" ||
+      window.location.hash !== "#cpm-grid"
+    ) {
+      return;
+    }
+    const grid = document.getElementById("cpm-grid");
+    if (!grid) return;
+    didScrollToGridRef.current = true;
+    window.requestAnimationFrame(() => {
+      grid.scrollIntoView({ block: "start" });
+    });
+  }, [displayedCpmModel.tasks.length]);
 
   const addActivity = () => {
     const validationError = validateActivityDraft(draft, sortedActivities);
@@ -1973,6 +1990,7 @@ export function CpmActivityPlanner({
           </div>
         </div>
         <ActivityScheduleMatrix
+          matrixId="cpm-grid"
           model={displayedCpmModel}
           delayFragments={delayFragments}
           dayPx={CONSTRUCTLINE_FIT_DAY_PX}
@@ -3690,6 +3708,7 @@ function ActivityDivisionInput({
 }
 
 function ActivityScheduleMatrix({
+  matrixId,
   model,
   delayFragments,
   toolbar,
@@ -3704,6 +3723,7 @@ function ActivityScheduleMatrix({
   onOpenActivity,
   onDeleteActivity,
 }: {
+  matrixId?: string;
   model: ConstructLineCpmModel;
   delayFragments: ScheduleDelayFragmentRow[];
   toolbar?: ReactNode;
@@ -3830,8 +3850,9 @@ function ActivityScheduleMatrix({
 
   return (
     <div
+      id={matrixId}
       className={cn(
-        "constructline-cpm-matrix min-w-0 overflow-hidden rounded-md border border-hairline bg-card",
+        "constructline-cpm-matrix scroll-mt-24 min-w-0 overflow-hidden rounded-md border border-hairline bg-card",
         isPrintMode && "constructline-cpm-matrix-print",
         isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : isPrintMode ? "mt-0" : "mt-5",
       )}
