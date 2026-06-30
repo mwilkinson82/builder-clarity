@@ -1921,7 +1921,7 @@ export function CpmActivityPlanner({
     ? "Pending"
     : String(delaySummary.openDays);
   const delayFragmentStatSub = isDelayFragmentMigrationRequired
-    ? "migration needed"
+    ? "setup pending"
     : `${delaySummary.openCount} open / ${delaySummary.totalCount} total`;
   const isDataDateDirty = dataDateDraft !== (latestDataDate ?? "");
   const scheduleReportTitle = getScheduleReportTitle(scheduleView);
@@ -2089,9 +2089,9 @@ export function CpmActivityPlanner({
 
         {isWbsMigrationRequired && (
           <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
-            WBS persistence is waiting on the Lovable database migration. Sections are visible from
-            activity divisions, but WBS add, rename, and drag reorder will not save until
-            `schedule_wbs_sections` exists.
+            Saved WBS sections are still being enabled for this project. Sections are visible from
+            activity divisions now; WBS add, rename, and drag reorder will save once setup is
+            complete.
           </div>
         )}
 
@@ -5866,8 +5866,8 @@ function ActivityDelayFragmentPanel({
 
       {persistence === "migration_required" ? (
         <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
-          Lovable still needs the `schedule_delay_fragments` migration before delay records can
-          save.
+          Delay tracking is still being enabled for this project. Activity details and CPM logic
+          save normally; activity-level delay records will save once setup is complete.
         </div>
       ) : (
         <>

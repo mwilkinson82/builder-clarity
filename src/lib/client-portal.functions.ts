@@ -143,6 +143,10 @@ export interface ClientPortalPermissions {
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const bool = (v: unknown, d = false) => (typeof v === "boolean" ? v : d);
+const record = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+const rows = (v: unknown): Record<string, unknown>[] =>
+  Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
 
 const contactInput = z.object({
   projectId: z.string().uuid(),
@@ -538,8 +542,9 @@ async function loadProjectForManagement(context: ServerContext, projectId: strin
     .eq("id", projectId)
     .single();
   if (error) throw new Error(error.message);
-  if (!data?.organization_id) throw new Error("This project is missing an Overwatch company.");
-  return data as Record<string, unknown> & { organization_id: string };
+  const project = record(data);
+  if (!project.organization_id) throw new Error("This project is missing an Overwatch company.");
+  return project as Record<string, unknown> & { organization_id: string };
 }
 
 export const getClientPortalManagement = createServerFn({ method: "GET" })
@@ -582,16 +587,10 @@ export const getClientPortalManagement = createServerFn({ method: "GET" })
 
     return {
       project: normalizeClientProject(project),
-      contacts: (contactsRes.data ?? []).map((row: Record<string, unknown>) =>
-        normalizeContact(row),
-      ),
-      access: (accessRes.data ?? []).map((row: Record<string, unknown>) => normalizeAccess(row)),
-      changeOrders: (changeOrdersRes.data ?? []).map((row: Record<string, unknown>) =>
-        normalizeChangeOrder(row),
-      ),
-      approvals: (approvalsRes.data ?? []).map((row: Record<string, unknown>) =>
-        normalizeApproval(row),
-      ),
+      contacts: rows(contactsRes.data).map((row) => normalizeContact(row)),
+      access: rows(accessRes.data).map((row) => normalizeAccess(row)),
+      changeOrders: rows(changeOrdersRes.data).map((row) => normalizeChangeOrder(row)),
+      approvals: rows(approvalsRes.data).map((row) => normalizeApproval(row)),
     };
   });
 
@@ -621,9 +620,10 @@ export const upsertClientContact = createServerFn({ method: "POST" })
       .neq("status", "inactive")
       .maybeSingle();
     if (findError) throw new Error(findError.message);
+    const existingContact = existing ? record(existing) : null;
 
-    const query = existing
-      ? db(context).from("client_contacts").update(payload).eq("id", existing.id)
+    const query = existingContact
+      ? db(context).from("client_contacts").update(payload).eq("id", existingContact.id)
       : db(context).from("client_contacts").insert(payload);
     const { data: saved, error } = await query.select("*").single();
     if (error) throw new Error(error.message);
@@ -643,11 +643,12 @@ export const grantClientProjectAccess = createServerFn({ method: "POST" })
       .eq("id", data.contactId)
       .single();
     if (contactError) throw new Error(contactError.message);
-    if (!contact || contact.organization_id !== project.organization_id) {
+    const contactRow = record(contact);
+    if (!contactRow.id || contactRow.organization_id !== project.organization_id) {
       throw new Error("This client contact does not belong to the project team.");
     }
 
-    const email = str(contact.email).trim().toLowerCase();
+    const email = str(contactRow.email).trim().toLowerCase();
     const payload = {
       project_id: data.projectId,
       contact_id: data.contactId,
@@ -667,9 +668,10 @@ export const grantClientProjectAccess = createServerFn({ method: "POST" })
       .neq("status", "revoked")
       .maybeSingle();
     if (findError) throw new Error(findError.message);
+    const existingAccess = existing ? record(existing) : null;
 
-    const query = existing
-      ? db(context).from("project_client_access").update(payload).eq("id", existing.id)
+    const query = existingAccess
+      ? db(context).from("project_client_access").update(payload).eq("id", existingAccess.id)
       : db(context).from("project_client_access").insert(payload);
     const { data: saved, error } = await query.select("*").single();
     if (error) throw new Error(error.message);
@@ -687,7 +689,8 @@ export const updateClientProjectAccess = createServerFn({ method: "POST" })
       .eq("id", accessId)
       .single();
     if (accessError) throw new Error(accessError.message);
-    await requireCanManageProject(context as ServerContext, access.project_id as string);
+    const accessRow = record(access);
+    await requireCanManageProject(context as ServerContext, accessRow.project_id as string);
 
     const { data: saved, error } = await db(context)
       .from("project_client_access")
@@ -711,7 +714,8 @@ export const revokeClientProjectAccess = createServerFn({ method: "POST" })
       .eq("id", data.accessId)
       .single();
     if (accessError) throw new Error(accessError.message);
-    await requireCanManageProject(context as ServerContext, access.project_id as string);
+    const accessRow = record(access);
+    await requireCanManageProject(context as ServerContext, accessRow.project_id as string);
 
     const { error } = await db(context)
       .from("project_client_access")
@@ -733,7 +737,8 @@ export const setChangeOrderClientVisibility = createServerFn({ method: "POST" })
       .eq("id", data.changeOrderId)
       .single();
     if (coError) throw new Error(coError.message);
-    await requireCanManageProject(context as ServerContext, co.project_id as string);
+    const changeOrderRow = record(co);
+    await requireCanManageProject(context as ServerContext, changeOrderRow.project_id as string);
 
     const patch = data.client_visible
       ? {
@@ -890,9 +895,7 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
 
     const billingEvents = billingEventsRes.error
       ? []
-      : (billingEventsRes.data ?? []).map((row: Record<string, unknown>) =>
-          normalizeBillingApplicationEvent(row),
-        );
+      : rows(billingEventsRes.data).map((row) => normalizeBillingApplicationEvent(row));
     const billingEventsByApplication = new Map<string, BillingApplicationEventRow[]>();
     billingEvents.forEach((event: BillingApplicationEventRow) => {
       const existing = billingEventsByApplication.get(event.billing_application_id) ?? [];
@@ -901,9 +904,7 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
     });
     const paymentEvents = paymentLedgerRes.error
       ? []
-      : (paymentLedgerRes.data ?? []).map((row: Record<string, unknown>) =>
-          normalizePaymentLedger(row),
-        );
+      : rows(paymentLedgerRes.data).map((row) => normalizePaymentLedger(row));
     const paymentsByInvoice = new Map<string, PaymentLedgerRow[]>();
     paymentEvents.forEach((payment: PaymentLedgerRow) => {
       const existing = paymentsByInvoice.get(payment.invoice_id) ?? [];
@@ -912,9 +913,7 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
     });
     const normalizedBillingApplications = billingApplicationsRes.error
       ? []
-      : (billingApplicationsRes.data ?? []).map((row: Record<string, unknown>) =>
-          normalizeBillingApplication(row),
-        );
+      : rows(billingApplicationsRes.data).map((row) => normalizeBillingApplication(row));
     const lineItemsByApplication = new Map<string, BillingLineItemRow[]>();
     if (canViewBilling && normalizedBillingApplications.length > 0) {
       const lineItemsRes = await db(context)
@@ -930,8 +929,8 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
         throw new Error(lineItemsRes.error.message);
       }
       if (!lineItemsRes.error) {
-        (lineItemsRes.data ?? [])
-          .map((row: Record<string, unknown>) => normalizeBillingLineItem(row))
+        rows(lineItemsRes.data)
+          .map((row) => normalizeBillingLineItem(row))
           .forEach((line: BillingLineItemRow) => {
             const existing = lineItemsByApplication.get(line.billing_application_id) ?? [];
             existing.push(line);
@@ -942,12 +941,8 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
 
     return {
       project: normalizeClientProject(projectRes.data as Record<string, unknown>),
-      changeOrders: (changeOrdersRes.data ?? []).map((row: Record<string, unknown>) =>
-        normalizeChangeOrder(row),
-      ),
-      approvals: (approvalsRes.data ?? []).map((row: Record<string, unknown>) =>
-        normalizeApproval(row),
-      ),
+      changeOrders: rows(changeOrdersRes.data).map((row) => normalizeChangeOrder(row)),
+      approvals: rows(approvalsRes.data).map((row) => normalizeApproval(row)),
       billingApplications: normalizedBillingApplications.map(
         (app: ClientPortalBillingApplication) => ({
           ...app,
@@ -957,16 +952,14 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
       ),
       billingInvoices: billingInvoicesRes.error
         ? []
-        : (billingInvoicesRes.data ?? []).map((row: Record<string, unknown>) => {
+        : rows(billingInvoicesRes.data).map((row) => {
             const invoice = normalizeBillingInvoice(row);
             return {
               ...invoice,
               payment_events: paymentsByInvoice.get(invoice.id) ?? [],
             };
           }),
-      dailyReports: (dailyReportsRes.data ?? []).map((row: Record<string, unknown>) =>
-        normalizeDailyReport(row),
-      ),
+      dailyReports: rows(dailyReportsRes.data).map((row) => normalizeDailyReport(row)),
       portalPermissions: {
         canViewChangeOrders,
         canViewDailyReports,

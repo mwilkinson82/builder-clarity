@@ -388,10 +388,17 @@ function ProjectPage() {
   const list = useServerFn(listProjects);
   const qc = useQueryClient();
   const [creatingCoRiskId, setCreatingCoRiskId] = useState<string | null>(null);
-  const [activeProjectTab, setActiveProjectTab] = useState(search.tab ?? "dashboard");
+  const [activeProjectTab, setActiveProjectTab] = useState<ProjectTabValue>(
+    search.tab ?? "dashboard",
+  );
+  const setProjectTab = (value: string) => {
+    if (PROJECT_TAB_VALUES.includes(value as ProjectTabValue)) {
+      setActiveProjectTab(value as ProjectTabValue);
+    }
+  };
 
   useEffect(() => {
-    if (search.tab) setActiveProjectTab(search.tab);
+    if (search.tab) setProjectTab(search.tab);
   }, [search.tab]);
 
   const { data, isLoading, error } = useQuery({
@@ -497,7 +504,7 @@ function ProjectPage() {
     },
     onError: (err) => {
       toast.error("SOV mapping did not save", {
-        description: err instanceof Error ? err.message : "Try again after Lovable publishes.",
+        description: err instanceof Error ? err.message : "Try again after setup is complete.",
       });
     },
   });
@@ -670,7 +677,7 @@ function ProjectPage() {
       if (error.code === "stripe_not_configured") {
         toast.error("Stripe is not connected yet", {
           description:
-            "Invoice PDFs and email still work. Add STRIPE_SECRET_KEY in Lovable before enabling live checkout.",
+            "Invoice PDFs and email still work. Connect Stripe in company settings before enabling live checkout.",
         });
         return;
       }
@@ -1372,7 +1379,7 @@ function ProjectPage() {
       >
         <Tabs
           value={activeProjectTab}
-          onValueChange={setActiveProjectTab}
+          onValueChange={setProjectTab}
           className={`grid min-w-0 gap-6 lg:items-start ${
             activeProjectTab === "billing"
               ? "lg:grid-cols-[76px_minmax(0,1fr)] xl:grid-cols-[84px_minmax(0,1fr)]"
