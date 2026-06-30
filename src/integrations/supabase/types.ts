@@ -1968,6 +1968,72 @@ export type Database = {
           },
         ]
       }
+      schedule_delay_fragments: {
+        Row: {
+          activity_id: string
+          created_at: string
+          delay_days: number
+          id: string
+          identified_on: string
+          owner: string
+          project_id: string
+          reason: string
+          resolved_on: string | null
+          schedule_activity_id: string | null
+          source: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          activity_id?: string
+          created_at?: string
+          delay_days?: number
+          id?: string
+          identified_on?: string
+          owner?: string
+          project_id: string
+          reason?: string
+          resolved_on?: string | null
+          schedule_activity_id?: string | null
+          source?: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          activity_id?: string
+          created_at?: string
+          delay_days?: number
+          id?: string
+          identified_on?: string
+          owner?: string
+          project_id?: string
+          reason?: string
+          resolved_on?: string | null
+          schedule_activity_id?: string | null
+          source?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_delay_fragments_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_delay_fragments_schedule_activity_id_fkey"
+            columns: ["schedule_activity_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_activities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       schedule_milestone_updates: {
         Row: {
           baseline_date: string | null
