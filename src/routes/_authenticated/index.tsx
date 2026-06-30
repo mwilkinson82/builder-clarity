@@ -194,6 +194,9 @@ function PortfolioPage() {
       ),
     [projects],
   );
+  const headerCompanyName =
+    companyFilter !== "all" ? companyFilter : companyNames[0] || "Overwatch";
+  const headerTitle = portfolioTab === "pipeline" ? "CRM" : "Portfolio";
   const managerNames = useMemo(
     () =>
       Array.from(new Set(projects.map((p) => p.project_manager.trim()).filter(Boolean))).sort(
@@ -338,9 +341,9 @@ function PortfolioPage() {
         <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-6 lg:px-10">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-              Overwatch
+              {headerCompanyName}
             </div>
-            <h1 className="mt-1 font-serif text-3xl text-foreground">Portfolio</h1>
+            <h1 className="mt-1 font-serif text-3xl text-foreground">{headerTitle}</h1>
           </div>
           <div className="flex items-center gap-2">
             <Button asChild size="sm" variant="outline" className="gap-1.5">
