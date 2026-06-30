@@ -347,7 +347,8 @@ for (const requiredScheduleRiskText of [
 
 for (const requiredScheduleRouteText of [
   "WBS order applied",
-  "The grid moved immediately. Saving the project order in the background.",
+  "The grid moved immediately. Saving in the background.",
+  'await qc.cancelQueries({ queryKey: ["schedule", projectId] });',
   "Schedule operations",
   "Critical delayed decisions",
   "Procurement risks",

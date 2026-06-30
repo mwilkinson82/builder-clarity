@@ -263,9 +263,10 @@ function ScheduleWorkspacePage() {
       wbsOrderToastRef.current = toastId;
       toast.success("WBS order applied", {
         id: toastId,
-        description: "The grid moved immediately. Saving the project order in the background.",
+        description: "The grid moved immediately. Saving in the background.",
+        duration: 1800,
       });
-      void qc.cancelQueries({ queryKey: ["schedule", projectId] });
+      await qc.cancelQueries({ queryKey: ["schedule", projectId] });
       qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
         if (!current?.wbsSections) return current;
         const orderMap = new Map(orderedIds.map((id, index) => [id, (index + 1) * 10]));
@@ -284,6 +285,7 @@ function ScheduleWorkspacePage() {
       toast.success("WBS order saved", {
         id: toastId,
         description: "The saved project order now matches the CPM grid.",
+        duration: 1400,
       });
       wbsOrderToastRef.current = null;
     },
