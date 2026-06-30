@@ -362,7 +362,7 @@ export function EstimateWorkspace({
   });
 
   const duplicateMutation = useMutation({
-    mutationFn: (asProjectEstimate = false) =>
+    mutationFn: (asProjectEstimate: boolean) =>
       duplicateFn({ data: { id: estimate.id, as_project_estimate: asProjectEstimate } }),
     onSuccess: (result, asProjectEstimate) => {
       toast.success(

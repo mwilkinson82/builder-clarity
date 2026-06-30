@@ -4,6 +4,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
+import {
+  listCrmSnapshot,
+  listOpportunities,
+  type PipelineCrmSnapshot,
+  type PipelineOpportunityRow,
+  type PipelineStage,
+} from "@/lib/pipeline.functions";
 import { createProject, listProjects, seedDemoIfEmpty } from "@/lib/projects.functions";
 import { PipelineWorkspace } from "@/components/pipeline/PipelineWorkspace";
 import {
@@ -52,6 +59,7 @@ import {
   CalendarClock,
   ClipboardList,
   FileText,
+  KanbanSquare,
   LogOut,
   MailPlus,
   Plus,
@@ -140,6 +148,8 @@ function errorMessage(error: unknown) {
 function PortfolioPage() {
   const list = useServerFn(listProjects);
   const seed = useServerFn(seedDemoIfEmpty);
+  const listCrm = useServerFn(listOpportunities);
+  const loadCrmSnapshot = useServerFn(listCrmSnapshot);
   const qc = useQueryClient();
   const {
     data: projects = [],
@@ -150,6 +160,14 @@ function PortfolioPage() {
   } = useQuery({
     queryKey: ["projects"],
     queryFn: () => list(),
+  });
+  const { data: crmOpportunities = [], isLoading: crmOpportunitiesLoading } = useQuery({
+    queryKey: ["pipeline-opportunities", false],
+    queryFn: () => listCrm({ data: { includeArchived: false } }),
+  });
+  const { data: crmSnapshot = null, isLoading: crmSnapshotLoading } = useQuery({
+    queryKey: ["pipeline-crm-snapshot"],
+    queryFn: () => loadCrmSnapshot(),
   });
   const [search, setSearch] = useState("");
   const [seedError, setSeedError] = useState<string | null>(null);
@@ -358,7 +376,11 @@ function PortfolioPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1400px] px-6 py-10 lg:px-10">
+      <main
+        className={`mx-auto px-6 py-10 lg:px-10 ${
+          portfolioTab === "pipeline" ? "max-w-[1900px]" : "max-w-[1400px]"
+        }`}
+      >
         {seedError && (
           <PortfolioLoadError
             title="Harbor Residence demo did not load"
@@ -398,6 +420,12 @@ function PortfolioPage() {
             ) : (
               <div className="space-y-6">
                 <PortfolioDashboard totals={portfolioTotals} />
+                <PortfolioCrmDashboard
+                  opportunities={crmOpportunities}
+                  snapshot={crmSnapshot}
+                  isLoading={crmOpportunitiesLoading || crmSnapshotLoading}
+                  onOpenCrm={() => setPortfolioTabWithUrl("pipeline")}
+                />
                 <div className="space-y-3 rounded-lg border border-hairline bg-card p-4 shadow-card">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
                     <div className="relative flex-1">
@@ -862,6 +890,69 @@ function buildPortfolioTotals(projects: PortfolioProject[]): PortfolioTotals {
   };
 }
 
+const CRM_ACTIVE_STAGES = new Set<PipelineStage>([
+  "lead",
+  "qualifying",
+  "estimating",
+  "bid_submitted",
+  "negotiating",
+]);
+
+function buildPortfolioCrmTotals(
+  opportunities: PipelineOpportunityRow[],
+  snapshot: PipelineCrmSnapshot | null,
+) {
+  const activeOpportunities = opportunities.filter(
+    (opportunity) => !opportunity.archived && CRM_ACTIVE_STAGES.has(opportunity.stage),
+  );
+  const wonOpportunities = opportunities.filter((opportunity) => opportunity.stage === "won");
+  const topOpportunities = [...activeOpportunities]
+    .sort(
+      (a, b) =>
+        b.estimated_contract * (b.probability / 100) -
+          a.estimated_contract * (a.probability / 100) ||
+        b.estimated_contract - a.estimated_contract,
+    )
+    .slice(0, 4);
+  const openActions = snapshot?.openActions ?? [];
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const oneWeek = now.getTime() + 7 * 86400000;
+  const overdueActions = openActions.filter((action) => {
+    if (!action.due_date) return false;
+    return new Date(`${action.due_date}T00:00:00`).getTime() < now.getTime();
+  });
+  const dueThisWeek = openActions.filter((action) => {
+    if (!action.due_date) return false;
+    const due = new Date(`${action.due_date}T00:00:00`).getTime();
+    return due <= oneWeek;
+  });
+
+  return {
+    accountCount: snapshot?.accounts.length ?? 0,
+    contactCount: snapshot?.contacts.length ?? 0,
+    activeOpportunityCount: activeOpportunities.length,
+    activePipelineValue: activeOpportunities.reduce(
+      (total, opportunity) => total + opportunity.estimated_contract,
+      0,
+    ),
+    weightedPipelineValue: activeOpportunities.reduce(
+      (total, opportunity) =>
+        total + opportunity.estimated_contract * (opportunity.probability / 100),
+      0,
+    ),
+    wonValue: wonOpportunities.reduce(
+      (total, opportunity) => total + opportunity.estimated_contract,
+      0,
+    ),
+    openActionCount: openActions.length,
+    overdueActionCount: overdueActions.length,
+    dueThisWeekCount: dueThisWeek.length,
+    topOpportunities,
+    nextActions: openActions.slice(0, 4),
+  };
+}
+
 function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
   return (
     <section className="rounded-lg border border-hairline bg-card p-5 shadow-card md:p-6">
@@ -1027,6 +1118,164 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
       </div>
     </section>
   );
+}
+
+function PortfolioCrmDashboard({
+  opportunities,
+  snapshot,
+  isLoading,
+  onOpenCrm,
+}: {
+  opportunities: PipelineOpportunityRow[];
+  snapshot: PipelineCrmSnapshot | null;
+  isLoading: boolean;
+  onOpenCrm: () => void;
+}) {
+  const totals = buildPortfolioCrmTotals(opportunities, snapshot);
+  return (
+    <section className="rounded-lg border border-hairline bg-card p-5 shadow-card md:p-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <KanbanSquare className="h-3.5 w-3.5" />
+            CRM Dashboard
+          </div>
+          <h2 className="mt-2 font-serif text-3xl leading-tight text-foreground">
+            Opportunities before they become IORs.
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            Active pursuits, relationships, and follow-ups that feed the future project portfolio.
+          </p>
+        </div>
+        <Button type="button" onClick={onOpenCrm} className="w-full gap-1.5 sm:w-auto">
+          <KanbanSquare className="h-3.5 w-3.5" />
+          View opportunities
+        </Button>
+      </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-3 2xl:grid-cols-6">
+        <PortfolioSignal
+          icon={<BriefcaseBusiness className="h-3.5 w-3.5" />}
+          label="Open opps"
+          value={isLoading ? "..." : String(totals.activeOpportunityCount)}
+        />
+        <PortfolioSignal
+          icon={<Activity className="h-3.5 w-3.5" />}
+          label="Weighted"
+          value={isLoading ? "..." : fmtUSD(totals.weightedPipelineValue)}
+          tone={totals.weightedPipelineValue > 0 ? "success" : undefined}
+        />
+        <PortfolioSignal
+          icon={<ClipboardList className="h-3.5 w-3.5" />}
+          label="Open actions"
+          value={isLoading ? "..." : String(totals.openActionCount)}
+          tone={totals.overdueActionCount > 0 ? "danger" : "success"}
+        />
+        <PortfolioSignal
+          icon={<CalendarClock className="h-3.5 w-3.5" />}
+          label="Due this week"
+          value={isLoading ? "..." : String(totals.dueThisWeekCount)}
+          tone={totals.dueThisWeekCount > 0 ? "warning" : "success"}
+        />
+        <PortfolioSignal
+          icon={<Users className="h-3.5 w-3.5" />}
+          label="Accounts"
+          value={isLoading ? "..." : String(totals.accountCount)}
+        />
+        <PortfolioSignal
+          icon={<Users className="h-3.5 w-3.5" />}
+          label="Contacts"
+          value={isLoading ? "..." : String(totals.contactCount)}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_0.9fr]">
+        <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Top open opportunities
+            </div>
+            <div className="text-sm font-medium tabular text-foreground">
+              {fmtUSD(totals.activePipelineValue)}
+            </div>
+          </div>
+          <div className="mt-3 divide-y divide-hairline">
+            {totals.topOpportunities.length === 0 ? (
+              <div className="py-3 text-sm text-muted-foreground">
+                No open CRM opportunities in the current company workspace.
+              </div>
+            ) : (
+              totals.topOpportunities.map((opportunity) => (
+                <button
+                  type="button"
+                  key={opportunity.id}
+                  onClick={onOpenCrm}
+                  className="grid w-full gap-2 py-3 text-left hover:text-accent sm:grid-cols-[1fr_auto]"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-foreground">{opportunity.name}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {opportunity.account_name || opportunity.client || "No account"} ·{" "}
+                      {crmStageLabel(opportunity.stage)} · {opportunity.probability}%
+                    </div>
+                  </div>
+                  <div className="text-right font-medium tabular text-foreground">
+                    {fmtUSD(opportunity.estimated_contract)}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Next CRM actions
+            </div>
+            <div
+              className={`text-sm font-medium tabular ${
+                totals.overdueActionCount > 0 ? "text-danger" : "text-foreground"
+              }`}
+            >
+              {totals.overdueActionCount} overdue
+            </div>
+          </div>
+          <div className="mt-3 divide-y divide-hairline">
+            {totals.nextActions.length === 0 ? (
+              <div className="py-3 text-sm text-muted-foreground">No open CRM actions.</div>
+            ) : (
+              totals.nextActions.map((action) => (
+                <button
+                  type="button"
+                  key={action.id}
+                  onClick={onOpenCrm}
+                  className="grid w-full gap-2 py-3 text-left hover:text-accent sm:grid-cols-[1fr_auto]"
+                >
+                  <div className="min-w-0">
+                    <div className="font-medium text-foreground">{action.title}</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {action.opportunity_name || action.account_name || action.contact_name}
+                    </div>
+                  </div>
+                  <div className="text-right text-xs font-medium tabular text-muted-foreground">
+                    {shortDate(action.due_date)}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function crmStageLabel(stage: PipelineStage) {
+  return stage
+    .split("_")
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function PortfolioMetric({

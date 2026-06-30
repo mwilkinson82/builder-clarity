@@ -25,13 +25,13 @@ export function ActivityTimeline({ activity, isAddingNote, onAddNote }: Activity
         <Textarea
           value={note}
           onChange={(event) => setNote(event.target.value)}
-          placeholder="Add a pursuit note"
+          placeholder="Log a call, meeting, email, text, or client conversation"
           className="min-h-20"
         />
         <div className="flex justify-end">
           <Button type="button" size="sm" onClick={submit} disabled={isAddingNote || !note.trim()}>
             <Send className="mr-1.5 h-3.5 w-3.5" />
-            Add note
+            Log touchpoint
           </Button>
         </div>
       </div>
@@ -39,7 +39,7 @@ export function ActivityTimeline({ activity, isAddingNote, onAddNote }: Activity
       <div className="space-y-3">
         {activity.length === 0 && (
           <div className="rounded-lg border border-dashed border-hairline p-4 text-sm text-muted-foreground">
-            No activity yet.
+            No conversations logged yet.
           </div>
         )}
         {activity.map((item) => (
@@ -77,7 +77,7 @@ function titleFor(item: PipelineActivityRow) {
   if (item.event_type === "bid_decision") {
     return `Bid decision changed to ${item.to_value || "undecided"}`;
   }
-  if (item.event_type === "note_added") return "Note added";
+  if (item.event_type === "note_added") return "Communication logged";
   if (item.event_type === "converted") return "Converted to project";
   if (item.event_type === "created") return "Opportunity created";
   if (item.event_type === "archived") return "Opportunity archived";

@@ -27,12 +27,15 @@ export function OpportunityCard({
       }}
       onDragEnd={onDragEnd}
       onClick={() => onOpen(opportunity.id)}
-      className="w-full rounded-lg border border-hairline bg-background p-3 text-left shadow-sm transition hover:border-accent/40 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      title="Drag to move, click to open"
+      className="w-full cursor-grab rounded-lg border border-hairline bg-background p-3 text-left shadow-sm transition hover:border-accent/40 hover:bg-surface active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="flex items-start gap-2">
-        <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <GripVertical className="mt-0.5 h-4 w-4 shrink-0 cursor-grab text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-foreground">{opportunity.name}</div>
+          <div className="text-sm font-semibold leading-snug text-foreground">
+            {opportunity.name}
+          </div>
           <div className="mt-0.5 truncate text-xs text-muted-foreground">
             {opportunity.account_name || opportunity.client || "No account yet"}
           </div>
@@ -58,7 +61,7 @@ export function OpportunityCard({
             </div>
           )}
           {opportunity.next_action_title && (
-            <div className="mt-1 truncate text-[11px] text-muted-foreground">
+            <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
               Next: {opportunity.next_action_title}
             </div>
           )}

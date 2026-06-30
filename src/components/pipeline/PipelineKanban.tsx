@@ -21,9 +21,9 @@ export function PipelineKanban({ opportunities, onOpen, onStageChange }: Pipelin
     estimating: false,
     bid_submitted: false,
     negotiating: false,
-    won: true,
-    lost: true,
-    no_bid: true,
+    won: false,
+    lost: false,
+    no_bid: false,
   });
   const byStage = useMemo(() => {
     const grouped = new Map<PipelineStage, PipelineOpportunityRow[]>();
@@ -36,7 +36,7 @@ export function PipelineKanban({ opportunities, onOpen, onStageChange }: Pipelin
 
   return (
     <div className="overflow-x-auto pb-2">
-      <div className="grid min-w-[1180px] grid-cols-8 gap-3">
+      <div className="grid min-w-[1800px] grid-cols-8 gap-4">
         {STAGE_ORDER.map((stage) => {
           const items = byStage.get(stage) ?? [];
           const isCollapsed = collapsed[stage];
@@ -54,10 +54,11 @@ export function PipelineKanban({ opportunities, onOpen, onStageChange }: Pipelin
                 const id = event.dataTransfer.getData("text/plain") || draggingId;
                 setOverStage(null);
                 setDraggingId(null);
+                setCollapsed((current) => ({ ...current, [stage]: false }));
                 if (id) onStageChange(id, stage);
               }}
               className={cn(
-                "min-h-[240px] rounded-lg border border-hairline bg-card p-3 shadow-card transition",
+                "min-h-[320px] rounded-lg border border-hairline bg-card p-3 shadow-card transition",
                 isOver && "border-accent/50 bg-accent/5",
               )}
             >
@@ -96,7 +97,7 @@ export function PipelineKanban({ opportunities, onOpen, onStageChange }: Pipelin
               </div>
               {isCollapsed ? (
                 <div className="rounded-md border border-dashed border-hairline p-3 text-center text-xs text-muted-foreground">
-                  Collapsed
+                  Click the arrow to show deals
                 </div>
               ) : (
                 <div className="space-y-2">

@@ -18,6 +18,7 @@ import {
   updateOpportunity,
   type CreateNextActionInput,
   type CreateOpportunityInput,
+  type PipelineActivityRow,
   type PipelineOpportunityRow,
   type PipelineStage,
 } from "@/lib/pipeline.functions";
@@ -51,6 +52,7 @@ type PipelineWorkspaceProps = {
 
 const EMPTY_OPPORTUNITIES: PipelineOpportunityRow[] = [];
 const DEMO_OPPORTUNITY_STORAGE_KEY = "overwatch.crm.demo-opportunity-overrides.v1";
+const DEMO_ACTIVITY_STORAGE_KEY = "overwatch.crm.demo-communications.v1";
 const DEMO_OPPORTUNITY_ID_PREFIX = "00000000-0000-4000-8000-00000000010";
 
 type DemoOpportunityOverride = Partial<
@@ -108,6 +110,8 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   const [demoOpportunityOverrides, setDemoOpportunityOverrides] = useState<
     Record<string, DemoOpportunityOverride>
   >(readDemoOpportunityOverrides);
+  const [demoActivityLog, setDemoActivityLog] =
+    useState<Record<string, PipelineActivityRow[]>>(readDemoActivityLog);
 
   useEffect(() => {
     if (initialOpportunityId) setSelectedId(initialOpportunityId);
@@ -144,6 +148,9 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   useEffect(() => {
     writeDemoOpportunityOverrides(demoOpportunityOverrides);
   }, [demoOpportunityOverrides]);
+  useEffect(() => {
+    writeDemoActivityLog(demoActivityLog);
+  }, [demoActivityLog]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -268,9 +275,10 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
     mutationFn: ({ id, note }: { id: string; note: string }) => noteFn({ data: { id, note } }),
     onSuccess: async () => {
       await invalidatePipeline();
-      toast.success("Note added");
+      toast.success("Communication logged");
     },
-    onError: (error) => toast.error("Note did not save", { description: errorMessage(error) }),
+    onError: (error) =>
+      toast.error("Communication did not save", { description: errorMessage(error) }),
   });
 
   const createActionMutation = useMutation({
@@ -359,6 +367,28 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   const selected = detailQuery.data?.opportunity
     ? applyDemoOpportunityOverride(detailQuery.data.opportunity, demoOpportunityOverrides)
     : null;
+  const selectedActivity = useMemo(() => {
+    const remoteActivity = detailQuery.data?.activity ?? [];
+    if (!selectedId) return remoteActivity;
+    const localActivity = demoActivityLog[selectedId] ?? [];
+    if (localActivity.length === 0) return remoteActivity;
+    return [...localActivity, ...remoteActivity].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+  }, [demoActivityLog, detailQuery.data?.activity, selectedId]);
+
+  const addLocalDemoCommunication = (id: string, note: string) => {
+    if (!isDemoOpportunityId(id)) return;
+    const opportunity = selected ?? opportunities.find((item) => item.id === id);
+    if (!opportunity) return;
+    const now = new Date().toISOString();
+    const activity = makeDemoCommunicationActivity(opportunity, note, now);
+    setDemoActivityLog((current) => ({
+      ...current,
+      [id]: [activity, ...(current[id] ?? [])].slice(0, 50),
+    }));
+    applyLocalDemoPatch(id, { last_activity_at: now, updated_at: now });
+  };
 
   return (
     <div className="space-y-6">
@@ -508,7 +538,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
       <OpportunityDetail
         open={Boolean(selectedId)}
         opportunity={selected}
-        activity={detailQuery.data?.activity ?? []}
+        activity={selectedActivity}
         members={members}
         isLoading={detailQuery.isLoading}
         isSaving={updateMutation.isPending}
@@ -526,6 +556,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
         }}
         onAddNote={(note) => {
           if (!selectedId) return Promise.resolve();
+          addLocalDemoCommunication(selectedId, note);
           return noteMutation.mutateAsync({ id: selectedId, note }).then(() => undefined);
         }}
         onCreateAction={(input) => createActionMutation.mutateAsync(input).then(() => undefined)}
@@ -617,6 +648,82 @@ function writeDemoOpportunityOverrides(overrides: Record<string, DemoOpportunity
     DEMO_OPPORTUNITY_STORAGE_KEY,
     JSON.stringify(Object.fromEntries(entries)),
   );
+}
+
+function readDemoActivityLog(): Record<string, PipelineActivityRow[]> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(DEMO_ACTIVITY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(([id, value]) => isDemoOpportunityId(id) && Array.isArray(value))
+        .map(([id, value]) => [
+          id,
+          (value as unknown[])
+            .map(normalizeDemoActivity)
+            .filter((item): item is PipelineActivityRow => Boolean(item))
+            .slice(0, 50),
+        ])
+        .filter(([, activity]) => activity.length > 0),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeDemoActivityLog(activityLog: Record<string, PipelineActivityRow[]>) {
+  if (typeof window === "undefined") return;
+  const entries = Object.entries(activityLog)
+    .filter(([id, activity]) => isDemoOpportunityId(id) && activity.length > 0)
+    .map(([id, activity]) => [id, activity.slice(0, 50)]);
+  if (entries.length === 0) {
+    window.localStorage.removeItem(DEMO_ACTIVITY_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(
+    DEMO_ACTIVITY_STORAGE_KEY,
+    JSON.stringify(Object.fromEntries(entries)),
+  );
+}
+
+function normalizeDemoActivity(value: unknown): PipelineActivityRow | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const opportunityId = typeof row.opportunity_id === "string" ? row.opportunity_id : "";
+  if (!isDemoOpportunityId(opportunityId)) return null;
+  const eventType = row.event_type === "note_added" ? "note_added" : "field_update";
+  return {
+    id: typeof row.id === "string" ? row.id : `${opportunityId}-local-${Date.now()}`,
+    opportunity_id: opportunityId,
+    organization_id: typeof row.organization_id === "string" ? row.organization_id : "",
+    event_type: eventType,
+    from_value: "",
+    to_value: "",
+    notes: typeof row.notes === "string" ? row.notes : "",
+    created_by: typeof row.created_by === "string" ? row.created_by : null,
+    created_at: typeof row.created_at === "string" ? row.created_at : new Date().toISOString(),
+  };
+}
+
+function makeDemoCommunicationActivity(
+  opportunity: PipelineOpportunityRow,
+  note: string,
+  createdAt: string,
+): PipelineActivityRow {
+  return {
+    id: `${opportunity.id}-local-${createdAt}`,
+    opportunity_id: opportunity.id,
+    organization_id: opportunity.organization_id,
+    event_type: "note_added",
+    from_value: "",
+    to_value: "",
+    notes: note,
+    created_by: opportunity.created_by,
+    created_at: createdAt,
+  };
 }
 
 function normalizeDemoOpportunityPatch(patch: Record<string, unknown>): DemoOpportunityOverride {
