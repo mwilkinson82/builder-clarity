@@ -514,6 +514,24 @@ async function loadEstimateLines(context: { supabase: unknown }, estimateId: str
   return ((data ?? []) as Record<string, unknown>[]).map(normalizeLineItem);
 }
 
+async function getNextLineSortOrder(context: { supabase: unknown }, estimateId: string) {
+  const { data: existing, error: existingError } = await dynamicTable(
+    context.supabase,
+    "estimate_line_items",
+  )
+    .select("sort_order")
+    .eq("estimate_id", estimateId)
+    .order("sort_order", { ascending: false })
+    .limit(1);
+  if (existingError) throw new Error(existingError.message);
+  return (
+    ((existing as Record<string, unknown>[] | null)?.reduce(
+      (max, row) => Math.max(max, Math.round(num(row.sort_order))),
+      0,
+    ) ?? 0) + 1
+  );
+}
+
 async function recalculateEstimateTotalsInternal(
   context: { supabase: unknown },
   estimateId: string,
@@ -637,6 +655,11 @@ const importEstimateLineItemsInput = z.object({
   rows: z.array(estimateLineImportItemInput).min(1).max(500),
 });
 
+const createBlankLineItemsInput = z.object({
+  estimate_id: z.string().uuid(),
+  count: z.number().int().min(1).max(25),
+});
+
 const duplicateEstimateInput = z.object({
   id: z.string().uuid(),
   as_project_estimate: z.boolean().optional().default(false),
@@ -649,6 +672,7 @@ const saveMarkupDefaultsInput = z.object({
 });
 
 const HARBOR_DEMO_ESTIMATE_NAME = "Harbor Residence - Sample Estimate";
+const HARBOR_SAMPLE_MASTER_SHEET_NAME = "Harbor Residence - Sample Master Sheet";
 
 const HARBOR_DEMO_ESTIMATE_LINES = [
   {
@@ -939,6 +963,129 @@ const HARBOR_DEMO_ESTIMATE_LINES = [
   },
 ] as const;
 
+const HARBOR_SAMPLE_MASTER_SHEET_LINES = HARBOR_DEMO_ESTIMATE_LINES.filter((line) =>
+  [
+    "01-500",
+    "01-740",
+    "31-220",
+    "03-300",
+    "06-100",
+    "06-175",
+    "07-310",
+    "08-500",
+    "09-290",
+    "09-301",
+    "09-640",
+    "06-410",
+    "12-360",
+    "22-100",
+    "26-100",
+  ].includes(line.cost_code),
+);
+
+async function ensureHarborSampleMasterSheet(
+  context: { supabase: unknown; userId: string },
+  organizationId: string,
+) {
+  const { data: existingEstimates, error: existingError } = await dynamicTable(
+    context.supabase,
+    "estimates",
+  )
+    .select("id,name,project_type")
+    .eq("organization_id", organizationId)
+    .limit(500);
+  if (existingError) throw new Error(existingError.message);
+
+  const estimates = (existingEstimates ?? []) as Record<string, unknown>[];
+  if (
+    estimates.some(
+      (estimate) =>
+        str(estimate.project_type) === MASTER_ESTIMATE_PROJECT_TYPE &&
+        str(estimate.name).toLowerCase() === HARBOR_SAMPLE_MASTER_SHEET_NAME.toLowerCase(),
+    )
+  ) {
+    return;
+  }
+
+  const { data: projects, error: projectsError } = await dynamicTable(context.supabase, "projects")
+    .select("id,name,job_number")
+    .eq("organization_id", organizationId)
+    .limit(100);
+  if (projectsError) throw new Error(projectsError.message);
+
+  const harborProject = ((projects ?? []) as Record<string, unknown>[]).find((project) => {
+    const name = str(project.name).toLowerCase();
+    const jobNumber = str(project.job_number).toLowerCase();
+    return name.includes("harbor residence") || jobNumber.includes("harbor");
+  });
+
+  const externalIds = Array.from(
+    new Set(HARBOR_SAMPLE_MASTER_SHEET_LINES.map((line) => line.external_id).filter(Boolean)),
+  );
+  const libraryResult =
+    externalIds.length > 0
+      ? await dynamicTable(context.supabase, "cost_library_items")
+          .select("id,external_id")
+          .eq("organization_id", organizationId)
+          .in("external_id", externalIds)
+      : { data: [], error: null };
+  if (libraryResult.error) throw new Error(libraryResult.error.message);
+
+  const libraryIds = new Map(
+    ((libraryResult.data ?? []) as Record<string, unknown>[]).map((row) => [
+      str(row.external_id),
+      str(row.id),
+    ]),
+  );
+
+  const { data: masterRow, error: masterError } = await dynamicTable(context.supabase, "estimates")
+    .insert({
+      organization_id: organizationId,
+      created_by: context.userId,
+      name: HARBOR_SAMPLE_MASTER_SHEET_NAME,
+      description:
+        "Sample reusable master sheet seeded from Harbor Residence. Open it to see the format, copy it for your company, or create a project estimate from it.",
+      project_id: str(harborProject?.id) || null,
+      project_type: MASTER_ESTIMATE_PROJECT_TYPE,
+      region: "national",
+      region_multiplier: 1,
+      overhead_pct: 800,
+      profit_pct: 1200,
+      contingency_pct: 500,
+      bond_pct: 0,
+      tax_pct: 0,
+      general_conditions_pct: 450,
+      custom_markups: [] as unknown as Json,
+      status: "draft",
+    })
+    .select("id")
+    .single();
+  if (masterError || !masterRow) {
+    throw new Error(masterError?.message ?? "Harbor sample master sheet did not save.");
+  }
+
+  const masterId = str((masterRow as Record<string, unknown>).id);
+  const { error: linesError } = await dynamicTable(context.supabase, "estimate_line_items").insert(
+    HARBOR_SAMPLE_MASTER_SHEET_LINES.map((line, index) => ({
+      estimate_id: masterId,
+      csi_division: line.csi_division,
+      cost_code: line.cost_code,
+      description: line.description,
+      unit: line.unit,
+      quantity: line.unit === "LS" ? 1 : line.quantity,
+      material_unit_cost_cents: line.material_unit_cost_cents,
+      labor_unit_cost_cents: line.labor_unit_cost_cents,
+      library_item_id: line.external_id ? (libraryIds.get(line.external_id) ?? null) : null,
+      scope_group: line.scope_group,
+      sort_order: index + 1,
+      notes: "Sample master sheet line. Copy the master, update pricing, then create an estimate.",
+    })),
+  );
+  if (linesError) throw new Error(linesError.message);
+
+  await recalculateEstimateTotalsInternal(context, masterId);
+}
+
 export const listEstimateRegions = createServerFn({ method: "GET" }).handler(async () => ({
   regions: ESTIMATE_REGIONS,
 }));
@@ -949,6 +1096,7 @@ export const listEstimates = createServerFn({ method: "GET" })
     const organizationId = await getOrganizationId(context);
     await ensureCostLibrarySeeded(context, organizationId);
     await ensureHarborDemoEstimate(context, organizationId);
+    await ensureHarborSampleMasterSheet(context, organizationId);
 
     const { data, error } = await dynamicTable(context.supabase, "estimates")
       .select("*")
@@ -1117,20 +1265,7 @@ export const createLineItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof lineItemInput>) => lineItemInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { data: existing, error: existingError } = await dynamicTable(
-      context.supabase,
-      "estimate_line_items",
-    )
-      .select("sort_order")
-      .eq("estimate_id", data.estimate_id)
-      .order("sort_order", { ascending: false })
-      .limit(1);
-    if (existingError) throw new Error(existingError.message);
-    const nextOrder =
-      ((existing as Record<string, unknown>[] | null)?.reduce(
-        (max, row) => Math.max(max, Math.round(num(row.sort_order))),
-        0,
-      ) ?? 0) + 1;
+    const nextOrder = await getNextLineSortOrder(context, data.estimate_id);
     const quantity = data.unit.toUpperCase() === "LS" ? 1 : data.quantity;
     const { data: row, error } = await dynamicTable(context.supabase, "estimate_line_items")
       .insert({
@@ -1151,6 +1286,40 @@ export const createLineItem = createServerFn({ method: "POST" })
     return { line_item: normalizeLineItem(row as Record<string, unknown>) };
   });
 
+export const createBlankLineItems = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof createBlankLineItemsInput>) =>
+    createBlankLineItemsInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await loadEstimate(context, data.estimate_id);
+    const nextOrder = await getNextLineSortOrder(context, data.estimate_id);
+    const rows = Array.from({ length: data.count }, (_, index) => ({
+      estimate_id: data.estimate_id,
+      csi_division: "",
+      cost_code: "",
+      description: "New estimate item",
+      unit: "EA",
+      quantity: 0,
+      material_unit_cost_cents: 0,
+      labor_unit_cost_cents: 0,
+      library_item_id: null,
+      scope_group: "",
+      notes: "",
+      sort_order: nextOrder + index,
+    }));
+
+    const { data: createdRows, error } = await dynamicTable(context.supabase, "estimate_line_items")
+      .insert(rows)
+      .select("*");
+    if (error) throw new Error(error.message);
+    await recalculateEstimateTotalsInternal(context, data.estimate_id);
+    return {
+      created_count: rows.length,
+      line_items: ((createdRows ?? []) as Record<string, unknown>[]).map(normalizeLineItem),
+    };
+  });
+
 export const importEstimateLineItems = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof importEstimateLineItemsInput>) =>
@@ -1166,21 +1335,7 @@ export const importEstimateLineItems = createServerFn({ method: "POST" })
       if (deleteError) throw new Error(deleteError.message);
     }
 
-    const { data: existing, error: existingError } = await dynamicTable(
-      context.supabase,
-      "estimate_line_items",
-    )
-      .select("sort_order")
-      .eq("estimate_id", data.estimate_id)
-      .order("sort_order", { ascending: false })
-      .limit(1);
-    if (existingError) throw new Error(existingError.message);
-
-    const nextOrder =
-      ((existing as Record<string, unknown>[] | null)?.reduce(
-        (max, row) => Math.max(max, Math.round(num(row.sort_order))),
-        0,
-      ) ?? 0) + 1;
+    const nextOrder = await getNextLineSortOrder(context, data.estimate_id);
 
     const rows = data.rows.map((line, index) => {
       const unit = clean(line.unit.toUpperCase(), 16);

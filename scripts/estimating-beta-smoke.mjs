@@ -113,7 +113,7 @@ const templateEstimateRows = parseEstimateLineRows(
   parseDelimited(estimateLineTemplateCsv, ","),
   true,
 );
-assert.equal(templateEstimateRows.length, 2);
+assert.ok(templateEstimateRows.length >= 5);
 assert.equal(
   templateEstimateRows.every((row) => row.valid),
   true,
@@ -140,6 +140,9 @@ const estimatesSource = await readFile(
   "utf8",
 );
 assert.match(estimatesSource, /Harbor Residence - Sample Estimate/);
+assert.match(estimatesSource, /Harbor Residence - Sample Master Sheet/);
+assert.match(estimatesSource, /ensureHarborSampleMasterSheet/);
+assert.match(estimatesSource, /createBlankLineItems/);
 const harborBlock = estimatesSource.match(
   /const HARBOR_DEMO_ESTIMATE_LINES = \[([\s\S]*?)\n\] as const;/,
 )?.[1];
