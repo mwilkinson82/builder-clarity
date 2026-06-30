@@ -42,10 +42,20 @@ import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
+import { BillingEnhancementPanels } from "@/components/billing/BillingEnhancements";
 import {
   getClientPortalManagement,
   type ProjectClientAccessRow,
 } from "@/lib/client-portal.functions";
+import {
+  createCostActual,
+  generateBillingLineItems,
+  getBillingWorkspace,
+  updateBillingLineItem,
+  updateCostBucketBillingSettings,
+  voidCostActual,
+  type BillingWorkspaceData,
+} from "@/lib/billing.functions";
 import {
   createExposure,
   updateExposure,
@@ -82,6 +92,7 @@ import {
   type PaymentLedgerRow,
   type ExposureRow,
   type SovImportRow,
+  type BucketRow,
 } from "@/lib/projects.functions";
 import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
@@ -212,6 +223,9 @@ function makeLocalBillingApplication(
     amount_billed: input.amount_billed,
     paid_to_date: input.paid_to_date,
     retainage: input.retainage,
+    has_line_detail: input.has_line_detail,
+    total_retainage_held: input.total_retainage_held,
+    retainage_released_this_period: input.retainage_released_this_period,
     status: input.status,
     notes: input.notes,
     sort_order: input.sort_order,
@@ -270,6 +284,9 @@ function normalizeStoredBillingApplication(
     amount_billed: billingNumber(record.amount_billed),
     paid_to_date: billingNumber(record.paid_to_date),
     retainage: billingNumber(record.retainage),
+    has_line_detail: Boolean(record.has_line_detail ?? false),
+    total_retainage_held: billingNumber(record.total_retainage_held),
+    retainage_released_this_period: billingNumber(record.retainage_released_this_period),
     status: isBillingStatus(record.status) ? record.status : "draft",
     notes: billingString(record.notes),
     sort_order: billingNumber(record.sort_order),
@@ -371,10 +388,18 @@ function ProjectPage() {
   const updateInvoiceFn = useServerFn(updateBillingInvoice);
   const deleteInvoiceFn = useServerFn(deleteBillingInvoice);
   const recordPaymentFn = useServerFn(recordInvoicePayment);
+  const loadBillingWorkspaceFn = useServerFn(getBillingWorkspace);
+  const generateBillingLinesFn = useServerFn(generateBillingLineItems);
+  const updateBillingLineFn = useServerFn(updateBillingLineItem);
+  const createCostActualFn = useServerFn(createCostActual);
+  const voidCostActualFn = useServerFn(voidCostActual);
+  const updateBucketBillingSettingsFn = useServerFn(updateCostBucketBillingSettings);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", projectId] });
     qc.invalidateQueries({ queryKey: ["projects"] });
+    qc.invalidateQueries({ queryKey: ["billing-workspace", projectId] });
+    qc.invalidateQueries({ queryKey: ["portfolio-billing"] });
   };
   const useServerMutation = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
     useMutation({ mutationFn: (input: I) => fn({ data: input }), onSuccess: invalidate });
@@ -443,6 +468,90 @@ function ProjectPage() {
   const invoiceUpdate = useServerMutation<Record<string, unknown>>(updateInvoiceFn as never);
   const invoiceDelete = useServerMutation<{ id: string }>(deleteInvoiceFn);
   const paymentRecord = useServerMutation<Record<string, unknown>>(recordPaymentFn as never);
+  const billingWorkspaceQuery = useQuery({
+    queryKey: ["billing-workspace", projectId],
+    queryFn: () => loadBillingWorkspaceFn({ data: { projectId } }),
+  });
+  const billingLineGenerate = useMutation({
+    mutationFn: (input: { projectId: string; billingApplicationId: string }) =>
+      generateBillingLinesFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Billing lines generated", {
+        description: "The pay app now has SOV-level continuation detail.",
+      });
+    },
+    onError: (err) => {
+      toast.error("Billing lines did not generate", {
+        description: err instanceof Error ? err.message : "Try again after the migration runs.",
+      });
+    },
+  });
+  const billingLineUpdate = useMutation({
+    mutationFn: (input: {
+      id: string;
+      patch: {
+        work_completed_this_period?: number;
+        materials_stored_this_period?: number;
+        retainage_released?: number;
+      };
+    }) => updateBillingLineFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Billing line saved");
+    },
+    onError: (err) => {
+      toast.error("Billing line did not save", {
+        description: err instanceof Error ? err.message : "Check the line values and try again.",
+      });
+    },
+  });
+  const costActualCreate = useMutation({
+    mutationFn: (input: Parameters<typeof createCostActualFn>[0]["data"]) =>
+      createCostActualFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Cost actual saved");
+    },
+    onError: (err) => {
+      toast.error("Cost actual did not save", {
+        description: err instanceof Error ? err.message : "Check the cost entry and try again.",
+      });
+    },
+  });
+  const costActualVoid = useMutation({
+    mutationFn: (input: { id: string; notes: string }) => voidCostActualFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Cost actual voided");
+    },
+    onError: (err) => {
+      toast.error("Cost actual did not void", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const bucketBillingUpdate = useMutation({
+    mutationFn: (input: {
+      id: string;
+      patch: {
+        earned_percent_complete?: number;
+        retainage_pct?: number;
+        billing_method?: "percent" | "unit" | "material";
+        contract_quantity?: number;
+        unit?: string;
+      };
+    }) => updateBucketBillingSettingsFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("WIP setting saved");
+    },
+    onError: (err) => {
+      toast.error("WIP setting did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
   const [checkoutInvoiceId, setCheckoutInvoiceId] = useState<string | null>(null);
   const invoiceCheckout = useMutation({
     mutationFn: async (invoice: BillingInvoiceRow) => {
@@ -1340,14 +1449,34 @@ function ProjectPage() {
                 project={project}
                 rollup={rollup}
                 changeOrders={changeOrders}
+                buckets={buckets}
                 billingApplications={visibleBillingApplications}
                 billingInvoices={billingInvoices ?? []}
+                billingWorkspace={billingWorkspaceQuery.data}
+                billingWorkspaceLoading={billingWorkspaceQuery.isLoading}
                 savingPayApp={billingCreate.isPending}
                 savingInvoice={invoiceCreate.isPending}
                 savingPayment={paymentRecord.isPending}
+                savingBillingLine={billingLineGenerate.isPending || billingLineUpdate.isPending}
+                savingCostActual={costActualCreate.isPending || costActualVoid.isPending}
+                savingBucketBilling={bucketBillingUpdate.isPending}
                 onCreate={handleCreatePayApp}
                 onUpdate={handleUpdatePayApp}
                 onDelete={handleDeletePayApp}
+                onGenerateBillingLines={(billingApplicationId) =>
+                  billingLineGenerate.mutate({ projectId, billingApplicationId })
+                }
+                onUpdateBillingLine={(id, patch) => billingLineUpdate.mutate({ id, patch })}
+                onCreateCostActual={(input) =>
+                  costActualCreate.mutate({
+                    projectId,
+                    ...input,
+                  })
+                }
+                onVoidCostActual={(id, notes) => costActualVoid.mutate({ id, notes })}
+                onUpdateBucketBillingSettings={(id, patch) =>
+                  bucketBillingUpdate.mutate({ id, patch })
+                }
                 onCreateInvoice={handleCreateInvoice}
                 onUpdateInvoice={handleUpdateInvoice}
                 onDeleteInvoice={handleDeleteInvoice}
@@ -1701,14 +1830,25 @@ function BillingWorkspace({
   project,
   rollup,
   changeOrders,
+  buckets,
   billingApplications,
   billingInvoices,
+  billingWorkspace,
+  billingWorkspaceLoading,
   savingPayApp,
   savingInvoice,
   savingPayment,
+  savingBillingLine,
+  savingCostActual,
+  savingBucketBilling,
   onCreate,
   onUpdate,
   onDelete,
+  onGenerateBillingLines,
+  onUpdateBillingLine,
+  onCreateCostActual,
+  onVoidCostActual,
+  onUpdateBucketBillingSettings,
   onCreateInvoice,
   onUpdateInvoice,
   onDeleteInvoice,
@@ -1719,14 +1859,52 @@ function BillingWorkspace({
   project: ProjectRow;
   rollup: Rollup;
   changeOrders: ChangeOrderRow[];
+  buckets: BucketRow[];
   billingApplications: BillingApplicationRow[];
   billingInvoices: BillingInvoiceRow[];
+  billingWorkspace?: BillingWorkspaceData;
+  billingWorkspaceLoading?: boolean;
   savingPayApp?: boolean;
   savingInvoice?: boolean;
   savingPayment?: boolean;
+  savingBillingLine?: boolean;
+  savingCostActual?: boolean;
+  savingBucketBilling?: boolean;
   onCreate: (input: BillingDraft) => void;
   onUpdate: (id: string, patch: Partial<BillingApplicationRow>) => void;
   onDelete: (id: string) => void;
+  onGenerateBillingLines: (billingApplicationId: string) => void;
+  onUpdateBillingLine: (
+    id: string,
+    patch: {
+      work_completed_this_period?: number;
+      materials_stored_this_period?: number;
+      retainage_released?: number;
+    },
+  ) => void;
+  onCreateCostActual: (input: {
+    cost_bucket_id: string | null;
+    cost_code: string;
+    description: string;
+    category: "direct" | "labor" | "material" | "equipment" | "subcontract" | "overhead";
+    amount: number;
+    vendor: string;
+    reference_number: string;
+    cost_date: string;
+    status: "committed" | "paid";
+    notes: string;
+  }) => void;
+  onVoidCostActual: (id: string, notes: string) => void;
+  onUpdateBucketBillingSettings: (
+    id: string,
+    patch: {
+      earned_percent_complete?: number;
+      retainage_pct?: number;
+      billing_method?: "percent" | "unit" | "material";
+      contract_quantity?: number;
+      unit?: string;
+    },
+  ) => void;
   onCreateInvoice: (input: InvoiceDraft) => void;
   onUpdateInvoice: (id: string, patch: Partial<BillingInvoiceRow>) => void;
   onDeleteInvoice: (id: string) => void;
@@ -1824,6 +2002,9 @@ function BillingWorkspace({
       amount_billed: unbilledEarnedToDate,
       paid_to_date: 0,
       retainage: unbilledEarnedToDate * 0.1,
+      has_line_detail: false,
+      total_retainage_held: 0,
+      retainage_released_this_period: 0,
       status: "draft",
       notes: "",
       sort_order: billingApplications.length + 1,
@@ -1838,8 +2019,9 @@ function BillingWorkspace({
         : `INV-${String(sourceIndex).padStart(3, "0")}`);
     const subtotal = app?.amount_billed ?? unbilledEarnedToDate;
     const invoiceRetainage = app?.retainage ?? subtotal * 0.1;
+    const retainageReleased = app?.retainage_released_this_period ?? 0;
     const paidAmount = app?.paid_to_date ?? 0;
-    const totalDue = Math.max(0, subtotal - invoiceRetainage);
+    const totalDue = Math.max(0, subtotal - invoiceRetainage + retainageReleased);
     const status: BillingInvoiceRow["status"] =
       paidAmount >= totalDue && totalDue > 0
         ? "paid"
@@ -2072,6 +2254,22 @@ function BillingWorkspace({
           and retainage.
         </p>
       </div>
+
+      <BillingEnhancementPanels
+        projectId={project.id}
+        payApps={billingApplications}
+        buckets={buckets}
+        workspace={billingWorkspace}
+        isLoading={billingWorkspaceLoading}
+        savingLine={savingBillingLine}
+        savingCost={savingCostActual}
+        savingBucket={savingBucketBilling}
+        onGenerateLines={onGenerateBillingLines}
+        onUpdateLine={onUpdateBillingLine}
+        onCreateCostActual={onCreateCostActual}
+        onVoidCostActual={onVoidCostActual}
+        onUpdateBucketSettings={onUpdateBucketBillingSettings}
+      />
 
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">

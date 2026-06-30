@@ -132,6 +132,11 @@ export interface BucketRow {
   source_type: "original_sov" | "change_order" | "added_cost";
   source_date: string | null;
   source_note: string;
+  retainage_pct: number;
+  billing_method: "percent" | "unit" | "material";
+  contract_quantity: number;
+  unit: string;
+  earned_percent_complete: number;
 }
 
 export interface SovImportRow {
@@ -199,6 +204,9 @@ export interface BillingApplicationRow {
   amount_billed: number;
   paid_to_date: number;
   retainage: number;
+  has_line_detail: boolean;
+  total_retainage_held: number;
+  retainage_released_this_period: number;
   status: BillingStatus;
   notes: string;
   sort_order: number;
@@ -421,6 +429,9 @@ const normalizeBillingApplication = (b: Record<string, unknown>): BillingApplica
   amount_billed: num(b.amount_billed),
   paid_to_date: num(b.paid_to_date),
   retainage: num(b.retainage),
+  has_line_detail: Boolean(b.has_line_detail ?? false),
+  total_retainage_held: num(b.total_retainage_held),
+  retainage_released_this_period: num(b.retainage_released_this_period),
   status: str(b.status, "draft") as BillingStatus,
   notes: str(b.notes),
   sort_order: num(b.sort_order),
@@ -913,6 +924,11 @@ export const getProject = createServerFn({ method: "GET" })
         source_type: str(o.source_type, "original_sov") as BucketRow["source_type"],
         source_date: (o.source_date as string | null) ?? null,
         source_note: str(o.source_note),
+        retainage_pct: num(o.retainage_pct ?? 10),
+        billing_method: str(o.billing_method, "percent") as BucketRow["billing_method"],
+        contract_quantity: num(o.contract_quantity),
+        unit: str(o.unit),
+        earned_percent_complete: num(o.earned_percent_complete),
       };
     });
     const billingEventsByApplication = new Map<string, BillingApplicationEventRow[]>();
@@ -1060,7 +1076,8 @@ export const createProject = createServerFn({ method: "POST" })
       "ensure_current_user_account",
     );
     if (accountError) throw new Error(accountError.message);
-    if (!ensuredOrganizationId) throw new Error("No Overwatch company workspace is available for this user.");
+    if (!ensuredOrganizationId)
+      throw new Error("No Overwatch company workspace is available for this user.");
 
     let organizationId = ensuredOrganizationId as string;
     const { data: writableMemberships, error: membershipsError } = await context.supabase
@@ -1739,7 +1756,10 @@ export const updateBillingInvoice = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), patch: billingInvoiceInput.partial() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { data: before, error: loadError } = await dynamicTable(context.supabase, "billing_invoices")
+    const { data: before, error: loadError } = await dynamicTable(
+      context.supabase,
+      "billing_invoices",
+    )
       .select("status,sent_at,paid_at")
       .eq("id", data.id)
       .single();

@@ -437,7 +437,7 @@ export const listSchedule = createServerFn({ method: "GET" })
       delayFragments: delayFragmentsMissing
         ? []
         : (dRes.data ?? []).map((r) =>
-            normalizeScheduleDelayFragment(r as Record<string, unknown>),
+            normalizeScheduleDelayFragment(r as unknown as Record<string, unknown>),
           ),
       delayFragmentPersistence: delayFragmentsMissing ? "migration_required" : "ready",
       risks,
@@ -831,7 +831,7 @@ export const createScheduleDelayFragment = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return {
       ok: true,
-      delayFragment: normalizeScheduleDelayFragment(row as Record<string, unknown>),
+      delayFragment: normalizeScheduleDelayFragment(row as unknown as Record<string, unknown>),
     };
   });
 

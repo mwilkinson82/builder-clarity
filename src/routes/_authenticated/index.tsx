@@ -53,6 +53,7 @@ import {
   LogOut,
   MailPlus,
   Plus,
+  ReceiptText,
   RotateCcw,
   Search,
   Trash2,
@@ -300,6 +301,11 @@ function PortfolioPage() {
             <h1 className="mt-1 font-serif text-3xl text-foreground">Portfolio</h1>
           </div>
           <div className="flex items-center gap-2">
+            <Button asChild size="sm" variant="outline" className="gap-1.5">
+              <Link to="/billing">
+                <ReceiptText className="h-3.5 w-3.5" /> Billing
+              </Link>
+            </Button>
             <Button asChild size="sm" variant="outline" className="gap-1.5">
               <Link to="/team">
                 <Users className="h-3.5 w-3.5" /> Company
