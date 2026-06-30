@@ -1,8 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   createSupabaseAdminClient,
+  isMissingAnySupabaseColumn,
   jsonError,
   jsonOk,
+  RouteError,
   verifyStripeWebhookPayload,
 } from "@/lib/stripe.server";
 
@@ -24,8 +26,35 @@ function epochToIso(value: unknown) {
   return seconds > 0 ? new Date(seconds * 1000).toISOString() : null;
 }
 
+type DynamicQueryError = {
+  code?: string;
+  details?: string;
+  hint?: string;
+  message: string;
+};
+
+type DynamicQueryResult<T = Record<string, unknown>> = {
+  data: T | null;
+  error: DynamicQueryError | null;
+};
+
+type DynamicQuery = PromiseLike<DynamicQueryResult> & {
+  eq(column: string, value: unknown): DynamicQuery;
+  insert(values: unknown): DynamicQuery;
+  maybeSingle(): DynamicQuery;
+  select(columns?: string): DynamicQuery;
+  single(): DynamicQuery;
+  update(values: unknown): DynamicQuery;
+};
+
 const dynamicTable = (supabase: unknown, relation: string) =>
-  (supabase as { from(table: string): any }).from(relation);
+  (supabase as { from(table: string): DynamicQuery }).from(relation);
+
+const CONNECT_PERSISTENCE_COLUMNS = [
+  "stripe_connect_account_id",
+  "stripe_connect_status",
+  "payment_processor_ready",
+] as const;
 
 function sessionMetadata(object: StripeObject) {
   return object.metadata ?? {};
@@ -47,11 +76,16 @@ function connectAccountStatus(object: StripeObject) {
     return { status: "active", ready: true };
   }
 
-  if (detailsSubmitted) {
-    return { status: "pending_review", ready: false };
-  }
+  return { status: "pending", ready: false };
+}
 
-  return { status: "onboarding_started", ready: false };
+function stripeConnectSchemaNotReady(error: { message?: string } | null) {
+  return new RouteError(
+    "stripe_schema_not_ready",
+    "Stripe webhook processing is waiting on the latest billing database migration.",
+    409,
+    { cause: error?.message ?? "" },
+  );
 }
 
 async function handleCheckoutCompleted(object: StripeObject) {
@@ -112,7 +146,10 @@ async function markInvoicePaid(object: StripeObject) {
   const overwatchFee = Math.max(0, num(metadata.overwatch_fee_amount_cents) / 100);
   const netPayout = Math.max(0, amount - overwatchFee);
 
-  const { data: existingPayment, error: existingError } = await dynamicTable(admin, "payment_ledger")
+  const { data: existingPayment, error: existingError } = await dynamicTable(
+    admin,
+    "payment_ledger",
+  )
     .select("id")
     .eq("stripe_checkout_session_id", sessionId)
     .maybeSingle();
@@ -263,7 +300,12 @@ async function markConnectAccountUpdated(object: StripeObject) {
       payment_processor_ready: status.ready,
     })
     .eq("stripe_connect_account_id", accountId);
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (isMissingAnySupabaseColumn(error, CONNECT_PERSISTENCE_COLUMNS)) {
+      throw stripeConnectSchemaNotReady(error);
+    }
+    throw new Error(error.message);
+  }
 }
 
 export const Route = createFileRoute("/api/stripe/webhook")({

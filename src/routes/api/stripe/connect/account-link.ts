@@ -3,10 +3,13 @@ import { z } from "zod";
 import {
   appendStripeForm,
   getAppOrigin,
+  isMissingAnySupabaseColumn,
+  isMissingSupabaseColumn,
   jsonError,
   jsonOk,
   requireAuthedStripeContext,
   requireCanManageOrganization,
+  RouteError,
   stripeGet,
   stripePost,
   type AuthedStripeContext,
@@ -40,8 +43,41 @@ type StripeAccountLink = {
   expires_at?: number;
 };
 
+type DynamicQueryError = {
+  code?: string;
+  details?: string;
+  hint?: string;
+  message: string;
+};
+
+type DynamicQueryResult<T = Record<string, unknown>> = {
+  data: T | null;
+  error: DynamicQueryError | null;
+};
+
+type DynamicQuery = PromiseLike<DynamicQueryResult> & {
+  eq(column: string, value: unknown): DynamicQuery;
+  select(columns?: string): DynamicQuery;
+  single(): DynamicQuery;
+  update(values: unknown): DynamicQuery;
+};
+
 const dynamicTable = (supabase: unknown, relation: string) =>
-  (supabase as { from(table: string): any }).from(relation);
+  (supabase as { from(table: string): DynamicQuery }).from(relation);
+
+const CONNECT_SELECT =
+  "id,name,billing_email,stripe_connect_account_id,stripe_connect_status,payment_processor_ready";
+const CONNECT_SELECT_WITHOUT_BILLING_EMAIL =
+  "id,name,stripe_connect_account_id,stripe_connect_status,payment_processor_ready";
+const CONNECT_PERSISTENCE_COLUMNS = [
+  "stripe_connect_account_id",
+  "stripe_connect_status",
+  "payment_processor_ready",
+] as const;
+const CONNECT_OPTIONAL_COLUMNS = ["billing_email", ...CONNECT_PERSISTENCE_COLUMNS] as const;
+
+const str = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback);
+const bool = (value: unknown) => (typeof value === "boolean" ? value : Boolean(value));
 
 function normalizedInternalPath(value: string | undefined, fallback: string) {
   if (!value) return fallback;
@@ -55,11 +91,27 @@ function connectStatus(account: StripeConnectAccount) {
     return { status: "active", ready: true };
   }
 
-  if (account.details_submitted) {
-    return { status: "pending_review", ready: false };
-  }
+  return { status: "pending", ready: false };
+}
 
-  return { status: "onboarding_started", ready: false };
+function stripeConnectSchemaNotReady(error: { message?: string } | null) {
+  return new RouteError(
+    "stripe_schema_not_ready",
+    "Stripe setup is waiting on the latest billing database migration. Deploy the current Overwatch migration, then try Connect Stripe again.",
+    409,
+    { cause: error?.message ?? "" },
+  );
+}
+
+function normalizeOrganization(row: Record<string, unknown>): OrganizationRecord {
+  return {
+    id: str(row.id),
+    name: str(row.name, "Company"),
+    billing_email: str(row.billing_email),
+    stripe_connect_account_id: str(row.stripe_connect_account_id),
+    stripe_connect_status: str(row.stripe_connect_status, "not_connected"),
+    payment_processor_ready: bool(row.payment_processor_ready),
+  };
 }
 
 async function resolveOrganizationId(
@@ -86,8 +138,45 @@ async function syncConnectAccountStatus(
       payment_processor_ready: status.ready,
     })
     .eq("id", organizationId);
-  if (error) throw new Error(error.message);
+  if (error) {
+    if (isMissingAnySupabaseColumn(error, CONNECT_PERSISTENCE_COLUMNS)) {
+      throw stripeConnectSchemaNotReady(error);
+    }
+    throw new Error(error.message);
+  }
   return status;
+}
+
+async function loadOrganizationForConnect(context: AuthedStripeContext, organizationId: string) {
+  const full = await dynamicTable(context.admin, "organizations")
+    .select(CONNECT_SELECT)
+    .eq("id", organizationId)
+    .single();
+  if (!full.error) {
+    return normalizeOrganization(full.data as unknown as Record<string, unknown>);
+  }
+  if (!isMissingAnySupabaseColumn(full.error, CONNECT_OPTIONAL_COLUMNS)) {
+    throw new Error(full.error.message);
+  }
+
+  if (!isMissingSupabaseColumn(full.error, "billing_email")) {
+    throw stripeConnectSchemaNotReady(full.error);
+  }
+
+  const withoutBillingEmail = await dynamicTable(context.admin, "organizations")
+    .select(CONNECT_SELECT_WITHOUT_BILLING_EMAIL)
+    .eq("id", organizationId)
+    .single();
+  if (!withoutBillingEmail.error) {
+    return normalizeOrganization({
+      ...(withoutBillingEmail.data as Record<string, unknown>),
+      billing_email: "",
+    });
+  }
+  if (isMissingAnySupabaseColumn(withoutBillingEmail.error, CONNECT_PERSISTENCE_COLUMNS)) {
+    throw stripeConnectSchemaNotReady(withoutBillingEmail.error);
+  }
+  throw new Error(withoutBillingEmail.error.message);
 }
 
 async function createConnectAccount(
@@ -121,16 +210,9 @@ export const Route = createFileRoute("/api/stripe/connect/account-link")({
           const organizationId = await resolveOrganizationId(body.organizationId, context);
           await requireCanManageOrganization(context, organizationId);
 
-          const { data: organization, error: orgError } = await dynamicTable(context.admin, "organizations")
-            .select(
-              "id,name,billing_email,stripe_connect_account_id,stripe_connect_status,payment_processor_ready",
-            )
-            .eq("id", organizationId)
-            .single();
-          if (orgError) throw new Error(orgError.message);
-          if (!organization) throw new Error("Organization not found.");
+          const orgRecord = await loadOrganizationForConnect(context, organizationId);
+          if (!orgRecord.id) throw new Error("Organization not found.");
 
-          const orgRecord = organization as unknown as OrganizationRecord;
           const account = orgRecord.stripe_connect_account_id
             ? await stripeGet<StripeConnectAccount>(
                 `accounts/${orgRecord.stripe_connect_account_id}`,

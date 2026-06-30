@@ -1973,7 +1973,9 @@ function PlanReadinessPanel({
   const connectReady = paymentProcessorReady || stripeConnectStatus === "active";
   const checkoutConfigured = Boolean(stripePriceId);
   const connectInProgress =
-    stripeConnectStatus === "onboarding_started" || stripeConnectStatus === "pending_review";
+    stripeConnectStatus === "pending" ||
+    stripeConnectStatus === "onboarding_started" ||
+    stripeConnectStatus === "pending_review";
   const connectButtonLabel = connectReady
     ? "Stripe connected"
     : connectInProgress
