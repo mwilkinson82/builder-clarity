@@ -204,7 +204,12 @@ function CostLibraryPage() {
         },
       }),
     onSuccess: (result) => {
-      toast.success(`${result.created_count} cost items imported`);
+      const updated = result.updated_count ?? 0;
+      toast.success(
+        updated > 0
+          ? `${result.created_count} cost items added, ${updated} updated`
+          : `${result.created_count} cost items imported`,
+      );
       setImportOpen(false);
       setImportRows([]);
       setPasteText("");

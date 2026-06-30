@@ -1448,39 +1448,102 @@ export const importCostLibraryItems = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const organizationId = await getOrganizationId(context);
-    const rows = data.items.map((item) => ({
-      organization_id: organizationId,
-      external_id: "",
-      csi_division: clean(item.csi_division, 8),
-      csi_code: clean(item.csi_code, 16),
-      category: clean(item.category, 64),
-      description: clean(item.description, 500),
-      unit: clean(item.unit.toUpperCase(), 16),
-      material_cost_cents: item.material_cost_cents,
-      labor_cost_cents: item.labor_cost_cents,
-      crew_size: item.crew_size ?? null,
-      productivity_per_hour: item.productivity_per_hour ?? null,
-      synonyms: item.synonyms as unknown as Json,
-      keywords:
-        item.keywords.length > 0
-          ? (item.keywords as unknown as Json)
-          : (item.description
-              .toLowerCase()
-              .split(/[^a-z0-9]+/)
-              .filter(Boolean) as unknown as Json),
-      source: "imported",
-      base_region: "national",
-    }));
+    const keyFor = (row: { csi_code: string; description: string; unit: string }) =>
+      [row.csi_code.trim().toLowerCase(), row.description.trim().toLowerCase(), row.unit.trim()]
+        .join("\u001f")
+        .slice(0, 700);
+    const rowByKey = new Map(
+      data.items.map((item) => {
+        const row = {
+          organization_id: organizationId,
+          external_id: "",
+          csi_division: clean(item.csi_division, 8),
+          csi_code: clean(item.csi_code, 16),
+          category: clean(item.category, 64),
+          description: clean(item.description, 500),
+          unit: clean(item.unit.toUpperCase(), 16),
+          material_cost_cents: item.material_cost_cents,
+          labor_cost_cents: item.labor_cost_cents,
+          crew_size: item.crew_size ?? null,
+          productivity_per_hour: item.productivity_per_hour ?? null,
+          synonyms: item.synonyms as unknown as Json,
+          keywords:
+            item.keywords.length > 0
+              ? (item.keywords as unknown as Json)
+              : (item.description
+                  .toLowerCase()
+                  .split(/[^a-z0-9]+/)
+                  .filter(Boolean) as unknown as Json),
+          source: "imported",
+          base_region: "national",
+        };
+        return [keyFor(row), row] as const;
+      }),
+    );
+    const rows = Array.from(rowByKey.values());
 
-    const { data: inserted, error } = await dynamicTable(context.supabase, "cost_library_items")
-      .insert(rows)
-      .select("*");
-    if (error) throw new Error(error.message);
+    const { data: existing, error: existingError } = await dynamicTable(
+      context.supabase,
+      "cost_library_items",
+    )
+      .select("*")
+      .eq("organization_id", organizationId)
+      .limit(5000);
+    if (existingError) throw new Error(existingError.message);
+
+    const existingByKey = new Map<string, Record<string, unknown>>();
+    for (const row of ((existing ?? []) as Record<string, unknown>[]).filter(
+      (row) => str(row.source) !== "system",
+    )) {
+      existingByKey.set(
+        keyFor({
+          csi_code: str(row.csi_code),
+          description: str(row.description),
+          unit: str(row.unit).toUpperCase(),
+        }),
+        row,
+      );
+    }
+
+    const inserts: typeof rows = [];
+    const updates: Array<{ id: string; row: (typeof rows)[number] }> = [];
+    for (const row of rows) {
+      const existingRow = existingByKey.get(keyFor(row));
+      const id = str(existingRow?.id);
+      if (id) {
+        updates.push({ id, row });
+      } else {
+        inserts.push(row);
+      }
+    }
+
+    const updatedRows: Record<string, unknown>[] = [];
+    for (const update of updates) {
+      const { data: updated, error: updateError } = await dynamicTable(
+        context.supabase,
+        "cost_library_items",
+      )
+        .update(update.row)
+        .eq("id", update.id)
+        .select("*")
+        .single();
+      if (updateError || !updated) {
+        throw new Error(updateError?.message ?? "Imported cost item did not update.");
+      }
+      updatedRows.push(updated as Record<string, unknown>);
+    }
+
+    const insertedResult = inserts.length
+      ? await dynamicTable(context.supabase, "cost_library_items").insert(inserts).select("*")
+      : { data: [], error: null };
+    if (insertedResult.error) throw new Error(insertedResult.error.message);
 
     return {
-      created_count: ((inserted ?? []) as unknown[]).length,
-      items: ((inserted ?? []) as Record<string, unknown>[]).map((row) =>
-        normalizeLibraryItem(row),
+      created_count: ((insertedResult.data ?? []) as unknown[]).length,
+      updated_count: updatedRows.length,
+      imported_count: rows.length,
+      items: [...((insertedResult.data ?? []) as Record<string, unknown>[]), ...updatedRows].map(
+        (row) => normalizeLibraryItem(row),
       ),
     };
   });
