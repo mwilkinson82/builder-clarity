@@ -12,6 +12,7 @@ import {
   stripePost,
   type StripeCheckoutSession,
 } from "@/lib/stripe.server";
+import { billingDocumentLabel } from "@/lib/billing-labels";
 
 const invoiceCheckoutInput = z.object({
   invoiceId: z.string().uuid(),
@@ -48,8 +49,20 @@ type OrganizationPaymentRecord = {
   payment_processor_ready: boolean;
 };
 
+type DynamicQueryResult<T = unknown> = {
+  data: T | null;
+  error: { message: string } | null;
+};
+
+type DynamicQuery = PromiseLike<DynamicQueryResult> & {
+  select(columns?: string): DynamicQuery;
+  update(values: unknown): DynamicQuery;
+  eq(column: string, value: unknown): DynamicQuery;
+  single(): DynamicQuery;
+};
+
 const dynamicTable = (supabase: unknown, relation: string) =>
-  (supabase as { from(table: string): any }).from(relation);
+  (supabase as { from(table: string): DynamicQuery }).from(relation);
 
 function normalizedInternalPath(value: string | undefined, fallback: string) {
   if (!value) return fallback;
@@ -77,7 +90,10 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
           const body = invoiceCheckoutInput.parse(await request.json());
           const context = await requireAuthedStripeContext(request);
 
-          const { data: invoice, error: invoiceError } = await dynamicTable(context.admin, "billing_invoices")
+          const { data: invoice, error: invoiceError } = await dynamicTable(
+            context.admin,
+            "billing_invoices",
+          )
             .select(
               "id,project_id,billing_application_id,invoice_number,title,subtotal,retainage,total_due,paid_amount,status,sent_at",
             )
@@ -106,7 +122,10 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
             );
           }
 
-          const { data: organization, error: organizationError } = await dynamicTable(context.admin, "organizations")
+          const { data: organization, error: organizationError } = await dynamicTable(
+            context.admin,
+            "organizations",
+          )
             .select("id,stripe_connect_account_id,stripe_connect_status,payment_processor_ready")
             .eq("id", projectRecord.organization_id)
             .single();
@@ -155,8 +174,11 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
             origin,
           );
 
-          const label =
-            invoiceRecord.invoice_number || invoiceRecord.title || `${projectRecord.name} invoice`;
+          const label = billingDocumentLabel(
+            invoiceRecord.invoice_number,
+            invoiceRecord.title,
+            `${projectRecord.name} invoice`,
+          );
           const form = new URLSearchParams();
           appendStripeForm(form, "mode", "payment");
           appendStripeForm(form, "client_reference_id", invoiceRecord.id);

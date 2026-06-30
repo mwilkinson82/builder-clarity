@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
+import { normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import {
   computeRollup,
   computeScheduleVarianceWeeks,
@@ -233,11 +234,22 @@ export interface BillingApplicationEventRow {
 }
 
 export type InvoiceStatus =
-  "draft" | "sent" | "viewed" | "partially_paid" | "paid" | "overdue" | "void";
+  | "draft"
+  | "sent"
+  | "viewed"
+  | "partially_paid"
+  | "paid"
+  | "overdue"
+  | "void";
 
 export type PaymentStatus = "pending" | "succeeded" | "failed" | "refunded" | "void";
 export type OnlinePaymentStatus =
-  "not_enabled" | "pending" | "paid" | "expired" | "failed" | "refunded";
+  | "not_enabled"
+  | "pending"
+  | "paid"
+  | "expired"
+  | "failed"
+  | "refunded";
 
 export interface BillingInvoiceRow {
   id: string;
@@ -415,8 +427,8 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
 const normalizeBillingApplication = (b: Record<string, unknown>): BillingApplicationRow => ({
   id: b.id as string,
   project_id: b.project_id as string,
-  application_number: str(b.application_number),
-  invoice_number: str(b.invoice_number),
+  application_number: normalizeBillingNumberLabel(str(b.application_number)),
+  invoice_number: normalizeBillingNumberLabel(str(b.invoice_number)),
   submitted_date: (b.submitted_date as string | null) ?? null,
   due_date: (b.due_date as string | null) ?? null,
   billing_period: str(b.billing_period),
@@ -477,8 +489,8 @@ const normalizeBillingInvoice = (row: Record<string, unknown>): BillingInvoiceRo
   id: row.id as string,
   project_id: row.project_id as string,
   billing_application_id: (row.billing_application_id as string | null) ?? null,
-  invoice_number: str(row.invoice_number),
-  title: str(row.title),
+  invoice_number: normalizeBillingNumberLabel(str(row.invoice_number)),
+  title: normalizeBillingNumberLabel(str(row.title)),
   issue_date: (row.issue_date as string | null) ?? null,
   due_date: (row.due_date as string | null) ?? null,
   subtotal: num(row.subtotal),
@@ -1596,6 +1608,11 @@ export const createBillingApplication = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
+    const billingPayload = {
+      ...rest,
+      application_number: normalizeBillingNumberLabel(rest.application_number),
+      invoice_number: normalizeBillingNumberLabel(rest.invoice_number),
+    };
     const { data: last } = await context.supabase
       .from("billing_applications")
       .select("sort_order")
@@ -1608,7 +1625,7 @@ export const createBillingApplication = createServerFn({ method: "POST" })
       .from("billing_applications")
       .insert({
         project_id: projectId,
-        ...rest,
+        ...billingPayload,
         sort_order,
       })
       .select("*")
@@ -1634,6 +1651,15 @@ export const updateBillingApplication = createServerFn({ method: "POST" })
       z.object({ id: z.string().uuid(), patch: billingApplicationInput.partial() }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    const normalizedPatch = { ...data.patch };
+    if (typeof normalizedPatch.application_number === "string") {
+      normalizedPatch.application_number = normalizeBillingNumberLabel(
+        normalizedPatch.application_number,
+      );
+    }
+    if (typeof normalizedPatch.invoice_number === "string") {
+      normalizedPatch.invoice_number = normalizeBillingNumberLabel(normalizedPatch.invoice_number);
+    }
     const { data: before, error: beforeError } = await context.supabase
       .from("billing_applications")
       .select("id,project_id,status,amount_billed,paid_to_date,application_number")
@@ -1644,22 +1670,22 @@ export const updateBillingApplication = createServerFn({ method: "POST" })
 
     const { error } = await context.supabase
       .from("billing_applications")
-      .update(data.patch)
+      .update(normalizedPatch)
       .eq("id", data.id);
     if (error) throw new Error(error.message);
 
     const previousStatus = str(before.status, "draft");
-    const nextStatus = data.patch.status;
+    const nextStatus = normalizedPatch.status;
     const statusChanged = typeof nextStatus === "string" && nextStatus !== previousStatus;
     const previousPaid = num(before.paid_to_date);
-    const nextPaid = data.patch.paid_to_date;
+    const nextPaid = normalizedPatch.paid_to_date;
     const paidChanged = typeof nextPaid === "number" && nextPaid !== previousPaid;
 
     if (statusChanged || paidChanged) {
       const eventType = statusChanged ? "status_change" : "payment_update";
       const eventNotes = statusChanged
-        ? `${str(before.application_number, "Pay app")} moved from ${previousStatus} to ${nextStatus}.`
-        : `${str(before.application_number, "Pay app")} paid-to-date updated from ${previousPaid} to ${nextPaid}.`;
+        ? `${normalizeBillingNumberLabel(str(before.application_number, "Pay app"))} moved from ${previousStatus} to ${nextStatus}.`
+        : `${normalizeBillingNumberLabel(str(before.application_number, "Pay app"))} paid-to-date updated from ${previousPaid} to ${nextPaid}.`;
       await recordBillingApplicationEvent(context.supabase, {
         billing_application_id: data.id,
         project_id: before.project_id as string,
@@ -1766,11 +1792,16 @@ export const createBillingInvoice = createServerFn({ method: "POST" })
       const existingPayAppInvoice = firstActiveInvoice(existingPayAppInvoices);
       if (existingPayAppInvoice) {
         throw new Error(
-          `This pay app already has invoice ${str(existingPayAppInvoice.invoice_number, "")}. Void or edit the existing invoice before creating another.`,
+          `This pay app already has invoice ${normalizeBillingNumberLabel(str(existingPayAppInvoice.invoice_number, ""))}. Void or edit the existing invoice before creating another.`,
         );
       }
     }
-    const invoiceNumber = rest.invoice_number.trim();
+    const invoiceNumber = normalizeBillingNumberLabel(rest.invoice_number);
+    const invoicePayload = {
+      ...rest,
+      invoice_number: invoiceNumber,
+      title: normalizeBillingNumberLabel(rest.title),
+    };
     if (invoiceNumber) {
       const { data: existingInvoiceNumbers, error: existingInvoiceNumberError } =
         await dynamicTable(context.supabase, "billing_invoices")
@@ -1789,7 +1820,7 @@ export const createBillingInvoice = createServerFn({ method: "POST" })
     const { data: created, error } = await dynamicTable(context.supabase, "billing_invoices")
       .insert({
         project_id: projectId,
-        ...rest,
+        ...invoicePayload,
         invoice_number: invoiceNumber,
         sent_at: sentAt,
         paid_at: paidAt,
@@ -1820,6 +1851,12 @@ export const updateBillingInvoice = createServerFn({ method: "POST" })
     if (!before) throw new Error("Invoice not found.");
 
     const patch: Record<string, unknown> = { ...data.patch };
+    if (typeof patch.invoice_number === "string") {
+      patch.invoice_number = normalizeBillingNumberLabel(patch.invoice_number);
+    }
+    if (typeof patch.title === "string") {
+      patch.title = normalizeBillingNumberLabel(patch.title);
+    }
     const nextStatus = data.patch.status as InvoiceStatus | undefined;
     if (nextStatus && isInvoiceSentStatus(nextStatus) && !before.sent_at) {
       patch.sent_at = new Date().toISOString();

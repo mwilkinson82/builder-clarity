@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { aiaBillingFilename, downloadPdfBytes, generateAiaBillingPdf } from "@/lib/aia-pdf";
+import { billingDocumentLabel } from "@/lib/billing-labels";
 import { fmtPct, fmtUSD } from "@/lib/format";
 import type {
   BillingLineItemRow,
@@ -295,7 +296,7 @@ export function BillingLineItemsPanel({
             <SelectContent>
               {payApps.map((app) => (
                 <SelectItem key={app.id} value={app.id}>
-                  {app.application_number || app.invoice_number || "Pay app"}
+                  {billingDocumentLabel(app.application_number, app.invoice_number)}
                 </SelectItem>
               ))}
             </SelectContent>

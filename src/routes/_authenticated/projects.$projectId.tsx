@@ -47,6 +47,7 @@ import {
   ProjectCostTrackingPanel,
   WipAnalysisPanel,
 } from "@/components/billing/BillingEnhancements";
+import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import {
   getClientPortalManagement,
   type ProjectClientAccessRow,
@@ -220,8 +221,8 @@ function makeLocalBillingApplication(
   return {
     id,
     project_id: projectId,
-    application_number: input.application_number,
-    invoice_number: input.invoice_number,
+    application_number: normalizeBillingNumberLabel(input.application_number),
+    invoice_number: normalizeBillingNumberLabel(input.invoice_number),
     submitted_date: input.submitted_date || null,
     due_date: input.due_date || null,
     billing_period: input.billing_period,
@@ -281,8 +282,10 @@ function normalizeStoredBillingApplication(
   return {
     id: normalizedId,
     project_id: projectId,
-    application_number: billingString(record.application_number, "Pay App"),
-    invoice_number: billingString(record.invoice_number),
+    application_number: normalizeBillingNumberLabel(
+      billingString(record.application_number, "Pay App"),
+    ),
+    invoice_number: normalizeBillingNumberLabel(billingString(record.invoice_number)),
     submitted_date: billingDate(record.submitted_date),
     due_date: billingDate(record.due_date),
     billing_period: billingString(record.billing_period),
@@ -478,7 +481,7 @@ function ProjectPage() {
     onSuccess: (_result, input) => {
       invalidate();
       toast.success("Invoice created", {
-        description: `${input.invoice_number || "Invoice"} is now in the billing ledger.`,
+        description: `${billingDocumentLabel(input.invoice_number, input.title, "Invoice")} is now in the billing ledger.`,
       });
     },
     onError: (err) => {
@@ -925,7 +928,7 @@ function ProjectPage() {
       {
         onSuccess: () => {
           toast.success("Pay app added", {
-            description: `${input.application_number || "Pay application"} is now in the billing ledger.`,
+            description: `${billingDocumentLabel(input.application_number, input.invoice_number, "Pay application")} is now in the billing ledger.`,
           });
         },
         onError: (err) => {
@@ -958,8 +961,8 @@ function ProjectPage() {
                 to_status: statusChanged ? patch.status : app.status,
                 amount: paidChanged ? patch.paid_to_date : app.amount_billed,
                 notes: statusChanged
-                  ? `${app.application_number || "Pay app"} moved from ${app.status} to ${patch.status}.`
-                  : `${app.application_number || "Pay app"} paid-to-date updated from ${app.paid_to_date} to ${patch.paid_to_date}.`,
+                  ? `${billingDocumentLabel(app.application_number, app.invoice_number)} moved from ${app.status} to ${patch.status}.`
+                  : `${billingDocumentLabel(app.application_number, app.invoice_number)} paid-to-date updated from ${app.paid_to_date} to ${patch.paid_to_date}.`,
               }),
             );
           }
@@ -1784,7 +1787,7 @@ function invoiceFilename(project: ProjectRow, invoice: BillingInvoiceRow) {
     .replace(/[^a-z0-9]+/gi, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 42);
-  const invoicePart = (invoice.invoice_number || invoice.title || "invoice")
+  const invoicePart = billingDocumentLabel(invoice.invoice_number, invoice.title, "invoice")
     .replace(/[^a-z0-9]+/gi, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 42);
@@ -1824,8 +1827,10 @@ async function enqueueInvoiceEmail(input: {
         projectName: project.name,
         clientName: project.client,
         jobNumber: project.job_number,
-        invoiceNumber: invoice.invoice_number || invoice.title || "Invoice",
-        invoiceTitle: invoice.title || linkedPayApp?.application_number || "",
+        invoiceNumber: billingDocumentLabel(invoice.invoice_number, invoice.title, "Invoice"),
+        invoiceTitle: normalizeBillingNumberLabel(
+          invoice.title || linkedPayApp?.application_number || "",
+        ),
         invoiceStatus: invoiceStatusLabel(invoice.status),
         totalDue: fmtUSD(invoice.total_due),
         paidAmount: fmtUSD(invoice.paid_amount),
@@ -2089,9 +2094,10 @@ function BillingWorkspace({
   const buildInvoiceDraft = (app?: BillingApplicationRow): InvoiceDraft => {
     const sourceIndex = billingInvoices.length + 1;
     const sourceNumber = String(sourceIndex);
-    const invoiceNumber =
+    const invoiceNumber = normalizeBillingNumberLabel(
       app?.invoice_number ||
-      (project.job_number ? `${project.job_number}-${sourceNumber}` : `INV-${sourceNumber}`);
+        (project.job_number ? `${project.job_number}-${sourceNumber}` : `INV-${sourceNumber}`),
+    );
     const subtotal = app?.amount_billed ?? unbilledEarnedToDate;
     const invoiceRetainage = app?.retainage ?? subtotal * 0.1;
     const retainageReleased = app?.retainage_released_this_period ?? 0;
@@ -2108,7 +2114,7 @@ function BillingWorkspace({
     return {
       billing_application_id: app?.id ?? null,
       invoice_number: invoiceNumber,
-      title: app?.application_number || `Invoice ${sourceNumber}`,
+      title: normalizeBillingNumberLabel(app?.application_number || `Invoice ${sourceNumber}`),
       issue_date: app?.submitted_date ?? today,
       due_date: app?.due_date ?? addDays(today, 30),
       subtotal,
@@ -2132,16 +2138,20 @@ function BillingWorkspace({
   const selectedPayAppInvoice = invoiceDraft.billing_application_id
     ? getActiveInvoiceForPayApp(invoiceDraft.billing_application_id)
     : undefined;
-  const normalizedInvoiceNumber = invoiceDraft.invoice_number.trim().toLowerCase();
+  const normalizedInvoiceNumber = normalizeBillingNumberLabel(invoiceDraft.invoice_number)
+    .toLowerCase()
+    .trim();
   const duplicateInvoiceNumber = normalizedInvoiceNumber
     ? activeBillingInvoices.find(
-        (invoice) => invoice.invoice_number.trim().toLowerCase() === normalizedInvoiceNumber,
+        (invoice) =>
+          normalizeBillingNumberLabel(invoice.invoice_number).toLowerCase() ===
+          normalizedInvoiceNumber,
       )
     : undefined;
   const invoiceBlockingMessage = selectedPayAppInvoice
-    ? `This pay app already has invoice ${selectedPayAppInvoice.invoice_number}. Edit or void the existing invoice before creating another.`
+    ? `This pay app already has invoice ${billingDocumentLabel(selectedPayAppInvoice.invoice_number, selectedPayAppInvoice.title, "Invoice")}. Edit or void the existing invoice before creating another.`
     : duplicateInvoiceNumber
-      ? `Invoice ${invoiceDraft.invoice_number.trim()} already exists. Use a unique invoice number.`
+      ? `Invoice ${normalizeBillingNumberLabel(invoiceDraft.invoice_number)} already exists. Use a unique invoice number.`
       : "";
   const invoiceDialogMessage = invoiceError || invoiceBlockingMessage;
 
@@ -2161,7 +2171,7 @@ function BillingWorkspace({
       const existingInvoice = getActiveInvoiceForPayApp(app.id);
       if (existingInvoice) {
         toast.warning("Pay app already invoiced", {
-          description: `${app.application_number || "This pay app"} is linked to ${existingInvoice.invoice_number}.`,
+          description: `${billingDocumentLabel(app.application_number, app.invoice_number, "This pay app")} is linked to ${billingDocumentLabel(existingInvoice.invoice_number, existingInvoice.title, "Invoice")}.`,
         });
         setInvoiceOpen(false);
         return;
@@ -2179,7 +2189,7 @@ function BillingWorkspace({
     const existingInvoice = app ? getActiveInvoiceForPayApp(app.id) : undefined;
     if (app && existingInvoice) {
       setInvoiceError(
-        `${app.application_number || "This pay app"} already has invoice ${existingInvoice.invoice_number}.`,
+        `${billingDocumentLabel(app.application_number, app.invoice_number, "This pay app")} already has invoice ${billingDocumentLabel(existingInvoice.invoice_number, existingInvoice.title, "Invoice")}.`,
       );
       return;
     }
@@ -2587,9 +2597,9 @@ function BillingWorkspace({
                                   value={app.id}
                                   disabled={Boolean(existingInvoice)}
                                 >
-                                  {app.application_number || app.invoice_number || "Pay app"}
+                                  {billingDocumentLabel(app.application_number, app.invoice_number)}
                                   {existingInvoice
-                                    ? ` - invoiced as ${existingInvoice.invoice_number}`
+                                    ? ` - invoiced as ${billingDocumentLabel(existingInvoice.invoice_number, existingInvoice.title, "Invoice")}`
                                     : ""}
                                 </SelectItem>
                               );
@@ -2939,6 +2949,8 @@ function BillingApplicationRowEditor({
 }) {
   const openReceivable = Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
   const events = app.status_events.slice(0, 3);
+  const appLabel = billingDocumentLabel(app.application_number, app.invoice_number);
+  const invoiceLabel = normalizeBillingNumberLabel(app.invoice_number);
 
   return (
     <div className="rounded-md border border-hairline bg-surface p-4">
@@ -2947,8 +2959,10 @@ function BillingApplicationRowEditor({
           <div className="space-y-1.5">
             <Label>Pay app</Label>
             <EditableText
-              value={app.application_number}
-              onCommit={(application_number) => onPatch({ application_number })}
+              value={appLabel}
+              onCommit={(application_number) =>
+                onPatch({ application_number: normalizeBillingNumberLabel(application_number) })
+              }
             />
             <EditableText
               value={app.billing_period}
@@ -2960,9 +2974,11 @@ function BillingApplicationRowEditor({
           <div className="space-y-1.5">
             <Label>Invoice #</Label>
             <EditableText
-              value={app.invoice_number}
+              value={invoiceLabel}
               placeholder="Invoice #"
-              onCommit={(invoice_number) => onPatch({ invoice_number })}
+              onCommit={(invoice_number) =>
+                onPatch({ invoice_number: normalizeBillingNumberLabel(invoice_number) })
+              }
             />
           </div>
           <div className="space-y-1.5">
@@ -2990,7 +3006,11 @@ function BillingApplicationRowEditor({
           {linkedInvoice ? (
             <div className="flex min-h-9 items-center rounded-md border border-hairline bg-card px-2.5 text-xs text-muted-foreground">
               <ReceiptText className="mr-1.5 h-3.5 w-3.5" />
-              {linkedInvoice.invoice_number} · {invoiceStatusLabel(linkedInvoice.status)}
+              {billingDocumentLabel(
+                linkedInvoice.invoice_number,
+                linkedInvoice.title,
+                "Invoice",
+              )} · {invoiceStatusLabel(linkedInvoice.status)}
             </div>
           ) : (
             <Button size="sm" variant="outline" className="h-9 gap-1.5" onClick={onCreateInvoice}>
@@ -3116,6 +3136,11 @@ function BillingInvoiceRowEditor({
   enablingPayment?: boolean;
 }) {
   const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
+  const invoiceLabel = billingDocumentLabel(invoice.invoice_number, invoice.title, "Invoice");
+  const invoiceTitle = normalizeBillingNumberLabel(invoice.title);
+  const sourceLabel = linkedPayApp
+    ? billingDocumentLabel(linkedPayApp.application_number, linkedPayApp.invoice_number)
+    : "Direct invoice";
   const paymentLinkReady = Boolean(
     invoice.payment_enabled && invoice.payment_url && openBalance > 0,
   );
@@ -3268,15 +3293,17 @@ function BillingInvoiceRowEditor({
           <div className="space-y-1.5">
             <Label>Invoice</Label>
             <EditableText
-              value={invoice.invoice_number}
+              value={invoiceLabel}
               placeholder="Invoice #"
-              onCommit={(invoice_number) => onPatch({ invoice_number })}
+              onCommit={(invoice_number) =>
+                onPatch({ invoice_number: normalizeBillingNumberLabel(invoice_number) })
+              }
             />
             <EditableText
-              value={invoice.title}
+              value={invoiceTitle}
               placeholder="Invoice title"
               small
-              onCommit={(title) => onPatch({ title })}
+              onCommit={(title) => onPatch({ title: normalizeBillingNumberLabel(title) })}
             />
             {invoice.notes ? (
               <div className="mt-1 text-xs text-muted-foreground">{invoice.notes}</div>
@@ -3284,9 +3311,7 @@ function BillingInvoiceRowEditor({
           </div>
           <div>
             <Label>Source</Label>
-            <div className="mt-2 text-sm text-foreground">
-              {linkedPayApp?.application_number || "Direct invoice"}
-            </div>
+            <div className="mt-2 text-sm text-foreground">{sourceLabel}</div>
             {linkedPayApp?.billing_period ? (
               <div className="mt-1 text-xs text-muted-foreground">
                 {linkedPayApp.billing_period}

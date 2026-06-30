@@ -26,6 +26,7 @@ import {
 } from "@/lib/client-portal.functions";
 import type { BillingInvoiceRow } from "@/lib/projects.functions";
 import { downloadPdfBytes, generateDailyReportPacketPdf } from "@/lib/daily-report-packet-pdf";
+import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import { fmtUSD } from "@/lib/format";
 
 const DAILY_REPORT_BUCKET = "daily-reports";
@@ -492,10 +493,14 @@ function ClientProjectPage() {
                             <tr key={invoice.id} className="border-t border-hairline">
                               <td className="px-3 py-3 align-top">
                                 <div className="font-medium text-foreground">
-                                  {invoice.invoice_number || "Invoice"}
+                                  {billingDocumentLabel(
+                                    invoice.invoice_number,
+                                    invoice.title,
+                                    "Invoice",
+                                  )}
                                 </div>
                                 <div className="mt-1 text-xs text-muted-foreground">
-                                  {invoice.title || "Current invoice"}
+                                  {normalizeBillingNumberLabel(invoice.title) || "Current invoice"}
                                 </div>
                               </td>
                               <td className="px-3 py-3 align-top text-xs text-muted-foreground">
@@ -576,14 +581,18 @@ function ClientProjectPage() {
                             <tr key={app.id} className="border-t border-hairline">
                               <td className="px-3 py-3 align-top">
                                 <div className="font-medium text-foreground">
-                                  {app.application_number || "Pay application"}
+                                  {billingDocumentLabel(
+                                    app.application_number,
+                                    app.invoice_number,
+                                    "Pay application",
+                                  )}
                                 </div>
                                 <div className="mt-1 text-xs text-muted-foreground">
                                   {app.billing_period || "Current billing cycle"}
                                 </div>
                               </td>
                               <td className="px-3 py-3 align-top">
-                                {app.invoice_number || "Not issued"}
+                                {normalizeBillingNumberLabel(app.invoice_number) || "Not issued"}
                               </td>
                               <td className="px-3 py-3 align-top text-xs text-muted-foreground">
                                 <div>

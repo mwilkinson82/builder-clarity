@@ -1,4 +1,5 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, type RGB } from "pdf-lib";
+import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import type {
   BillingApplicationRow,
   BillingInvoiceRow,
@@ -227,7 +228,7 @@ export async function generateInvoicePdf({
   });
   ctx.y -= 30;
   drawWrapped(ctx, "Invoice", M, 300, { font: serif, size: 40, lineHeight: 42 });
-  drawWrapped(ctx, invoice.invoice_number || invoice.title || "Invoice", M, 280, {
+  drawWrapped(ctx, billingDocumentLabel(invoice.invoice_number, invoice.title, "Invoice"), M, 280, {
     font: serif,
     size: 22,
     color: ACCENT,
@@ -280,8 +281,14 @@ export async function generateInvoicePdf({
   drawSectionTitle(ctx, "Source");
   const source = linkedPayApp
     ? [
-        linkedPayApp.application_number || "Pay application",
-        linkedPayApp.invoice_number ? `Invoice ${linkedPayApp.invoice_number}` : "",
+        billingDocumentLabel(
+          linkedPayApp.application_number,
+          linkedPayApp.invoice_number,
+          "Pay application",
+        ),
+        linkedPayApp.invoice_number
+          ? `Invoice ${normalizeBillingNumberLabel(linkedPayApp.invoice_number)}`
+          : "",
         linkedPayApp.billing_period,
       ]
         .filter(Boolean)

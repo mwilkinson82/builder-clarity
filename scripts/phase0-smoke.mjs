@@ -353,6 +353,7 @@ await expectContains(
 await expectContains(
   "src/components/billing/BillingEnhancements.tsx",
   [
+    /billingDocumentLabel/,
     /Pay application line detail/,
     /Continuation sheet detail/,
     /Download pay app package/,
@@ -366,8 +367,15 @@ await expectContains(
 );
 
 await expectContains(
+  "src/lib/billing-labels.ts",
+  [/normalizeBillingNumberLabel/, /LEADING_ZERO_NUMBER_TOKEN/, /billingDocumentLabel/],
+  "billing document labels normalize generated-looking leading zeroes before rendering or export",
+);
+
+await expectContains(
   "src/lib/aia-pdf.ts",
   [
+    /billingDocumentLabel/,
     /APPLICATION AND CERTIFICATE FOR PAYMENT/,
     /CONTINUATION SHEET/,
     /Owner \/ Company/,

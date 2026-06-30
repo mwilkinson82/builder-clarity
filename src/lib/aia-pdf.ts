@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import type { BillingLineItemRow } from "@/lib/billing.functions";
 import type { BillingApplicationRow, ProjectRow } from "@/lib/projects.functions";
 
@@ -259,8 +260,24 @@ function drawCoverSheet(
     34,
   );
   ctx.y -= 42;
-  drawField(ctx, "Application no.", payApp.application_number || "-", M, ctx.y, fieldW, 34);
-  drawField(ctx, "Invoice no.", payApp.invoice_number || "-", M + fieldW + 12, ctx.y, fieldW, 34);
+  drawField(
+    ctx,
+    "Application no.",
+    billingDocumentLabel(payApp.application_number, payApp.invoice_number, "-"),
+    M,
+    ctx.y,
+    fieldW,
+    34,
+  );
+  drawField(
+    ctx,
+    "Invoice no.",
+    normalizeBillingNumberLabel(payApp.invoice_number || "-"),
+    M + fieldW + 12,
+    ctx.y,
+    fieldW,
+    34,
+  );
   ctx.y -= 42;
   drawField(ctx, "Billing period", payApp.billing_period || "-", M, ctx.y, fieldW, 34);
   drawField(
@@ -360,9 +377,15 @@ function drawContinuationHeader(
 ) {
   text(ctx, "CONTINUATION SHEET", M, LANDSCAPE_H - M, { font: ctx.serif, size: 18 });
   text(ctx, `Project: ${project.name}`, M, LANDSCAPE_H - M - 18, { font: ctx.sansBold, size: 8 });
-  text(ctx, `Application: ${payApp.application_number || "-"}`, M + 320, LANDSCAPE_H - M - 18, {
-    size: 8,
-  });
+  text(
+    ctx,
+    `Application: ${billingDocumentLabel(payApp.application_number, payApp.invoice_number, "-")}`,
+    M + 320,
+    LANDSCAPE_H - M - 18,
+    {
+      size: 8,
+    },
+  );
   text(ctx, `Page ${pageNumber}`, LANDSCAPE_W - 82, LANDSCAPE_H - M - 18, { size: 8 });
   ctx.y = LANDSCAPE_H - M - 48;
   ctx.page.drawRectangle({
@@ -484,10 +507,9 @@ export function aiaBillingFilename(project: ProjectRow, payApp: BillingApplicati
   const projectName = clean(project.name)
     .replace(/[^a-z0-9]+/gi, "-")
     .replace(/^-|-$/g, "");
-  const appName = clean(payApp.application_number || payApp.invoice_number || "pay-app").replace(
-    /[^a-z0-9]+/gi,
-    "-",
-  );
+  const appName = clean(
+    billingDocumentLabel(payApp.application_number, payApp.invoice_number, "pay-app"),
+  ).replace(/[^a-z0-9]+/gi, "-");
   return `${projectName || "project"}-${appName || "pay-app"}-aia-pay-application-package.pdf`;
 }
 
