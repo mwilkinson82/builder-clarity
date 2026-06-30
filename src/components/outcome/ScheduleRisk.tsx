@@ -2957,18 +2957,29 @@ function WbsManagerDialog({
   const [draggingDivision, setDraggingDivision] = useState<string | null>(null);
   const [dropTargetDivision, setDropTargetDivision] = useState<string | null>(null);
   const newDivisionInputRef = useRef<HTMLInputElement | null>(null);
+  const wasOpenRef = useRef(false);
   const selectedParentRow =
     newDivisionParentId === "root"
       ? null
       : (divisions.find((row) => row.id === newDivisionParentId) ?? null);
 
   useEffect(() => {
-    if (!open) return;
-    setDraftNames(Object.fromEntries(divisions.map((row) => [row.division, row.title])));
-    setNewDivisionParentId("root");
-    setSavingDivision(null);
-    setDraggingDivision(null);
-    setDropTargetDivision(null);
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    setDraftNames((current) =>
+      Object.fromEntries(
+        divisions.map((row) => [row.division, current[row.division] ?? row.title]),
+      ),
+    );
+    if (!wasOpenRef.current) {
+      setNewDivisionParentId("root");
+      setSavingDivision(null);
+      setDraggingDivision(null);
+      setDropTargetDivision(null);
+      wasOpenRef.current = true;
+    }
   }, [divisions, open]);
 
   const addDivision = () => {

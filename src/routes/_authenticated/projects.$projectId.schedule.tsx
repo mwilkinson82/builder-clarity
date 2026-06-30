@@ -107,8 +107,8 @@ function ScheduleWorkspacePage() {
   const activityCreate = useMutation({
     mutationFn: (activity: ActivityCreateInput) =>
       createActivityFn({ data: { projectId, ...activity } }),
-    onSuccess: async () => {
-      await refreshSchedule();
+    onSuccess: () => {
+      void refreshSchedule();
       toast.success("Activity added", {
         description: "The row is now in the project schedule workspace.",
       });
@@ -126,8 +126,8 @@ function ScheduleWorkspacePage() {
         await createActivityFn({ data: { projectId, ...item } });
       }
     },
-    onSuccess: async (_result, items) => {
-      await refreshSchedule();
+    onSuccess: (_result, items) => {
+      void refreshSchedule();
       toast.success("CPM rows created", {
         description: `${items.length} milestone ${items.length === 1 ? "row" : "rows"} added to the schedule workspace.`,
       });
@@ -148,8 +148,8 @@ function ScheduleWorkspacePage() {
       patch: Partial<ScheduleActivityRow>;
       silent?: boolean;
     }) => updateActivityFn({ data: { id, patch } }),
-    onSuccess: async (_result, variables) => {
-      await refreshSchedule();
+    onSuccess: (_result, variables) => {
+      void refreshSchedule();
       if (!variables.silent) {
         toast.success("Activity updated", {
           description: "The CPM row and logic ties were saved.",
@@ -165,8 +165,8 @@ function ScheduleWorkspacePage() {
 
   const activityDelete = useMutation({
     mutationFn: ({ id }: { id: string }) => deleteActivityFn({ data: { id } }),
-    onSuccess: async () => {
-      await refreshSchedule();
+    onSuccess: () => {
+      void refreshSchedule();
       toast.success("Activity deleted");
     },
     onError: (error) => {
@@ -179,8 +179,8 @@ function ScheduleWorkspacePage() {
   const wbsCreate = useMutation({
     mutationFn: ({ name, parentId }: { name: string; parentId?: string | null }) =>
       createWbsSectionFn({ data: { projectId, name, parentId: parentId ?? null } }),
-    onSuccess: async () => {
-      await refreshSchedule();
+    onSuccess: () => {
+      void refreshSchedule();
       toast.success("WBS added", {
         description: "The section is now saved to this project schedule.",
       });
@@ -195,8 +195,8 @@ function ScheduleWorkspacePage() {
   const wbsRename = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
       renameWbsSectionFn({ data: { id, name } }),
-    onSuccess: async () => {
-      await refreshSchedule();
+    onSuccess: () => {
+      void refreshSchedule();
       toast.success("WBS renamed", {
         description: "Matching activity divisions were updated.",
       });
@@ -255,8 +255,8 @@ function ScheduleWorkspacePage() {
       identified_on?: string;
       resolved_on?: string | null;
     }) => createDelayFragmentFn({ data: { projectId, ...fragment } }),
-    onSuccess: async () => {
-      await refreshSchedule();
+    onSuccess: () => {
+      void refreshSchedule();
       toast.success("Delay fragment added", {
         description: "The delay is now tied to this CPM schedule.",
       });
@@ -271,8 +271,8 @@ function ScheduleWorkspacePage() {
   const delayFragmentUpdate = useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Partial<ScheduleDelayFragmentRow> }) =>
       updateDelayFragmentFn({ data: { id, patch } }),
-    onSuccess: async () => {
-      await refreshSchedule();
+    onSuccess: () => {
+      void refreshSchedule();
       toast.success("Delay fragment updated");
     },
     onError: (error) => {
@@ -284,8 +284,8 @@ function ScheduleWorkspacePage() {
 
   const delayFragmentDelete = useMutation({
     mutationFn: (id: string) => deleteDelayFragmentFn({ data: { id } }),
-    onSuccess: async () => {
-      await refreshSchedule();
+    onSuccess: () => {
+      void refreshSchedule();
       toast.success("Delay fragment removed");
     },
     onError: (error) => {

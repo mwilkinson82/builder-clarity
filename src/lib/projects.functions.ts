@@ -235,22 +235,11 @@ export interface BillingApplicationEventRow {
 }
 
 export type InvoiceStatus =
-  | "draft"
-  | "sent"
-  | "viewed"
-  | "partially_paid"
-  | "paid"
-  | "overdue"
-  | "void";
+  "draft" | "sent" | "viewed" | "partially_paid" | "paid" | "overdue" | "void";
 
 export type PaymentStatus = "pending" | "succeeded" | "failed" | "refunded" | "void";
 export type OnlinePaymentStatus =
-  | "not_enabled"
-  | "pending"
-  | "paid"
-  | "expired"
-  | "failed"
-  | "refunded";
+  "not_enabled" | "pending" | "paid" | "expired" | "failed" | "refunded";
 
 export interface BillingInvoiceRow {
   id: string;
