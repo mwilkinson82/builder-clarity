@@ -1333,7 +1333,7 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
       .insert({
         ...basePayload,
         wbs_section_id: wbsSectionId,
-      })
+      } as any)
       .select("*")
       .single();
     if (error && isMissingRestColumn(error, "wbs_section_id")) {
