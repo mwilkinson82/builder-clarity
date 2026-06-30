@@ -9,6 +9,7 @@ import {
   Copy,
   Download,
   FileSpreadsheet,
+  Library,
   Lock,
   Plus,
   Save,
@@ -100,6 +101,8 @@ type NewItem = {
   labor_cost_cents: number;
 };
 
+type LibraryView = "system" | "my";
+
 const blankItem: NewItem = {
   csi_division: "",
   csi_code: "",
@@ -109,6 +112,8 @@ const blankItem: NewItem = {
   material_cost_cents: 0,
   labor_cost_cents: 0,
 };
+
+const EMPTY_COST_ITEMS: CostLibraryItemRow[] = [];
 
 function CostLibraryPage() {
   const qc = useQueryClient();
@@ -126,6 +131,7 @@ function CostLibraryPage() {
   const [importRows, setImportRows] = useState<CostLibraryImportRow[]>([]);
   const [importSource, setImportSource] = useState("");
   const [draft, setDraft] = useState<NewItem>(blankItem);
+  const [activeView, setActiveView] = useState<LibraryView>("system");
 
   const libraryQuery = useQuery({
     queryKey: ["cost-library", division, category],
@@ -151,10 +157,12 @@ function CostLibraryPage() {
             .filter(Boolean),
         },
       }),
-    onSuccess: () => {
-      toast.success("Custom item added");
+    onSuccess: (result) => {
+      toast.success("Custom item added to My Cost Library");
       setNewOpen(false);
       setDraft(blankItem);
+      setActiveView("my");
+      setSearch(result.item.description);
       qc.invalidateQueries({ queryKey: ["cost-library"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Item did not save"),
@@ -177,8 +185,10 @@ function CostLibraryPage() {
           keywords: item.keywords.map(String).slice(0, 60),
         },
       }),
-    onSuccess: () => {
-      toast.success("Editable copy created");
+    onSuccess: (result) => {
+      toast.success("Added to My Cost Library");
+      setActiveView("my");
+      setSearch(result.item.description);
       qc.invalidateQueries({ queryKey: ["cost-library"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Copy did not save"),
@@ -214,6 +224,8 @@ function CostLibraryPage() {
       setImportRows([]);
       setPasteText("");
       setImportSource("");
+      setActiveView("my");
+      setSearch("");
       qc.invalidateQueries({ queryKey: ["cost-library"] });
     },
     onError: (error) =>
@@ -239,9 +251,16 @@ function CostLibraryPage() {
     onError: (error) => toast.error(error instanceof Error ? error.message : "Item did not delete"),
   });
 
+  const allItems = libraryQuery.data?.items ?? EMPTY_COST_ITEMS;
+  const systemCount = allItems.filter((item) => item.source === "system").length;
+  const myCount = allItems.length - systemCount;
+
   const visibleItems = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (libraryQuery.data?.items ?? []).filter((item) => {
+    const sourceFiltered = allItems.filter((item) =>
+      activeView === "system" ? item.source === "system" : item.source !== "system",
+    );
+    const searched = sourceFiltered.filter((item) => {
       if (!q) return true;
       return [
         item.description,
@@ -255,7 +274,20 @@ function CostLibraryPage() {
         .toLowerCase()
         .includes(q);
     });
-  }, [libraryQuery.data, search]);
+    if (activeView === "system") return searched;
+    return [...searched].sort(
+      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+    );
+  }, [activeView, allItems, search]);
+
+  const activeEmptyMessage =
+    activeView === "system"
+      ? "No Overwatch system costs found."
+      : "No personal costs yet. Add a custom item, import your spreadsheet, or add a system cost to My Cost Library.";
+  const activeViewDescription =
+    activeView === "system"
+      ? "Read-only Overwatch starter pricing. Add a row to My Cost Library before editing it."
+      : "Your editable costs. Custom, imported, and copied Overwatch costs live here and are available inside master sheets and estimates.";
 
   const resetImport = () => {
     setImportRows([]);
@@ -318,15 +350,16 @@ function CostLibraryPage() {
                 size="sm"
                 variant="outline"
                 className="gap-1.5"
+                title="Download the CSV column guide for importing costs"
                 onClick={() =>
                   downloadText(
-                    "overwatch-cost-library-template.csv",
+                    "overwatch-cost-library-import-format.csv",
                     costLibraryTemplateCsv,
                     "text/csv",
                   )
                 }
               >
-                <Download className="h-3.5 w-3.5" /> Template
+                <Download className="h-3.5 w-3.5" /> Download Import Format
               </Button>
               <Button
                 size="sm"
@@ -334,10 +367,10 @@ function CostLibraryPage() {
                 className="gap-1.5"
                 onClick={() => setImportOpen(true)}
               >
-                <Upload className="h-3.5 w-3.5" /> Import Costs
+                <Upload className="h-3.5 w-3.5" /> Import My Costs
               </Button>
               <Button size="sm" className="gap-1.5" onClick={() => setNewOpen(true)}>
-                <Plus className="h-3.5 w-3.5" /> Add Custom Item
+                <Plus className="h-3.5 w-3.5" /> Add Custom Cost
               </Button>
             </div>
           </div>
@@ -345,6 +378,32 @@ function CostLibraryPage() {
       </header>
 
       <main className="mx-auto max-w-[1500px] space-y-5 px-6 py-8 lg:px-10">
+        <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="max-w-3xl">
+              <div className="flex items-center gap-2 font-medium">
+                <Library className="h-4 w-4" />
+                Build your estimating price book
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Start from Overwatch pricing, import your spreadsheet, or add costs by hand. Master
+                sheets and project estimates search the saved costs in this library.
+              </p>
+            </div>
+            <Tabs
+              value={activeView}
+              onValueChange={(value) => setActiveView(value as LibraryView)}
+              className="w-full lg:w-auto"
+            >
+              <TabsList className="grid w-full grid-cols-2 lg:w-[390px]">
+                <TabsTrigger value="system">Overwatch Library ({systemCount})</TabsTrigger>
+                <TabsTrigger value="my">My Cost Library ({myCount})</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">{activeViewDescription}</p>
+        </section>
+
         <div className="grid gap-3 rounded-lg border border-hairline bg-card p-4 shadow-card lg:grid-cols-[1fr_180px_220px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -387,8 +446,8 @@ function CostLibraryPage() {
           <Table className="min-w-[1150px]">
             <TableHeader>
               <TableRow className="bg-surface [&>th]:whitespace-nowrap">
-                <TableHead className="w-[96px]">Source</TableHead>
-                <TableHead className="w-[90px]">CSI</TableHead>
+                <TableHead className="w-[110px]">Source</TableHead>
+                <TableHead className="w-[120px]">CSI</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead className="w-[110px]">Category</TableHead>
                 <TableHead className="w-[80px]">Unit</TableHead>
@@ -421,7 +480,7 @@ function CostLibraryPage() {
                     colSpan={8}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
-                    No library items found.
+                    {activeEmptyMessage}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -443,7 +502,11 @@ function CostLibraryPage() {
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Custom Item</DialogTitle>
+            <DialogTitle>Add Custom Cost</DialogTitle>
+            <DialogDescription>
+              Save one editable cost to My Cost Library. It will appear in master sheet and estimate
+              line-item search.
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="CSI Division">
@@ -507,7 +570,7 @@ function CostLibraryPage() {
                 createMutation.isPending
               }
             >
-              Create
+              Save to My Cost Library
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -545,6 +608,8 @@ function CostLibraryRow({
   onCopy: () => void;
 }) {
   const editable = item.source !== "system";
+  const sourceLabel =
+    item.source === "system" ? "Overwatch" : item.source === "imported" ? "Imported" : "Custom";
   const [draft, setDraft] = useState<NewItem>({
     csi_division: item.csi_division,
     csi_code: item.csi_code,
@@ -571,14 +636,14 @@ function CostLibraryRow({
       <TableCell>
         <Badge variant="outline" className="gap-1 capitalize">
           {item.source === "system" && <Lock className="h-3 w-3" />}
-          {item.source}
+          {sourceLabel}
         </Badge>
       </TableCell>
       <TableCell>
         {editable ? (
           <Input
-            value={draft.csi_division}
-            onChange={(event) => setDraft({ ...draft, csi_division: event.target.value })}
+            value={draft.csi_code || draft.csi_division}
+            onChange={(event) => setDraft({ ...draft, csi_code: event.target.value })}
             className="h-8"
           />
         ) : (
@@ -658,8 +723,8 @@ function CostLibraryRow({
                 variant="ghost"
                 className="h-8 w-8"
                 onClick={() => onSave(draft)}
-                title="Save custom item"
-                aria-label="Save custom item"
+                title="Save cost"
+                aria-label="Save cost"
               >
                 <Save className="h-4 w-4" />
               </Button>
@@ -668,8 +733,8 @@ function CostLibraryRow({
                 variant="ghost"
                 className="h-8 w-8"
                 onClick={onDelete}
-                title="Delete custom item"
-                aria-label="Delete custom item"
+                title="Delete cost"
+                aria-label="Delete cost"
               >
                 <Trash2 className="h-4 w-4 text-danger" />
               </Button>
@@ -680,8 +745,8 @@ function CostLibraryRow({
               variant="ghost"
               className="h-8 w-8"
               onClick={onCopy}
-              title="Copy to custom library"
-              aria-label="Copy to custom library"
+              title="Add to My Cost Library"
+              aria-label="Add to My Cost Library"
             >
               <Copy className="h-4 w-4" />
             </Button>
@@ -731,16 +796,17 @@ function CostImportDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[86vh] max-w-5xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Import Cost Library</DialogTitle>
+          <DialogTitle>Import My Costs</DialogTitle>
           <DialogDescription>
-            Stage contractor-owned costs from spreadsheet rows before saving them to this company.
+            Bring in your own price list from pasted rows, CSV, or Excel. Use Download Import Format
+            for the column guide; imported rows save to My Cost Library.
           </DialogDescription>
         </DialogHeader>
 
         {rows.length === 0 ? (
           <Tabs defaultValue="paste" className="space-y-4">
             <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="paste">Paste</TabsTrigger>
+              <TabsTrigger value="paste">Paste Rows</TabsTrigger>
               <TabsTrigger value="csv">CSV</TabsTrigger>
               <TabsTrigger value="xlsx">Excel</TabsTrigger>
             </TabsList>
@@ -862,7 +928,7 @@ function CostImportDialog({
             Cancel
           </Button>
           <Button onClick={onImport} disabled={validRows.length === 0 || saving}>
-            {saving ? "Importing..." : `Import ${validRows.length} Items`}
+            {saving ? "Importing..." : `Import ${validRows.length} to My Cost Library`}
           </Button>
         </DialogFooter>
       </DialogContent>

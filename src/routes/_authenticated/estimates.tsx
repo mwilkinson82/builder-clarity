@@ -2,7 +2,7 @@ import { createFileRoute, Link, Outlet, useLocation, useNavigate } from "@tansta
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
-import { Calculator, FileSpreadsheet, Library, Plus, Search, Users } from "lucide-react";
+import { ArrowLeft, Calculator, FileSpreadsheet, Library, Plus, Search, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -130,9 +130,18 @@ function EstimatesPage() {
       <header className="border-b border-hairline bg-surface-elevated">
         <div className="mx-auto flex max-w-[1500px] flex-col gap-4 px-6 py-5 lg:px-10">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Overwatch</p>
-              <h1 className="mt-1 font-serif text-3xl text-foreground">Estimates</h1>
+            <div className="flex min-w-0 items-center gap-3">
+              <Button asChild variant="ghost" size="icon" title="Back to portfolio">
+                <Link to="/">
+                  <ArrowLeft className="h-4 w-4" />
+                </Link>
+              </Button>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Overwatch
+                </p>
+                <h1 className="mt-1 font-serif text-3xl text-foreground">Estimates</h1>
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Button asChild size="sm" variant="outline" className="gap-1.5">
