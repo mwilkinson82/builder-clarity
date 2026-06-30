@@ -164,8 +164,10 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
       }
       await invalidatePipeline();
     },
-    onError: (error) =>
-      toast.error("CRM sample data did not load", { description: errorMessage(error) }),
+    onError: (error) => {
+      if (isMissingPipelineSchemaMessage(error)) return;
+      toast.error("CRM sample data did not load", { description: errorMessage(error) });
+    },
   });
 
   useEffect(() => {
@@ -486,4 +488,10 @@ function sortOpportunities(
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error";
+}
+
+function isMissingPipelineSchemaMessage(error: unknown) {
+  return /pipeline_(opportunities|accounts|contacts|next_actions|activity_log)/i.test(
+    errorMessage(error),
+  );
 }

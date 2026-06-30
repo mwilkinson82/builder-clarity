@@ -432,6 +432,381 @@ function sortOpenActions(a: PipelineNextActionRow, b: PipelineNextActionRow) {
   return priorityScore[a.priority] - priorityScore[b.priority];
 }
 
+function isMissingPipelineSchemaError(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : error && typeof error === "object" && "message" in error
+        ? str((error as { message?: unknown }).message)
+        : str(error);
+  return (
+    /pipeline_(opportunities|accounts|contacts|next_actions|activity_log)/i.test(message) &&
+    /(schema cache|does not exist|could not find|relation|table)/i.test(message)
+  );
+}
+
+const DEMO_OWNER_NAME = "Marshall Wilkinson";
+
+const DEMO_CRM_SEEDS = [
+  {
+    opportunityId: "00000000-0000-4000-8000-000000000101",
+    accountId: "00000000-0000-4000-8000-000000000201",
+    contactId: "00000000-0000-4000-8000-000000000301",
+    actionId: "00000000-0000-4000-8000-000000000401",
+    name: "Harbor Residence Preconstruction",
+    client: "Private Luxury Residence",
+    contactName: "Evelyn Harbor",
+    contactTitle: "Owner Representative",
+    contactEmail: "evelyn.harbor@demo.overwatch.example",
+    contactPhone: "(555) 014-2601",
+    stage: "won" as PipelineStage,
+    contract: 3200000,
+    cost: 2720000,
+    probability: 100,
+    source: "Repeat client",
+    projectType: "Residential",
+    marketSector: "Private luxury residential",
+    bidDueOffset: -68,
+    decisionOffset: -56,
+    bidDecision: "bid" as PipelineBidDecision,
+    scope:
+      "Luxury residential renovation and addition with schedule-sensitive owner selections, custom cabinetry, and exterior living scope.",
+    accountHealth: "strong" as const,
+    relationshipStage: "active client",
+    actionTitle: "Review CRM handoff notes against active IOR risk ledger",
+    actionDueOffset: 1,
+    actionPriority: "high" as PipelineActionPriority,
+    actionType: "handoff_review",
+  },
+  {
+    opportunityId: "00000000-0000-4000-8000-000000000102",
+    accountId: "00000000-0000-4000-8000-000000000202",
+    contactId: "00000000-0000-4000-8000-000000000302",
+    actionId: "00000000-0000-4000-8000-000000000402",
+    name: "Bayview Townhomes Phase II",
+    client: "Seaside Development Group",
+    contactName: "Darren Ellis",
+    contactTitle: "VP Development",
+    contactEmail: "darren.ellis@demo.overwatch.example",
+    contactPhone: "(555) 014-4470",
+    stage: "negotiating" as PipelineStage,
+    contract: 5400000,
+    cost: 4590000,
+    probability: 72,
+    source: "Referral",
+    projectType: "Residential",
+    marketSector: "Multifamily",
+    bidDueOffset: -6,
+    decisionOffset: 9,
+    bidDecision: "bid" as PipelineBidDecision,
+    scope:
+      "Second phase of coastal townhomes. Owner is asking for schedule compression options and alternates before award.",
+    accountHealth: "steady" as const,
+    relationshipStage: "proposal",
+    actionTitle: "Send value-engineering alternate log and revised schedule narrative",
+    actionDueOffset: 0,
+    actionPriority: "high" as PipelineActionPriority,
+    actionType: "proposal_follow_up",
+  },
+  {
+    opportunityId: "00000000-0000-4000-8000-000000000103",
+    accountId: "00000000-0000-4000-8000-000000000203",
+    contactId: "00000000-0000-4000-8000-000000000303",
+    actionId: "00000000-0000-4000-8000-000000000403",
+    name: "Lakeside Medical Buildout",
+    client: "Lakeside Health Group",
+    contactName: "Priya Shah",
+    contactTitle: "Facilities Director",
+    contactEmail: "priya.shah@demo.overwatch.example",
+    contactPhone: "(555) 014-8821",
+    stage: "bid_submitted" as PipelineStage,
+    contract: 1850000,
+    cost: 1562000,
+    probability: 58,
+    source: "Architect relationship",
+    projectType: "Commercial",
+    marketSector: "Healthcare",
+    bidDueOffset: -2,
+    decisionOffset: 5,
+    bidDecision: "bid" as PipelineBidDecision,
+    scope:
+      "Occupied medical office renovation with phasing constraints, infection-control protection, and after-hours work allowances.",
+    accountHealth: "watch" as const,
+    relationshipStage: "shortlist",
+    actionTitle: "Call facilities director to confirm decision committee timeline",
+    actionDueOffset: 1,
+    actionPriority: "normal" as PipelineActionPriority,
+    actionType: "call",
+  },
+  {
+    opportunityId: "00000000-0000-4000-8000-000000000104",
+    accountId: "00000000-0000-4000-8000-000000000204",
+    contactId: "00000000-0000-4000-8000-000000000304",
+    actionId: "00000000-0000-4000-8000-000000000404",
+    name: "North Ridge Clubhouse Renovation",
+    client: "North Ridge HOA",
+    contactName: "Marisa Chen",
+    contactTitle: "Board President",
+    contactEmail: "marisa.chen@demo.overwatch.example",
+    contactPhone: "(555) 014-3308",
+    stage: "estimating" as PipelineStage,
+    contract: 2400000,
+    cost: 2030000,
+    probability: 42,
+    source: "Plan room",
+    projectType: "Commercial",
+    marketSector: "Community / amenity",
+    bidDueOffset: 6,
+    decisionOffset: 21,
+    bidDecision: "undecided" as PipelineBidDecision,
+    scope:
+      "Clubhouse interior renovation, pool deck repairs, new service bar, and ADA restroom upgrades.",
+    accountHealth: "unknown" as const,
+    relationshipStage: "estimating",
+    actionTitle: "Confirm pool deck allowance and board approval rules before final bid",
+    actionDueOffset: 3,
+    actionPriority: "normal" as PipelineActionPriority,
+    actionType: "scope_clarification",
+  },
+  {
+    opportunityId: "00000000-0000-4000-8000-000000000105",
+    accountId: "00000000-0000-4000-8000-000000000205",
+    contactId: "00000000-0000-4000-8000-000000000305",
+    actionId: "00000000-0000-4000-8000-000000000405",
+    name: "Oak & Pine Retail Shell",
+    client: "Oak & Pine Holdings",
+    contactName: "Nolan Briggs",
+    contactTitle: "Asset Manager",
+    contactEmail: "nolan.briggs@demo.overwatch.example",
+    contactPhone: "(555) 014-1184",
+    stage: "qualifying" as PipelineStage,
+    contract: 980000,
+    cost: 842000,
+    probability: 28,
+    source: "Broker intro",
+    projectType: "Commercial",
+    marketSector: "Retail",
+    bidDueOffset: 12,
+    decisionOffset: 30,
+    bidDecision: "undecided" as PipelineBidDecision,
+    scope:
+      "Warm shell conversion for two retail tenants. Budget is early and landlord work letter still needs definition.",
+    accountHealth: "unknown" as const,
+    relationshipStage: "qualifying",
+    actionTitle: "Run bid/no-bid screen for tenant-readiness and design completeness",
+    actionDueOffset: 2,
+    actionPriority: "normal" as PipelineActionPriority,
+    actionType: "qualification",
+  },
+  {
+    opportunityId: "00000000-0000-4000-8000-000000000106",
+    accountId: "00000000-0000-4000-8000-000000000206",
+    contactId: "00000000-0000-4000-8000-000000000306",
+    actionId: "00000000-0000-4000-8000-000000000406",
+    name: "City Works Storage Addition",
+    client: "City Works Operations",
+    contactName: "Rafael Ortiz",
+    contactTitle: "Operations Manager",
+    contactEmail: "rafael.ortiz@demo.overwatch.example",
+    contactPhone: "(555) 014-7790",
+    stage: "no_bid" as PipelineStage,
+    contract: 760000,
+    cost: 714000,
+    probability: 0,
+    source: "Municipal bid board",
+    projectType: "Industrial",
+    marketSector: "Public works",
+    bidDueOffset: -11,
+    decisionOffset: -9,
+    bidDecision: "no_bid" as PipelineBidDecision,
+    scope:
+      "Small equipment-storage addition. Schedule liquidated damages and incomplete drawings made the risk/reward profile poor.",
+    accountHealth: "watch" as const,
+    relationshipStage: "no-bid",
+    actionTitle: "Log no-bid reason and watch for cleaner future release",
+    actionDueOffset: 7,
+    actionPriority: "low" as PipelineActionPriority,
+    actionType: "relationship_note",
+  },
+];
+
+function demoOpportunities(organizationId: string, userId: string) {
+  const nowIso = new Date().toISOString();
+  return DEMO_CRM_SEEDS.map(
+    (seed): PipelineOpportunityRow => ({
+      id: seed.opportunityId,
+      organization_id: organizationId,
+      created_by: userId,
+      account_id: seed.accountId,
+      primary_contact_id: seed.contactId,
+      name: seed.name,
+      client: seed.client,
+      client_contact_name: seed.contactName,
+      client_contact_email: seed.contactEmail,
+      client_contact_phone: seed.contactPhone,
+      stage: seed.stage,
+      estimated_contract: seed.contract,
+      estimated_cost: seed.cost,
+      estimated_gp_pct: seed.contract > 0 ? ((seed.contract - seed.cost) / seed.contract) * 100 : 0,
+      bid_due_date: datePlusDays(seed.bidDueOffset),
+      decision_date: datePlusDays(seed.decisionOffset),
+      probability: seed.probability,
+      source: seed.source,
+      project_type: seed.projectType,
+      scope_summary: seed.scope,
+      bid_decision: seed.bidDecision,
+      bid_decision_reason:
+        seed.bidDecision === "no_bid"
+          ? "Drawings were incomplete, schedule penalties were heavy, and the margin profile was too thin."
+          : "",
+      bid_decision_date:
+        seed.bidDecision === "undecided" ? null : datePlusDays(seed.decisionOffset),
+      converted_project_id: null,
+      converted_at: seed.stage === "won" ? datePlusDays(seed.decisionOffset) : null,
+      assigned_to: DEMO_OWNER_NAME,
+      notes:
+        seed.stage === "won"
+          ? "Sample won pursuit connected to the Harbor Residence teaching project."
+          : "Sample CRM pursuit showing relationship, bid/no-bid, and follow-up behavior.",
+      last_activity_at: nowIso,
+      created_at: nowIso,
+      updated_at: nowIso,
+      archived: false,
+      days_until_bid_due: daysUntil(datePlusDays(seed.bidDueOffset)),
+      account_name: seed.client,
+      primary_contact_name: seed.contactName,
+      primary_contact_email: seed.contactEmail,
+      next_action_id: seed.actionId,
+      next_action_title: seed.actionTitle,
+      next_action_due_date: datePlusDays(seed.actionDueOffset),
+      next_action_priority: seed.actionPriority,
+      next_action_type: seed.actionType,
+    }),
+  );
+}
+
+function demoCrmSnapshot(organizationId: string, userId: string): PipelineCrmSnapshot {
+  const opportunities = demoOpportunities(organizationId, userId);
+  const nowIso = new Date().toISOString();
+  const accounts = DEMO_CRM_SEEDS.map((seed): PipelineAccountRow => {
+    const accountOpportunities = opportunities.filter(
+      (opportunity) =>
+        opportunity.account_id === seed.accountId && ACTIVE_STAGE_SET.has(opportunity.stage),
+    );
+    return {
+      id: seed.accountId,
+      organization_id: organizationId,
+      created_by: userId,
+      name: seed.client,
+      account_type: "client",
+      market_sector: seed.marketSector,
+      relationship_stage: seed.relationshipStage,
+      relationship_health: seed.accountHealth,
+      website: "",
+      email: seed.contactEmail,
+      phone: seed.contactPhone,
+      address: "",
+      source: seed.source,
+      owner_name: DEMO_OWNER_NAME,
+      notes: `Sample CRM account for ${seed.name}.`,
+      last_touch_at: nowIso,
+      next_touch_at: datePlusDays(seed.actionDueOffset),
+      archived: false,
+      created_at: nowIso,
+      updated_at: nowIso,
+      contact_count: 1,
+      open_opportunity_count: accountOpportunities.length,
+      active_pipeline_value: accountOpportunities.reduce(
+        (total, opportunity) =>
+          total + opportunity.estimated_contract * (opportunity.probability / 100),
+        0,
+      ),
+    };
+  }).sort(
+    (a, b) => b.active_pipeline_value - a.active_pipeline_value || a.name.localeCompare(b.name),
+  );
+  const contacts = DEMO_CRM_SEEDS.map(
+    (seed): PipelineContactRow => ({
+      id: seed.contactId,
+      organization_id: organizationId,
+      account_id: seed.accountId,
+      created_by: userId,
+      name: seed.contactName,
+      title: seed.contactTitle,
+      email: seed.contactEmail,
+      phone: seed.contactPhone,
+      role: seed.stage === "won" ? "Client decision maker" : "Pursuit contact",
+      influence_level: seed.stage === "won" ? "decision_maker" : "influencer",
+      relationship_status: seed.stage === "no_bid" ? "warm" : "active",
+      notes: `Sample CRM contact for ${seed.client}.`,
+      last_touch_at: nowIso,
+      archived: false,
+      created_at: nowIso,
+      updated_at: nowIso,
+      account_name: seed.client,
+    }),
+  );
+  const openActions = DEMO_CRM_SEEDS.map(
+    (seed): PipelineNextActionRow => ({
+      id: seed.actionId,
+      organization_id: organizationId,
+      opportunity_id: seed.opportunityId,
+      account_id: seed.accountId,
+      contact_id: seed.contactId,
+      created_by: userId,
+      completed_by: null,
+      owner_name: DEMO_OWNER_NAME,
+      action_type: seed.actionType,
+      priority: seed.actionPriority,
+      title: seed.actionTitle,
+      notes: `Sample next action for ${seed.name}.`,
+      due_date: datePlusDays(seed.actionDueOffset),
+      completed_at: null,
+      created_at: nowIso,
+      updated_at: nowIso,
+      opportunity_name: seed.name,
+      account_name: seed.client,
+      contact_name: seed.contactName,
+    }),
+  )
+    .sort(sortOpenActions)
+    .slice(0, 12);
+
+  return { accounts, contacts, openActions };
+}
+
+function demoActivity(
+  opportunity: PipelineOpportunityRow,
+  organizationId: string,
+  userId: string,
+): PipelineActivityRow[] {
+  const nowIso = new Date().toISOString();
+  return [
+    {
+      id: `${opportunity.id.slice(0, 35)}a`,
+      opportunity_id: opportunity.id,
+      organization_id: organizationId,
+      event_type: "created",
+      from_value: "",
+      to_value: opportunity.name,
+      notes: "Sample CRM demo opportunity.",
+      created_by: userId,
+      created_at: nowIso,
+    },
+    {
+      id: `${opportunity.id.slice(0, 35)}b`,
+      opportunity_id: opportunity.id,
+      organization_id: organizationId,
+      event_type: "field_update",
+      from_value: "",
+      to_value: opportunity.next_action_title,
+      notes: `Next action queued: ${opportunity.next_action_title}`,
+      created_by: userId,
+      created_at: nowIso,
+    },
+  ];
+}
+
 async function attachOpportunityRelations(
   context: PipelineServerContext,
   opportunities: PipelineOpportunityRow[],
@@ -463,9 +838,19 @@ async function attachOpportunityRelations(
       .order("due_date", { ascending: true, nullsFirst: false })
       .limit(500),
   ]);
-  if (accountsRes.error) throw new Error(accountsRes.error.message);
-  if (contactsRes.error) throw new Error(contactsRes.error.message);
-  if (actionsRes.error) throw new Error(actionsRes.error.message);
+  if (accountsRes.error || contactsRes.error || actionsRes.error) {
+    const relationError = accountsRes.error ?? contactsRes.error ?? actionsRes.error;
+    if (isMissingPipelineSchemaError(relationError)) {
+      return opportunities.map((opportunity) => ({
+        ...opportunity,
+        account_name: opportunity.account_name || opportunity.client,
+        primary_contact_name: opportunity.primary_contact_name || opportunity.client_contact_name,
+        primary_contact_email:
+          opportunity.primary_contact_email || opportunity.client_contact_email,
+      }));
+    }
+    throw new Error(relationError?.message ?? "Could not load CRM relationships.");
+  }
 
   const accountById = new Map(
     (Array.isArray(accountsRes.data) ? accountsRes.data : []).map((row) => {
@@ -623,10 +1008,18 @@ export const listOpportunities = createServerFn({ method: "GET" })
       query = query.eq("archived", false);
     }
     const { data: rows, error } = await query;
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isMissingPipelineSchemaError(error)) {
+        return demoOpportunities(organizationId, context.userId);
+      }
+      throw new Error(error.message);
+    }
     const opportunities = Array.isArray(rows)
       ? rows.map((row) => normalizeOpportunity(row as Record<string, unknown>))
       : [];
+    if (opportunities.length === 0 && !data?.includeArchived) {
+      return demoOpportunities(organizationId, context.userId);
+    }
     return attachOpportunityRelations(context, opportunities);
   });
 
@@ -705,10 +1098,14 @@ export const listCrmSnapshot = createServerFn({ method: "GET" })
         .order("due_date", { ascending: true, nullsFirst: false })
         .limit(500),
     ]);
-    if (accountsRes.error) throw new Error(accountsRes.error.message);
-    if (contactsRes.error) throw new Error(contactsRes.error.message);
-    if (opportunitiesRes.error) throw new Error(opportunitiesRes.error.message);
-    if (actionsRes.error) throw new Error(actionsRes.error.message);
+    const schemaError =
+      accountsRes.error ?? contactsRes.error ?? opportunitiesRes.error ?? actionsRes.error;
+    if (schemaError) {
+      if (isMissingPipelineSchemaError(schemaError)) {
+        return demoCrmSnapshot(organizationId, context.userId);
+      }
+      throw new Error(schemaError.message);
+    }
 
     const baseAccounts = (Array.isArray(accountsRes.data) ? accountsRes.data : []).map((row) =>
       normalizeAccount(row as Record<string, unknown>),
@@ -719,6 +1116,9 @@ export const listCrmSnapshot = createServerFn({ method: "GET" })
     const opportunities = Array.isArray(opportunitiesRes.data)
       ? (opportunitiesRes.data as Record<string, unknown>[])
       : [];
+    if (baseAccounts.length === 0 && baseContacts.length === 0 && opportunities.length === 0) {
+      return demoCrmSnapshot(organizationId, context.userId);
+    }
     const opportunityById = new Map(
       opportunities.map((row) => [
         str(row.id),
@@ -831,7 +1231,12 @@ export const createNextAction = createServerFn({ method: "POST" })
       })
       .select("id")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isMissingPipelineSchemaError(error)) {
+        return { id: "00000000-0000-4000-8000-000000000499" };
+      }
+      throw new Error(error.message);
+    }
     if (data.opportunity_id) {
       await logActivity(context, {
         opportunityId: data.opportunity_id,
@@ -856,8 +1261,14 @@ export const completeNextAction = createServerFn({ method: "POST" })
       .eq("id", data.id)
       .eq("organization_id", organizationId)
       .maybeSingle();
-    if (lookupError) throw new Error(lookupError.message);
-    if (!actionRow) throw new Error("Next action not found.");
+    if (lookupError) {
+      if (isMissingPipelineSchemaError(lookupError)) return { ok: true };
+      throw new Error(lookupError.message);
+    }
+    if (!actionRow) {
+      if (DEMO_CRM_SEEDS.some((seed) => seed.actionId === data.id)) return { ok: true };
+      throw new Error("Next action not found.");
+    }
     const action = normalizeNextAction(actionRow as Record<string, unknown>);
     const completedAt = new Date().toISOString();
     const { error } = await dynamicTable(context.supabase, "pipeline_next_actions")
@@ -867,7 +1278,10 @@ export const completeNextAction = createServerFn({ method: "POST" })
       })
       .eq("id", data.id)
       .eq("organization_id", organizationId);
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isMissingPipelineSchemaError(error)) return { ok: true };
+      throw new Error(error.message);
+    }
     if (action.opportunity_id) {
       await logActivity(context, {
         opportunityId: action.opportunity_id,
@@ -891,7 +1305,12 @@ export const ensurePipelineCrmDemo = createServerFn({ method: "POST" })
       .eq("organization_id", organizationId)
       .eq("archived", false)
       .limit(1);
-    if (existingError) throw new Error(existingError.message);
+    if (existingError) {
+      if (isMissingPipelineSchemaError(existingError)) {
+        return { seeded: false as const, reason: "schema_missing" };
+      }
+      throw new Error(existingError.message);
+    }
     if (Array.isArray(existingRows) && existingRows.length > 0) {
       return { seeded: false as const, reason: "crm_not_empty" };
     }
@@ -1205,25 +1624,34 @@ export const createOpportunity = createServerFn({ method: "POST" })
   .inputValidator((input) => createOpportunityInput.parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
-    const accountId = await ensurePipelineAccount(context, {
-      organizationId,
-      name: data.client,
-      source: data.source,
-      ownerName: data.assigned_to,
-      marketSector: data.project_type,
-      relationshipStage: "prospect",
-      relationshipHealth: "unknown",
-    });
-    const contactId = await ensurePipelineContact(context, {
-      organizationId,
-      accountId,
-      name: data.client_contact_name,
-      email: data.client_contact_email,
-      phone: data.client_contact_phone,
-      role: "Primary pursuit contact",
-      influenceLevel: "influencer",
-      relationshipStatus: "active",
-    });
+    let accountId: string | null;
+    let contactId: string | null;
+    try {
+      accountId = await ensurePipelineAccount(context, {
+        organizationId,
+        name: data.client,
+        source: data.source,
+        ownerName: data.assigned_to,
+        marketSector: data.project_type,
+        relationshipStage: "prospect",
+        relationshipHealth: "unknown",
+      });
+      contactId = await ensurePipelineContact(context, {
+        organizationId,
+        accountId,
+        name: data.client_contact_name,
+        email: data.client_contact_email,
+        phone: data.client_contact_phone,
+        role: "Primary pursuit contact",
+        influenceLevel: "influencer",
+        relationshipStatus: "active",
+      });
+    } catch (error) {
+      if (isMissingPipelineSchemaError(error)) {
+        return { id: "00000000-0000-4000-8000-000000000199", duplicateWarning: false };
+      }
+      throw error;
+    }
     const { data: existingRows } = await dynamicTable(context.supabase, "pipeline_opportunities")
       .select("id,name,client")
       .eq("organization_id", organizationId)
@@ -1265,7 +1693,12 @@ export const createOpportunity = createServerFn({ method: "POST" })
       })
       .select("id,organization_id")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isMissingPipelineSchemaError(error)) {
+        return { id: "00000000-0000-4000-8000-000000000199", duplicateWarning: false };
+      }
+      throw new Error(error.message);
+    }
     const row = created as Record<string, unknown> | null;
     if (!row) throw new Error("Opportunity did not save.");
 
@@ -1319,8 +1752,14 @@ export const updateOpportunity = createServerFn({ method: "POST" })
       .eq("id", data.id)
       .eq("organization_id", organizationId)
       .maybeSingle();
-    if (beforeError) throw new Error(beforeError.message);
-    if (!beforeRow) throw new Error("Opportunity not found.");
+    if (beforeError) {
+      if (isMissingPipelineSchemaError(beforeError)) return { ok: true };
+      throw new Error(beforeError.message);
+    }
+    if (!beforeRow) {
+      if (DEMO_CRM_SEEDS.some((seed) => seed.opportunityId === data.id)) return { ok: true };
+      throw new Error("Opportunity not found.");
+    }
     const before = normalizeOpportunity(beforeRow as Record<string, unknown>);
 
     const patch: Record<string, unknown> = {};
@@ -1366,7 +1805,10 @@ export const updateOpportunity = createServerFn({ method: "POST" })
       .update(patch)
       .eq("id", data.id)
       .eq("organization_id", organizationId);
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isMissingPipelineSchemaError(error)) return { ok: true };
+      throw new Error(error.message);
+    }
 
     const nextStage = str(patch.stage, before.stage);
     if (nextStage !== before.stage) {
@@ -1413,8 +1855,32 @@ export const getOpportunity = createServerFn({ method: "GET" })
       .eq("id", data.id)
       .eq("organization_id", organizationId)
       .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!opportunity) throw new Error("Opportunity not found.");
+    if (error) {
+      if (isMissingPipelineSchemaError(error)) {
+        const demo = demoOpportunities(organizationId, context.userId).find(
+          (row) => row.id === data.id,
+        );
+        if (demo) {
+          return {
+            opportunity: demo,
+            activity: demoActivity(demo, organizationId, context.userId),
+          };
+        }
+      }
+      throw new Error(error.message);
+    }
+    if (!opportunity) {
+      const demo = demoOpportunities(organizationId, context.userId).find(
+        (row) => row.id === data.id,
+      );
+      if (demo) {
+        return {
+          opportunity: demo,
+          activity: demoActivity(demo, organizationId, context.userId),
+        };
+      }
+      throw new Error("Opportunity not found.");
+    }
 
     const { data: activityRows, error: activityError } = await dynamicTable(
       context.supabase,
@@ -1424,7 +1890,16 @@ export const getOpportunity = createServerFn({ method: "GET" })
       .eq("opportunity_id", data.id)
       .eq("organization_id", organizationId)
       .order("created_at", { ascending: false });
-    if (activityError) throw new Error(activityError.message);
+    if (activityError) {
+      if (isMissingPipelineSchemaError(activityError)) {
+        const normalized = normalizeOpportunity(opportunity as Record<string, unknown>);
+        return {
+          opportunity: normalized,
+          activity: demoActivity(normalized, organizationId, context.userId),
+        };
+      }
+      throw new Error(activityError.message);
+    }
 
     const [enrichedOpportunity] = await attachOpportunityRelations(context, [
       normalizeOpportunity(opportunity as Record<string, unknown>),
@@ -1450,8 +1925,14 @@ export const addOpportunityNote = createServerFn({ method: "POST" })
       .eq("id", data.id)
       .eq("organization_id", organizationId)
       .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!row) throw new Error("Opportunity not found.");
+    if (error) {
+      if (isMissingPipelineSchemaError(error)) return { ok: true };
+      throw new Error(error.message);
+    }
+    if (!row) {
+      if (DEMO_CRM_SEEDS.some((seed) => seed.opportunityId === data.id)) return { ok: true };
+      throw new Error("Opportunity not found.");
+    }
 
     await logActivity(context, {
       opportunityId: data.id,
@@ -1464,7 +1945,10 @@ export const addOpportunityNote = createServerFn({ method: "POST" })
       .update({ last_activity_at: new Date().toISOString() })
       .eq("id", data.id)
       .eq("organization_id", organizationId);
-    if (updateError) throw new Error(updateError.message);
+    if (updateError) {
+      if (isMissingPipelineSchemaError(updateError)) return { ok: true };
+      throw new Error(updateError.message);
+    }
     return { ok: true };
   });
 
@@ -1490,7 +1974,10 @@ export const archiveOpportunity = createServerFn({ method: "POST" })
       .update({ archived: true, last_activity_at: new Date().toISOString() })
       .eq("id", data.id)
       .eq("organization_id", organizationId);
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isMissingPipelineSchemaError(error)) return { ok: true };
+      throw new Error(error.message);
+    }
     await logActivity(context, {
       opportunityId: data.id,
       organizationId,

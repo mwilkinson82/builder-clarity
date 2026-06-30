@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -81,6 +82,9 @@ export function OpportunityCreateDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>New opportunity</DialogTitle>
+          <DialogDescription>
+            Capture the relationship, bid details, and first follow-up before this becomes a job.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Opportunity name" className="sm:col-span-2">
