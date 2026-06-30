@@ -48,7 +48,7 @@ function formatDelayFragmentError(error: unknown) {
     lowerMessage.includes("could not find the table") ||
     lowerMessage.includes("does not exist")
   ) {
-    return "Delay tracking storage is not available yet. Use Notes / Constraint for the delay narrative; CPM activity details still save normally.";
+    return "Delay impact logging is not enabled for this workspace yet. Use Notes / Constraint for the delay narrative; CPM activity details still save normally.";
   }
   return message || "Refresh and try again.";
 }
@@ -248,12 +248,6 @@ function ScheduleWorkspacePage() {
     mutationFn: ({ parentId, orderedIds }: WbsReorderInput) =>
       reorderWbsSectionsFn({ data: { projectId, parentId, orderedIds } }),
     onMutate: async ({ orderedIds }) => {
-      const existingToastId = wbsOrderToastRef.current ?? undefined;
-      const toastId = toast.loading("Saving WBS order", {
-        id: existingToastId,
-        description: "The grid has already moved to the new order.",
-      });
-      wbsOrderToastRef.current = toastId;
       await qc.cancelQueries({ queryKey: ["schedule", projectId] });
       const previous = qc.getQueryData(["schedule", projectId]);
       qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
@@ -267,24 +261,23 @@ function ScheduleWorkspacePage() {
           })),
         };
       });
-      return { previous, toastId };
+      return { previous };
     },
-    onSuccess: (_result, _variables, context) => {
-      if (context?.toastId) {
-        toast.success("WBS order saved", {
-          id: context.toastId,
-          description: "The saved order is now the CPM WBS order.",
-        });
-      }
-      if (wbsOrderToastRef.current === context?.toastId) wbsOrderToastRef.current = null;
+    onSuccess: () => {
+      const toastId = wbsOrderToastRef.current ?? "wbs-order-saved";
+      toast.success("WBS order saved", {
+        id: toastId,
+        description: "The saved order is now the CPM WBS order.",
+      });
+      wbsOrderToastRef.current = toastId;
     },
     onError: (error, _orderedIds, context) => {
       if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS order did not save", {
-        id: context?.toastId,
+        id: wbsOrderToastRef.current ?? "wbs-order-error",
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
-      if (wbsOrderToastRef.current === context?.toastId) wbsOrderToastRef.current = null;
+      wbsOrderToastRef.current = null;
     },
   });
 
@@ -303,12 +296,12 @@ function ScheduleWorkspacePage() {
     }) => createDelayFragmentFn({ data: { projectId, ...fragment } }),
     onSuccess: () => {
       void refreshSchedule();
-      toast.success("Delay fragment added", {
+      toast.success("Delay impact added", {
         description: "The delay is now tied to this CPM schedule.",
       });
     },
     onError: (error) => {
-      toast.error("Delay fragment did not save", {
+      toast.error("Delay impact did not save", {
         description: formatDelayFragmentError(error),
       });
     },
@@ -319,10 +312,10 @@ function ScheduleWorkspacePage() {
       updateDelayFragmentFn({ data: { id, patch } }),
     onSuccess: () => {
       void refreshSchedule();
-      toast.success("Delay fragment updated");
+      toast.success("Delay impact updated");
     },
     onError: (error) => {
-      toast.error("Delay fragment did not update", {
+      toast.error("Delay impact did not update", {
         description: formatDelayFragmentError(error),
       });
     },
@@ -332,10 +325,10 @@ function ScheduleWorkspacePage() {
     mutationFn: (id: string) => deleteDelayFragmentFn({ data: { id } }),
     onSuccess: () => {
       void refreshSchedule();
-      toast.success("Delay fragment removed");
+      toast.success("Delay impact removed");
     },
     onError: (error) => {
-      toast.error("Delay fragment did not delete", {
+      toast.error("Delay impact did not delete", {
         description: formatDelayFragmentError(error),
       });
     },
