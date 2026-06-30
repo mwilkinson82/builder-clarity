@@ -48,6 +48,7 @@ const centsToDollars = (value: number) => Math.round(value) / 100;
 
 export type EstimateStatus = "draft" | "final" | "awarded" | "lost";
 export type MarkupBasis = "subtotal" | "material" | "labor";
+export const MASTER_ESTIMATE_PROJECT_TYPE = "master_sheet";
 
 export interface EstimateCustomMarkup {
   name: string;
@@ -634,6 +635,11 @@ const importEstimateLineItemsInput = z.object({
   estimate_id: z.string().uuid(),
   mode: z.enum(["append", "replace"]).optional().default("append"),
   rows: z.array(estimateLineImportItemInput).min(1).max(500),
+});
+
+const duplicateEstimateInput = z.object({
+  id: z.string().uuid(),
+  as_project_estimate: z.boolean().optional().default(false),
 });
 
 const saveMarkupDefaultsInput = z.object({
@@ -1279,19 +1285,27 @@ export const reorderLineItems = createServerFn({ method: "POST" })
 
 export const duplicateEstimate = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input: z.input<typeof duplicateEstimateInput>) =>
+    duplicateEstimateInput.parse(input),
+  )
   .handler(async ({ data, context }) => {
     const estimate = await loadEstimate(context, data.id);
     const lines = await loadEstimateLines(context, data.id);
+    const copyAsProjectEstimate = data.as_project_estimate === true;
+    const copyName = copyAsProjectEstimate
+      ? `${estimate.name.replace(/\s*master\s*(estimate|sheet)?\s*/gi, " ").trim()} Estimate`
+          .replace(/\s+/g, " ")
+          .slice(0, 200) || `Estimate from ${estimate.name}`.slice(0, 200)
+      : `Copy of ${estimate.name}`.slice(0, 200);
     const { data: copy, error } = await dynamicTable(context.supabase, "estimates")
       .insert({
         organization_id: estimate.organization_id,
         created_by: context.userId,
-        name: `Copy of ${estimate.name}`.slice(0, 200),
+        name: copyName,
         description: estimate.description,
         opportunity_id: estimate.opportunity_id,
         project_id: null,
-        project_type: estimate.project_type,
+        project_type: copyAsProjectEstimate ? "commercial" : estimate.project_type,
         region: estimate.region,
         region_multiplier: estimate.region_multiplier,
         overhead_pct: estimate.overhead_pct,

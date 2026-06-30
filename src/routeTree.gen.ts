@@ -16,6 +16,7 @@ import { Route as EmailUnsubscribeRouteImport } from './routes/email/unsubscribe
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
 import { Route as AuthenticatedEstimatesRouteImport } from './routes/_authenticated/estimates'
+import { Route as AuthenticatedEstimateMastersRouteImport } from './routes/_authenticated/estimate-masters'
 import { Route as AuthenticatedCostLibraryRouteImport } from './routes/_authenticated/cost-library'
 import { Route as AuthenticatedBillingRouteImport } from './routes/_authenticated/billing'
 import { Route as LovableEmailSuppressionRouteImport } from './routes/lovable/email/suppression'
@@ -68,6 +69,12 @@ const AuthenticatedEstimatesRoute = AuthenticatedEstimatesRouteImport.update({
   path: '/estimates',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedEstimateMastersRoute =
+  AuthenticatedEstimateMastersRouteImport.update({
+    id: '/estimate-masters',
+    path: '/estimate-masters',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedCostLibraryRoute =
   AuthenticatedCostLibraryRouteImport.update({
     id: '/cost-library',
@@ -170,6 +177,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRouteWithChildren
   '/billing': typeof AuthenticatedBillingRoute
   '/cost-library': typeof AuthenticatedCostLibraryRoute
+  '/estimate-masters': typeof AuthenticatedEstimateMastersRoute
   '/estimates': typeof AuthenticatedEstimatesRouteWithChildren
   '/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -194,6 +202,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRouteWithChildren
   '/billing': typeof AuthenticatedBillingRoute
   '/cost-library': typeof AuthenticatedCostLibraryRoute
+  '/estimate-masters': typeof AuthenticatedEstimateMastersRoute
   '/estimates': typeof AuthenticatedEstimatesRouteWithChildren
   '/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -221,6 +230,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRouteWithChildren
   '/_authenticated/billing': typeof AuthenticatedBillingRoute
   '/_authenticated/cost-library': typeof AuthenticatedCostLibraryRoute
+  '/_authenticated/estimate-masters': typeof AuthenticatedEstimateMastersRoute
   '/_authenticated/estimates': typeof AuthenticatedEstimatesRouteWithChildren
   '/_authenticated/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
@@ -249,6 +259,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/billing'
     | '/cost-library'
+    | '/estimate-masters'
     | '/estimates'
     | '/team'
     | '/auth/callback'
@@ -273,6 +284,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/billing'
     | '/cost-library'
+    | '/estimate-masters'
     | '/estimates'
     | '/team'
     | '/auth/callback'
@@ -299,6 +311,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_authenticated/billing'
     | '/_authenticated/cost-library'
+    | '/_authenticated/estimate-masters'
     | '/_authenticated/estimates'
     | '/_authenticated/team'
     | '/auth/callback'
@@ -387,6 +400,13 @@ declare module '@tanstack/react-router' {
       path: '/estimates'
       fullPath: '/estimates'
       preLoaderRoute: typeof AuthenticatedEstimatesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/estimate-masters': {
+      id: '/_authenticated/estimate-masters'
+      path: '/estimate-masters'
+      fullPath: '/estimate-masters'
+      preLoaderRoute: typeof AuthenticatedEstimateMastersRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/cost-library': {
@@ -544,6 +564,7 @@ const AuthenticatedProjectsProjectIdRouteWithChildren =
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedBillingRoute: typeof AuthenticatedBillingRoute
   AuthenticatedCostLibraryRoute: typeof AuthenticatedCostLibraryRoute
+  AuthenticatedEstimateMastersRoute: typeof AuthenticatedEstimateMastersRoute
   AuthenticatedEstimatesRoute: typeof AuthenticatedEstimatesRouteWithChildren
   AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
@@ -554,6 +575,7 @@ interface AuthenticatedRouteRouteChildren {
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedBillingRoute: AuthenticatedBillingRoute,
   AuthenticatedCostLibraryRoute: AuthenticatedCostLibraryRoute,
+  AuthenticatedEstimateMastersRoute: AuthenticatedEstimateMastersRoute,
   AuthenticatedEstimatesRoute: AuthenticatedEstimatesRouteWithChildren,
   AuthenticatedTeamRoute: AuthenticatedTeamRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
