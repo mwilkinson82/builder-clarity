@@ -653,10 +653,24 @@ function CostLibraryRow({
         <div className="flex justify-end gap-1">
           {editable ? (
             <>
-              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => onSave(draft)}>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                onClick={() => onSave(draft)}
+                title="Save custom item"
+                aria-label="Save custom item"
+              >
                 <Save className="h-4 w-4" />
               </Button>
-              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onDelete}>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8"
+                onClick={onDelete}
+                title="Delete custom item"
+                aria-label="Delete custom item"
+              >
                 <Trash2 className="h-4 w-4 text-danger" />
               </Button>
             </>
@@ -667,6 +681,7 @@ function CostLibraryRow({
               className="h-8 w-8"
               onClick={onCopy}
               title="Copy to custom library"
+              aria-label="Copy to custom library"
             >
               <Copy className="h-4 w-4" />
             </Button>
