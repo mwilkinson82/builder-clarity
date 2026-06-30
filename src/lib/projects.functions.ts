@@ -3225,8 +3225,8 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       .from("billing_applications")
       .insert({
         project_id: projectId,
-        application_number: "Pay App 001",
-        invoice_number: "DEMO-2601-001",
+        application_number: "Pay App 1",
+        invoice_number: "DEMO-2601-1",
         submitted_date: "2026-06-21",
         due_date: "2026-07-21",
         billing_period: "Current cycle",

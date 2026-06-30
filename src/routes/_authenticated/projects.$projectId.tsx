@@ -42,7 +42,11 @@ import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
-import { BillingEnhancementPanels } from "@/components/billing/BillingEnhancements";
+import {
+  BillingLineItemsPanel,
+  ProjectCostTrackingPanel,
+  WipAnalysisPanel,
+} from "@/components/billing/BillingEnhancements";
 import {
   getClientPortalManagement,
   type ProjectClientAccessRow,
@@ -357,6 +361,7 @@ function ProjectPage() {
   const list = useServerFn(listProjects);
   const qc = useQueryClient();
   const [creatingCoRiskId, setCreatingCoRiskId] = useState<string | null>(null);
+  const [activeProjectTab, setActiveProjectTab] = useState("dashboard");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["project", projectId],
@@ -1302,19 +1307,32 @@ function ProjectPage() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[1500px] min-w-0 px-4 py-6 sm:px-6 lg:px-8">
+      <main
+        className={`mx-auto w-full min-w-0 px-4 py-6 sm:px-6 lg:px-8 ${
+          activeProjectTab === "billing" ? "max-w-[1760px]" : "max-w-[1500px]"
+        }`}
+      >
         <Tabs
-          defaultValue="dashboard"
-          className="grid min-w-0 gap-6 lg:grid-cols-[238px_minmax(0,1fr)] lg:items-start"
+          value={activeProjectTab}
+          onValueChange={setActiveProjectTab}
+          className={`grid min-w-0 gap-6 lg:items-start ${
+            activeProjectTab === "billing"
+              ? "lg:grid-cols-[76px_minmax(0,1fr)] xl:grid-cols-[84px_minmax(0,1fr)]"
+              : "lg:grid-cols-[238px_minmax(0,1fr)]"
+          }`}
         >
           <aside className="lg:sticky lg:top-6">
             <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1 shadow-card lg:flex-col lg:items-stretch lg:overflow-visible">
               <a
                 href="/?tab=crm"
-                className="inline-flex min-w-[148px] items-center justify-start rounded-md px-3 py-3 text-left text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground lg:w-full"
+                className={`inline-flex min-w-[148px] items-center justify-start rounded-md px-3 py-3 text-left text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground lg:w-full ${
+                  activeProjectTab === "billing" ? "lg:min-w-0 lg:justify-center lg:px-2" : ""
+                }`}
               >
-                <BriefcaseBusiness className="mr-2 h-4 w-4 shrink-0" />
-                <span className="min-w-0">
+                <BriefcaseBusiness
+                  className={`h-4 w-4 shrink-0 ${activeProjectTab === "billing" ? "lg:mr-0" : "mr-2"}`}
+                />
+                <span className={`min-w-0 ${activeProjectTab === "billing" ? "lg:sr-only" : ""}`}>
                   <span className="block text-sm font-medium leading-tight">CRM</span>
                   <span className="mt-0.5 block truncate text-[11px] font-normal opacity-80">
                     Relationships
@@ -1327,10 +1345,16 @@ function ProjectPage() {
                   <TabsTrigger
                     key={item.value}
                     value={item.value}
-                    className="min-w-[148px] justify-start rounded-md px-3 py-3 text-left data-[state=active]:bg-foreground data-[state=active]:text-background lg:w-full"
+                    className={`min-w-[148px] justify-start rounded-md px-3 py-3 text-left data-[state=active]:bg-foreground data-[state=active]:text-background lg:w-full ${
+                      activeProjectTab === "billing" ? "lg:min-w-0 lg:justify-center lg:px-2" : ""
+                    }`}
                   >
-                    <Icon className="mr-2 h-4 w-4 shrink-0" />
-                    <span className="min-w-0">
+                    <Icon
+                      className={`h-4 w-4 shrink-0 ${activeProjectTab === "billing" ? "lg:mr-0" : "mr-2"}`}
+                    />
+                    <span
+                      className={`min-w-0 ${activeProjectTab === "billing" ? "lg:sr-only" : ""}`}
+                    >
                       <span className="block text-sm font-medium leading-tight">{item.label}</span>
                       <span className="mt-0.5 block truncate text-[11px] font-normal opacity-70">
                         {item.detail}
@@ -2040,7 +2064,7 @@ function BillingWorkspace({
   );
 
   const buildDraft = (): BillingDraft => {
-    const nextNumber = String(billingApplications.length + 1).padStart(3, "0");
+    const nextNumber = String(billingApplications.length + 1);
     return {
       application_number: `Pay App ${nextNumber}`,
       invoice_number: project.job_number
@@ -2064,11 +2088,10 @@ function BillingWorkspace({
   };
   const buildInvoiceDraft = (app?: BillingApplicationRow): InvoiceDraft => {
     const sourceIndex = billingInvoices.length + 1;
+    const sourceNumber = String(sourceIndex);
     const invoiceNumber =
       app?.invoice_number ||
-      (project.job_number
-        ? `${project.job_number}-${String(sourceIndex).padStart(3, "0")}`
-        : `INV-${String(sourceIndex).padStart(3, "0")}`);
+      (project.job_number ? `${project.job_number}-${sourceNumber}` : `INV-${sourceNumber}`);
     const subtotal = app?.amount_billed ?? unbilledEarnedToDate;
     const invoiceRetainage = app?.retainage ?? subtotal * 0.1;
     const retainageReleased = app?.retainage_released_this_period ?? 0;
@@ -2085,7 +2108,7 @@ function BillingWorkspace({
     return {
       billing_application_id: app?.id ?? null,
       invoice_number: invoiceNumber,
-      title: app?.application_number || `Invoice ${String(sourceIndex).padStart(3, "0")}`,
+      title: app?.application_number || `Invoice ${sourceNumber}`,
       issue_date: app?.submitted_date ?? today,
       due_date: app?.due_date ?? addDays(today, 30),
       subtotal,
@@ -2178,323 +2201,67 @@ function BillingWorkspace({
     }
   };
 
+  const renderEnhancedBillingPanel = (render: (workspace: BillingWorkspaceData) => ReactNode) => {
+    if (billingWorkspaceLoading) {
+      return (
+        <div className="rounded-md border border-hairline bg-surface p-5 text-sm text-muted-foreground">
+          Loading billing detail...
+        </div>
+      );
+    }
+    if (!billingWorkspace?.schemaReady) {
+      return (
+        <div className="rounded-md border border-warning/30 bg-warning/10 p-5 text-sm text-warning">
+          Enhanced billing tables are not available yet. Apply the Billing and WIP foundation
+          migration, then refresh this project.
+        </div>
+      );
+    }
+    return render(billingWorkspace);
+  };
+
   return (
-    <section className="space-y-6">
-      <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <WorkspaceHeader
-            title="Billing"
-            subtitle="Pay applications, invoice status, remaining-to-bill, retainage, open receivables, and pending COs."
-            compact
-          />
-          <Dialog open={payAppOpen} onOpenChange={setPayAppOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" onClick={openPayAppDialog} className="gap-1.5">
-                <Plus className="h-3.5 w-3.5" /> Add pay app
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-3xl">
-              <DialogHeader>
-                <DialogTitle className="font-serif text-2xl">Add pay application</DialogTitle>
-              </DialogHeader>
-              <div className="grid gap-4 py-2">
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="space-y-1.5">
-                    <Label>Pay app</Label>
-                    <Input
-                      value={draft.application_number}
-                      onChange={(e) => setDraft({ ...draft, application_number: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Invoice #</Label>
-                    <Input
-                      value={draft.invoice_number}
-                      onChange={(e) => setDraft({ ...draft, invoice_number: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Status</Label>
-                    <Select
-                      value={draft.status}
-                      onValueChange={(status) =>
-                        setDraft({ ...draft, status: status as BillingApplicationRow["status"] })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="draft">Draft</SelectItem>
-                        <SelectItem value="submitted">Submitted</SelectItem>
-                        <SelectItem value="partial">Partial</SelectItem>
-                        <SelectItem value="paid">Paid</SelectItem>
-                        <SelectItem value="rejected">Rejected</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="space-y-1.5">
-                    <Label>Billing period</Label>
-                    <Input
-                      value={draft.billing_period}
-                      onChange={(e) => setDraft({ ...draft, billing_period: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Submitted date</Label>
-                    <Input
-                      type="date"
-                      value={draft.submitted_date ?? ""}
-                      onChange={(e) =>
-                        setDraft({ ...draft, submitted_date: e.target.value || null })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Due date</Label>
-                    <Input
-                      type="date"
-                      value={draft.due_date ?? ""}
-                      onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })}
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-5">
-                  <div className="space-y-1.5">
-                    <Label>Contract</Label>
-                    <MoneyInput
-                      value={draft.contract_amount}
-                      onValueChange={(contract_amount) => setDraft({ ...draft, contract_amount })}
-                      align="right"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Change orders</Label>
-                    <MoneyInput
-                      value={draft.change_order_amount}
-                      onValueChange={(change_order_amount) =>
-                        setDraft({ ...draft, change_order_amount })
-                      }
-                      align="right"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Amount billed</Label>
-                    <MoneyInput
-                      value={draft.amount_billed}
-                      onValueChange={(amount_billed) => setDraft({ ...draft, amount_billed })}
-                      align="right"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Paid to date</Label>
-                    <MoneyInput
-                      value={draft.paid_to_date}
-                      onValueChange={(paid_to_date) => setDraft({ ...draft, paid_to_date })}
-                      align="right"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Retainage</Label>
-                    <MoneyInput
-                      value={draft.retainage}
-                      onValueChange={(retainage) => setDraft({ ...draft, retainage })}
-                      align="right"
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-[1fr_180px]">
-                  <div className="space-y-1.5">
-                    <Label>Notes</Label>
-                    <Textarea
-                      rows={3}
-                      value={draft.notes}
-                      placeholder="Billing narrative, exclusions, retainage notes, or collection issue."
-                      onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
-                    />
-                  </div>
-                  <div className="rounded-md border border-hairline bg-surface p-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Open A/R
-                    </div>
-                    <div className="mt-2 text-2xl font-medium tabular text-foreground">
-                      {fmtUSD(draftOpenReceivable)}
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      Billed less paid and retainage.
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="ghost" onClick={() => setPayAppOpen(false)}>
-                  Cancel
+    <section className="space-y-4">
+      <Tabs defaultValue="billing" className="space-y-4">
+        <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <WorkspaceHeader
+              title="Billing"
+              subtitle="Pay applications, project cost tracking, WIP, invoices, retainage, open receivables, and pending COs."
+              compact
+            />
+            <Dialog open={payAppOpen} onOpenChange={setPayAppOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" onClick={openPayAppDialog} className="gap-1.5">
+                  <Plus className="h-3.5 w-3.5" /> Add pay app
                 </Button>
-                <Button onClick={savePayApplication} disabled={savingPayApp}>
-                  {savingPayApp ? "Saving..." : "Save pay app"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-4 xl:grid-cols-7">
-          <SovMetric label="Forecasted contract" value={fmtUSD(rollup.forecastedFinalContract)} />
-          <SovMetric label="Earned to date" value={fmtUSD(earnedToDate)} />
-          <SovMetric label="Billed to date" value={fmtUSD(totalBilled)} />
-          <SovMetric label="Remaining to bill" value={fmtUSD(contractRemaining)} />
-          <SovMetric label="Paid to date" value={fmtUSD(paidToDate)} />
-          <SovMetric label="Open A/R" value={fmtUSD(openReceivable)} />
-          <SovMetric label="Retainage" value={fmtUSD(retainage)} />
-        </div>
-        <p className="mt-3 text-xs text-muted-foreground">
-          Remaining to bill is forecasted contract less billed to date. Open A/R is billed less paid
-          and retainage.
-        </p>
-      </div>
-
-      <BillingEnhancementPanels
-        project={project}
-        projectId={project.id}
-        payApps={billingApplications}
-        buckets={buckets}
-        workspace={billingWorkspace}
-        isLoading={billingWorkspaceLoading}
-        savingLine={savingBillingLine}
-        savingCost={savingCostActual}
-        savingBucket={savingBucketBilling}
-        onGenerateLines={onGenerateBillingLines}
-        onUpdateLine={onUpdateBillingLine}
-        onCreateCostActual={onCreateCostActual}
-        onImportCostActuals={onImportCostActuals}
-        onVoidCostActual={onVoidCostActual}
-        onUpdateBucketSettings={onUpdateBucketBillingSettings}
-      />
-
-      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
-          <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                Pay application ledger
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Contract billing, change-order billing, invoice dates, paid-to-date, retainage, and
-                open A/R.
-              </p>
-            </div>
-            <div className="text-sm tabular text-muted-foreground">
-              Remaining to bill {fmtUSD(contractRemaining)} · Open A/R {fmtUSD(openReceivable)} ·
-              Holds {fmtUSD(holds)}
-            </div>
-          </div>
-          <div className="space-y-3">
-            {billingApplications.length === 0 ? (
-              <div className="rounded-md border border-hairline bg-surface px-3 py-8 text-center text-sm text-muted-foreground">
-                No pay applications logged yet. Add the first pay app above.
-              </div>
-            ) : (
-              billingApplications.map((app) => {
-                const linkedInvoice = getActiveInvoiceForPayApp(app.id);
-                return (
-                  <BillingApplicationRowEditor
-                    key={app.id}
-                    app={app}
-                    linkedInvoice={linkedInvoice}
-                    onPatch={(patch) => onUpdate(app.id, patch)}
-                    onCreateInvoice={() => openInvoiceDialog(app)}
-                    onDelete={() => onDelete(app.id)}
-                  />
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
-          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                Invoice & payment ledger
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Client-facing invoices, payment status, retainage, processor fees, and open
-                receivables.
-              </p>
-            </div>
-            <Dialog
-              open={invoiceOpen}
-              onOpenChange={(open) => {
-                setInvoiceOpen(open);
-                if (!open) setInvoiceError("");
-              }}
-            >
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => openInvoiceDialog()}
-                className="gap-1.5"
-              >
-                <ReceiptText className="h-3.5 w-3.5" /> Create invoice
-              </Button>
+              </DialogTrigger>
               <DialogContent className="sm:max-w-3xl">
                 <DialogHeader>
-                  <DialogTitle className="font-serif text-2xl">Create invoice</DialogTitle>
+                  <DialogTitle className="font-serif text-2xl">Add pay application</DialogTitle>
                 </DialogHeader>
                 <div className="grid gap-4 py-2">
                   <div className="grid gap-3 md:grid-cols-3">
                     <div className="space-y-1.5">
-                      <Label>Source pay app</Label>
-                      <Select
-                        value={invoiceDraft.billing_application_id ?? "none"}
-                        onValueChange={(value) =>
-                          value === "none"
-                            ? setInvoiceDraft(buildInvoiceDraft())
-                            : selectInvoiceSource(value)
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">No linked pay app</SelectItem>
-                          {billingApplications.map((app) => {
-                            const existingInvoice = getActiveInvoiceForPayApp(app.id);
-                            return (
-                              <SelectItem
-                                key={app.id}
-                                value={app.id}
-                                disabled={Boolean(existingInvoice)}
-                              >
-                                {app.application_number || app.invoice_number || "Pay app"}
-                                {existingInvoice
-                                  ? ` - invoiced as ${existingInvoice.invoice_number}`
-                                  : ""}
-                              </SelectItem>
-                            );
-                          })}
-                        </SelectContent>
-                      </Select>
+                      <Label>Pay app</Label>
+                      <Input
+                        value={draft.application_number}
+                        onChange={(e) => setDraft({ ...draft, application_number: e.target.value })}
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <Label>Invoice #</Label>
                       <Input
-                        value={invoiceDraft.invoice_number}
-                        onChange={(e) =>
-                          setInvoiceDraft({ ...invoiceDraft, invoice_number: e.target.value })
-                        }
+                        value={draft.invoice_number}
+                        onChange={(e) => setDraft({ ...draft, invoice_number: e.target.value })}
                       />
                     </div>
                     <div className="space-y-1.5">
                       <Label>Status</Label>
                       <Select
-                        value={invoiceDraft.status}
+                        value={draft.status}
                         onValueChange={(status) =>
-                          setInvoiceDraft({
-                            ...invoiceDraft,
-                            status: status as BillingInvoiceRow["status"],
-                          })
+                          setDraft({ ...draft, status: status as BillingApplicationRow["status"] })
                         }
                       >
                         <SelectTrigger>
@@ -2502,33 +2269,29 @@ function BillingWorkspace({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="draft">Draft</SelectItem>
-                          <SelectItem value="sent">Sent</SelectItem>
-                          <SelectItem value="viewed">Viewed</SelectItem>
-                          <SelectItem value="partially_paid">Partially paid</SelectItem>
+                          <SelectItem value="submitted">Submitted</SelectItem>
+                          <SelectItem value="partial">Partial</SelectItem>
                           <SelectItem value="paid">Paid</SelectItem>
-                          <SelectItem value="overdue">Overdue</SelectItem>
-                          <SelectItem value="void">Void</SelectItem>
+                          <SelectItem value="rejected">Rejected</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                   </div>
                   <div className="grid gap-3 md:grid-cols-3">
                     <div className="space-y-1.5">
-                      <Label>Title</Label>
+                      <Label>Billing period</Label>
                       <Input
-                        value={invoiceDraft.title}
-                        onChange={(e) =>
-                          setInvoiceDraft({ ...invoiceDraft, title: e.target.value })
-                        }
+                        value={draft.billing_period}
+                        onChange={(e) => setDraft({ ...draft, billing_period: e.target.value })}
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Issue date</Label>
+                      <Label>Submitted date</Label>
                       <Input
                         type="date"
-                        value={invoiceDraft.issue_date ?? ""}
+                        value={draft.submitted_date ?? ""}
                         onChange={(e) =>
-                          setInvoiceDraft({ ...invoiceDraft, issue_date: e.target.value || null })
+                          setDraft({ ...draft, submitted_date: e.target.value || null })
                         }
                       />
                     </div>
@@ -2536,224 +2299,588 @@ function BillingWorkspace({
                       <Label>Due date</Label>
                       <Input
                         type="date"
-                        value={invoiceDraft.due_date ?? ""}
-                        onChange={(e) =>
-                          setInvoiceDraft({ ...invoiceDraft, due_date: e.target.value || null })
-                        }
+                        value={draft.due_date ?? ""}
+                        onChange={(e) => setDraft({ ...draft, due_date: e.target.value || null })}
                       />
                     </div>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-4">
+                  <div className="grid gap-3 md:grid-cols-5">
                     <div className="space-y-1.5">
-                      <Label>Subtotal</Label>
+                      <Label>Contract</Label>
                       <MoneyInput
-                        value={invoiceDraft.subtotal}
-                        onValueChange={(subtotal) =>
-                          setInvoiceDraft({
-                            ...invoiceDraft,
-                            subtotal,
-                            total_due: Math.max(0, subtotal - invoiceDraft.retainage),
-                          })
+                        value={draft.contract_amount}
+                        onValueChange={(contract_amount) => setDraft({ ...draft, contract_amount })}
+                        align="right"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Change orders</Label>
+                      <MoneyInput
+                        value={draft.change_order_amount}
+                        onValueChange={(change_order_amount) =>
+                          setDraft({ ...draft, change_order_amount })
                         }
+                        align="right"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Amount billed</Label>
+                      <MoneyInput
+                        value={draft.amount_billed}
+                        onValueChange={(amount_billed) => setDraft({ ...draft, amount_billed })}
+                        align="right"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Paid to date</Label>
+                      <MoneyInput
+                        value={draft.paid_to_date}
+                        onValueChange={(paid_to_date) => setDraft({ ...draft, paid_to_date })}
                         align="right"
                       />
                     </div>
                     <div className="space-y-1.5">
                       <Label>Retainage</Label>
                       <MoneyInput
-                        value={invoiceDraft.retainage}
-                        onValueChange={(retainage) =>
-                          setInvoiceDraft({
-                            ...invoiceDraft,
-                            retainage,
-                            total_due: Math.max(0, invoiceDraft.subtotal - retainage),
-                          })
-                        }
-                        align="right"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Total due</Label>
-                      <MoneyInput
-                        value={invoiceDraft.total_due}
-                        onValueChange={(total_due) =>
-                          setInvoiceDraft({ ...invoiceDraft, total_due })
-                        }
-                        align="right"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Paid</Label>
-                      <MoneyInput
-                        value={invoiceDraft.paid_amount}
-                        onValueChange={(paid_amount) =>
-                          setInvoiceDraft({ ...invoiceDraft, paid_amount })
-                        }
+                        value={draft.retainage}
+                        onValueChange={(retainage) => setDraft({ ...draft, retainage })}
                         align="right"
                       />
                     </div>
                   </div>
-                  <label className="flex items-center gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={invoiceDraft.client_visible}
-                      onChange={(e) =>
-                        setInvoiceDraft({ ...invoiceDraft, client_visible: e.target.checked })
-                      }
-                    />
-                    Visible in client portal when billing access is enabled
-                  </label>
-                  <div className="space-y-1.5">
-                    <Label>Notes</Label>
-                    <Textarea
-                      rows={3}
-                      value={invoiceDraft.notes}
-                      placeholder="Invoice context, exclusions, payment terms, or collection notes."
-                      onChange={(e) => setInvoiceDraft({ ...invoiceDraft, notes: e.target.value })}
-                    />
+                  <div className="grid gap-3 md:grid-cols-[1fr_180px]">
+                    <div className="space-y-1.5">
+                      <Label>Notes</Label>
+                      <Textarea
+                        rows={3}
+                        value={draft.notes}
+                        placeholder="Billing narrative, exclusions, retainage notes, or collection issue."
+                        onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+                      />
+                    </div>
+                    <div className="rounded-md border border-hairline bg-surface p-3">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Open A/R
+                      </div>
+                      <div className="mt-2 text-2xl font-medium tabular text-foreground">
+                        {fmtUSD(draftOpenReceivable)}
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Billed less paid and retainage.
+                      </div>
+                    </div>
                   </div>
                 </div>
-                {invoiceDialogMessage ? (
-                  <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-                    {invoiceDialogMessage}
-                  </div>
-                ) : null}
                 <DialogFooter>
-                  <Button variant="ghost" onClick={() => setInvoiceOpen(false)}>
+                  <Button variant="ghost" onClick={() => setPayAppOpen(false)}>
                     Cancel
                   </Button>
-                  <Button
-                    onClick={saveInvoice}
-                    disabled={savingInvoice || Boolean(invoiceBlockingMessage)}
-                  >
-                    {savingInvoice ? "Saving..." : "Save invoice"}
+                  <Button onClick={savePayApplication} disabled={savingPayApp}>
+                    {savingPayApp ? "Saving..." : "Save pay app"}
                   </Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
           </div>
-
-          <div className="mb-4 grid gap-3 md:grid-cols-5">
-            <SovMetric label="Invoice total due" value={fmtUSD(invoiceTotalDue)} />
-            <SovMetric label="Invoice paid" value={fmtUSD(invoicePaid)} />
-            <SovMetric label="Invoice open" value={fmtUSD(invoiceOpenBalance)} />
-            <SovMetric label="Client-visible" value={String(clientVisibleInvoices)} />
-            <SovMetric label="Billing recipients" value={recipientStatus} />
+          <div className="mt-5 grid gap-3 md:grid-cols-4 xl:grid-cols-7">
+            <SovMetric label="Forecasted contract" value={fmtUSD(rollup.forecastedFinalContract)} />
+            <SovMetric label="Earned to date" value={fmtUSD(earnedToDate)} />
+            <SovMetric label="Billed to date" value={fmtUSD(totalBilled)} />
+            <SovMetric label="Remaining to bill" value={fmtUSD(contractRemaining)} />
+            <SovMetric label="Paid to date" value={fmtUSD(paidToDate)} />
+            <SovMetric label="Open A/R" value={fmtUSD(openReceivable)} />
+            <SovMetric label="Retainage" value={fmtUSD(retainage)} />
           </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Remaining to bill is forecasted contract less billed to date. Open A/R is billed less
+            paid and retainage.
+          </p>
+          <TabsList className="mt-5 h-auto w-full justify-start gap-1 overflow-x-auto rounded-md border border-hairline bg-surface p-1 sm:flex-wrap sm:overflow-visible">
+            <TabsTrigger value="billing" className="whitespace-nowrap">
+              Billing
+            </TabsTrigger>
+            <TabsTrigger value="pay-app-detail" className="whitespace-nowrap">
+              Pay App Detail
+            </TabsTrigger>
+            <TabsTrigger value="project-costs" className="whitespace-nowrap">
+              Project Costs
+            </TabsTrigger>
+            <TabsTrigger value="wip-analysis" className="whitespace-nowrap">
+              WIP Analysis
+            </TabsTrigger>
+            <TabsTrigger value="pay-app-ledger" className="whitespace-nowrap">
+              Pay App Ledger
+            </TabsTrigger>
+            <TabsTrigger value="invoice-ledger" className="whitespace-nowrap">
+              Invoices & Payments
+            </TabsTrigger>
+            <TabsTrigger value="pending-cos" className="whitespace-nowrap">
+              Pending COs
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
-          <div className="mb-4 rounded-md border border-hairline bg-surface p-4">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <TabsContent value="billing" className="mt-0 space-y-4">
+          <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+            <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                Billing position
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <SovMetric label="Unbilled earned" value={fmtUSD(unbilledEarnedToDate)} />
+                <SovMetric label="Remaining to bill" value={fmtUSD(contractRemaining)} />
+                <SovMetric label="Holds" value={fmtUSD(holds)} />
+                <SovMetric label="Open A/R" value={fmtUSD(openReceivable)} />
+                <SovMetric label="Retainage" value={fmtUSD(retainage)} />
+                <SovMetric label="Pending CO likely" value={fmtUSD(weightedPending)} />
+              </div>
+            </div>
+            <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                Client payment readiness
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">{billingReadinessMessage}</p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <SovMetric label="Invoices" value={String(billingInvoices.length)} />
+                <SovMetric label="Client-visible" value={String(clientVisibleInvoices)} />
+                <SovMetric label="Billing recipients" value={recipientStatus} />
+                <SovMetric label="Online links" value={String(onlinePayReadyInvoices.length)} />
+                <SovMetric label="Online balance" value={fmtUSD(onlinePayReadyBalance)} />
+                <SovMetric label="Invoice open" value={fmtUSD(invoiceOpenBalance)} />
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="pay-app-detail" className="mt-0">
+          {renderEnhancedBillingPanel((workspace) => (
+            <BillingLineItemsPanel
+              project={project}
+              payApps={billingApplications}
+              lineItems={workspace.lineItems}
+              onGenerateLines={onGenerateBillingLines}
+              onUpdateLine={onUpdateBillingLine}
+              savingLine={savingBillingLine}
+            />
+          ))}
+        </TabsContent>
+
+        <TabsContent value="project-costs" className="mt-0">
+          {renderEnhancedBillingPanel((workspace) => (
+            <ProjectCostTrackingPanel
+              projectId={project.id}
+              buckets={buckets}
+              costActuals={workspace.costActuals}
+              onCreateCostActual={onCreateCostActual}
+              onImportCostActuals={onImportCostActuals}
+              onVoidCostActual={onVoidCostActual}
+              savingCost={savingCostActual}
+            />
+          ))}
+        </TabsContent>
+
+        <TabsContent value="wip-analysis" className="mt-0">
+          {renderEnhancedBillingPanel((workspace) => (
+            <WipAnalysisPanel
+              buckets={buckets}
+              workspace={workspace}
+              onUpdateBucketSettings={onUpdateBucketBillingSettings}
+              savingBucket={savingBucketBilling}
+            />
+          ))}
+        </TabsContent>
+
+        <TabsContent value="pay-app-ledger" className="mt-0">
+          <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
+            <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  Client payment readiness
+                <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                  Pay application ledger
                 </div>
-                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  {billingReadinessMessage}
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Contract billing, change-order billing, invoice dates, paid-to-date, retainage,
+                  and open A/R.
                 </p>
               </div>
-              <div className="grid w-full min-w-0 gap-2 sm:grid-cols-3 lg:max-w-[460px]">
-                <div className="rounded-md border border-hairline bg-card px-3 py-2">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Online links
-                  </div>
-                  <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">
-                    {onlinePayReadyInvoices.length}
-                  </div>
-                </div>
-                <div className="rounded-md border border-hairline bg-card px-3 py-2">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Online balance
-                  </div>
-                  <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">
-                    {fmtUSD(onlinePayReadyBalance)}
-                  </div>
-                </div>
-                <Button asChild variant="outline" className="h-full min-h-[58px] justify-start">
-                  <Link to="/team">Finish payment setup</Link>
-                </Button>
+              <div className="text-sm tabular text-muted-foreground">
+                Remaining to bill {fmtUSD(contractRemaining)} · Open A/R {fmtUSD(openReceivable)} ·
+                Holds {fmtUSD(holds)}
               </div>
             </div>
+            <div className="space-y-3">
+              {billingApplications.length === 0 ? (
+                <div className="rounded-md border border-hairline bg-surface px-3 py-8 text-center text-sm text-muted-foreground">
+                  No pay applications logged yet. Add the first pay app above.
+                </div>
+              ) : (
+                billingApplications.map((app) => {
+                  const linkedInvoice = getActiveInvoiceForPayApp(app.id);
+                  return (
+                    <BillingApplicationRowEditor
+                      key={app.id}
+                      app={app}
+                      linkedInvoice={linkedInvoice}
+                      onPatch={(patch) => onUpdate(app.id, patch)}
+                      onCreateInvoice={() => openInvoiceDialog(app)}
+                      onDelete={() => onDelete(app.id)}
+                    />
+                  );
+                })
+              )}
+            </div>
           </div>
+        </TabsContent>
 
-          <div className="space-y-3">
-            {billingInvoices.length === 0 ? (
-              <div className="rounded-md border border-hairline bg-surface px-3 py-8 text-center text-sm text-muted-foreground">
-                No invoices logged yet. Create one from a pay app when it is ready for client
-                billing.
+        <TabsContent value="invoice-ledger" className="mt-0">
+          <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
+            <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                  Invoice & payment ledger
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Client-facing invoices, payment status, retainage, processor fees, and open
+                  receivables.
+                </p>
               </div>
+              <Dialog
+                open={invoiceOpen}
+                onOpenChange={(open) => {
+                  setInvoiceOpen(open);
+                  if (!open) setInvoiceError("");
+                }}
+              >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openInvoiceDialog()}
+                  className="gap-1.5"
+                >
+                  <ReceiptText className="h-3.5 w-3.5" /> Create invoice
+                </Button>
+                <DialogContent className="sm:max-w-3xl">
+                  <DialogHeader>
+                    <DialogTitle className="font-serif text-2xl">Create invoice</DialogTitle>
+                  </DialogHeader>
+                  <div className="grid gap-4 py-2">
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="space-y-1.5">
+                        <Label>Source pay app</Label>
+                        <Select
+                          value={invoiceDraft.billing_application_id ?? "none"}
+                          onValueChange={(value) =>
+                            value === "none"
+                              ? setInvoiceDraft(buildInvoiceDraft())
+                              : selectInvoiceSource(value)
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">No linked pay app</SelectItem>
+                            {billingApplications.map((app) => {
+                              const existingInvoice = getActiveInvoiceForPayApp(app.id);
+                              return (
+                                <SelectItem
+                                  key={app.id}
+                                  value={app.id}
+                                  disabled={Boolean(existingInvoice)}
+                                >
+                                  {app.application_number || app.invoice_number || "Pay app"}
+                                  {existingInvoice
+                                    ? ` - invoiced as ${existingInvoice.invoice_number}`
+                                    : ""}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Invoice #</Label>
+                        <Input
+                          value={invoiceDraft.invoice_number}
+                          onChange={(e) =>
+                            setInvoiceDraft({ ...invoiceDraft, invoice_number: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Status</Label>
+                        <Select
+                          value={invoiceDraft.status}
+                          onValueChange={(status) =>
+                            setInvoiceDraft({
+                              ...invoiceDraft,
+                              status: status as BillingInvoiceRow["status"],
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="draft">Draft</SelectItem>
+                            <SelectItem value="sent">Sent</SelectItem>
+                            <SelectItem value="viewed">Viewed</SelectItem>
+                            <SelectItem value="partially_paid">Partially paid</SelectItem>
+                            <SelectItem value="paid">Paid</SelectItem>
+                            <SelectItem value="overdue">Overdue</SelectItem>
+                            <SelectItem value="void">Void</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="space-y-1.5">
+                        <Label>Title</Label>
+                        <Input
+                          value={invoiceDraft.title}
+                          onChange={(e) =>
+                            setInvoiceDraft({ ...invoiceDraft, title: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Issue date</Label>
+                        <Input
+                          type="date"
+                          value={invoiceDraft.issue_date ?? ""}
+                          onChange={(e) =>
+                            setInvoiceDraft({ ...invoiceDraft, issue_date: e.target.value || null })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Due date</Label>
+                        <Input
+                          type="date"
+                          value={invoiceDraft.due_date ?? ""}
+                          onChange={(e) =>
+                            setInvoiceDraft({ ...invoiceDraft, due_date: e.target.value || null })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-4">
+                      <div className="space-y-1.5">
+                        <Label>Subtotal</Label>
+                        <MoneyInput
+                          value={invoiceDraft.subtotal}
+                          onValueChange={(subtotal) =>
+                            setInvoiceDraft({
+                              ...invoiceDraft,
+                              subtotal,
+                              total_due: Math.max(0, subtotal - invoiceDraft.retainage),
+                            })
+                          }
+                          align="right"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Retainage</Label>
+                        <MoneyInput
+                          value={invoiceDraft.retainage}
+                          onValueChange={(retainage) =>
+                            setInvoiceDraft({
+                              ...invoiceDraft,
+                              retainage,
+                              total_due: Math.max(0, invoiceDraft.subtotal - retainage),
+                            })
+                          }
+                          align="right"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Total due</Label>
+                        <MoneyInput
+                          value={invoiceDraft.total_due}
+                          onValueChange={(total_due) =>
+                            setInvoiceDraft({ ...invoiceDraft, total_due })
+                          }
+                          align="right"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Paid</Label>
+                        <MoneyInput
+                          value={invoiceDraft.paid_amount}
+                          onValueChange={(paid_amount) =>
+                            setInvoiceDraft({ ...invoiceDraft, paid_amount })
+                          }
+                          align="right"
+                        />
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={invoiceDraft.client_visible}
+                        onChange={(e) =>
+                          setInvoiceDraft({ ...invoiceDraft, client_visible: e.target.checked })
+                        }
+                      />
+                      Visible in client portal when billing access is enabled
+                    </label>
+                    <div className="space-y-1.5">
+                      <Label>Notes</Label>
+                      <Textarea
+                        rows={3}
+                        value={invoiceDraft.notes}
+                        placeholder="Invoice context, exclusions, payment terms, or collection notes."
+                        onChange={(e) =>
+                          setInvoiceDraft({ ...invoiceDraft, notes: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  {invoiceDialogMessage ? (
+                    <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                      {invoiceDialogMessage}
+                    </div>
+                  ) : null}
+                  <DialogFooter>
+                    <Button variant="ghost" onClick={() => setInvoiceOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={saveInvoice}
+                      disabled={savingInvoice || Boolean(invoiceBlockingMessage)}
+                    >
+                      {savingInvoice ? "Saving..." : "Save invoice"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+
+            <div className="mb-4 grid gap-3 md:grid-cols-5">
+              <SovMetric label="Invoice total due" value={fmtUSD(invoiceTotalDue)} />
+              <SovMetric label="Invoice paid" value={fmtUSD(invoicePaid)} />
+              <SovMetric label="Invoice open" value={fmtUSD(invoiceOpenBalance)} />
+              <SovMetric label="Client-visible" value={String(clientVisibleInvoices)} />
+              <SovMetric label="Billing recipients" value={recipientStatus} />
+            </div>
+
+            <div className="mb-4 rounded-md border border-hairline bg-surface p-4">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Client payment readiness
+                  </div>
+                  <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                    {billingReadinessMessage}
+                  </p>
+                </div>
+                <div className="grid w-full min-w-0 gap-2 sm:grid-cols-3 lg:max-w-[460px]">
+                  <div className="rounded-md border border-hairline bg-card px-3 py-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Online links
+                    </div>
+                    <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">
+                      {onlinePayReadyInvoices.length}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-hairline bg-card px-3 py-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Online balance
+                    </div>
+                    <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">
+                      {fmtUSD(onlinePayReadyBalance)}
+                    </div>
+                  </div>
+                  <Button asChild variant="outline" className="h-full min-h-[58px] justify-start">
+                    <Link to="/team">Finish payment setup</Link>
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {billingInvoices.length === 0 ? (
+                <div className="rounded-md border border-hairline bg-surface px-3 py-8 text-center text-sm text-muted-foreground">
+                  No invoices logged yet. Create one from a pay app when it is ready for client
+                  billing.
+                </div>
+              ) : (
+                billingInvoices.map((invoice) => {
+                  const linkedPayApp = billingApplications.find(
+                    (app) => app.id === invoice.billing_application_id,
+                  );
+                  return (
+                    <BillingInvoiceRowEditor
+                      key={invoice.id}
+                      project={project}
+                      invoice={invoice}
+                      linkedPayApp={linkedPayApp}
+                      invoiceRecipients={invoiceRecipients}
+                      invoiceRecipientsLoading={clientPortalQuery.isLoading}
+                      invoiceRecipientsError={
+                        clientPortalQuery.error instanceof Error
+                          ? clientPortalQuery.error.message
+                          : ""
+                      }
+                      savingPayment={savingPayment}
+                      onPatch={(patch) => onUpdateInvoice(invoice.id, patch)}
+                      onDelete={() => onDeleteInvoice(invoice.id)}
+                      onRecordPayment={onRecordPayment}
+                      onEnablePayment={() => onEnableInvoicePayment(invoice)}
+                      enablingPayment={enablingInvoicePaymentId === invoice.id}
+                    />
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="pending-cos" className="mt-0">
+          <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              Pending COs in billing
+            </div>
+            <div className="mt-1 text-sm tabular text-muted-foreground">
+              Raw {fmtUSD(rollup.pendingCOContract)} · likely {fmtUSD(weightedPending)}
+            </div>
+            {pendingCOs.length === 0 ? (
+              <p className="mt-4 text-sm text-muted-foreground">No pending change orders.</p>
             ) : (
-              billingInvoices.map((invoice) => {
-                const linkedPayApp = billingApplications.find(
-                  (app) => app.id === invoice.billing_application_id,
-                );
-                return (
-                  <BillingInvoiceRowEditor
-                    key={invoice.id}
-                    project={project}
-                    invoice={invoice}
-                    linkedPayApp={linkedPayApp}
-                    invoiceRecipients={invoiceRecipients}
-                    invoiceRecipientsLoading={clientPortalQuery.isLoading}
-                    invoiceRecipientsError={
-                      clientPortalQuery.error instanceof Error
-                        ? clientPortalQuery.error.message
-                        : ""
-                    }
-                    savingPayment={savingPayment}
-                    onPatch={(patch) => onUpdateInvoice(invoice.id, patch)}
-                    onDelete={() => onDeleteInvoice(invoice.id)}
-                    onRecordPayment={onRecordPayment}
-                    onEnablePayment={() => onEnableInvoicePayment(invoice)}
-                    enablingPayment={enablingInvoicePaymentId === invoice.id}
-                  />
-                );
-              })
+              <div className="mt-4 overflow-hidden rounded-md border border-hairline">
+                <table className="w-full text-sm">
+                  <thead className="bg-surface text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 text-left">CO</th>
+                      <th className="px-3 py-2 text-right">Contract</th>
+                      <th className="px-3 py-2 text-right">Prob.</th>
+                      <th className="px-3 py-2 text-right">Likely</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-hairline">
+                    {pendingCOs.map((co) => (
+                      <tr key={co.number}>
+                        <td className="px-3 py-2">
+                          <div className="font-medium text-foreground">{co.number}</div>
+                          <div className="text-xs text-muted-foreground">{co.description}</div>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular">
+                          {fmtUSD(co.contract_amount)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular text-muted-foreground">
+                          {co.probability}%
+                        </td>
+                        <td className="px-3 py-2 text-right tabular">
+                          {fmtUSD(co.contract_amount * (co.probability / 100))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
-        </div>
-
-        <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-            Pending COs in billing
-          </div>
-          <div className="mt-1 text-sm tabular text-muted-foreground">
-            Raw {fmtUSD(rollup.pendingCOContract)} · likely {fmtUSD(weightedPending)}
-          </div>
-          {pendingCOs.length === 0 ? (
-            <p className="mt-4 text-sm text-muted-foreground">No pending change orders.</p>
-          ) : (
-            <div className="mt-4 overflow-hidden rounded-md border border-hairline">
-              <table className="w-full text-sm">
-                <thead className="bg-surface text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2 text-left">CO</th>
-                    <th className="px-3 py-2 text-right">Contract</th>
-                    <th className="px-3 py-2 text-right">Prob.</th>
-                    <th className="px-3 py-2 text-right">Likely</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-hairline">
-                  {pendingCOs.map((co) => (
-                    <tr key={co.number}>
-                      <td className="px-3 py-2">
-                        <div className="font-medium text-foreground">{co.number}</div>
-                        <div className="text-xs text-muted-foreground">{co.description}</div>
-                      </td>
-                      <td className="px-3 py-2 text-right tabular">{fmtUSD(co.contract_amount)}</td>
-                      <td className="px-3 py-2 text-right tabular text-muted-foreground">
-                        {co.probability}%
-                      </td>
-                      <td className="px-3 py-2 text-right tabular">
-                        {fmtUSD(co.contract_amount * (co.probability / 100))}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }

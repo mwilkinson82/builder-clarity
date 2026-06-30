@@ -331,6 +331,54 @@ await expectContains(
 );
 
 await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [
+    /activeProjectTab === "billing"/,
+    /max-w-\[1760px\]/,
+    /lg:grid-cols-\[76px_minmax\(0,1fr\)\]/,
+    /Pay App Detail/,
+    /Project Costs/,
+    /WIP Analysis/,
+    /Pay App Ledger/,
+    /Invoices & Payments/,
+    /Pending COs/,
+    /renderEnhancedBillingPanel/,
+    /BillingLineItemsPanel/,
+    /ProjectCostTrackingPanel/,
+    /WipAnalysisPanel/,
+  ],
+  "billing route opens a wide tabbed workspace instead of stacking every ledger in one cramped view",
+);
+
+await expectContains(
+  "src/components/billing/BillingEnhancements.tsx",
+  [
+    /Pay application line detail/,
+    /Continuation sheet detail/,
+    /Download pay app package/,
+    /Project cost tracking/,
+    /Subcontractors, suppliers, and direct costs by cost code/,
+    /Export function|export function BillingLineItemsPanel/i,
+    /export function ProjectCostTrackingPanel/,
+    /export function WipAnalysisPanel/,
+  ],
+  "billing enhancement panels expose pay app detail, project cost tracking, and WIP sections with production wording",
+);
+
+await expectContains(
+  "src/lib/aia-pdf.ts",
+  [
+    /APPLICATION AND CERTIFICATE FOR PAYMENT/,
+    /CONTINUATION SHEET/,
+    /Owner \/ Company/,
+    /CONTRACT SUMMARY/,
+    /CONTRACTOR CERTIFICATION/,
+    /aia-pay-application-package\.pdf/,
+  ],
+  "pay app PDF generator creates a cover sheet and continuation sheet package",
+);
+
+await expectContains(
   "src/components/outcome/ChangeOrdersTable.tsx",
   [/onCreateRisk/, /creatingRiskId/, /Send to risk tally/],
   "change order table exposes a risk-tally action",

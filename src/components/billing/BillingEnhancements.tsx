@@ -167,7 +167,7 @@ export function BillingEnhancementPanels({
 
   return (
     <div className="space-y-5">
-      <LineItemsPanel
+      <BillingLineItemsPanel
         project={project}
         payApps={payApps}
         lineItems={workspace.lineItems}
@@ -175,7 +175,7 @@ export function BillingEnhancementPanels({
         onUpdateLine={onUpdateLine}
         savingLine={savingLine}
       />
-      <CostTrackingPanel
+      <ProjectCostTrackingPanel
         projectId={projectId}
         buckets={buckets}
         costActuals={workspace.costActuals}
@@ -194,7 +194,7 @@ export function BillingEnhancementPanels({
   );
 }
 
-function LineItemsPanel({
+export function BillingLineItemsPanel({
   project,
   payApps,
   lineItems,
@@ -267,7 +267,9 @@ function LineItemsPanel({
       });
       downloadPdfBytes(bytes, aiaBillingFilename(project, selectedPayApp));
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "AIA PDF could not be generated.");
+      window.alert(
+        error instanceof Error ? error.message : "AIA pay app package could not be generated.",
+      );
     } finally {
       setPdfBusy(false);
     }
@@ -281,7 +283,8 @@ function LineItemsPanel({
             Pay application line detail
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            AIA-style continuation detail tied back to the SOV cost buckets.
+            Continuation sheet detail by scheduled value, previous work, this period, stored
+            materials, retainage, and balance to finish.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -315,7 +318,7 @@ function LineItemsPanel({
             disabled={pdfBusy || selectedLines.length === 0}
             onClick={downloadAiaPdf}
           >
-            <Download className="h-3.5 w-3.5" /> AIA PDF
+            <Download className="h-3.5 w-3.5" /> Download pay app package
           </Button>
           <Button
             type="button"
@@ -461,7 +464,7 @@ function BillingLineItemEditor({
   );
 }
 
-function CostTrackingPanel({
+export function ProjectCostTrackingPanel({
   projectId,
   buckets,
   costActuals,
@@ -555,10 +558,13 @@ function CostTrackingPanel({
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Cost tracking
+            Project cost tracking
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Record subcontractor invoices, commitments, direct costs, and paid actuals by cost code.
+            <span className="font-medium text-foreground">
+              Subcontractors, suppliers, and direct costs by cost code.
+            </span>{" "}
+            Track commitments, invoices, and paid actuals against the project cost plan.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -825,7 +831,7 @@ function CostTrackingPanel({
   );
 }
 
-function WipAnalysisPanel({
+export function WipAnalysisPanel({
   buckets,
   workspace,
   onUpdateBucketSettings,
