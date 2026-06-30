@@ -5,7 +5,7 @@ import type { Database } from "@/integrations/supabase/types";
 export const STRIPE_API_VERSION = "2026-02-25.clover";
 export const DEFAULT_APP_ORIGIN = "https://overwatch.alpcontractorcircle.com";
 
-type SupabaseAdmin = SupabaseClient<any>;
+type SupabaseAdmin = SupabaseClient<Database>;
 type SupabaseAuthed = SupabaseClient<Database>;
 
 export class RouteError extends Error {
@@ -49,6 +49,29 @@ export function jsonError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unexpected server error";
   console.error("[Stripe route] unexpected failure", error);
   return Response.json({ ok: false, code: "server_error", error: message }, { status: 500 });
+}
+
+type SupabaseSchemaError = {
+  code?: string;
+  details?: string;
+  hint?: string;
+  message?: string;
+} | null;
+
+export function isMissingSupabaseColumn(error: SupabaseSchemaError, column: string) {
+  const text = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`.toLowerCase();
+  const target = column.toLowerCase();
+
+  return (
+    (error?.code === "PGRST204" && text.includes(`'${target}' column`)) ||
+    text.includes(`column ${target} does not exist`) ||
+    text.includes(`.${target} does not exist`) ||
+    text.includes(`could not find the '${target}' column`)
+  );
+}
+
+export function isMissingAnySupabaseColumn(error: SupabaseSchemaError, columns: readonly string[]) {
+  return columns.some((column) => isMissingSupabaseColumn(error, column));
 }
 
 export function readServerEnv(name: string) {
@@ -236,8 +259,7 @@ export async function stripePost<T>(
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     const stripeError = payload.error as
-      | { message?: string; type?: string; code?: string }
-      | undefined;
+      { message?: string; type?: string; code?: string } | undefined;
     throw new RouteError(
       "stripe_api_error",
       stripeError?.message || "Stripe rejected the checkout request.",
@@ -265,8 +287,7 @@ export async function stripeGet<T>(path: string): Promise<T> {
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     const stripeError = payload.error as
-      | { message?: string; type?: string; code?: string }
-      | undefined;
+      { message?: string; type?: string; code?: string } | undefined;
     throw new RouteError(
       "stripe_api_error",
       stripeError?.message || "Stripe rejected the request.",

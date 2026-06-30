@@ -626,11 +626,13 @@ await expectContains(
     /stripePost/,
     /stripeGet/,
     /createSupabaseAdminClient/,
+    /isMissingSupabaseColumn/,
+    /PGRST204/,
     /requireAuthedStripeContext/,
     /can_manage_project/,
     /can_manage_org/,
   ],
-  "Stripe server helper keeps secrets server-side and verifies project/org access",
+  "Stripe server helper keeps secrets server-side, detects schema drift, and verifies project/org access",
 );
 
 await expectContains(
@@ -645,9 +647,19 @@ await expectContains(
     /capabilities\[transfers\]\[requested\]/,
     /stripe_connect_account_id/,
     /payment_processor_ready/,
+    /CONNECT_SELECT_WITHOUT_BILLING_EMAIL/,
+    /stripe_schema_not_ready/,
+    /isMissingSupabaseColumn/,
+    /status:\s*"pending"/,
     /requireCanManageOrganization/,
   ],
-  "Stripe Connect onboarding route creates account links and updates company readiness",
+  "Stripe Connect onboarding route handles billing-email schema drift, creates account links, and updates company readiness",
+);
+
+await expectContains(
+  "src/routes/api/stripe/webhook.ts",
+  [/account\.updated/, /stripe_schema_not_ready/, /status:\s*"pending"/],
+  "Stripe webhook route keeps Connect status values aligned to the database constraint",
 );
 
 await expectContains(
@@ -1112,6 +1124,9 @@ expectSql(
     /alter table public\.billing_invoices[\s\S]*payment_url/i,
     /alter table public\.billing_invoices[\s\S]*stripe_checkout_session_id/i,
     /alter table public\.payment_ledger[\s\S]*stripe_payment_intent_id/i,
+    /repair the Stripe commercial readiness schema/i,
+    /stripe_connect_status IN \('not_connected', 'pending', 'active', 'restricted', 'disabled'\)/i,
+    /onboarding_started', 'pending_review/i,
     /Stripe Price ID used by Checkout Sessions/i,
     /Contractor Circle users working/i,
   ],
