@@ -15,11 +15,14 @@ import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/
 import { Route as EmailUnsubscribeRouteImport } from './routes/email/unsubscribe'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
+import { Route as AuthenticatedEstimatesRouteImport } from './routes/_authenticated/estimates'
+import { Route as AuthenticatedCostLibraryRouteImport } from './routes/_authenticated/cost-library'
 import { Route as AuthenticatedBillingRouteImport } from './routes/_authenticated/billing'
 import { Route as LovableEmailSuppressionRouteImport } from './routes/lovable/email/suppression'
 import { Route as ApiStripeWebhookRouteImport } from './routes/api/stripe/webhook'
 import { Route as ApiAuthMagicLinkRouteImport } from './routes/api/auth/magic-link'
 import { Route as AuthenticatedProjectsProjectIdRouteImport } from './routes/_authenticated/projects.$projectId'
+import { Route as AuthenticatedEstimatesEstimateIdRouteImport } from './routes/_authenticated/estimates.$estimateId'
 import { Route as LovableEmailTransactionalSendRouteImport } from './routes/lovable/email/transactional/send'
 import { Route as LovableEmailTransactionalPreviewRouteImport } from './routes/lovable/email/transactional/preview'
 import { Route as LovableEmailQueueProcessRouteImport } from './routes/lovable/email/queue/process'
@@ -60,6 +63,17 @@ const AuthenticatedTeamRoute = AuthenticatedTeamRouteImport.update({
   path: '/team',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedEstimatesRoute = AuthenticatedEstimatesRouteImport.update({
+  id: '/estimates',
+  path: '/estimates',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedCostLibraryRoute =
+  AuthenticatedCostLibraryRouteImport.update({
+    id: '/cost-library',
+    path: '/cost-library',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedBillingRoute = AuthenticatedBillingRouteImport.update({
   id: '/billing',
   path: '/billing',
@@ -85,6 +99,12 @@ const AuthenticatedProjectsProjectIdRoute =
     id: '/projects/$projectId',
     path: '/projects/$projectId',
     getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEstimatesEstimateIdRoute =
+  AuthenticatedEstimatesEstimateIdRouteImport.update({
+    id: '/$estimateId',
+    path: '/$estimateId',
+    getParentRoute: () => AuthenticatedEstimatesRoute,
   } as any)
 const LovableEmailTransactionalSendRoute =
   LovableEmailTransactionalSendRouteImport.update({
@@ -149,9 +169,12 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRouteWithChildren
   '/billing': typeof AuthenticatedBillingRoute
+  '/cost-library': typeof AuthenticatedCostLibraryRoute
+  '/estimates': typeof AuthenticatedEstimatesRouteWithChildren
   '/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
+  '/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
@@ -170,10 +193,13 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/auth': typeof AuthRouteWithChildren
   '/billing': typeof AuthenticatedBillingRoute
+  '/cost-library': typeof AuthenticatedCostLibraryRoute
+  '/estimates': typeof AuthenticatedEstimatesRouteWithChildren
   '/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/': typeof AuthenticatedIndexRoute
+  '/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRoute
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
@@ -194,10 +220,13 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRouteWithChildren
   '/_authenticated/billing': typeof AuthenticatedBillingRoute
+  '/_authenticated/cost-library': typeof AuthenticatedCostLibraryRoute
+  '/_authenticated/estimates': typeof AuthenticatedEstimatesRouteWithChildren
   '/_authenticated/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/_authenticated/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRoute
   '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
@@ -219,9 +248,12 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/billing'
+    | '/cost-library'
+    | '/estimates'
     | '/team'
     | '/auth/callback'
     | '/email/unsubscribe'
+    | '/estimates/$estimateId'
     | '/projects/$projectId'
     | '/api/auth/magic-link'
     | '/api/stripe/webhook'
@@ -240,10 +272,13 @@ export interface FileRouteTypes {
   to:
     | '/auth'
     | '/billing'
+    | '/cost-library'
+    | '/estimates'
     | '/team'
     | '/auth/callback'
     | '/email/unsubscribe'
     | '/'
+    | '/estimates/$estimateId'
     | '/projects/$projectId'
     | '/api/auth/magic-link'
     | '/api/stripe/webhook'
@@ -263,10 +298,13 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/billing'
+    | '/_authenticated/cost-library'
+    | '/_authenticated/estimates'
     | '/_authenticated/team'
     | '/auth/callback'
     | '/email/unsubscribe'
     | '/_authenticated/'
+    | '/_authenticated/estimates/$estimateId'
     | '/_authenticated/projects/$projectId'
     | '/api/auth/magic-link'
     | '/api/stripe/webhook'
@@ -344,6 +382,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedTeamRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/estimates': {
+      id: '/_authenticated/estimates'
+      path: '/estimates'
+      fullPath: '/estimates'
+      preLoaderRoute: typeof AuthenticatedEstimatesRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/cost-library': {
+      id: '/_authenticated/cost-library'
+      path: '/cost-library'
+      fullPath: '/cost-library'
+      preLoaderRoute: typeof AuthenticatedCostLibraryRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/billing': {
       id: '/_authenticated/billing'
       path: '/billing'
@@ -378,6 +430,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/projects/$projectId'
       preLoaderRoute: typeof AuthenticatedProjectsProjectIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/estimates/$estimateId': {
+      id: '/_authenticated/estimates/$estimateId'
+      path: '/$estimateId'
+      fullPath: '/estimates/$estimateId'
+      preLoaderRoute: typeof AuthenticatedEstimatesEstimateIdRouteImport
+      parentRoute: typeof AuthenticatedEstimatesRoute
     }
     '/lovable/email/transactional/send': {
       id: '/lovable/email/transactional/send'
@@ -452,6 +511,21 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedEstimatesRouteChildren {
+  AuthenticatedEstimatesEstimateIdRoute: typeof AuthenticatedEstimatesEstimateIdRoute
+}
+
+const AuthenticatedEstimatesRouteChildren: AuthenticatedEstimatesRouteChildren =
+  {
+    AuthenticatedEstimatesEstimateIdRoute:
+      AuthenticatedEstimatesEstimateIdRoute,
+  }
+
+const AuthenticatedEstimatesRouteWithChildren =
+  AuthenticatedEstimatesRoute._addFileChildren(
+    AuthenticatedEstimatesRouteChildren,
+  )
+
 interface AuthenticatedProjectsProjectIdRouteChildren {
   AuthenticatedProjectsProjectIdScheduleRoute: typeof AuthenticatedProjectsProjectIdScheduleRoute
 }
@@ -469,6 +543,8 @@ const AuthenticatedProjectsProjectIdRouteWithChildren =
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedBillingRoute: typeof AuthenticatedBillingRoute
+  AuthenticatedCostLibraryRoute: typeof AuthenticatedCostLibraryRoute
+  AuthenticatedEstimatesRoute: typeof AuthenticatedEstimatesRouteWithChildren
   AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedProjectsProjectIdRoute: typeof AuthenticatedProjectsProjectIdRouteWithChildren
@@ -477,6 +553,8 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedBillingRoute: AuthenticatedBillingRoute,
+  AuthenticatedCostLibraryRoute: AuthenticatedCostLibraryRoute,
+  AuthenticatedEstimatesRoute: AuthenticatedEstimatesRouteWithChildren,
   AuthenticatedTeamRoute: AuthenticatedTeamRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedProjectsProjectIdRoute:
