@@ -754,6 +754,77 @@ export type Database = {
           },
         ]
       }
+      cost_library_items: {
+        Row: {
+          base_region: string
+          category: string
+          created_at: string
+          crew_size: number | null
+          csi_code: string
+          csi_division: string
+          description: string
+          external_id: string
+          id: string
+          keywords: Json
+          labor_cost_cents: number
+          material_cost_cents: number
+          organization_id: string
+          productivity_per_hour: number | null
+          source: string
+          synonyms: Json
+          unit: string
+          updated_at: string
+        }
+        Insert: {
+          base_region?: string
+          category?: string
+          created_at?: string
+          crew_size?: number | null
+          csi_code?: string
+          csi_division: string
+          description: string
+          external_id?: string
+          id?: string
+          keywords?: Json
+          labor_cost_cents?: number
+          material_cost_cents?: number
+          organization_id: string
+          productivity_per_hour?: number | null
+          source?: string
+          synonyms?: Json
+          unit: string
+          updated_at?: string
+        }
+        Update: {
+          base_region?: string
+          category?: string
+          created_at?: string
+          crew_size?: number | null
+          csi_code?: string
+          csi_division?: string
+          description?: string
+          external_id?: string
+          id?: string
+          keywords?: Json
+          labor_cost_cents?: number
+          material_cost_cents?: number
+          organization_id?: string
+          productivity_per_hour?: number | null
+          source?: string
+          synonyms?: Json
+          unit?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cost_library_items_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       daily_reports: {
         Row: {
           attachment_name: string
@@ -975,6 +1046,233 @@ export type Database = {
           used_at?: string | null
         }
         Relationships: []
+      }
+      estimate_line_items: {
+        Row: {
+          cost_code: string
+          created_at: string
+          csi_division: string
+          description: string
+          estimate_id: string
+          id: string
+          labor_extended_cents: number | null
+          labor_unit_cost_cents: number
+          library_item_id: string | null
+          material_extended_cents: number | null
+          material_unit_cost_cents: number
+          notes: string
+          quantity: number
+          scope_group: string
+          sort_order: number
+          total_extended_cents: number | null
+          unit: string
+          updated_at: string
+        }
+        Insert: {
+          cost_code?: string
+          created_at?: string
+          csi_division?: string
+          description: string
+          estimate_id: string
+          id?: string
+          labor_extended_cents?: number | null
+          labor_unit_cost_cents?: number
+          library_item_id?: string | null
+          material_extended_cents?: number | null
+          material_unit_cost_cents?: number
+          notes?: string
+          quantity?: number
+          scope_group?: string
+          sort_order?: number
+          total_extended_cents?: number | null
+          unit: string
+          updated_at?: string
+        }
+        Update: {
+          cost_code?: string
+          created_at?: string
+          csi_division?: string
+          description?: string
+          estimate_id?: string
+          id?: string
+          labor_extended_cents?: number | null
+          labor_unit_cost_cents?: number
+          library_item_id?: string | null
+          material_extended_cents?: number | null
+          material_unit_cost_cents?: number
+          notes?: string
+          quantity?: number
+          scope_group?: string
+          sort_order?: number
+          total_extended_cents?: number | null
+          unit?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_line_items_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_line_items_library_item_id_fkey"
+            columns: ["library_item_id"]
+            isOneToOne: false
+            referencedRelation: "cost_library_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_markup_defaults: {
+        Row: {
+          bond_pct: number
+          contingency_pct: number
+          custom_markups: Json
+          default_region: string
+          default_region_multiplier: number
+          general_conditions_pct: number
+          id: string
+          organization_id: string
+          overhead_pct: number
+          profit_pct: number
+          tax_pct: number
+          updated_at: string
+        }
+        Insert: {
+          bond_pct?: number
+          contingency_pct?: number
+          custom_markups?: Json
+          default_region?: string
+          default_region_multiplier?: number
+          general_conditions_pct?: number
+          id?: string
+          organization_id: string
+          overhead_pct?: number
+          profit_pct?: number
+          tax_pct?: number
+          updated_at?: string
+        }
+        Update: {
+          bond_pct?: number
+          contingency_pct?: number
+          custom_markups?: Json
+          default_region?: string
+          default_region_multiplier?: number
+          general_conditions_pct?: number
+          id?: string
+          organization_id?: string
+          overhead_pct?: number
+          profit_pct?: number
+          tax_pct?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_markup_defaults_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimates: {
+        Row: {
+          bond_pct: number
+          contingency_pct: number
+          created_at: string
+          created_by: string | null
+          custom_markups: Json
+          description: string
+          general_conditions_pct: number
+          id: string
+          name: string
+          opportunity_id: string | null
+          organization_id: string
+          overhead_pct: number
+          profit_pct: number
+          project_id: string | null
+          project_type: string
+          region: string
+          region_multiplier: number
+          status: string
+          subtotal_cents: number
+          subtotal_labor_cents: number
+          subtotal_material_cents: number
+          tax_pct: number
+          total_with_markups_cents: number
+          updated_at: string
+        }
+        Insert: {
+          bond_pct?: number
+          contingency_pct?: number
+          created_at?: string
+          created_by?: string | null
+          custom_markups?: Json
+          description?: string
+          general_conditions_pct?: number
+          id?: string
+          name: string
+          opportunity_id?: string | null
+          organization_id: string
+          overhead_pct?: number
+          profit_pct?: number
+          project_id?: string | null
+          project_type?: string
+          region?: string
+          region_multiplier?: number
+          status?: string
+          subtotal_cents?: number
+          subtotal_labor_cents?: number
+          subtotal_material_cents?: number
+          tax_pct?: number
+          total_with_markups_cents?: number
+          updated_at?: string
+        }
+        Update: {
+          bond_pct?: number
+          contingency_pct?: number
+          created_at?: string
+          created_by?: string | null
+          custom_markups?: Json
+          description?: string
+          general_conditions_pct?: number
+          id?: string
+          name?: string
+          opportunity_id?: string | null
+          organization_id?: string
+          overhead_pct?: number
+          profit_pct?: number
+          project_id?: string | null
+          project_type?: string
+          region?: string
+          region_multiplier?: number
+          status?: string
+          subtotal_cents?: number
+          subtotal_labor_cents?: number
+          subtotal_material_cents?: number
+          tax_pct?: number
+          total_with_markups_cents?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimates_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       exposures: {
         Row: {
