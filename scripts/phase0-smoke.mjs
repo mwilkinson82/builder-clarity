@@ -910,6 +910,9 @@ await expectContains(
     /deleteEstimate/,
     /Delete Estimate/,
     /Delete Master Sheet/,
+    /titleRows/,
+    /permanently removes/,
+    /does not move it to Archived/i,
     /parseEstimateLineRows/,
     /parseCsv/,
     /parseXlsx/,
@@ -939,6 +942,7 @@ expectSql(
     /'won'/,
     /'not_won'/,
     /idx_estimates_org_folder_updated/i,
+    /NOTIFY pgrst, 'reload schema'/i,
   ],
   "estimate folders migration exists for won, not-won, active, and archived bid cleanup",
 );

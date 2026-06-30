@@ -1320,7 +1320,7 @@ export const updateEstimate = createServerFn({ method: "POST" })
       .single();
     if (error && "folder" in patch && isMissingEstimateFolderColumn(error)) {
       throw new Error(
-        "Estimate folders are not enabled yet. Apply the latest Overwatch backend update, then try again.",
+        "Estimate folders are still being enabled on the backend. Wait for Lovable to finish the migration, then try again.",
       );
     }
     if (error || !row) throw new Error(error?.message ?? "Estimate did not update.");
