@@ -56,7 +56,8 @@ export type ClientChangeOrderStatus = "not_sent" | "sent" | "approved" | "reject
 export interface ProjectRow {
   id: string;
   organization_id: string | null;
-  organization_name?: string;
+  organization_name: string;
+  organization_logo_url: string;
   job_number: string;
   name: string;
   client: string;
@@ -234,11 +235,22 @@ export interface BillingApplicationEventRow {
 }
 
 export type InvoiceStatus =
-  "draft" | "sent" | "viewed" | "partially_paid" | "paid" | "overdue" | "void";
+  | "draft"
+  | "sent"
+  | "viewed"
+  | "partially_paid"
+  | "paid"
+  | "overdue"
+  | "void";
 
 export type PaymentStatus = "pending" | "succeeded" | "failed" | "refunded" | "void";
 export type OnlinePaymentStatus =
-  "not_enabled" | "pending" | "paid" | "expired" | "failed" | "refunded";
+  | "not_enabled"
+  | "pending"
+  | "paid"
+  | "expired"
+  | "failed"
+  | "refunded";
 
 export interface BillingInvoiceRow {
   id: string;
@@ -395,6 +407,8 @@ const throwIfProjectSchemaError = (error: { code?: string; message?: string } | 
 const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   id: p.id as string,
   organization_id: (p.organization_id as string | null) ?? null,
+  organization_name: str(p.organization_name),
+  organization_logo_url: str(p.organization_logo_url),
   job_number: str(p.job_number),
   name: p.name as string,
   client: str(p.client),
@@ -563,13 +577,28 @@ export const listProjects = createServerFn({ method: "GET" })
         .in("project_id", ids),
       organizationIds.length === 0
         ? { data: [], error: null }
-        : context.supabase.from("organizations").select("id,name").in("id", organizationIds),
+        : dynamicTable(context.supabase, "organizations")
+            .select("id,name,logo_url")
+            .in("id", organizationIds),
     ]);
     if (expRes.error) throw new Error(expRes.error.message);
     if (cosRes.error) throw new Error(cosRes.error.message);
     if (bucketsRes.error) throw new Error(bucketsRes.error.message);
     if (decisionsRes.error) throw new Error(decisionsRes.error.message);
-    if (organizationsRes.error) throw new Error(organizationsRes.error.message);
+    let organizationRows = (organizationsRes.data ?? []) as Record<string, unknown>[];
+    if (organizationsRes.error) {
+      if (!isMissingRestColumn(organizationsRes.error, "logo_url")) {
+        throw new Error(organizationsRes.error.message);
+      }
+      const fallbackOrganizationsRes =
+        organizationIds.length === 0
+          ? { data: [], error: null }
+          : await dynamicTable(context.supabase, "organizations")
+              .select("id,name")
+              .in("id", organizationIds);
+      if (fallbackOrganizationsRes.error) throw new Error(fallbackOrganizationsRes.error.message);
+      organizationRows = (fallbackOrganizationsRes.data ?? []) as Record<string, unknown>[];
+    }
 
     let dailyReportRows: Record<string, unknown>[] = [];
     const dailyReportsRes = await dynamicTable(context.supabase, "daily_reports")
@@ -603,10 +632,13 @@ export const listProjects = createServerFn({ method: "GET" })
     const bByP = groupBy<{ project_id: string } & Record<string, unknown>>(bucketsRes.data ?? []);
     const dByP = groupBy<{ project_id: string } & Record<string, unknown>>(decisionsRes.data ?? []);
     const drByP = groupBy<{ project_id: string } & Record<string, unknown>>(dailyReportRows);
-    const organizationNames = new Map(
-      (organizationsRes.data ?? []).map((organization) => [
+    const organizationsById = new Map(
+      organizationRows.map((organization) => [
         organization.id as string,
-        str(organization.name),
+        {
+          name: str(organization.name),
+          logo_url: str(organization.logo_url),
+        },
       ]),
     );
 
@@ -703,8 +735,10 @@ export const listProjects = createServerFn({ method: "GET" })
         id: p.id,
         organization_id: p.organization_id,
         organization_name:
-          (p.organization_id ? organizationNames.get(p.organization_id) : "") ||
+          (p.organization_id ? organizationsById.get(p.organization_id)?.name : "") ||
           "Unassigned company",
+        organization_logo_url:
+          (p.organization_id ? organizationsById.get(p.organization_id)?.logo_url : "") || "",
         job_number: p.job_number,
         name: p.name,
         client: p.client,
@@ -864,21 +898,36 @@ export const getProject = createServerFn({ method: "GET" })
           );
     }
 
-    const project = normalizeProject(pRes.data as Record<string, unknown>);
-    let organizationName = "";
+    let project = normalizeProject(pRes.data as Record<string, unknown>);
     if (project.organization_id) {
-      const orgRes = await context.supabase
-        .from("organizations")
-        .select("name")
+      const organizationRes = await dynamicTable(context.supabase, "organizations")
+        .select("id,name,logo_url")
         .eq("id", project.organization_id)
         .maybeSingle();
-      if (orgRes.error) throw new Error(orgRes.error.message);
-      organizationName = str((orgRes.data as Record<string, unknown> | null)?.name);
+      if (organizationRes.error) {
+        if (!isMissingRestColumn(organizationRes.error, "logo_url")) {
+          throw new Error(organizationRes.error.message);
+        }
+        const fallbackOrganizationRes = await dynamicTable(context.supabase, "organizations")
+          .select("id,name")
+          .eq("id", project.organization_id)
+          .maybeSingle();
+        if (fallbackOrganizationRes.error) throw new Error(fallbackOrganizationRes.error.message);
+        const fallbackOrganization = fallbackOrganizationRes.data as Record<string, unknown> | null;
+        project = {
+          ...project,
+          organization_name: str(fallbackOrganization?.name),
+        };
+      } else if (organizationRes.data) {
+        const organization = organizationRes.data as Record<string, unknown>;
+        project = {
+          ...project,
+          organization_name: str(organization.name),
+          organization_logo_url: str(organization.logo_url),
+        };
+      }
     }
-    const projectWithOrganization = {
-      ...project,
-      organization_name: organizationName || "Unassigned company",
-    };
+    const projectWithOrganization = project;
     let sovMappingProfiles: SovMappingProfileRow[] = [];
     if (project.organization_id) {
       const profileRes = await dynamicTable(context.supabase, "sov_mapping_profiles")

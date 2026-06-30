@@ -2,7 +2,15 @@
 // Two layouts: "executive" (one-pager + appendix) and "structured" (multi-page report).
 // All drawing helpers operate in points (72 = 1 inch). US Letter portrait.
 
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, type RGB } from "pdf-lib";
+import {
+  PDFDocument,
+  PDFFont,
+  PDFPage,
+  StandardFonts,
+  rgb,
+  type PDFImage,
+  type RGB,
+} from "pdf-lib";
 import {
   remainingExposureValue,
   type Rollup,
@@ -23,6 +31,7 @@ import type {
   MilestoneStatus,
   ScheduleRiskKind,
 } from "@/lib/schedule.functions";
+import { drawPdfBrand, embedPdfLogo } from "@/lib/pdf-branding";
 
 export type IorPdfStyle = "executive" | "structured";
 
@@ -285,9 +294,26 @@ function drawWaterfall(c: Ctx, r: Rollup, project: ProjectRow) {
 }
 
 // ---------------- Header / Cover ----------------
-function drawHeader(c: Ctx, project: ProjectRow, label: string, date: Date) {
+function drawHeader(
+  c: Ctx,
+  project: ProjectRow,
+  label: string,
+  date: Date,
+  logo?: PDFImage | null,
+) {
   ensure(c, 92);
   const top = c.y;
+  drawPdfBrand({
+    page: c.page,
+    logo,
+    companyName: project.organization_name,
+    font: c.sansB,
+    x: PAGE_W - M - 170,
+    y: top + 2,
+    maxWidth: 170,
+    maxHeight: 32,
+    color: MUTED,
+  });
   text(c, "INDICATED OUTCOME REPORT", M, top, { font: c.sansB, size: 8, color: ACCENT });
   c.y = top - 18;
   text(c, project.name, M, c.y, { font: c.serif, size: 22 });
@@ -644,9 +670,10 @@ export async function generateIorPdf(
   const c: Ctx = { doc, page: doc.addPage([PAGE_W, PAGE_H]), y: PAGE_H - M, serif, sans, sansB };
   const generatedAt = input.generatedAt ?? new Date();
   const weekLabel = `Week of ${generatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+  const companyLogo = await embedPdfLogo(doc, input.project.organization_logo_url);
 
   if (style === "executive") {
-    drawHeader(c, input.project, weekLabel, generatedAt);
+    drawHeader(c, input.project, weekLabel, generatedAt, companyLogo);
     drawKpiStrip(c, input.rollup, input.project);
     sectionTitle(c, "Financial outcome");
     drawWaterfall(c, input.rollup, input.project);
@@ -682,6 +709,19 @@ export async function generateIorPdf(
   } else {
     // Structured — cover
     c.y = PAGE_H - 200;
+    drawPdfBrand({
+      page: c.page,
+      logo: companyLogo,
+      companyName: input.project.organization_name,
+      font: c.sansB,
+      x: M,
+      y: PAGE_H - M,
+      maxWidth: PAGE_W - M * 2,
+      maxHeight: 40,
+      color: MUTED,
+      align: "left",
+      size: 9,
+    });
     text(c, "INDICATED OUTCOME REPORT", M, c.y, { font: c.sansB, size: 10, color: ACCENT });
     c.y -= 30;
     text(c, input.project.name, M, c.y, { font: c.serif, size: 36 });
@@ -716,7 +756,7 @@ export async function generateIorPdf(
 
     // Executive summary
     newPage(c);
-    drawHeader(c, input.project, weekLabel, generatedAt);
+    drawHeader(c, input.project, weekLabel, generatedAt, companyLogo);
     sectionTitle(c, "Executive summary");
     const narrative =
       input.narrative ||
@@ -727,7 +767,7 @@ export async function generateIorPdf(
 
     // Financial outcome page
     newPage(c);
-    drawHeader(c, input.project, weekLabel, generatedAt);
+    drawHeader(c, input.project, weekLabel, generatedAt, companyLogo);
     sectionTitle(c, "Financial outcome");
     drawWaterfall(c, input.rollup, input.project);
     sectionTitle(c, "Cost buckets");
@@ -735,7 +775,7 @@ export async function generateIorPdf(
 
     // Exposure register
     newPage(c);
-    drawHeader(c, input.project, weekLabel, generatedAt);
+    drawHeader(c, input.project, weekLabel, generatedAt, companyLogo);
     sectionTitle(c, "Exposure register — grouped by treatment path");
     drawExposuresTable(
       c,
@@ -745,7 +785,7 @@ export async function generateIorPdf(
 
     // Decisions + COs + schedule
     newPage(c);
-    drawHeader(c, input.project, weekLabel, generatedAt);
+    drawHeader(c, input.project, weekLabel, generatedAt, companyLogo);
     sectionTitle(c, "Schedule — milestones & risk");
     drawSchedule(c, input.milestones ?? [], input.scheduleRisks ?? [], input.project);
     sectionTitle(c, "Decisions required");
@@ -755,7 +795,7 @@ export async function generateIorPdf(
 
     // Review log
     newPage(c);
-    drawHeader(c, input.project, weekLabel, generatedAt);
+    drawHeader(c, input.project, weekLabel, generatedAt, companyLogo);
     sectionTitle(c, "Review log");
     for (const r of input.reviews.slice(0, 5)) {
       ensure(c, 30);

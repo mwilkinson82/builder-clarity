@@ -1949,6 +1949,17 @@ export function CpmActivityPlanner({
       <section className="constructline-cpm-print-shell" aria-label="Printable CPM schedule">
         <div className="constructline-cpm-print-titlebar">
           <div>
+            {(project.organization_logo_url || project.organization_name) && (
+              <div className="constructline-print-brand">
+                {project.organization_logo_url && (
+                  <img
+                    src={project.organization_logo_url}
+                    alt={`${project.organization_name} logo`}
+                  />
+                )}
+                {project.organization_name && <span>{project.organization_name}</span>}
+              </div>
+            )}
             <div className="constructline-cpm-print-kicker">
               {contractorName} · ConstructLine CPM
             </div>
@@ -3295,6 +3306,17 @@ function ConstructLinePrintReport({
     <section className="constructline-print-report" aria-label="Printable ConstructLine schedule">
       <header className="constructline-print-header">
         <div>
+          {(project.organization_logo_url || project.organization_name) && (
+            <div className="constructline-print-brand">
+              {project.organization_logo_url && (
+                <img
+                  src={project.organization_logo_url}
+                  alt={`${project.organization_name} logo`}
+                />
+              )}
+              {project.organization_name && <span>{project.organization_name}</span>}
+            </div>
+          )}
           <div className="constructline-print-kicker">ConstructLine CPM schedule</div>
           <h1>{project.name}</h1>
           <div className="constructline-print-meta">

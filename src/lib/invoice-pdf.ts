@@ -5,6 +5,7 @@ import type {
   BillingInvoiceRow,
   ProjectRow,
 } from "@/lib/projects.functions";
+import { drawPdfBrand, embedPdfLogo } from "@/lib/pdf-branding";
 
 export interface InvoicePdfInput {
   project: ProjectRow;
@@ -220,10 +221,22 @@ export async function generateInvoicePdf({
   const page = doc.addPage([PAGE_W, PAGE_H]);
   const ctx: PdfCtx = { doc, page, y: PAGE_H - M, serif, sans, sansBold };
   const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
+  const companyLogo = await embedPdfLogo(doc, project.organization_logo_url);
 
   drawText(ctx, "OVERWATCH BILLING", M, ctx.y, {
     font: sansBold,
     size: 8,
+    color: MUTED,
+  });
+  drawPdfBrand({
+    page: ctx.page,
+    logo: companyLogo,
+    companyName: project.organization_name,
+    font: sansBold,
+    x: PAGE_W - M - 170,
+    y: ctx.y + 2,
+    maxWidth: 170,
+    maxHeight: 34,
     color: MUTED,
   });
   ctx.y -= 30;

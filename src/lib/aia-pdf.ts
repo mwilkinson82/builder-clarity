@@ -1,7 +1,15 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import {
+  PDFDocument,
+  StandardFonts,
+  rgb,
+  type PDFFont,
+  type PDFImage,
+  type PDFPage,
+} from "pdf-lib";
 import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import type { BillingLineItemRow } from "@/lib/billing.functions";
 import type { BillingApplicationRow, ProjectRow } from "@/lib/projects.functions";
+import { drawPdfBrand, embedPdfLogo } from "@/lib/pdf-branding";
 
 interface AiaPdfInput {
   project: ProjectRow;
@@ -228,12 +236,24 @@ function drawCoverSheet(
   payApp: BillingApplicationRow,
   totals: PaymentTotals,
   generatedAt: Date,
+  companyLogo?: PDFImage | null,
 ) {
   const page = ctx.doc.addPage([PORTRAIT_W, PORTRAIT_H]);
   ctx.page = page;
   ctx.y = PORTRAIT_H - M;
 
   text(ctx, "OVERWATCH BILLING", M, ctx.y, { font: ctx.sansBold, size: 7, color: MUTED });
+  drawPdfBrand({
+    page,
+    logo: companyLogo,
+    companyName: project.organization_name,
+    font: ctx.sansBold,
+    x: PORTRAIT_W - M - 170,
+    y: ctx.y + 2,
+    maxWidth: 170,
+    maxHeight: 34,
+    color: MUTED,
+  });
   text(ctx, "APPLICATION AND CERTIFICATE FOR PAYMENT", M, ctx.y - 26, {
     font: ctx.serif,
     size: 21,
@@ -374,8 +394,20 @@ function drawContinuationHeader(
   project: ProjectRow,
   payApp: BillingApplicationRow,
   pageNumber: number,
+  companyLogo?: PDFImage | null,
 ) {
   text(ctx, "CONTINUATION SHEET", M, LANDSCAPE_H - M, { font: ctx.serif, size: 18 });
+  drawPdfBrand({
+    page: ctx.page,
+    logo: companyLogo,
+    companyName: project.organization_name,
+    font: ctx.sansBold,
+    x: LANDSCAPE_W - M - 185,
+    y: LANDSCAPE_H - M + 2,
+    maxWidth: 185,
+    maxHeight: 30,
+    color: MUTED,
+  });
   text(ctx, `Project: ${project.name}`, M, LANDSCAPE_H - M - 18, { font: ctx.sansBold, size: 8 });
   text(
     ctx,
@@ -437,9 +469,10 @@ function addContinuationPage(
   project: ProjectRow,
   payApp: BillingApplicationRow,
   pageNumber: number,
+  companyLogo?: PDFImage | null,
 ) {
   ctx.page = ctx.doc.addPage([LANDSCAPE_W, LANDSCAPE_H]);
-  drawContinuationHeader(ctx, project, payApp, pageNumber);
+  drawContinuationHeader(ctx, project, payApp, pageNumber, companyLogo);
 }
 
 function drawContinuationSheets(
@@ -448,14 +481,15 @@ function drawContinuationSheets(
   payApp: BillingApplicationRow,
   lineItems: BillingLineItemRow[],
   totals: PaymentTotals,
+  companyLogo?: PDFImage | null,
 ) {
   let pageNumber = 1;
-  addContinuationPage(ctx, project, payApp, pageNumber);
+  addContinuationPage(ctx, project, payApp, pageNumber, companyLogo);
 
   lineItems.forEach((line, index) => {
     if (ctx.y < M + 44) {
       pageNumber += 1;
-      addContinuationPage(ctx, project, payApp, pageNumber);
+      addContinuationPage(ctx, project, payApp, pageNumber, companyLogo);
     }
     drawContinuationRow(ctx, line, index + 1, ctx.y);
     ctx.y -= 27;
@@ -497,8 +531,9 @@ export async function generateAiaBillingPdf({
   doc.removePage(0);
 
   const totals = computeTotals(lineItems);
-  drawCoverSheet(ctx, project, payApp, totals, generatedAt);
-  drawContinuationSheets(ctx, project, payApp, lineItems, totals);
+  const companyLogo = await embedPdfLogo(doc, project.organization_logo_url);
+  drawCoverSheet(ctx, project, payApp, totals, generatedAt, companyLogo);
+  drawContinuationSheets(ctx, project, payApp, lineItems, totals, companyLogo);
 
   return doc.save();
 }

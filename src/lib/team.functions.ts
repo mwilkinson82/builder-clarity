@@ -24,6 +24,19 @@ export interface TeamOrganization {
   id: string;
   name: string;
   slug: string;
+  legal_name: string;
+  website_url: string;
+  office_phone: string;
+  address_line1: string;
+  address_line2: string;
+  city: string;
+  state: string;
+  postal_code: string;
+  country: string;
+  license_number: string;
+  tax_identifier: string;
+  logo_url: string;
+  logo_path: string;
   plan_code: string;
   billing_status: string;
   billing_email: string;
@@ -78,6 +91,7 @@ export interface TeamProject {
   id: string;
   name: string;
   job_number: string;
+  client: string;
   project_manager: string;
   owner_id: string;
 }
@@ -90,6 +104,34 @@ export interface TeamProjectMember {
   full_name: string;
   role: ProjectMemberRole;
   status: MemberStatus;
+  created_at: string;
+}
+
+export interface TeamClientContact {
+  id: string;
+  name: string;
+  email: string;
+  company: string;
+  title: string;
+  phone: string;
+  status: string;
+}
+
+export interface TeamClientProjectAccess {
+  id: string;
+  project_id: string;
+  contact_id: string | null;
+  email: string;
+  contact_name: string;
+  contact_company: string;
+  project_name: string;
+  project_job_number: string;
+  status: "pending" | "active" | "revoked";
+  can_view_change_orders: boolean;
+  can_view_daily_reports: boolean;
+  can_view_billing: boolean;
+  accepted_at: string | null;
+  last_sent_at: string | null;
   created_at: string;
 }
 
@@ -121,7 +163,24 @@ const ORGANIZATION_COMMERCIAL_COLUMNS = [
   "payment_processor_ready",
 ] as const;
 
-const ORGANIZATION_SELECT = `${ORGANIZATION_BASE_SELECT},${ORGANIZATION_COMMERCIAL_COLUMNS.join(",")}`;
+const ORGANIZATION_IDENTITY_COLUMNS = [
+  "legal_name",
+  "website_url",
+  "office_phone",
+  "address_line1",
+  "address_line2",
+  "city",
+  "state",
+  "postal_code",
+  "country",
+  "license_number",
+  "tax_identifier",
+  "logo_url",
+  "logo_path",
+] as const;
+
+const ORGANIZATION_COMMERCIAL_SELECT = `${ORGANIZATION_BASE_SELECT},${ORGANIZATION_COMMERCIAL_COLUMNS.join(",")}`;
+const ORGANIZATION_SELECT = `${ORGANIZATION_COMMERCIAL_SELECT},${ORGANIZATION_IDENTITY_COLUMNS.join(",")}`;
 
 const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) => {
   const message = (error?.message ?? "").toLowerCase();
@@ -137,6 +196,10 @@ function missingCommercialOrganizationColumn(error: { code?: string; message?: s
   return ORGANIZATION_COMMERCIAL_COLUMNS.some((column) => isMissingRestColumn(error, column));
 }
 
+function missingIdentityOrganizationColumn(error: { code?: string; message?: string } | null) {
+  return ORGANIZATION_IDENTITY_COLUMNS.some((column) => isMissingRestColumn(error, column));
+}
+
 function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
   const contractorCircleGrant = bool(row.contractor_circle_grant);
 
@@ -144,6 +207,19 @@ function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
     id: row.id as string,
     name: str(row.name),
     slug: str(row.slug),
+    legal_name: str(row.legal_name),
+    website_url: str(row.website_url),
+    office_phone: str(row.office_phone),
+    address_line1: str(row.address_line1),
+    address_line2: str(row.address_line2),
+    city: str(row.city),
+    state: str(row.state),
+    postal_code: str(row.postal_code),
+    country: str(row.country),
+    license_number: str(row.license_number),
+    tax_identifier: str(row.tax_identifier),
+    logo_url: str(row.logo_url),
+    logo_path: str(row.logo_path),
     plan_code: str(row.plan_code),
     billing_status: str(row.billing_status),
     billing_email: str(row.billing_email),
@@ -183,6 +259,13 @@ type TeamServerContext = {
   userId: string;
 };
 
+type DynamicSupabaseClient = {
+  from: (relation: string) => ReturnType<SupabaseClient["from"]>;
+};
+
+const dynamicTable = (supabase: unknown, relation: string) =>
+  (supabase as DynamicSupabaseClient).from(relation);
+
 async function ensureCurrentOrganization(context: TeamServerContext) {
   const { data: organizationId, error } = await context.supabase.rpc("ensure_current_user_account");
   if (error) throw new Error(error.message);
@@ -214,8 +297,26 @@ async function loadOrganization(context: TeamServerContext, organizationId: stri
     .eq("id", organizationId)
     .single();
 
-  if (!extended.error) return normalizeOrganization(extended.data as unknown as Record<string, unknown>);
-  if (!missingCommercialOrganizationColumn(extended.error)) throw new Error(extended.error.message);
+  if (!extended.error)
+    return normalizeOrganization(extended.data as unknown as Record<string, unknown>);
+  if (
+    !missingIdentityOrganizationColumn(extended.error) &&
+    !missingCommercialOrganizationColumn(extended.error)
+  ) {
+    throw new Error(extended.error.message);
+  }
+
+  const commercial = await context.supabase
+    .from("organizations")
+    .select(ORGANIZATION_COMMERCIAL_SELECT)
+    .eq("id", organizationId)
+    .single();
+  if (!commercial.error) {
+    return normalizeOrganization(commercial.data as unknown as Record<string, unknown>);
+  }
+  if (!missingCommercialOrganizationColumn(commercial.error)) {
+    throw new Error(commercial.error.message);
+  }
 
   const fallback = await context.supabase
     .from("organizations")
@@ -291,6 +392,48 @@ async function loadDailyReportUsage(context: TeamServerContext, projectIds: stri
   );
 }
 
+function normalizeTeamClientContact(row: Record<string, unknown>): TeamClientContact {
+  return {
+    id: row.id as string,
+    name: str(row.name),
+    email: str(row.email),
+    company: str(row.company),
+    title: str(row.title),
+    phone: str(row.phone),
+    status: str(row.status, "active"),
+  };
+}
+
+function normalizeTeamClientProjectAccess(
+  row: Record<string, unknown>,
+  contactsById: Map<string, TeamClientContact>,
+  projectsById: Map<string, TeamProject>,
+): TeamClientProjectAccess {
+  const contactId = (row.contact_id as string | null) ?? null;
+  const contact = contactId ? contactsById.get(contactId) : undefined;
+  const projectId = row.project_id as string;
+  const project = projectsById.get(projectId);
+
+  return {
+    id: row.id as string,
+    project_id: projectId,
+    contact_id: contactId,
+    email: str(row.email, contact?.email ?? ""),
+    contact_name: contact?.name ?? "",
+    contact_company: contact?.company ?? "",
+    project_name: project?.name ?? "Project",
+    project_job_number: project?.job_number ?? "",
+    status: str(row.status, "pending") as TeamClientProjectAccess["status"],
+    can_view_change_orders:
+      row.can_view_change_orders == null ? true : bool(row.can_view_change_orders),
+    can_view_daily_reports: bool(row.can_view_daily_reports),
+    can_view_billing: bool(row.can_view_billing),
+    accepted_at: (row.accepted_at as string | null) ?? null,
+    last_sent_at: (row.last_sent_at as string | null) ?? null,
+    created_at: str(row.created_at),
+  };
+}
+
 async function assertNotLastOrgOwner(
   context: TeamServerContext,
   membership: { id: string; organization_id: string; role: string; status: string },
@@ -353,7 +496,7 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
         .order("created_at", { ascending: false }),
       context.supabase
         .from("projects")
-        .select("id,name,job_number,project_manager,owner_id")
+        .select("id,name,job_number,client,project_manager,owner_id")
         .eq("organization_id", organizationId)
         .is("archived_at", null)
         .order("name", { ascending: true }),
@@ -367,12 +510,13 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       id: p.id as string,
       name: str(p.name),
       job_number: str(p.job_number),
+      client: str(p.client),
       project_manager: str(p.project_manager),
       owner_id: p.owner_id as string,
     }));
     const projectIds = projects.map((p) => p.id);
 
-    const [projectMembersRes, dailyReportUsage] = await Promise.all([
+    const [projectMembersRes, dailyReportUsage, contactsRes, clientAccessRes] = await Promise.all([
       projectIds.length === 0
         ? { data: [], error: null }
         : context.supabase
@@ -381,8 +525,26 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
             .in("project_id", projectIds)
             .order("created_at", { ascending: true }),
       loadDailyReportUsage(context, projectIds),
+      context.supabase
+        .from("client_contacts")
+        .select("id,name,email,company,title,phone,status")
+        .eq("organization_id", organizationId)
+        .neq("status", "inactive")
+        .order("created_at", { ascending: false }),
+      projectIds.length === 0
+        ? { data: [], error: null }
+        : context.supabase
+            .from("project_client_access")
+            .select(
+              "id,project_id,contact_id,email,status,can_view_change_orders,can_view_daily_reports,can_view_billing,accepted_at,last_sent_at,created_at",
+            )
+            .in("project_id", projectIds)
+            .neq("status", "revoked")
+            .order("created_at", { ascending: false }),
     ]);
     if (projectMembersRes.error) throw new Error(projectMembersRes.error.message);
+    if (contactsRes.error) throw new Error(contactsRes.error.message);
+    if (clientAccessRes.error) throw new Error(clientAccessRes.error.message);
 
     const memberRows = membersRes.data ?? [];
     const projectMemberRows = projectMembersRes.data ?? [];
@@ -452,6 +614,19 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       expires_at: str(i.expires_at),
       created_at: str(i.created_at),
     }));
+    const clientContacts: TeamClientContact[] = (contactsRes.data ?? []).map((contact) =>
+      normalizeTeamClientContact(contact as Record<string, unknown>),
+    );
+    const contactsById = new Map(clientContacts.map((contact) => [contact.id, contact]));
+    const projectsById = new Map(projects.map((project) => [project.id, project]));
+    const clientProjectAccess: TeamClientProjectAccess[] = (clientAccessRes.data ?? []).map(
+      (access) =>
+        normalizeTeamClientProjectAccess(
+          access as Record<string, unknown>,
+          contactsById,
+          projectsById,
+        ),
+    );
 
     const currentProfileRow = profilesRes.data?.find((p) => p.id === context.userId);
     const currentProfile: TeamProfile = {
@@ -472,6 +647,8 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       invites,
       projects,
       projectMembers,
+      clientContacts,
+      clientProjectAccess,
       currentUserRole: currentMember?.role ?? null,
       canManageTeam,
       usage: {
@@ -517,6 +694,19 @@ export const updateMyProfile = createServerFn({ method: "POST" })
 const organizationUpdateInput = z.object({
   name: z.string().min(1, "Enter a company name.").max(160),
   slug: z.string().max(120).default(""),
+  legal_name: z.string().max(200).default(""),
+  website_url: z.string().url("Enter a valid website URL.").or(z.literal("")).default(""),
+  office_phone: z.string().max(80).default(""),
+  address_line1: z.string().max(200).default(""),
+  address_line2: z.string().max(200).default(""),
+  city: z.string().max(120).default(""),
+  state: z.string().max(80).default(""),
+  postal_code: z.string().max(40).default(""),
+  country: z.string().max(80).default(""),
+  license_number: z.string().max(120).default(""),
+  tax_identifier: z.string().max(120).default(""),
+  logo_url: z.string().url("Logo URL must be valid.").or(z.literal("")).default(""),
+  logo_path: z.string().max(500).default(""),
   billing_email: z.string().email("Enter a valid billing email.").or(z.literal("")).default(""),
   billing_contact_name: z.string().max(160).default(""),
 });
@@ -539,18 +729,57 @@ export const updateOrganization = createServerFn({ method: "POST" })
     const updatePayload = {
       name: data.name.trim(),
       slug: cleanSlug,
+      legal_name: data.legal_name.trim(),
+      website_url: data.website_url.trim(),
+      office_phone: data.office_phone.trim(),
+      address_line1: data.address_line1.trim(),
+      address_line2: data.address_line2.trim(),
+      city: data.city.trim(),
+      state: data.state.trim(),
+      postal_code: data.postal_code.trim(),
+      country: data.country.trim(),
+      license_number: data.license_number.trim(),
+      tax_identifier: data.tax_identifier.trim(),
+      logo_url: data.logo_url.trim(),
+      logo_path: data.logo_path.trim(),
       billing_email: data.billing_email.trim().toLowerCase(),
       billing_contact_name: data.billing_contact_name.trim(),
     };
 
-    const { data: updated, error } = await context.supabase
-      .from("organizations")
-      .update(updatePayload as any)
+    const { data: updated, error } = await dynamicTable(context.supabase, "organizations")
+      .update(updatePayload)
       .eq("id", organizationId)
       .select(ORGANIZATION_SELECT)
       .single();
     if (error) {
-      if (!missingCommercialOrganizationColumn(error)) throw new Error(error.message);
+      if (
+        !missingIdentityOrganizationColumn(error) &&
+        !missingCommercialOrganizationColumn(error)
+      ) {
+        throw new Error(error.message);
+      }
+
+      const commercialPayload = {
+        name: updatePayload.name,
+        slug: updatePayload.slug,
+        billing_email: updatePayload.billing_email,
+        billing_contact_name: updatePayload.billing_contact_name,
+      };
+      const commercial = await dynamicTable(context.supabase, "organizations")
+        .update(commercialPayload)
+        .eq("id", organizationId)
+        .select(ORGANIZATION_COMMERCIAL_SELECT)
+        .single();
+      if (!commercial.error) {
+        return {
+          organization: normalizeOrganization(
+            commercial.data as unknown as Record<string, unknown>,
+          ),
+        };
+      }
+      if (!missingCommercialOrganizationColumn(commercial.error)) {
+        throw new Error(commercial.error.message);
+      }
 
       const { data: fallback, error: fallbackError } = await context.supabase
         .from("organizations")

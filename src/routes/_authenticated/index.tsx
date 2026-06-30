@@ -624,42 +624,53 @@ function PortfolioPage() {
                             <TableCell>
                               <a
                                 href={projectHref}
-                                className="block"
+                                className="flex min-w-0 items-start gap-3"
                                 onClick={(event) => event.stopPropagation()}
                               >
-                                <div className="flex items-center gap-2">
-                                  <div className="font-serif text-lg text-foreground">{p.name}</div>
-                                  {isDemo && (
-                                    <span
-                                      title="Seeded Overwatch teaching project"
-                                      className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent"
-                                    >
-                                      Demo IOR
-                                    </span>
-                                  )}
-                                  {p.warning_count > 0 && (
-                                    <span
-                                      title={`${p.warning_count} system risk${p.warning_count === 1 ? "" : "s"} detected`}
-                                      className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-danger/15 px-1.5 text-[10px] font-semibold text-danger"
-                                    >
-                                      {p.warning_count}
-                                    </span>
-                                  )}
-                                  {p.days_since_review !== null && p.days_since_review > 30 && (
-                                    <span
-                                      title="Project has not been reviewed in over 30 days"
-                                      className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold text-warning"
-                                    >
-                                      Review {p.days_since_review}d
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                  {p.organization_name} · {p.client} · {p.phase} ·{" "}
-                                  {p.percent_complete}% complete
-                                  {p.top_category && (
-                                    <> · Top risk: {p.top_category.replace(/_/g, " ")}</>
-                                  )}
+                                {p.organization_logo_url && (
+                                  <img
+                                    src={p.organization_logo_url}
+                                    alt={`${p.organization_name} logo`}
+                                    className="mt-0.5 h-9 w-9 shrink-0 rounded-sm object-contain"
+                                  />
+                                )}
+                                <div className="min-w-0">
+                                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                    <div className="truncate font-serif text-lg text-foreground">
+                                      {p.name}
+                                    </div>
+                                    {isDemo && (
+                                      <span
+                                        title="Seeded Overwatch teaching project"
+                                        className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent"
+                                      >
+                                        Demo IOR
+                                      </span>
+                                    )}
+                                    {p.warning_count > 0 && (
+                                      <span
+                                        title={`${p.warning_count} system risk${p.warning_count === 1 ? "" : "s"} detected`}
+                                        className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-danger/15 px-1.5 text-[10px] font-semibold text-danger"
+                                      >
+                                        {p.warning_count}
+                                      </span>
+                                    )}
+                                    {p.days_since_review !== null && p.days_since_review > 30 && (
+                                      <span
+                                        title="Project has not been reviewed in over 30 days"
+                                        className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold text-warning"
+                                      >
+                                        Review {p.days_since_review}d
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="truncate text-xs text-muted-foreground">
+                                    {p.organization_name} · {p.client} · {p.phase} ·{" "}
+                                    {p.percent_complete}% complete
+                                    {p.top_category && (
+                                      <> · Top risk: {p.top_category.replace(/_/g, " ")}</>
+                                    )}
+                                  </div>
                                 </div>
                               </a>
                             </TableCell>

@@ -1,10 +1,13 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, type RGB } from "pdf-lib";
+import { drawPdfBrand, embedPdfLogo } from "@/lib/pdf-branding";
 
 export interface DailyReportPacketProject {
   name: string;
   client?: string | null;
   job_number?: string | null;
   project_manager?: string | null;
+  organization_name?: string | null;
+  organization_logo_url?: string | null;
 }
 
 export interface DailyReportPacketAttachment {
@@ -342,10 +345,22 @@ export async function generateDailyReportPacketPdf({
   const sansBold = await doc.embedFont(StandardFonts.HelveticaBold);
   const firstPage = doc.addPage([PAGE_W, PAGE_H]);
   const ctx: PdfCtx = { doc, page: firstPage, y: PAGE_H - M, serif, sans, sansBold };
+  const companyLogo = await embedPdfLogo(doc, project.organization_logo_url);
 
   drawText(ctx, "OVERWATCH FIELD RECORD", M, ctx.y, {
     font: sansBold,
     size: 8,
+    color: MUTED,
+  });
+  drawPdfBrand({
+    page: ctx.page,
+    logo: companyLogo,
+    companyName: project.organization_name,
+    font: sansBold,
+    x: PAGE_W - M - 170,
+    y: ctx.y + 2,
+    maxWidth: 170,
+    maxHeight: 34,
     color: MUTED,
   });
   ctx.y -= 32;

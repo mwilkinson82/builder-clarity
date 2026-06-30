@@ -6,13 +6,19 @@ import {
   AlertTriangle,
   ArrowLeft,
   BriefcaseBusiness,
+  Building2,
   CheckCircle2,
   ClipboardList,
   CreditCard,
+  FileImage,
   Gauge,
+  Globe,
   HardDrive,
   LogOut,
   MailPlus,
+  MapPin,
+  Phone,
+  Send,
   Save,
   ShieldCheck,
   Trash2,
@@ -33,6 +39,13 @@ import {
 } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
+import {
+  grantClientProjectAccess,
+  revokeClientProjectAccess,
+  updateClientProjectAccess,
+  upsertClientContact,
+  type ProjectClientAccessRow,
+} from "@/lib/client-portal.functions";
 import {
   assignProjectMember,
   createTeamInvite,
@@ -83,6 +96,31 @@ const projectRoleOptions: { value: ProjectMemberRole; label: string }[] = [
   { value: "viewer", label: "Viewer" },
 ];
 
+const clientPermissionFields = [
+  { field: "can_view_change_orders", label: "COs" },
+  { field: "can_view_daily_reports", label: "Daily" },
+  { field: "can_view_billing", label: "Billing" },
+] as const;
+
+type ClientPermissionField = (typeof clientPermissionFields)[number]["field"];
+
+const COMPANY_ASSET_BUCKET = "company-assets";
+const COMPANY_LOGO_MAX_BYTES = 2 * 1024 * 1024;
+const COMPANY_LOGO_TYPES = new Set(["image/png", "image/jpeg"]);
+
+const emptyClientInvite = {
+  projectId: "",
+  name: "",
+  email: "",
+  company: "",
+  title: "",
+  phone: "",
+  notes: "",
+  can_view_change_orders: true,
+  can_view_daily_reports: false,
+  can_view_billing: false,
+};
+
 function roleLabel(role: string) {
   return roleOptions.find((option) => option.value === role)?.label ?? role;
 }
@@ -117,6 +155,33 @@ function formatBytes(bytes: number) {
 function formatUsageValue(used: number, limit: number) {
   const limitLabel = limit > 0 ? formatNumber(limit) : "No cap";
   return `${formatNumber(used)} / ${limitLabel}`;
+}
+
+function sanitizeAssetName(name: string) {
+  return name
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 120);
+}
+
+function companyInitials(name: string) {
+  const parts = name
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return "OW";
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+}
+
+function normalizeWebsiteInput(value: string) {
+  const clean = value.trim();
+  if (!clean) return "";
+  return /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
 }
 
 function meterPercent(used: number, limit: number) {
@@ -237,6 +302,10 @@ function TeamPage() {
   const assignMember = useServerFn(assignProjectMember);
   const updateProjectAccess = useServerFn(updateProjectMember);
   const removeProjectAccess = useServerFn(removeProjectMember);
+  const saveClientContact = useServerFn(upsertClientContact);
+  const grantClientAccess = useServerFn(grantClientProjectAccess);
+  const updateClientAccess = useServerFn(updateClientProjectAccess);
+  const revokeClientAccess = useServerFn(revokeClientProjectAccess);
 
   const { data: team, isLoading } = useQuery({
     queryKey: ["team-workspace"],
@@ -251,6 +320,19 @@ function TeamPage() {
   const [orgForm, setOrgForm] = useState({
     name: "",
     slug: "",
+    legal_name: "",
+    website_url: "",
+    office_phone: "",
+    address_line1: "",
+    address_line2: "",
+    city: "",
+    state: "",
+    postal_code: "",
+    country: "",
+    license_number: "",
+    tax_identifier: "",
+    logo_url: "",
+    logo_path: "",
     billing_email: "",
     billing_contact_name: "",
   });
@@ -259,6 +341,8 @@ function TeamPage() {
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedUserId, setSelectedUserId] = useState("");
   const [projectRole, setProjectRole] = useState<ProjectMemberRole>("viewer");
+  const [logoInputKey, setLogoInputKey] = useState(0);
+  const [clientInviteForm, setClientInviteForm] = useState(emptyClientInvite);
 
   useEffect(() => {
     if (!team) return;
@@ -270,10 +354,27 @@ function TeamPage() {
     setOrgForm({
       name: team.organization.name,
       slug: team.organization.slug,
+      legal_name: team.organization.legal_name,
+      website_url: team.organization.website_url,
+      office_phone: team.organization.office_phone,
+      address_line1: team.organization.address_line1,
+      address_line2: team.organization.address_line2,
+      city: team.organization.city,
+      state: team.organization.state,
+      postal_code: team.organization.postal_code,
+      country: team.organization.country,
+      license_number: team.organization.license_number,
+      tax_identifier: team.organization.tax_identifier,
+      logo_url: team.organization.logo_url,
+      logo_path: team.organization.logo_path,
       billing_email: team.organization.billing_email,
       billing_contact_name: team.organization.billing_contact_name,
     });
     setSelectedProjectId((current) => current || team.projects[0]?.id || "");
+    setClientInviteForm((current) => ({
+      ...current,
+      projectId: current.projectId || team.projects[0]?.id || "",
+    }));
     setSelectedUserId(
       (current) =>
         current || team.members.find((member) => member.status === "active")?.user_id || "",
@@ -323,13 +424,71 @@ function TeamPage() {
   });
 
   const orgMutation = useMutation({
-    mutationFn: () => saveOrganization({ data: orgForm }),
+    mutationFn: () =>
+      saveOrganization({
+        data: {
+          ...orgForm,
+          website_url: normalizeWebsiteInput(orgForm.website_url),
+        },
+      }),
     onSuccess: async () => {
       await refreshWorkspace();
       toast.success("Company saved");
     },
     onError: (error) => {
       toast.error("Company did not save", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    },
+  });
+
+  const logoUploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!team?.organization.id) throw new Error("Company workspace is still loading.");
+      if (!COMPANY_LOGO_TYPES.has(file.type)) {
+        throw new Error("Company logos must be PNG or JPG files.");
+      }
+      if (file.size > COMPANY_LOGO_MAX_BYTES) {
+        throw new Error("Company logos must be 2 MB or smaller.");
+      }
+
+      const safeName = sanitizeAssetName(file.name) || "company-logo";
+      const path = `${team.organization.id}/logo-${crypto.randomUUID()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage
+        .from(COMPANY_ASSET_BUCKET)
+        .upload(path, file, {
+          contentType: file.type,
+          upsert: false,
+        });
+      if (uploadError) throw new Error(uploadError.message);
+
+      const { data } = supabase.storage.from(COMPANY_ASSET_BUCKET).getPublicUrl(path);
+      const logoUrl = data.publicUrl;
+      await saveOrganization({
+        data: {
+          ...orgForm,
+          website_url: normalizeWebsiteInput(orgForm.website_url),
+          logo_url: logoUrl,
+          logo_path: path,
+        },
+      });
+
+      const oldPath = orgForm.logo_path || team.organization.logo_path;
+      if (oldPath && oldPath !== path) {
+        await supabase.storage.from(COMPANY_ASSET_BUCKET).remove([oldPath]);
+      }
+
+      return { logoUrl, path };
+    },
+    onSuccess: async ({ logoUrl, path }) => {
+      setOrgForm((current) => ({ ...current, logo_url: logoUrl, logo_path: path }));
+      setLogoInputKey((key) => key + 1);
+      await refreshWorkspace();
+      toast.success("Company logo saved");
+    },
+    onError: (error) => {
+      setLogoInputKey((key) => key + 1);
+      toast.error("Company logo did not save", {
         description: error instanceof Error ? error.message : "Try again.",
       });
     },
@@ -478,11 +637,134 @@ function TeamPage() {
     },
   });
 
+  const clientInviteMutation = useMutation({
+    mutationFn: async () => {
+      const projectId = clientInviteForm.projectId;
+      const email = clientInviteForm.email.trim().toLowerCase();
+      if (!projectId) throw new Error("Choose the project this client should access.");
+      if (!clientInviteForm.name.trim()) throw new Error("Enter the client contact name.");
+      if (!email) throw new Error("Enter the client email address.");
+
+      const contactResult = await saveClientContact({
+        data: {
+          projectId,
+          name: clientInviteForm.name,
+          email,
+          company: clientInviteForm.company,
+          title: clientInviteForm.title,
+          phone: clientInviteForm.phone,
+          notes: clientInviteForm.notes,
+        },
+      });
+      const accessResult = await grantClientAccess({
+        data: { projectId, contactId: contactResult.contact.id },
+      });
+      const access = accessResult.access as ProjectClientAccessRow;
+      await updateClientAccess({
+        data: {
+          accessId: access.id,
+          can_view_change_orders: clientInviteForm.can_view_change_orders,
+          can_view_daily_reports: clientInviteForm.can_view_daily_reports,
+          can_view_billing: clientInviteForm.can_view_billing,
+        },
+      });
+      await sendOverwatchMagicLink({
+        email,
+        next: `/client/projects/${projectId}`,
+        context: "client_portal",
+      });
+      await updateClientAccess({
+        data: { accessId: access.id, last_sent_at: new Date().toISOString() },
+      });
+      return { email, projectId };
+    },
+    onSuccess: async ({ email, projectId }) => {
+      await refreshWorkspace();
+      toast.success("Client portal invite sent", {
+        description: `${email} can open the selected project portal.`,
+      });
+      setClientInviteForm({
+        ...emptyClientInvite,
+        projectId,
+      });
+    },
+    onError: (error) => {
+      toast.error("Client invite did not send", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    },
+  });
+
+  const clientAccessPermissionMutation = useMutation({
+    mutationFn: (payload: { accessId: string; field: ClientPermissionField; value: boolean }) =>
+      updateClientAccess({ data: { accessId: payload.accessId, [payload.field]: payload.value } }),
+    onSuccess: async () => {
+      await refreshWorkspace();
+      toast.success("Client access updated");
+    },
+    onError: (error) => {
+      toast.error("Client access did not update", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    },
+  });
+
+  const clientAccessRevokeMutation = useMutation({
+    mutationFn: (accessId: string) => revokeClientAccess({ data: { accessId } }),
+    onSuccess: async () => {
+      await refreshWorkspace();
+      toast.success("Client access removed");
+    },
+    onError: (error) => {
+      toast.error("Client access did not remove", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    },
+  });
+
+  const clientAccessSendLinkMutation = useMutation({
+    mutationFn: async (access: {
+      id: string;
+      email: string;
+      project_id: string;
+      project_name: string;
+    }) => {
+      await sendOverwatchMagicLink({
+        email: access.email,
+        next: `/client/projects/${access.project_id}`,
+        context: "client_portal",
+      });
+      await updateClientAccess({
+        data: { accessId: access.id, last_sent_at: new Date().toISOString() },
+      });
+      return access;
+    },
+    onSuccess: async (access) => {
+      await refreshWorkspace();
+      toast.success("Client portal link sent", {
+        description: `${access.email} can open ${access.project_name}.`,
+      });
+    },
+    onError: (error) => {
+      toast.error("Client portal link did not send", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    },
+  });
+
   const signOut = async () => {
     await supabase.auth.signOut();
     router.invalidate();
     navigate({ to: "/auth" });
   };
+
+  const logoPreviewUrl = orgForm.logo_url || team?.organization.logo_url || "";
+  const clientPermissionSavingKey =
+    clientAccessPermissionMutation.isPending && clientAccessPermissionMutation.variables
+      ? `${clientAccessPermissionMutation.variables.accessId}:${clientAccessPermissionMutation.variables.field}`
+      : "";
+  const isClientPermissionSaving = (accessId: string, field: ClientPermissionField) =>
+    clientPermissionSavingKey === `${accessId}:${field}`;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -672,21 +954,175 @@ function TeamPage() {
                   title={team.organization.name}
                 />
                 <div className="mt-5 grid gap-4">
-                  <div className="grid gap-4 md:grid-cols-[1fr_220px]">
+                  <div className="grid gap-4 lg:grid-cols-[180px_1fr]">
+                    <div className="space-y-3">
+                      <div className="flex h-32 w-32 items-center justify-center overflow-hidden rounded-md border border-hairline bg-surface text-xl font-semibold text-muted-foreground">
+                        {logoPreviewUrl ? (
+                          <img
+                            src={logoPreviewUrl}
+                            alt={`${orgForm.name || "Company"} logo`}
+                            className="h-full w-full object-contain p-2"
+                          />
+                        ) : (
+                          companyInitials(orgForm.name)
+                        )}
+                      </div>
+                      {team.canManageTeam && (
+                        <div className="space-y-1.5">
+                          <Label htmlFor="company-logo-upload">Logo</Label>
+                          <Input
+                            key={logoInputKey}
+                            id="company-logo-upload"
+                            type="file"
+                            accept="image/png,image/jpeg"
+                            disabled={logoUploadMutation.isPending}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              if (file) logoUploadMutation.mutate(file);
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <div className="grid gap-4">
+                      <div className="grid gap-4 md:grid-cols-[1fr_1fr_160px]">
+                        <div className="space-y-1.5">
+                          <Label>Company name</Label>
+                          <Input
+                            value={orgForm.name}
+                            disabled={!team.canManageTeam}
+                            onChange={(event) =>
+                              setOrgForm({ ...orgForm, name: event.target.value })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Legal name</Label>
+                          <Input
+                            value={orgForm.legal_name}
+                            disabled={!team.canManageTeam}
+                            onChange={(event) =>
+                              setOrgForm({ ...orgForm, legal_name: event.target.value })
+                            }
+                            placeholder={orgForm.name}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Slug</Label>
+                          <Input
+                            value={orgForm.slug}
+                            disabled={!team.canManageTeam}
+                            onChange={(event) =>
+                              setOrgForm({ ...orgForm, slug: event.target.value })
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <div className="space-y-1.5">
+                          <Label>Website</Label>
+                          <Input
+                            value={orgForm.website_url}
+                            disabled={!team.canManageTeam}
+                            onChange={(event) =>
+                              setOrgForm({ ...orgForm, website_url: event.target.value })
+                            }
+                            placeholder="company.com"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Office phone</Label>
+                          <Input
+                            value={orgForm.office_phone}
+                            disabled={!team.canManageTeam}
+                            onChange={(event) =>
+                              setOrgForm({ ...orgForm, office_phone: event.target.value })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Country</Label>
+                          <Input
+                            value={orgForm.country}
+                            disabled={!team.canManageTeam}
+                            onChange={(event) =>
+                              setOrgForm({ ...orgForm, country: event.target.value })
+                            }
+                            placeholder="United States"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label>Company name</Label>
+                      <Label>Address line 1</Label>
                       <Input
-                        value={orgForm.name}
+                        value={orgForm.address_line1}
                         disabled={!team.canManageTeam}
-                        onChange={(event) => setOrgForm({ ...orgForm, name: event.target.value })}
+                        onChange={(event) =>
+                          setOrgForm({ ...orgForm, address_line1: event.target.value })
+                        }
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Slug</Label>
+                      <Label>Address line 2</Label>
                       <Input
-                        value={orgForm.slug}
+                        value={orgForm.address_line2}
                         disabled={!team.canManageTeam}
-                        onChange={(event) => setOrgForm({ ...orgForm, slug: event.target.value })}
+                        onChange={(event) =>
+                          setOrgForm({ ...orgForm, address_line2: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-[1fr_120px_140px]">
+                    <div className="space-y-1.5">
+                      <Label>City</Label>
+                      <Input
+                        value={orgForm.city}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) => setOrgForm({ ...orgForm, city: event.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>State</Label>
+                      <Input
+                        value={orgForm.state}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) => setOrgForm({ ...orgForm, state: event.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>ZIP</Label>
+                      <Input
+                        value={orgForm.postal_code}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) =>
+                          setOrgForm({ ...orgForm, postal_code: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>License number</Label>
+                      <Input
+                        value={orgForm.license_number}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) =>
+                          setOrgForm({ ...orgForm, license_number: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Tax identifier</Label>
+                      <Input
+                        value={orgForm.tax_identifier}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) =>
+                          setOrgForm({ ...orgForm, tax_identifier: event.target.value })
+                        }
                       />
                     </div>
                   </div>
@@ -714,6 +1150,38 @@ function TeamPage() {
                         placeholder="billing@company.com"
                       />
                     </div>
+                  </div>
+                  <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-3">
+                    <ContactFact
+                      icon={<Building2 className="h-3.5 w-3.5" />}
+                      label="Display"
+                      value={orgForm.name || "Company"}
+                    />
+                    <ContactFact
+                      icon={<Globe className="h-3.5 w-3.5" />}
+                      label="Website"
+                      value={orgForm.website_url || "Not set"}
+                    />
+                    <ContactFact
+                      icon={<Phone className="h-3.5 w-3.5" />}
+                      label="Phone"
+                      value={orgForm.office_phone || "Not set"}
+                    />
+                    <ContactFact
+                      icon={<MapPin className="h-3.5 w-3.5" />}
+                      label="Location"
+                      value={[orgForm.city, orgForm.state].filter(Boolean).join(", ") || "Not set"}
+                    />
+                    <ContactFact
+                      icon={<FileImage className="h-3.5 w-3.5" />}
+                      label="Logo"
+                      value={logoPreviewUrl ? "Ready" : "Not set"}
+                    />
+                    <ContactFact
+                      icon={<ShieldCheck className="h-3.5 w-3.5" />}
+                      label="Role"
+                      value={roleLabel(team.currentUserRole ?? "member")}
+                    />
                   </div>
                   <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-3 xl:grid-cols-6">
                     <MiniStat label="Plan" value={team.organization.plan_code} />
@@ -746,7 +1214,11 @@ function TeamPage() {
                     <div className="flex justify-end">
                       <Button
                         onClick={() => orgMutation.mutate()}
-                        disabled={orgMutation.isPending || !orgForm.name.trim()}
+                        disabled={
+                          orgMutation.isPending ||
+                          logoUploadMutation.isPending ||
+                          !orgForm.name.trim()
+                        }
                         className="gap-1.5"
                       >
                         <Save className="h-3.5 w-3.5" />
@@ -923,6 +1395,273 @@ function TeamPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+              <SectionHeader
+                icon={<ShieldCheck className="h-4 w-4" />}
+                eyebrow="Client Portal"
+                title="Client project access"
+              />
+              <div className="mt-5 grid gap-3 rounded-md border border-hairline bg-surface p-3 xl:grid-cols-[1fr_1fr_1fr]">
+                <div className="space-y-1.5">
+                  <Label>Project</Label>
+                  <Select
+                    value={clientInviteForm.projectId}
+                    disabled={!team.canManageTeam}
+                    onValueChange={(projectId) =>
+                      setClientInviteForm((current) => ({ ...current, projectId }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {team.projects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.job_number
+                            ? `${project.job_number} - ${project.name}`
+                            : project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Client name</Label>
+                  <Input
+                    value={clientInviteForm.name}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        name: event.target.value,
+                      }))
+                    }
+                    placeholder="Owner or client rep"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Email</Label>
+                  <Input
+                    type="email"
+                    value={clientInviteForm.email}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        email: event.target.value,
+                      }))
+                    }
+                    placeholder="client@company.com"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Client company</Label>
+                  <Input
+                    value={clientInviteForm.company}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        company: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Title</Label>
+                  <Input
+                    value={clientInviteForm.title}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        title: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Phone</Label>
+                  <Input
+                    value={clientInviteForm.phone}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        phone: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5 xl:col-span-2">
+                  <Label>Notes</Label>
+                  <Input
+                    value={clientInviteForm.notes}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        notes: event.target.value,
+                      }))
+                    }
+                    placeholder="Owner rep, lender, architect, billing contact"
+                  />
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+                  <div className="space-y-1.5">
+                    <Label>Portal modules</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {clientPermissionFields.map(({ field, label }) => {
+                        const active = clientInviteForm[field];
+                        return (
+                          <Button
+                            key={field}
+                            type="button"
+                            size="sm"
+                            variant={active ? "default" : "outline"}
+                            disabled={!team.canManageTeam}
+                            onClick={() =>
+                              setClientInviteForm((current) => ({
+                                ...current,
+                                [field]: !current[field],
+                              }))
+                            }
+                          >
+                            {label}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <Button
+                    disabled={
+                      !team.canManageTeam ||
+                      !clientInviteForm.projectId ||
+                      !clientInviteForm.name.trim() ||
+                      !clientInviteForm.email.trim() ||
+                      clientInviteMutation.isPending
+                    }
+                    onClick={() => clientInviteMutation.mutate()}
+                    className="gap-1.5"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {clientInviteMutation.isPending ? "Sending..." : "Invite client"}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-5 overflow-hidden rounded-md border border-hairline">
+                {team.clientProjectAccess.length === 0 ? (
+                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    No client project access has been granted yet.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[920px] divide-y divide-hairline">
+                      <div className="grid grid-cols-[1.2fr_1.1fr_1fr_1.15fr_0.9fr_150px] gap-3 bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        <div>Client</div>
+                        <div>Project</div>
+                        <div>Status</div>
+                        <div>Modules</div>
+                        <div>Last sent</div>
+                        <div className="text-right">Actions</div>
+                      </div>
+                      {team.clientProjectAccess.map((access) => (
+                        <div
+                          key={access.id}
+                          className="grid grid-cols-[1.2fr_1.1fr_1fr_1.15fr_0.9fr_150px] gap-3 px-3 py-3 text-sm"
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate font-medium text-foreground">
+                              {access.contact_name || access.email}
+                            </div>
+                            <div className="truncate text-xs text-muted-foreground">
+                              {access.email}
+                            </div>
+                            {access.contact_company && (
+                              <div className="truncate text-xs text-muted-foreground">
+                                {access.contact_company}
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate font-medium text-foreground">
+                              {access.project_name}
+                            </div>
+                            <div className="truncate text-xs text-muted-foreground">
+                              {access.project_job_number || "No job number"}
+                            </div>
+                          </div>
+                          <div className="min-w-0">
+                            <span className="inline-flex max-w-full rounded-full border border-hairline px-2 py-1 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                              <span className="truncate">{access.status}</span>
+                            </span>
+                            <div className="mt-1 truncate text-xs text-muted-foreground">
+                              {access.accepted_at
+                                ? `Accepted ${shortDate(access.accepted_at)}`
+                                : "Not accepted"}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {clientPermissionFields.map(({ field, label }) => {
+                              const active = access[field];
+                              return (
+                                <Button
+                                  key={field}
+                                  type="button"
+                                  size="sm"
+                                  variant={active ? "default" : "outline"}
+                                  disabled={
+                                    !team.canManageTeam ||
+                                    isClientPermissionSaving(access.id, field)
+                                  }
+                                  onClick={() =>
+                                    clientAccessPermissionMutation.mutate({
+                                      accessId: access.id,
+                                      field,
+                                      value: !active,
+                                    })
+                                  }
+                                  className="h-7 px-2 text-xs"
+                                >
+                                  {label}
+                                </Button>
+                              );
+                            })}
+                          </div>
+                          <div className="min-w-0 truncate text-sm text-muted-foreground">
+                            {access.last_sent_at ? shortDate(access.last_sent_at) : "Not sent"}
+                          </div>
+                          <div className="flex justify-end gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              title="Send portal link"
+                              disabled={
+                                !team.canManageTeam || clientAccessSendLinkMutation.isPending
+                              }
+                              onClick={() => clientAccessSendLinkMutation.mutate(access)}
+                            >
+                              <Send className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Remove client access"
+                              disabled={!team.canManageTeam || clientAccessRevokeMutation.isPending}
+                              onClick={() => clientAccessRevokeMutation.mutate(access.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
 
@@ -1454,6 +2193,20 @@ function UsageCard({
             />
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ContactFact({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-start gap-2">
+      <div className="mt-0.5 text-muted-foreground">{icon}</div>
+      <div className="min-w-0">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          {label}
+        </div>
+        <div className="mt-0.5 truncate text-sm font-medium text-foreground">{value}</div>
       </div>
     </div>
   );

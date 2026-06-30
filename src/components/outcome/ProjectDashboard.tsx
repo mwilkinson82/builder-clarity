@@ -85,7 +85,26 @@ export function ProjectDashboard({
       <div className="rounded-lg border border-hairline bg-card shadow-card">
         <div className="border-b border-hairline p-6 lg:p-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
+            <div className="min-w-0">
+              {(project.organization_name || project.organization_logo_url) && (
+                <div className="mb-4 flex max-w-lg items-center gap-3">
+                  {project.organization_logo_url && (
+                    <img
+                      src={project.organization_logo_url}
+                      alt={`${project.organization_name || "Company"} logo`}
+                      className="h-9 w-9 shrink-0 rounded-sm object-contain"
+                    />
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                      Company
+                    </div>
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {project.organization_name || "Overwatch company"}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
                 <span className="inline-block h-px w-7 bg-accent" />
                 Financial Dashboard
