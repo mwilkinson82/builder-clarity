@@ -2537,65 +2537,118 @@ function CpmGridToolbar({
   onSaveDataDate: () => void;
 }) {
   return (
-    <>
-      <CpmDataDateControl
-        value={dataDateDraft}
-        savedValue={latestDataDate}
-        isSaving={isSavingDataDate}
-        onChange={onDataDateChange}
-        onSave={onSaveDataDate}
-        className="min-w-[300px]"
-      />
-      <ScheduleViewControls value={scheduleView} onChange={onScheduleViewChange} />
-      <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
-      <Button type="button" variant="outline" className="gap-2" onClick={onManageWbs}>
-        <ListTree className="h-4 w-4" />
-        Manage WBS
-      </Button>
-      <ScheduleZoomControls dayPx={dayPx} onChange={onZoomChange} />
-      <Button
-        type="button"
-        variant={showLogicLines ? "default" : "outline"}
-        className="gap-2"
-        aria-pressed={showLogicLines}
-        onClick={onToggleLogicLines}
-      >
-        <GitBranch className="h-4 w-4" />
-        Logic lines
-      </Button>
-      <Button type="button" variant="outline" className="gap-2" onClick={onExpand}>
-        <Maximize2 className="h-4 w-4" />
-        Expand
-      </Button>
-      <Button
-        type="button"
-        variant="outline"
-        className="gap-2"
-        disabled={!canSeedActivities || isSeedingActivities}
-        onClick={onSeedActivities}
-      >
-        <ClipboardList className="h-4 w-4" />
-        {isSeedingActivities ? "Building..." : "Build from milestones"}
-      </Button>
-      <Button
-        type="button"
-        variant="outline"
-        className="gap-2"
-        title="Print optimized for Tabloid / 11 x 17 landscape"
-        onClick={onPrint}
-      >
-        <Printer className="h-4 w-4" />
-        Print 11x17
-      </Button>
-      <Button type="button" className="gap-2" onClick={onToggleActivityDraft}>
-        <Plus className="h-4 w-4" />
-        {isActivityDraftOpen ? "Close form" : "Add activity"}
-      </Button>
-      <Button type="button" variant="outline" className="gap-2" onClick={onAddMilestone}>
-        <Diamond className="h-4 w-4" />
-        Add milestone
-      </Button>
-    </>
+    <div className="grid w-full min-w-0 gap-2 lg:grid-cols-2 2xl:grid-cols-[minmax(320px,1.15fr)_minmax(430px,1.35fr)_minmax(390px,1.25fr)]">
+      <CpmToolbarGroup label="Data Date" className="lg:col-span-2 2xl:col-span-1">
+        <CpmDataDateControl
+          value={dataDateDraft}
+          savedValue={latestDataDate}
+          isSaving={isSavingDataDate}
+          onChange={onDataDateChange}
+          onSave={onSaveDataDate}
+          className="w-full"
+          embedded
+        />
+      </CpmToolbarGroup>
+      <CpmToolbarGroup label="View">
+        <ScheduleViewControls value={scheduleView} onChange={onScheduleViewChange} />
+      </CpmToolbarGroup>
+      <CpmToolbarGroup label="Sort & WBS">
+        <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 gap-2 whitespace-nowrap"
+          onClick={onManageWbs}
+        >
+          <ListTree className="h-4 w-4" />
+          Manage WBS
+        </Button>
+      </CpmToolbarGroup>
+      <CpmToolbarGroup label="Scale & Logic">
+        <ScheduleZoomControls dayPx={dayPx} onChange={onZoomChange} />
+        <Button
+          type="button"
+          variant={showLogicLines ? "default" : "outline"}
+          className="h-9 gap-2 whitespace-nowrap"
+          aria-pressed={showLogicLines}
+          onClick={onToggleLogicLines}
+        >
+          <GitBranch className="h-4 w-4" />
+          Logic lines
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 gap-2 whitespace-nowrap"
+          onClick={onExpand}
+        >
+          <Maximize2 className="h-4 w-4" />
+          Expand
+        </Button>
+      </CpmToolbarGroup>
+      <CpmToolbarGroup label="Output">
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 gap-2 whitespace-nowrap"
+          disabled={!canSeedActivities || isSeedingActivities}
+          onClick={onSeedActivities}
+        >
+          <ClipboardList className="h-4 w-4" />
+          {isSeedingActivities ? "Building..." : "Build from milestones"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 gap-2 whitespace-nowrap"
+          title="Print optimized for Tabloid / 11 x 17 landscape"
+          onClick={onPrint}
+        >
+          <Printer className="h-4 w-4" />
+          Print 11x17
+        </Button>
+      </CpmToolbarGroup>
+      <CpmToolbarGroup label="Add">
+        <Button
+          type="button"
+          className="h-9 gap-2 whitespace-nowrap"
+          onClick={onToggleActivityDraft}
+        >
+          <Plus className="h-4 w-4" />
+          {isActivityDraftOpen ? "Close form" : "Add activity"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 gap-2 whitespace-nowrap"
+          onClick={onAddMilestone}
+        >
+          <Diamond className="h-4 w-4" />
+          Add milestone
+        </Button>
+      </CpmToolbarGroup>
+    </div>
+  );
+}
+
+function CpmToolbarGroup({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn("min-w-0 rounded-md border border-hairline bg-surface/70 px-3 py-2", className)}
+    >
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
+    </div>
   );
 }
 
@@ -2606,6 +2659,7 @@ function CpmDataDateControl({
   onChange,
   onSave,
   className,
+  embedded = false,
 }: {
   value: string;
   savedValue: string | null;
@@ -2613,12 +2667,14 @@ function CpmDataDateControl({
   onChange: (value: string) => void;
   onSave: () => void;
   className?: string;
+  embedded?: boolean;
 }) {
   const isDirty = value !== (savedValue ?? "");
   return (
     <div
       className={cn(
-        "flex min-h-9 flex-wrap items-center gap-2 rounded-md border border-hairline bg-card px-2 py-1",
+        "flex min-h-9 flex-wrap items-center gap-2",
+        !embedded && "rounded-md border border-hairline bg-card px-2 py-1",
         className,
       )}
     >
@@ -3571,8 +3627,8 @@ function ActivityScheduleMatrix({
         isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : isPrintMode ? "mt-0" : "mt-5",
       )}
     >
-      <div className="constructline-cpm-matrix-head flex flex-col gap-3 border-b border-hairline px-4 py-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+      <div className="constructline-cpm-matrix-head flex flex-col gap-4 border-b border-hairline px-4 py-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
           <div className="constructline-cpm-matrix-title">
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               <GitBranch className="h-3.5 w-3.5" />
@@ -3586,45 +3642,41 @@ function ActivityScheduleMatrix({
               <div className="mt-1 text-xs font-semibold text-foreground">{viewSummary}</div>
             )}
           </div>
-          {toolbar && (
-            <div className="constructline-cpm-matrix-toolbar flex flex-wrap gap-2 print:hidden xl:justify-end">
-              {toolbar}
-            </div>
-          )}
-        </div>
-        <div className="constructline-cpm-matrix-legend flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1">
-            <span className="h-2 w-5 rounded-full bg-danger" />
-            Critical
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="h-2 w-5 rounded-full bg-warning" />
-            Near critical
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="h-2 w-5 rounded-full bg-success" />
-            Complete
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="h-2.5 w-2.5 rotate-45 rounded-[1px] border border-foreground/45 bg-card" />
-            Milestone
-          </span>
-          {activeDelayFragmentCount > 0 && (
+          <div className="constructline-cpm-matrix-legend flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-muted-foreground xl:justify-end">
             <span className="inline-flex items-center gap-1">
-              <span className="h-2.5 w-2.5 rounded-full bg-danger ring-2 ring-danger/15" />
-              Delay
+              <span className="h-2 w-5 rounded-full bg-danger" />
+              Critical
             </span>
-          )}
-          <span className="font-semibold tabular text-foreground">
-            {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
-          </span>
-          {showLogicLines && (
-            <span className="inline-flex items-center gap-1 font-semibold text-foreground">
-              <GitBranch className="h-3.5 w-3.5" />
-              {logicLines.length} ties shown
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-5 rounded-full bg-warning" />
+              Near critical
             </span>
-          )}
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-5 rounded-full bg-success" />
+              Complete
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2.5 w-2.5 rotate-45 rounded-[1px] border border-foreground/45 bg-card" />
+              Milestone
+            </span>
+            {activeDelayFragmentCount > 0 && (
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2.5 w-2.5 rounded-full bg-danger ring-2 ring-danger/15" />
+                Delay
+              </span>
+            )}
+            <span className="font-semibold tabular text-foreground">
+              {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
+            </span>
+            {showLogicLines && (
+              <span className="inline-flex items-center gap-1 font-semibold text-foreground">
+                <GitBranch className="h-3.5 w-3.5" />
+                {logicLines.length} ties shown
+              </span>
+            )}
+          </div>
         </div>
+        {toolbar && <div className="constructline-cpm-matrix-toolbar print:hidden">{toolbar}</div>}
       </div>
 
       {model.groups.length === 0 ? (
