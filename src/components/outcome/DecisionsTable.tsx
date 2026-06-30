@@ -19,14 +19,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   AlertTriangle,
   Bell,
   CalendarClock,
@@ -383,7 +375,7 @@ export function DecisionsTable({
   };
 
   return (
-    <div className="w-[calc(100vw-2rem)] min-w-0 max-w-full space-y-4 sm:w-full">
+    <div className="w-full min-w-0 max-w-full space-y-4">
       <div className="w-full min-w-0 max-w-full overflow-hidden rounded-lg border border-hairline bg-card p-4 shadow-card md:p-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -576,180 +568,179 @@ export function DecisionsTable({
         )}
       </div>
 
-      <div className="hidden overflow-x-auto rounded-lg border border-hairline bg-card shadow-card md:block">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-surface">
-              <TableHead className="min-w-[320px]">To-do</TableHead>
-              <TableHead className="hidden min-w-[180px] 2xl:table-cell">Risk link</TableHead>
-              <TableHead className="min-w-[180px]">Owner</TableHead>
-              <TableHead className="min-w-[150px]">Due</TableHead>
-              <TableHead className="hidden min-w-[160px] 2xl:table-cell">Reminder</TableHead>
-              <TableHead className="min-w-[150px]">Status</TableHead>
-              <TableHead className="w-[86px] text-right" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredDecisions.map((decision) => (
-              <TableRow key={decision.id} className="align-top">
-                <TableCell>
-                  <div className="max-w-xl">
-                    <div className="font-medium leading-snug text-foreground">
-                      {decision.decision}
-                    </div>
-                    {decision.impact && (
-                      <div className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">
-                        {decision.impact}
-                      </div>
-                    )}
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground 2xl:hidden">
-                      {decision.linked_exposure_id && (
-                        <span className="inline-flex items-center gap-1 rounded border border-accent/20 bg-accent/10 px-2 py-0.5 text-accent">
-                          <Link2 className="h-3 w-3" />
-                          {riskTitle(exposures, decision.linked_exposure_id)}
-                        </span>
-                      )}
-                      {decision.reminder_enabled && (
-                        <span className="inline-flex items-center gap-1 rounded border border-hairline bg-surface px-2 py-0.5">
-                          <Bell className="h-3 w-3" />
-                          {fmtDateTime(decision.reminder_at)}
-                        </span>
-                      )}
-                    </div>
+      <div className="hidden overflow-hidden rounded-lg border border-hairline bg-card shadow-card md:block">
+        <div className="grid grid-cols-[minmax(260px,1fr)_minmax(150px,0.62fr)_116px_136px_84px] items-center gap-4 border-b border-hairline bg-surface px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground 2xl:grid-cols-[minmax(360px,1.8fr)_minmax(200px,1fr)_minmax(150px,0.75fr)_116px_minmax(150px,0.75fr)_140px_84px]">
+          <div>To-do</div>
+          <div className="hidden min-w-0 2xl:block">Risk link</div>
+          <div className="min-w-0">Owner</div>
+          <div>Due</div>
+          <div className="hidden min-w-0 2xl:block">Reminder</div>
+          <div>Status</div>
+          <div className="text-right">Actions</div>
+        </div>
+
+        <div className="divide-y divide-hairline">
+          {filteredDecisions.map((decision) => (
+            <div
+              key={decision.id}
+              data-todo-row="true"
+              className="grid grid-cols-[minmax(260px,1fr)_minmax(150px,0.62fr)_116px_136px_84px] items-start gap-4 px-4 py-4 transition hover:bg-surface/60 2xl:grid-cols-[minmax(360px,1.8fr)_minmax(200px,1fr)_minmax(150px,0.75fr)_116px_minmax(150px,0.75fr)_140px_84px]"
+            >
+              <div className="min-w-0" data-todo-cell="summary">
+                <div className="font-medium leading-snug text-foreground">{decision.decision}</div>
+                {decision.impact && (
+                  <div className="mt-1 line-clamp-2 text-sm leading-5 text-muted-foreground">
+                    {decision.impact}
                   </div>
-                </TableCell>
-                <TableCell className="hidden 2xl:table-cell">
-                  {decision.linked_exposure_id ? (
-                    <div className="max-w-[220px]">
-                      <div className="inline-flex items-center gap-1.5 rounded-md border border-accent/20 bg-accent/10 px-2 py-1 text-xs font-medium text-accent">
-                        <Link2 className="h-3.5 w-3.5" />
-                        <span className="truncate">
-                          {riskTitle(exposures, decision.linked_exposure_id)}
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">Standalone</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-hairline bg-surface text-[11px] font-semibold text-muted-foreground">
-                      {getInitials(decision.owner, decision.owner_email) || (
-                        <UserRound className="h-3.5 w-3.5" />
-                      )}
+                )}
+                <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground 2xl:hidden">
+                  {decision.linked_exposure_id && (
+                    <span className="inline-flex max-w-full min-w-0 items-center gap-1 rounded border border-accent/20 bg-accent/10 px-2 py-0.5 text-accent">
+                      <Link2 className="h-3 w-3 shrink-0" />
+                      <span className="min-w-0 truncate">
+                        {riskTitle(exposures, decision.linked_exposure_id)}
+                      </span>
                     </span>
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">
-                        {decision.owner || "Unassigned"}
-                      </div>
-                      {decision.owner_email && (
-                        <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                          <Mail className="h-3 w-3 shrink-0" />
-                          <span className="truncate">{decision.owner_email}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium",
-                      isPastDue(decision)
-                        ? "border-danger/30 bg-danger/10 text-danger"
-                        : isDueSoon(decision)
-                          ? "border-warning/40 bg-warning/10 text-foreground"
-                          : "border-hairline bg-surface text-muted-foreground",
-                    )}
-                  >
-                    <CalendarClock className="h-3.5 w-3.5" />
-                    {fmtDate(decision.due_date)}
-                  </div>
-                </TableCell>
-                <TableCell className="hidden 2xl:table-cell">
-                  {decision.reminder_enabled ? (
-                    <div className="text-sm">
-                      <div className="flex items-center gap-1.5 font-medium">
-                        <Bell className="h-3.5 w-3.5 text-accent" />
-                        {reminderChannelLabels[decision.reminder_channel]}
-                      </div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">
-                        {fmtDateTime(decision.reminder_at)}
-                      </div>
-                    </div>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">Off</span>
                   )}
-                </TableCell>
-                <TableCell>
-                  <Select
-                    value={decision.status}
-                    onValueChange={(value) =>
-                      onUpdate(decision.id, { status: value as DecisionStatus })
-                    }
+                  {decision.reminder_enabled && (
+                    <span className="inline-flex max-w-full min-w-0 items-center gap-1 rounded border border-hairline bg-surface px-2 py-0.5">
+                      <Bell className="h-3 w-3 shrink-0" />
+                      <span className="min-w-0 truncate">{fmtDateTime(decision.reminder_at)}</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="hidden min-w-0 2xl:block" data-todo-cell="risk">
+                {decision.linked_exposure_id ? (
+                  <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-accent/20 bg-accent/10 px-2 py-1 text-xs font-medium text-accent">
+                    <Link2 className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 truncate">
+                      {riskTitle(exposures, decision.linked_exposure_id)}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="text-sm text-muted-foreground">Standalone</span>
+                )}
+              </div>
+
+              <div className="flex min-w-0 items-center gap-2" data-todo-cell="owner">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-hairline bg-surface text-[11px] font-semibold text-muted-foreground">
+                  {getInitials(decision.owner, decision.owner_email) || (
+                    <UserRound className="h-3.5 w-3.5" />
+                  )}
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">
+                    {decision.owner || "Unassigned"}
+                  </div>
+                  {decision.owner_email && (
+                    <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                      <Mail className="h-3 w-3 shrink-0" />
+                      <span className="min-w-0 truncate">{decision.owner_email}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div
+                data-todo-cell="due"
+                className={cn(
+                  "inline-flex w-fit max-w-full items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium",
+                  isPastDue(decision)
+                    ? "border-danger/30 bg-danger/10 text-danger"
+                    : isDueSoon(decision)
+                      ? "border-warning/40 bg-warning/10 text-foreground"
+                      : "border-hairline bg-surface text-muted-foreground",
+                )}
+              >
+                <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+                {fmtDate(decision.due_date)}
+              </div>
+
+              <div className="hidden min-w-0 2xl:block" data-todo-cell="reminder">
+                {decision.reminder_enabled ? (
+                  <div className="min-w-0 text-sm">
+                    <div className="flex min-w-0 items-center gap-1.5 font-medium">
+                      <Bell className="h-3.5 w-3.5 shrink-0 text-accent" />
+                      <span className="min-w-0 truncate">
+                        {reminderChannelLabels[decision.reminder_channel]}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {fmtDateTime(decision.reminder_at)}
+                    </div>
+                  </div>
+                ) : (
+                  <span className="text-sm text-muted-foreground">Off</span>
+                )}
+              </div>
+
+              <Select
+                value={decision.status}
+                onValueChange={(value) =>
+                  onUpdate(decision.id, { status: value as DecisionStatus })
+                }
+              >
+                <div data-todo-cell="status">
+                  <SelectTrigger
+                    className={cn("h-8 w-full min-w-0 text-xs", statusStyles[decision.status])}
                   >
-                    <SelectTrigger
-                      className={cn("h-8 w-[140px] text-xs", statusStyles[decision.status])}
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(Object.keys(statusLabels) as DecisionStatus[]).map((status) => (
-                        <SelectItem key={status} value={status}>
-                          {statusLabels[status]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8"
-                      onClick={() => openEdit(decision)}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      <span className="sr-only">Edit to-do</span>
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 text-muted-foreground hover:text-danger"
-                      onClick={() => deleteDecision(decision)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      <span className="sr-only">Delete to-do</span>
-                    </Button>
+                    <SelectValue />
+                  </SelectTrigger>
+                </div>
+                <SelectContent>
+                  {(Object.keys(statusLabels) as DecisionStatus[]).map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {statusLabels[status]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <div className="flex justify-end gap-1" data-todo-cell="actions">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8"
+                  onClick={() => openEdit(decision)}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  <span className="sr-only">Edit to-do</span>
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 text-muted-foreground hover:text-danger"
+                  onClick={() => deleteDecision(decision)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span className="sr-only">Delete to-do</span>
+                </Button>
+              </div>
+            </div>
+          ))}
+
+          {filteredDecisions.length === 0 && (
+            <div className="px-4 py-14 text-center">
+              <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-md border border-hairline bg-surface">
+                  <CheckCircle2 className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <div className="font-medium text-foreground">No matching to-dos</div>
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    Clear filters or add the next owned action.
                   </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {filteredDecisions.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={7} className="py-14 text-center">
-                  <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-md border border-hairline bg-surface">
-                      <CheckCircle2 className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <div className="font-medium text-foreground">No matching to-dos</div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        Clear filters or add the next owned action.
-                      </div>
-                    </div>
-                    <Button onClick={openNew} size="sm" className="gap-1.5">
-                      <Plus className="h-3.5 w-3.5" />
-                      Add to-do
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+                </div>
+                <Button onClick={openNew} size="sm" className="gap-1.5">
+                  <Plus className="h-3.5 w-3.5" />
+                  Add to-do
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
