@@ -788,10 +788,109 @@ type DelayFragmentSummary = {
   driverLabels: string[];
 };
 
+type ScheduleQualityQueueItem = {
+  task: ConstructLineCpmTask;
+  severity: "danger" | "warning";
+  reasons: string[];
+  guidance: string;
+  sort: number;
+};
+
 function filterMilestones(milestones: MilestoneRow[], view: MilestoneView) {
   if (view === "all") return milestones;
   if (view === "complete") return milestones.filter((m) => m.status === "complete");
   return milestones.filter((m) => m.status !== "complete");
+}
+
+function buildScheduleQualityQueue(model: ConstructLineCpmModel): ScheduleQualityQueueItem[] {
+  const items = model.tasks.flatMap((task) => {
+    const reasons: string[] = [];
+    let severity: ScheduleQualityQueueItem["severity"] = "warning";
+    let sort = 90;
+
+    if (task.hasMissingDates) {
+      reasons.push("Missing start or finish date");
+      severity = "danger";
+      sort = Math.min(sort, 10);
+    }
+    if (task.missingPredecessorKeys.length > 0 || task.missingSuccessorKeys.length > 0) {
+      reasons.push("Missing logic reference");
+      severity = "danger";
+      sort = Math.min(sort, 12);
+    }
+    if (model.openStartCount > 1 && task.isOpenStart) {
+      reasons.push("Open start");
+      sort = Math.min(sort, 20);
+    }
+    if (model.openFinishCount > 1 && task.isOpenFinish) {
+      reasons.push("Open finish");
+      sort = Math.min(sort, 22);
+    }
+    if (task.isOutOfSequence) {
+      reasons.push("Out-of-sequence progress");
+      severity = "danger";
+      sort = Math.min(sort, 30);
+    }
+    if (task.isLate) {
+      reasons.push("Late against data date");
+      severity = "danger";
+      sort = Math.min(sort, 34);
+    }
+    if (
+      task.predecessorKeys.length === 0 &&
+      task.successorKeys.length === 0 &&
+      !task.isMilestone &&
+      !reasons.some((reason) => reason.startsWith("Open"))
+    ) {
+      reasons.push("No logic ties");
+      sort = Math.min(sort, 42);
+    }
+
+    if (reasons.length === 0) return [];
+    return [
+      {
+        task,
+        severity,
+        reasons,
+        guidance: buildScheduleQualityGuidance(task, reasons),
+        sort,
+      },
+    ];
+  });
+
+  return items.sort((a, b) => {
+    const severity = a.severity === b.severity ? 0 : a.severity === "danger" ? -1 : 1;
+    if (severity !== 0) return severity;
+    return a.sort - b.sort || a.task.totalFloat - b.task.totalFloat;
+  });
+}
+
+function buildScheduleQualityGuidance(task: ConstructLineCpmTask, reasons: string[]) {
+  if (reasons.some((reason) => reason.includes("Missing start"))) {
+    return "Add dates so the row can participate in CPM math.";
+  }
+  if (reasons.some((reason) => reason.includes("Missing logic reference"))) {
+    const missingIds = [...task.missingPredecessorKeys, ...task.missingSuccessorKeys];
+    return `Replace ${missingIds.join(", ")} with an existing activity from the picker.`;
+  }
+  if (reasons.includes("Open start")) {
+    return "Tie this row to the launch path or mark it as an intentional start milestone.";
+  }
+  if (reasons.includes("Open finish")) {
+    return "Tie this row to a downstream completion path.";
+  }
+  if (reasons.includes("Out-of-sequence progress")) {
+    return "Review progress against predecessor completion before the next update.";
+  }
+  if (reasons.includes("Late against data date")) {
+    return "Update progress, add a delay fragment, or revise the recovery path.";
+  }
+  if (reasons.includes("No logic ties")) {
+    return task.totalFloat <= 0
+      ? "Add predecessor and successor logic before relying on this as critical."
+      : "Connect this row so the schedule is not just a date list.";
+  }
+  return "Open the activity and clean up dates, logic, or progress.";
 }
 
 function buildCpmScheduleUpdateDraft({
@@ -1544,6 +1643,7 @@ export function CpmActivityPlanner({
     () => orderConstructLineCpmModel(baseCpmModel, activityOrder, wbsDivisionOrder),
     [activityOrder, baseCpmModel, wbsDivisionOrder],
   );
+  const qualityQueueItems = useMemo(() => buildScheduleQualityQueue(cpmModel), [cpmModel]);
   const gridViewReferenceDate = effectiveDataDate ?? todayIsoDate();
   const displayedCpmModel = useMemo(
     () =>
@@ -1920,6 +2020,12 @@ export function CpmActivityPlanner({
           </div>
         </div>
 
+        <ScheduleQualityQueue
+          items={qualityQueueItems}
+          onShowIssues={() => setScheduleView("issues")}
+          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
+        />
+
         <div className="mt-5 grid gap-3 md:grid-cols-4">
           <ScheduleWorkbenchStat
             label="Activities"
@@ -2284,6 +2390,101 @@ function ScheduleWorkbenchStat({
       </div>
       <div className={`mt-1 truncate text-xl font-semibold tabular ${toneClass}`}>{value}</div>
       <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
+    </div>
+  );
+}
+
+function ScheduleQualityQueue({
+  items,
+  onShowIssues,
+  onOpenActivity,
+}: {
+  items: ScheduleQualityQueueItem[];
+  onShowIssues: () => void;
+  onOpenActivity: (activity: ScheduleActivityRow) => void;
+}) {
+  const visibleItems = items.slice(0, 6);
+  const hiddenCount = Math.max(0, items.length - visibleItems.length);
+
+  return (
+    <div className="mt-4 rounded-md border border-hairline bg-card p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Schedule quality queue
+          </div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            Rows that need cleanup before the CPM path should be trusted.
+          </div>
+        </div>
+        <Button type="button" variant="outline" className="h-9 gap-2" onClick={onShowIssues}>
+          <AlertTriangle className="h-4 w-4" />
+          Show issue rows
+        </Button>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="mt-3 rounded border border-success/25 bg-success/10 px-3 py-2 text-sm text-success">
+          No blocking schedule quality items detected.
+        </div>
+      ) : (
+        <div className="mt-3 grid gap-2 xl:grid-cols-2">
+          {visibleItems.map((item) => (
+            <div
+              key={item.task.activity.id}
+              className={cn(
+                "grid min-w-0 gap-3 rounded border px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+                item.severity === "danger"
+                  ? "border-danger/20 bg-danger/10"
+                  : "border-warning/25 bg-warning/10",
+              )}
+            >
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="font-semibold tabular text-foreground">
+                    {item.task.dependencyKey}
+                  </span>
+                  <span className="min-w-0 truncate text-sm font-semibold text-foreground">
+                    {item.task.activity.name}
+                  </span>
+                  <span
+                    className={cn(
+                      "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em]",
+                      item.severity === "danger"
+                        ? "bg-danger/15 text-danger"
+                        : "bg-warning/15 text-warning",
+                    )}
+                  >
+                    {item.reasons[0]}
+                  </span>
+                </div>
+                <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                  {item.guidance}
+                </div>
+                {item.reasons.length > 1 && (
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    Also: {item.reasons.slice(1).join(", ")}
+                  </div>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 justify-self-start px-3 text-xs sm:justify-self-end"
+                onClick={() => onOpenActivity(item.task.activity)}
+              >
+                Open
+              </Button>
+            </div>
+          ))}
+          {hiddenCount > 0 && (
+            <div className="rounded border border-hairline bg-surface px-3 py-2 text-sm text-muted-foreground">
+              {hiddenCount} more {hiddenCount === 1 ? "item" : "items"} in the issue view.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
