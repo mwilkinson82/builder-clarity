@@ -14,6 +14,7 @@ import {
   deleteScheduleDelayFragment,
   deleteScheduleActivity,
   listSchedule,
+  moveScheduleWbsSectionParent,
   renameScheduleWbsSection,
   reorderScheduleWbsSections,
   updateScheduleDelayFragment,
@@ -34,6 +35,10 @@ type WbsReorderInput = {
   parentId: string | null;
   orderedIds: string[];
 };
+type WbsParentMoveInput = {
+  id: string;
+  parentId: string | null;
+};
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId/schedule")({
   ssr: false,
@@ -53,6 +58,7 @@ function ScheduleWorkspacePage() {
   const updateDelayFragmentFn = useServerFn(updateScheduleDelayFragment);
   const deleteDelayFragmentFn = useServerFn(deleteScheduleDelayFragment);
   const createWbsSectionFn = useServerFn(createScheduleWbsSection);
+  const moveWbsSectionParentFn = useServerFn(moveScheduleWbsSectionParent);
   const renameWbsSectionFn = useServerFn(renameScheduleWbsSection);
   const reorderWbsSectionsFn = useServerFn(reorderScheduleWbsSections);
 
@@ -208,11 +214,29 @@ function ScheduleWorkspacePage() {
     },
   });
 
+  const wbsParentMove = useMutation({
+    mutationFn: ({ id, parentId }: WbsParentMoveInput) =>
+      moveWbsSectionParentFn({ data: { id, parentId } }),
+    onSuccess: () => {
+      void refreshSchedule();
+      toast.success("WBS parent updated", {
+        description: "The section and matching activity paths were moved.",
+      });
+    },
+    onError: (error) => {
+      toast.error("WBS parent did not update", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+
   const wbsReorder = useMutation({
     mutationFn: ({ parentId, orderedIds }: WbsReorderInput) =>
       reorderWbsSectionsFn({ data: { projectId, parentId, orderedIds } }),
     onMutate: async ({ orderedIds }) => {
-      const toastId = toast.loading("Saving WBS order...");
+      const toastId = toast.success("WBS order updated", {
+        description: "The grid reflects the new order while it saves.",
+      });
       await qc.cancelQueries({ queryKey: ["schedule", projectId] });
       const previous = qc.getQueryData(["schedule", projectId]);
       qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
@@ -229,14 +253,18 @@ function ScheduleWorkspacePage() {
       return { previous, toastId };
     },
     onSuccess: (_result, _orderedIds, context) => {
-      if (context?.toastId) toast.dismiss(context.toastId);
-      toast.success("WBS order saved");
+      if (context?.toastId) {
+        toast.success("WBS order saved", {
+          id: context.toastId,
+          description: "The saved order is now the CPM WBS order.",
+        });
+      }
       void refreshSchedule();
     },
     onError: (error, _orderedIds, context) => {
-      if (context?.toastId) toast.dismiss(context.toastId);
       if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS order did not save", {
+        id: context?.toastId,
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
     },
@@ -412,10 +440,18 @@ function ScheduleWorkspacePage() {
         onRenameWbsSection={async (id, name) => {
           await wbsRename.mutateAsync({ id, name });
         }}
+        onMoveWbsSectionParent={async (id, parentId) => {
+          await wbsParentMove.mutateAsync({ id, parentId });
+        }}
         onReorderWbsSections={async (payload) => {
           await wbsReorder.mutateAsync(payload);
         }}
-        isSavingWbs={wbsCreate.isPending || wbsRename.isPending || wbsReorder.isPending}
+        isSavingWbs={
+          wbsCreate.isPending ||
+          wbsRename.isPending ||
+          wbsParentMove.isPending ||
+          wbsReorder.isPending
+        }
       />
 
       <ScheduleWorkspaceOperations

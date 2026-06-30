@@ -20,7 +20,13 @@ export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_d
 export type ScheduleRiskStatus = "active" | "inactive" | "completed";
 export type ScheduleDelayFragmentStatus = "active" | "mitigated" | "accepted" | "recovered";
 export type ScheduleDelayFragmentSource =
-  "field" | "trade" | "owner" | "design" | "procurement" | "weather" | "other";
+  | "field"
+  | "trade"
+  | "owner"
+  | "design"
+  | "procurement"
+  | "weather"
+  | "other";
 
 type ScheduleSupabaseClient = SupabaseClient<Database>;
 type ScheduleUpdateInsert = TablesInsert<"schedule_updates">;
@@ -29,6 +35,7 @@ type ScheduleDelayFragmentUpdate = TablesUpdate<"schedule_delay_fragments">;
 type ScheduleActivityInsert = TablesInsert<"schedule_activities">;
 type ScheduleActivityUpdate = TablesUpdate<"schedule_activities">;
 type ScheduleWbsSectionInsert = TablesInsert<"schedule_wbs_sections">;
+type ScheduleWbsSectionUpdate = TablesUpdate<"schedule_wbs_sections">;
 
 type ScheduleWbsParentFilterQuery<TQuery> = {
   eq: (column: string, value: string) => TQuery;
@@ -373,6 +380,63 @@ const buildPersistedWbsPathMaps = (
     current: buildWbsSectionPathMap(currentSections),
   };
 };
+
+async function syncActivityDivisionsForWbsPathChange(
+  supabase: ScheduleSupabaseClient,
+  projectId: string,
+  oldPath: string,
+  newPath: string,
+) {
+  if (!oldPath || !newPath || oldPath === newPath) return;
+  const { data: activities, error: activitiesError } = await supabase
+    .from("schedule_activities")
+    .select("id,division")
+    .eq("project_id", projectId);
+  if (activitiesError) throw new Error(activitiesError.message);
+  const patches = ((activities ?? []) as unknown as Array<Record<string, unknown>>)
+    .map((activity) => {
+      const division = str(activity.division, "General");
+      if (division === oldPath) return { id: activity.id as string, division: newPath };
+      if (division.startsWith(`${oldPath}${WBS_PATH_SEPARATOR}`)) {
+        return {
+          id: activity.id as string,
+          division: `${newPath}${division.slice(oldPath.length)}`,
+        };
+      }
+      return null;
+    })
+    .filter((patch): patch is { id: string; division: string } => Boolean(patch));
+  if (patches.length === 0) return;
+  const patchResults = await Promise.all(
+    patches.map((patch) =>
+      supabase
+        .from("schedule_activities")
+        .update({ division: patch.division })
+        .eq("id", patch.id)
+        .eq("project_id", projectId),
+    ),
+  );
+  const patchError = patchResults.find((result) => result.error)?.error;
+  if (patchError) throw new Error(patchError.message);
+}
+
+function isDescendantWbsSection(
+  sections: ScheduleWbsSectionRow[],
+  sectionId: string,
+  candidateParentId: string | null,
+) {
+  if (!candidateParentId) return false;
+  const byId = new Map(sections.map((section) => [section.id, section]));
+  let cursor: string | null = candidateParentId;
+  const seen = new Set<string>();
+  while (cursor) {
+    if (cursor === sectionId) return true;
+    if (seen.has(cursor)) return true;
+    seen.add(cursor);
+    cursor = byId.get(cursor)?.parent_id ?? null;
+  }
+  return false;
+}
 
 // ---------- LIST ----------
 export const listSchedule = createServerFn({ method: "GET" })
@@ -971,43 +1035,87 @@ export const renameScheduleWbsSection = createServerFn({ method: "POST" })
     );
     const oldPath = pathMaps.previous.get(data.id) ?? oldName;
     const newPath = pathMaps.current.get(data.id) ?? data.name;
-    const { error: activityError } = await context.supabase
-      .from("schedule_activities")
-      .update({ division: data.name })
-      .eq("project_id", projectId)
-      .eq("division", oldName);
-    if (activityError) throw new Error(activityError.message);
-    if (oldPath !== oldName || newPath !== data.name) {
-      const { data: activities, error: activitiesError } = await context.supabase
-        .from("schedule_activities")
-        .select("id,division")
-        .eq("project_id", projectId);
-      if (activitiesError) throw new Error(activitiesError.message);
-      const patches = ((activities ?? []) as unknown as Array<Record<string, unknown>>)
-        .map((activity) => {
-          const division = str(activity.division, "General");
-          if (division === oldPath) return { id: activity.id as string, division: newPath };
-          if (division.startsWith(`${oldPath}${WBS_PATH_SEPARATOR}`)) {
-            return {
-              id: activity.id as string,
-              division: `${newPath}${division.slice(oldPath.length)}`,
-            };
-          }
-          return null;
-        })
-        .filter((patch): patch is { id: string; division: string } => Boolean(patch));
-      const patchResults = await Promise.all(
-        patches.map((patch) =>
-          context.supabase
-            .from("schedule_activities")
-            .update({ division: patch.division })
-            .eq("id", patch.id)
-            .eq("project_id", projectId),
-        ),
-      );
-      const patchError = patchResults.find((result) => result.error)?.error;
-      if (patchError) throw new Error(patchError.message);
+    await syncActivityDivisionsForWbsPathChange(context.supabase, projectId, oldPath, newPath);
+
+    return { ok: true };
+  });
+
+export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string; parentId?: string | null }) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        parentId: z.string().uuid().nullable().optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const nextParentId = data.parentId ?? null;
+    if (nextParentId === data.id) throw new Error("A WBS section cannot be its own parent.");
+
+    const { data: sectionRow, error: sectionError } = await context.supabase
+      .from("schedule_wbs_sections")
+      .select("*")
+      .eq("id", data.id)
+      .single();
+    if (sectionError) throw new Error(sectionError.message);
+    const section = normalizeScheduleWbsSection(sectionRow as unknown as Record<string, unknown>);
+    if ((section.parent_id ?? null) === nextParentId) return { ok: true };
+
+    const { data: allRows, error: allRowsError } = await context.supabase
+      .from("schedule_wbs_sections")
+      .select("*")
+      .eq("project_id", section.project_id);
+    if (allRowsError) throw new Error(allRowsError.message);
+    const sections = ((allRows ?? []) as unknown as Array<Record<string, unknown>>).map((row) =>
+      normalizeScheduleWbsSection(row),
+    );
+    if (nextParentId) {
+      const parent = sections.find((item) => item.id === nextParentId);
+      if (!parent) throw new Error("Choose a WBS parent from this project.");
+      if (parent.project_id !== section.project_id) {
+        throw new Error("WBS sections can only move within the same project.");
+      }
+      if (isDescendantWbsSection(sections, section.id, nextParentId)) {
+        throw new Error("A WBS section cannot be moved under one of its child sections.");
+      }
     }
+
+    let siblingQuery = context.supabase
+      .from("schedule_wbs_sections")
+      .select("sort_order")
+      .eq("project_id", section.project_id);
+    siblingQuery = scheduleWbsParentFilter(siblingQuery, nextParentId);
+    const { data: lastSibling, error: lastSiblingError } = await siblingQuery
+      .order("sort_order", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastSiblingError) throw new Error(lastSiblingError.message);
+
+    const previousPaths = buildWbsSectionPathMap(sections);
+    const sortOrder = ((lastSibling as { sort_order?: number } | null)?.sort_order ?? 0) + 10;
+    const updatePayload: ScheduleWbsSectionUpdate = {
+      parent_id: nextParentId,
+      sort_order: sortOrder,
+    };
+    const { error: updateError } = await context.supabase
+      .from("schedule_wbs_sections")
+      .update(updatePayload)
+      .eq("id", section.id)
+      .eq("project_id", section.project_id);
+    if (updateError) throw new Error(updateError.message);
+
+    const nextSections = sections.map((item) =>
+      item.id === section.id ? { ...item, parent_id: nextParentId, sort_order: sortOrder } : item,
+    );
+    const currentPaths = buildWbsSectionPathMap(nextSections);
+    await syncActivityDivisionsForWbsPathChange(
+      context.supabase,
+      section.project_id,
+      previousPaths.get(section.id) ?? section.name,
+      currentPaths.get(section.id) ?? section.name,
+    );
 
     return { ok: true };
   });
@@ -1027,7 +1135,7 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
     const parentId = data.parentId ?? null;
     let siblingQuery = context.supabase
       .from("schedule_wbs_sections")
-      .select("id,parent_id")
+      .select("id,parent_id,sort_order")
       .eq("project_id", data.projectId)
       .in("id", data.orderedIds);
     siblingQuery = scheduleWbsParentFilter(siblingQuery, parentId);
@@ -1046,18 +1154,29 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
       throw new Error("WBS order can only be saved for sections under the same parent.");
     }
 
+    const currentOrder = new Map(
+      ((siblingRows ?? []) as unknown as Array<Record<string, unknown>>).map((row) => [
+        row.id as string,
+        num(row.sort_order),
+      ]),
+    );
+    const changedRows = data.orderedIds
+      .map((id, index) => ({ id, sort_order: (index + 1) * 10 }))
+      .filter((row) => currentOrder.get(row.id) !== row.sort_order);
+    if (changedRows.length === 0) return { ok: true, changed: 0 };
+
     const updates = await Promise.all(
-      data.orderedIds.map((id, index) =>
+      changedRows.map((row) =>
         context.supabase
           .from("schedule_wbs_sections")
-          .update({ sort_order: (index + 1) * 10 })
-          .eq("id", id)
+          .update({ sort_order: row.sort_order })
+          .eq("id", row.id)
           .eq("project_id", data.projectId),
       ),
     );
     const error = updates.find((result) => result.error)?.error;
     if (error) throw new Error(error.message);
-    return { ok: true };
+    return { ok: true, changed: changedRows.length };
   });
 
 // ---------- DELAY FRAGMENTS ----------

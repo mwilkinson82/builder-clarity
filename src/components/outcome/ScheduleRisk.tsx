@@ -1585,6 +1585,7 @@ export function CpmActivityPlanner({
   isSavingDelayFragment,
   onAddWbsSection,
   onRenameWbsSection,
+  onMoveWbsSectionParent,
   onReorderWbsSections,
   isSavingWbs,
 }: {
@@ -1612,6 +1613,7 @@ export function CpmActivityPlanner({
   isSavingDelayFragment: boolean;
   onAddWbsSection: (name: string, parentId?: string | null) => Promise<void>;
   onRenameWbsSection: (id: string, name: string) => Promise<void>;
+  onMoveWbsSectionParent: (id: string, parentId: string | null) => Promise<void>;
   onReorderWbsSections: (input: WbsReorderInput) => Promise<void>;
   isSavingWbs: boolean;
 }) {
@@ -1842,6 +1844,27 @@ export function CpmActivityPlanner({
     if (!row?.id) return;
     await onRenameWbsSection(row.id, nextDivision);
   };
+  const moveWbsDivisionParent = async (division: string, parentId: string | null) => {
+    const row = wbsDivisionRows.find((item) => item.division === division);
+    if (!row?.id || (row.parentId ?? null) === parentId) return;
+    const parentRow = parentId ? wbsDivisionRows.find((item) => item.id === parentId) : null;
+    const nextPath = parentRow
+      ? joinWbsPath([...splitWbsPath(parentRow.division), row.title])
+      : row.title;
+    if (
+      hasWbsDivision(
+        knownWbsDivisions.filter((item) => item !== division),
+        nextPath,
+      )
+    ) {
+      toast.error("WBS already exists", {
+        description: `${nextPath} is already in the schedule.`,
+      });
+      return;
+    }
+    setActivityOrder("wbs");
+    await onMoveWbsSectionParent(row.id, parentId);
+  };
   const moveWbsDivision = (division: string, direction: -1 | 1) => {
     const orderedRows = moveWbsDivisionInOrder(wbsDivisionRows, division, direction);
     const orderedIds = orderedRows.map((row) => row.id).filter((id): id is string => Boolean(id));
@@ -1993,11 +2016,12 @@ export function CpmActivityPlanner({
             </div>
           </div>
           <div className="constructline-cpm-print-status">
-            <span>{scheduleReportTitle}</span>
-            <strong>
-              {displayedCpmModel.criticalPathReliable ? "Critical basis valid" : "Provisional"}
-            </strong>
-            <em>Finish {shortDate(displayedCpmModel.cpmFinishDate)}</em>
+            <span>Report type</span>
+            <strong>{scheduleReportTitle}</strong>
+            <em>
+              {displayedCpmModel.criticalPathReliable ? "Critical basis valid" : "Provisional"} ·
+              Finish {shortDate(displayedCpmModel.cpmFinishDate)}
+            </em>
           </div>
         </div>
         <ActivityScheduleMatrix
@@ -2015,11 +2039,13 @@ export function CpmActivityPlanner({
           onDeleteActivity={() => undefined}
         />
         <footer className="constructline-cpm-print-footer">
-          <span>{contractorName}</span>
-          <span>{scheduleReportTitle}</span>
+          <span>Company: {contractorName}</span>
+          <span>Report: {scheduleReportTitle}</span>
           <span>Project finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
           <span>Data date {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}</span>
-          <span>Critical: red · Near critical: gold · Complete: green · Milestone: diamond</span>
+          <span>
+            Legend: critical red · near critical gold · complete green · milestone diamond
+          </span>
         </footer>
       </section>
       <div className="constructline-screen-workbench rounded-lg border border-hairline bg-surface p-5">
@@ -2474,6 +2500,7 @@ export function CpmActivityPlanner({
         onOpenChange={setIsWbsManagerOpen}
         onAddDivision={addWbsDivision}
         onRenameDivision={renameWbsDivision}
+        onMoveDivisionParent={moveWbsDivisionParent}
         onMoveDivision={moveWbsDivision}
         onReorderDivisions={reorderWbsDivisions}
       />
@@ -2938,6 +2965,7 @@ function WbsManagerDialog({
   onOpenChange,
   onAddDivision,
   onRenameDivision,
+  onMoveDivisionParent,
   onMoveDivision,
   onReorderDivisions,
 }: {
@@ -2947,6 +2975,7 @@ function WbsManagerDialog({
   onOpenChange: (open: boolean) => void;
   onAddDivision: (division: string, parentId?: string | null) => void;
   onRenameDivision: (fromDivision: string, toDivision: string) => Promise<void>;
+  onMoveDivisionParent: (division: string, parentId: string | null) => Promise<void>;
   onMoveDivision: (division: string, direction: -1 | 1) => void;
   onReorderDivisions: (orderedDivisions: string[]) => void;
 }) {
@@ -2954,6 +2983,7 @@ function WbsManagerDialog({
   const [newDivisionParentId, setNewDivisionParentId] = useState<string>("root");
   const [draftNames, setDraftNames] = useState<Record<string, string>>({});
   const [savingDivision, setSavingDivision] = useState<string | null>(null);
+  const [movingParentDivision, setMovingParentDivision] = useState<string | null>(null);
   const [draggingDivision, setDraggingDivision] = useState<string | null>(null);
   const [dropTargetDivision, setDropTargetDivision] = useState<string | null>(null);
   const newDivisionInputRef = useRef<HTMLInputElement | null>(null);
@@ -2976,6 +3006,7 @@ function WbsManagerDialog({
     if (!wasOpenRef.current) {
       setNewDivisionParentId("root");
       setSavingDivision(null);
+      setMovingParentDivision(null);
       setDraggingDivision(null);
       setDropTargetDivision(null);
       wasOpenRef.current = true;
@@ -3005,6 +3036,14 @@ function WbsManagerDialog({
       setSavingDivision(null);
     }
   };
+  const moveDivisionParent = async (division: string, parentId: string | null) => {
+    setMovingParentDivision(division);
+    try {
+      await onMoveDivisionParent(division, parentId);
+    } finally {
+      setMovingParentDivision(null);
+    }
+  };
   const reorderDivision = (targetDivision: string) => {
     if (!draggingDivision || draggingDivision === targetDivision) return;
     const draggingRow = divisions.find((row) => row.division === draggingDivision);
@@ -3027,7 +3066,7 @@ function WbsManagerDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !isSaving && onOpenChange(nextOpen)}>
-      <DialogContent className="flex max-h-[88vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:w-[min(calc(100vw-2rem),58rem)] sm:max-w-[58rem]">
+      <DialogContent className="flex max-h-[88vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:w-[min(calc(100vw-2rem),72rem)] sm:max-w-[72rem]">
         <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
           <DialogTitle className="font-serif text-2xl">WBS manager</DialogTitle>
           <DialogDescription>
@@ -3104,7 +3143,10 @@ function WbsManagerDialog({
                 const cleanDraftName = cleanWbsDivisionInput(draftName);
                 const hasNameChange =
                   normalizeWbsDivisionName(draftName) !== normalizeWbsDivisionName(row.title);
-                const isRowSaving = savingDivision === row.division || isSaving;
+                const isRowSaving =
+                  savingDivision === row.division ||
+                  movingParentDivision === row.division ||
+                  isSaving;
                 const canPersistRow = Boolean(row.id);
                 const siblingPosition = getWbsSiblingPosition(divisions, row);
                 const canMoveUp = canPersistRow && siblingPosition.index > 0;
@@ -3112,11 +3154,12 @@ function WbsManagerDialog({
                   canPersistRow &&
                   siblingPosition.index >= 0 &&
                   siblingPosition.index < siblingPosition.count - 1;
+                const parentOptions = getValidWbsParentRows(divisions, row);
                 return (
                   <div
                     key={row.division}
                     className={cn(
-                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition md:grid-cols-[40px_minmax(0,1fr)_132px_104px_122px_88px]",
+                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition xl:grid-cols-[40px_minmax(220px,1.35fr)_minmax(180px,0.8fr)_132px_118px_122px_88px]",
                       draggingDivision === row.division && "opacity-55",
                       dropTargetDivision === row.division &&
                         draggingDivision !== row.division &&
@@ -3207,6 +3250,27 @@ function WbsManagerDialog({
                         </div>
                       )}
                     </div>
+                    <LabeledField label="Parent / area">
+                      <Select
+                        value={row.parentId ?? "root"}
+                        disabled={!canPersistRow || isRowSaving}
+                        onValueChange={(value) => {
+                          void moveDivisionParent(row.division, value === "root" ? null : value);
+                        }}
+                      >
+                        <SelectTrigger className="h-9 min-w-0 bg-surface">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="root">Top level WBS</SelectItem>
+                          {parentOptions.map((parentRow) => (
+                            <SelectItem key={parentRow.id!} value={parentRow.id!}>
+                              {formatIndentedWbsLabel(parentRow)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </LabeledField>
                     <div className="min-w-0 rounded border border-hairline bg-surface px-3 py-2">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                         Activities
@@ -3230,7 +3294,7 @@ function WbsManagerDialog({
                       onClick={() => startChildDivision(row)}
                     >
                       <Plus className="mr-1 h-3.5 w-3.5" />
-                      Child
+                      Child area
                     </Button>
                     <Button
                       type="button"
@@ -4745,6 +4809,13 @@ function isSameWbsParent(a: WbsDivisionRow, b: WbsDivisionRow) {
   return (a.parentId ?? null) === (b.parentId ?? null);
 }
 
+function getValidWbsParentRows(rows: WbsDivisionRow[], row: WbsDivisionRow) {
+  return rows.filter((candidate) => {
+    if (!candidate.id || candidate.id === row.id) return false;
+    return !candidate.division.startsWith(`${row.division}${WBS_PATH_SEPARATOR}`);
+  });
+}
+
 function buildWbsDivisionRows(
   activities: ScheduleActivityRow[],
   sections: ScheduleWbsSectionRow[],
@@ -5866,8 +5937,8 @@ function ActivityDelayFragmentPanel({
 
       {persistence === "migration_required" ? (
         <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
-          Delay tracking is still being enabled for this project. Activity details and CPM logic
-          save normally; activity-level delay records will save once setup is complete.
+          Delay logging is not enabled for this workspace yet. Activity details and CPM logic still
+          save normally; delay records can be added after this workspace is enabled.
         </div>
       ) : (
         <>
