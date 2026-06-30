@@ -805,9 +805,12 @@ await expectContains(
     /ensureHarborDemoEstimate/,
     /ensureHarborSampleMasterSheet/,
     /createBlankLineItems/,
+    /ESTIMATE_FOLDERS/,
+    /deleteEstimate/,
+    /folder:\s*estimateFolderSchema\.optional/,
     /recalculateEstimateTotalsInternal/,
   ],
-  "estimating server functions import contractor costs, protect system rows, seed Harbor samples, and create blank rows in bulk",
+  "estimating server functions import contractor costs, protect system rows, seed Harbor samples, folder estimates, delete estimates, and create blank rows in bulk",
 );
 
 await expectContains(
@@ -845,8 +848,13 @@ await expectContains(
     /Back to portfolio/,
     /Master Sheets/,
     /MASTER_ESTIMATE_PROJECT_TYPE/,
+    /Estimate Folders/,
+    /ESTIMATE_FOLDERS/,
+    /folderCounts/,
+    /deleteEstimate/,
+    /Delete Estimate/,
   ],
-  "estimate detail route renders its workspace and project estimates stay separate from master sheets",
+  "estimate detail route renders its workspace and project estimates stay separate from master sheets with folders and delete controls",
 );
 
 await expectContains(
@@ -879,6 +887,10 @@ await expectContains(
     /createBlankLineItems/,
     /MASTER_ESTIMATE_PROJECT_TYPE/,
     /Create Estimate From Master/,
+    /ESTIMATE_FOLDERS/,
+    /deleteEstimate/,
+    /Delete Estimate/,
+    /Delete Master Sheet/,
     /parseEstimateLineRows/,
     /parseCsv/,
     /parseXlsx/,
@@ -894,10 +906,23 @@ await expectContains(
     /ArrowDown/,
     /onCreateNextRow/,
   ],
-  "estimate workspace UI can bulk import master sheets and keeps the worksheet grid readable",
+  "estimate workspace UI can bulk import master sheets, move/delete estimates, and keeps the worksheet grid readable",
 );
 
 const sql = await readAllMigrationSql();
+
+expectSql(
+  sql,
+  [
+    /alter table public\.estimates[\s\S]*folder varchar\(48\)/i,
+    /estimates_folder_check/i,
+    /'sales_process'/,
+    /'won'/,
+    /'not_won'/,
+    /idx_estimates_org_folder_updated/i,
+  ],
+  "estimate folders migration exists for won, not-won, active, and archived bid cleanup",
+);
 
 expectSql(
   sql,

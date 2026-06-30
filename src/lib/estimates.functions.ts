@@ -47,8 +47,36 @@ const clean = (value: string, max = 500) => value.trim().slice(0, max);
 const centsToDollars = (value: number) => Math.round(value) / 100;
 
 export type EstimateStatus = "draft" | "final" | "awarded" | "lost";
+const ESTIMATE_FOLDER_VALUES = ["sales_process", "won", "not_won", "archived"] as const;
+export type EstimateFolder = (typeof ESTIMATE_FOLDER_VALUES)[number];
 export type MarkupBasis = "subtotal" | "material" | "labor";
 export const MASTER_ESTIMATE_PROJECT_TYPE = "master_sheet";
+export const ESTIMATE_FOLDERS: Array<{
+  value: EstimateFolder;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "sales_process",
+    label: "Sales Process",
+    description: "Bids you are still working, pricing, or following up on.",
+  },
+  {
+    value: "won",
+    label: "Won Estimates",
+    description: "Jobs you won and may push into active projects.",
+  },
+  {
+    value: "not_won",
+    label: "Not Won",
+    description: "Bids you lost or decided not to chase.",
+  },
+  {
+    value: "archived",
+    label: "Archived",
+    description: "Old estimates you want to keep out of the way.",
+  },
+];
 
 export interface EstimateCustomMarkup {
   name: string;
@@ -79,6 +107,7 @@ export interface EstimateRow {
   subtotal_cents: number;
   total_with_markups_cents: number;
   status: EstimateStatus;
+  folder: EstimateFolder;
   created_at: string;
   updated_at: string;
   line_item_count?: number;
@@ -162,32 +191,64 @@ const normalizeCustomMarkup = (value: unknown): EstimateCustomMarkup[] =>
     })
     .filter((item) => item.name && item.pct >= 0);
 
-const normalizeEstimate = (row: Record<string, unknown>): EstimateRow => ({
-  id: str(row.id),
-  organization_id: str(row.organization_id),
-  created_by: (row.created_by as string | null) ?? null,
-  name: str(row.name),
-  description: str(row.description),
-  opportunity_id: (row.opportunity_id as string | null) ?? null,
-  project_id: (row.project_id as string | null) ?? null,
-  project_type: str(row.project_type, "commercial"),
-  region: str(row.region),
-  region_multiplier: num(row.region_multiplier, 1),
-  overhead_pct: Math.round(num(row.overhead_pct, 1000)),
-  profit_pct: Math.round(num(row.profit_pct, 1000)),
-  contingency_pct: Math.round(num(row.contingency_pct, 500)),
-  bond_pct: Math.round(num(row.bond_pct, 150)),
-  tax_pct: Math.round(num(row.tax_pct)),
-  general_conditions_pct: Math.round(num(row.general_conditions_pct)),
-  custom_markups: normalizeCustomMarkup(row.custom_markups),
-  subtotal_material_cents: Math.round(num(row.subtotal_material_cents)),
-  subtotal_labor_cents: Math.round(num(row.subtotal_labor_cents)),
-  subtotal_cents: Math.round(num(row.subtotal_cents)),
-  total_with_markups_cents: Math.round(num(row.total_with_markups_cents)),
-  status: str(row.status, "draft") as EstimateStatus,
-  created_at: str(row.created_at),
-  updated_at: str(row.updated_at),
-});
+const normalizeEstimateStatus = (value: unknown): EstimateStatus => {
+  const status = str(value, "draft");
+  return status === "final" || status === "awarded" || status === "lost" ? status : "draft";
+};
+
+const estimateFolderFromStatus = (status: EstimateStatus): EstimateFolder => {
+  if (status === "awarded") return "won";
+  if (status === "lost") return "not_won";
+  return "sales_process";
+};
+
+const normalizeEstimateFolder = (value: unknown, status: EstimateStatus): EstimateFolder => {
+  const folder = str(value);
+  return ESTIMATE_FOLDER_VALUES.includes(folder as EstimateFolder)
+    ? (folder as EstimateFolder)
+    : estimateFolderFromStatus(status);
+};
+
+const isMissingEstimateFolderColumn = (error: { code?: string; message?: string } | null) => {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" ||
+      error.code === "42703" ||
+      (/folder/i.test(message) && /schema cache|column|could not find/i.test(message))),
+  );
+};
+
+const normalizeEstimate = (row: Record<string, unknown>): EstimateRow => {
+  const status = normalizeEstimateStatus(row.status);
+  return {
+    id: str(row.id),
+    organization_id: str(row.organization_id),
+    created_by: (row.created_by as string | null) ?? null,
+    name: str(row.name),
+    description: str(row.description),
+    opportunity_id: (row.opportunity_id as string | null) ?? null,
+    project_id: (row.project_id as string | null) ?? null,
+    project_type: str(row.project_type, "commercial"),
+    region: str(row.region),
+    region_multiplier: num(row.region_multiplier, 1),
+    overhead_pct: Math.round(num(row.overhead_pct, 1000)),
+    profit_pct: Math.round(num(row.profit_pct, 1000)),
+    contingency_pct: Math.round(num(row.contingency_pct, 500)),
+    bond_pct: Math.round(num(row.bond_pct, 150)),
+    tax_pct: Math.round(num(row.tax_pct)),
+    general_conditions_pct: Math.round(num(row.general_conditions_pct)),
+    custom_markups: normalizeCustomMarkup(row.custom_markups),
+    subtotal_material_cents: Math.round(num(row.subtotal_material_cents)),
+    subtotal_labor_cents: Math.round(num(row.subtotal_labor_cents)),
+    subtotal_cents: Math.round(num(row.subtotal_cents)),
+    total_with_markups_cents: Math.round(num(row.total_with_markups_cents)),
+    status,
+    folder: normalizeEstimateFolder(row.folder, status),
+    created_at: str(row.created_at),
+    updated_at: str(row.updated_at),
+  };
+};
 
 const normalizeLineItem = (row: Record<string, unknown>): EstimateLineItemRow => {
   const quantity = num(row.quantity);
@@ -558,6 +619,7 @@ const customMarkupSchema = z.object({
   pct: z.number().int().min(0).max(100000),
   applies_to: z.enum(["subtotal", "material", "labor"]).default("subtotal"),
 });
+const estimateFolderSchema = z.enum(ESTIMATE_FOLDER_VALUES);
 
 const markupPatchSchema = {
   overhead_pct: z.number().int().min(0).max(100000).optional(),
@@ -590,6 +652,7 @@ const updateEstimateInput = z.object({
       region: z.string().max(64).optional(),
       region_multiplier: z.number().min(0).max(10).optional(),
       status: z.enum(["draft", "final", "awarded", "lost"]).optional(),
+      folder: estimateFolderSchema.optional(),
       ...markupPatchSchema,
     })
     .refine((patch) => Object.keys(patch).length > 0, "No estimate changes were provided."),
@@ -663,6 +726,10 @@ const createBlankLineItemsInput = z.object({
 const duplicateEstimateInput = z.object({
   id: z.string().uuid(),
   as_project_estimate: z.boolean().optional().default(false),
+});
+
+const deleteEstimateInput = z.object({
+  id: z.string().uuid(),
 });
 
 const saveMarkupDefaultsInput = z.object({
@@ -1251,9 +1318,46 @@ export const updateEstimate = createServerFn({ method: "POST" })
       .eq("id", data.id)
       .select("*")
       .single();
+    if (error && "folder" in patch && isMissingEstimateFolderColumn(error)) {
+      throw new Error(
+        "Estimate folders are not enabled yet. Apply the latest Overwatch backend update, then try again.",
+      );
+    }
     if (error || !row) throw new Error(error?.message ?? "Estimate did not update.");
     const totals = await recalculateEstimateTotalsInternal(context, data.id);
     return { estimate: totals.estimate };
+  });
+
+export const deleteEstimate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof deleteEstimateInput>) => deleteEstimateInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const organizationId = await getOrganizationId(context);
+    const current = await dynamicTable(context.supabase, "estimates")
+      .select("id,name,project_type")
+      .eq("id", data.id)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (current.error) throw new Error(current.error.message);
+    if (!current.data) throw new Error("Estimate was not found.");
+
+    const { error: lineError } = await dynamicTable(context.supabase, "estimate_line_items")
+      .delete()
+      .eq("estimate_id", data.id);
+    if (lineError) throw new Error(lineError.message);
+
+    const { error } = await dynamicTable(context.supabase, "estimates")
+      .delete()
+      .eq("id", data.id)
+      .eq("organization_id", organizationId);
+    if (error) throw new Error(error.message);
+
+    const row = current.data as Record<string, unknown>;
+    return {
+      ok: true,
+      name: str(row.name),
+      project_type: str(row.project_type, "commercial"),
+    };
   });
 
 export const recalculateEstimateTotals = createServerFn({ method: "POST" })

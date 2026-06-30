@@ -1,14 +1,25 @@
 import { createFileRoute, Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
-import { ArrowLeft, Calculator, FileSpreadsheet, Library, Plus, Search, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  Calculator,
+  FileSpreadsheet,
+  FolderOpen,
+  Library,
+  Plus,
+  Search,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -32,9 +43,14 @@ import {
 } from "@/components/ui/table";
 import {
   createEstimate,
+  deleteEstimate,
+  ESTIMATE_FOLDERS,
   listEstimateRegions,
   listEstimates,
   MASTER_ESTIMATE_PROJECT_TYPE,
+  updateEstimate,
+  type EstimateFolder,
+  type EstimateRow,
 } from "@/lib/estimates.functions";
 import { fmtUSD } from "@/lib/format";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
@@ -60,18 +76,27 @@ function shortDate(value: string) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+type EstimateFolderFilter = "all" | EstimateFolder;
+const folderLabel = (folder: EstimateFolder) =>
+  ESTIMATE_FOLDERS.find((item) => item.value === folder)?.label ?? "Sales Process";
+
 function EstimatesPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const list = useServerFn(listEstimates);
   const create = useServerFn(createEstimate);
+  const update = useServerFn(updateEstimate);
+  const deleteEstimateFn = useServerFn(deleteEstimate);
   const regionList = useServerFn(listEstimateRegions);
   const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
   const [search, setSearch] = useState("");
+  const [folderFilter, setFolderFilter] = useState<EstimateFolderFilter>("all");
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newRegion, setNewRegion] = useState("national");
+  const [deleteTarget, setDeleteTarget] = useState<EstimateRow | null>(null);
 
   const estimatesQuery = useQuery({
     queryKey: ["estimates"],
@@ -87,16 +112,33 @@ function EstimatesPage() {
   });
   const companyName = companyContext?.name || "Company";
 
+  const projectEstimates = useMemo(
+    () =>
+      (estimatesQuery.data ?? []).filter(
+        (estimate) => estimate.project_type !== MASTER_ESTIMATE_PROJECT_TYPE,
+      ),
+    [estimatesQuery.data],
+  );
+
+  const folderCounts = useMemo(() => {
+    const counts = new Map<EstimateFolder, number>();
+    for (const estimate of projectEstimates) {
+      counts.set(estimate.folder, (counts.get(estimate.folder) ?? 0) + 1);
+    }
+    return counts;
+  }, [projectEstimates]);
+
   const visibleEstimates = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (estimatesQuery.data ?? [])
-      .filter((estimate) => estimate.project_type !== MASTER_ESTIMATE_PROJECT_TYPE)
+    return projectEstimates
+      .filter((estimate) => folderFilter === "all" || estimate.folder === folderFilter)
       .filter((estimate) => {
         if (!q) return true;
         return [
           estimate.name,
           estimate.description,
           estimate.status,
+          folderLabel(estimate.folder),
           estimate.project_name,
           estimate.opportunity_name,
           estimate.region,
@@ -105,7 +147,7 @@ function EstimatesPage() {
           .toLowerCase()
           .includes(q);
       });
-  }, [estimatesQuery.data, search]);
+  }, [folderFilter, projectEstimates, search]);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -126,6 +168,28 @@ function EstimatesPage() {
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Estimate did not save"),
+  });
+
+  const folderMutation = useMutation({
+    mutationFn: ({ id, folder }: { id: string; folder: EstimateFolder }) =>
+      update({ data: { id, patch: { folder } } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["estimates"] });
+      toast.success("Estimate moved");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate folder did not update"),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteEstimateFn({ data: { id } }),
+    onSuccess: () => {
+      setDeleteTarget(null);
+      qc.invalidateQueries({ queryKey: ["estimates"] });
+      toast.success("Estimate deleted");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate did not delete"),
   });
 
   if (/^\/estimates\/[^/]+\/?$/.test(location.pathname)) {
@@ -186,30 +250,68 @@ function EstimatesPage() {
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search estimates, projects, opportunities, status, or region"
+              placeholder="Search estimates, folders, projects, opportunities, status, or region"
               className="pl-9"
             />
           </div>
         </div>
 
+        <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="mt-0.5 rounded-md border border-hairline bg-surface p-2">
+                <FolderOpen className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">Estimate Folders</h2>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                  Keep active bids, won work, and not-won estimates separated before they become
+                  projects or get cleaned out.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant={folderFilter === "all" ? "default" : "outline"}
+                onClick={() => setFolderFilter("all")}
+              >
+                All ({projectEstimates.length})
+              </Button>
+              {ESTIMATE_FOLDERS.map((folder) => (
+                <Button
+                  key={folder.value}
+                  size="sm"
+                  variant={folderFilter === folder.value ? "default" : "outline"}
+                  onClick={() => setFolderFilter(folder.value)}
+                >
+                  {folder.label} ({folderCounts.get(folder.value) ?? 0})
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
+
         <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
-          <Table className="min-w-[980px]">
+          <Table className="min-w-[1180px]">
             <TableHeader>
               <TableRow className="bg-surface [&>th]:whitespace-nowrap">
                 <TableHead>Name</TableHead>
                 <TableHead>Client / Opportunity</TableHead>
+                <TableHead>Folder</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Line Items</TableHead>
                 <TableHead className="text-right">Subtotal</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead>Last Updated</TableHead>
+                <TableHead className="w-[72px] text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {estimatesQuery.isLoading ? (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={9}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     Loading...
@@ -217,7 +319,7 @@ function EstimatesPage() {
                 </TableRow>
               ) : estimatesQuery.isError ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-10 text-center text-sm text-danger">
+                  <TableCell colSpan={9} className="py-10 text-center text-sm text-danger">
                     {estimatesQuery.error instanceof Error
                       ? estimatesQuery.error.message
                       : "Estimates did not load"}
@@ -226,10 +328,12 @@ function EstimatesPage() {
               ) : visibleEstimates.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={9}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
-                    No project estimates found. Create a new estimate, or start from a master sheet.
+                    {folderFilter === "all"
+                      ? "No project estimates found. Create a new estimate, or start from a master sheet."
+                      : "No estimates in this folder yet. Move an estimate here when it belongs in this bucket."}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -265,6 +369,34 @@ function EstimatesPage() {
                       {estimate.opportunity_name || estimate.project_name || "-"}
                     </TableCell>
                     <TableCell>
+                      <div
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <Select
+                          value={estimate.folder}
+                          onValueChange={(folder) =>
+                            folderMutation.mutate({
+                              id: estimate.id,
+                              folder: folder as EstimateFolder,
+                            })
+                          }
+                          disabled={folderMutation.isPending}
+                        >
+                          <SelectTrigger className="h-9 w-[160px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ESTIMATE_FOLDERS.map((folder) => (
+                              <SelectItem key={folder.value} value={folder.value}>
+                                {folder.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </TableCell>
+                    <TableCell>
                       <Badge variant="outline" className="capitalize">
                         {estimate.status}
                       </Badge>
@@ -280,6 +412,23 @@ function EstimatesPage() {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {shortDate(estimate.updated_at)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-muted-foreground hover:text-danger"
+                        title="Delete estimate"
+                        aria-label="Delete estimate"
+                        disabled={deleteMutation.isPending}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setDeleteTarget(estimate);
+                        }}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))
@@ -335,6 +484,34 @@ function EstimatesPage() {
               disabled={!newName.trim() || createMutation.isPending}
             >
               Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Estimate?</DialogTitle>
+            <DialogDescription>
+              This removes {deleteTarget?.name ? `"${deleteTarget.name}"` : "this estimate"} and its
+              line items from Overwatch. This is meant for estimates you truly do not need to keep.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleteMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              disabled={!deleteTarget || deleteMutation.isPending}
+            >
+              Delete Estimate
             </Button>
           </DialogFooter>
         </DialogContent>
