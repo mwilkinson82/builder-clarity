@@ -199,12 +199,12 @@ await expectContains(
 await expectContains(
   "src/styles.css",
   [
-    /--accent:\s*#f76a16/,
-    /--ring:\s*rgb\(247 106 22 \/ 0\.4\)/,
-    /--accent:\s*oklch\(0\.66 0\.17 36\)/,
-    /--ring:\s*oklch\(0\.66 0\.17 36 \/ 0\.55\)/,
+    /--accent:\s*#1b7a6e/,
+    /--ring:\s*rgb\(27 122 110 \/ 0\.4\)/,
+    /--accent:\s*#2aa99a/,
+    /--ring:\s*rgb\(42 169 154 \/ 0\.55\)/,
   ],
-  "global highlight accent keeps the rationed ALP/AOS orange signal",
+  "global highlight accent uses the deep teal trial palette",
 );
 
 await expectContains(
@@ -416,9 +416,9 @@ await expectContains(
     /ProjectNavTooltip/,
     /TooltipProvider delayDuration=\{120\}/,
     /aria-label=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
-    /BILLING_WORKSPACE_TAB_TRIGGER_CLASS[\s\S]*data-\[state=active\]:bg-foreground/,
+    /BILLING_WORKSPACE_TAB_TRIGGER_CLASS[\s\S]*data-\[state=active\]:bg-accent/,
     /BILLING_WORKSPACE_TAB_TRIGGER_CLASS[\s\S]*data-\[state=active\]:border-accent/,
-    /border border-hairline bg-card p-1\.5 shadow-card ring-1 ring-foreground\/5/,
+    /border border-accent\/25 bg-accent\/5 p-1\.5 shadow-card ring-1 ring-accent\/10/,
     /Pay App Detail/,
     /Project Costs/,
     /WIP Analysis/,

@@ -178,7 +178,7 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
 const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
 const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
 const BILLING_WORKSPACE_TAB_TRIGGER_CLASS =
-  "whitespace-nowrap rounded-md border border-hairline bg-card px-3 py-2 text-foreground shadow-sm transition hover:border-accent/35 hover:bg-accent/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-accent data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow";
+  "whitespace-nowrap rounded-md border border-accent/25 bg-card px-3 py-2 text-foreground shadow-sm transition hover:border-accent/40 hover:bg-accent/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-accent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow";
 
 type InvoiceCheckoutPayload = {
   ok?: boolean;
@@ -2528,7 +2528,7 @@ function BillingWorkspace({
             Remaining to bill is forecasted contract less billed to date. Open A/R is billed less
             paid and retainage.
           </p>
-          <TabsList className="mt-5 h-auto w-full justify-start gap-1.5 overflow-x-auto rounded-lg border border-hairline bg-card p-1.5 shadow-card ring-1 ring-foreground/5 sm:flex-wrap sm:overflow-visible">
+          <TabsList className="mt-5 h-auto w-full justify-start gap-1.5 overflow-x-auto rounded-lg border border-accent/25 bg-accent/5 p-1.5 shadow-card ring-1 ring-accent/10 sm:flex-wrap sm:overflow-visible">
             <TabsTrigger value="billing" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Billing
             </TabsTrigger>
