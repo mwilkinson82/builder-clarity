@@ -301,6 +301,41 @@
     text-transform: uppercase;
   }
 
+  .constructline-cpm-print-report-strip {
+    display: grid;
+    grid-template-columns: 1.28in 1.45in 1.1in 1.05in 1.05in minmax(0, 1fr);
+    margin-bottom: 0.055in;
+    border: 1px solid #d8d1c5;
+    background: #fbf8f2;
+  }
+
+  .constructline-cpm-print-report-strip span {
+    min-width: 0;
+    overflow: hidden;
+    border-right: 1px solid #d8d1c5;
+    padding: 0.035in 0.045in;
+    color: #221f1b;
+    font-size: 7px;
+    font-weight: 700;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .constructline-cpm-print-report-strip span:last-child {
+    border-right: 0;
+  }
+
+  .constructline-cpm-print-report-strip strong {
+    display: block;
+    margin-bottom: 0.012in;
+    color: #6f6a60;
+    font-size: 5.5px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
   .constructline-cpm-print-footer {
     display: flex;
     flex-wrap: wrap;

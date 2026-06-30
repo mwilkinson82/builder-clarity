@@ -1481,28 +1481,55 @@ function ScheduleWorkspaceLaunch({
       activity.predecessor_activity_ids.length > 0 || activity.successor_activity_ids.length > 0,
   ).length;
   const activeMilestones = milestones.filter((milestone) => milestone.status !== "complete").length;
+  const workspacePanels = [
+    "Full CPM activity table + Gantt",
+    "Schedule update history",
+    "Interim milestones",
+    "Critical delayed decisions",
+    "Procurement risks",
+    "Trade performance risks",
+  ];
 
   return (
     <div className="rounded-md border border-hairline bg-surface p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.46fr)] xl:items-start">
+        <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
             Schedule workspace
           </div>
           <h4 className="mt-1 font-serif text-2xl text-foreground">
-            Full activity table and Gantt
+            Open the full construction schedule workspace
           </h4>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Build and manage the project construction schedule in a dedicated full-width workspace.
-            This IOR page keeps the schedule signal, baseline variance, and milestone rollup clean.
+            This tab keeps the IOR schedule signal clean. The full-width workspace is where the PM
+            manages the CPM activity table, Gantt, WBS hierarchy, data dates, schedule updates, and
+            schedule-linked risks without the left navigation constraining the work.
           </p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {workspacePanels.map((panel) => (
+              <div
+                key={panel}
+                className="min-w-0 rounded border border-hairline bg-card px-3 py-2 text-xs font-semibold leading-5 text-foreground"
+              >
+                {panel}
+              </div>
+            ))}
+          </div>
         </div>
-        <Button asChild className="gap-2 print:hidden">
-          <a href={`/projects/${project.id}/schedule#cpm-grid`} target="_blank" rel="noreferrer">
-            <ExternalLink className="h-4 w-4" />
-            Open full schedule workspace
-          </a>
-        </Button>
+        <div className="min-w-0 rounded-md border border-hairline bg-card p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Working surface
+          </div>
+          <div className="mt-1 text-sm leading-6 text-muted-foreground">
+            Use this when you need to build, update, print, or analyze the actual project schedule.
+          </div>
+          <Button asChild className="mt-4 w-full gap-2 print:hidden">
+            <a href={`/projects/${project.id}/schedule#cpm-grid`} target="_blank" rel="noreferrer">
+              <ExternalLink className="h-4 w-4" />
+              Open full schedule workspace
+            </a>
+          </Button>
+        </div>
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-4">
         <ScheduleWorkbenchStat
@@ -2027,6 +2054,32 @@ export function CpmActivityPlanner({
               Finish {shortDate(displayedCpmModel.cpmFinishDate)}
             </em>
           </div>
+        </div>
+        <div className="constructline-cpm-print-report-strip">
+          <span>
+            <strong>Company</strong>
+            {contractorName}
+          </span>
+          <span>
+            <strong>Report</strong>
+            {printReportLabel}
+          </span>
+          <span>
+            <strong>Critical basis</strong>
+            {displayedCpmModel.criticalPathReliable ? "Valid" : "Provisional"}
+          </span>
+          <span>
+            <strong>Finish</strong>
+            {shortDate(displayedCpmModel.cpmFinishDate)}
+          </span>
+          <span>
+            <strong>Data date</strong>
+            {effectiveDataDate ? shortDate(effectiveDataDate) : "Not set"}
+          </span>
+          <span>
+            <strong>Legend</strong>
+            Critical red · near critical gold · complete green · milestone diamond
+          </span>
         </div>
         <ActivityScheduleMatrix
           matrixId="cpm-grid"
@@ -3088,6 +3141,46 @@ function WbsManagerDialog({
       </div>
     );
   };
+  const renderChildDropTarget = (row: WbsDivisionRow) => {
+    if (
+      !row.id ||
+      !draggingDivision ||
+      draggingDivision === row.division ||
+      !canDropIntoParent(row.id)
+    ) {
+      return null;
+    }
+    const isActive = dropParentTargetId === row.id;
+    return (
+      <div
+        className={cn(
+          "rounded border border-dashed border-accent/40 bg-accent/10 px-3 py-2 text-xs font-semibold text-foreground transition",
+          isActive && "border-foreground/50 bg-card shadow-sm",
+        )}
+        onDragOver={(event) => {
+          if (isSaving || !canDropIntoParent(row.id)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          event.dataTransfer.dropEffect = "move";
+          setDropTargetDivision(null);
+          setDropParentTargetId(row.id);
+        }}
+        onDragLeave={(event) => {
+          const nextTarget = event.relatedTarget as Node | null;
+          if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
+            setDropParentTargetId((current) => (current === row.id ? null : current));
+          }
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void moveDraggingDivisionToParent(row.id);
+        }}
+      >
+        Nest under {row.title}
+      </div>
+    );
+  };
   const getChildRowsForRender = (parentId: string | null, parentPath: string | null = null) => {
     if (parentId) return getWbsChildRows(divisions, parentId);
     if (parentPath) {
@@ -3201,7 +3294,7 @@ function WbsManagerDialog({
               draggable={!isSaving && canPersistRow}
               className="flex h-9 w-9 cursor-grab items-center justify-center rounded border border-hairline bg-surface text-muted-foreground transition hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50 xl:self-center"
               aria-label={`Drag ${row.division} to reorder WBS`}
-              title="Drag to reorder. Drop onto a parent target to make this a child area."
+              title="Drag onto another row to reorder. Use the Nest target to make it a child area."
               disabled={isSaving || !canPersistRow}
               onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = "move";
@@ -3277,11 +3370,7 @@ function WbsManagerDialog({
               </div>
             </div>
             <div className="grid min-w-0 gap-2 xl:col-span-3 xl:col-start-2">
-              {dropParentTargetId === row.id && draggingDivision !== row.division && (
-                <div className="rounded border border-accent/50 bg-card px-3 py-2 text-xs font-semibold text-foreground">
-                  Drop to make this a child under {row.title}.
-                </div>
-              )}
+              {renderChildDropTarget(row)}
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <Button
                   type="button"
@@ -3487,7 +3576,7 @@ function WbsManagerDialog({
           <div className="text-xs text-muted-foreground">
             {isSavingOrder
               ? "Saving WBS order..."
-              : "Drag within the same parent to reorder. Drop onto another row to make it a child."}
+              : "Drag rows to reorder. Use the Nest target while dragging to create parent-child sections."}
           </div>
           <Button type="button" onClick={() => onOpenChange(false)} disabled={isSaving}>
             Done
