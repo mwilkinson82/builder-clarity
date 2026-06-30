@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -24,6 +24,7 @@ import {
   Trash2,
   UserCog,
   Users,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -104,7 +105,6 @@ const clientPermissionFields = [
 
 type ClientPermissionField = (typeof clientPermissionFields)[number]["field"];
 
-const COMPANY_ASSET_BUCKET = "company-assets";
 const COMPANY_LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const COMPANY_LOGO_TYPES = new Set(["image/png", "image/jpeg"]);
 
@@ -155,15 +155,6 @@ function formatBytes(bytes: number) {
 function formatUsageValue(used: number, limit: number) {
   const limitLabel = limit > 0 ? formatNumber(limit) : "No cap";
   return `${formatNumber(used)} / ${limitLabel}`;
-}
-
-function sanitizeAssetName(name: string) {
-  return name
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 120);
 }
 
 function companyInitials(name: string) {
@@ -342,6 +333,7 @@ function TeamPage() {
   const [selectedUserId, setSelectedUserId] = useState("");
   const [projectRole, setProjectRole] = useState<ProjectMemberRole>("viewer");
   const [logoInputKey, setLogoInputKey] = useState(0);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
   const [clientInviteForm, setClientInviteForm] = useState(emptyClientInvite);
 
   useEffect(() => {
@@ -452,33 +444,34 @@ function TeamPage() {
         throw new Error("Company logos must be 2 MB or smaller.");
       }
 
-      const safeName = sanitizeAssetName(file.name) || "company-logo";
-      const path = `${team.organization.id}/logo-${crypto.randomUUID()}-${safeName}`;
-      const { error: uploadError } = await supabase.storage
-        .from(COMPANY_ASSET_BUCKET)
-        .upload(path, file, {
-          contentType: file.type,
-          upsert: false,
-        });
-      if (uploadError) throw new Error(uploadError.message);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Sign in again before uploading the company logo.");
 
-      const { data } = supabase.storage.from(COMPANY_ASSET_BUCKET).getPublicUrl(path);
-      const logoUrl = data.publicUrl;
-      await saveOrganization({
-        data: {
-          ...orgForm,
-          website_url: normalizeWebsiteInput(orgForm.website_url),
-          logo_url: logoUrl,
-          logo_path: path,
+      const formData = new FormData();
+      formData.append("organizationId", team.organization.id);
+      formData.append("oldPath", orgForm.logo_path || team.organization.logo_path || "");
+      formData.append("logo", file);
+
+      const response = await fetch("/api/company/assets/logo", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
         },
+        body: formData,
       });
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        logoUrl?: string;
+        path?: string;
+        error?: string;
+      } | null;
 
-      const oldPath = orgForm.logo_path || team.organization.logo_path;
-      if (oldPath && oldPath !== path) {
-        await supabase.storage.from(COMPANY_ASSET_BUCKET).remove([oldPath]);
+      if (!response.ok || !payload?.ok || !payload.logoUrl || !payload.path) {
+        throw new Error(payload?.error || "Company logo upload failed.");
       }
 
-      return { logoUrl, path };
+      return { logoUrl: payload.logoUrl, path: payload.path };
     },
     onSuccess: async ({ logoUrl, path }) => {
       setOrgForm((current) => ({ ...current, logo_url: logoUrl, logo_path: path }));
@@ -968,19 +961,38 @@ function TeamPage() {
                         )}
                       </div>
                       {team.canManageTeam && (
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                           <Label htmlFor="company-logo-upload">Logo</Label>
                           <Input
                             key={logoInputKey}
+                            ref={logoInputRef}
                             id="company-logo-upload"
                             type="file"
                             accept="image/png,image/jpeg"
                             disabled={logoUploadMutation.isPending}
+                            className="sr-only"
                             onChange={(event) => {
                               const file = event.target.files?.[0];
                               if (file) logoUploadMutation.mutate(file);
                             }}
                           />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-start gap-2"
+                            disabled={logoUploadMutation.isPending}
+                            onClick={() => logoInputRef.current?.click()}
+                          >
+                            <Upload className="h-3.5 w-3.5" />
+                            {logoUploadMutation.isPending
+                              ? "Uploading..."
+                              : logoPreviewUrl
+                                ? "Replace logo"
+                                : "Upload logo"}
+                          </Button>
+                          <p className="text-xs leading-5 text-muted-foreground">
+                            PNG or JPG, up to 2 MB.
+                          </p>
                         </div>
                       )}
                     </div>
