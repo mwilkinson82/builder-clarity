@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -30,6 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  createBlankLineItems,
   createEstimate,
   listEstimateRegions,
   listEstimates,
@@ -61,12 +63,14 @@ function shortDate(value: string) {
 function EstimateMastersPage() {
   const list = useServerFn(listEstimates);
   const create = useServerFn(createEstimate);
+  const createBlankLines = useServerFn(createBlankLineItems);
   const regionList = useServerFn(listEstimateRegions);
   const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newRegion, setNewRegion] = useState("national");
+  const [newBlankRows, setNewBlankRows] = useState("10");
 
   const estimatesQuery = useQuery({
     queryKey: ["estimates"],
@@ -91,20 +95,27 @@ function EstimateMastersPage() {
   }, [estimatesQuery.data, search]);
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      create({
+    mutationFn: async () => {
+      const result = await create({
         data: {
           name: newName,
           description: newDescription,
           project_type: MASTER_ESTIMATE_PROJECT_TYPE,
           region: newRegion === "national" ? "" : newRegion,
         },
-      }),
+      });
+      const rowCount = Number(newBlankRows);
+      if (Number.isFinite(rowCount) && rowCount > 0) {
+        await createBlankLines({ data: { estimate_id: result.id, count: rowCount } });
+      }
+      return result;
+    },
     onSuccess: (result) => {
       setNewOpen(false);
       setNewName("");
       setNewDescription("");
       setNewRegion("national");
+      setNewBlankRows("10");
       window.location.assign(`/estimates/${result.id}`);
     },
     onError: (error) =>
@@ -162,8 +173,9 @@ function EstimateMastersPage() {
                 Prep room for repeatable pricing
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                Keep your company master estimate here, update material and labor unit costs, copy
-                it for alternates, then create a project estimate from the clean master.
+                Open the Harbor sample first to see a finished master sheet. For your own work, keep
+                company pricing here, update material and labor unit costs, copy it for alternates,
+                then create a project estimate from the clean master.
               </p>
             </div>
             <Button size="sm" className="gap-1.5" onClick={() => setNewOpen(true)}>
@@ -272,6 +284,10 @@ function EstimateMastersPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>New Master Sheet</DialogTitle>
+            <DialogDescription>
+              This creates the saved worksheet inside Overwatch. The import format download is only
+              a column guide for Excel or CSV files.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
@@ -306,6 +322,20 @@ function EstimateMastersPage() {
                       {region.name} ({region.multiplier_decimal.toFixed(2)}x)
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Start with blank rows</Label>
+              <Select value={newBlankRows} onValueChange={setNewBlankRows}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">No blank rows</SelectItem>
+                  <SelectItem value="5">5 blank rows</SelectItem>
+                  <SelectItem value="10">10 blank rows</SelectItem>
+                  <SelectItem value="15">15 blank rows</SelectItem>
                 </SelectContent>
               </Select>
             </div>

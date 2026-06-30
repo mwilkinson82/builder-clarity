@@ -58,9 +58,9 @@ import {
 } from "@/components/ui/table";
 import {
   calculateEstimateTotals,
+  createBlankLineItems,
   convertEstimateToProject,
   convertEstimateToSOV,
-  createLineItem,
   deleteLineItem,
   duplicateEstimate,
   importEstimateLineItems,
@@ -216,9 +216,15 @@ async function downloadMasterEstimateWorkbook() {
   const { utils, writeFile } = await import("xlsx");
   const workbook = utils.book_new();
   const instructions = [
-    ["Overwatch Master Estimate Sheet"],
+    ["Overwatch Master Sheet Import Format"],
     [""],
-    ["Use the Master Estimate tab as the format for your master sheet or project estimate."],
+    ["What this file is", "A column guide and example file for getting your costs into Overwatch."],
+    [
+      "What this file is not",
+      "It is not the saved master sheet. Your saved master sheet lives inside Overwatch after you import or add rows.",
+    ],
+    [""],
+    ["Use the Master Estimate tab as the format for a master sheet or project estimate import."],
     ["Keep the header row exactly as shown so Overwatch can match your columns."],
     ["Required columns", "Description", "Unit", "Qty"],
     [
@@ -243,7 +249,7 @@ async function downloadMasterEstimateWorkbook() {
     utils.aoa_to_sheet(estimateLineTemplateRows),
     "Master Estimate",
   );
-  writeFile(workbook, "overwatch-master-estimate-template.xlsx");
+  writeFile(workbook, "overwatch-master-sheet-import-format.xlsx");
 }
 
 export function EstimateWorkspace({
@@ -255,7 +261,7 @@ export function EstimateWorkspace({
   const qc = useQueryClient();
   const navigate = useNavigate();
   const updateEstimateFn = useServerFn(updateEstimate);
-  const createLineFn = useServerFn(createLineItem);
+  const createBlankLinesFn = useServerFn(createBlankLineItems);
   const updateLineFn = useServerFn(updateLineItem);
   const deleteLineFn = useServerFn(deleteLineItem);
   const reorderLineFn = useServerFn(reorderLineItems);
@@ -288,21 +294,20 @@ export function EstimateWorkspace({
       toast.error(error instanceof Error ? error.message : "Estimate did not save"),
   });
 
-  const createLineMutation = useMutation({
-    mutationFn: () =>
-      createLineFn({
+  const createLinesMutation = useMutation({
+    mutationFn: (count: number) =>
+      createBlankLinesFn({
         data: {
           estimate_id: estimate.id,
-          description: "New estimate item",
-          unit: "EA",
-          quantity: 0,
-          material_unit_cost_cents: 0,
-          labor_unit_cost_cents: 0,
+          count,
         },
       }),
-    onSuccess: invalidate,
+    onSuccess: (result, count) => {
+      if (count > 1) toast.success(`${result.created_count} blank rows added`);
+      invalidate();
+    },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Line item did not save"),
+      toast.error(error instanceof Error ? error.message : "Blank rows did not save"),
   });
 
   const updateLineMutation = useMutation({
@@ -444,6 +449,12 @@ export function EstimateWorkspace({
 
   const updateEstimatePatch = (patch: UpdateEstimatePayload["patch"]) =>
     updateEstimateMutation.mutate({ id: estimate.id, patch });
+
+  const addBlankRows = (count: number, colIndex = 2) => {
+    if (createLinesMutation.isPending) return;
+    setPendingGridFocus({ rowIndex: orderedLines.length, colIndex });
+    createLinesMutation.mutate(count);
+  };
 
   const onDropRow = (targetId: string) => {
     if (!draggingId || draggingId === targetId) return;
@@ -628,25 +639,26 @@ export function EstimateWorkspace({
                 {isMasterSheet ? "Master Sheet Lines" : "Line Items"}
               </h2>
               <p className="text-xs text-muted-foreground">
-                {orderedLines.length} rows. Import a master estimate, then replace or append the
-                worksheet.
+                {isMasterSheet
+                  ? `${orderedLines.length} rows. This saved master sheet is the reusable worksheet; the download is only the Excel/CSV import format.`
+                  : `${orderedLines.length} rows. Import a master sheet, then replace or append this estimate.`}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button size="sm" variant="outline" className="gap-1.5">
-                    <Download className="h-3.5 w-3.5" /> Master Sheet Template
+                    <Download className="h-3.5 w-3.5" /> Download Import Format
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={downloadMasterEstimateWorkbook}>
-                    <FileSpreadsheet className="h-4 w-4" /> Excel with instructions
+                    <FileSpreadsheet className="h-4 w-4" /> Excel example + instructions
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() =>
                       downloadText(
-                        "overwatch-master-estimate-template.csv",
+                        "overwatch-master-sheet-import-format.csv",
                         estimateLineTemplateCsv,
                         "text/csv",
                       )
@@ -664,18 +676,20 @@ export function EstimateWorkspace({
               >
                 <Upload className="h-3.5 w-3.5" /> Import Master Sheet
               </Button>
-              <Button
-                size="sm"
-                className="gap-1.5"
-                onClick={() => {
-                  if (createLineMutation.isPending) return;
-                  setPendingGridFocus({ rowIndex: orderedLines.length, colIndex: 2 });
-                  createLineMutation.mutate();
-                }}
-                disabled={createLineMutation.isPending}
-              >
-                <Plus className="h-3.5 w-3.5" /> Add Row
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" className="gap-1.5" disabled={createLinesMutation.isPending}>
+                    <Plus className="h-3.5 w-3.5" /> Add Rows
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {[1, 5, 10, 15].map((count) => (
+                    <DropdownMenuItem key={count} onClick={() => addBlankRows(count)}>
+                      {count === 1 ? "1 blank row" : `${count} blank rows`}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -719,9 +733,7 @@ export function EstimateWorkspace({
                       onDragStart={() => setDraggingId(line.id)}
                       onDrop={() => onDropRow(line.id)}
                       onCreateNextRow={(colIndex) => {
-                        if (createLineMutation.isPending) return;
-                        setPendingGridFocus({ rowIndex: orderedLines.length, colIndex });
-                        createLineMutation.mutate();
+                        addBlankRows(1, colIndex);
                       }}
                     />
                   ))
@@ -1130,11 +1142,12 @@ function EstimateLineImportDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[86vh] max-w-6xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Import Master Estimate</DialogTitle>
+          <DialogTitle>Import Master Sheet</DialogTitle>
           <DialogDescription>
-            Paste or upload your master estimate sheet. Use the same columns as the template: Cost
-            Code, CSI Division, Description, Group, Unit, Qty, Material $/Unit, Labor $/Unit, and
-            Notes.
+            Paste or upload a spreadsheet into this worksheet. The download is only the import
+            format/example file; your saved master sheet is the worksheet inside Overwatch. Accepted
+            columns include Cost Code, CSI Division, Description, Group, Unit, Qty, Material $/Unit,
+            Labor $/Unit, and Notes.
           </DialogDescription>
         </DialogHeader>
 
