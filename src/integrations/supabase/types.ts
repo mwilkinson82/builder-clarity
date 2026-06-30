@@ -41,15 +41,18 @@ export type Database = {
           contract_amount: number
           created_at: string
           due_date: string | null
+          has_line_detail: boolean
           id: string
           invoice_number: string
           notes: string
           paid_to_date: number
           project_id: string
           retainage: number
+          retainage_released_this_period: number
           sort_order: number
           status: string
           submitted_date: string | null
+          total_retainage_held: number
           updated_at: string
         }
         Insert: {
@@ -60,15 +63,18 @@ export type Database = {
           contract_amount?: number
           created_at?: string
           due_date?: string | null
+          has_line_detail?: boolean
           id?: string
           invoice_number?: string
           notes?: string
           paid_to_date?: number
           project_id: string
           retainage?: number
+          retainage_released_this_period?: number
           sort_order?: number
           status?: string
           submitted_date?: string | null
+          total_retainage_held?: number
           updated_at?: string
         }
         Update: {
@@ -79,20 +85,187 @@ export type Database = {
           contract_amount?: number
           created_at?: string
           due_date?: string | null
+          has_line_detail?: boolean
           id?: string
           invoice_number?: string
           notes?: string
           paid_to_date?: number
           project_id?: string
           retainage?: number
+          retainage_released_this_period?: number
           sort_order?: number
           status?: string
           submitted_date?: string | null
+          total_retainage_held?: number
           updated_at?: string
         }
         Relationships: [
           {
             foreignKeyName: "billing_applications_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      billing_line_items: {
+        Row: {
+          balance_to_finish_cents: number | null
+          billing_application_id: string
+          billing_method: string
+          billing_percent_complete: number | null
+          change_order_value_cents: number
+          cost_bucket_id: string | null
+          cost_code: string
+          created_at: string
+          description: string
+          id: string
+          materials_stored_previous_cents: number
+          materials_stored_this_period_cents: number
+          materials_stored_to_date_cents: number | null
+          project_id: string
+          retainage_held_cents: number | null
+          retainage_pct: number
+          retainage_released_cents: number
+          scheduled_value_cents: number
+          sort_order: number
+          total_completed_and_stored_cents: number | null
+          updated_at: string
+          work_completed_previous_cents: number
+          work_completed_this_period_cents: number
+          work_completed_to_date_cents: number | null
+        }
+        Insert: {
+          balance_to_finish_cents?: number | null
+          billing_application_id: string
+          billing_method?: string
+          billing_percent_complete?: number | null
+          change_order_value_cents?: number
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          description: string
+          id?: string
+          materials_stored_previous_cents?: number
+          materials_stored_this_period_cents?: number
+          materials_stored_to_date_cents?: number | null
+          project_id: string
+          retainage_held_cents?: number | null
+          retainage_pct?: number
+          retainage_released_cents?: number
+          scheduled_value_cents?: number
+          sort_order?: number
+          total_completed_and_stored_cents?: number | null
+          updated_at?: string
+          work_completed_previous_cents?: number
+          work_completed_this_period_cents?: number
+          work_completed_to_date_cents?: number | null
+        }
+        Update: {
+          balance_to_finish_cents?: number | null
+          billing_application_id?: string
+          billing_method?: string
+          billing_percent_complete?: number | null
+          change_order_value_cents?: number
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          description?: string
+          id?: string
+          materials_stored_previous_cents?: number
+          materials_stored_this_period_cents?: number
+          materials_stored_to_date_cents?: number | null
+          project_id?: string
+          retainage_held_cents?: number | null
+          retainage_pct?: number
+          retainage_released_cents?: number
+          scheduled_value_cents?: number
+          sort_order?: number
+          total_completed_and_stored_cents?: number | null
+          updated_at?: string
+          work_completed_previous_cents?: number
+          work_completed_this_period_cents?: number
+          work_completed_to_date_cents?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_line_items_billing_application_id_fkey"
+            columns: ["billing_application_id"]
+            isOneToOne: false
+            referencedRelation: "billing_applications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_line_items_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_line_items_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      change_order_allocations: {
+        Row: {
+          change_order_id: string
+          contract_amount: number
+          cost_amount: number
+          cost_bucket_id: string | null
+          cost_code: string
+          created_at: string
+          description: string
+          id: string
+          project_id: string
+          updated_at: string
+        }
+        Insert: {
+          change_order_id: string
+          contract_amount?: number
+          cost_amount?: number
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          description?: string
+          id?: string
+          project_id: string
+          updated_at?: string
+        }
+        Update: {
+          change_order_id?: string
+          contract_amount?: number
+          cost_amount?: number
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          description?: string
+          id?: string
+          project_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "change_order_allocations_change_order_id_fkey"
+            columns: ["change_order_id"]
+            isOneToOne: false
+            referencedRelation: "change_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "change_order_allocations_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "change_order_allocations_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -288,50 +461,206 @@ export type Database = {
           },
         ]
       }
+      cost_actual_import_batches: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          file_hash: string
+          id: string
+          matched_count: number
+          project_id: string
+          row_count: number
+          source_name: string
+          source_type: string
+          status: string
+          unmatched_count: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          file_hash?: string
+          id?: string
+          matched_count?: number
+          project_id: string
+          row_count?: number
+          source_name?: string
+          source_type?: string
+          status?: string
+          unmatched_count?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          file_hash?: string
+          id?: string
+          matched_count?: number
+          project_id?: string
+          row_count?: number
+          source_name?: string
+          source_type?: string
+          status?: string
+          unmatched_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cost_actual_import_batches_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cost_actuals: {
+        Row: {
+          amount: number
+          category: string
+          cost_bucket_id: string | null
+          cost_code: string
+          cost_date: string
+          created_at: string
+          created_by: string | null
+          description: string
+          id: string
+          import_batch_id: string | null
+          notes: string
+          project_id: string
+          reference_number: string
+          source_external_id: string
+          source_row_hash: string
+          status: string
+          updated_at: string
+          vendor: string
+          voided_at: string | null
+          voided_by: string | null
+        }
+        Insert: {
+          amount?: number
+          category?: string
+          cost_bucket_id?: string | null
+          cost_code?: string
+          cost_date: string
+          created_at?: string
+          created_by?: string | null
+          description: string
+          id?: string
+          import_batch_id?: string | null
+          notes?: string
+          project_id: string
+          reference_number?: string
+          source_external_id?: string
+          source_row_hash?: string
+          status?: string
+          updated_at?: string
+          vendor?: string
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Update: {
+          amount?: number
+          category?: string
+          cost_bucket_id?: string | null
+          cost_code?: string
+          cost_date?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          import_batch_id?: string | null
+          notes?: string
+          project_id?: string
+          reference_number?: string
+          source_external_id?: string
+          source_row_hash?: string
+          status?: string
+          updated_at?: string
+          vendor?: string
+          voided_at?: string | null
+          voided_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cost_actuals_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cost_actuals_import_batch_id_fkey"
+            columns: ["import_batch_id"]
+            isOneToOne: false
+            referencedRelation: "cost_actual_import_batches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cost_actuals_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cost_buckets: {
         Row: {
           actual_to_date: number
+          billing_method: string
           bucket: string
+          contract_quantity: number
           cost_code: string
           created_at: string
+          earned_percent_complete: number
           ftc: number
           id: string
           original_budget: number
           project_id: string
+          retainage_pct: number
           sort_order: number
           source_date: string | null
           source_note: string
           source_type: string
+          unit: string
           updated_at: string
         }
         Insert: {
           actual_to_date?: number
+          billing_method?: string
           bucket: string
+          contract_quantity?: number
           cost_code?: string
           created_at?: string
+          earned_percent_complete?: number
           ftc?: number
           id?: string
           original_budget?: number
           project_id: string
+          retainage_pct?: number
           sort_order?: number
           source_date?: string | null
           source_note?: string
           source_type?: string
+          unit?: string
           updated_at?: string
         }
         Update: {
           actual_to_date?: number
+          billing_method?: string
           bucket?: string
+          contract_quantity?: number
           cost_code?: string
           created_at?: string
+          earned_percent_complete?: number
           ftc?: number
           id?: string
           original_budget?: number
           project_id?: string
+          retainage_pct?: number
           sort_order?: number
           source_date?: string | null
           source_note?: string
           source_type?: string
+          unit?: string
           updated_at?: string
         }
         Relationships: [
@@ -969,8 +1298,12 @@ export type Database = {
         Row: {
           archived_at: string | null
           baseline_completion_date: string | null
+          billing_contact_email: string
+          billing_contact_name: string
+          billing_frequency: string
           client: string
           created_at: string
+          default_retainage_pct: number
           forecast_completion_date: string | null
           hold_variance_note: string
           id: string
@@ -978,6 +1311,7 @@ export type Database = {
           last_review_summary: string
           last_reviewed_at: string | null
           name: string
+          next_billing_date: string | null
           next_review_at: string | null
           organization_id: string | null
           original_contract: number
@@ -992,8 +1326,12 @@ export type Database = {
         Insert: {
           archived_at?: string | null
           baseline_completion_date?: string | null
+          billing_contact_email?: string
+          billing_contact_name?: string
+          billing_frequency?: string
           client?: string
           created_at?: string
+          default_retainage_pct?: number
           forecast_completion_date?: string | null
           hold_variance_note?: string
           id?: string
@@ -1001,6 +1339,7 @@ export type Database = {
           last_review_summary?: string
           last_reviewed_at?: string | null
           name: string
+          next_billing_date?: string | null
           next_review_at?: string | null
           organization_id?: string | null
           original_contract?: number
@@ -1015,8 +1354,12 @@ export type Database = {
         Update: {
           archived_at?: string | null
           baseline_completion_date?: string | null
+          billing_contact_email?: string
+          billing_contact_name?: string
+          billing_frequency?: string
           client?: string
           created_at?: string
+          default_retainage_pct?: number
           forecast_completion_date?: string | null
           hold_variance_note?: string
           id?: string
@@ -1024,6 +1367,7 @@ export type Database = {
           last_review_summary?: string
           last_reviewed_at?: string | null
           name?: string
+          next_billing_date?: string | null
           next_review_at?: string | null
           organization_id?: string | null
           original_contract?: number
@@ -1532,6 +1876,14 @@ export type Database = {
         Returns: boolean
       }
       can_read_project: { Args: { p_project_id: string }; Returns: boolean }
+      can_view_client_billing: {
+        Args: { p_project_id: string }
+        Returns: boolean
+      }
+      cost_actual_rollup_amount: {
+        Args: { p_amount: number; p_status: string }
+        Returns: number
+      }
       delete_email: {
         Args: { message_id: number; queue_name: string }
         Returns: boolean
@@ -1574,6 +1926,10 @@ export type Database = {
         Returns: string
       }
       storage_project_id: { Args: { p_name: string }; Returns: string }
+      sync_billing_application_from_lines: {
+        Args: { p_billing_application_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       account_role:
