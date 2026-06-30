@@ -2,6 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState } from "react";
+import type { KeyboardEvent } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -123,6 +124,13 @@ type LinePatch = Partial<
 >;
 type UpdateLinePayload = { id: string; patch: LinePatch };
 
+type GridCellProps = {
+  "data-estimate-grid-cell": true;
+  "data-row-index": number;
+  "data-col-index": number;
+  onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
+};
+
 interface EstimateWorkspaceProps {
   estimate: EstimateRow;
   lineItems: EstimateLineItemRow[];
@@ -156,6 +164,20 @@ function downloadText(filename: string, content: string, type: string) {
 function toCsvCell(value: unknown) {
   const text = String(value ?? "");
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+const ESTIMATE_GRID_COLUMNS = 7;
+
+function focusEstimateGridCell(root: ParentNode, rowIndex: number, colIndex: number) {
+  const next = root.querySelector<HTMLElement>(
+    `[data-estimate-grid-cell][data-row-index="${rowIndex}"][data-col-index="${colIndex}"]`,
+  );
+  if (!next) return false;
+  next.focus();
+  if (next instanceof HTMLInputElement) {
+    window.setTimeout(() => next.select(), 0);
+  }
+  return true;
 }
 
 function buildEstimateCsv(estimate: EstimateRow, lines: EstimateLineItemRow[]) {
@@ -213,6 +235,10 @@ export function EstimateWorkspace({
   const [pasteText, setPasteText] = useState("");
   const [importRows, setImportRows] = useState<EstimateLineImportRow[]>([]);
   const [importSource, setImportSource] = useState("");
+  const [pendingGridFocus, setPendingGridFocus] = useState<{
+    rowIndex: number;
+    colIndex: number;
+  } | null>(null);
 
   useEffect(() => setNameDraft(estimate.name), [estimate.name]);
 
@@ -356,6 +382,16 @@ export function EstimateWorkspace({
     () => [...lineItems].sort((a, b) => a.sort_order - b.sort_order),
     [lineItems],
   );
+
+  useEffect(() => {
+    if (!pendingGridFocus) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (focusEstimateGridCell(document, pendingGridFocus.rowIndex, pendingGridFocus.colIndex)) {
+        setPendingGridFocus(null);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [orderedLines.length, pendingGridFocus]);
 
   const liveTotals = useMemo(
     () => calculateEstimateTotals(estimate, orderedLines),
@@ -557,7 +593,11 @@ export function EstimateWorkspace({
               <Button
                 size="sm"
                 className="gap-1.5"
-                onClick={() => createLineMutation.mutate()}
+                onClick={() => {
+                  if (createLineMutation.isPending) return;
+                  setPendingGridFocus({ rowIndex: orderedLines.length, colIndex: 2 });
+                  createLineMutation.mutate();
+                }}
                 disabled={createLineMutation.isPending}
               >
                 <Plus className="h-3.5 w-3.5" /> Add Row
@@ -565,7 +605,7 @@ export function EstimateWorkspace({
             </div>
           </div>
           <div className="overflow-x-auto">
-            <Table className="min-w-[1280px]">
+            <Table data-estimate-grid className="min-w-[1280px]">
               <TableHeader>
                 <TableRow className="bg-surface [&>th]:whitespace-nowrap">
                   <TableHead className="w-[44px]" />
@@ -604,6 +644,11 @@ export function EstimateWorkspace({
                       onDelete={() => deleteLineMutation.mutate(line.id)}
                       onDragStart={() => setDraggingId(line.id)}
                       onDrop={() => onDropRow(line.id)}
+                      onCreateNextRow={(colIndex) => {
+                        if (createLineMutation.isPending) return;
+                        setPendingGridFocus({ rowIndex: orderedLines.length, colIndex });
+                        createLineMutation.mutate();
+                      }}
                     />
                   ))
                 )}
@@ -666,6 +711,7 @@ function EstimateLineRow({
   onDelete,
   onDragStart,
   onDrop,
+  onCreateNextRow,
 }: {
   estimate: EstimateRow;
   line: EstimateLineItemRow;
@@ -674,6 +720,7 @@ function EstimateLineRow({
   onDelete: () => void;
   onDragStart: () => void;
   onDrop: () => void;
+  onCreateNextRow: (colIndex: number) => void;
 }) {
   const [draft, setDraft] = useState(line);
   useEffect(() => setDraft(line), [line]);
@@ -685,6 +732,65 @@ function EstimateLineRow({
   );
 
   const commit = (patch: UpdateLinePayload["patch"]) => onUpdate(patch);
+  const handleGridKeyDown = (colIndex: number) => (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const grid = event.currentTarget.closest("[data-estimate-grid]");
+    if (!grid) return;
+
+    let nextRow = index;
+    let nextCol = colIndex;
+    const valueLength = event.currentTarget.value.length;
+    const hasSelection =
+      typeof event.currentTarget.selectionStart === "number" &&
+      typeof event.currentTarget.selectionEnd === "number";
+    const atStart = !hasSelection || event.currentTarget.selectionStart === 0;
+    const atEnd = !hasSelection || event.currentTarget.selectionEnd === valueLength;
+
+    if (event.key === "Tab") {
+      nextCol += event.shiftKey ? -1 : 1;
+      if (nextCol < 0) {
+        nextRow -= 1;
+        nextCol = ESTIMATE_GRID_COLUMNS - 1;
+      } else if (nextCol >= ESTIMATE_GRID_COLUMNS) {
+        nextRow += 1;
+        nextCol = 0;
+      }
+    } else if (event.key === "Enter") {
+      nextRow += 1;
+    } else if (event.key === "ArrowDown") {
+      nextRow += 1;
+    } else if (event.key === "ArrowUp") {
+      nextRow -= 1;
+    } else if (event.key === "ArrowLeft" && atStart) {
+      nextCol -= 1;
+    } else if (event.key === "ArrowRight" && atEnd) {
+      nextCol += 1;
+    } else {
+      return;
+    }
+
+    if (nextCol < 0 || nextRow < 0) return;
+    if (nextCol >= ESTIMATE_GRID_COLUMNS) {
+      nextRow += 1;
+      nextCol = 0;
+    }
+
+    if (focusEstimateGridCell(grid, nextRow, nextCol)) {
+      event.preventDefault();
+      return;
+    }
+
+    if (!event.shiftKey && nextRow > index) {
+      event.preventDefault();
+      onCreateNextRow(nextCol);
+    }
+  };
+  const gridCellProps = (colIndex: number): GridCellProps => ({
+    "data-estimate-grid-cell": true,
+    "data-row-index": index,
+    "data-col-index": colIndex,
+    onKeyDown: handleGridKeyDown(colIndex),
+  });
   const selectLibraryItem = (item: CostLibraryItemRow) => {
     const patch = {
       description: item.description,
@@ -717,6 +823,7 @@ function EstimateLineRow({
       <TableCell className="text-xs text-muted-foreground">{index + 1}</TableCell>
       <TableCell>
         <Input
+          {...gridCellProps(0)}
           value={draft.cost_code}
           onChange={(event) => setDraft({ ...draft, cost_code: event.target.value })}
           onBlur={() => commit({ cost_code: draft.cost_code })}
@@ -725,6 +832,7 @@ function EstimateLineRow({
       </TableCell>
       <TableCell>
         <Input
+          {...gridCellProps(1)}
           value={draft.scope_group}
           onChange={(event) => setDraft({ ...draft, scope_group: event.target.value })}
           onBlur={() => commit({ scope_group: draft.scope_group })}
@@ -739,10 +847,12 @@ function EstimateLineRow({
           onChange={(description) => setDraft({ ...draft, description })}
           onBlur={() => commit({ description: draft.description })}
           onSelect={selectLibraryItem}
+          gridCell={gridCellProps(2)}
         />
       </TableCell>
       <TableCell>
         <Input
+          {...gridCellProps(3)}
           value={draft.unit}
           onChange={(event) => setDraft({ ...draft, unit: event.target.value })}
           onBlur={() => commit({ unit: draft.unit })}
@@ -751,6 +861,7 @@ function EstimateLineRow({
       </TableCell>
       <TableCell>
         <Input
+          {...gridCellProps(4)}
           type="number"
           min={0}
           step="0.01"
@@ -762,6 +873,7 @@ function EstimateLineRow({
       </TableCell>
       <TableCell>
         <MoneyInput
+          {...gridCellProps(5)}
           value={centsToDollars(draft.material_unit_cost_cents)}
           onValueChange={(value) =>
             setDraft({ ...draft, material_unit_cost_cents: dollarsToCents(value) })
@@ -773,6 +885,7 @@ function EstimateLineRow({
       </TableCell>
       <TableCell>
         <MoneyInput
+          {...gridCellProps(6)}
           value={centsToDollars(draft.labor_unit_cost_cents)}
           onValueChange={(value) =>
             setDraft({ ...draft, labor_unit_cost_cents: dollarsToCents(value) })
@@ -809,6 +922,7 @@ function CostLibraryAutocomplete({
   onChange,
   onBlur,
   onSelect,
+  gridCell,
 }: {
   value: string;
   csiDivision: string;
@@ -816,6 +930,7 @@ function CostLibraryAutocomplete({
   onChange: (value: string) => void;
   onBlur: () => void;
   onSelect: (item: CostLibraryItemRow) => void;
+  gridCell?: GridCellProps;
 }) {
   const search = useServerFn(searchCostLibrary);
   const [open, setOpen] = useState(false);
@@ -841,6 +956,7 @@ function CostLibraryAutocomplete({
   return (
     <div className="relative">
       <Input
+        {...gridCell}
         value={value}
         onFocus={() => setOpen(true)}
         onChange={(event) => {

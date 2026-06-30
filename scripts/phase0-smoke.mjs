@@ -678,8 +678,12 @@ await expectContains(
     /materialTotal/,
     /laborTotal/,
     /direct/,
+    /data-estimate-grid-cell/,
+    /handleGridKeyDown/,
+    /ArrowDown/,
+    /onCreateNextRow/,
   ],
-  "estimate workspace UI can bulk import worksheet rows with append or replace staging",
+  "estimate workspace UI can bulk import worksheet rows and supports spreadsheet navigation",
 );
 
 const sql = await readAllMigrationSql();
