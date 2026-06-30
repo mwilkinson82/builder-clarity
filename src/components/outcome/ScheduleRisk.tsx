@@ -1595,6 +1595,7 @@ export function CpmActivityPlanner({
   onMoveWbsSectionParent,
   onReorderWbsSections,
   isSavingWbs,
+  isSavingWbsOrder = false,
 }: {
   activities: ScheduleActivityRow[];
   wbsSections: ScheduleWbsSectionRow[];
@@ -1623,6 +1624,7 @@ export function CpmActivityPlanner({
   onMoveWbsSectionParent: (id: string, parentId: string | null) => Promise<void>;
   onReorderWbsSections: (input: WbsReorderInput) => Promise<void>;
   isSavingWbs: boolean;
+  isSavingWbsOrder?: boolean;
 }) {
   const qc = useQueryClient();
   const createUpdateFn = useServerFn(createScheduleUpdate);
@@ -1948,6 +1950,7 @@ export function CpmActivityPlanner({
   );
   const isDataDateDirty = dataDateDraft !== (latestDataDate ?? "");
   const scheduleReportTitle = getScheduleReportTitle(scheduleView);
+  const isCriticalPathReport = scheduleView === "critical";
   const contractorName = project.organization_name || "Overwatch";
   const saveDataDate = () => {
     if (!dataDateDraft || dataDateUpdate.isPending || !isDataDateDirty) return;
@@ -2016,8 +2019,8 @@ export function CpmActivityPlanner({
             </div>
           </div>
           <div className="constructline-cpm-print-status">
-            <span>Report type</span>
-            <strong>{scheduleReportTitle}</strong>
+            <span>{isCriticalPathReport ? "Critical path report" : "Report type"}</span>
+            <strong>{isCriticalPathReport ? "Critical Path" : scheduleReportTitle}</strong>
             <em>
               {displayedCpmModel.criticalPathReliable ? "Critical basis valid" : "Provisional"} ·
               Finish {shortDate(displayedCpmModel.cpmFinishDate)}
@@ -2039,8 +2042,11 @@ export function CpmActivityPlanner({
           onDeleteActivity={() => undefined}
         />
         <footer className="constructline-cpm-print-footer">
-          <span>Company: {contractorName}</span>
-          <span>Report: {scheduleReportTitle}</span>
+          <span className="constructline-cpm-print-footer-primary">Company: {contractorName}</span>
+          <span className="constructline-cpm-print-footer-report">
+            Report: {scheduleReportTitle}
+          </span>
+          <span>Critical path finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
           <span>Project finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
           <span>Data date {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}</span>
           <span>
@@ -2452,6 +2458,7 @@ export function CpmActivityPlanner({
         onMoveDivisionParent={moveWbsDivisionParent}
         onMoveDivision={moveWbsDivision}
         onReorderDivisions={reorderWbsDivisions}
+        isSavingOrder={isSavingWbsOrder}
       />
     </>
   );
@@ -2911,6 +2918,7 @@ function WbsManagerDialog({
   open,
   divisions,
   isSaving,
+  isSavingOrder,
   onOpenChange,
   onAddDivision,
   onRenameDivision,
@@ -2921,6 +2929,7 @@ function WbsManagerDialog({
   open: boolean;
   divisions: WbsDivisionRow[];
   isSaving: boolean;
+  isSavingOrder: boolean;
   onOpenChange: (open: boolean) => void;
   onAddDivision: (division: string, parentId?: string | null) => void;
   onRenameDivision: (fromDivision: string, toDivision: string) => Promise<void>;
@@ -3019,37 +3028,49 @@ function WbsManagerDialog({
         <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
           <DialogTitle className="font-serif text-2xl">WBS manager</DialogTitle>
           <DialogDescription>
-            Organize parent WBS sections and child areas. Drag rows within the same parent level to
-            control the CPM grid order.
+            Organize the parent WBS, child areas, and the order each level appears in the CPM grid.
           </DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="rounded-md border border-hairline bg-surface p-3">
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_280px_auto] lg:items-end">
-              <LabeledField label="New WBS / child area">
-                <Input
-                  ref={newDivisionInputRef}
-                  value={newDivision}
-                  onChange={(event) => setNewDivision(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      addDivision();
-                    }
-                  }}
-                  placeholder={selectedParentRow ? "Northwest corner" : "Concrete"}
-                  className="h-10 min-w-0"
-                  disabled={isSaving}
-                />
-              </LabeledField>
-              <LabeledField label="Place under">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+                <LabeledField
+                  label={selectedParentRow ? "New child WBS / area" : "New top-level WBS"}
+                >
+                  <Input
+                    ref={newDivisionInputRef}
+                    value={newDivision}
+                    onChange={(event) => setNewDivision(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        addDivision();
+                      }
+                    }}
+                    placeholder={selectedParentRow ? "Northwest corner" : "Concrete"}
+                    className="h-10 min-w-0"
+                    disabled={isSaving}
+                  />
+                </LabeledField>
+                <Button
+                  type="button"
+                  className="h-10 gap-2"
+                  disabled={!newDivision.trim() || isSaving}
+                  onClick={addDivision}
+                >
+                  <Plus className="h-4 w-4" />
+                  {selectedParentRow ? "Add child area" : "Add WBS"}
+                </Button>
+              </div>
+              <LabeledField label="Parent / child relationship">
                 <Select
                   value={newDivisionParentId}
                   onValueChange={setNewDivisionParentId}
                   disabled={isSaving}
                 >
-                  <SelectTrigger className="h-10 min-w-0">
+                  <SelectTrigger className="h-10 min-w-0 bg-card">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -3064,20 +3085,25 @@ function WbsManagerDialog({
                   </SelectContent>
                 </Select>
               </LabeledField>
-              <Button
-                type="button"
-                className="h-10 gap-2"
-                disabled={!newDivision.trim() || isSaving}
-                onClick={addDivision}
-              >
-                <Plus className="h-4 w-4" />
-                {selectedParentRow ? "Add child area" : "Add WBS"}
-              </Button>
             </div>
-            <div className="mt-2 text-xs text-muted-foreground">
-              {selectedParentRow
-                ? `Adding under ${selectedParentRow.division}.`
-                : "Use parent WBS for locations, areas, rooms, trades, or subcontractor-specific work packages under a main division."}
+            <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+              <div className="min-w-0 rounded border border-hairline bg-card px-3 py-2">
+                <span className="font-semibold text-foreground">Path preview:</span>{" "}
+                {selectedParentRow
+                  ? `${selectedParentRow.division} / ${newDivision.trim() || "New child area"}`
+                  : newDivision.trim() || "New top-level WBS"}
+              </div>
+              {selectedParentRow && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 whitespace-nowrap"
+                  onClick={() => setNewDivisionParentId("root")}
+                  disabled={isSaving}
+                >
+                  Add at top level
+                </Button>
+              )}
             </div>
           </div>
 
@@ -3108,8 +3134,9 @@ function WbsManagerDialog({
                   <div
                     key={row.division}
                     className={cn(
-                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition xl:grid-cols-[40px_minmax(220px,1.35fr)_minmax(190px,0.8fr)_132px_124px_126px_88px]",
+                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition xl:grid-cols-[40px_minmax(210px,1.2fr)_minmax(180px,0.8fr)_124px_104px_104px_118px_88px]",
                       row.level > 0 && "border-l-4 border-l-accent/45",
+                      selectedParentRow?.id === row.id && "border-foreground/40 bg-muted/30",
                       draggingDivision === row.division && "opacity-55",
                       dropTargetDivision === row.division &&
                         draggingDivision !== row.division &&
@@ -3251,8 +3278,17 @@ function WbsManagerDialog({
                     </Button>
                     <Button
                       type="button"
+                      variant={selectedParentRow?.id === row.id ? "default" : "outline"}
+                      className="h-9 self-end whitespace-nowrap"
+                      disabled={!canPersistRow || isSaving}
+                      onClick={() => setNewDivisionParentId(row.id ?? "root")}
+                    >
+                      Use parent
+                    </Button>
+                    <Button
+                      type="button"
                       variant="outline"
-                      className="h-9 self-end"
+                      className="h-9 self-end whitespace-nowrap"
                       disabled={!canPersistRow || !cleanDraftName || !hasNameChange || isRowSaving}
                       onClick={() => renameDivision(row.division)}
                     >
@@ -3289,7 +3325,12 @@ function WbsManagerDialog({
           </div>
         </div>
 
-        <DialogFooter className="border-t border-hairline px-4 py-4 sm:px-6">
+        <DialogFooter className="flex-col gap-2 border-t border-hairline px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div className="text-xs text-muted-foreground">
+            {isSavingOrder
+              ? "Saving WBS order..."
+              : "Drag rows within the same parent level to save order."}
+          </div>
           <Button type="button" onClick={() => onOpenChange(false)} disabled={isSaving}>
             Done
           </Button>
@@ -6031,9 +6072,9 @@ function ActivityDelayFragmentPanel({
       </div>
 
       {persistence === "migration_required" ? (
-        <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
-          Delay logging is not enabled for this workspace yet. Activity details and CPM logic still
-          save normally; delay records can be added after this workspace is enabled.
+        <div className="mt-3 rounded border border-hairline bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Use Notes / Constraint for the delay narrative on this activity. Activity details and CPM
+          logic still save normally.
         </div>
       ) : (
         <>

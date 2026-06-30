@@ -233,8 +233,8 @@ function ScheduleWorkspacePage() {
     mutationFn: ({ parentId, orderedIds }: WbsReorderInput) =>
       reorderWbsSectionsFn({ data: { projectId, parentId, orderedIds } }),
     onMutate: async ({ orderedIds }) => {
-      const toastId = toast.success("WBS order updated", {
-        description: "The grid reflects the new order while it saves.",
+      const toastId = toast.loading("Saving WBS order", {
+        description: "The grid has already moved to the new order.",
       });
       await qc.cancelQueries({ queryKey: ["schedule", projectId] });
       const previous = qc.getQueryData(["schedule", projectId]);
@@ -251,14 +251,13 @@ function ScheduleWorkspacePage() {
       });
       return { previous, toastId };
     },
-    onSuccess: (_result, _orderedIds, context) => {
+    onSuccess: (_result, _variables, context) => {
       if (context?.toastId) {
         toast.success("WBS order saved", {
           id: context.toastId,
           description: "The saved order is now the CPM WBS order.",
         });
       }
-      void refreshSchedule();
     },
     onError: (error, _orderedIds, context) => {
       if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
@@ -405,12 +404,8 @@ function ScheduleWorkspacePage() {
         onReorderWbsSections={async (payload) => {
           await wbsReorder.mutateAsync(payload);
         }}
-        isSavingWbs={
-          wbsCreate.isPending ||
-          wbsRename.isPending ||
-          wbsParentMove.isPending ||
-          wbsReorder.isPending
-        }
+        isSavingWbs={wbsCreate.isPending || wbsRename.isPending || wbsParentMove.isPending}
+        isSavingWbsOrder={wbsReorder.isPending}
       />
 
       <ScheduleWorkspaceOperations
@@ -495,13 +490,14 @@ function ScheduleWorkspaceOperations({
   const tradeRisks = risks.filter((risk) => risk.kind === "trade_performance").slice(0, 4);
 
   return (
-    <section className="constructline-screen-ops mb-4 mt-4 grid gap-3 xl:grid-cols-5">
+    <section className="constructline-screen-ops mb-4 mt-5 grid gap-3 xl:grid-cols-3 2xl:grid-cols-5">
       <ScheduleOpsCard
         label="Schedule update history"
         title={`${updates.length} saved ${updates.length === 1 ? "update" : "updates"}`}
         sub={`Baseline ${formatDate(project.baseline_completion_date)} · Forecast ${formatDate(
           project.forecast_completion_date,
         )}`}
+        className="xl:col-span-3 2xl:col-span-1"
       >
         {updates.length === 0 ? (
           <ScheduleOpsEmpty>No saved schedule updates yet.</ScheduleOpsEmpty>
@@ -595,14 +591,16 @@ function ScheduleOpsCard({
   title,
   sub,
   children,
+  className,
 }: {
   label: string;
   title: string;
   sub: string;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-lg border border-hairline bg-card p-4">
+    <div className={`min-w-0 rounded-lg border border-hairline bg-card p-4 ${className ?? ""}`}>
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </div>

@@ -316,9 +316,15 @@
     text-transform: uppercase;
   }
 
-  .constructline-cpm-print-footer span:first-child,
-  .constructline-cpm-print-footer span:nth-child(2) {
+  .constructline-cpm-print-footer-primary,
+  .constructline-cpm-print-footer-report {
     color: #221f1b;
+  }
+
+  .constructline-cpm-print-footer-report {
+    border: 1px solid #221f1b;
+    padding: 0.015in 0.045in;
+    background: #fbf8f2;
   }
 
   .constructline-cpm-matrix-print {
