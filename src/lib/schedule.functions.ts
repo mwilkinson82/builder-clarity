@@ -20,13 +20,7 @@ export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_d
 export type ScheduleRiskStatus = "active" | "inactive" | "completed";
 export type ScheduleDelayFragmentStatus = "active" | "mitigated" | "accepted" | "recovered";
 export type ScheduleDelayFragmentSource =
-  | "field"
-  | "trade"
-  | "owner"
-  | "design"
-  | "procurement"
-  | "weather"
-  | "other";
+  "field" | "trade" | "owner" | "design" | "procurement" | "weather" | "other";
 
 type ScheduleSupabaseClient = SupabaseClient<Database>;
 type ScheduleUpdateInsert = TablesInsert<"schedule_updates">;
@@ -37,10 +31,6 @@ type ScheduleActivityUpdate = TablesUpdate<"schedule_activities">;
 type ScheduleWbsSectionInsert = TablesInsert<"schedule_wbs_sections">;
 type ScheduleWbsSectionUpdate = TablesUpdate<"schedule_wbs_sections">;
 type DynamicSupabaseError = { code?: string; message?: string } | null;
-type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError };
-type DynamicScheduleRpcClient = {
-  rpc: (fn: string, args?: Record<string, unknown>) => Promise<DynamicSupabaseResult>;
-};
 
 type ScheduleWbsParentFilterQuery<TQuery> = {
   eq: (column: string, value: string) => TQuery;
@@ -567,16 +557,17 @@ export const listSchedule = createServerFn({ method: "GET" })
       ? []
       : ((wRes.data ?? []) as unknown as Array<Record<string, unknown>>);
     if (!wbsSectionsMissing && persistedWbsRows.length === 0 && derivedWbsSections.length > 0) {
-      const { error: seedWbsError } = await context.supabase.from("schedule_wbs_sections").insert(
-        derivedWbsSections
-          .filter((section) => section.parent_id == null)
-          .map((section) => ({
-            project_id: section.project_id,
-            name: section.name,
-            code: section.code,
-            sort_order: section.sort_order,
-          })) as any,
-      );
+      const seedWbsRows: ScheduleWbsSectionInsert[] = derivedWbsSections
+        .filter((section) => section.parent_id == null)
+        .map((section) => ({
+          project_id: section.project_id,
+          name: section.name,
+          code: section.code,
+          sort_order: section.sort_order,
+        }));
+      const { error: seedWbsError } = await context.supabase
+        .from("schedule_wbs_sections")
+        .insert(seedWbsRows);
       if (!seedWbsError) {
         const seededWbs = await context.supabase
           .from("schedule_wbs_sections")
@@ -709,7 +700,7 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       schedule_money_exposure: data.schedule_money_exposure,
       schedule_money_recovery: data.schedule_money_recovery,
       money_notes: data.money_notes,
-    } as any;
+    };
 
     let { data: update, error: insertError } = await context.supabase
       .from("schedule_updates")
@@ -921,7 +912,7 @@ async function ensureScheduleWbsSection(
     name: sectionName,
     code: "",
     sort_order: ((last as { sort_order?: number } | null)?.sort_order ?? 0) + 10,
-  } as any;
+  };
   let { data: inserted, error: insertError } = await supabase
     .from("schedule_wbs_sections")
     .insert(payload)
@@ -1114,7 +1105,7 @@ export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
     const updatePayload: ScheduleWbsSectionUpdate = {
       parent_id: nextParentId,
       sort_order: sortOrder,
-    } as any;
+    };
     const { error: updateError } = await context.supabase
       .from("schedule_wbs_sections")
       .update(updatePayload)
@@ -1149,14 +1140,11 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const parentId = data.parentId ?? null;
-    const reorderRpc = await (context.supabase as unknown as DynamicScheduleRpcClient).rpc(
-      "reorder_schedule_wbs_sections",
-      {
-        p_project_id: data.projectId,
-        p_parent_id: parentId,
-        p_ordered_ids: data.orderedIds,
-      },
-    );
+    const reorderRpc = await context.supabase.rpc("reorder_schedule_wbs_sections", {
+      p_project_id: data.projectId,
+      p_parent_id: parentId,
+      p_ordered_ids: data.orderedIds,
+    });
     if (!reorderRpc.error) {
       return { ok: true, changed: num(reorderRpc.data), method: "rpc" };
     }
@@ -1333,7 +1321,7 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
       .insert({
         ...basePayload,
         wbs_section_id: wbsSectionId,
-      } as any)
+      })
       .select("*")
       .single();
     if (error && isMissingRestColumn(error, "wbs_section_id")) {
@@ -1406,7 +1394,7 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       );
       const { error: wbsLinkError } = await context.supabase
         .from("schedule_activities")
-        .update({ wbs_section_id: wbsSectionId } as any)
+        .update({ wbs_section_id: wbsSectionId })
         .eq("id", data.id);
       if (wbsLinkError && !isMissingRestColumn(wbsLinkError, "wbs_section_id")) {
         throw new Error(wbsLinkError.message);
