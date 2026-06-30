@@ -289,7 +289,7 @@ function ClientProjectPage() {
           <dl className="mt-6 grid gap-3 md:grid-cols-6">
             <ClientMetric label="Client" value={project.client || "Project client"} />
             <ClientMetric label="Job #" value={project.job_number || "Not listed"} />
-            <ClientMetric label="COs for review" value={String(totals.visible)} />
+            <ClientMetric label="Change orders" value={String(totals.visible)} />
             <ClientMetric label="Shared CO value" value={fmtUSD(totals.amount)} />
             <ClientMetric
               label="Invoices"

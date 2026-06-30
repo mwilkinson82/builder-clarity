@@ -179,7 +179,7 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
 const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
 const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
 const BILLING_WORKSPACE_TAB_TRIGGER_CLASS =
-  "whitespace-nowrap rounded-md border border-accent/25 bg-card px-3 py-2 text-foreground shadow-sm transition hover:border-accent/40 hover:bg-accent/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-accent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow";
+  "whitespace-nowrap rounded-md border border-accent/35 bg-accent/10 px-3 py-2 text-sm font-semibold text-foreground shadow-sm transition hover:border-accent/60 hover:bg-accent/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-accent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-md";
 
 type InvoiceCheckoutPayload = {
   ok?: boolean;
@@ -408,6 +408,7 @@ function ProjectPage() {
     search.tab ?? "dashboard",
   );
   const [focusedRiskExposureId, setFocusedRiskExposureId] = useState<string | null>(null);
+  const handleRiskFocusHandled = useCallback(() => setFocusedRiskExposureId(null), []);
   const [companyLogoFailedUrl, setCompanyLogoFailedUrl] = useState("");
   const setProjectTab = (value: string) => {
     if (PROJECT_TAB_VALUES.includes(value as ProjectTabValue)) {
@@ -1164,7 +1165,6 @@ function ProjectPage() {
     setActiveProjectTab("risk-tally");
     setFocusedRiskExposureId(exposureId);
   };
-  const handleRiskFocusHandled = useCallback(() => setFocusedRiskExposureId(null), []);
 
   const downloadCurrentReport = async (style: IorPdfStyle) => {
     const bytes = await generateIorPdf(
@@ -1739,7 +1739,7 @@ function ProjectPage() {
             <TabsContent value="change-orders" className="mt-0">
               <WorkspaceHeader
                 title="Change Orders"
-                subtitle="Approved COs add to both sides. Pending COs are probability-weighted into the rollup."
+                subtitle="Approved change orders add to the forecasted contract. Pending change orders are probability-weighted into the rollup."
               />
               <ChangeOrdersTable
                 changeOrders={changeOrders}
@@ -2419,7 +2419,7 @@ function BillingWorkspace({
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <WorkspaceHeader
               title="Billing"
-              subtitle="Pay applications, project cost tracking, WIP, invoices, retainage, open receivables, and pending COs."
+              subtitle="Pay applications, project cost tracking, WIP, invoices, retainage, open receivables, and pending change orders."
               compact
             />
             <Dialog open={payAppOpen} onOpenChange={setPayAppOpen}>
@@ -2614,7 +2614,7 @@ function BillingWorkspace({
               Pay App Detail
             </TabsTrigger>
             <TabsTrigger value="project-costs" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Project Costs
+              Cost Ledger
             </TabsTrigger>
             <TabsTrigger value="wip-analysis" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               WIP Analysis
@@ -2623,7 +2623,7 @@ function BillingWorkspace({
               Invoices & Payments
             </TabsTrigger>
             <TabsTrigger value="pending-cos" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Pending COs
+              Pending Change Orders
             </TabsTrigger>
             <TabsTrigger value="pay-app-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Pay App Ledger
@@ -3014,7 +3014,7 @@ function BillingWorkspace({
         <TabsContent value="pending-cos" className="mt-0">
           <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-              Pending COs in billing
+              Pending change orders in billing
             </div>
             <div className="mt-1 text-sm tabular text-muted-foreground">
               Raw {fmtUSD(rollup.pendingCOContract)} · likely {fmtUSD(weightedPending)}
@@ -3026,7 +3026,7 @@ function BillingWorkspace({
                 <table className="w-full text-sm">
                   <thead className="bg-surface text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                     <tr>
-                      <th className="px-3 py-2 text-left">CO</th>
+                      <th className="px-3 py-2 text-left">Change order</th>
                       <th className="px-3 py-2 text-right">Contract</th>
                       <th className="px-3 py-2 text-right">Prob.</th>
                       <th className="px-3 py-2 text-right">Likely</th>
@@ -3355,7 +3355,7 @@ function BillingApplicationRowEditor({
           />
         </div>
         <div className="space-y-1.5">
-          <Label>COs</Label>
+          <Label>Change orders</Label>
           <MoneyInput
             value={app.change_order_amount}
             onValueChange={(change_order_amount) => onPatch({ change_order_amount })}

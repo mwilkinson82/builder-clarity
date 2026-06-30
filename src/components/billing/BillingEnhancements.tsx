@@ -383,7 +383,11 @@ export function BillingLineItemsPanel({
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
                 <BillingDetail label="Scheduled" value={fmtUSD(totals.scheduled)} />
-                <BillingDetail label="COs" value={fmtUSD(totals.co)} />
+                <BillingDetail
+                  label="Change orders"
+                  value={fmtUSD(totals.co)}
+                  tone={totals.co > 0 ? "warning" : undefined}
+                />
                 <BillingDetail label="Previous" value={fmtUSD(totals.previous)} />
                 <BillingDetail label="This period" value={fmtUSD(totals.thisPeriod)} />
                 <BillingDetail label="Total" value={fmtUSD(totals.total)} />
@@ -514,7 +518,11 @@ function BillingLineItemEditor({
           label="Scheduled"
           value={fmtUSD(centsToDollars(line.scheduled_value_cents))}
         />
-        <BillingDetail label="COs" value={fmtUSD(centsToDollars(line.change_order_value_cents))} />
+        <BillingDetail
+          label="Change orders"
+          value={fmtUSD(centsToDollars(line.change_order_value_cents))}
+          tone={line.change_order_value_cents > 0 ? "warning" : undefined}
+        />
         <BillingDetail label="Previous" value={fmtUSD(previous)} />
         <div className="space-y-1.5">
           <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -673,13 +681,14 @@ export function ProjectCostTrackingPanel({
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Project cost tracking
+            Cost ledger / project costs
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             <span className="font-medium text-foreground">
               Subcontractors, suppliers, and direct costs by cost code.
             </span>{" "}
-            Track commitments, invoices, and paid actuals against the project cost plan.
+            The SOV sets the billable schedule of values; this ledger records the cost backup
+            against those same codes.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -849,11 +858,13 @@ export function ProjectCostTrackingPanel({
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-md border border-hairline bg-surface p-4">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Cost actuals
+            Cost ledger rows
           </div>
           {costActuals.length === 0 ? (
             <div className="mt-3 rounded-md border border-hairline bg-card py-8 text-center text-sm text-muted-foreground">
-              No cost actuals recorded yet.
+              {totalActual > 0
+                ? "No cost ledger rows are attached yet. The actual totals shown here are imported or manual SOV cost values; add/import cost rows to audit the backup."
+                : "No cost ledger rows recorded yet."}
             </div>
           ) : (
             <div className="mt-3 space-y-3">
@@ -968,11 +979,12 @@ export function WipAnalysisPanel({
       </section>
     );
   }
-  const underBilled = wip.total_over_under < 0;
-  const overBilled = wip.total_over_under > 0;
-  const overUnderLabel = underBilled ? "Underbilled" : overBilled ? "Overbilled" : "Current";
+  const earnedBehindBillings = wip.total_over_under > 1;
+  const earnedAheadOfBillings = wip.total_over_under < -1;
   const projectedCost = wip.total_cost + wip.total_cost_to_complete;
-  const projectedGpTone = wip.estimated_gross_profit < -1 ? "danger" : undefined;
+  const projectedLoss = wip.estimated_gross_profit < -1;
+  const projectedProfit = wip.estimated_gross_profit > 1;
+  const projectedGpTone = projectedLoss ? "danger" : projectedProfit ? "success" : undefined;
 
   return (
     <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
@@ -982,31 +994,31 @@ export function WipAnalysisPanel({
             WIP analysis (Work in Progress)
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Work in Progress compares earned revenue, billed revenue, cost, and forecast to
-            complete. Billing variance is billed-to-date minus earned-to-date; projected GP is
-            contract value minus cost-to-date and forecast-to-complete.
+            Work in Progress compares earned revenue, cost-to-date, and forecast-to-complete by SOV
+            cost code. The red/green signal below is projected margin. Earned vs billed is a
+            cash-timing check, not the profit/loss result.
           </p>
         </div>
         <div className="flex flex-col gap-2 md:items-end">
           <div
             className={`rounded-md border px-3 py-2 text-sm font-semibold ${
-              underBilled
-                ? "border-success/35 bg-success/10 text-success"
-                : overBilled
-                  ? "border-danger/35 bg-danger/10 text-danger"
+              projectedLoss
+                ? "border-danger/35 bg-danger/10 text-danger"
+                : projectedProfit
+                  ? "border-success/35 bg-success/10 text-success"
                   : "border-hairline bg-surface text-muted-foreground"
             }`}
           >
-            {overUnderLabel}: {fmtUSD(Math.abs(wip.total_over_under))}
+            {projectedMarginLabel(wip.estimated_gross_profit)}
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-success" />
-              Green = underbilled
+              Green = projected profit
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-danger" />
-              Red = overbilled
+              Red = projected loss
             </span>
           </div>
         </div>
@@ -1024,10 +1036,9 @@ export function WipAnalysisPanel({
           sub="Pay apps completed/stored"
         />
         <BillingMetric
-          label="Billing variance"
-          value={billingPositionLabel(wip.total_over_under)}
-          sub="Billed minus earned"
-          tone={underBilled ? "success" : overBilled ? "danger" : undefined}
+          label="Earned vs billed"
+          value={billingTimingLabel(wip.total_over_under)}
+          sub="Cash timing check"
         />
         <BillingMetric
           label="Projected GP"
@@ -1038,11 +1049,11 @@ export function WipAnalysisPanel({
       </div>
 
       <div className="mt-4 rounded-md border border-hairline bg-surface p-4 text-sm text-muted-foreground">
-        {wip.total_over_under < -1
-          ? `You are underbilled by ${fmtUSD(Math.abs(wip.total_over_under))}. Consider billing earned work next cycle to keep cash aligned with production.`
-          : wip.total_over_under > 1
-            ? `You are overbilled by ${fmtUSD(wip.total_over_under)}. Make sure field progress catches up before the next pay application.`
-            : "Billing is aligned with earned revenue on the current WIP view."}
+        {projectedLoss
+          ? `Projected cost is ${fmtUSD(projectedCost)}, creating a projected loss of ${fmtUSD(Math.abs(wip.estimated_gross_profit))}. Review cost-to-date and FTC before the next pay application.`
+          : projectedProfit
+            ? `Projected cost is ${fmtUSD(projectedCost)}, leaving projected gross profit of ${fmtUSD(wip.estimated_gross_profit)}. ${earnedAheadOfBillings ? "Earned work is ahead of billings, so the next pay app can improve cash position." : earnedBehindBillings ? "Billings are ahead of earned production; watch field progress before submitting the next pay app." : "Earned revenue and billings are currently aligned."}`
+            : "Projected cost is aligned with contract value. Review cost-to-date and FTC before submitting the next pay application."}
       </div>
 
       <div className="mt-4 space-y-3">
@@ -1071,9 +1082,9 @@ export function WipAnalysisPanel({
   );
 }
 
-function billingPositionLabel(value: number) {
-  if (value > 1) return `Overbilled ${fmtUSD(value)}`;
-  if (value < -1) return `Underbilled ${fmtUSD(Math.abs(value))}`;
+function billingTimingLabel(value: number) {
+  if (value > 1) return `Billed ${fmtUSD(value)} ahead`;
+  if (value < -1) return `Earned ${fmtUSD(Math.abs(value))} unbilled`;
   return "Aligned";
 }
 
@@ -1097,22 +1108,17 @@ function WipBucketRow({
   onSave: (earnedPct: number) => void;
 }) {
   const [value, setValue] = useState(String(Math.round(earnedPct)));
-  const overUnderClass =
-    bucket.over_under_billing > 0
-      ? "text-danger"
-      : bucket.over_under_billing < 0
-        ? "text-success"
-        : "";
-  const overUnderRowClass =
-    bucket.over_under_billing > 0
-      ? "border-danger/30 bg-danger/5"
-      : bucket.over_under_billing < 0
-        ? "border-success/30 bg-success/5"
-        : "bg-card";
+  const projectedLoss = bucket.estimated_gross_profit < -1;
+  const projectedProfit = bucket.estimated_gross_profit > 1;
+  const projectedRowClass = projectedLoss
+    ? "border-danger/30 bg-danger/5"
+    : projectedProfit
+      ? "border-success/30 bg-success/5"
+      : "bg-card";
   const projectedCost = bucket.cost_to_date + bucket.cost_to_complete;
-  const projectedGpTone = bucket.estimated_gross_profit < -1 ? "danger" : undefined;
+  const projectedGpTone = projectedLoss ? "danger" : projectedProfit ? "success" : undefined;
   return (
-    <div className={`rounded-md border border-hairline p-4 ${overUnderRowClass}`}>
+    <div className={`rounded-md border border-hairline p-4 ${projectedRowClass}`}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1153,9 +1159,8 @@ function WipBucketRow({
         <BillingDetail label="Earned to date" value={fmtUSD(bucket.earned_revenue)} />
         <BillingDetail label="Billed to date" value={fmtUSD(bucket.billed_to_date)} />
         <BillingDetail
-          label="Billing variance"
-          value={billingPositionLabel(bucket.over_under_billing)}
-          valueClassName={overUnderClass}
+          label="Earned vs billed"
+          value={billingTimingLabel(bucket.over_under_billing)}
         />
         <BillingDetail label="Cost to date" value={fmtUSD(bucket.cost_to_date)} />
         <BillingDetail label="FTC" value={fmtUSD(bucket.cost_to_complete)} />

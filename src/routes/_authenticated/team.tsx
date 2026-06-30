@@ -99,7 +99,7 @@ const projectRoleOptions: { value: ProjectMemberRole; label: string }[] = [
 ];
 
 const clientPermissionFields = [
-  { field: "can_view_change_orders", label: "COs" },
+  { field: "can_view_change_orders", label: "Change orders" },
   { field: "can_view_daily_reports", label: "Daily" },
   { field: "can_view_billing", label: "Billing" },
 ] as const;
