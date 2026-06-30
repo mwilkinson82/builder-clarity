@@ -258,14 +258,14 @@ function ScheduleWorkspacePage() {
     mutationFn: ({ parentId, orderedIds }: WbsReorderInput) =>
       reorderWbsSectionsFn({ data: { projectId, parentId, orderedIds } }),
     onMutate: async ({ orderedIds }) => {
-      await qc.cancelQueries({ queryKey: ["schedule", projectId] });
       const previous = qc.getQueryData(["schedule", projectId]);
       const toastId = wbsOrderToastRef.current ?? "wbs-order-save";
       wbsOrderToastRef.current = toastId;
       toast.loading("Saving WBS order", {
         id: toastId,
-        description: "The grid updates immediately while the project order is saved.",
+        description: "Applied in the grid. Saving project order now.",
       });
+      void qc.cancelQueries({ queryKey: ["schedule", projectId] });
       qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
         if (!current?.wbsSections) return current;
         const orderMap = new Map(orderedIds.map((id, index) => [id, (index + 1) * 10]));

@@ -6,6 +6,13 @@ import {
   formatConstructLineDependencyToken,
   parseConstructLineDependencyToken,
 } from "../src/lib/constructline-cpm.ts";
+import {
+  buildWbsDivisionOrder,
+  buildWbsDivisionRows,
+  getImmediateChildWbsTitle,
+  getWbsChildRows,
+  moveWbsDivisionInOrder,
+} from "../src/lib/constructline-wbs.ts";
 
 const parsed = parseConstructLineDependencyToken("A-010 FF +2d");
 assert.deepEqual(parsed, {
@@ -181,6 +188,131 @@ assert.deepEqual(deleteReciprocalPatches, [
     predecessor_activity_ids: [],
     successor_activity_ids: [],
   },
+]);
+
+const wbsSections = [
+  {
+    id: "wbs-milestones",
+    project_id: "project",
+    name: "Milestones",
+    code: "milestones",
+    parent_id: null,
+    sort_order: 10,
+  },
+  {
+    id: "wbs-concrete",
+    project_id: "project",
+    name: "03 - Concrete",
+    code: "03",
+    parent_id: null,
+    sort_order: 20,
+  },
+  {
+    id: "wbs-northwest",
+    project_id: "project",
+    name: "Northwest corner",
+    code: "nw",
+    parent_id: "wbs-concrete",
+    sort_order: 10,
+  },
+  {
+    id: "wbs-southwest",
+    project_id: "project",
+    name: "Southwest corner",
+    code: "sw",
+    parent_id: "wbs-concrete",
+    sort_order: 20,
+  },
+  {
+    id: "wbs-eastern",
+    project_id: "project",
+    name: "Eastern corner",
+    code: "east",
+    parent_id: "wbs-concrete",
+    sort_order: 30,
+  },
+];
+const wbsActivities = [
+  {
+    id: "cnw",
+    project_id: "project",
+    activity_id: "03-110",
+    name: "Pour northwest corner",
+    division: "03 - Concrete / Northwest corner",
+    start_date: "2026-02-03",
+    finish_date: "2026-02-07",
+    percent_complete: 0,
+    predecessor_activity_ids: [],
+    successor_activity_ids: [],
+    notes: "",
+    sort_order: 10,
+  },
+  {
+    id: "csw",
+    project_id: "project",
+    activity_id: "03-120",
+    name: "Pour southwest corner",
+    division: "03 - Concrete / Southwest corner",
+    start_date: "2026-02-10",
+    finish_date: "2026-02-14",
+    percent_complete: 0,
+    predecessor_activity_ids: [],
+    successor_activity_ids: [],
+    notes: "",
+    sort_order: 20,
+  },
+  {
+    id: "ce",
+    project_id: "project",
+    activity_id: "03-130",
+    name: "Pour eastern corner",
+    division: "03 - Concrete / Eastern corner",
+    start_date: "2026-02-17",
+    finish_date: "2026-02-21",
+    percent_complete: 0,
+    predecessor_activity_ids: [],
+    successor_activity_ids: [],
+    notes: "",
+    sort_order: 30,
+  },
+];
+const wbsOrder = buildWbsDivisionOrder(wbsActivities, wbsSections);
+assert.deepEqual(wbsOrder.slice(0, 5), [
+  "Milestones",
+  "03 - Concrete",
+  "03 - Concrete / Northwest corner",
+  "03 - Concrete / Southwest corner",
+  "03 - Concrete / Eastern corner",
+]);
+
+const wbsRows = buildWbsDivisionRows(wbsActivities, wbsSections, wbsOrder);
+const concreteRow = wbsRows.find((row) => row.division === "03 - Concrete");
+assert.equal(concreteRow?.activityCount, 3);
+assert.equal(concreteRow?.directActivityCount, 0);
+assert.equal(concreteRow?.childCount, 3);
+assert.equal(concreteRow?.firstStart, "2026-02-03");
+assert.equal(concreteRow?.lastFinish, "2026-02-21");
+
+const concreteChildren = getWbsChildRows(wbsRows, "wbs-concrete").map((row) => row.division);
+assert.deepEqual(concreteChildren, [
+  "03 - Concrete / Northwest corner",
+  "03 - Concrete / Southwest corner",
+  "03 - Concrete / Eastern corner",
+]);
+assert.equal(
+  getImmediateChildWbsTitle("03 - Concrete", "03 - Concrete / Northwest corner / Level 2"),
+  "Northwest corner",
+);
+
+const reorderedConcreteChildren = moveWbsDivisionInOrder(
+  wbsRows,
+  "03 - Concrete / Eastern corner",
+  -1,
+).map((row) => row.division);
+assert.deepEqual(reorderedConcreteChildren, [
+  "03 - Concrete / Northwest corner",
+  "03 - Concrete / Eastern corner",
+  "03 - Concrete / Southwest corner",
 ]);
 
 console.log("ConstructLine CPM smoke checks passed.");
