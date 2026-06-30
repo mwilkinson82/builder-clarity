@@ -61,8 +61,10 @@ import {
   createBlankLineItems,
   convertEstimateToProject,
   convertEstimateToSOV,
+  deleteEstimate,
   deleteLineItem,
   duplicateEstimate,
+  ESTIMATE_FOLDERS,
   importEstimateLineItems,
   MASTER_ESTIMATE_PROJECT_TYPE,
   reorderLineItems,
@@ -71,6 +73,7 @@ import {
   updateEstimate,
   updateLineItem,
   type CostLibraryItemRow,
+  type EstimateFolder,
   type EstimateLineItemRow,
   type EstimateRow,
   type EstimateStatus,
@@ -99,6 +102,7 @@ type EstimatePatch = Partial<
     | "region"
     | "region_multiplier"
     | "status"
+    | "folder"
     | "overhead_pct"
     | "profit_pct"
     | "contingency_pct"
@@ -140,6 +144,9 @@ interface EstimateWorkspaceProps {
   regions: EstimateRegion[];
   companyName?: string;
 }
+
+const estimateFolderLabel = (folder: EstimateFolder) =>
+  ESTIMATE_FOLDERS.find((item) => item.value === folder)?.label ?? "Sales Process";
 
 const pctToNumber = (basisPoints: number) => Number((basisPoints / 100).toFixed(2));
 const numberToPct = (value: number) => Math.round(value * 100);
@@ -263,6 +270,7 @@ export function EstimateWorkspace({
   const qc = useQueryClient();
   const navigate = useNavigate();
   const updateEstimateFn = useServerFn(updateEstimate);
+  const deleteEstimateFn = useServerFn(deleteEstimate);
   const createBlankLinesFn = useServerFn(createBlankLineItems);
   const updateLineFn = useServerFn(updateLineItem);
   const deleteLineFn = useServerFn(deleteLineItem);
@@ -274,6 +282,7 @@ export function EstimateWorkspace({
   const saveDefaultsFn = useServerFn(saveEstimateMarkupDefaults);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState(estimate.name);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importMode, setImportMode] = useState<"append" | "replace">("append");
   const [pasteText, setPasteText] = useState("");
@@ -294,6 +303,16 @@ export function EstimateWorkspace({
     onSuccess: invalidate,
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Estimate did not save"),
+  });
+
+  const deleteEstimateMutation = useMutation({
+    mutationFn: () => deleteEstimateFn({ data: { id: estimate.id } }),
+    onSuccess: () => {
+      toast.success(isMasterSheet ? "Master sheet deleted" : "Estimate deleted");
+      navigate({ to: isMasterSheet ? "/estimate-masters" : "/estimates" });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate did not delete"),
   });
 
   const createLinesMutation = useMutation({
@@ -553,6 +572,9 @@ export function EstimateWorkspace({
                   <Badge variant="outline" className="capitalize">
                     {estimate.status}
                   </Badge>
+                  {!isMasterSheet && (
+                    <Badge variant="secondary">{estimateFolderLabel(estimate.folder)}</Badge>
+                  )}
                   {isMasterSheet && <Badge variant="secondary">Master Sheet</Badge>}
                   {estimate.project_name && (
                     <span className="text-xs text-muted-foreground">
@@ -592,6 +614,25 @@ export function EstimateWorkspace({
                   <SelectItem value="lost">Lost</SelectItem>
                 </SelectContent>
               </Select>
+              {!isMasterSheet && (
+                <Select
+                  value={estimate.folder}
+                  onValueChange={(folder) =>
+                    updateEstimatePatch({ folder: folder as EstimateFolder })
+                  }
+                >
+                  <SelectTrigger className="w-[170px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ESTIMATE_FOLDERS.map((folder) => (
+                      <SelectItem key={folder.value} value={folder.value}>
+                        {folder.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -616,6 +657,15 @@ export function EstimateWorkspace({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-danger hover:text-danger"
+                onClick={() => setDeleteOpen(true)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {isMasterSheet ? "Delete Master" : "Delete Estimate"}
+              </Button>
               <Button
                 size="sm"
                 className="gap-1.5"
@@ -773,6 +823,34 @@ export function EstimateWorkspace({
           savingDefaults={saveDefaultsMutation.isPending}
         />
       </main>
+
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{isMasterSheet ? "Delete Master Sheet?" : "Delete Estimate?"}</DialogTitle>
+            <DialogDescription>
+              This removes "{estimate.name}" and all of its worksheet rows from Overwatch. Use this
+              only when you do not need to keep the bid or master sheet for later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteOpen(false)}
+              disabled={deleteEstimateMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteEstimateMutation.mutate()}
+              disabled={deleteEstimateMutation.isPending}
+            >
+              {isMasterSheet ? "Delete Master Sheet" : "Delete Estimate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <EstimateLineImportDialog
         open={importOpen}
