@@ -275,6 +275,21 @@
     text-transform: uppercase;
   }
 
+  .constructline-cpm-print-footer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.08in;
+    margin-top: 0.055in;
+    border-top: 1px solid #d8d1c5;
+    padding-top: 0.04in;
+    color: #5a554c;
+    font-size: 6.4px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
   .constructline-cpm-matrix-print {
     break-inside: avoid;
     overflow: hidden !important;

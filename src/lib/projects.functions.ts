@@ -55,6 +55,7 @@ export type ClientChangeOrderStatus = "not_sent" | "sent" | "approved" | "reject
 export interface ProjectRow {
   id: string;
   organization_id: string | null;
+  organization_name?: string;
   job_number: string;
   name: string;
   client: string;
@@ -232,22 +233,11 @@ export interface BillingApplicationEventRow {
 }
 
 export type InvoiceStatus =
-  | "draft"
-  | "sent"
-  | "viewed"
-  | "partially_paid"
-  | "paid"
-  | "overdue"
-  | "void";
+  "draft" | "sent" | "viewed" | "partially_paid" | "paid" | "overdue" | "void";
 
 export type PaymentStatus = "pending" | "succeeded" | "failed" | "refunded" | "void";
 export type OnlinePaymentStatus =
-  | "not_enabled"
-  | "pending"
-  | "paid"
-  | "expired"
-  | "failed"
-  | "refunded";
+  "not_enabled" | "pending" | "paid" | "expired" | "failed" | "refunded";
 
 export interface BillingInvoiceRow {
   id: string;
@@ -874,6 +864,20 @@ export const getProject = createServerFn({ method: "GET" })
     }
 
     const project = normalizeProject(pRes.data as Record<string, unknown>);
+    let organizationName = "";
+    if (project.organization_id) {
+      const orgRes = await context.supabase
+        .from("organizations")
+        .select("name")
+        .eq("id", project.organization_id)
+        .maybeSingle();
+      if (orgRes.error) throw new Error(orgRes.error.message);
+      organizationName = str((orgRes.data as Record<string, unknown> | null)?.name);
+    }
+    const projectWithOrganization = {
+      ...project,
+      organization_name: organizationName || "Unassigned company",
+    };
     let sovMappingProfiles: SovMappingProfileRow[] = [];
     if (project.organization_id) {
       const profileRes = await dynamicTable(context.supabase, "sov_mapping_profiles")
@@ -1041,7 +1045,7 @@ export const getProject = createServerFn({ method: "GET" })
     const aging = exposureAging(exposures);
 
     return {
-      project,
+      project: projectWithOrganization,
       exposures,
       changeOrders,
       buckets,

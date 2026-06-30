@@ -101,6 +101,13 @@ import {
   type ConstructLineRelationshipType,
 } from "@/lib/constructline-cpm";
 
+const EMPTY_MILESTONES: MilestoneRow[] = [];
+const EMPTY_ACTIVITIES: ScheduleActivityRow[] = [];
+const EMPTY_DELAY_FRAGMENTS: ScheduleDelayFragmentRow[] = [];
+const EMPTY_SCHEDULE_RISKS: ScheduleRiskRow[] = [];
+const EMPTY_SCHEDULE_UPDATES: ScheduleUpdateRow[] = [];
+const EMPTY_MILESTONE_UPDATES: ScheduleMilestoneUpdateRow[] = [];
+
 const STATUS_LABEL: Record<MilestoneStatus, string> = {
   on_track: "On track",
   at_risk: "At risk",
@@ -177,12 +184,27 @@ type ActivityPatchOptions = { silent?: boolean };
 type WbsDivisionRow = {
   id: string | null;
   division: string;
+  title: string;
+  parentId: string | null;
+  parentPath: string | null;
+  level: number;
   activityCount: number;
   firstStart: string | null;
   lastFinish: string | null;
   isPlaceholder: boolean;
   isPersisted: boolean;
 };
+type WbsSectionDescriptor = {
+  id: string;
+  title: string;
+  path: string;
+  parentId: string | null;
+  parentPath: string | null;
+  level: number;
+  sortOrder: number;
+  isDerived: boolean;
+};
+const WBS_PATH_SEPARATOR = " / ";
 const CONSTRUCTLINE_RELATIONSHIP_TYPES: ConstructLineRelationshipType[] = ["FS", "SS", "FF", "SF"];
 const SCHEDULE_GRID_VIEW_OPTIONS: Array<{ value: ScheduleGridView; label: string }> = [
   { value: "all", label: "All" },
@@ -414,12 +436,12 @@ export function ScheduleRisk({
     },
   });
 
-  const milestones = data?.milestones ?? [];
-  const activities = data?.activities ?? [];
-  const delayFragments = data?.delayFragments ?? [];
-  const risks = data?.risks ?? [];
-  const updates = data?.updates ?? [];
-  const milestoneUpdates = data?.milestoneUpdates ?? [];
+  const milestones = data?.milestones ?? EMPTY_MILESTONES;
+  const activities = data?.activities ?? EMPTY_ACTIVITIES;
+  const delayFragments = data?.delayFragments ?? EMPTY_DELAY_FRAGMENTS;
+  const risks = data?.risks ?? EMPTY_SCHEDULE_RISKS;
+  const updates = data?.updates ?? EMPTY_SCHEDULE_UPDATES;
+  const milestoneUpdates = data?.milestoneUpdates ?? EMPTY_MILESTONE_UPDATES;
   const visibleMilestones = filterMilestones(milestones, milestoneView);
   const activeMilestoneCount = milestones.filter((m) => m.status !== "complete").length;
   const completedMilestoneCount = milestones.filter((m) => m.status === "complete").length;
@@ -1584,7 +1606,7 @@ export function CpmActivityPlanner({
   onPatchDelayFragment: (id: string, patch: DelayFragmentPatchInput) => Promise<void>;
   onDeleteDelayFragment: (id: string) => Promise<void>;
   isSavingDelayFragment: boolean;
-  onAddWbsSection: (name: string) => Promise<void>;
+  onAddWbsSection: (name: string, parentId?: string | null) => Promise<void>;
   onRenameWbsSection: (id: string, name: string) => Promise<void>;
   onReorderWbsSections: (orderedIds: string[]) => Promise<void>;
   isSavingWbs: boolean;
@@ -1762,33 +1784,40 @@ export function CpmActivityPlanner({
     });
     setShowDraft(true);
   };
-  const addWbsDivision = (divisionName: string) => {
+  const addWbsDivision = (divisionName: string, parentId: string | null = null) => {
     const division = cleanWbsDivisionInput(divisionName);
     if (!division) return;
-    if (hasWbsDivision(knownWbsDivisions, division)) {
+    const parentRow = parentId ? wbsDivisionRows.find((row) => row.id === parentId) : null;
+    const nextPath = parentRow
+      ? joinWbsPath([...splitWbsPath(parentRow.division), division])
+      : division;
+    if (hasWbsDivision(knownWbsDivisions, nextPath)) {
       toast.error("WBS already exists", {
-        description: `${division} is already in the schedule.`,
+        description: `${nextPath} is already in the schedule.`,
       });
       return;
     }
     setActivityOrder("wbs");
-    void onAddWbsSection(division);
+    void onAddWbsSection(division, parentId);
   };
   const renameWbsDivision = async (fromDivision: string, toDivision: string) => {
     const nextDivision = cleanWbsDivisionInput(toDivision);
     if (!nextDivision || nextDivision === fromDivision) return;
+    const row = wbsDivisionRows.find((item) => item.division === fromDivision);
+    const nextPath = row?.parentPath
+      ? joinWbsPath([...splitWbsPath(row.parentPath), nextDivision])
+      : nextDivision;
     if (
       hasWbsDivision(
         knownWbsDivisions.filter((division) => division !== fromDivision),
-        nextDivision,
+        nextPath,
       )
     ) {
       toast.error("WBS already exists", {
-        description: `${nextDivision} is already in the schedule.`,
+        description: `${nextPath} is already in the schedule.`,
       });
       return;
     }
-    const row = wbsDivisionRows.find((item) => item.division === fromDivision);
     if (!row?.id) return;
     await onRenameWbsSection(row.id, nextDivision);
   };
@@ -1863,6 +1892,8 @@ export function CpmActivityPlanner({
     ? "migration needed"
     : `${delaySummary.openCount} open / ${delaySummary.totalCount} total`;
   const isDataDateDirty = dataDateDraft !== (latestDataDate ?? "");
+  const scheduleReportTitle = getScheduleReportTitle(scheduleView);
+  const contractorName = project.organization_name || "Overwatch";
   const saveDataDate = () => {
     if (!dataDateDraft || dataDateUpdate.isPending || !isDataDateDirty) return;
     dataDateUpdate.mutate(dataDateDraft);
@@ -1886,8 +1917,12 @@ export function CpmActivityPlanner({
       <section className="constructline-cpm-print-shell" aria-label="Printable CPM schedule">
         <div className="constructline-cpm-print-titlebar">
           <div>
-            <div className="constructline-cpm-print-kicker">ConstructLine CPM grid</div>
-            <h1>{project.name} schedule</h1>
+            <div className="constructline-cpm-print-kicker">
+              {contractorName} · ConstructLine CPM
+            </div>
+            <h1>
+              {project.name} · {scheduleReportTitle}
+            </h1>
             <div className="constructline-cpm-print-meta">
               {project.job_number && <span>Job # {project.job_number}</span>}
               {project.client && <span>{project.client}</span>}
@@ -1915,11 +1950,11 @@ export function CpmActivityPlanner({
             </div>
           </div>
           <div className="constructline-cpm-print-status">
-            <span>Print setup</span>
-            <strong>11 x 17 landscape</strong>
-            <em>
-              Critical basis: {displayedCpmModel.criticalPathReliable ? "valid" : "provisional"}
-            </em>
+            <span>{scheduleReportTitle}</span>
+            <strong>
+              {displayedCpmModel.criticalPathReliable ? "Critical basis valid" : "Provisional"}
+            </strong>
+            <em>Finish {shortDate(displayedCpmModel.cpmFinishDate)}</em>
           </div>
         </div>
         <ActivityScheduleMatrix
@@ -1935,6 +1970,13 @@ export function CpmActivityPlanner({
           onOpenActivity={() => undefined}
           onDeleteActivity={() => undefined}
         />
+        <footer className="constructline-cpm-print-footer">
+          <span>{contractorName}</span>
+          <span>{scheduleReportTitle}</span>
+          <span>Project finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
+          <span>Data date {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}</span>
+          <span>Critical: red · Near critical: gold · Complete: green · Milestone: diamond</span>
+        </footer>
       </section>
       <div className="constructline-screen-workbench rounded-lg border border-hairline bg-surface p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -2859,12 +2901,13 @@ function WbsManagerDialog({
   divisions: WbsDivisionRow[];
   isSaving: boolean;
   onOpenChange: (open: boolean) => void;
-  onAddDivision: (division: string) => void;
+  onAddDivision: (division: string, parentId?: string | null) => void;
   onRenameDivision: (fromDivision: string, toDivision: string) => Promise<void>;
   onMoveDivision: (division: string, direction: -1 | 1) => void;
   onReorderDivisions: (orderedDivisions: string[]) => void;
 }) {
   const [newDivision, setNewDivision] = useState("");
+  const [newDivisionParentId, setNewDivisionParentId] = useState<string>("root");
   const [draftNames, setDraftNames] = useState<Record<string, string>>({});
   const [savingDivision, setSavingDivision] = useState<string | null>(null);
   const [draggingDivision, setDraggingDivision] = useState<string | null>(null);
@@ -2872,7 +2915,8 @@ function WbsManagerDialog({
 
   useEffect(() => {
     if (!open) return;
-    setDraftNames(Object.fromEntries(divisions.map((row) => [row.division, row.division])));
+    setDraftNames(Object.fromEntries(divisions.map((row) => [row.division, row.title])));
+    setNewDivisionParentId("root");
     setSavingDivision(null);
     setDraggingDivision(null);
     setDropTargetDivision(null);
@@ -2881,7 +2925,7 @@ function WbsManagerDialog({
   const addDivision = () => {
     const division = cleanWbsDivisionInput(newDivision);
     if (!division) return;
-    onAddDivision(division);
+    onAddDivision(division, newDivisionParentId === "root" ? null : newDivisionParentId);
     setNewDivision("");
   };
 
@@ -2924,8 +2968,8 @@ function WbsManagerDialog({
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="rounded-md border border-hairline bg-surface p-3">
-            <LabeledField label="New WBS / division">
-              <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px_auto] lg:items-end">
+              <LabeledField label="New WBS section">
                 <Input
                   value={newDivision}
                   onChange={(event) => setNewDivision(event.target.value)}
@@ -2935,21 +2979,46 @@ function WbsManagerDialog({
                       addDivision();
                     }
                   }}
-                  placeholder="12 - Furnishings / Casework"
+                  placeholder="Northwest corner"
                   className="h-10 min-w-0"
                   disabled={isSaving}
                 />
-                <Button
-                  type="button"
-                  className="h-10 gap-2 sm:w-auto"
-                  disabled={!newDivision.trim() || isSaving}
-                  onClick={addDivision}
+              </LabeledField>
+              <LabeledField label="Parent WBS">
+                <Select
+                  value={newDivisionParentId}
+                  onValueChange={setNewDivisionParentId}
+                  disabled={isSaving}
                 >
-                  <Plus className="h-4 w-4" />
-                  Add WBS
-                </Button>
-              </div>
-            </LabeledField>
+                  <SelectTrigger className="h-10 min-w-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="root">Top level WBS</SelectItem>
+                    {divisions
+                      .filter((row) => row.id)
+                      .map((row) => (
+                        <SelectItem key={row.id!} value={row.id!}>
+                          {formatIndentedWbsLabel(row)}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </LabeledField>
+              <Button
+                type="button"
+                className="h-10 gap-2"
+                disabled={!newDivision.trim() || isSaving}
+                onClick={addDivision}
+              >
+                <Plus className="h-4 w-4" />
+                Add WBS
+              </Button>
+            </div>
+            <div className="mt-2 text-xs text-muted-foreground">
+              Use parent WBS for locations, areas, rooms, trades, or subcontractor-specific work
+              packages under a main division.
+            </div>
           </div>
 
           <div className="grid gap-2">
@@ -2959,17 +3028,17 @@ function WbsManagerDialog({
               </div>
             ) : (
               divisions.map((row, index) => {
-                const draftName = draftNames[row.division] ?? row.division;
+                const draftName = draftNames[row.division] ?? row.title;
                 const cleanDraftName = cleanWbsDivisionInput(draftName);
                 const hasNameChange =
-                  normalizeWbsDivisionName(draftName) !== normalizeWbsDivisionName(row.division);
+                  normalizeWbsDivisionName(draftName) !== normalizeWbsDivisionName(row.title);
                 const isRowSaving = savingDivision === row.division || isSaving;
                 const canPersistRow = Boolean(row.id);
                 return (
                   <div
                     key={row.division}
                     className={cn(
-                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition md:grid-cols-[40px_minmax(0,1fr)_124px_122px_88px]",
+                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition md:grid-cols-[40px_minmax(0,1fr)_132px_122px_88px]",
                       draggingDivision === row.division && "opacity-55",
                       dropTargetDivision === row.division &&
                         draggingDivision !== row.division &&
@@ -3023,8 +3092,13 @@ function WbsManagerDialog({
                       <GripVertical className="h-4 w-4" />
                     </button>
                     <div className="min-w-0">
-                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                        WBS title
+                      <div className="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                        <span>WBS title</span>
+                        {row.parentPath && (
+                          <span className="truncate normal-case tracking-normal text-muted-foreground/85">
+                            under {row.parentPath}
+                          </span>
+                        )}
                       </div>
                       <Input
                         value={draftName}
@@ -3035,8 +3109,14 @@ function WbsManagerDialog({
                           }))
                         }
                         className="h-9 min-w-0"
+                        style={{ paddingLeft: `${Math.min(row.level, 4) * 14 + 12}px` }}
                         disabled={isRowSaving}
                       />
+                      {row.level > 0 && (
+                        <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                          Full path: {row.division}
+                        </div>
+                      )}
                     </div>
                     <div className="min-w-0 rounded border border-hairline bg-surface px-3 py-2">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
@@ -4374,6 +4454,15 @@ function describeScheduleGridView(
   return countText;
 }
 
+function getScheduleReportTitle(view: ScheduleGridView) {
+  if (view === "critical") return "Critical Path Report";
+  if (view === "lookahead") return "6-Week Lookahead Report";
+  if (view === "issues") return "Schedule Issues Report";
+  if (view === "milestones") return "Milestone Report";
+  if (view === "active") return "Active Schedule Report";
+  return "Full CPM Schedule Report";
+}
+
 function compareCpmTasksByStart(a: ConstructLineCpmTask, b: ConstructLineCpmTask) {
   return (
     a.visualStartDate.localeCompare(b.visualStartDate) ||
@@ -4413,7 +4502,7 @@ function groupCpmTasksByWbsDivision(
 ) {
   const groups = new Map<string, ConstructLineCpmTask[]>();
   for (const task of tasks) {
-    const division = task.activity.division || "General";
+    const division = normalizeWbsDivisionName(task.activity.division);
     groups.set(division, [...(groups.get(division) ?? []), task]);
   }
   return Array.from(groups.entries())
@@ -4439,18 +4528,29 @@ function compareWbsDivision(
 
 function getWbsDivisionSortKey(value?: string | null) {
   const label = normalizeWbsDivisionName(value);
-  const numericPrefix = label.match(/^(\d+)/)?.[1];
+  const numericPrefix = splitWbsPath(label)[0]?.match(/^(\d+)/)?.[1];
   if (numericPrefix) return { rank: Number(numericPrefix), label };
   if (/milestones?/i.test(label)) return { rank: 900, label };
   return { rank: 500, label };
 }
 
 function normalizeWbsDivisionName(value?: string | null) {
-  return (value || "General").trim() || "General";
+  return joinWbsPath(splitWbsPath(value));
 }
 
 function cleanWbsDivisionInput(value?: string | null) {
   return (value ?? "").trim();
+}
+
+function splitWbsPath(value?: string | null) {
+  return (value || "General")
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function joinWbsPath(parts: string[]) {
+  return (parts.length > 0 ? parts : ["General"]).join(WBS_PATH_SEPARATOR);
 }
 
 function getWbsOrderIndex(division: string, order: string[]) {
@@ -4459,21 +4559,15 @@ function getWbsOrderIndex(division: string, order: string[]) {
 }
 
 function hasWbsDivision(divisions: string[], division: string) {
-  const target = division.toLocaleLowerCase();
-  return divisions.some((item) => item.toLocaleLowerCase() === target);
+  const target = normalizeWbsDivisionName(division).toLocaleLowerCase();
+  return divisions.some((item) => normalizeWbsDivisionName(item).toLocaleLowerCase() === target);
 }
 
 function buildWbsDivisionOrder(
   activities: ScheduleActivityRow[],
   sections: ScheduleWbsSectionRow[],
 ) {
-  const sectionOrder = [...sections]
-    .sort(
-      (a, b) =>
-        a.sort_order - b.sort_order ||
-        naturalScheduleCompare(normalizeWbsDivisionName(a.name), normalizeWbsDivisionName(b.name)),
-    )
-    .map((section) => normalizeWbsDivisionName(section.name));
+  const sectionOrder = buildWbsSectionDescriptors(sections).map((section) => section.path);
   const activityDivisions = Array.from(
     new Set(activities.map((activity) => normalizeWbsDivisionName(activity.division))),
   ).sort((a, b) => compareWbsDivision(a, b));
@@ -4499,26 +4593,33 @@ function buildWbsDivisionRows(
   wbsDivisionOrder: string[] = [],
 ): WbsDivisionRow[] {
   const rows = new Map<string, WbsDivisionRow>();
-  for (const section of sections) {
-    const normalized = normalizeWbsDivisionName(section.name);
-    const isDerived = section.id.startsWith("derived-");
-    rows.set(normalized, {
-      id: isDerived ? null : section.id,
-      division: normalized,
+  for (const section of buildWbsSectionDescriptors(sections)) {
+    rows.set(section.path, {
+      id: section.isDerived ? null : section.id,
+      division: section.path,
+      title: section.title,
+      parentId: section.parentId,
+      parentPath: section.parentPath,
+      level: section.level,
       activityCount: 0,
       firstStart: null,
       lastFinish: null,
       isPlaceholder: true,
-      isPersisted: !isDerived,
+      isPersisted: !section.isDerived,
     });
   }
   for (const activity of activities) {
     const division = normalizeWbsDivisionName(activity.division);
+    const parts = splitWbsPath(division);
     const existing =
       rows.get(division) ??
       ({
         id: null,
         division,
+        title: parts[parts.length - 1] ?? division,
+        parentId: null,
+        parentPath: parts.length > 1 ? joinWbsPath(parts.slice(0, -1)) : null,
+        level: Math.max(0, parts.length - 1),
         activityCount: 0,
         firstStart: null,
         lastFinish: null,
@@ -4536,6 +4637,58 @@ function buildWbsDivisionRows(
   return Array.from(rows.values()).sort((a, b) =>
     compareWbsDivision(a.division, b.division, wbsDivisionOrder),
   );
+}
+
+function buildWbsSectionDescriptors(sections: ScheduleWbsSectionRow[]): WbsSectionDescriptor[] {
+  const normalizedSections = sections.map((section) => ({
+    ...section,
+    name: cleanWbsDivisionInput(section.name) || "General",
+  }));
+  const byParent = new Map<string, ScheduleWbsSectionRow[]>();
+  const byId = new Map(normalizedSections.map((section) => [section.id, section]));
+  for (const section of normalizedSections) {
+    const parentKey = section.parent_id && byId.has(section.parent_id) ? section.parent_id : "root";
+    byParent.set(parentKey, [...(byParent.get(parentKey) ?? []), section]);
+  }
+  const sortSiblings = (rows: ScheduleWbsSectionRow[]) =>
+    [...rows].sort(
+      (a, b) =>
+        a.sort_order - b.sort_order ||
+        naturalScheduleCompare(normalizeWbsDivisionName(a.name), normalizeWbsDivisionName(b.name)),
+    );
+  const descriptors: WbsSectionDescriptor[] = [];
+  const visit = (
+    section: ScheduleWbsSectionRow,
+    parentPath: string | null,
+    level: number,
+    trail = new Set<string>(),
+  ) => {
+    if (trail.has(section.id)) return;
+    const title = cleanWbsDivisionInput(section.name) || "General";
+    const path = parentPath ? joinWbsPath([...splitWbsPath(parentPath), title]) : title;
+    descriptors.push({
+      id: section.id,
+      title,
+      path,
+      parentId: section.parent_id,
+      parentPath,
+      level,
+      sortOrder: section.sort_order,
+      isDerived: section.id.startsWith("derived-"),
+    });
+    const nextTrail = new Set(trail);
+    nextTrail.add(section.id);
+    for (const child of sortSiblings(byParent.get(section.id) ?? [])) {
+      visit(child, path, level + 1, nextTrail);
+    }
+  };
+  for (const root of sortSiblings(byParent.get("root") ?? [])) visit(root, null, 0);
+  return descriptors;
+}
+
+function formatIndentedWbsLabel(row: WbsDivisionRow) {
+  const indent = row.level > 0 ? `${"· ".repeat(Math.min(row.level, 4))}` : "";
+  return `${indent}${row.division}`;
 }
 
 function earlierDate(current: string | null, next?: string | null) {

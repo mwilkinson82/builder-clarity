@@ -21,10 +21,15 @@ import {
   type MilestoneRow,
   type ScheduleActivityRow,
   type ScheduleDelayFragmentRow,
+  type ScheduleRiskRow,
   type ScheduleUpdateRow,
   type ScheduleWbsSectionRow,
 } from "@/lib/schedule.functions";
 import { computeScheduleVarianceWeeks } from "@/lib/ior";
+
+type ScheduleQueryCache = {
+  wbsSections?: ScheduleWbsSectionRow[];
+} & Record<string, unknown>;
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId/schedule")({
   ssr: false,
@@ -72,6 +77,10 @@ function ScheduleWorkspacePage() {
   const updates = useMemo(
     () => (scheduleQuery.data?.updates ?? []) as ScheduleUpdateRow[],
     [scheduleQuery.data?.updates],
+  );
+  const risks = useMemo(
+    () => (scheduleQuery.data?.risks ?? []) as ScheduleRiskRow[],
+    [scheduleQuery.data?.risks],
   );
   const delayFragments = useMemo(
     () => (scheduleQuery.data?.delayFragments ?? []) as ScheduleDelayFragmentRow[],
@@ -164,7 +173,8 @@ function ScheduleWorkspacePage() {
   });
 
   const wbsCreate = useMutation({
-    mutationFn: (name: string) => createWbsSectionFn({ data: { projectId, name } }),
+    mutationFn: ({ name, parentId }: { name: string; parentId?: string | null }) =>
+      createWbsSectionFn({ data: { projectId, name, parentId: parentId ?? null } }),
     onSuccess: async () => {
       await refreshSchedule();
       toast.success("WBS added", {
@@ -196,14 +206,35 @@ function ScheduleWorkspacePage() {
 
   const wbsReorder = useMutation({
     mutationFn: (orderedIds: string[]) => reorderWbsSectionsFn({ data: { projectId, orderedIds } }),
+    onMutate: async (orderedIds) => {
+      const toastId = toast.loading("Saving WBS order...");
+      await qc.cancelQueries({ queryKey: ["schedule", projectId] });
+      const previous = qc.getQueryData(["schedule", projectId]);
+      qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
+        if (!current?.wbsSections) return current;
+        const orderMap = new Map(orderedIds.map((id, index) => [id, (index + 1) * 10]));
+        return {
+          ...current,
+          wbsSections: current.wbsSections.map((section: ScheduleWbsSectionRow) => ({
+            ...section,
+            sort_order: orderMap.get(section.id) ?? section.sort_order,
+          })),
+        };
+      });
+      return { previous, toastId };
+    },
     onSuccess: async () => {
       await refreshSchedule();
       toast.success("WBS order saved");
     },
-    onError: (error) => {
+    onError: (error, _orderedIds, context) => {
+      if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS order did not save", {
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
+    },
+    onSettled: (_data, _error, _orderedIds, context) => {
+      if (context?.toastId) toast.dismiss(context.toastId);
     },
   });
 
@@ -340,6 +371,13 @@ function ScheduleWorkspacePage() {
         />
       </section>
 
+      <ScheduleWorkspaceOperations
+        milestones={milestones}
+        risks={risks}
+        updates={updates}
+        project={project}
+      />
+
       <CpmActivityPlanner
         activities={activities}
         wbsSections={wbsSections}
@@ -371,8 +409,8 @@ function ScheduleWorkspacePage() {
           delayFragmentUpdate.isPending ||
           delayFragmentDelete.isPending
         }
-        onAddWbsSection={async (name) => {
-          await wbsCreate.mutateAsync(name);
+        onAddWbsSection={async (name, parentId) => {
+          await wbsCreate.mutateAsync({ name, parentId });
         }}
         onRenameWbsSection={async (id, name) => {
           await wbsRename.mutateAsync({ id, name });
@@ -462,6 +500,165 @@ function ScheduleMetricCard({
         <div className={`text-2xl font-semibold tabular ${toneClass}`}>{value}</div>
         <div className="mt-1 text-xs text-muted-foreground">{sub}</div>
       </div>
+    </div>
+  );
+}
+
+function ScheduleWorkspaceOperations({
+  milestones,
+  risks,
+  updates,
+  project,
+}: {
+  milestones: MilestoneRow[];
+  risks: ScheduleRiskRow[];
+  updates: ScheduleUpdateRow[];
+  project: ProjectRow;
+}) {
+  const activeMilestones = milestones
+    .filter((milestone) => milestone.status !== "complete")
+    .sort((a, b) =>
+      (a.forecast_date ?? a.baseline_date ?? "9999-12-31").localeCompare(
+        b.forecast_date ?? b.baseline_date ?? "9999-12-31",
+      ),
+    )
+    .slice(0, 4);
+  const delayedDecisions = risks.filter((risk) => risk.kind === "critical_decision").slice(0, 4);
+  const procurementRisks = risks.filter((risk) => risk.kind === "procurement").slice(0, 4);
+  const tradeRisks = risks.filter((risk) => risk.kind === "trade_performance").slice(0, 4);
+
+  return (
+    <section className="constructline-screen-ops mb-4 grid gap-3 xl:grid-cols-5">
+      <ScheduleOpsCard
+        label="Schedule update history"
+        title={`${updates.length} saved ${updates.length === 1 ? "update" : "updates"}`}
+        sub={`Baseline ${formatDate(project.baseline_completion_date)} · Forecast ${formatDate(
+          project.forecast_completion_date,
+        )}`}
+      >
+        {updates.length === 0 ? (
+          <ScheduleOpsEmpty>No saved schedule updates yet.</ScheduleOpsEmpty>
+        ) : (
+          updates
+            .slice(0, 4)
+            .map((update) => (
+              <ScheduleOpsItem
+                key={update.id}
+                title={`Update #${update.update_number} · ${formatDate(update.data_date)}`}
+                meta={`${formatVariance(update.variance_weeks)} vs baseline · finish ${formatDate(
+                  update.forecast_completion_date,
+                )}`}
+              />
+            ))
+        )}
+      </ScheduleOpsCard>
+
+      <ScheduleOpsCard
+        label="Interim milestones"
+        title={`${activeMilestones.length} active`}
+        sub="Forecast checkpoints"
+      >
+        {activeMilestones.length === 0 ? (
+          <ScheduleOpsEmpty>No active interim milestones.</ScheduleOpsEmpty>
+        ) : (
+          activeMilestones.map((milestone) => (
+            <ScheduleOpsItem
+              key={milestone.id}
+              title={milestone.name}
+              meta={`${formatDate(milestone.forecast_date ?? milestone.baseline_date)} · ${milestone.status.replace(
+                "_",
+                " ",
+              )}`}
+            />
+          ))
+        )}
+      </ScheduleOpsCard>
+
+      <RiskOpsCard
+        label="Critical delayed decisions"
+        risks={delayedDecisions}
+        empty="No critical decision risks."
+      />
+      <RiskOpsCard
+        label="Procurement risks"
+        risks={procurementRisks}
+        empty="No procurement risks."
+      />
+      <RiskOpsCard
+        label="Trade performance risks"
+        risks={tradeRisks}
+        empty="No trade performance risks."
+      />
+    </section>
+  );
+}
+
+function RiskOpsCard({
+  label,
+  risks,
+  empty,
+}: {
+  label: string;
+  risks: ScheduleRiskRow[];
+  empty: string;
+}) {
+  return (
+    <ScheduleOpsCard label={label} title={`${risks.length} open`} sub="Schedule-linked risk">
+      {risks.length === 0 ? (
+        <ScheduleOpsEmpty>{empty}</ScheduleOpsEmpty>
+      ) : (
+        risks.map((risk) => (
+          <ScheduleOpsItem
+            key={risk.id}
+            title={risk.title}
+            meta={`${risk.owner || "Unassigned"} · ${
+              risk.schedule_impact_weeks == null
+                ? "No duration"
+                : `${risk.schedule_impact_weeks} wk`
+            }`}
+          />
+        ))
+      )}
+    </ScheduleOpsCard>
+  );
+}
+
+function ScheduleOpsCard({
+  label,
+  title,
+  sub,
+  children,
+}: {
+  label: string;
+  title: string;
+  sub: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border border-hairline bg-card p-4">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-2 text-lg font-semibold text-foreground">{title}</div>
+      <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
+      <div className="mt-3 grid gap-2">{children}</div>
+    </div>
+  );
+}
+
+function ScheduleOpsItem({ title, meta }: { title: string; meta: string }) {
+  return (
+    <div className="min-w-0 rounded border border-hairline bg-surface px-3 py-2">
+      <div className="truncate text-sm font-semibold text-foreground">{title}</div>
+      <div className="mt-1 truncate text-xs text-muted-foreground">{meta}</div>
+    </div>
+  );
+}
+
+function ScheduleOpsEmpty({ children }: { children: ReactNode }) {
+  return (
+    <div className="rounded border border-dashed border-hairline bg-surface/70 px-3 py-3 text-sm text-muted-foreground">
+      {children}
     </div>
   );
 }
