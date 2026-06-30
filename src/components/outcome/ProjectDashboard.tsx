@@ -274,7 +274,7 @@ export function ProjectDashboard({
         </div>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(320px,0.62fr)]">
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(320px,0.62fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(290px,0.44fr)_minmax(320px,0.5fr)]">
         <div className="rounded-lg border border-hairline bg-card p-5 shadow-card lg:p-7">
           <PanelTitle icon={CircleDollarSign} label="Financial Outcome" />
           <div className="mt-5 grid gap-3">
@@ -310,7 +310,7 @@ export function ProjectDashboard({
           </div>
         </div>
 
-        <div className="grid gap-5">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-1 2xl:contents">
           <div className="rounded-lg border border-hairline bg-card p-5 shadow-card lg:p-6">
             <div className="mb-5 flex items-start justify-between gap-3">
               <PanelTitle icon={CalendarClock} label="Schedule Signal" />
@@ -320,7 +320,7 @@ export function ProjectDashboard({
                 {schedule.label} - {Math.round(schedule.score)}%
               </span>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-1">
               <DashboardMetric
                 label="Baseline"
                 value={formatDate(project.baseline_completion_date)}

@@ -151,6 +151,7 @@ const PROJECT_TAB_VALUES = [
 type ProjectTabValue = (typeof PROJECT_TAB_VALUES)[number];
 
 const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
+  "dashboard",
   "schedule",
   "risk-tally",
   "todos",
@@ -1437,7 +1438,7 @@ function ProjectPage() {
               : "lg:grid-cols-[238px_minmax(0,1fr)]"
           }`}
         >
-          <aside className="lg:sticky lg:top-6">
+          <aside className="min-w-0 lg:sticky lg:top-6">
             <TooltipProvider delayDuration={120}>
               <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1.5 shadow-card ring-1 ring-foreground/5 lg:flex-col lg:items-stretch lg:overflow-visible">
                 <ProjectNavTooltip enabled={compactProjectNav} label="CRM" detail="Relationships">
