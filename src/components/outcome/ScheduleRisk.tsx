@@ -4132,20 +4132,34 @@ function ActivityScheduleMatrix({
 }) {
   const totalActivities = model.tasks.length;
   const isFitZoom = !isPrintMode && dayPx === CONSTRUCTLINE_FIT_DAY_PX;
-  const tableWidth = isPrintMode ? CONSTRUCTLINE_PRINT_TABLE_WIDTH : isFitZoom ? 760 : 860;
   const matrixScrollRef = useRef<HTMLDivElement | null>(null);
   const [matrixViewportWidth, setMatrixViewportWidth] = useState(0);
-  const fitTimelineTargetWidth = Math.max(560, matrixViewportWidth - tableWidth);
-  const printDayPx = CONSTRUCTLINE_PRINT_TIMELINE_WIDTH / Math.max(1, model.totalTimelineDays);
-  const fitDayPx = Math.max(
-    CONSTRUCTLINE_FIT_DAY_PX,
-    fitTimelineTargetWidth / Math.max(1, model.totalTimelineDays),
+  const measuredMatrixWidth =
+    matrixViewportWidth > 0 ? matrixViewportWidth : isFocusMode ? 1320 : 1180;
+  const fitTableWidth = Math.round(
+    Math.min(
+      isFocusMode ? 760 : 680,
+      Math.max(isFocusMode ? 620 : 600, measuredMatrixWidth * (isFocusMode ? 0.42 : 0.45)),
+    ),
   );
+  const tableWidth = isPrintMode
+    ? CONSTRUCTLINE_PRINT_TABLE_WIDTH
+    : isFitZoom
+      ? fitTableWidth
+      : 860;
+  const fitTimelineTargetWidth =
+    matrixViewportWidth > 0
+      ? Math.max(360, measuredMatrixWidth - tableWidth - 1)
+      : isFocusMode
+        ? 720
+        : 640;
+  const printDayPx = CONSTRUCTLINE_PRINT_TIMELINE_WIDTH / Math.max(1, model.totalTimelineDays);
+  const fitDayPx = Math.max(0.85, fitTimelineTargetWidth / Math.max(1, model.totalTimelineDays));
   const activeDayPx = isPrintMode ? printDayPx : isFitZoom ? fitDayPx : dayPx;
   const tableColumns = isPrintMode
     ? "62px minmax(170px,1fr) 42px 58px 58px 48px 40px 42px"
     : isFitZoom
-      ? "76px minmax(220px,1fr) 58px 78px 78px 70px 54px 58px"
+      ? "64px minmax(180px,1fr) 44px 64px 64px 58px 44px 48px"
       : "82px minmax(260px,1fr) 64px 86px 86px 74px 56px 64px";
   const rowHeight = isPrintMode ? 22 : 64;
   const groupHeight = isPrintMode ? 16 : 32;
@@ -4153,7 +4167,7 @@ function ActivityScheduleMatrix({
   const timelineWidth = isPrintMode
     ? CONSTRUCTLINE_PRINT_TIMELINE_WIDTH
     : isFitZoom
-      ? Math.ceil(model.totalTimelineDays * activeDayPx)
+      ? Math.max(fitTimelineTargetWidth, Math.ceil(model.totalTimelineDays * activeDayPx))
       : Math.max(720, model.totalTimelineDays * activeDayPx);
   useEffect(() => {
     if (isPrintMode || model.groups.length === 0 || typeof ResizeObserver === "undefined") return;
@@ -4349,10 +4363,11 @@ function ActivityScheduleMatrix({
                   <div
                     key={`${band.label}-${band.x}`}
                     className="absolute inset-y-0 border-l border-hairline/80 px-2"
+                    title={band.label}
                     style={{ left: band.x, width: band.width }}
                   >
-                    <div className="flex h-full items-center truncate text-muted-foreground">
-                      {band.label}
+                    <div className="flex h-full items-center text-muted-foreground">
+                      {band.width >= 46 ? band.label : ""}
                     </div>
                   </div>
                 ))}
