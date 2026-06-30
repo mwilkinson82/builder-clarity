@@ -855,11 +855,8 @@ export function WipAnalysisPanel({
     );
   }
   const underBilled = wip.total_over_under < 0;
-  const overUnderLabel = underBilled
-    ? "Underbilled"
-    : wip.total_over_under > 0
-      ? "Overbilled"
-      : "Current";
+  const overBilled = wip.total_over_under > 0;
+  const overUnderLabel = underBilled ? "Underbilled" : overBilled ? "Overbilled" : "Current";
 
   return (
     <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
@@ -873,23 +870,39 @@ export function WipAnalysisPanel({
             so overbilling or underbilling is visible before the next pay application.
           </p>
         </div>
-        <div
-          className={`rounded-md border px-3 py-2 text-sm ${
-            underBilled
-              ? "border-success/30 bg-success/10 text-success"
-              : wip.total_over_under > 0
-                ? "border-warning/30 bg-warning/10 text-warning"
-                : "border-hairline bg-surface text-muted-foreground"
-          }`}
-        >
-          {overUnderLabel}: {fmtUSD(Math.abs(wip.total_over_under))}
+        <div className="flex flex-col gap-2 md:items-end">
+          <div
+            className={`rounded-md border px-3 py-2 text-sm font-semibold ${
+              underBilled
+                ? "border-success/35 bg-success/10 text-success"
+                : overBilled
+                  ? "border-danger/35 bg-danger/10 text-danger"
+                  : "border-hairline bg-surface text-muted-foreground"
+            }`}
+          >
+            {overUnderLabel}: {fmtUSD(Math.abs(wip.total_over_under))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full bg-success" />
+              Green = underbilled
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full bg-danger" />
+              Red = overbilled
+            </span>
+          </div>
         </div>
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-4">
         <BillingMetric label="Total earned" value={fmtUSD(wip.total_earned)} />
         <BillingMetric label="Total billed" value={fmtUSD(wip.total_billed)} />
-        <BillingMetric label="Over / under" value={fmtUSD(wip.total_over_under)} />
+        <BillingMetric
+          label="Over / under"
+          value={fmtUSD(wip.total_over_under)}
+          tone={underBilled ? "success" : overBilled ? "danger" : undefined}
+        />
         <BillingMetric
           label="Est. GP"
           value={fmtUSD(wip.estimated_gross_profit)}
@@ -947,12 +960,18 @@ function WipBucketRow({
   const [value, setValue] = useState(String(Math.round(earnedPct)));
   const overUnderClass =
     bucket.over_under_billing > 0
-      ? "text-warning"
+      ? "text-danger"
       : bucket.over_under_billing < 0
         ? "text-success"
         : "";
+  const overUnderRowClass =
+    bucket.over_under_billing > 0
+      ? "border-danger/30 bg-danger/5"
+      : bucket.over_under_billing < 0
+        ? "border-success/30 bg-success/5"
+        : "bg-card";
   return (
-    <div className="rounded-md border border-hairline bg-card p-4">
+    <div className={`rounded-md border border-hairline p-4 ${overUnderRowClass}`}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1048,13 +1067,25 @@ function BillingDetail({
   );
 }
 
-function BillingMetric({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function BillingMetric({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "success" | "danger";
+}) {
+  const toneClass =
+    tone === "success" ? "text-success" : tone === "danger" ? "text-danger" : "text-foreground";
   return (
     <div className="rounded-md border border-hairline bg-surface px-3 py-2">
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
-      <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">{value}</div>
+      <div className={`pt-2 text-lg font-semibold tabular leading-none ${toneClass}`}>{value}</div>
       {sub ? <div className="mt-1 text-xs text-muted-foreground">{sub}</div> : null}
     </div>
   );

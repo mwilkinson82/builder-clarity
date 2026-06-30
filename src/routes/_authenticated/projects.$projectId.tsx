@@ -177,6 +177,8 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
 
 const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
 const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
+const BILLING_WORKSPACE_TAB_TRIGGER_CLASS =
+  "whitespace-nowrap rounded-md border border-accent/25 bg-card px-3 py-2 text-foreground shadow-sm transition hover:border-accent/40 hover:bg-accent/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent/35 data-[state=active]:border-accent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow";
 
 type InvoiceCheckoutPayload = {
   ok?: boolean;
@@ -2526,47 +2528,26 @@ function BillingWorkspace({
             Remaining to bill is forecasted contract less billed to date. Open A/R is billed less
             paid and retainage.
           </p>
-          <TabsList className="mt-5 h-auto w-full justify-start gap-1 overflow-x-auto rounded-md border border-hairline bg-card p-1.5 shadow-card ring-1 ring-foreground/5 sm:flex-wrap sm:overflow-visible">
-            <TabsTrigger
-              value="billing"
-              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
-            >
+          <TabsList className="mt-5 h-auto w-full justify-start gap-1.5 overflow-x-auto rounded-lg border border-accent/25 bg-accent/5 p-1.5 shadow-card ring-1 ring-accent/10 sm:flex-wrap sm:overflow-visible">
+            <TabsTrigger value="billing" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Billing
             </TabsTrigger>
-            <TabsTrigger
-              value="pay-app-detail"
-              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
-            >
+            <TabsTrigger value="pay-app-detail" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Pay App Detail
             </TabsTrigger>
-            <TabsTrigger
-              value="project-costs"
-              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
-            >
+            <TabsTrigger value="project-costs" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Project Costs
             </TabsTrigger>
-            <TabsTrigger
-              value="wip-analysis"
-              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
-            >
+            <TabsTrigger value="wip-analysis" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               WIP Analysis
             </TabsTrigger>
-            <TabsTrigger
-              value="pay-app-ledger"
-              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
-            >
+            <TabsTrigger value="pay-app-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Pay App Ledger
             </TabsTrigger>
-            <TabsTrigger
-              value="invoice-ledger"
-              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
-            >
+            <TabsTrigger value="invoice-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Invoices & Payments
             </TabsTrigger>
-            <TabsTrigger
-              value="pending-cos"
-              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
-            >
+            <TabsTrigger value="pending-cos" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Pending COs
             </TabsTrigger>
           </TabsList>
