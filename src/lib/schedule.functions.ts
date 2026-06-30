@@ -709,7 +709,7 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       schedule_money_exposure: data.schedule_money_exposure,
       schedule_money_recovery: data.schedule_money_recovery,
       money_notes: data.money_notes,
-    };
+    } as any;
 
     let { data: update, error: insertError } = await context.supabase
       .from("schedule_updates")
