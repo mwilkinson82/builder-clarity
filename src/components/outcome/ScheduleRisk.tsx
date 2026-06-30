@@ -191,6 +191,7 @@ type WbsDivisionRow = {
   activityCount: number;
   firstStart: string | null;
   lastFinish: string | null;
+  childCount: number;
   isPlaceholder: boolean;
   isPersisted: boolean;
 };
@@ -1658,7 +1659,6 @@ export function CpmActivityPlanner({
     [wbsDivisionRows],
   );
   const isWbsMigrationRequired = wbsPersistence === "migration_required";
-  const isDelayFragmentMigrationRequired = delayFragmentPersistence === "migration_required";
   const delaySummary = useMemo(() => buildDelayFragmentSummary(delayFragments), [delayFragments]);
   const baseCpmModel = useMemo(
     () =>
@@ -1940,12 +1940,6 @@ export function CpmActivityPlanner({
     (total, task) => total + task.predecessorKeys.length,
     0,
   );
-  const delayFragmentStatValue = isDelayFragmentMigrationRequired
-    ? "Pending"
-    : String(delaySummary.openDays);
-  const delayFragmentStatSub = isDelayFragmentMigrationRequired
-    ? "setup pending"
-    : `${delaySummary.openCount} open / ${delaySummary.totalCount} total`;
   const isDataDateDirty = dataDateDraft !== (latestDataDate ?? "");
   const scheduleReportTitle = getScheduleReportTitle(scheduleView);
   const contractorName = project.organization_name || "Overwatch";
@@ -2062,147 +2056,11 @@ export function CpmActivityPlanner({
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-5">
-          <ScheduleWorkbenchStat
-            label="CPM health"
-            value={`${cpmModel.healthScore}%`}
-            sub="logic quality"
-            tone={cpmModel.healthTone}
-          />
-          <ScheduleWorkbenchStat
-            label="Critical"
-            value={String(cpmModel.criticalCount)}
-            sub={
-              cpmModel.criticalPathReliable
-                ? `${cpmModel.nearCriticalCount} near-critical`
-                : "provisional until open ends close"
-            }
-            tone={
-              cpmModel.criticalPathReliable
-                ? cpmModel.criticalCount > 0
-                  ? "danger"
-                  : "default"
-                : "warning"
-            }
-          />
-          <ScheduleWorkbenchStat
-            label="Open ends"
-            value={`${cpmModel.openStartCount}/${cpmModel.openFinishCount}`}
-            sub="starts / finishes"
-            tone={
-              cpmModel.openStartCount > 1 || cpmModel.openFinishCount > 1 ? "warning" : "success"
-            }
-          />
-          <ScheduleWorkbenchStat
-            label="Max stack"
-            value={String(cpmModel.maxStack)}
-            sub={cpmModel.maxStackLabel}
-            tone={cpmModel.maxStack >= 4 ? "warning" : "default"}
-          />
-          <ScheduleWorkbenchStat
-            label="Delay fragments"
-            value={delayFragmentStatValue}
-            sub={delayFragmentStatSub}
-            tone={
-              isDelayFragmentMigrationRequired
-                ? "warning"
-                : delaySummary.openDays > 0
-                  ? "danger"
-                  : "success"
-            }
-          />
-        </div>
-
         {isWbsMigrationRequired && (
           <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
             Saved WBS sections are still being enabled for this project. Sections are visible from
             activity divisions now; WBS add, rename, and drag reorder will save once setup is
             complete.
-          </div>
-        )}
-
-        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="rounded-md border border-hairline bg-card p-4">
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              <Gauge className="h-3.5 w-3.5" />
-              Schedule intelligence
-            </div>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
-              {cpmModel.recommendations.slice(0, 4).map((item) => (
-                <div
-                  key={item}
-                  className="rounded border border-hairline bg-surface px-3 py-2 text-sm text-foreground"
-                >
-                  {item}
-                </div>
-              ))}
-            </div>
-            {cpmModel.diagnostics.length > 0 && (
-              <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
-                {cpmModel.diagnostics.slice(0, 2).join(" ")}
-              </div>
-            )}
-            {delaySummary.openCount > 0 && (
-              <div className="mt-3 rounded border border-danger/20 bg-danger/10 px-3 py-2 text-xs text-danger">
-                Delay ledger has {delaySummary.openCount} open fragment
-                {delaySummary.openCount === 1 ? "" : "s"} totaling {delaySummary.openDays} days.
-                {delaySummary.driverLabels.length > 0
-                  ? ` Drivers: ${delaySummary.driverLabels.join(", ")}.`
-                  : ""}
-              </div>
-            )}
-          </div>
-          <div className="rounded-md border border-hairline bg-card p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                <Layers className="h-3.5 w-3.5" />
-                Activity stacking
-              </div>
-              <div className="text-xs font-semibold tabular text-foreground">
-                {cpmModel.maxStack} peak
-              </div>
-            </div>
-            <StackingMiniMap model={cpmModel} />
-          </div>
-        </div>
-
-        <ScheduleQualityQueue
-          items={qualityQueueItems}
-          onShowIssues={() => setScheduleView("issues")}
-          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
-        />
-
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
-          <ScheduleWorkbenchStat
-            label="Activities"
-            value={String(sortedActivities.length)}
-            sub="in plan"
-          />
-          <ScheduleWorkbenchStat
-            label="Complete"
-            value={`${completedActivities}/${sortedActivities.length || 0}`}
-            sub="progress count"
-            tone={completedActivities > 0 ? "success" : "default"}
-          />
-          <ScheduleWorkbenchStat
-            label="Logic ties"
-            value={String(activitiesWithLogic)}
-            sub="pred / succ"
-            tone={activitiesWithLogic > 0 ? "success" : "warning"}
-          />
-          <ScheduleWorkbenchStat
-            label="Dated"
-            value={`${activitiesWithDates}/${sortedActivities.length || 0}`}
-            sub={`${shortDate(bounds.startLabel)} to ${shortDate(bounds.endLabel)}`}
-          />
-        </div>
-
-        {milestones.length > 0 && milestoneSeedRows.length > 0 && (
-          <div className="mt-4 rounded-md border border-hairline bg-card p-3 text-sm text-muted-foreground">
-            <span className="font-semibold text-foreground">Milestone bridge:</span>{" "}
-            {milestoneSeedRows.length} milestone {milestoneSeedRows.length === 1 ? "is" : "are"}{" "}
-            ready to become CPM activity rows. Build them once, then add logic ties and update
-            percent complete from the schedule workbench.
           </div>
         )}
 
@@ -2259,7 +2117,7 @@ export function CpmActivityPlanner({
                   className="h-10"
                 />
               </LabeledField>
-              <LabeledField label="Division">
+              <LabeledField label="WBS / area">
                 <ActivityDivisionInput
                   value={draft.division}
                   onChange={(division) => setDraft({ ...draft, division })}
@@ -2387,6 +2245,91 @@ export function CpmActivityPlanner({
             if (activity) confirmDeleteActivity(activity);
           }}
         />
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="rounded-md border border-hairline bg-card p-4">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              <Gauge className="h-3.5 w-3.5" />
+              Schedule intelligence
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {cpmModel.recommendations.slice(0, 4).map((item) => (
+                <div
+                  key={item}
+                  className="rounded border border-hairline bg-surface px-3 py-2 text-sm text-foreground"
+                >
+                  {item}
+                </div>
+              ))}
+            </div>
+            {cpmModel.diagnostics.length > 0 && (
+              <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
+                {cpmModel.diagnostics.slice(0, 2).join(" ")}
+              </div>
+            )}
+            {delaySummary.openCount > 0 && (
+              <div className="mt-3 rounded border border-danger/20 bg-danger/10 px-3 py-2 text-xs text-danger">
+                Delay ledger has {delaySummary.openCount} open fragment
+                {delaySummary.openCount === 1 ? "" : "s"} totaling {delaySummary.openDays} days.
+                {delaySummary.driverLabels.length > 0
+                  ? ` Drivers: ${delaySummary.driverLabels.join(", ")}.`
+                  : ""}
+              </div>
+            )}
+          </div>
+          <div className="rounded-md border border-hairline bg-card p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                <Layers className="h-3.5 w-3.5" />
+                Activity stacking
+              </div>
+              <div className="text-xs font-semibold tabular text-foreground">
+                {cpmModel.maxStack} peak
+              </div>
+            </div>
+            <StackingMiniMap model={cpmModel} />
+          </div>
+        </div>
+
+        <ScheduleQualityQueue
+          items={qualityQueueItems}
+          onShowIssues={() => setScheduleView("issues")}
+          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
+        />
+
+        <div className="mt-5 grid gap-3 md:grid-cols-4">
+          <ScheduleWorkbenchStat
+            label="Activities"
+            value={String(sortedActivities.length)}
+            sub="in plan"
+          />
+          <ScheduleWorkbenchStat
+            label="Complete"
+            value={`${completedActivities}/${sortedActivities.length || 0}`}
+            sub="progress count"
+            tone={completedActivities > 0 ? "success" : "default"}
+          />
+          <ScheduleWorkbenchStat
+            label="Logic ties"
+            value={String(activitiesWithLogic)}
+            sub="pred / succ"
+            tone={activitiesWithLogic > 0 ? "success" : "warning"}
+          />
+          <ScheduleWorkbenchStat
+            label="Dated"
+            value={`${activitiesWithDates}/${sortedActivities.length || 0}`}
+            sub={`${shortDate(bounds.startLabel)} to ${shortDate(bounds.endLabel)}`}
+          />
+        </div>
+
+        {milestones.length > 0 && milestoneSeedRows.length > 0 && (
+          <div className="mt-4 rounded-md border border-hairline bg-card p-3 text-sm text-muted-foreground">
+            <span className="font-semibold text-foreground">Milestone bridge:</span>{" "}
+            {milestoneSeedRows.length} milestone {milestoneSeedRows.length === 1 ? "is" : "are"}{" "}
+            ready to become CPM activity rows. Build them once, then add logic ties and update
+            percent complete from the schedule workbench.
+          </div>
+        )}
       </div>
 
       {isFocusOpen && (
@@ -3077,8 +3020,8 @@ function WbsManagerDialog({
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="rounded-md border border-hairline bg-surface p-3">
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px_auto] lg:items-end">
-              <LabeledField label="New WBS section">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_280px_auto] lg:items-end">
+              <LabeledField label="New WBS / child area">
                 <Input
                   ref={newDivisionInputRef}
                   value={newDivision}
@@ -3094,7 +3037,7 @@ function WbsManagerDialog({
                   disabled={isSaving}
                 />
               </LabeledField>
-              <LabeledField label="Parent WBS">
+              <LabeledField label="Place under">
                 <Select
                   value={newDivisionParentId}
                   onValueChange={setNewDivisionParentId}
@@ -3122,7 +3065,7 @@ function WbsManagerDialog({
                 onClick={addDivision}
               >
                 <Plus className="h-4 w-4" />
-                {selectedParentRow ? "Add child WBS" : "Add WBS"}
+                {selectedParentRow ? "Add child area" : "Add WBS"}
               </Button>
             </div>
             <div className="mt-2 text-xs text-muted-foreground">
@@ -3159,12 +3102,14 @@ function WbsManagerDialog({
                   <div
                     key={row.division}
                     className={cn(
-                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition xl:grid-cols-[40px_minmax(220px,1.35fr)_minmax(180px,0.8fr)_132px_118px_122px_88px]",
+                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition xl:grid-cols-[40px_minmax(220px,1.35fr)_minmax(190px,0.8fr)_132px_124px_126px_88px]",
+                      row.level > 0 && "border-l-4 border-l-accent/45",
                       draggingDivision === row.division && "opacity-55",
                       dropTargetDivision === row.division &&
                         draggingDivision !== row.division &&
                         "border-foreground/35 bg-muted/40 shadow-sm",
                     )}
+                    style={{ marginLeft: `${Math.min(row.level, 5) * 18}px` }}
                     onDragOver={(event) => {
                       if (
                         !draggingDivision ||
@@ -3225,12 +3170,10 @@ function WbsManagerDialog({
                     </button>
                     <div className="min-w-0">
                       <div className="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                        <span>WBS title</span>
-                        {row.parentPath && (
-                          <span className="truncate normal-case tracking-normal text-muted-foreground/85">
-                            under {row.parentPath}
-                          </span>
-                        )}
+                        <span>{row.level > 0 ? "Child WBS / area" : "Parent WBS"}</span>
+                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">
+                          Level {row.level + 1}
+                        </span>
                       </div>
                       <Input
                         value={draftName}
@@ -3246,11 +3189,11 @@ function WbsManagerDialog({
                       />
                       {row.level > 0 && (
                         <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                          Full path: {row.division}
+                          Path: {row.division}
                         </div>
                       )}
                     </div>
-                    <LabeledField label="Parent / area">
+                    <LabeledField label="Parent WBS">
                       <Select
                         value={row.parentId ?? "root"}
                         disabled={!canPersistRow || isRowSaving}
@@ -3279,11 +3222,13 @@ function WbsManagerDialog({
                         {row.activityCount}
                       </div>
                       <div className="truncate text-[11px] text-muted-foreground">
-                        {!row.isPersisted
-                          ? "derived from activities"
-                          : row.isPlaceholder
-                            ? "empty"
-                            : `${shortDate(row.firstStart)} to ${shortDate(row.lastFinish)}`}
+                        {row.childCount > 0
+                          ? `${row.childCount} child ${row.childCount === 1 ? "area" : "areas"}`
+                          : !row.isPersisted
+                            ? "derived from activities"
+                            : row.isPlaceholder
+                              ? "empty"
+                              : `${shortDate(row.firstStart)} to ${shortDate(row.lastFinish)}`}
                       </div>
                     </div>
                     <Button
@@ -3294,7 +3239,7 @@ function WbsManagerDialog({
                       onClick={() => startChildDivision(row)}
                     >
                       <Plus className="mr-1 h-3.5 w-3.5" />
-                      Child area
+                      Add child
                     </Button>
                     <Button
                       type="button"
@@ -4833,6 +4778,7 @@ function buildWbsDivisionRows(
       activityCount: 0,
       firstStart: null,
       lastFinish: null,
+      childCount: 0,
       isPlaceholder: true,
       isPersisted: !section.isDerived,
     });
@@ -4852,6 +4798,7 @@ function buildWbsDivisionRows(
         activityCount: 0,
         firstStart: null,
         lastFinish: null,
+        childCount: 0,
         isPlaceholder: false,
         isPersisted: false,
       } satisfies WbsDivisionRow);
@@ -4863,9 +4810,15 @@ function buildWbsDivisionRows(
       isPlaceholder: existing.isPersisted ? false : existing.activityCount + 1 === 0,
     });
   }
-  return Array.from(rows.values()).sort((a, b) =>
-    compareWbsDivision(a.division, b.division, wbsDivisionOrder),
-  );
+  const rowList = Array.from(rows.values());
+  const childCounts = new Map<string, number>();
+  for (const row of rowList) {
+    if (!row.parentPath) continue;
+    childCounts.set(row.parentPath, (childCounts.get(row.parentPath) ?? 0) + 1);
+  }
+  return rowList
+    .map((row) => ({ ...row, childCount: childCounts.get(row.division) ?? 0 }))
+    .sort((a, b) => compareWbsDivision(a.division, b.division, wbsDivisionOrder));
 }
 
 function buildWbsSectionDescriptors(sections: ScheduleWbsSectionRow[]): WbsSectionDescriptor[] {
@@ -5937,8 +5890,8 @@ function ActivityDelayFragmentPanel({
 
       {persistence === "migration_required" ? (
         <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
-          Delay logging is not enabled for this workspace yet. Activity details and CPM logic still
-          save normally; delay records can be added after this workspace is enabled.
+          Delay logging is temporarily unavailable for this workspace. Activity details and CPM
+          logic still save normally.
         </div>
       ) : (
         <>

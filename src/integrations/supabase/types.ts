@@ -2490,6 +2490,14 @@ export type Database = {
         }
         Returns: string
       }
+      reorder_schedule_wbs_sections: {
+        Args: {
+          p_ordered_ids: string[]
+          p_parent_id: string | null
+          p_project_id: string
+        }
+        Returns: number
+      }
       storage_project_id: { Args: { p_name: string }; Returns: string }
       sync_billing_application_from_lines: {
         Args: { p_billing_application_id: string }

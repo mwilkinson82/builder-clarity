@@ -210,7 +210,7 @@
 
   .constructline-cpm-print-titlebar {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 1.75in;
+    grid-template-columns: minmax(0, 1fr) 2.08in;
     gap: 0.1in;
     align-items: end;
     margin-bottom: 0.055in;
@@ -268,8 +268,9 @@
   }
 
   .constructline-cpm-print-status {
-    border: 1px solid #d8d1c5;
-    padding: 0.055in 0.065in;
+    border: 1px solid #221f1b;
+    background: #fbf8f2;
+    padding: 0.065in 0.075in;
     text-align: right;
   }
 
@@ -285,7 +286,8 @@
   .constructline-cpm-print-status strong {
     display: block;
     margin-top: 0.02in;
-    font-size: 11px;
+    color: #221f1b;
+    font-size: 12.5px;
     line-height: 1.05;
   }
 
@@ -305,13 +307,18 @@
     justify-content: space-between;
     gap: 0.08in;
     margin-top: 0.055in;
-    border-top: 1px solid #d8d1c5;
+    border-top: 1px solid #221f1b;
     padding-top: 0.04in;
     color: #5a554c;
     font-size: 6.6px;
     font-weight: 700;
     letter-spacing: 0.03em;
     text-transform: uppercase;
+  }
+
+  .constructline-cpm-print-footer span:first-child,
+  .constructline-cpm-print-footer span:nth-child(2) {
+    color: #221f1b;
   }
 
   .constructline-cpm-matrix-print {

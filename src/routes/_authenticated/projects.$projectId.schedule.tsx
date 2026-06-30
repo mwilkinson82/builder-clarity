@@ -26,7 +26,6 @@ import {
   type ScheduleUpdateRow,
   type ScheduleWbsSectionRow,
 } from "@/lib/schedule.functions";
-import { computeScheduleVarianceWeeks } from "@/lib/ior";
 
 type ScheduleQueryCache = {
   wbsSections?: ScheduleWbsSectionRow[];
@@ -323,11 +322,6 @@ function ScheduleWorkspacePage() {
     },
   });
 
-  const metrics = useMemo(
-    () => buildScheduleMetrics(project, activities, milestones, updates),
-    [activities, milestones, project, updates],
-  );
-
   if (projectQuery.isLoading || scheduleQuery.isLoading) {
     return (
       <ScheduleWorkspaceShell>
@@ -368,41 +362,6 @@ function ScheduleWorkspacePage() {
 
   return (
     <ScheduleWorkspaceShell project={project}>
-      <section className="constructline-screen-summary mb-4 grid gap-3 lg:grid-cols-[minmax(360px,1.35fr)_repeat(4,minmax(160px,0.5fr))]">
-        <div className="rounded-lg border border-hairline bg-card p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Project construction schedule
-          </div>
-          <h1 className="mt-2 font-serif text-3xl text-foreground">{project.name}</h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Full-width CPM workspace for activities, activity IDs, divisions, dates, progress, and
-            predecessor / successor logic.
-          </p>
-        </div>
-        <ScheduleMetricCard
-          label="Activities"
-          value={String(metrics.activityCount)}
-          sub={`${metrics.completeCount} complete`}
-        />
-        <ScheduleMetricCard
-          label="Logic ties"
-          value={String(metrics.logicCount)}
-          sub="pred / succ"
-          tone={metrics.logicCount > 0 ? "success" : "warning"}
-        />
-        <ScheduleMetricCard
-          label="Data date"
-          value={formatDate(metrics.latestDataDate)}
-          sub={latestUpdate ? `Update #${latestUpdate.update_number}` : "No update saved"}
-        />
-        <ScheduleMetricCard
-          label="Variance"
-          value={formatVariance(metrics.completionVariance)}
-          sub="vs baseline"
-          tone={(metrics.completionVariance ?? 0) > 0 ? "danger" : "success"}
-        />
-      </section>
-
       <CpmActivityPlanner
         activities={activities}
         wbsSections={wbsSections}
@@ -508,38 +467,6 @@ function ScheduleWorkspaceShell({
         </div>
       </header>
       <main className="mx-auto w-full max-w-[1840px] px-4 py-5 lg:px-8">{children}</main>
-    </div>
-  );
-}
-
-function ScheduleMetricCard({
-  label,
-  value,
-  sub,
-  tone = "default",
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  tone?: "default" | "success" | "warning" | "danger";
-}) {
-  const toneClass =
-    tone === "success"
-      ? "text-success"
-      : tone === "warning"
-        ? "text-warning"
-        : tone === "danger"
-          ? "text-danger"
-          : "text-foreground";
-  return (
-    <div className="flex min-h-[120px] flex-col justify-between rounded-lg border border-hairline bg-card p-4">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-        {label}
-      </div>
-      <div>
-        <div className={`text-2xl font-semibold tabular ${toneClass}`}>{value}</div>
-        <div className="mt-1 text-xs text-muted-foreground">{sub}</div>
-      </div>
     </div>
   );
 }
@@ -701,31 +628,6 @@ function ScheduleOpsEmpty({ children }: { children: ReactNode }) {
       {children}
     </div>
   );
-}
-
-function buildScheduleMetrics(
-  project: ProjectRow | undefined,
-  activities: ScheduleActivityRow[],
-  milestones: MilestoneRow[],
-  updates: ScheduleUpdateRow[],
-) {
-  const latestUpdate = updates[0] ?? null;
-  return {
-    activityCount: activities.length,
-    completeCount: activities.filter((activity) => activity.percent_complete >= 100).length,
-    logicCount: activities.filter(
-      (activity) =>
-        activity.predecessor_activity_ids.length > 0 || activity.successor_activity_ids.length > 0,
-    ).length,
-    activeMilestoneCount: milestones.filter((milestone) => milestone.status !== "complete").length,
-    latestDataDate: latestUpdate?.data_date ?? null,
-    completionVariance: project
-      ? computeScheduleVarianceWeeks(
-          project.baseline_completion_date,
-          project.forecast_completion_date,
-        )
-      : null,
-  };
 }
 
 function formatDate(value: string | null | undefined) {

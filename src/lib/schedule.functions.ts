@@ -36,6 +36,11 @@ type ScheduleActivityInsert = TablesInsert<"schedule_activities">;
 type ScheduleActivityUpdate = TablesUpdate<"schedule_activities">;
 type ScheduleWbsSectionInsert = TablesInsert<"schedule_wbs_sections">;
 type ScheduleWbsSectionUpdate = TablesUpdate<"schedule_wbs_sections">;
+type DynamicSupabaseError = { code?: string; message?: string } | null;
+type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError };
+type DynamicScheduleRpcClient = {
+  rpc: (fn: string, args?: Record<string, unknown>) => Promise<DynamicSupabaseResult>;
+};
 
 type ScheduleWbsParentFilterQuery<TQuery> = {
   eq: (column: string, value: string) => TQuery;
@@ -174,6 +179,17 @@ const isMissingRestColumn = (error: { code?: string; message?: string } | null, 
     (error?.code === "PGRST204" && message.includes(`'${target}' column`)) ||
     message.includes(`column ${target} does not exist`) ||
     message.includes(`.${target} does not exist`)
+  );
+};
+const isMissingRpcError = (error: DynamicSupabaseError, fnName: string) => {
+  const message = (error?.message ?? "").toLowerCase();
+  return (
+    error?.code === "PGRST202" ||
+    message.includes(fnName.toLowerCase()) ||
+    message.includes("schema cache") ||
+    message.includes("could not find the function") ||
+    message.includes("function public.") ||
+    message.includes("does not exist")
   );
 };
 
@@ -1133,6 +1149,21 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const parentId = data.parentId ?? null;
+    const reorderRpc = await (context.supabase as unknown as DynamicScheduleRpcClient).rpc(
+      "reorder_schedule_wbs_sections",
+      {
+        p_project_id: data.projectId,
+        p_parent_id: parentId,
+        p_ordered_ids: data.orderedIds,
+      },
+    );
+    if (!reorderRpc.error) {
+      return { ok: true, changed: num(reorderRpc.data), method: "rpc" };
+    }
+    if (!isMissingRpcError(reorderRpc.error, "reorder_schedule_wbs_sections")) {
+      throw new Error(reorderRpc.error.message ?? "WBS order did not save.");
+    }
+
     let siblingQuery = context.supabase
       .from("schedule_wbs_sections")
       .select("id,parent_id,sort_order")
