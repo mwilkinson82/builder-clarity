@@ -64,6 +64,7 @@ export interface ProjectRow {
   client: string;
   original_contract: number;
   original_cost_budget: number;
+  default_retainage_pct: number;
   schedule_variance_weeks: number;
   phase: Phase;
   percent_complete: number;
@@ -236,11 +237,22 @@ export interface BillingApplicationEventRow {
 }
 
 export type InvoiceStatus =
-  "draft" | "sent" | "viewed" | "partially_paid" | "paid" | "overdue" | "void";
+  | "draft"
+  | "sent"
+  | "viewed"
+  | "partially_paid"
+  | "paid"
+  | "overdue"
+  | "void";
 
 export type PaymentStatus = "pending" | "succeeded" | "failed" | "refunded" | "void";
 export type OnlinePaymentStatus =
-  "not_enabled" | "pending" | "paid" | "expired" | "failed" | "refunded";
+  | "not_enabled"
+  | "pending"
+  | "paid"
+  | "expired"
+  | "failed"
+  | "refunded";
 
 export interface BillingInvoiceRow {
   id: string;
@@ -428,6 +440,7 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   client: str(p.client),
   original_contract: num(p.original_contract),
   original_cost_budget: num(p.original_cost_budget),
+  default_retainage_pct: num(p.default_retainage_pct ?? 10),
   schedule_variance_weeks: num(p.schedule_variance_weeks),
   phase: (p.phase as Phase) ?? "Early",
   percent_complete: num(p.percent_complete),

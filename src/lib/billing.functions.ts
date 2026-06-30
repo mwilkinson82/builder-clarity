@@ -821,6 +821,7 @@ const updateLineItemInput = z.object({
   patch: z.object({
     work_completed_this_period: z.number().min(0).optional(),
     materials_stored_this_period: z.number().min(0).optional(),
+    retainage_pct: z.number().min(0).max(100).optional(),
     retainage_released: z.number().min(0).optional(),
   }),
 });
@@ -849,6 +850,9 @@ export const updateBillingLineItem = createServerFn({ method: "POST" })
         data.patch.materials_stored_this_period,
       );
     }
+    if (typeof data.patch.retainage_pct === "number") {
+      patch.retainage_pct = data.patch.retainage_pct;
+    }
     if (typeof data.patch.retainage_released === "number") {
       patch.retainage_released_cents = dollarsToCents(data.patch.retainage_released);
     }
@@ -862,6 +866,42 @@ export const updateBillingLineItem = createServerFn({ method: "POST" })
     });
     if (syncRes.error) throw new Error(syncRes.error.message);
     return { ok: true };
+  });
+
+const updatePayAppRetainageRateInput = z.object({
+  billingApplicationId: z.string().uuid(),
+  retainage_pct: z.number().min(0).max(100),
+});
+
+export const updateBillingApplicationRetainageRate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof updatePayAppRetainageRateInput>) =>
+    updatePayAppRetainageRateInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    const appRes = await dynamicTable(ctx.supabase, "billing_applications")
+      .select("id,project_id")
+      .eq("id", data.billingApplicationId)
+      .single();
+    if (appRes.error) throw new Error(appRes.error.message);
+    const app = appRes.data as Record<string, unknown>;
+    await requireCanManageProject(ctx, app.project_id as string);
+
+    const updateRes = await dynamicTable(ctx.supabase, "billing_line_items")
+      .update({ retainage_pct: data.retainage_pct })
+      .eq("billing_application_id", data.billingApplicationId)
+      .select("id");
+    if (updateRes.error) throw new Error(updateRes.error.message);
+
+    const syncRes = await ctx.supabase.rpc("sync_billing_application_from_lines", {
+      p_billing_application_id: data.billingApplicationId,
+    });
+    if (syncRes.error) throw new Error(syncRes.error.message);
+    return {
+      ok: true,
+      line_count: Array.isArray(updateRes.data) ? updateRes.data.length : 0,
+    };
   });
 
 const updateBucketWipInput = z.object({
