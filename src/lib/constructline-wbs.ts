@@ -160,6 +160,32 @@ export function isWbsDescendantPath(candidate: WbsDivisionRow, parent: WbsDivisi
   );
 }
 
+export function buildWbsSectionPathMap(sections: ScheduleWbsSectionRow[] = []) {
+  const byId = new Map(sections.map((section) => [section.id, section]));
+  const buildPath = (section: ScheduleWbsSectionRow, trail = new Set<string>()): string => {
+    if (!section.parent_id || trail.has(section.parent_id)) {
+      return normalizeWbsDivisionName(section.name);
+    }
+    const parent = byId.get(section.parent_id);
+    if (!parent) return normalizeWbsDivisionName(section.name);
+    const nextTrail = new Set(trail);
+    nextTrail.add(section.id);
+    return joinWbsPath([...splitWbsPath(buildPath(parent, nextTrail)), section.name]);
+  };
+  return new Map(sections.map((section) => [section.id, buildPath(section)]));
+}
+
+export function replaceWbsPathInDivision(value: string, oldPath: string, newPath: string) {
+  const current = normalizeWbsDivisionName(value);
+  const normalizedOldPath = normalizeWbsDivisionName(oldPath);
+  const normalizedNewPath = normalizeWbsDivisionName(newPath);
+  if (current === normalizedOldPath) return normalizedNewPath;
+  if (current.startsWith(`${normalizedOldPath}${WBS_PATH_SEPARATOR}`)) {
+    return `${normalizedNewPath}${current.slice(normalizedOldPath.length)}`;
+  }
+  return value;
+}
+
 export function buildWbsDivisionRows(
   activities: ScheduleActivityRow[],
   sections: ScheduleWbsSectionRow[],

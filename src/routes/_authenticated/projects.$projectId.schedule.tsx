@@ -16,6 +16,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/outcome/ScheduleRisk";
+import { buildWbsSectionPathMap, replaceWbsPathInDivision } from "@/lib/constructline-wbs";
 import { getProject, type ProjectRow } from "@/lib/projects.functions";
 import {
   createScheduleDelayFragment,
@@ -38,8 +39,17 @@ import {
 } from "@/lib/schedule.functions";
 
 type ScheduleQueryCache = {
+  activities?: ScheduleActivityRow[];
   wbsSections?: ScheduleWbsSectionRow[];
 } & Record<string, unknown>;
+type WbsCreateInput = {
+  name: string;
+  parentId?: string | null;
+};
+type WbsRenameInput = {
+  id: string;
+  name: string;
+};
 type WbsReorderInput = {
   parentId: string | null;
   orderedIds: string[];
@@ -61,6 +71,37 @@ function formatDelayFragmentError(error: unknown) {
     return "Delay impact logging is not enabled for this workspace yet. Use Notes / Constraint for the delay narrative; CPM activity details still save normally.";
   }
   return message || "Refresh and try again.";
+}
+
+function getNextWbsSortOrder(
+  sections: ScheduleWbsSectionRow[] | undefined,
+  parentId: string | null,
+) {
+  const siblings = (sections ?? []).filter((section) => (section.parent_id ?? null) === parentId);
+  return Math.max(0, ...siblings.map((section) => section.sort_order ?? 0)) + 10;
+}
+
+function applyOptimisticWbsPathChange(
+  current: ScheduleQueryCache | undefined,
+  nextSections: ScheduleWbsSectionRow[],
+  changedSectionId: string,
+  previousPathMap: Map<string, string>,
+) {
+  if (!current?.wbsSections) return current;
+  const nextPathMap = buildWbsSectionPathMap(nextSections);
+  const oldPath = previousPathMap.get(changedSectionId);
+  const newPath = nextPathMap.get(changedSectionId);
+  return {
+    ...current,
+    wbsSections: nextSections,
+    activities:
+      oldPath && newPath && oldPath !== newPath
+        ? current.activities?.map((activity) => ({
+            ...activity,
+            division: replaceWbsPathInDivision(activity.division, oldPath, newPath),
+          }))
+        : current.activities,
+  };
 }
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId/schedule")({
@@ -207,15 +248,48 @@ function ScheduleWorkspacePage() {
   });
 
   const wbsCreate = useMutation({
-    mutationFn: ({ name, parentId }: { name: string; parentId?: string | null }) =>
+    mutationFn: ({ name, parentId }: WbsCreateInput) =>
       createWbsSectionFn({ data: { projectId, name, parentId: parentId ?? null } }),
+    onMutate: async ({ name, parentId }) => {
+      await qc.cancelQueries({ queryKey: ["schedule", projectId] });
+      const previous = qc.getQueryData<ScheduleQueryCache>(["schedule", projectId]);
+      const cleanName = name.trim() || "General";
+      const normalizedParentId = parentId ?? null;
+      const optimisticId = `optimistic-wbs-${Date.now()}`;
+      qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
+        if (!current?.wbsSections) return current;
+        return {
+          ...current,
+          wbsSections: [
+            ...current.wbsSections,
+            {
+              id: optimisticId,
+              project_id: projectId,
+              parent_id: normalizedParentId,
+              name: cleanName,
+              code: "",
+              sort_order: getNextWbsSortOrder(current.wbsSections, normalizedParentId),
+            },
+          ],
+        };
+      });
+      toast.success(normalizedParentId ? "Child WBS added" : "WBS added", {
+        description: normalizedParentId
+          ? "The child area is visible now. Saving in the background."
+          : "The WBS section is visible now. Saving in the background.",
+        duration: 1600,
+      });
+      return { previous };
+    },
     onSuccess: () => {
       void refreshSchedule();
-      toast.success("WBS added", {
-        description: "The section is now saved to this project schedule.",
+      toast.success("WBS saved", {
+        description: "The project hierarchy is saved.",
+        duration: 1400,
       });
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS did not save", {
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
@@ -223,15 +297,33 @@ function ScheduleWorkspacePage() {
   });
 
   const wbsRename = useMutation({
-    mutationFn: ({ id, name }: { id: string; name: string }) =>
-      renameWbsSectionFn({ data: { id, name } }),
+    mutationFn: ({ id, name }: WbsRenameInput) => renameWbsSectionFn({ data: { id, name } }),
+    onMutate: async ({ id, name }) => {
+      await qc.cancelQueries({ queryKey: ["schedule", projectId] });
+      const previous = qc.getQueryData<ScheduleQueryCache>(["schedule", projectId]);
+      const previousPathMap = buildWbsSectionPathMap(previous?.wbsSections);
+      qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
+        if (!current?.wbsSections) return current;
+        const nextSections = current.wbsSections.map((section) =>
+          section.id === id ? { ...section, name: name.trim() || "General" } : section,
+        );
+        return applyOptimisticWbsPathChange(current, nextSections, id, previousPathMap);
+      });
+      toast.success("WBS title applied", {
+        description: "The hierarchy and matching activity paths moved immediately.",
+        duration: 1600,
+      });
+      return { previous };
+    },
     onSuccess: () => {
       void refreshSchedule();
       toast.success("WBS renamed", {
         description: "Matching activity divisions were updated.",
+        duration: 1400,
       });
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS did not update", {
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
@@ -241,13 +333,39 @@ function ScheduleWorkspacePage() {
   const wbsParentMove = useMutation({
     mutationFn: ({ id, parentId }: WbsParentMoveInput) =>
       moveWbsSectionParentFn({ data: { id, parentId } }),
+    onMutate: async ({ id, parentId }) => {
+      await qc.cancelQueries({ queryKey: ["schedule", projectId] });
+      const previous = qc.getQueryData<ScheduleQueryCache>(["schedule", projectId]);
+      const normalizedParentId = parentId ?? null;
+      const previousPathMap = buildWbsSectionPathMap(previous?.wbsSections);
+      qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
+        if (!current?.wbsSections) return current;
+        const nextSortOrder = getNextWbsSortOrder(
+          current.wbsSections.filter((section) => section.id !== id),
+          normalizedParentId,
+        );
+        const nextSections = current.wbsSections.map((section) =>
+          section.id === id
+            ? { ...section, parent_id: normalizedParentId, sort_order: nextSortOrder }
+            : section,
+        );
+        return applyOptimisticWbsPathChange(current, nextSections, id, previousPathMap);
+      });
+      toast.success(normalizedParentId ? "WBS nested" : "WBS moved to top level", {
+        description: "The grid moved immediately. Saving in the background.",
+        duration: 1600,
+      });
+      return { previous };
+    },
     onSuccess: () => {
       void refreshSchedule();
       toast.success("WBS parent updated", {
         description: "The section and matching activity paths were moved.",
+        duration: 1400,
       });
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS parent did not update", {
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });

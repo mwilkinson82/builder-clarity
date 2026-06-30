@@ -12,9 +12,11 @@ import {
 import {
   buildWbsDivisionOrder,
   buildWbsDivisionRows,
+  buildWbsSectionPathMap,
   getImmediateChildWbsTitle,
   getWbsChildRows,
   moveWbsDivisionInOrder,
+  replaceWbsPathInDivision,
 } from "../src/lib/constructline-wbs.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -305,9 +307,20 @@ assert.deepEqual(concreteChildren, [
   "03 - Concrete / Southwest corner",
   "03 - Concrete / Eastern corner",
 ]);
+const wbsPathMap = buildWbsSectionPathMap(wbsSections);
+assert.equal(wbsPathMap.get("wbs-concrete"), "03 - Concrete");
+assert.equal(wbsPathMap.get("wbs-northwest"), "03 - Concrete / Northwest corner");
 assert.equal(
   getImmediateChildWbsTitle("03 - Concrete", "03 - Concrete / Northwest corner / Level 2"),
   "Northwest corner",
+);
+assert.equal(
+  replaceWbsPathInDivision(
+    "03 - Concrete / Northwest corner / Level 2",
+    "03 - Concrete / Northwest corner",
+    "03 - Concrete / North Pour",
+  ),
+  "03 - Concrete / North Pour / Level 2",
 );
 
 const reorderedConcreteChildren = moveWbsDivisionInOrder(
@@ -337,6 +350,9 @@ for (const requiredScheduleRiskText of [
   "View filters",
   "Schedule actions",
   "Concrete / Northwest corner",
+  "WBS / areas",
+  "WBS / area manager",
+  "Custom WBS / child area path",
   "Schedule update history",
 ]) {
   assert.ok(
@@ -347,7 +363,11 @@ for (const requiredScheduleRiskText of [
 
 for (const requiredScheduleRouteText of [
   "WBS order applied",
+  "Child WBS added",
+  "WBS title applied",
+  "WBS nested",
   "The grid moved immediately. Saving in the background.",
+  "applyOptimisticWbsPathChange",
   'await qc.cancelQueries({ queryKey: ["schedule", projectId] });',
   "Schedule operations",
   "Critical delayed decisions",

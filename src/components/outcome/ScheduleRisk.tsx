@@ -2419,7 +2419,7 @@ export function CpmActivityPlanner({
                 onClick={() => setIsWbsManagerOpen(true)}
               >
                 <ListTree className="h-4 w-4" />
-                Manage WBS
+                WBS / areas
               </Button>
               <ScheduleZoomControls dayPx={dayPx} onChange={setDayPx} />
               <Button
@@ -2708,7 +2708,7 @@ function CpmGridToolbar({
             onClick={onManageWbs}
           >
             <ListTree className="h-4 w-4" />
-            Manage WBS
+            WBS / areas
           </Button>
         </CpmToolbarGroup>
       </div>
@@ -3437,7 +3437,7 @@ function WbsManagerDialog({
     <Dialog open={open} onOpenChange={(nextOpen) => !isSaving && onOpenChange(nextOpen)}>
       <DialogContent className="flex max-h-[88vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:w-[min(calc(100vw-2rem),72rem)] sm:max-w-[72rem]">
         <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
-          <DialogTitle className="font-serif text-2xl">WBS manager</DialogTitle>
+          <DialogTitle className="font-serif text-2xl">WBS / area manager</DialogTitle>
           <DialogDescription>
             Build parent WBS sections, child areas, and the order each level appears in the CPM
             grid.
@@ -4058,7 +4058,7 @@ function ActivityDivisionInput({
           <SelectValue placeholder="Choose WBS / child area" />
         </SelectTrigger>
         <SelectContent className="max-h-[22rem]">
-          <SelectItem value="__custom__">Custom WBS / area path</SelectItem>
+          <SelectItem value="__custom__">Custom WBS / child area path</SelectItem>
           {normalizedOptions.map((option) => {
             const meta = getWbsDisplayMeta(option);
             return (
