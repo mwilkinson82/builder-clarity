@@ -52,7 +52,16 @@ const dynamicTable = (supabase: unknown, relation: string) =>
 
 export type COStatus = "Approved" | "Pending" | "Denied";
 export type DecisionStatus = "open" | "in_progress" | "resolved" | "overdue";
+export type DecisionReminderChannel = "none" | "in_app" | "email";
 export type ClientChangeOrderStatus = "not_sent" | "sent" | "approved" | "rejected";
+
+export interface DecisionOwnerOption {
+  user_id: string;
+  label: string;
+  email: string;
+  role: string;
+  scope: "project" | "company";
+}
 
 export interface ProjectRow {
   id: string;
@@ -312,10 +321,15 @@ export interface DecisionRow {
   decision: string;
   impact: string;
   owner: string;
+  owner_email: string;
+  owner_user_id: string | null;
   due_date: string | null;
   status: DecisionStatus;
   linked_exposure_id: string | null;
   linked_co_id: string | null;
+  reminder_enabled: boolean;
+  reminder_at: string | null;
+  reminder_channel: DecisionReminderChannel;
   notes: string;
 }
 
@@ -408,6 +422,56 @@ const isMissingRestRelation = (
   );
 };
 
+const DECISION_REMINDER_CHANNELS = ["none", "in_app", "email"] as const;
+const DECISION_ENHANCEMENT_COLUMNS = [
+  "owner_email",
+  "owner_user_id",
+  "reminder_enabled",
+  "reminder_at",
+  "reminder_channel",
+] as const;
+
+function isDecisionReminderChannel(value: unknown): value is DecisionReminderChannel {
+  return (
+    typeof value === "string" &&
+    DECISION_REMINDER_CHANNELS.includes(value as DecisionReminderChannel)
+  );
+}
+
+function isMissingDecisionEnhancementColumn(error: { code?: string; message?: string } | null) {
+  return DECISION_ENHANCEMENT_COLUMNS.some((column) => isMissingRestColumn(error, column));
+}
+
+function normalizeDecision(row: Record<string, unknown>): DecisionRow {
+  return {
+    id: row.id as string,
+    project_id: row.project_id as string,
+    decision: str(row.decision),
+    impact: str(row.impact),
+    owner: str(row.owner),
+    owner_email: str(row.owner_email),
+    owner_user_id: (row.owner_user_id as string | null) ?? null,
+    due_date: (row.due_date as string | null) ?? null,
+    status: (row.status as DecisionStatus) ?? "open",
+    linked_exposure_id: (row.linked_exposure_id as string | null) ?? null,
+    linked_co_id: (row.linked_co_id as string | null) ?? null,
+    reminder_enabled: Boolean(row.reminder_enabled ?? false),
+    reminder_at: (row.reminder_at as string | null) ?? null,
+    reminder_channel: isDecisionReminderChannel(row.reminder_channel)
+      ? row.reminder_channel
+      : "none",
+    notes: str(row.notes),
+  };
+}
+
+function stripDecisionEnhancementFields<T extends Record<string, unknown>>(input: T) {
+  const next = { ...input };
+  for (const column of DECISION_ENHANCEMENT_COLUMNS) {
+    delete next[column];
+  }
+  return next;
+}
+
 const PROJECT_METADATA_MIGRATION = "20260622140000_project_metadata_hardening.sql";
 const PROJECT_METADATA_COLUMNS = [
   "job_number",
@@ -453,6 +517,106 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   project_manager: str(p.project_manager),
   source_opportunity_id: (p.source_opportunity_id as string | null) ?? null,
 });
+
+async function loadDecisionOwnerOptions(
+  context: { supabase: unknown },
+  project: ProjectRow,
+): Promise<DecisionOwnerOption[]> {
+  const projectMembersQuery = dynamicTable(context.supabase, "project_memberships")
+    .select("user_id,role,status")
+    .eq("project_id", project.id);
+  const organizationMembersQuery = project.organization_id
+    ? dynamicTable(context.supabase, "organization_memberships")
+        .select("user_id,role,status,invited_email")
+        .eq("organization_id", project.organization_id)
+    : Promise.resolve({ data: [], error: null });
+
+  const [projectMembersRes, organizationMembersRes] = await Promise.all([
+    projectMembersQuery,
+    organizationMembersQuery,
+  ]);
+
+  const projectMembersMissing =
+    projectMembersRes.error &&
+    isMissingRestRelation(projectMembersRes.error, "project_memberships");
+  const organizationMembersMissing =
+    organizationMembersRes.error &&
+    isMissingRestRelation(organizationMembersRes.error, "organization_memberships");
+  if (projectMembersRes.error && !projectMembersMissing) {
+    throw new Error(projectMembersRes.error.message);
+  }
+  if (organizationMembersRes.error && !organizationMembersMissing) {
+    throw new Error(organizationMembersRes.error.message);
+  }
+
+  const projectRows = projectMembersMissing
+    ? []
+    : ((projectMembersRes.data ?? []) as Record<string, unknown>[]).filter(
+        (member) => str(member.status, "active") === "active",
+      );
+  const organizationRows = organizationMembersMissing
+    ? []
+    : ((organizationMembersRes.data ?? []) as Record<string, unknown>[]).filter(
+        (member) => str(member.status, "active") === "active",
+      );
+  const userIds = Array.from(
+    new Set(
+      [...projectRows, ...organizationRows]
+        .map((member) => member.user_id as string)
+        .filter(Boolean),
+    ),
+  );
+  const profilesRes =
+    userIds.length === 0
+      ? { data: [], error: null }
+      : await dynamicTable(context.supabase, "profiles")
+          .select("id,email,full_name,company_title")
+          .in("id", userIds);
+  if (profilesRes.error && !isMissingRestRelation(profilesRes.error, "profiles")) {
+    throw new Error(profilesRes.error.message);
+  }
+  const profilesById = new Map(
+    ((profilesRes.data ?? []) as Record<string, unknown>[]).map((profile) => [
+      profile.id as string,
+      profile,
+    ]),
+  );
+  const byUser = new Map<string, DecisionOwnerOption>();
+
+  for (const row of projectRows) {
+    const userId = row.user_id as string;
+    const profile = profilesById.get(userId);
+    const label = str(profile?.full_name) || str(profile?.email) || "Project member";
+    byUser.set(userId, {
+      user_id: userId,
+      label,
+      email: str(profile?.email),
+      role: str(row.role, "viewer"),
+      scope: "project",
+    });
+  }
+
+  for (const row of organizationRows) {
+    const userId = row.user_id as string;
+    if (byUser.has(userId)) continue;
+    const profile = profilesById.get(userId);
+    const invitedEmail = str(row.invited_email);
+    const label = str(profile?.full_name) || str(profile?.email) || invitedEmail || "Team member";
+    byUser.set(userId, {
+      user_id: userId,
+      label,
+      email: str(profile?.email, invitedEmail),
+      role: str(row.role, "member"),
+      scope: "company",
+    });
+  }
+
+  return Array.from(byUser.values()).sort(
+    (a, b) =>
+      (a.scope === "project" ? 0 : 1) - (b.scope === "project" ? 0 : 1) ||
+      a.label.localeCompare(b.label),
+  );
+}
 
 const normalizeBillingApplication = (b: Record<string, unknown>): BillingApplicationRow => ({
   id: b.id as string,
@@ -959,6 +1123,7 @@ export const getProject = createServerFn({ method: "GET" })
       }
     }
     const projectWithOrganization = project;
+    const decisionOwnerOptions = await loadDecisionOwnerOptions(context, projectWithOrganization);
     let sovMappingProfiles: SovMappingProfileRow[] = [];
     if (project.organization_id) {
       const profileRes = await dynamicTable(context.supabase, "sov_mapping_profiles")
@@ -1053,21 +1218,9 @@ export const getProject = createServerFn({ method: "GET" })
             payment_events: paymentsByInvoice.get(invoice.id) ?? [],
           };
         });
-    const decisions: DecisionRow[] = (dRes.data ?? []).map((d) => {
-      const o = d as Record<string, unknown>;
-      return {
-        id: o.id as string,
-        project_id: o.project_id as string,
-        decision: str(o.decision),
-        impact: str(o.impact),
-        owner: str(o.owner),
-        due_date: (o.due_date as string | null) ?? null,
-        status: (o.status as DecisionStatus) ?? "open",
-        linked_exposure_id: (o.linked_exposure_id as string | null) ?? null,
-        linked_co_id: (o.linked_co_id as string | null) ?? null,
-        notes: str(o.notes),
-      };
-    });
+    const decisions: DecisionRow[] = (dRes.data ?? []).map((d) =>
+      normalizeDecision(d as Record<string, unknown>),
+    );
     const reviews: ReviewRow[] = (rRes.data ?? []).map((r) => {
       const o = r as Record<string, unknown>;
       return {
@@ -1131,6 +1284,7 @@ export const getProject = createServerFn({ method: "GET" })
       changeOrders,
       buckets,
       decisions,
+      decisionOwnerOptions,
       reviews,
       sovImports,
       sovMappingProfiles,
@@ -1578,10 +1732,15 @@ const decisionInput = z.object({
   decision: z.string().min(1).max(500),
   impact: z.string().max(5000).default(""),
   owner: z.string().max(200).default(""),
+  owner_email: z.string().email().or(z.literal("")).default(""),
+  owner_user_id: z.string().uuid().nullable().optional(),
   due_date: z.string().nullable().optional(),
   status: z.enum(DECISION_STATUSES).default("open"),
   linked_exposure_id: z.string().uuid().nullable().optional(),
   linked_co_id: z.string().uuid().nullable().optional(),
+  reminder_enabled: z.boolean().default(false),
+  reminder_at: z.string().nullable().optional(),
+  reminder_channel: z.enum(DECISION_REMINDER_CHANNELS).default("none"),
   notes: z.string().max(5000).default(""),
 });
 
@@ -1595,7 +1754,17 @@ export const createDecision = createServerFn({ method: "POST" })
     const { error } = await context.supabase
       .from("decisions")
       .insert({ project_id: projectId, ...rest });
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isMissingDecisionEnhancementColumn(error)) {
+        const { error: fallbackError } = await context.supabase.from("decisions").insert({
+          project_id: projectId,
+          ...stripDecisionEnhancementFields(rest),
+        });
+        if (fallbackError) throw new Error(fallbackError.message);
+        return { ok: true, reminderFieldsPersisted: false };
+      }
+      throw new Error(error.message);
+    }
     return { ok: true };
   });
 
@@ -1607,7 +1776,17 @@ export const updateDecision = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { id, ...patch } = data;
     const { error } = await context.supabase.from("decisions").update(patch).eq("id", id);
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isMissingDecisionEnhancementColumn(error)) {
+        const { error: fallbackError } = await context.supabase
+          .from("decisions")
+          .update(stripDecisionEnhancementFields(patch))
+          .eq("id", id);
+        if (fallbackError) throw new Error(fallbackError.message);
+        return { ok: true, reminderFieldsPersisted: false };
+      }
+      throw new Error(error.message);
+    }
     return { ok: true };
   });
 

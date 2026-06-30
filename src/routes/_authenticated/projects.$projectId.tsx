@@ -784,6 +784,7 @@ function ProjectPage() {
     changeOrders,
     buckets,
     decisions,
+    decisionOwnerOptions,
     reviews,
     sovImports,
     sovMappingProfiles,
@@ -1541,6 +1542,8 @@ function ProjectPage() {
               <DecisionsTable
                 decisions={decisions}
                 exposures={exposures}
+                ownerOptions={decisionOwnerOptions ?? []}
+                projectManager={project.project_manager}
                 onCreate={(d) => decisionCreate.mutate({ projectId, ...d })}
                 onUpdate={(id, patch) => decisionUpdate.mutate({ id, ...patch })}
                 onDelete={(id) => decisionDelete.mutate({ id })}

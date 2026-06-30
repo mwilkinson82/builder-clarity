@@ -904,7 +904,12 @@ export type Database = {
           linked_exposure_id: string | null
           notes: string
           owner: string
+          owner_email: string
+          owner_user_id: string | null
           project_id: string
+          reminder_at: string | null
+          reminder_channel: string
+          reminder_enabled: boolean
           status: Database["public"]["Enums"]["decision_status"]
           updated_at: string
         }
@@ -918,7 +923,12 @@ export type Database = {
           linked_exposure_id?: string | null
           notes?: string
           owner?: string
+          owner_email?: string
+          owner_user_id?: string | null
           project_id: string
+          reminder_at?: string | null
+          reminder_channel?: string
+          reminder_enabled?: boolean
           status?: Database["public"]["Enums"]["decision_status"]
           updated_at?: string
         }
@@ -932,7 +942,12 @@ export type Database = {
           linked_exposure_id?: string | null
           notes?: string
           owner?: string
+          owner_email?: string
+          owner_user_id?: string | null
           project_id?: string
+          reminder_at?: string | null
+          reminder_channel?: string
+          reminder_enabled?: boolean
           status?: Database["public"]["Enums"]["decision_status"]
           updated_at?: string
         }
