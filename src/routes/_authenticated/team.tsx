@@ -13,7 +13,6 @@ import {
   FileImage,
   Gauge,
   Globe,
-  HardDrive,
   LogOut,
   MailPlus,
   MapPin,
@@ -770,11 +769,45 @@ function TeamPage() {
       : "";
   const isClientPermissionSaving = (accessId: string, field: ClientPermissionField) =>
     clientPermissionSavingKey === `${accessId}:${field}`;
+  const memberSummary = useMemo(() => {
+    if (!team) {
+      return { active: 0, disabled: 0, owners: 0 };
+    }
+
+    return team.members.reduce(
+      (summary, member) => {
+        if (member.status === "active") summary.active += 1;
+        if (member.status === "disabled") summary.disabled += 1;
+        if (member.role === "owner" || member.role === "admin") summary.owners += 1;
+        return summary;
+      },
+      { active: 0, disabled: 0, owners: 0 },
+    );
+  }, [team]);
+  const clientAccessSummary = useMemo(() => {
+    if (!team) {
+      return { seats: 0, projects: 0, billing: 0, daily: 0, changeOrders: 0 };
+    }
+
+    const projectIds = new Set<string>();
+    return team.clientProjectAccess.reduce(
+      (summary, access) => {
+        summary.seats += 1;
+        projectIds.add(access.project_id);
+        if (access.can_view_billing) summary.billing += 1;
+        if (access.can_view_daily_reports) summary.daily += 1;
+        if (access.can_view_change_orders) summary.changeOrders += 1;
+        summary.projects = projectIds.size;
+        return summary;
+      },
+      { seats: 0, projects: 0, billing: 0, daily: 0, changeOrders: 0 },
+    );
+  }, [team]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-6 py-6 lg:flex-row lg:items-center lg:justify-between lg:px-10">
+        <div className="mx-auto flex max-w-[1600px] flex-col gap-4 px-6 py-5 lg:flex-row lg:items-center lg:justify-between lg:px-10">
           <div>
             <Button asChild variant="ghost" size="sm" className="-ml-3 mb-2 gap-1.5">
               <Link to="/">
@@ -785,7 +818,7 @@ function TeamPage() {
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               {team?.organization.name || "Company Workspace"}
             </div>
-            <h1 className="mt-1 font-serif text-4xl text-foreground">Your Company</h1>
+            <h1 className="mt-1 font-serif text-3xl text-foreground">Your Company</h1>
           </div>
           <div className="flex items-center gap-2">
             <Button asChild variant="outline" size="sm">
@@ -799,7 +832,7 @@ function TeamPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1400px] px-6 py-8 lg:px-10">
+      <main className="mx-auto max-w-[1600px] px-6 py-7 lg:px-10">
         {isLoading ? (
           <div className="rounded-lg border border-hairline bg-card p-8 text-sm text-muted-foreground shadow-card">
             Loading company workspace...
@@ -810,20 +843,15 @@ function TeamPage() {
           </div>
         ) : (
           <div className="space-y-6">
-            <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <section
+              data-testid="company-command-center"
+              className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6"
+            >
               <UsageCard
                 icon={<ShieldCheck className="h-4 w-4" />}
                 label="Access"
-                value={
-                  team.organization.contractor_circle_grant
-                    ? "Circle grant"
-                    : team.organization.plan_code
-                }
-                sub={
-                  team.organization.contractor_circle_grant
-                    ? "advisory plan"
-                    : team.organization.billing_status
-                }
+                value={roleLabel(team.currentUserRole ?? "member")}
+                sub={team.canManageTeam ? "can manage company" : "limited access"}
               />
               <UsageCard
                 icon={<Users className="h-4 w-4" />}
@@ -862,13 +890,529 @@ function TeamPage() {
                 tone={usage ? usageTone(usage.dailyReports, usage.dailyReportLimit) : "default"}
               />
               <UsageCard
-                icon={<HardDrive className="h-4 w-4" />}
-                label="Storage meter"
-                value={`${usage?.storageUsedLabel ?? "0 B"} / ${usage?.storageLimitLabel ?? "0 B"}`}
-                sub={`${usage?.attachmentCount ?? 0} attachments`}
-                meterValue={usage ? meterPercent(usage.storageBytes, usage.storageLimitBytes) : 0}
-                tone={usage ? usageTone(usage.storageBytes, usage.storageLimitBytes) : "default"}
+                icon={<Gauge className="h-4 w-4" />}
+                label="Plan"
+                value={
+                  team.organization.contractor_circle_grant
+                    ? "Circle grant"
+                    : formatPlanCode(team.organization.plan_code)
+                }
+                sub={formatBillingStatus(team.organization.billing_status)}
               />
+              <UsageCard
+                icon={<CreditCard className="h-4 w-4" />}
+                label="Payments"
+                value={team.organization.payment_processor_ready ? "Online ready" : "Manual only"}
+                sub={
+                  team.organization.stripe_connect_account_id
+                    ? "Stripe setup started"
+                    : "Stripe not connected"
+                }
+              />
+            </section>
+
+            {!team.canManageTeam && (
+              <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+                Your role is {roleLabel(team.currentUserRole ?? "member")}. Owners, admins, and
+                executives can change company access.
+              </div>
+            )}
+
+            <section
+              data-testid="company-users-access"
+              className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]"
+            >
+              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+                <SectionHeader
+                  icon={<MailPlus className="h-4 w-4" />}
+                  eyebrow="Seats"
+                  title="Invite company users"
+                />
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <SummaryMetric
+                    label="Seats used"
+                    value={usage ? formatUsageValue(usage.seatsUsed, usage.seatLimit) : "0 / 0"}
+                    sub="active plus pending"
+                  />
+                  <SummaryMetric
+                    label="Active users"
+                    value={formatNumber(memberSummary.active)}
+                    sub={`${formatNumber(memberSummary.owners)} owner/admin`}
+                  />
+                  <SummaryMetric
+                    label="Pending invites"
+                    value={formatNumber(team.invites.length)}
+                    sub="magic links waiting"
+                  />
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-[1fr_190px_auto] md:items-end">
+                  <div className="space-y-1.5">
+                    <Label>Email</Label>
+                    <Input
+                      type="email"
+                      value={inviteEmail}
+                      disabled={!team.canManageTeam}
+                      onChange={(event) => setInviteEmail(event.target.value)}
+                      placeholder="pm@company.com"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Company role</Label>
+                    <Select
+                      value={inviteRole}
+                      disabled={!team.canManageTeam}
+                      onValueChange={(value) => setInviteRole(value as AccountRole)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {roleOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    disabled={
+                      !team.canManageTeam || !inviteEmail.trim() || inviteMutation.isPending
+                    }
+                    onClick={() => inviteMutation.mutate()}
+                    className="gap-1.5"
+                  >
+                    <MailPlus className="h-3.5 w-3.5" />
+                    {inviteMutation.isPending ? "Sending..." : "Send invite"}
+                  </Button>
+                </div>
+
+                <div className="mt-5 rounded-md border border-hairline">
+                  <div className="border-b border-hairline bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Pending invites
+                  </div>
+                  {team.invites.length === 0 ? (
+                    <div className="px-3 py-4 text-sm text-muted-foreground">
+                      No pending invites.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-hairline">
+                      {team.invites.map((invite) => (
+                        <div
+                          key={invite.id}
+                          className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_150px_120px_auto] md:items-center"
+                        >
+                          <div>
+                            <div className="font-medium">{invite.email}</div>
+                            <div className="text-xs text-muted-foreground">
+                              Expires {shortDate(invite.expires_at)}
+                            </div>
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            {roleLabel(invite.role)}
+                          </div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-warning">
+                            {invite.status}
+                          </div>
+                          {team.canManageTeam && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={revokeMutation.isPending}
+                              onClick={() => revokeMutation.mutate(invite.id)}
+                            >
+                              Revoke
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+                <SectionHeader
+                  icon={<Users className="h-4 w-4" />}
+                  eyebrow="Members"
+                  title="Company users and roles"
+                />
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <SummaryMetric
+                    label="Total users"
+                    value={formatNumber(team.members.length)}
+                    sub="company seats"
+                  />
+                  <SummaryMetric
+                    label="Active"
+                    value={formatNumber(memberSummary.active)}
+                    sub="can work now"
+                  />
+                  <SummaryMetric
+                    label="Disabled"
+                    value={formatNumber(memberSummary.disabled)}
+                    sub="locked out"
+                  />
+                </div>
+                <div className="mt-4 divide-y divide-hairline rounded-md border border-hairline">
+                  {team.members.map((member) => (
+                    <div
+                      key={member.id}
+                      className="grid gap-3 px-3 py-3 lg:grid-cols-[1fr_190px_150px] lg:items-center"
+                    >
+                      <div>
+                        <div className="font-medium">{member.full_name || member.email}</div>
+                        <div className="text-xs text-muted-foreground">{member.email}</div>
+                      </div>
+                      {team.canManageTeam ? (
+                        <>
+                          <Select
+                            value={member.role}
+                            onValueChange={(value) =>
+                              memberMutation.mutate({
+                                membershipId: member.id,
+                                role: value as AccountRole,
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {roleOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Select
+                            value={member.status === "pending" ? "active" : member.status}
+                            onValueChange={(value) =>
+                              memberMutation.mutate({
+                                membershipId: member.id,
+                                status: value as "active" | "disabled",
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {memberStatusOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-sm text-muted-foreground">
+                            {roleLabel(member.role)}
+                          </div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            {member.status}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section
+              data-testid="client-access-priority-panel"
+              className="rounded-lg border border-hairline bg-card p-5 shadow-card"
+            >
+              <SectionHeader
+                icon={<ShieldCheck className="h-4 w-4" />}
+                eyebrow="Client Portal"
+                title="Client project access"
+              />
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <SummaryMetric
+                  label="Client seats"
+                  value={formatNumber(clientAccessSummary.seats)}
+                  sub="portal users"
+                />
+                <SummaryMetric
+                  label="Shared projects"
+                  value={formatNumber(clientAccessSummary.projects)}
+                  sub="client-visible"
+                />
+                <SummaryMetric
+                  label="Billing on"
+                  value={formatNumber(clientAccessSummary.billing)}
+                  sub="invoice access"
+                />
+                <SummaryMetric
+                  label="Daily reports"
+                  value={formatNumber(clientAccessSummary.daily)}
+                  sub="field logs shared"
+                />
+                <SummaryMetric
+                  label="Change orders"
+                  value={formatNumber(clientAccessSummary.changeOrders)}
+                  sub="CO access"
+                />
+              </div>
+              <div className="mt-4 grid gap-3 rounded-md border border-hairline bg-surface p-3 xl:grid-cols-[1fr_1fr_1fr]">
+                <div className="space-y-1.5">
+                  <Label>Project</Label>
+                  <Select
+                    value={clientInviteForm.projectId}
+                    disabled={!team.canManageTeam}
+                    onValueChange={(projectId) =>
+                      setClientInviteForm((current) => ({ ...current, projectId }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {team.projects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.job_number
+                            ? `${project.job_number} - ${project.name}`
+                            : project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Client name</Label>
+                  <Input
+                    value={clientInviteForm.name}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        name: event.target.value,
+                      }))
+                    }
+                    placeholder="Owner or client rep"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Email</Label>
+                  <Input
+                    type="email"
+                    value={clientInviteForm.email}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        email: event.target.value,
+                      }))
+                    }
+                    placeholder="client@company.com"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Client company</Label>
+                  <Input
+                    value={clientInviteForm.company}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        company: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Title</Label>
+                  <Input
+                    value={clientInviteForm.title}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        title: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Phone</Label>
+                  <Input
+                    value={clientInviteForm.phone}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        phone: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5 xl:col-span-2">
+                  <Label>Notes</Label>
+                  <Input
+                    value={clientInviteForm.notes}
+                    disabled={!team.canManageTeam}
+                    onChange={(event) =>
+                      setClientInviteForm((current) => ({
+                        ...current,
+                        notes: event.target.value,
+                      }))
+                    }
+                    placeholder="Owner rep, lender, architect, billing contact"
+                  />
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+                  <div className="space-y-1.5">
+                    <Label>Portal modules</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {clientPermissionFields.map(({ field, label }) => {
+                        const active = clientInviteForm[field];
+                        return (
+                          <Button
+                            key={field}
+                            type="button"
+                            size="sm"
+                            variant={active ? "default" : "outline"}
+                            disabled={!team.canManageTeam}
+                            onClick={() =>
+                              setClientInviteForm((current) => ({
+                                ...current,
+                                [field]: !current[field],
+                              }))
+                            }
+                          >
+                            {label}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <Button
+                    disabled={
+                      !team.canManageTeam ||
+                      !clientInviteForm.projectId ||
+                      !clientInviteForm.name.trim() ||
+                      !clientInviteForm.email.trim() ||
+                      clientInviteMutation.isPending
+                    }
+                    onClick={() => clientInviteMutation.mutate()}
+                    className="gap-1.5"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {clientInviteMutation.isPending ? "Sending..." : "Invite client"}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-5 overflow-hidden rounded-md border border-hairline">
+                {team.clientProjectAccess.length === 0 ? (
+                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    No client project access has been granted yet.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-hairline">
+                    <div className="hidden gap-3 bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground xl:grid xl:grid-cols-[minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(130px,0.72fr)_minmax(190px,1.05fr)_minmax(110px,0.58fr)_110px]">
+                      <div>Client</div>
+                      <div>Project</div>
+                      <div>Status</div>
+                      <div>Modules</div>
+                      <div>Last sent</div>
+                      <div className="text-right">Actions</div>
+                    </div>
+                    {team.clientProjectAccess.map((access) => (
+                      <div
+                        key={access.id}
+                        className="grid gap-3 px-3 py-3 text-sm md:grid-cols-2 xl:grid-cols-[minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(130px,0.72fr)_minmax(190px,1.05fr)_minmax(110px,0.58fr)_110px] xl:items-center"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-foreground">
+                            {access.contact_name || access.email}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {access.email}
+                          </div>
+                          {access.contact_company && (
+                            <div className="truncate text-xs text-muted-foreground">
+                              {access.contact_company}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-foreground">
+                            {access.project_name}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {access.project_job_number || "No job number"}
+                          </div>
+                        </div>
+                        <div className="min-w-0">
+                          <span className="inline-flex max-w-full rounded-full border border-hairline px-2 py-1 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                            <span className="truncate">{access.status}</span>
+                          </span>
+                          <div className="mt-1 truncate text-xs text-muted-foreground">
+                            {access.accepted_at
+                              ? `Accepted ${shortDate(access.accepted_at)}`
+                              : "Not accepted"}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {clientPermissionFields.map(({ field, label }) => {
+                            const active = access[field];
+                            return (
+                              <Button
+                                key={field}
+                                type="button"
+                                size="sm"
+                                variant={active ? "default" : "outline"}
+                                disabled={
+                                  !team.canManageTeam || isClientPermissionSaving(access.id, field)
+                                }
+                                onClick={() =>
+                                  clientAccessPermissionMutation.mutate({
+                                    accessId: access.id,
+                                    field,
+                                    value: !active,
+                                  })
+                                }
+                                className="h-7 px-2 text-xs"
+                              >
+                                {label}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                        <div className="min-w-0 truncate text-sm text-muted-foreground">
+                          {access.last_sent_at ? shortDate(access.last_sent_at) : "Not sent"}
+                        </div>
+                        <div className="flex justify-start gap-1.5 xl:justify-end">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            title="Send portal link"
+                            disabled={!team.canManageTeam || clientAccessSendLinkMutation.isPending}
+                            onClick={() => clientAccessSendLinkMutation.mutate(access)}
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Remove client access"
+                            disabled={!team.canManageTeam || clientAccessRevokeMutation.isPending}
+                            onClick={() => clientAccessRevokeMutation.mutate(access.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </section>
 
             {usage && (
@@ -891,14 +1435,143 @@ function TeamPage() {
               />
             )}
 
-            {!team.canManageTeam && (
-              <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-                Your role is {roleLabel(team.currentUserRole ?? "member")}. Owners, admins, and
-                executives can change company access.
+            <section
+              data-testid="project-asset-access-assignments"
+              className="rounded-lg border border-hairline bg-card p-5 shadow-card"
+            >
+              <SectionHeader
+                icon={<ShieldCheck className="h-4 w-4" />}
+                eyebrow="Asset Access"
+                title="Project access assignments"
+              />
+              <div className="mt-5 grid gap-3 rounded-md border border-hairline bg-surface p-3 lg:grid-cols-[1fr_1fr_180px_auto] lg:items-end">
+                <div className="space-y-1.5">
+                  <Label>Project</Label>
+                  <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {team.projects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.job_number
+                            ? `${project.job_number} - ${project.name}`
+                            : project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Company member</Label>
+                  <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose person" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {team.members
+                        .filter((member) => member.status === "active")
+                        .map((member) => (
+                          <SelectItem key={member.user_id} value={member.user_id}>
+                            {member.full_name || member.email}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Project role</Label>
+                  <Select
+                    value={projectRole}
+                    onValueChange={(value) => setProjectRole(value as ProjectMemberRole)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {projectRoleOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  disabled={!selectedProjectId || !selectedUserId || assignMutation.isPending}
+                  onClick={() => assignMutation.mutate()}
+                >
+                  {assignMutation.isPending ? "Saving..." : "Assign"}
+                </Button>
               </div>
-            )}
 
-            <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+              <div className="mt-5 overflow-hidden rounded-md border border-hairline">
+                {team.projectMembers.length === 0 ? (
+                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    No project-level access has been assigned yet.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-hairline">
+                    {team.projectMembers.map((member) => {
+                      const project = team.projects.find((p) => p.id === member.project_id);
+                      return (
+                        <div
+                          key={member.id}
+                          className="grid gap-3 px-3 py-3 lg:grid-cols-[1.1fr_1fr_170px_140px_auto] lg:items-center"
+                        >
+                          <div>
+                            <div className="font-medium">{project?.name || "Project"}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {project?.job_number || "No job number"}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="font-medium">{member.full_name || member.email}</div>
+                            <div className="text-xs text-muted-foreground">{member.email}</div>
+                          </div>
+                          <Select
+                            value={member.role}
+                            onValueChange={(value) =>
+                              projectAccessMutation.mutate({
+                                membershipId: member.id,
+                                role: value as ProjectMemberRole,
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {projectRoleOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                            {member.status}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title={`Remove ${projectRoleLabel(member.role)} access`}
+                            disabled={removeProjectAccessMutation.isPending}
+                            onClick={() => removeProjectAccessMutation.mutate(member.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </section>
+            <section
+              data-testid="company-profile-record"
+              className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]"
+            >
               <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
                 <SectionHeader
                   icon={<UserCog className="h-4 w-4" />}
@@ -1252,572 +1925,6 @@ function TeamPage() {
                     </div>
                   )}
                 </div>
-              </div>
-            </section>
-
-            <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-                <SectionHeader
-                  icon={<MailPlus className="h-4 w-4" />}
-                  eyebrow="Seats"
-                  title="Invite company users"
-                />
-                <div className="mt-5 grid gap-3 md:grid-cols-[1fr_190px_auto] md:items-end">
-                  <div className="space-y-1.5">
-                    <Label>Email</Label>
-                    <Input
-                      type="email"
-                      value={inviteEmail}
-                      disabled={!team.canManageTeam}
-                      onChange={(event) => setInviteEmail(event.target.value)}
-                      placeholder="pm@company.com"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Company role</Label>
-                    <Select
-                      value={inviteRole}
-                      disabled={!team.canManageTeam}
-                      onValueChange={(value) => setInviteRole(value as AccountRole)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {roleOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button
-                    disabled={
-                      !team.canManageTeam || !inviteEmail.trim() || inviteMutation.isPending
-                    }
-                    onClick={() => inviteMutation.mutate()}
-                    className="gap-1.5"
-                  >
-                    <MailPlus className="h-3.5 w-3.5" />
-                    {inviteMutation.isPending ? "Sending..." : "Send invite"}
-                  </Button>
-                </div>
-
-                <div className="mt-5 rounded-md border border-hairline">
-                  <div className="border-b border-hairline bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Pending invites
-                  </div>
-                  {team.invites.length === 0 ? (
-                    <div className="px-3 py-4 text-sm text-muted-foreground">
-                      No pending invites.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-hairline">
-                      {team.invites.map((invite) => (
-                        <div
-                          key={invite.id}
-                          className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_150px_120px_auto] md:items-center"
-                        >
-                          <div>
-                            <div className="font-medium">{invite.email}</div>
-                            <div className="text-xs text-muted-foreground">
-                              Expires {shortDate(invite.expires_at)}
-                            </div>
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            {roleLabel(invite.role)}
-                          </div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-warning">
-                            {invite.status}
-                          </div>
-                          {team.canManageTeam && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={revokeMutation.isPending}
-                              onClick={() => revokeMutation.mutate(invite.id)}
-                            >
-                              Revoke
-                            </Button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-                <SectionHeader
-                  icon={<Users className="h-4 w-4" />}
-                  eyebrow="Members"
-                  title={`${team.members.length} people`}
-                />
-                <div className="mt-5 divide-y divide-hairline rounded-md border border-hairline">
-                  {team.members.map((member) => (
-                    <div
-                      key={member.id}
-                      className="grid gap-3 px-3 py-3 lg:grid-cols-[1fr_190px_150px] lg:items-center"
-                    >
-                      <div>
-                        <div className="font-medium">{member.full_name || member.email}</div>
-                        <div className="text-xs text-muted-foreground">{member.email}</div>
-                      </div>
-                      {team.canManageTeam ? (
-                        <>
-                          <Select
-                            value={member.role}
-                            onValueChange={(value) =>
-                              memberMutation.mutate({
-                                membershipId: member.id,
-                                role: value as AccountRole,
-                              })
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {roleOptions.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Select
-                            value={member.status === "pending" ? "active" : member.status}
-                            onValueChange={(value) =>
-                              memberMutation.mutate({
-                                membershipId: member.id,
-                                status: value as "active" | "disabled",
-                              })
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {memberStatusOptions.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </>
-                      ) : (
-                        <>
-                          <div className="text-sm text-muted-foreground">
-                            {roleLabel(member.role)}
-                          </div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                            {member.status}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-              <SectionHeader
-                icon={<ShieldCheck className="h-4 w-4" />}
-                eyebrow="Client Portal"
-                title="Client project access"
-              />
-              <div className="mt-5 grid gap-3 rounded-md border border-hairline bg-surface p-3 xl:grid-cols-[1fr_1fr_1fr]">
-                <div className="space-y-1.5">
-                  <Label>Project</Label>
-                  <Select
-                    value={clientInviteForm.projectId}
-                    disabled={!team.canManageTeam}
-                    onValueChange={(projectId) =>
-                      setClientInviteForm((current) => ({ ...current, projectId }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose project" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {team.projects.map((project) => (
-                        <SelectItem key={project.id} value={project.id}>
-                          {project.job_number
-                            ? `${project.job_number} - ${project.name}`
-                            : project.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Client name</Label>
-                  <Input
-                    value={clientInviteForm.name}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        name: event.target.value,
-                      }))
-                    }
-                    placeholder="Owner or client rep"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Email</Label>
-                  <Input
-                    type="email"
-                    value={clientInviteForm.email}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        email: event.target.value,
-                      }))
-                    }
-                    placeholder="client@company.com"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Client company</Label>
-                  <Input
-                    value={clientInviteForm.company}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        company: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Title</Label>
-                  <Input
-                    value={clientInviteForm.title}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        title: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Phone</Label>
-                  <Input
-                    value={clientInviteForm.phone}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        phone: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-1.5 xl:col-span-2">
-                  <Label>Notes</Label>
-                  <Input
-                    value={clientInviteForm.notes}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        notes: event.target.value,
-                      }))
-                    }
-                    placeholder="Owner rep, lender, architect, billing contact"
-                  />
-                </div>
-                <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
-                  <div className="space-y-1.5">
-                    <Label>Portal modules</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {clientPermissionFields.map(({ field, label }) => {
-                        const active = clientInviteForm[field];
-                        return (
-                          <Button
-                            key={field}
-                            type="button"
-                            size="sm"
-                            variant={active ? "default" : "outline"}
-                            disabled={!team.canManageTeam}
-                            onClick={() =>
-                              setClientInviteForm((current) => ({
-                                ...current,
-                                [field]: !current[field],
-                              }))
-                            }
-                          >
-                            {label}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <Button
-                    disabled={
-                      !team.canManageTeam ||
-                      !clientInviteForm.projectId ||
-                      !clientInviteForm.name.trim() ||
-                      !clientInviteForm.email.trim() ||
-                      clientInviteMutation.isPending
-                    }
-                    onClick={() => clientInviteMutation.mutate()}
-                    className="gap-1.5"
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                    {clientInviteMutation.isPending ? "Sending..." : "Invite client"}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="mt-5 overflow-hidden rounded-md border border-hairline">
-                {team.clientProjectAccess.length === 0 ? (
-                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    No client project access has been granted yet.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <div className="min-w-[920px] divide-y divide-hairline">
-                      <div className="grid grid-cols-[1.2fr_1.1fr_1fr_1.15fr_0.9fr_150px] gap-3 bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                        <div>Client</div>
-                        <div>Project</div>
-                        <div>Status</div>
-                        <div>Modules</div>
-                        <div>Last sent</div>
-                        <div className="text-right">Actions</div>
-                      </div>
-                      {team.clientProjectAccess.map((access) => (
-                        <div
-                          key={access.id}
-                          className="grid grid-cols-[1.2fr_1.1fr_1fr_1.15fr_0.9fr_150px] gap-3 px-3 py-3 text-sm"
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate font-medium text-foreground">
-                              {access.contact_name || access.email}
-                            </div>
-                            <div className="truncate text-xs text-muted-foreground">
-                              {access.email}
-                            </div>
-                            {access.contact_company && (
-                              <div className="truncate text-xs text-muted-foreground">
-                                {access.contact_company}
-                              </div>
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="truncate font-medium text-foreground">
-                              {access.project_name}
-                            </div>
-                            <div className="truncate text-xs text-muted-foreground">
-                              {access.project_job_number || "No job number"}
-                            </div>
-                          </div>
-                          <div className="min-w-0">
-                            <span className="inline-flex max-w-full rounded-full border border-hairline px-2 py-1 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                              <span className="truncate">{access.status}</span>
-                            </span>
-                            <div className="mt-1 truncate text-xs text-muted-foreground">
-                              {access.accepted_at
-                                ? `Accepted ${shortDate(access.accepted_at)}`
-                                : "Not accepted"}
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap gap-1.5">
-                            {clientPermissionFields.map(({ field, label }) => {
-                              const active = access[field];
-                              return (
-                                <Button
-                                  key={field}
-                                  type="button"
-                                  size="sm"
-                                  variant={active ? "default" : "outline"}
-                                  disabled={
-                                    !team.canManageTeam ||
-                                    isClientPermissionSaving(access.id, field)
-                                  }
-                                  onClick={() =>
-                                    clientAccessPermissionMutation.mutate({
-                                      accessId: access.id,
-                                      field,
-                                      value: !active,
-                                    })
-                                  }
-                                  className="h-7 px-2 text-xs"
-                                >
-                                  {label}
-                                </Button>
-                              );
-                            })}
-                          </div>
-                          <div className="min-w-0 truncate text-sm text-muted-foreground">
-                            {access.last_sent_at ? shortDate(access.last_sent_at) : "Not sent"}
-                          </div>
-                          <div className="flex justify-end gap-1.5">
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              title="Send portal link"
-                              disabled={
-                                !team.canManageTeam || clientAccessSendLinkMutation.isPending
-                              }
-                              onClick={() => clientAccessSendLinkMutation.mutate(access)}
-                            >
-                              <Send className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title="Remove client access"
-                              disabled={!team.canManageTeam || clientAccessRevokeMutation.isPending}
-                              onClick={() => clientAccessRevokeMutation.mutate(access.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-              <SectionHeader
-                icon={<ShieldCheck className="h-4 w-4" />}
-                eyebrow="Project Access"
-                title="Assignments"
-              />
-              <div className="mt-5 grid gap-3 rounded-md border border-hairline bg-surface p-3 lg:grid-cols-[1fr_1fr_180px_auto] lg:items-end">
-                <div className="space-y-1.5">
-                  <Label>Project</Label>
-                  <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose project" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {team.projects.map((project) => (
-                        <SelectItem key={project.id} value={project.id}>
-                          {project.job_number
-                            ? `${project.job_number} - ${project.name}`
-                            : project.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Company member</Label>
-                  <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose person" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {team.members
-                        .filter((member) => member.status === "active")
-                        .map((member) => (
-                          <SelectItem key={member.user_id} value={member.user_id}>
-                            {member.full_name || member.email}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Project role</Label>
-                  <Select
-                    value={projectRole}
-                    onValueChange={(value) => setProjectRole(value as ProjectMemberRole)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {projectRoleOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  disabled={!selectedProjectId || !selectedUserId || assignMutation.isPending}
-                  onClick={() => assignMutation.mutate()}
-                >
-                  {assignMutation.isPending ? "Saving..." : "Assign"}
-                </Button>
-              </div>
-
-              <div className="mt-5 overflow-hidden rounded-md border border-hairline">
-                {team.projectMembers.length === 0 ? (
-                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    No project-level access has been assigned yet.
-                  </div>
-                ) : (
-                  <div className="divide-y divide-hairline">
-                    {team.projectMembers.map((member) => {
-                      const project = team.projects.find((p) => p.id === member.project_id);
-                      return (
-                        <div
-                          key={member.id}
-                          className="grid gap-3 px-3 py-3 lg:grid-cols-[1.1fr_1fr_170px_140px_auto] lg:items-center"
-                        >
-                          <div>
-                            <div className="font-medium">{project?.name || "Project"}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {project?.job_number || "No job number"}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="font-medium">{member.full_name || member.email}</div>
-                            <div className="text-xs text-muted-foreground">{member.email}</div>
-                          </div>
-                          <Select
-                            value={member.role}
-                            onValueChange={(value) =>
-                              projectAccessMutation.mutate({
-                                membershipId: member.id,
-                                role: value as ProjectMemberRole,
-                              })
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {projectRoleOptions.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                            {member.status}
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title={`Remove ${projectRoleLabel(member.role)} access`}
-                            disabled={removeProjectAccessMutation.isPending}
-                            onClick={() => removeProjectAccessMutation.mutate(member.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
             </section>
           </div>
@@ -2176,6 +2283,18 @@ function SectionHeader({
   );
 }
 
+function SummaryMetric({ label, value, sub }: { label: string; value: string; sub: string }) {
+  return (
+    <div className="flex min-h-20 flex-col items-center justify-center rounded-md border border-hairline bg-surface px-3 py-3 text-center">
+      <div className="text-2xl font-medium leading-none tabular-nums text-foreground">{value}</div>
+      <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 text-xs leading-snug text-muted-foreground">{sub}</div>
+    </div>
+  );
+}
+
 function UsageCard({
   icon,
   label,
@@ -2201,14 +2320,14 @@ function UsageCard({
     tone === "danger" ? "bg-danger" : tone === "warning" ? "bg-warning" : "bg-success";
   return (
     <div
-      className={`flex min-h-[112px] flex-col justify-between rounded-lg border p-4 shadow-card ${toneClass}`}
+      className={`flex min-h-[112px] flex-col items-center justify-between rounded-lg border p-4 text-center shadow-card ${toneClass}`}
     >
-      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+      <div className="flex items-center justify-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {icon}
         {label}
       </div>
-      <div>
-        <div className="text-xl font-medium tabular text-foreground">{value}</div>
+      <div className="w-full">
+        <div className="text-2xl font-medium leading-tight tabular text-foreground">{value}</div>
         <div className="mt-1 text-xs text-muted-foreground">{sub}</div>
         {meterValue !== undefined && (
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">

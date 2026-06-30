@@ -506,6 +506,11 @@ await expectContains(
 await expectContains(
   "src/routes/_authenticated/team.tsx",
   [
+    /data-testid="company-command-center"/,
+    /data-testid="company-users-access"/,
+    /data-testid="client-access-priority-panel"/,
+    /data-testid="project-asset-access-assignments"/,
+    /data-testid="company-profile-record"/,
     /PlanReadinessPanel/,
     /Plan and payment readiness/,
     /Commercial setup/,
@@ -520,9 +525,14 @@ await expectContains(
     /Checkout Sessions/,
     /usageStatus/,
     /Contractor Circle grant keeps this company working/,
+    /Invite company users/,
+    /Company users and roles/,
+    /Client project access/,
+    /Project access assignments/,
+    /SummaryMetric/,
     /Storage and attachments/,
   ],
-  "company workspace exposes plan, Stripe, and usage controls without blocking Contractor Circle access",
+  "company workspace prioritizes access, team seats, client portal access, plan readiness, and profile controls",
 );
 
 await expectContains(
@@ -538,7 +548,7 @@ await expectContains(
 await expectContains(
   "src/components/outcome/ExposuresTable.tsx",
   [
-    /overflow-hidden rounded-lg border border-hairline bg-card/,
+    /w-full min-w-0 max-w-full overflow-hidden rounded-lg border border-hairline bg-card/,
     /lg:grid-cols-\[minmax\(280px,1\.35fr\)_minmax\(156px,0\.46fr\)_minmax\(210px,0\.62fr\)_minmax\(170px,0\.5fr\)_96px\]/,
     /role="button"/,
     /onClick=\{\(\) => onView\(exposure\)\}/,
