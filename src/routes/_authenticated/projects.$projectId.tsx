@@ -11,6 +11,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -147,6 +148,18 @@ const PROJECT_TAB_VALUES = [
 ] as const;
 
 type ProjectTabValue = (typeof PROJECT_TAB_VALUES)[number];
+
+const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
+  "schedule",
+  "risk-tally",
+  "todos",
+  "sov",
+  "billing",
+  "change-orders",
+  "client-portal",
+  "ior-report",
+  "daily-reports",
+]);
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   ssr: false,
@@ -1223,6 +1236,7 @@ function ProjectPage() {
     project.organization_logo_url && project.organization_logo_url !== companyLogoFailedUrl
       ? project.organization_logo_url
       : "";
+  const compactProjectNav = COMPACT_PROJECT_NAV_TABS.has(activeProjectTab);
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-background text-foreground">
@@ -1383,61 +1397,73 @@ function ProjectPage() {
 
       <main
         className={`mx-auto w-full min-w-0 px-4 py-6 sm:px-6 lg:px-8 ${
-          activeProjectTab === "billing" ? "max-w-[1760px]" : "max-w-[1500px]"
+          compactProjectNav ? "max-w-[1760px]" : "max-w-[1500px]"
         }`}
       >
         <Tabs
           value={activeProjectTab}
           onValueChange={setProjectTab}
           className={`grid min-w-0 gap-6 lg:items-start ${
-            activeProjectTab === "billing"
+            compactProjectNav
               ? "lg:grid-cols-[76px_minmax(0,1fr)] xl:grid-cols-[84px_minmax(0,1fr)]"
               : "lg:grid-cols-[238px_minmax(0,1fr)]"
           }`}
         >
           <aside className="lg:sticky lg:top-6">
-            <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1.5 shadow-card ring-1 ring-foreground/5 lg:flex-col lg:items-stretch lg:overflow-visible">
-              <a
-                href="/?tab=crm"
-                className={`inline-flex min-w-[148px] items-center justify-start rounded-md border border-transparent px-3 py-3 text-left text-muted-foreground transition hover:border-hairline hover:bg-secondary/70 hover:text-foreground lg:w-full ${
-                  activeProjectTab === "billing" ? "lg:min-w-0 lg:justify-center lg:px-2" : ""
-                }`}
-              >
-                <BriefcaseBusiness
-                  className={`h-4 w-4 shrink-0 ${activeProjectTab === "billing" ? "lg:mr-0" : "mr-2"}`}
-                />
-                <span className={`min-w-0 ${activeProjectTab === "billing" ? "lg:sr-only" : ""}`}>
-                  <span className="block text-sm font-medium leading-tight">CRM</span>
-                  <span className="mt-0.5 block truncate text-[11px] font-normal opacity-80">
-                    Relationships
-                  </span>
-                </span>
-              </a>
-              {projectNavItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <TabsTrigger
-                    key={item.value}
-                    value={item.value}
-                    className={`min-w-[148px] justify-start rounded-md border border-transparent px-3 py-3 text-left transition hover:border-hairline hover:bg-secondary/70 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-sm lg:w-full ${
-                      activeProjectTab === "billing" ? "lg:min-w-0 lg:justify-center lg:px-2" : ""
+            <TooltipProvider delayDuration={120}>
+              <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1.5 shadow-card ring-1 ring-foreground/5 lg:flex-col lg:items-stretch lg:overflow-visible">
+                <ProjectNavTooltip enabled={compactProjectNav} label="CRM" detail="Relationships">
+                  <a
+                    href="/?tab=crm"
+                    aria-label="CRM: Relationships"
+                    className={`inline-flex min-w-[148px] items-center justify-start rounded-md border border-transparent px-3 py-3 text-left text-muted-foreground transition hover:border-hairline hover:bg-secondary/70 hover:text-foreground lg:w-full ${
+                      compactProjectNav ? "lg:min-w-0 lg:justify-center lg:px-2" : ""
                     }`}
                   >
-                    <Icon
-                      className={`h-4 w-4 shrink-0 ${activeProjectTab === "billing" ? "lg:mr-0" : "mr-2"}`}
+                    <BriefcaseBusiness
+                      className={`h-4 w-4 shrink-0 ${compactProjectNav ? "lg:mr-0" : "mr-2"}`}
                     />
-                    <span
-                      className={`min-w-0 ${activeProjectTab === "billing" ? "lg:sr-only" : ""}`}
-                    >
-                      <span className="block text-sm font-medium leading-tight">{item.label}</span>
-                      <span className="mt-0.5 block truncate text-[11px] font-normal opacity-70">
-                        {item.detail}
+                    <span className={`min-w-0 ${compactProjectNav ? "lg:sr-only" : ""}`}>
+                      <span className="block text-sm font-medium leading-tight">CRM</span>
+                      <span className="mt-0.5 block truncate text-[11px] font-normal opacity-80">
+                        Relationships
                       </span>
                     </span>
-                  </TabsTrigger>
-                );
-              })}
-            </TabsList>
+                  </a>
+                </ProjectNavTooltip>
+                {projectNavItems.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <ProjectNavTooltip
+                      key={item.value}
+                      enabled={compactProjectNav}
+                      label={item.label}
+                      detail={item.detail}
+                    >
+                      <TabsTrigger
+                        value={item.value}
+                        aria-label={`${item.label}: ${item.detail}`}
+                        className={`min-w-[148px] justify-start rounded-md border border-transparent px-3 py-3 text-left transition hover:border-hairline hover:bg-secondary/70 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-sm lg:w-full ${
+                          compactProjectNav ? "lg:min-w-0 lg:justify-center lg:px-2" : ""
+                        }`}
+                      >
+                        <Icon
+                          className={`h-4 w-4 shrink-0 ${compactProjectNav ? "lg:mr-0" : "mr-2"}`}
+                        />
+                        <span className={`min-w-0 ${compactProjectNav ? "lg:sr-only" : ""}`}>
+                          <span className="block text-sm font-medium leading-tight">
+                            {item.label}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[11px] font-normal opacity-70">
+                            {item.detail}
+                          </span>
+                        </span>
+                      </TabsTrigger>
+                    </ProjectNavTooltip>
+                  );
+                })}
+              </TabsList>
+            </TooltipProvider>
           </aside>
 
           <div className="min-w-0">
@@ -1695,6 +1721,30 @@ function ProjectPage() {
         </Tabs>
       </main>
     </div>
+  );
+}
+
+function ProjectNavTooltip({
+  enabled,
+  label,
+  detail,
+  children,
+}: {
+  enabled: boolean;
+  label: string;
+  detail: string;
+  children: ReactNode;
+}) {
+  if (!enabled) return <>{children}</>;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="right" align="center" className="max-w-[220px]">
+        <div className="font-medium">{label}</div>
+        <div className="mt-0.5 text-[11px] opacity-80">{detail}</div>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

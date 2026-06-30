@@ -227,7 +227,7 @@ await expectContains(
   [
     /getCompanyWorkspaceContext/,
     /name: organization\.name \|\| "Company"/,
-    /logo_url: organization\.logo_url/,
+    /logo_url: organizationLogoUrl\(context\.supabase, organization\)/,
   ],
   "company workspace context exposes the user's company name and logo for app headers",
 );
@@ -397,9 +397,14 @@ await expectContains(
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [
-    /activeProjectTab === "billing"/,
+    /const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>/,
+    /"schedule"[\s\S]*"risk-tally"[\s\S]*"todos"[\s\S]*"sov"[\s\S]*"billing"[\s\S]*"change-orders"[\s\S]*"client-portal"[\s\S]*"ior-report"[\s\S]*"daily-reports"/,
+    /const compactProjectNav = COMPACT_PROJECT_NAV_TABS\.has\(activeProjectTab\)/,
     /max-w-\[1760px\]/,
     /lg:grid-cols-\[76px_minmax\(0,1fr\)\]/,
+    /ProjectNavTooltip/,
+    /TooltipProvider delayDuration=\{120\}/,
+    /aria-label=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
     /Pay App Detail/,
     /Project Costs/,
     /WIP Analysis/,
@@ -411,7 +416,7 @@ await expectContains(
     /ProjectCostTrackingPanel/,
     /WipAnalysisPanel/,
   ],
-  "billing route opens a wide tabbed workspace instead of stacking every ledger in one cramped view",
+  "workspace-heavy project tabs open a wide rail layout with labeled icon tooltips",
 );
 
 await expectContains(
