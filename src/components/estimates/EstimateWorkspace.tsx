@@ -138,6 +138,7 @@ interface EstimateWorkspaceProps {
   lineItems: EstimateLineItemRow[];
   totals: EstimateTotalsBreakdown;
   regions: EstimateRegion[];
+  companyName?: string;
 }
 
 const pctToNumber = (basisPoints: number) => Number((basisPoints / 100).toFixed(2));
@@ -257,6 +258,7 @@ export function EstimateWorkspace({
   lineItems,
   totals,
   regions,
+  companyName = "Company",
 }: EstimateWorkspaceProps) {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -544,6 +546,9 @@ export function EstimateWorkspace({
                 </Button>
               )}
               <div className="min-w-0">
+                <p className="mb-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  {companyName}
+                </p>
                 <div className="mb-1 flex items-center gap-2">
                   <Badge variant="outline" className="capitalize">
                     {estimate.status}

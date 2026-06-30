@@ -5,6 +5,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
 import { listPortfolioBilling, type PortfolioBillingProject } from "@/lib/billing.functions";
 import { fmtPct, fmtUSD } from "@/lib/format";
+import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import {
   ArrowDownRight,
   ArrowRight,
@@ -24,12 +25,18 @@ export const Route = createFileRoute("/_authenticated/billing")({
 
 function BillingPortfolioPage() {
   const listBilling = useServerFn(listPortfolioBilling);
+  const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["portfolio-billing"],
     queryFn: () => listBilling(),
   });
+  const { data: companyContext } = useQuery({
+    queryKey: ["company-workspace-context"],
+    queryFn: () => loadCompanyContext(),
+  });
   const projects = useMemo(() => data?.projects ?? [], [data?.projects]);
   const totals = data?.totals;
+  const companyName = companyContext?.name || "Company";
   const sortedProjects = useMemo(
     () =>
       [...projects].sort(
@@ -55,7 +62,7 @@ function BillingPortfolioPage() {
         <div className="mx-auto flex max-w-[1500px] items-center justify-between px-6 py-6 lg:px-10">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-              Overwatch
+              {companyName}
             </div>
             <h1 className="mt-1 font-serif text-3xl text-foreground">Portfolio Billing</h1>
             <p className="mt-1 text-sm text-muted-foreground">

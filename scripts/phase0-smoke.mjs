@@ -151,6 +151,8 @@ await expectFile("src/routes/_authenticated/estimate-masters.tsx", "estimate mas
 await expectFile("src/routes/_authenticated/estimates.$estimateId.tsx", "estimate workspace route");
 await expectFile("src/routes/_authenticated/cost-library.tsx", "cost library route");
 await expectFile("src/components/estimates/EstimateWorkspace.tsx", "estimate workspace component");
+await expectFile("src/components/pipeline/PipelineWorkspace.tsx", "CRM pipeline workspace");
+await expectFile("src/components/pipeline/OpportunityDetail.tsx", "CRM opportunity detail modal");
 await expectFile("src/lib/estimate-import.ts", "estimating import parser");
 await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF generator");
 await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
@@ -211,11 +213,58 @@ await expectContains(
   [
     /createProject/,
     /seedDemoIfEmpty/,
+    /getCompanyWorkspaceContext/,
+    /company-workspace-context/,
     /toast\.loading\("Creating project/,
     /toast\.success\("Project created/,
     /window\.location\.assign\(`\/projects\/\$\{projectId\}`\)/,
   ],
-  "portfolio route supports member project creation and direct project navigation",
+  "portfolio route supports member project creation, direct project navigation, and company-scoped header identity",
+);
+
+await expectContains(
+  "src/lib/team.functions.ts",
+  [
+    /getCompanyWorkspaceContext/,
+    /name: organization\.name \|\| "Company"/,
+    /logo_url: organization\.logo_url/,
+  ],
+  "company workspace context exposes the user's company name and logo for app headers",
+);
+
+await expectContains(
+  "src/routes/_authenticated/estimates.tsx",
+  [/getCompanyWorkspaceContext/, /company-workspace-context/, /\{companyName\}/],
+  "estimates workspace header uses the user's company name",
+);
+
+await expectContains(
+  "src/routes/_authenticated/cost-library.tsx",
+  [/getCompanyWorkspaceContext/, /company-workspace-context/, /\{companyName\}/],
+  "cost library workspace header uses the user's company name",
+);
+
+await expectContains(
+  "src/routes/_authenticated/billing.tsx",
+  [/getCompanyWorkspaceContext/, /company-workspace-context/, /\{companyName\}/],
+  "billing workspace header uses the user's company name",
+);
+
+await expectContains(
+  "src/components/pipeline/PipelineWorkspace.tsx",
+  [
+    /createEstimate/,
+    /createEstimateMutation/,
+    /opportunity_id: opportunity\.id/,
+    /\/estimates\/\$\{result\.id\}/,
+  ],
+  "CRM opportunities can start linked estimates before project conversion",
+);
+
+await expectContains(
+  "src/components/pipeline/OpportunityDetail.tsx",
+  [/Create Estimate/, /isCreatingEstimate/, /onCreateEstimate/],
+  "CRM opportunity detail exposes the create-estimate handoff action",
 );
 
 await expectContains(
@@ -228,6 +277,9 @@ await expectContains(
     /successor_activity_ids/,
     /seedHarborDemoCpmActivities/,
     /ensureHarborDemoCpmActivitiesForProject/,
+    /HARBOR_DEMO_PROJECT_MANAGER/,
+    /Marshall Wilkinson/,
+    /ensureHarborDemoProjectManager/,
     /HARBOR_DEMO_FIRST_CPM_ACTIVITY_ID/,
     /isHarborDemoProject/,
     /getHarborDemoCpmActivityRows/,
@@ -235,7 +287,7 @@ await expectContains(
     /client/,
     /includes\(HARBOR_DEMO_NAME\.toLowerCase\(\)\)/,
   ],
-  "Harbor Residence demo seeds and self-detects a full CPM activity plan with predecessor and successor logic",
+  "Harbor Residence demo seeds Marshall Wilkinson as PM and self-detects a full CPM activity plan with predecessor and successor logic",
 );
 
 await expectContains(
@@ -247,6 +299,18 @@ await expectContains(
     /refreshedActivities/,
   ],
   "Schedule loader self-heals missing Harbor Residence CPM demo rows",
+);
+
+await expectContains(
+  "supabase/migrations/20260630170000_harbor_demo_pm_identity.sql",
+  [
+    /Marshall Wilkinson/,
+    /Overwatch Demo PM/,
+    /public\.projects/,
+    /public\.daily_reports/,
+    /public\.reviews/,
+  ],
+  "existing Harbor Residence demo PM, daily report, and review identities are backfilled",
 );
 
 await expectContains(
@@ -633,7 +697,7 @@ await expectContains(
     /deleteScheduleActivity/,
     /createScheduleWbsSection/,
     /reorderScheduleWbsSections/,
-    /Overwatch schedule workspace/,
+    /project\?\.organization_name \|\| "Company"/,
     /Activity added/,
     /CPM rows created/,
   ],
@@ -662,7 +726,7 @@ await expectContains(
     /Download packet/,
     /billingInvoices/,
     /Invoice total/,
-    /Pay online/,
+    /Pay invoice online/,
     /Billing shared with client/,
     /Daily reports shared with client/,
   ],

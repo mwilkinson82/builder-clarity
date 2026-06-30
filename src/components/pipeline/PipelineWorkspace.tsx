@@ -3,6 +3,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { KanbanSquare, List, RotateCcw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { createEstimate } from "@/lib/estimates.functions";
 import {
   addOpportunityNote,
   archiveOpportunity,
@@ -91,6 +92,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   const ensureDemoFn = useServerFn(ensurePipelineCrmDemo);
   const getFn = useServerFn(getOpportunity);
   const createFn = useServerFn(createOpportunity);
+  const createEstimateFn = useServerFn(createEstimate);
   const createActionFn = useServerFn(createNextAction);
   const updateFn = useServerFn(updateOpportunity);
   const noteFn = useServerFn(addOpportunityNote);
@@ -288,6 +290,25 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
       toast.success("CRM action added");
     },
     onError: (error) => toast.error("Action did not save", { description: errorMessage(error) }),
+  });
+
+  const createEstimateMutation = useMutation({
+    mutationFn: (opportunity: PipelineOpportunityRow) =>
+      createEstimateFn({
+        data: {
+          name: `${opportunity.name} Estimate`.slice(0, 200),
+          description: opportunity.scope_summary || opportunity.client || opportunity.name,
+          opportunity_id: opportunity.id,
+          project_type: /residential/i.test(opportunity.project_type)
+            ? "residential"
+            : "commercial",
+        },
+      }),
+    onSuccess: (result) => {
+      toast.success("Estimate created from CRM opportunity");
+      window.location.assign(`/estimates/${result.id}`);
+    },
+    onError: (error) => toast.error("Estimate did not start", { description: errorMessage(error) }),
   });
 
   const convertMutation = useMutation({
@@ -544,6 +565,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
         isSaving={updateMutation.isPending}
         isAddingNote={noteMutation.isPending}
         isCreatingAction={createActionMutation.isPending}
+        isCreatingEstimate={createEstimateMutation.isPending}
         isConverting={convertMutation.isPending}
         isArchiving={archiveMutation.isPending}
         onOpenChange={(open) => {
@@ -560,6 +582,10 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
           return noteMutation.mutateAsync({ id: selectedId, note }).then(() => undefined);
         }}
         onCreateAction={(input) => createActionMutation.mutateAsync(input).then(() => undefined)}
+        onCreateEstimate={() => {
+          if (!selected) return Promise.resolve();
+          return createEstimateMutation.mutateAsync(selected).then(() => undefined);
+        }}
         onConvert={() => {
           if (!selectedId) return Promise.resolve();
           if (selected?.estimated_contract === 0) {

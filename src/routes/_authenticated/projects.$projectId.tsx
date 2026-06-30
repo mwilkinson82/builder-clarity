@@ -1232,6 +1232,9 @@ function ProjectPage() {
               >
                 ← Portfolio
               </Link>
+              <span className="hidden text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground sm:inline">
+                {project.organization_name || "Company"}
+              </span>
               <Select
                 value={projectId}
                 onValueChange={(v) =>

@@ -38,6 +38,7 @@ import {
   MASTER_ESTIMATE_PROJECT_TYPE,
 } from "@/lib/estimates.functions";
 import { fmtUSD } from "@/lib/format";
+import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 
 export const Route = createFileRoute("/_authenticated/estimate-masters")({
   ssr: false,
@@ -65,6 +66,7 @@ function EstimateMastersPage() {
   const create = useServerFn(createEstimate);
   const createBlankLines = useServerFn(createBlankLineItems);
   const regionList = useServerFn(listEstimateRegions);
+  const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
   const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -80,6 +82,11 @@ function EstimateMastersPage() {
     queryKey: ["estimate-regions"],
     queryFn: () => regionList(),
   });
+  const { data: companyContext } = useQuery({
+    queryKey: ["company-workspace-context"],
+    queryFn: () => loadCompanyContext(),
+  });
+  const companyName = companyContext?.name || "Company";
 
   const visibleMasters = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -135,7 +142,7 @@ function EstimateMastersPage() {
               </Button>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  Estimating
+                  {companyName}
                 </p>
                 <h1 className="mt-1 font-serif text-3xl text-foreground">Master Estimate Sheets</h1>
               </div>

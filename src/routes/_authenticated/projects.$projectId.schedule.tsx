@@ -448,7 +448,7 @@ function ScheduleWorkspaceShell({
             </Button>
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Overwatch schedule workspace
+                {project?.organization_name || "Company"}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
                 {project?.job_number && <span>Job # {project.job_number}</span>}

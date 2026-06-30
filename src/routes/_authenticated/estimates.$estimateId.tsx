@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowLeft } from "lucide-react";
 import { EstimateWorkspace } from "@/components/estimates/EstimateWorkspace";
 import { Button } from "@/components/ui/button";
 import { getEstimate, listEstimateRegions } from "@/lib/estimates.functions";
+import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 
 export const Route = createFileRoute("/_authenticated/estimates/$estimateId")({
   ssr: false,
@@ -24,6 +25,7 @@ function EstimateDetailPage() {
   const { estimateId } = Route.useParams();
   const loadEstimate = useServerFn(getEstimate);
   const loadRegions = useServerFn(listEstimateRegions);
+  const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
 
   const estimateQuery = useQuery({
     queryKey: ["estimate", estimateId],
@@ -32,6 +34,10 @@ function EstimateDetailPage() {
   const regionsQuery = useQuery({
     queryKey: ["estimate-regions"],
     queryFn: () => loadRegions(),
+  });
+  const companyContextQuery = useQuery({
+    queryKey: ["company-workspace-context"],
+    queryFn: () => loadCompanyContext(),
   });
 
   if (estimateQuery.isLoading || regionsQuery.isLoading) {
@@ -75,6 +81,7 @@ function EstimateDetailPage() {
       lineItems={estimateQuery.data.line_items}
       totals={estimateQuery.data.totals}
       regions={regionsQuery.data?.regions ?? []}
+      companyName={companyContextQuery.data?.name || "Company"}
     />
   );
 }

@@ -65,12 +65,14 @@ type OpportunityDetailProps = {
   isSaving: boolean;
   isAddingNote: boolean;
   isCreatingAction: boolean;
+  isCreatingEstimate: boolean;
   isConverting: boolean;
   isArchiving: boolean;
   onOpenChange: (open: boolean) => void;
   onUpdate: (patch: OpportunityPatch) => Promise<void>;
   onAddNote: (note: string) => Promise<void>;
   onCreateAction: (input: CreateNextActionInput) => Promise<void>;
+  onCreateEstimate: () => Promise<void>;
   onConvert: () => Promise<void>;
   onArchive: () => Promise<void>;
 };
@@ -84,12 +86,14 @@ export function OpportunityDetail({
   isSaving,
   isAddingNote,
   isCreatingAction,
+  isCreatingEstimate,
   isConverting,
   isArchiving,
   onOpenChange,
   onUpdate,
   onAddNote,
   onCreateAction,
+  onCreateEstimate,
   onConvert,
   onArchive,
 }: OpportunityDetailProps) {
@@ -230,6 +234,14 @@ export function OpportunityDetail({
                   Convert to Project
                 </Button>
               )}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onCreateEstimate}
+                disabled={isCreatingEstimate}
+              >
+                Create Estimate
+              </Button>
               <Button type="button" variant="outline" onClick={save} disabled={isSaving}>
                 <Save className="mr-1.5 h-4 w-4" />
                 Save changes

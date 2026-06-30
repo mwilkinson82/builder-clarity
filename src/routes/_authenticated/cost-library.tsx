@@ -56,6 +56,7 @@ import {
   updateCostLibraryItem,
   type CostLibraryItemRow,
 } from "@/lib/estimates.functions";
+import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import {
   costLibraryTemplateCsv,
   parseCostLibraryRows,
@@ -122,6 +123,7 @@ function CostLibraryPage() {
   const bulkImport = useServerFn(importCostLibraryItems);
   const update = useServerFn(updateCostLibraryItem);
   const remove = useServerFn(deleteCostLibraryItem);
+  const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
   const [search, setSearch] = useState("");
   const [division, setDivision] = useState("all");
   const [category, setCategory] = useState("all");
@@ -143,6 +145,11 @@ function CostLibraryPage() {
         },
       }),
   });
+  const { data: companyContext } = useQuery({
+    queryKey: ["company-workspace-context"],
+    queryFn: () => loadCompanyContext(),
+  });
+  const companyName = companyContext?.name || "Company";
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -340,7 +347,7 @@ function CostLibraryPage() {
               </Button>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  Estimating
+                  {companyName}
                 </p>
                 <h1 className="mt-1 font-serif text-3xl text-foreground">Cost Library</h1>
               </div>

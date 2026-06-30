@@ -37,6 +37,7 @@ import {
   MASTER_ESTIMATE_PROJECT_TYPE,
 } from "@/lib/estimates.functions";
 import { fmtUSD } from "@/lib/format";
+import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 
 export const Route = createFileRoute("/_authenticated/estimates")({
   ssr: false,
@@ -65,6 +66,7 @@ function EstimatesPage() {
   const list = useServerFn(listEstimates);
   const create = useServerFn(createEstimate);
   const regionList = useServerFn(listEstimateRegions);
+  const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
   const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -79,6 +81,11 @@ function EstimatesPage() {
     queryKey: ["estimate-regions"],
     queryFn: () => regionList(),
   });
+  const { data: companyContext } = useQuery({
+    queryKey: ["company-workspace-context"],
+    queryFn: () => loadCompanyContext(),
+  });
+  const companyName = companyContext?.name || "Company";
 
   const visibleEstimates = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -138,7 +145,7 @@ function EstimatesPage() {
               </Button>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  Overwatch
+                  {companyName}
                 </p>
                 <h1 className="mt-1 font-serif text-3xl text-foreground">Estimates</h1>
               </div>

@@ -2437,6 +2437,7 @@ export const importCostBuckets = createServerFn({ method: "POST" })
 const HARBOR_DEMO_JOB_NUMBER = "DEMO-HARBOR";
 const HARBOR_DEMO_NAME = "Harbor Residence";
 const HARBOR_DEMO_CLIENT = "Private Luxury Residence";
+const HARBOR_DEMO_PROJECT_MANAGER = "Marshall Wilkinson";
 const HARBOR_DEMO_FIRST_CPM_ACTIVITY_ID = "01-010";
 
 const harborDemoBuckets = [
@@ -3094,6 +3095,30 @@ export const ensureHarborDemoCpmActivitiesForProject = async (
   };
 };
 
+const ensureHarborDemoProjectManager = async (
+  supabase: unknown,
+  projectId: string,
+  seedWarnings: string[],
+) => {
+  const { error: projectError } = await dynamicTable(supabase, "projects")
+    .update({ project_manager: HARBOR_DEMO_PROJECT_MANAGER })
+    .eq("id", projectId);
+  if (projectError) seedWarnings.push(`Harbor PM update skipped: ${projectError.message}`);
+
+  const { error: reportError } = await dynamicTable(supabase, "daily_reports")
+    .update({ author: HARBOR_DEMO_PROJECT_MANAGER })
+    .eq("project_id", projectId)
+    .eq("author", "Overwatch Demo PM");
+  if (reportError)
+    seedWarnings.push(`Harbor daily report author update skipped: ${reportError.message}`);
+
+  const { error: reviewError } = await dynamicTable(supabase, "reviews")
+    .update({ reviewer: HARBOR_DEMO_PROJECT_MANAGER })
+    .eq("project_id", projectId)
+    .eq("reviewer", "Overwatch Demo PM");
+  if (reviewError) seedWarnings.push(`Harbor review author update skipped: ${reviewError.message}`);
+};
+
 export const seedDemoIfEmpty = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -3125,6 +3150,11 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       .maybeSingle();
     if (demoLookupError) throw new Error(demoLookupError.message);
     if (existingDemo?.id) {
+      await ensureHarborDemoProjectManager(
+        context.supabase,
+        existingDemo.id as string,
+        seedWarnings,
+      );
       await seedHarborDemoCpmActivities(context.supabase, existingDemo.id as string, seedWarnings);
       return {
         seeded: false as const,
@@ -3144,6 +3174,11 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       .maybeSingle();
     if (harborLookupError) throw new Error(harborLookupError.message);
     if (existingHarbor?.id) {
+      await ensureHarborDemoProjectManager(
+        context.supabase,
+        existingHarbor.id as string,
+        seedWarnings,
+      );
       await seedHarborDemoCpmActivities(
         context.supabase,
         existingHarbor.id as string,
@@ -3163,7 +3198,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       job_number: HARBOR_DEMO_JOB_NUMBER,
       name: HARBOR_DEMO_NAME,
       client: HARBOR_DEMO_CLIENT,
-      project_manager: "Overwatch Demo PM",
+      project_manager: HARBOR_DEMO_PROJECT_MANAGER,
       original_contract: 3200000,
       original_cost_budget: 2720000,
       phase: "Middle" as const,
@@ -3470,7 +3505,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       {
         project_id: projectId,
         report_date: "2026-06-10",
-        author: "Overwatch Demo PM",
+        author: HARBOR_DEMO_PROJECT_MANAGER,
         weather: "Clear, 84F",
         crew_count: 18,
         work_performed:
@@ -3483,7 +3518,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       {
         project_id: projectId,
         report_date: "2026-06-11",
-        author: "Overwatch Demo PM",
+        author: HARBOR_DEMO_PROJECT_MANAGER,
         weather: "Humid, afternoon rain",
         crew_count: 16,
         work_performed:
@@ -3499,7 +3534,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
     const { error: reviewError } = await context.supabase.from("reviews").insert({
       project_id: projectId,
       reviewed_at: "2026-06-11T17:48:00.000Z",
-      reviewer: "Overwatch Demo PM",
+      reviewer: HARBOR_DEMO_PROJECT_MANAGER,
       forecast_completion_date_before: "2026-06-16",
       forecast_completion_date_after: "2026-06-30",
       summary_notes:

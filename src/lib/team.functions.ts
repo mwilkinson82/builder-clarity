@@ -57,6 +57,14 @@ export interface TeamOrganization {
   contractor_circle_grant: boolean;
 }
 
+export interface CompanyWorkspaceContext {
+  id: string;
+  name: string;
+  logo_url: string;
+  plan_code: string;
+  billing_status: string;
+}
+
 export interface TeamProfile {
   id: string;
   email: string;
@@ -326,6 +334,21 @@ async function loadOrganization(context: TeamServerContext, organizationId: stri
   if (fallback.error) throw new Error(fallback.error.message);
   return normalizeOrganization(fallback.data as Record<string, unknown>);
 }
+
+export const getCompanyWorkspaceContext = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<CompanyWorkspaceContext> => {
+    const organizationId = await ensureCurrentOrganization(context);
+    const organization = await loadOrganization(context, organizationId);
+
+    return {
+      id: organization.id,
+      name: organization.name || "Company",
+      logo_url: organization.logo_url,
+      plan_code: organization.plan_code,
+      billing_status: organization.billing_status,
+    };
+  });
 
 function currentMonthBounds() {
   const now = new Date();

@@ -778,7 +778,7 @@ function TeamPage() {
               </Link>
             </Button>
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-              Overwatch Company Workspace
+              {team?.organization.name || "Company Workspace"}
             </div>
             <h1 className="mt-1 font-serif text-4xl text-foreground">Your Company</h1>
           </div>

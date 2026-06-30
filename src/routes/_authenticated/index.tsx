@@ -17,6 +17,7 @@ import {
   assignProjectMember,
   createTeamInvite,
   getTeamWorkspace,
+  getCompanyWorkspaceContext,
   removeProjectMember,
   revokeTeamInvite,
   updateProjectMember,
@@ -150,6 +151,7 @@ function PortfolioPage() {
   const seed = useServerFn(seedDemoIfEmpty);
   const listCrm = useServerFn(listOpportunities);
   const loadCrmSnapshot = useServerFn(listCrmSnapshot);
+  const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
   const qc = useQueryClient();
   const {
     data: projects = [],
@@ -168,6 +170,10 @@ function PortfolioPage() {
   const { data: crmSnapshot = null, isLoading: crmSnapshotLoading } = useQuery({
     queryKey: ["pipeline-crm-snapshot"],
     queryFn: () => loadCrmSnapshot(),
+  });
+  const { data: companyContext } = useQuery({
+    queryKey: ["company-workspace-context"],
+    queryFn: () => loadCompanyContext(),
   });
   const [search, setSearch] = useState("");
   const [seedError, setSeedError] = useState<string | null>(null);
@@ -195,7 +201,7 @@ function PortfolioPage() {
     [projects],
   );
   const headerCompanyName =
-    companyFilter !== "all" ? companyFilter : companyNames[0] || "Overwatch";
+    companyFilter !== "all" ? companyFilter : companyContext?.name || companyNames[0] || "Company";
   const headerTitle = portfolioTab === "pipeline" ? "CRM" : "Portfolio";
   const managerNames = useMemo(
     () =>
