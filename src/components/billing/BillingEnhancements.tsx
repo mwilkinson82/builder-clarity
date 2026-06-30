@@ -1,5 +1,5 @@
 import * as Papa from "papaparse";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,6 +35,7 @@ import { Check, Download, Plus, Save, Trash2, Upload, Wand2 } from "lucide-react
 type LinePatch = {
   work_completed_this_period?: number;
   materials_stored_this_period?: number;
+  retainage_pct?: number;
   retainage_released?: number;
 };
 
@@ -67,10 +68,12 @@ type BillingEnhancementProps = {
   workspace?: BillingWorkspaceData;
   isLoading?: boolean;
   savingLine?: boolean;
+  savingRetainageRate?: boolean;
   savingCost?: boolean;
   savingBucket?: boolean;
   onGenerateLines: (billingApplicationId: string) => void;
   onUpdateLine: (id: string, patch: LinePatch) => void;
+  onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onCreateCostActual: (input: CostActualDraft) => void;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
@@ -78,6 +81,13 @@ type BillingEnhancementProps = {
 };
 
 const centsToDollars = (value: number) => value / 100;
+const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
+const parsePercentInput = (value: string | number) => {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? clampPercent(parsed) : 0;
+};
+const formatPercentInput = (value: number) =>
+  Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
 const today = () => new Date().toISOString().slice(0, 10);
 
 const normalizeHeader = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -140,10 +150,12 @@ export function BillingEnhancementPanels({
   workspace,
   isLoading,
   savingLine,
+  savingRetainageRate,
   savingCost,
   savingBucket,
   onGenerateLines,
   onUpdateLine,
+  onUpdatePayAppRetainageRate,
   onCreateCostActual,
   onImportCostActuals,
   onVoidCostActual,
@@ -174,7 +186,9 @@ export function BillingEnhancementPanels({
         lineItems={workspace.lineItems}
         onGenerateLines={onGenerateLines}
         onUpdateLine={onUpdateLine}
+        onUpdatePayAppRetainageRate={onUpdatePayAppRetainageRate}
         savingLine={savingLine}
+        savingRetainageRate={savingRetainageRate}
       />
       <ProjectCostTrackingPanel
         projectId={projectId}
@@ -201,14 +215,18 @@ export function BillingLineItemsPanel({
   lineItems,
   onGenerateLines,
   onUpdateLine,
+  onUpdatePayAppRetainageRate,
   savingLine,
+  savingRetainageRate,
 }: {
   project: ProjectRow;
   payApps: BillingApplicationRow[];
   lineItems: BillingLineItemRow[];
   onGenerateLines: (billingApplicationId: string) => void;
   onUpdateLine: (id: string, patch: LinePatch) => void;
+  onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   savingLine?: boolean;
+  savingRetainageRate?: boolean;
 }) {
   const [pdfBusy, setPdfBusy] = useState(false);
   const firstDetailedPayAppId = lineItems[0]?.billing_application_id ?? payApps[0]?.id ?? "";
@@ -218,6 +236,17 @@ export function BillingLineItemsPanel({
     (line) => line.billing_application_id === selectedPayAppId,
   );
   const selectedPayApp = payApps.find((app) => app.id === selectedPayAppId);
+  const defaultRetainagePct = project.default_retainage_pct ?? 10;
+  const selectedRetainagePct = selectedLines[0]?.retainage_pct ?? defaultRetainagePct;
+  const hasMixedRetainagePct = selectedLines.some(
+    (line) => Math.abs(line.retainage_pct - selectedRetainagePct) > 0.01,
+  );
+  const [retainagePctDraft, setRetainagePctDraft] = useState(
+    formatPercentInput(selectedRetainagePct),
+  );
+  useEffect(() => {
+    setRetainagePctDraft(formatPercentInput(selectedRetainagePct));
+  }, [selectedPayAppId, selectedRetainagePct]);
   const totals = useMemo(
     () =>
       selectedLines.reduce(
@@ -255,6 +284,13 @@ export function BillingLineItemsPanel({
         retainage_released: centsToDollars(line.retainage_held_cents),
       }),
     );
+  };
+
+  const applyRetainageRate = () => {
+    if (!selectedPayApp) return;
+    const nextPct = parsePercentInput(retainagePctDraft);
+    setRetainagePctDraft(formatPercentInput(nextPct));
+    onUpdatePayAppRetainageRate(selectedPayApp.id, nextPct);
   };
 
   const downloadAiaPdf = async () => {
@@ -355,6 +391,54 @@ export function BillingLineItemsPanel({
                 <BillingDetail label="Retainage" value={fmtUSD(totals.retainage)} />
               </div>
             </div>
+            <div className="rounded-md border border-hairline bg-surface p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Retention rate
+                  </div>
+                  <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                    Enter the retainage percentage for this pay app. Withheld retainage is
+                    calculated from completed work and stored materials.
+                  </p>
+                  {hasMixedRetainagePct ? (
+                    <p className="mt-1 text-xs text-warning">
+                      This pay app has mixed line rates. Apply a rate to make every line match, or
+                      edit individual lines below.
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[270px] sm:flex-row sm:items-end">
+                  <div className="space-y-1.5 sm:w-28">
+                    <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                      Retention %
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        value={retainagePctDraft}
+                        inputMode="decimal"
+                        className="h-9 pr-7 text-right tabular"
+                        onChange={(event) => setRetainagePctDraft(event.target.value)}
+                      />
+                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                        %
+                      </span>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-9 gap-1.5"
+                    disabled={savingRetainageRate || selectedLines.length === 0}
+                    onClick={applyRetainageRate}
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    {savingRetainageRate ? "Applying..." : "Apply rate"}
+                  </Button>
+                </div>
+              </div>
+            </div>
             {selectedLines.map((line) => (
               <BillingLineItemEditor
                 key={line.id}
@@ -381,7 +465,20 @@ function BillingLineItemEditor({
 }) {
   const [work, setWork] = useState(centsToDollars(line.work_completed_this_period_cents));
   const [stored, setStored] = useState(centsToDollars(line.materials_stored_this_period_cents));
+  const [retainagePct, setRetainagePct] = useState(formatPercentInput(line.retainage_pct));
   const [released, setReleased] = useState(centsToDollars(line.retainage_released_cents));
+  useEffect(() => {
+    setWork(centsToDollars(line.work_completed_this_period_cents));
+    setStored(centsToDollars(line.materials_stored_this_period_cents));
+    setRetainagePct(formatPercentInput(line.retainage_pct));
+    setReleased(centsToDollars(line.retainage_released_cents));
+  }, [
+    line.id,
+    line.work_completed_this_period_cents,
+    line.materials_stored_this_period_cents,
+    line.retainage_pct,
+    line.retainage_released_cents,
+  ]);
   const previous = centsToDollars(
     line.work_completed_previous_cents + line.materials_stored_previous_cents,
   );
@@ -412,7 +509,7 @@ function BillingLineItemEditor({
           />
         </div>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         <BillingDetail
           label="Scheduled"
           value={fmtUSD(centsToDollars(line.scheduled_value_cents))}
@@ -430,6 +527,22 @@ function BillingLineItemEditor({
             Stored
           </Label>
           <MoneyInput value={stored} onValueChange={setStored} align="right" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            Retention %
+          </Label>
+          <div className="relative">
+            <Input
+              value={retainagePct}
+              inputMode="decimal"
+              className="h-9 pr-7 text-right tabular"
+              onChange={(event) => setRetainagePct(event.target.value)}
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+              %
+            </span>
+          </div>
         </div>
         <div className="space-y-1.5">
           <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -454,6 +567,7 @@ function BillingLineItemEditor({
             onSave({
               work_completed_this_period: work,
               materials_stored_this_period: stored,
+              retainage_pct: parsePercentInput(retainagePct),
               retainage_released: released,
             })
           }

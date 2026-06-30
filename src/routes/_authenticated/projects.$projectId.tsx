@@ -58,6 +58,7 @@ import {
   generateBillingLineItems,
   getBillingWorkspace,
   importCostActuals,
+  updateBillingApplicationRetainageRate,
   updateBillingLineItem,
   updateCostBucketBillingSettings,
   voidCostActual,
@@ -453,6 +454,7 @@ function ProjectPage() {
   const loadBillingWorkspaceFn = useServerFn(getBillingWorkspace);
   const generateBillingLinesFn = useServerFn(generateBillingLineItems);
   const updateBillingLineFn = useServerFn(updateBillingLineItem);
+  const updateBillingRetainageRateFn = useServerFn(updateBillingApplicationRetainageRate);
   const createCostActualFn = useServerFn(createCostActual);
   const importCostActualsFn = useServerFn(importCostActuals);
   const voidCostActualFn = useServerFn(voidCostActual);
@@ -572,6 +574,7 @@ function ProjectPage() {
       patch: {
         work_completed_this_period?: number;
         materials_stored_this_period?: number;
+        retainage_pct?: number;
         retainage_released?: number;
       };
     }) => updateBillingLineFn({ data: input }),
@@ -582,6 +585,21 @@ function ProjectPage() {
     onError: (err) => {
       toast.error("Billing line did not save", {
         description: err instanceof Error ? err.message : "Check the line values and try again.",
+      });
+    },
+  });
+  const billingRetainageRateUpdate = useMutation({
+    mutationFn: (input: { billingApplicationId: string; retainage_pct: number }) =>
+      updateBillingRetainageRateFn({ data: input }),
+    onSuccess: (result) => {
+      invalidate();
+      toast.success("Retention rate applied", {
+        description: `${result.line_count} billing line${result.line_count === 1 ? "" : "s"} recalculated.`,
+      });
+    },
+    onError: (err) => {
+      toast.error("Retention rate did not save", {
+        description: err instanceof Error ? err.message : "Check the percentage and try again.",
       });
     },
   });
@@ -1623,6 +1641,7 @@ function ProjectPage() {
                 savingInvoice={invoiceCreate.isPending}
                 savingPayment={paymentRecord.isPending}
                 savingBillingLine={billingLineGenerate.isPending || billingLineUpdate.isPending}
+                savingRetainageRate={billingRetainageRateUpdate.isPending}
                 savingCostActual={
                   costActualCreate.isPending ||
                   costActualImport.isPending ||
@@ -1636,6 +1655,9 @@ function ProjectPage() {
                   billingLineGenerate.mutate({ projectId, billingApplicationId })
                 }
                 onUpdateBillingLine={(id, patch) => billingLineUpdate.mutate({ id, patch })}
+                onUpdatePayAppRetainageRate={(billingApplicationId, retainage_pct) =>
+                  billingRetainageRateUpdate.mutate({ billingApplicationId, retainage_pct })
+                }
                 onCreateCostActual={(input) =>
                   costActualCreate.mutate({
                     projectId,
@@ -2035,6 +2057,7 @@ function BillingWorkspace({
   savingInvoice,
   savingPayment,
   savingBillingLine,
+  savingRetainageRate,
   savingCostActual,
   savingBucketBilling,
   onCreate,
@@ -2042,6 +2065,7 @@ function BillingWorkspace({
   onDelete,
   onGenerateBillingLines,
   onUpdateBillingLine,
+  onUpdatePayAppRetainageRate,
   onCreateCostActual,
   onImportCostActuals,
   onVoidCostActual,
@@ -2065,6 +2089,7 @@ function BillingWorkspace({
   savingInvoice?: boolean;
   savingPayment?: boolean;
   savingBillingLine?: boolean;
+  savingRetainageRate?: boolean;
   savingCostActual?: boolean;
   savingBucketBilling?: boolean;
   onCreate: (input: BillingDraft) => void;
@@ -2076,9 +2101,11 @@ function BillingWorkspace({
     patch: {
       work_completed_this_period?: number;
       materials_stored_this_period?: number;
+      retainage_pct?: number;
       retainage_released?: number;
     },
   ) => void;
+  onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onCreateCostActual: (input: {
     cost_bucket_id: string | null;
     cost_code: string;
@@ -2118,6 +2145,7 @@ function BillingWorkspace({
   const holds = rollup.exposureHolds + rollup.contingencyHold;
   const totalBilled = billingApplications.reduce((sum, app) => sum + app.amount_billed, 0);
   const paidToDate = billingApplications.reduce((sum, app) => sum + app.paid_to_date, 0);
+  const defaultRetainagePct = project.default_retainage_pct ?? 10;
   const percentCompleteEarned = rollup.forecastedFinalContract * (project.percent_complete / 100);
   const ledgerEarnedToDate = billingApplications.reduce(
     (sum, app) => sum + Math.max(app.amount_billed, app.paid_to_date),
@@ -2205,7 +2233,7 @@ function BillingWorkspace({
       change_order_amount: rollup.approvedCOContract,
       amount_billed: unbilledEarnedToDate,
       paid_to_date: 0,
-      retainage: unbilledEarnedToDate * 0.1,
+      retainage: unbilledEarnedToDate * (defaultRetainagePct / 100),
       has_line_detail: false,
       total_retainage_held: 0,
       retainage_released_this_period: 0,
@@ -2251,6 +2279,9 @@ function BillingWorkspace({
   };
   const [payAppOpen, setPayAppOpen] = useState(false);
   const [draft, setDraft] = useState<BillingDraft>(() => buildDraft());
+  const [draftRetainagePct, setDraftRetainagePct] = useState(() =>
+    formatBillingPercentInput(defaultRetainagePct),
+  );
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(() => buildInvoiceDraft());
   const [invoiceError, setInvoiceError] = useState("");
@@ -2280,11 +2311,26 @@ function BillingWorkspace({
 
   const openPayAppDialog = () => {
     setDraft(buildDraft());
+    setDraftRetainagePct(formatBillingPercentInput(defaultRetainagePct));
     setPayAppOpen(true);
   };
 
+  const updateDraftRetainagePct = (value: string) => {
+    setDraftRetainagePct(value);
+    const nextPct = parseBillingPercent(value);
+    setDraft((current) => ({
+      ...current,
+      retainage: current.amount_billed * (nextPct / 100),
+    }));
+  };
+
   const savePayApplication = () => {
-    onCreate(draft);
+    const normalizedRetainagePct = parseBillingPercent(draftRetainagePct);
+    setDraftRetainagePct(formatBillingPercentInput(normalizedRetainagePct));
+    onCreate({
+      ...draft,
+      retainage: draft.amount_billed * (normalizedRetainagePct / 100),
+    });
     setPayAppOpen(false);
   };
 
@@ -2460,7 +2506,14 @@ function BillingWorkspace({
                       <Label>Amount billed</Label>
                       <MoneyInput
                         value={draft.amount_billed}
-                        onValueChange={(amount_billed) => setDraft({ ...draft, amount_billed })}
+                        onValueChange={(amount_billed) =>
+                          setDraft({
+                            ...draft,
+                            amount_billed,
+                            retainage:
+                              amount_billed * (parseBillingPercent(draftRetainagePct) / 100),
+                          })
+                        }
                         align="right"
                       />
                     </div>
@@ -2473,12 +2526,18 @@ function BillingWorkspace({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Retainage</Label>
-                      <MoneyInput
-                        value={draft.retainage}
-                        onValueChange={(retainage) => setDraft({ ...draft, retainage })}
-                        align="right"
-                      />
+                      <Label>Retention %</Label>
+                      <div className="relative">
+                        <Input
+                          value={draftRetainagePct}
+                          inputMode="decimal"
+                          className="pr-7 text-right tabular"
+                          onChange={(event) => updateDraftRetainagePct(event.target.value)}
+                        />
+                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                          %
+                        </span>
+                      </div>
                     </div>
                   </div>
                   <div className="grid gap-3 md:grid-cols-[1fr_180px]">
@@ -2493,13 +2552,19 @@ function BillingWorkspace({
                     </div>
                     <div className="rounded-md border border-hairline bg-surface p-3">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Retainage withheld
+                      </div>
+                      <div className="mt-2 text-xl font-medium tabular text-foreground">
+                        {fmtUSD(draft.retainage)}
+                      </div>
+                      <div className="mt-3 border-t border-hairline pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                         Open A/R
                       </div>
-                      <div className="mt-2 text-2xl font-medium tabular text-foreground">
+                      <div className="mt-2 text-xl font-medium tabular text-foreground">
                         {fmtUSD(draftOpenReceivable)}
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
-                        Billed less paid and retainage.
+                        Billed less paid and retainage held.
                       </div>
                     </div>
                   </div>
@@ -2593,7 +2658,9 @@ function BillingWorkspace({
               lineItems={workspace.lineItems}
               onGenerateLines={onGenerateBillingLines}
               onUpdateLine={onUpdateBillingLine}
+              onUpdatePayAppRetainageRate={onUpdatePayAppRetainageRate}
               savingLine={savingBillingLine}
+              savingRetainageRate={savingRetainageRate}
             />
           ))}
         </TabsContent>
@@ -3026,6 +3093,19 @@ function addDays(date: string, days: number) {
   const d = new Date(`${date}T00:00:00`);
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+function clampBillingPercent(value: number) {
+  return Math.max(0, Math.min(100, value));
+}
+
+function parseBillingPercent(value: string | number) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? clampBillingPercent(parsed) : 0;
+}
+
+function formatBillingPercentInput(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
 }
 
 function billingEventLabel(event: BillingApplicationEventRow) {
