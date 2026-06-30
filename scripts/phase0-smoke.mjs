@@ -103,6 +103,11 @@ await expectFile("src/routes/_authenticated/index.tsx", "portfolio route");
 await expectFile("src/routes/_authenticated/projects.$projectId.tsx", "project route");
 await expectFile("src/routes/_authenticated/client.projects.$projectId.tsx", "client portal route");
 await expectFile("src/routes/_authenticated/team.tsx", "company workspace route");
+await expectFile("src/routes/_authenticated/estimates.tsx", "estimates route");
+await expectFile("src/routes/_authenticated/estimates.$estimateId.tsx", "estimate workspace route");
+await expectFile("src/routes/_authenticated/cost-library.tsx", "cost library route");
+await expectFile("src/components/estimates/EstimateWorkspace.tsx", "estimate workspace component");
+await expectFile("src/lib/estimate-import.ts", "estimating import parser");
 await expectFile("src/lib/daily-report-packet-pdf.ts", "daily report packet PDF generator");
 await expectFile("src/lib/invoice-pdf.ts", "invoice PDF generator");
 await expectFile("src/lib/email-templates/invoice-notification.tsx", "invoice email template");
@@ -137,6 +142,12 @@ await expectContains(
     /fullPath:\s*'\/api\/stripe\/webhook'/,
   ],
   "generated route tree includes auth, app-owned magic links, company workspace, project, client portal, and Stripe API routes",
+);
+
+await expectContains(
+  "src/routeTree.gen.ts",
+  [/fullPath:\s*'\/estimates'/, /fullPath:\s*'\/cost-library'/],
+  "generated route tree includes estimating workspace and cost library routes",
 );
 
 await expectContains(
@@ -476,8 +487,6 @@ await expectContains(
   "src/components/outcome/ScheduleRisk.tsx",
   [
     /createScheduleUpdate/,
-    /createScheduleActivity/,
-    /updateScheduleActivity/,
     /createScheduleRisk/,
     /createExposure/,
     /Baseline vs schedule updates/,
@@ -485,7 +494,6 @@ await expectContains(
     /Money exposure in update/,
     /schedule_money_exposure/,
     /Construction schedule/,
-    /Schedule workbench/,
     /Activity table \+ Gantt/,
     /Build from milestones/,
     /CPM activity detail/,
@@ -501,6 +509,21 @@ await expectContains(
     /toast\.success\("Schedule update saved/,
   ],
   "schedule workspace creates data-date updates with money movement and pushes schedule risk into risk tally",
+);
+
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.schedule.tsx",
+  [
+    /createScheduleActivity/,
+    /updateScheduleActivity/,
+    /deleteScheduleActivity/,
+    /createScheduleWbsSection/,
+    /reorderScheduleWbsSections/,
+    /Overwatch schedule workspace/,
+    /Activity added/,
+    /CPM rows created/,
+  ],
+  "dedicated schedule workspace route creates and edits CPM activities",
 );
 
 await expectContains(
@@ -570,6 +593,74 @@ await expectContains(
     /confidence/,
   ],
   "SOV intake supports messy contractor spreadsheets and mapping confidence",
+);
+
+await expectContains(
+  "src/lib/estimate-import.ts",
+  [
+    /parseCostLibraryRows/,
+    /parseEstimateLineRows/,
+    /costLibraryTemplateCsv/,
+    /estimateLineTemplateCsv/,
+    /Material \$\/Unit/,
+    /Labor \$\/Unit/,
+    /warning/,
+  ],
+  "estimating import parser supports paste, CSV, and spreadsheet row staging",
+);
+
+await expectContains(
+  "src/lib/estimates.functions.ts",
+  [
+    /importCostLibraryItems/,
+    /importEstimateLineItems/,
+    /source:\s*"imported"/,
+    /mode:\s*z\.enum\(\["append", "replace"\]\)/,
+    /System library items are read-only/,
+    /HARBOR_DEMO_ESTIMATE_NAME/,
+    /Harbor Residence - Sample Estimate/,
+    /ensureHarborDemoEstimate/,
+    /recalculateEstimateTotalsInternal/,
+  ],
+  "estimating server functions import contractor costs, protect system rows, and seed the Harbor sample estimate",
+);
+
+await expectContains(
+  "src/routes/_authenticated/cost-library.tsx",
+  [
+    /Import Costs/,
+    /Template/,
+    /Copy to custom library/,
+    /parseCostLibraryRows/,
+    /parseCsv/,
+    /parseXlsx/,
+    /parsePaste/,
+    /Import Cost Library/,
+    /validRows/,
+    /copyMutation/,
+    /source === "system"/,
+  ],
+  "cost library UI can copy system rows and bulk import custom contractor pricing",
+);
+
+await expectContains(
+  "src/components/estimates/EstimateWorkspace.tsx",
+  [
+    /Import Rows/,
+    /Template/,
+    /Import Estimate Rows/,
+    /Replace worksheet/,
+    /Append rows/,
+    /parseEstimateLineRows/,
+    /parseCsv/,
+    /parseXlsx/,
+    /parsePaste/,
+    /estimateLineTemplateCsv/,
+    /materialTotal/,
+    /laborTotal/,
+    /direct/,
+  ],
+  "estimate workspace UI can bulk import worksheet rows with append or replace staging",
 );
 
 const sql = await readAllMigrationSql();

@@ -3,20 +3,32 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
+  CheckCircle2,
   Copy,
   Download,
   FileDown,
+  FileSpreadsheet,
   GripVertical,
   Library,
   Plus,
   Save,
   Send,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +46,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -49,6 +62,7 @@ import {
   createLineItem,
   deleteLineItem,
   duplicateEstimate,
+  importEstimateLineItems,
   reorderLineItems,
   saveEstimateMarkupDefaults,
   searchCostLibrary,
@@ -60,9 +74,16 @@ import {
   type EstimateStatus,
   type EstimateTotalsBreakdown,
 } from "@/lib/estimates.functions";
+import {
+  estimateLineTemplateCsv,
+  parseEstimateLineRows,
+  type EstimateLineImportRow,
+} from "@/lib/estimate-import";
 import { downloadPdfBytes, generateEstimatePdf } from "@/lib/estimate-pdf";
 import type { EstimateRegion } from "@/lib/estimate-seed-data";
 import { fmtUSD } from "@/lib/format";
+import { parseCsv, parsePaste, parseXlsx } from "@/lib/sov-import";
+import { Textarea } from "@/components/ui/textarea";
 
 type EstimatePatch = Partial<
   Pick<
@@ -180,12 +201,18 @@ export function EstimateWorkspace({
   const updateLineFn = useServerFn(updateLineItem);
   const deleteLineFn = useServerFn(deleteLineItem);
   const reorderLineFn = useServerFn(reorderLineItems);
+  const importLinesFn = useServerFn(importEstimateLineItems);
   const duplicateFn = useServerFn(duplicateEstimate);
   const convertToSovFn = useServerFn(convertEstimateToSOV);
   const convertToProjectFn = useServerFn(convertEstimateToProject);
   const saveDefaultsFn = useServerFn(saveEstimateMarkupDefaults);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState(estimate.name);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importMode, setImportMode] = useState<"append" | "replace">("append");
+  const [pasteText, setPasteText] = useState("");
+  const [importRows, setImportRows] = useState<EstimateLineImportRow[]>([]);
+  const [importSource, setImportSource] = useState("");
 
   useEffect(() => setNameDraft(estimate.name), [estimate.name]);
 
@@ -235,6 +262,40 @@ export function EstimateWorkspace({
     onSuccess: invalidate,
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Rows did not reorder"),
+  });
+
+  const importableRows = importRows.filter((row) => row.valid);
+
+  const importMutation = useMutation({
+    mutationFn: () =>
+      importLinesFn({
+        data: {
+          estimate_id: estimate.id,
+          mode: importMode,
+          rows: importableRows.map((row) => ({
+            csi_division: row.csi_division,
+            cost_code: row.cost_code,
+            description: row.description,
+            unit: row.unit,
+            quantity: row.quantity,
+            material_unit_cost_cents: row.material_unit_cost_cents,
+            labor_unit_cost_cents: row.labor_unit_cost_cents,
+            scope_group: row.scope_group,
+            notes: row.notes,
+          })),
+        },
+      }),
+    onSuccess: (result) => {
+      toast.success(`${result.created_count} estimate rows imported`);
+      setImportOpen(false);
+      setImportRows([]);
+      setImportSource("");
+      setPasteText("");
+      setImportMode("append");
+      invalidate();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate rows did not import"),
   });
 
   const duplicateMutation = useMutation({
@@ -314,6 +375,45 @@ export function EstimateWorkspace({
     next.splice(to, 0, moved);
     reorderMutation.mutate(next.map((line) => line.id));
     setDraggingId(null);
+  };
+
+  const resetImport = () => {
+    setImportRows([]);
+    setImportSource("");
+    setPasteText("");
+    setImportMode("append");
+  };
+
+  const stageImportRows = (matrix: string[][], hasHeader: boolean, source: string) => {
+    const rows = parseEstimateLineRows(matrix, hasHeader);
+    setImportRows(rows);
+    setImportSource(source);
+    if (rows.length === 0) {
+      toast.warning("No estimate rows found");
+      return;
+    }
+    const valid = rows.filter((row) => row.valid).length;
+    toast.success(`${valid} estimate rows staged`);
+  };
+
+  const handleImportFile = async (file: File) => {
+    try {
+      const extension = file.name.split(".").pop()?.toLowerCase();
+      const parsed =
+        extension === "xlsx" || extension === "xls" ? await parseXlsx(file) : await parseCsv(file);
+      stageImportRows(
+        parsed.matrix,
+        parsed.hasHeader,
+        `${parsed.source.toUpperCase()}${parsed.sheetName ? ` · ${parsed.sheetName}` : ""}`,
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "File did not parse");
+    }
+  };
+
+  const handleImportPaste = () => {
+    const parsed = parsePaste(pasteText);
+    stageImportRows(parsed.matrix, parsed.hasHeader, "Pasted rows");
   };
 
   const exportCsv = () => {
@@ -431,14 +531,38 @@ export function EstimateWorkspace({
               <h2 className="font-serif text-2xl">Line Items</h2>
               <p className="text-xs text-muted-foreground">{orderedLines.length} rows</p>
             </div>
-            <Button
-              size="sm"
-              className="gap-1.5"
-              onClick={() => createLineMutation.mutate()}
-              disabled={createLineMutation.isPending}
-            >
-              <Plus className="h-3.5 w-3.5" /> Add Row
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() =>
+                  downloadText(
+                    "overwatch-estimate-lines-template.csv",
+                    estimateLineTemplateCsv,
+                    "text/csv",
+                  )
+                }
+              >
+                <Download className="h-3.5 w-3.5" /> Template
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => setImportOpen(true)}
+              >
+                <Upload className="h-3.5 w-3.5" /> Import Rows
+              </Button>
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={() => createLineMutation.mutate()}
+                disabled={createLineMutation.isPending}
+              >
+                <Plus className="h-3.5 w-3.5" /> Add Row
+              </Button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <Table className="min-w-[1280px]">
@@ -510,6 +634,26 @@ export function EstimateWorkspace({
           savingDefaults={saveDefaultsMutation.isPending}
         />
       </main>
+
+      <EstimateLineImportDialog
+        open={importOpen}
+        rows={importRows}
+        source={importSource}
+        pasteText={pasteText}
+        mode={importMode}
+        saving={importMutation.isPending}
+        existingRowCount={orderedLines.length}
+        onOpenChange={(open) => {
+          setImportOpen(open);
+          if (!open) resetImport();
+        }}
+        onPasteTextChange={setPasteText}
+        onModeChange={setImportMode}
+        onPaste={handleImportPaste}
+        onFile={handleImportFile}
+        onReset={resetImport}
+        onImport={() => importMutation.mutate()}
+      />
     </div>
   );
 }
@@ -740,6 +884,226 @@ function CostLibraryAutocomplete({
         </div>
       )}
     </div>
+  );
+}
+
+function EstimateLineImportDialog({
+  open,
+  rows,
+  source,
+  pasteText,
+  mode,
+  saving,
+  existingRowCount,
+  onOpenChange,
+  onPasteTextChange,
+  onModeChange,
+  onPaste,
+  onFile,
+  onReset,
+  onImport,
+}: {
+  open: boolean;
+  rows: EstimateLineImportRow[];
+  source: string;
+  pasteText: string;
+  mode: "append" | "replace";
+  saving: boolean;
+  existingRowCount: number;
+  onOpenChange: (open: boolean) => void;
+  onPasteTextChange: (value: string) => void;
+  onModeChange: (mode: "append" | "replace") => void;
+  onPaste: () => void;
+  onFile: (file: File) => void;
+  onReset: () => void;
+  onImport: () => void;
+}) {
+  const validRows = rows.filter((row) => row.valid);
+  const warningCount = rows.reduce(
+    (sum, row) => sum + row.issues.filter((issue) => issue.level === "warning").length,
+    0,
+  );
+  const errorCount = rows.reduce(
+    (sum, row) => sum + row.issues.filter((issue) => issue.level === "error").length,
+    0,
+  );
+  const materialTotal = validRows.reduce(
+    (sum, row) => sum + row.quantity * row.material_unit_cost_cents,
+    0,
+  );
+  const laborTotal = validRows.reduce(
+    (sum, row) => sum + row.quantity * row.labor_unit_cost_cents,
+    0,
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[86vh] max-w-6xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Import Estimate Rows</DialogTitle>
+          <DialogDescription>
+            Stage worksheet rows before adding them to this estimate.
+          </DialogDescription>
+        </DialogHeader>
+
+        {rows.length === 0 ? (
+          <Tabs defaultValue="paste" className="space-y-4">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="paste">Paste</TabsTrigger>
+              <TabsTrigger value="csv">CSV</TabsTrigger>
+              <TabsTrigger value="xlsx">Excel</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="paste" className="space-y-3">
+              <Label>Worksheet rows</Label>
+              <Textarea
+                rows={12}
+                value={pasteText}
+                onChange={(event) => onPasteTextChange(event.target.value)}
+                placeholder={
+                  "Cost Code\tCSI Division\tDescription\tGroup\tUnit\tQty\tMaterial $/Unit\tLabor $/Unit\tNotes\n06-100\t06\tRough framing package\tStructure\tLS\t1\t185000\t62000\t\n09-510\t09\tInterior paint\tFinishes\tSF\t18500\t0.58\t1.35\t"
+                }
+                className="font-mono text-xs"
+              />
+              <Button
+                variant="outline"
+                className="gap-1.5"
+                onClick={onPaste}
+                disabled={!pasteText.trim()}
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" /> Stage Rows
+              </Button>
+            </TabsContent>
+
+            <TabsContent value="csv" className="space-y-3">
+              <Label>CSV file</Label>
+              <Input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) onFile(file);
+                }}
+              />
+            </TabsContent>
+
+            <TabsContent value="xlsx" className="space-y-3">
+              <Label>Excel file</Label>
+              <Input
+                type="file"
+                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) onFile(file);
+                }}
+              />
+            </TabsContent>
+          </Tabs>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-hairline bg-surface px-3 py-2 text-sm">
+              <span className="inline-flex items-center gap-1.5 font-medium">
+                <FileSpreadsheet className="h-4 w-4" /> {source || "Import preview"}
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-success">
+                <CheckCircle2 className="h-4 w-4" /> {validRows.length} ready
+              </span>
+              {warningCount > 0 && (
+                <span className="inline-flex items-center gap-1.5 text-warning">
+                  <AlertTriangle className="h-4 w-4" /> {warningCount} warnings
+                </span>
+              )}
+              {errorCount > 0 && (
+                <span className="inline-flex items-center gap-1.5 text-danger">
+                  <AlertTriangle className="h-4 w-4" /> {errorCount} errors
+                </span>
+              )}
+              <span className="ml-auto tabular">
+                {fmtUSD((materialTotal + laborTotal) / 100)} direct
+              </span>
+            </div>
+
+            <div className="grid gap-3 rounded-lg border border-hairline bg-card p-3 md:grid-cols-[220px_1fr_auto] md:items-center">
+              <div className="space-y-1.5">
+                <Label>Import mode</Label>
+                <Select
+                  value={mode}
+                  onValueChange={(value) => onModeChange(value as "append" | "replace")}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="append">Append rows</SelectItem>
+                    <SelectItem value="replace">Replace worksheet</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {mode === "replace" && existingRowCount > 0
+                  ? `${existingRowCount} existing rows will be removed before import.`
+                  : `${validRows.length} rows will be added to the worksheet.`}
+              </div>
+              <Button size="sm" variant="ghost" onClick={onReset}>
+                Start over
+              </Button>
+            </div>
+
+            <div className="max-h-[420px] overflow-auto rounded-lg border border-hairline">
+              <Table className="min-w-[1180px]">
+                <TableHeader>
+                  <TableRow className="bg-surface">
+                    <TableHead className="w-[62px]">Row</TableHead>
+                    <TableHead className="w-[110px]">Code</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead className="w-[130px]">Group</TableHead>
+                    <TableHead className="w-[72px]">Unit</TableHead>
+                    <TableHead className="w-[90px] text-right">Qty</TableHead>
+                    <TableHead className="w-[118px] text-right">Material</TableHead>
+                    <TableHead className="w-[118px] text-right">Labor</TableHead>
+                    <TableHead className="w-[190px]">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.slice(0, 100).map((row) => (
+                    <TableRow key={row.rowNumber} className={!row.valid ? "bg-danger/5" : ""}>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {row.rowNumber}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{row.cost_code || "-"}</TableCell>
+                      <TableCell className="font-medium">{row.description || "-"}</TableCell>
+                      <TableCell>{row.scope_group || "-"}</TableCell>
+                      <TableCell>{row.unit}</TableCell>
+                      <TableCell className="text-right tabular">{row.quantity}</TableCell>
+                      <TableCell className="text-right tabular">
+                        {fmtUSD(row.material_unit_cost_cents / 100)}
+                      </TableCell>
+                      <TableCell className="text-right tabular">
+                        {fmtUSD(row.labor_unit_cost_cents / 100)}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {row.issues.length === 0
+                          ? "Ready"
+                          : row.issues.map((issue) => issue.message).join("; ")}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={onImport} disabled={validRows.length === 0 || saving}>
+            {saving ? "Importing..." : `Import ${validRows.length} Rows`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

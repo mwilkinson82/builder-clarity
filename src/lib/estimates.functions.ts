@@ -391,6 +391,110 @@ async function ensureCostLibrarySeeded(context: { supabase: unknown }, organizat
   }
 }
 
+async function ensureHarborDemoEstimate(
+  context: { supabase: unknown; userId: string },
+  organizationId: string,
+) {
+  const { data: existingEstimates, error: existingError } = await dynamicTable(
+    context.supabase,
+    "estimates",
+  )
+    .select("id,name,project_id")
+    .eq("organization_id", organizationId)
+    .limit(500);
+  if (existingError) throw new Error(existingError.message);
+
+  const estimates = (existingEstimates ?? []) as Record<string, unknown>[];
+  if (
+    estimates.some(
+      (estimate) => str(estimate.name).toLowerCase() === HARBOR_DEMO_ESTIMATE_NAME.toLowerCase(),
+    )
+  ) {
+    return;
+  }
+
+  const { data: projects, error: projectsError } = await dynamicTable(context.supabase, "projects")
+    .select("id,name,client,job_number")
+    .eq("organization_id", organizationId)
+    .limit(100);
+  if (projectsError) throw new Error(projectsError.message);
+
+  const harborProject = ((projects ?? []) as Record<string, unknown>[]).find((project) => {
+    const name = str(project.name).toLowerCase();
+    const jobNumber = str(project.job_number).toLowerCase();
+    return name.includes("harbor residence") || jobNumber.includes("harbor");
+  });
+
+  const externalIds = Array.from(
+    new Set(HARBOR_DEMO_ESTIMATE_LINES.map((line) => line.external_id).filter(Boolean)),
+  );
+  const libraryResult =
+    externalIds.length > 0
+      ? await dynamicTable(context.supabase, "cost_library_items")
+          .select("id,external_id")
+          .eq("organization_id", organizationId)
+          .in("external_id", externalIds)
+      : { data: [], error: null };
+  if (libraryResult.error) throw new Error(libraryResult.error.message);
+
+  const libraryIds = new Map(
+    ((libraryResult.data ?? []) as Record<string, unknown>[]).map((row) => [
+      str(row.external_id),
+      str(row.id),
+    ]),
+  );
+
+  const { data: estimateRow, error: estimateError } = await dynamicTable(
+    context.supabase,
+    "estimates",
+  )
+    .insert({
+      organization_id: organizationId,
+      created_by: context.userId,
+      name: HARBOR_DEMO_ESTIMATE_NAME,
+      description:
+        "Fully loaded demo estimate for the Harbor Residence learning project. Use it to see takeoff rows, cost groups, markups, exports, and project handoff before importing your own pricing.",
+      project_id: str(harborProject?.id) || null,
+      project_type: "residential",
+      region: "national",
+      region_multiplier: 1,
+      overhead_pct: 800,
+      profit_pct: 1200,
+      contingency_pct: 500,
+      bond_pct: 0,
+      tax_pct: 0,
+      general_conditions_pct: 450,
+      custom_markups: [] as unknown as Json,
+      status: "final",
+    })
+    .select("id")
+    .single();
+  if (estimateError || !estimateRow) {
+    throw new Error(estimateError?.message ?? "Harbor sample estimate did not save.");
+  }
+
+  const estimateId = str((estimateRow as Record<string, unknown>).id);
+  const { error: linesError } = await dynamicTable(context.supabase, "estimate_line_items").insert(
+    HARBOR_DEMO_ESTIMATE_LINES.map((line, index) => ({
+      estimate_id: estimateId,
+      csi_division: line.csi_division,
+      cost_code: line.cost_code,
+      description: line.description,
+      unit: line.unit,
+      quantity: line.unit === "LS" ? 1 : line.quantity,
+      material_unit_cost_cents: line.material_unit_cost_cents,
+      labor_unit_cost_cents: line.labor_unit_cost_cents,
+      library_item_id: line.external_id ? (libraryIds.get(line.external_id) ?? null) : null,
+      scope_group: line.scope_group,
+      sort_order: index + 1,
+      notes: "Seeded Harbor Residence sample estimate.",
+    })),
+  );
+  if (linesError) throw new Error(linesError.message);
+
+  await recalculateEstimateTotalsInternal(context, estimateId);
+}
+
 async function loadEstimate(context: { supabase: unknown }, id: string): Promise<EstimateRow> {
   const { data, error } = await dynamicTable(context.supabase, "estimates")
     .select("*")
@@ -520,11 +624,314 @@ const costLibraryItemInput = z.object({
   keywords: z.array(z.string().max(80)).max(60).optional().default([]),
 });
 
+const importCostLibraryItemsInput = z.object({
+  items: z.array(costLibraryItemInput).min(1).max(500),
+});
+
+const estimateLineImportItemInput = lineItemInput.omit({ estimate_id: true });
+
+const importEstimateLineItemsInput = z.object({
+  estimate_id: z.string().uuid(),
+  mode: z.enum(["append", "replace"]).optional().default("append"),
+  rows: z.array(estimateLineImportItemInput).min(1).max(500),
+});
+
 const saveMarkupDefaultsInput = z.object({
   ...markupPatchSchema,
   default_region: z.string().max(64).optional().default(""),
   default_region_multiplier: z.number().min(0).max(10).optional(),
 });
+
+const HARBOR_DEMO_ESTIMATE_NAME = "Harbor Residence - Sample Estimate";
+
+const HARBOR_DEMO_ESTIMATE_LINES = [
+  {
+    external_id: "temp-fence",
+    csi_division: "01",
+    cost_code: "01-500",
+    scope_group: "General Conditions",
+    description: "Temporary chain link fence and site protection",
+    unit: "LF",
+    quantity: 420,
+    material_unit_cost_cents: 500,
+    labor_unit_cost_cents: 0,
+  },
+  {
+    external_id: "dumpster",
+    csi_division: "01",
+    cost_code: "01-740",
+    scope_group: "General Conditions",
+    description: "Dumpster rental and hauling allowance",
+    unit: "EA",
+    quantity: 10,
+    material_unit_cost_cents: 45000,
+    labor_unit_cost_cents: 0,
+  },
+  {
+    external_id: "grading",
+    csi_division: "31",
+    cost_code: "31-220",
+    scope_group: "Sitework",
+    description: "Clearing, grading, and site logistics package",
+    unit: "LS",
+    quantity: 1,
+    material_unit_cost_cents: 1800000,
+    labor_unit_cost_cents: 3200000,
+  },
+  {
+    external_id: "excavation-footing",
+    csi_division: "31",
+    cost_code: "31-230",
+    scope_group: "Sitework",
+    description: "Foundation excavation and backfill",
+    unit: "CY",
+    quantity: 580,
+    material_unit_cost_cents: 0,
+    labor_unit_cost_cents: 4800,
+  },
+  {
+    external_id: "footing-24x12",
+    csi_division: "03",
+    cost_code: "03-110",
+    scope_group: "Concrete",
+    description: "Continuous concrete footings",
+    unit: "LF",
+    quantity: 560,
+    material_unit_cost_cents: 1300,
+    labor_unit_cost_cents: 1600,
+  },
+  {
+    external_id: "slab-6in",
+    csi_division: "03",
+    cost_code: "03-300",
+    scope_group: "Concrete",
+    description: "Six-inch slab-on-grade package",
+    unit: "SF",
+    quantity: 6200,
+    material_unit_cost_cents: 425,
+    labor_unit_cost_cents: 320,
+  },
+  {
+    external_id: "rebar-5",
+    csi_division: "03",
+    cost_code: "03-520",
+    scope_group: "Concrete",
+    description: "Reinforcing steel allowance",
+    unit: "LB",
+    quantity: 7200,
+    material_unit_cost_cents: 95,
+    labor_unit_cost_cents: 55,
+  },
+  {
+    external_id: "lumber-framing",
+    csi_division: "06",
+    cost_code: "06-100",
+    scope_group: "Structure",
+    description: "Rough framing material and labor package",
+    unit: "LS",
+    quantity: 1,
+    material_unit_cost_cents: 24500000,
+    labor_unit_cost_cents: 13200000,
+  },
+  {
+    external_id: "wood-trusses",
+    csi_division: "06",
+    cost_code: "06-175",
+    scope_group: "Structure",
+    description: "Roof trusses and installation",
+    unit: "SF",
+    quantity: 6800,
+    material_unit_cost_cents: 1350,
+    labor_unit_cost_cents: 425,
+  },
+  {
+    external_id: "plywood-sheathing",
+    csi_division: "06",
+    cost_code: "06-300",
+    scope_group: "Structure",
+    description: "Wall and roof sheathing",
+    unit: "SF",
+    quantity: 9200,
+    material_unit_cost_cents: 285,
+    labor_unit_cost_cents: 140,
+  },
+  {
+    external_id: "roofing-asphalt-shingle",
+    csi_division: "07",
+    cost_code: "07-310",
+    scope_group: "Envelope",
+    description: "Architectural shingle roofing system",
+    unit: "SF",
+    quantity: 6800,
+    material_unit_cost_cents: 575,
+    labor_unit_cost_cents: 325,
+  },
+  {
+    external_id: "window-vinyl",
+    csi_division: "08",
+    cost_code: "08-500",
+    scope_group: "Envelope",
+    description: "Window package with install labor",
+    unit: "EA",
+    quantity: 42,
+    material_unit_cost_cents: 185000,
+    labor_unit_cost_cents: 24000,
+  },
+  {
+    external_id: "wood-door",
+    csi_division: "08",
+    cost_code: "08-140",
+    scope_group: "Envelope",
+    description: "Exterior and interior door package",
+    unit: "EA",
+    quantity: 31,
+    material_unit_cost_cents: 62000,
+    labor_unit_cost_cents: 18000,
+  },
+  {
+    external_id: "stucco",
+    csi_division: "09",
+    cost_code: "09-240",
+    scope_group: "Envelope",
+    description: "Stucco and exterior cladding package",
+    unit: "SF",
+    quantity: 7900,
+    material_unit_cost_cents: 850,
+    labor_unit_cost_cents: 725,
+  },
+  {
+    external_id: "labor-plumbing-rough",
+    csi_division: "22",
+    cost_code: "22-100",
+    scope_group: "MEP",
+    description: "Plumbing rough-in and fixture allowance",
+    unit: "LS",
+    quantity: 1,
+    material_unit_cost_cents: 8200000,
+    labor_unit_cost_cents: 5800000,
+  },
+  {
+    external_id: "light-fixture",
+    csi_division: "26",
+    cost_code: "26-100",
+    scope_group: "MEP",
+    description: "Electrical rough-in, trim, and lighting allowance",
+    unit: "LS",
+    quantity: 1,
+    material_unit_cost_cents: 11000000,
+    labor_unit_cost_cents: 7400000,
+  },
+  {
+    external_id: "labor-residential-hvac",
+    csi_division: "23",
+    cost_code: "23-100",
+    scope_group: "MEP",
+    description: "Residential HVAC equipment and installation",
+    unit: "LS",
+    quantity: 1,
+    material_unit_cost_cents: 7200000,
+    labor_unit_cost_cents: 4400000,
+  },
+  {
+    external_id: "batt-insulation-r19",
+    csi_division: "07",
+    cost_code: "07-210",
+    scope_group: "Interior Buildout",
+    description: "Wall and attic insulation package",
+    unit: "SF",
+    quantity: 18500,
+    material_unit_cost_cents: 125,
+    labor_unit_cost_cents: 68,
+  },
+  {
+    external_id: "drywall-1-2",
+    csi_division: "09",
+    cost_code: "09-290",
+    scope_group: "Interior Buildout",
+    description: "Drywall hang, finish, and texture",
+    unit: "SF",
+    quantity: 28000,
+    material_unit_cost_cents: 78,
+    labor_unit_cost_cents: 165,
+  },
+  {
+    external_id: "ceramic-tile-floor",
+    csi_division: "09",
+    cost_code: "09-301",
+    scope_group: "Finishes",
+    description: "Tile floors and wet-wall finishes",
+    unit: "SF",
+    quantity: 2900,
+    material_unit_cost_cents: 890,
+    labor_unit_cost_cents: 840,
+  },
+  {
+    external_id: "hardwood-flooring",
+    csi_division: "09",
+    cost_code: "09-640",
+    scope_group: "Finishes",
+    description: "Hardwood flooring package",
+    unit: "SF",
+    quantity: 4100,
+    material_unit_cost_cents: 1050,
+    labor_unit_cost_cents: 580,
+  },
+  {
+    external_id: "labor-cabinets",
+    csi_division: "06",
+    cost_code: "06-410",
+    scope_group: "Finishes",
+    description: "Custom cabinet package with install",
+    unit: "LS",
+    quantity: 1,
+    material_unit_cost_cents: 18000000,
+    labor_unit_cost_cents: 3400000,
+  },
+  {
+    external_id: "countertop",
+    csi_division: "12",
+    cost_code: "12-360",
+    scope_group: "Finishes",
+    description: "Stone countertops and slab install",
+    unit: "SF",
+    quantity: 380,
+    material_unit_cost_cents: 7200,
+    labor_unit_cost_cents: 1500,
+  },
+  {
+    external_id: "interior-paint",
+    csi_division: "09",
+    cost_code: "09-910",
+    scope_group: "Finishes",
+    description: "Interior prime and finish paint",
+    unit: "SF",
+    quantity: 18500,
+    material_unit_cost_cents: 58,
+    labor_unit_cost_cents: 135,
+  },
+  {
+    external_id: "finish-carpentry",
+    csi_division: "06",
+    cost_code: "06-600",
+    scope_group: "Finishes",
+    description: "Finish carpentry, trim, and punch labor",
+    unit: "LS",
+    quantity: 1,
+    material_unit_cost_cents: 7400000,
+    labor_unit_cost_cents: 9600000,
+  },
+  {
+    external_id: "",
+    csi_division: "01",
+    cost_code: "01-310",
+    scope_group: "General Conditions",
+    description: "Project supervision, warranty, and closeout allowance",
+    unit: "MO",
+    quantity: 10,
+    material_unit_cost_cents: 0,
+    labor_unit_cost_cents: 2400000,
+  },
+] as const;
 
 export const listEstimateRegions = createServerFn({ method: "GET" }).handler(async () => ({
   regions: ESTIMATE_REGIONS,
@@ -535,6 +942,7 @@ export const listEstimates = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const organizationId = await getOrganizationId(context);
     await ensureCostLibrarySeeded(context, organizationId);
+    await ensureHarborDemoEstimate(context, organizationId);
 
     const { data, error } = await dynamicTable(context.supabase, "estimates")
       .select("*")
@@ -545,27 +953,25 @@ export const listEstimates = createServerFn({ method: "GET" })
     const estimates = ((data ?? []) as Record<string, unknown>[]).map(normalizeEstimate);
     const ids = estimates.map((estimate) => estimate.id);
     if (ids.length === 0) return [];
+    const projectIds = estimates
+      .map((estimate) => estimate.project_id)
+      .filter((id): id is string => Boolean(id));
+    const opportunityIds = estimates
+      .map((estimate) => estimate.opportunity_id)
+      .filter((id): id is string => Boolean(id));
 
     const [lineRes, projectRes, opportunityRes] = await Promise.all([
       dynamicTable(context.supabase, "estimate_line_items")
         .select("estimate_id")
         .in("estimate_id", ids),
-      dynamicTable(context.supabase, "projects")
-        .select("id,name")
-        .in(
-          "id",
-          estimates
-            .map((estimate) => estimate.project_id)
-            .filter((id): id is string => Boolean(id)),
-        ),
-      dynamicTable(context.supabase, "pipeline_opportunities")
-        .select("id,name")
-        .in(
-          "id",
-          estimates
-            .map((estimate) => estimate.opportunity_id)
-            .filter((id): id is string => Boolean(id)),
-        ),
+      projectIds.length
+        ? dynamicTable(context.supabase, "projects").select("id,name").in("id", projectIds)
+        : Promise.resolve({ data: [], error: null }),
+      opportunityIds.length
+        ? dynamicTable(context.supabase, "pipeline_opportunities")
+            .select("id,name")
+            .in("id", opportunityIds)
+        : Promise.resolve({ data: [], error: null }),
     ]);
     if (lineRes.error) throw new Error(lineRes.error.message);
     if (
@@ -737,6 +1143,62 @@ export const createLineItem = createServerFn({ method: "POST" })
     if (error || !row) throw new Error(error?.message ?? "Line item did not save.");
     await recalculateEstimateTotalsInternal(context, data.estimate_id);
     return { line_item: normalizeLineItem(row as Record<string, unknown>) };
+  });
+
+export const importEstimateLineItems = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof importEstimateLineItemsInput>) =>
+    importEstimateLineItemsInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await loadEstimate(context, data.estimate_id);
+
+    if (data.mode === "replace") {
+      const { error: deleteError } = await dynamicTable(context.supabase, "estimate_line_items")
+        .delete()
+        .eq("estimate_id", data.estimate_id);
+      if (deleteError) throw new Error(deleteError.message);
+    }
+
+    const { data: existing, error: existingError } = await dynamicTable(
+      context.supabase,
+      "estimate_line_items",
+    )
+      .select("sort_order")
+      .eq("estimate_id", data.estimate_id)
+      .order("sort_order", { ascending: false })
+      .limit(1);
+    if (existingError) throw new Error(existingError.message);
+
+    const nextOrder =
+      ((existing as Record<string, unknown>[] | null)?.reduce(
+        (max, row) => Math.max(max, Math.round(num(row.sort_order))),
+        0,
+      ) ?? 0) + 1;
+
+    const rows = data.rows.map((line, index) => {
+      const unit = clean(line.unit.toUpperCase(), 16);
+      return {
+        estimate_id: data.estimate_id,
+        csi_division: clean(line.csi_division, 8),
+        cost_code: clean(line.cost_code, 32),
+        description: clean(line.description, 500),
+        unit,
+        quantity: unit === "LS" ? 1 : line.quantity,
+        material_unit_cost_cents: line.material_unit_cost_cents,
+        labor_unit_cost_cents: line.labor_unit_cost_cents,
+        library_item_id: line.library_item_id ?? null,
+        scope_group: clean(line.scope_group, 200),
+        notes: clean(line.notes, 2000),
+        sort_order: nextOrder + index,
+      };
+    });
+
+    const { error } = await dynamicTable(context.supabase, "estimate_line_items").insert(rows);
+    if (error) throw new Error(error.message);
+
+    await recalculateEstimateTotalsInternal(context, data.estimate_id);
+    return { created_count: rows.length };
   });
 
 export const updateLineItem = createServerFn({ method: "POST" })
@@ -979,6 +1441,50 @@ export const createCostLibraryItem = createServerFn({ method: "POST" })
     return { item: normalizeLibraryItem(row as Record<string, unknown>) };
   });
 
+export const importCostLibraryItems = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof importCostLibraryItemsInput>) =>
+    importCostLibraryItemsInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const organizationId = await getOrganizationId(context);
+    const rows = data.items.map((item) => ({
+      organization_id: organizationId,
+      external_id: "",
+      csi_division: clean(item.csi_division, 8),
+      csi_code: clean(item.csi_code, 16),
+      category: clean(item.category, 64),
+      description: clean(item.description, 500),
+      unit: clean(item.unit.toUpperCase(), 16),
+      material_cost_cents: item.material_cost_cents,
+      labor_cost_cents: item.labor_cost_cents,
+      crew_size: item.crew_size ?? null,
+      productivity_per_hour: item.productivity_per_hour ?? null,
+      synonyms: item.synonyms as unknown as Json,
+      keywords:
+        item.keywords.length > 0
+          ? (item.keywords as unknown as Json)
+          : (item.description
+              .toLowerCase()
+              .split(/[^a-z0-9]+/)
+              .filter(Boolean) as unknown as Json),
+      source: "imported",
+      base_region: "national",
+    }));
+
+    const { data: inserted, error } = await dynamicTable(context.supabase, "cost_library_items")
+      .insert(rows)
+      .select("*");
+    if (error) throw new Error(error.message);
+
+    return {
+      created_count: ((inserted ?? []) as unknown[]).length,
+      items: ((inserted ?? []) as Record<string, unknown>[]).map((row) =>
+        normalizeLibraryItem(row),
+      ),
+    };
+  });
+
 export const updateCostLibraryItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string; patch: Partial<z.input<typeof costLibraryItemInput>> }) =>
@@ -1019,6 +1525,16 @@ export const deleteCostLibraryItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
+    const current = await dynamicTable(context.supabase, "cost_library_items")
+      .select("source")
+      .eq("id", data.id)
+      .single();
+    if (current.error || !current.data) {
+      throw new Error(current.error?.message ?? "Cost library item was not found.");
+    }
+    if (str((current.data as Record<string, unknown>).source) === "system") {
+      throw new Error("System library items are read-only.");
+    }
     const { error } = await dynamicTable(context.supabase, "cost_library_items")
       .delete()
       .eq("id", data.id);
