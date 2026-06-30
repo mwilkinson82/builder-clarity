@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { ArrowLeft, Printer } from "lucide-react";
@@ -60,6 +60,7 @@ function ScheduleWorkspacePage() {
   const moveWbsSectionParentFn = useServerFn(moveScheduleWbsSectionParent);
   const renameWbsSectionFn = useServerFn(renameScheduleWbsSection);
   const reorderWbsSectionsFn = useServerFn(reorderScheduleWbsSections);
+  const wbsOrderToastRef = useRef<string | number | null>(null);
 
   const projectQuery = useQuery({
     queryKey: ["project", projectId],
@@ -233,9 +234,12 @@ function ScheduleWorkspacePage() {
     mutationFn: ({ parentId, orderedIds }: WbsReorderInput) =>
       reorderWbsSectionsFn({ data: { projectId, parentId, orderedIds } }),
     onMutate: async ({ orderedIds }) => {
+      const existingToastId = wbsOrderToastRef.current ?? undefined;
       const toastId = toast.loading("Saving WBS order", {
+        id: existingToastId,
         description: "The grid has already moved to the new order.",
       });
+      wbsOrderToastRef.current = toastId;
       await qc.cancelQueries({ queryKey: ["schedule", projectId] });
       const previous = qc.getQueryData(["schedule", projectId]);
       qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
@@ -258,6 +262,7 @@ function ScheduleWorkspacePage() {
           description: "The saved order is now the CPM WBS order.",
         });
       }
+      if (wbsOrderToastRef.current === context?.toastId) wbsOrderToastRef.current = null;
     },
     onError: (error, _orderedIds, context) => {
       if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
@@ -265,6 +270,7 @@ function ScheduleWorkspacePage() {
         id: context?.toastId,
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
+      if (wbsOrderToastRef.current === context?.toastId) wbsOrderToastRef.current = null;
     },
   });
 
