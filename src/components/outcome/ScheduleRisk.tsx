@@ -204,6 +204,10 @@ type WbsSectionDescriptor = {
   sortOrder: number;
   isDerived: boolean;
 };
+type WbsReorderInput = {
+  parentId: string | null;
+  orderedIds: string[];
+};
 const WBS_PATH_SEPARATOR = " / ";
 const CONSTRUCTLINE_RELATIONSHIP_TYPES: ConstructLineRelationshipType[] = ["FS", "SS", "FF", "SF"];
 const SCHEDULE_GRID_VIEW_OPTIONS: Array<{ value: ScheduleGridView; label: string }> = [
@@ -1608,7 +1612,7 @@ export function CpmActivityPlanner({
   isSavingDelayFragment: boolean;
   onAddWbsSection: (name: string, parentId?: string | null) => Promise<void>;
   onRenameWbsSection: (id: string, name: string) => Promise<void>;
-  onReorderWbsSections: (orderedIds: string[]) => Promise<void>;
+  onReorderWbsSections: (input: WbsReorderInput) => Promise<void>;
   isSavingWbs: boolean;
 }) {
   const qc = useQueryClient();
@@ -1824,14 +1828,25 @@ export function CpmActivityPlanner({
   const moveWbsDivision = (division: string, direction: -1 | 1) => {
     const orderedRows = moveWbsDivisionInOrder(wbsDivisionRows, division, direction);
     const orderedIds = orderedRows.map((row) => row.id).filter((id): id is string => Boolean(id));
-    if (orderedIds.length > 0) void onReorderWbsSections(orderedIds);
+    if (orderedIds.length > 0) {
+      void onReorderWbsSections({
+        parentId: orderedRows[0]?.parentId ?? null,
+        orderedIds,
+      });
+    }
     setActivityOrder("wbs");
   };
   const reorderWbsDivisions = (orderedDivisions: string[]) => {
-    const orderedIds = orderedDivisions
-      .map((division) => wbsDivisionRows.find((row) => row.division === division)?.id)
-      .filter((id): id is string => Boolean(id));
-    if (orderedIds.length > 0) void onReorderWbsSections(orderedIds);
+    const orderedRows = orderedDivisions
+      .map((division) => wbsDivisionRows.find((row) => row.division === division))
+      .filter((row): row is WbsDivisionRow => Boolean(row?.id));
+    const orderedIds = orderedRows.map((row) => row.id).filter((id): id is string => Boolean(id));
+    if (orderedIds.length > 0) {
+      void onReorderWbsSections({
+        parentId: orderedRows[0]?.parentId ?? null,
+        orderedIds,
+      });
+    }
     setActivityOrder("wbs");
   };
   const dataDateUpdate = useMutation({
@@ -2912,6 +2927,11 @@ function WbsManagerDialog({
   const [savingDivision, setSavingDivision] = useState<string | null>(null);
   const [draggingDivision, setDraggingDivision] = useState<string | null>(null);
   const [dropTargetDivision, setDropTargetDivision] = useState<string | null>(null);
+  const newDivisionInputRef = useRef<HTMLInputElement | null>(null);
+  const selectedParentRow =
+    newDivisionParentId === "root"
+      ? null
+      : (divisions.find((row) => row.id === newDivisionParentId) ?? null);
 
   useEffect(() => {
     if (!open) return;
@@ -2927,6 +2947,12 @@ function WbsManagerDialog({
     if (!division) return;
     onAddDivision(division, newDivisionParentId === "root" ? null : newDivisionParentId);
     setNewDivision("");
+  };
+  const startChildDivision = (row: WbsDivisionRow) => {
+    if (!row.id) return;
+    setNewDivisionParentId(row.id);
+    setNewDivision("");
+    window.requestAnimationFrame(() => newDivisionInputRef.current?.focus());
   };
 
   const renameDivision = async (division: string) => {
@@ -2975,6 +3001,7 @@ function WbsManagerDialog({
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px_auto] lg:items-end">
               <LabeledField label="New WBS section">
                 <Input
+                  ref={newDivisionInputRef}
                   value={newDivision}
                   onChange={(event) => setNewDivision(event.target.value)}
                   onKeyDown={(event) => {
@@ -2983,7 +3010,7 @@ function WbsManagerDialog({
                       addDivision();
                     }
                   }}
-                  placeholder="Northwest corner"
+                  placeholder={selectedParentRow ? "Northwest corner" : "Concrete"}
                   className="h-10 min-w-0"
                   disabled={isSaving}
                 />
@@ -3016,12 +3043,13 @@ function WbsManagerDialog({
                 onClick={addDivision}
               >
                 <Plus className="h-4 w-4" />
-                Add WBS
+                {selectedParentRow ? "Add child WBS" : "Add WBS"}
               </Button>
             </div>
             <div className="mt-2 text-xs text-muted-foreground">
-              Use parent WBS for locations, areas, rooms, trades, or subcontractor-specific work
-              packages under a main division.
+              {selectedParentRow
+                ? `Adding under ${selectedParentRow.division}.`
+                : "Use parent WBS for locations, areas, rooms, trades, or subcontractor-specific work packages under a main division."}
             </div>
           </div>
 
@@ -3031,7 +3059,7 @@ function WbsManagerDialog({
                 No WBS sections yet.
               </div>
             ) : (
-              divisions.map((row, index) => {
+              divisions.map((row) => {
                 const draftName = draftNames[row.division] ?? row.title;
                 const cleanDraftName = cleanWbsDivisionInput(draftName);
                 const hasNameChange =
@@ -3048,7 +3076,7 @@ function WbsManagerDialog({
                   <div
                     key={row.division}
                     className={cn(
-                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition md:grid-cols-[40px_minmax(0,1fr)_132px_122px_88px]",
+                      "grid min-w-0 gap-2 rounded-md border border-hairline bg-card p-3 transition md:grid-cols-[40px_minmax(0,1fr)_132px_104px_122px_88px]",
                       draggingDivision === row.division && "opacity-55",
                       dropTargetDivision === row.division &&
                         draggingDivision !== row.division &&
@@ -3154,6 +3182,16 @@ function WbsManagerDialog({
                             : `${shortDate(row.firstStart)} to ${shortDate(row.lastFinish)}`}
                       </div>
                     </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 self-end whitespace-nowrap"
+                      disabled={!canPersistRow || isSaving}
+                      onClick={() => startChildDivision(row)}
+                    >
+                      <Plus className="mr-1 h-3.5 w-3.5" />
+                      Child
+                    </Button>
                     <Button
                       type="button"
                       variant="outline"
@@ -3337,6 +3375,7 @@ function ConstructLinePrintReport({
         <div className="constructline-print-body">
           {printRows.map((row) => {
             if (row.kind === "group") {
+              const groupMeta = getWbsDisplayMeta(row.division);
               const groupStartPct = Math.min(
                 ...row.tasks.map((task) =>
                   timelinePrintPercent(
@@ -3357,8 +3396,9 @@ function ConstructLinePrintReport({
               );
               return (
                 <div key={`print-${row.division}`} className="constructline-print-group">
-                  <span>
-                    {row.division} · {row.tasks.length} activities
+                  <span style={{ paddingLeft: `${Math.min(groupMeta.level, 4) * 7}px` }}>
+                    {groupMeta.parentPath && <em>{groupMeta.parentPath} / </em>}
+                    {groupMeta.title} · {row.tasks.length} activities
                   </span>
                   <div className="constructline-print-timeline">
                     <span
@@ -3924,6 +3964,7 @@ function ActivityScheduleMatrix({
 
             {rows.map((row) => {
               if (row.kind === "group") {
+                const groupMeta = getWbsDisplayMeta(row.division);
                 const groupStart = Math.min(
                   ...row.tasks.map((task) =>
                     offsetFromTimelineStart(task.visualStartDate, model.timelineStartDate),
@@ -3944,7 +3985,19 @@ function ActivityScheduleMatrix({
                       className="sticky left-0 z-20 flex shrink-0 items-center border-r border-hairline bg-muted/55 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground"
                       style={{ width: tableWidth }}
                     >
-                      {row.division} · {row.tasks.length} activities
+                      <div
+                        className="min-w-0"
+                        style={{ paddingLeft: `${Math.min(groupMeta.level, 4) * 14}px` }}
+                      >
+                        {groupMeta.parentPath && (
+                          <div className="truncate normal-case tracking-normal text-muted-foreground/80">
+                            {groupMeta.parentPath}
+                          </div>
+                        )}
+                        <div className="truncate">
+                          {groupMeta.title} · {row.tasks.length} activities
+                        </div>
+                      </div>
                     </div>
                     <div className="relative shrink-0" style={{ width: timelineWidth }}>
                       <div
@@ -4572,6 +4625,17 @@ function splitWbsPath(value?: string | null) {
 
 function joinWbsPath(parts: string[]) {
   return (parts.length > 0 ? parts : ["General"]).join(WBS_PATH_SEPARATOR);
+}
+
+function getWbsDisplayMeta(value?: string | null) {
+  const parts = splitWbsPath(value);
+  const title = parts[parts.length - 1] ?? "General";
+  const parentPath = parts.length > 1 ? joinWbsPath(parts.slice(0, -1)) : null;
+  return {
+    title,
+    parentPath,
+    level: Math.max(0, parts.length - 1),
+  };
 }
 
 function getWbsOrderIndex(division: string, order: string[]) {

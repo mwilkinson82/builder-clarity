@@ -30,6 +30,10 @@ import { computeScheduleVarianceWeeks } from "@/lib/ior";
 type ScheduleQueryCache = {
   wbsSections?: ScheduleWbsSectionRow[];
 } & Record<string, unknown>;
+type WbsReorderInput = {
+  parentId: string | null;
+  orderedIds: string[];
+};
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId/schedule")({
   ssr: false,
@@ -205,8 +209,9 @@ function ScheduleWorkspacePage() {
   });
 
   const wbsReorder = useMutation({
-    mutationFn: (orderedIds: string[]) => reorderWbsSectionsFn({ data: { projectId, orderedIds } }),
-    onMutate: async (orderedIds) => {
+    mutationFn: ({ parentId, orderedIds }: WbsReorderInput) =>
+      reorderWbsSectionsFn({ data: { projectId, parentId, orderedIds } }),
+    onMutate: async ({ orderedIds }) => {
       const toastId = toast.loading("Saving WBS order...");
       await qc.cancelQueries({ queryKey: ["schedule", projectId] });
       const previous = qc.getQueryData(["schedule", projectId]);
@@ -370,13 +375,6 @@ function ScheduleWorkspacePage() {
         />
       </section>
 
-      <ScheduleWorkspaceOperations
-        milestones={milestones}
-        risks={risks}
-        updates={updates}
-        project={project}
-      />
-
       <CpmActivityPlanner
         activities={activities}
         wbsSections={wbsSections}
@@ -414,10 +412,17 @@ function ScheduleWorkspacePage() {
         onRenameWbsSection={async (id, name) => {
           await wbsRename.mutateAsync({ id, name });
         }}
-        onReorderWbsSections={async (orderedIds) => {
-          await wbsReorder.mutateAsync(orderedIds);
+        onReorderWbsSections={async (payload) => {
+          await wbsReorder.mutateAsync(payload);
         }}
         isSavingWbs={wbsCreate.isPending || wbsRename.isPending || wbsReorder.isPending}
+      />
+
+      <ScheduleWorkspaceOperations
+        milestones={milestones}
+        risks={risks}
+        updates={updates}
+        project={project}
       />
     </ScheduleWorkspaceShell>
   );
@@ -527,7 +532,7 @@ function ScheduleWorkspaceOperations({
   const tradeRisks = risks.filter((risk) => risk.kind === "trade_performance").slice(0, 4);
 
   return (
-    <section className="constructline-screen-ops mb-4 grid gap-3 xl:grid-cols-5">
+    <section className="constructline-screen-ops mb-4 mt-4 grid gap-3 xl:grid-cols-5">
       <ScheduleOpsCard
         label="Schedule update history"
         title={`${updates.length} saved ${updates.length === 1 ? "update" : "updates"}`}

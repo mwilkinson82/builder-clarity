@@ -601,6 +601,12 @@
     padding: 0.035in 0.04in;
   }
 
+  .constructline-print-group em {
+    color: #928b80;
+    font-style: normal;
+    font-weight: 600;
+  }
+
   .constructline-print-timeline {
     position: relative;
     min-height: 100%;

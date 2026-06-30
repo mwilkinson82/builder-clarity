@@ -26,6 +26,7 @@ type ScheduleSupabaseClient = SupabaseClient<Database>;
 type ScheduleUpdateInsert = TablesInsert<"schedule_updates">;
 type ScheduleDelayFragmentInsert = TablesInsert<"schedule_delay_fragments">;
 type ScheduleDelayFragmentUpdate = TablesUpdate<"schedule_delay_fragments">;
+type ScheduleActivityInsert = TablesInsert<"schedule_activities">;
 type ScheduleActivityUpdate = TablesUpdate<"schedule_activities">;
 type ScheduleWbsSectionInsert = TablesInsert<"schedule_wbs_sections">;
 
@@ -1013,15 +1014,38 @@ export const renameScheduleWbsSection = createServerFn({ method: "POST" })
 
 export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { projectId: string; orderedIds: string[] }) =>
+  .inputValidator((input: { projectId: string; parentId?: string | null; orderedIds: string[] }) =>
     z
       .object({
         projectId: z.string().uuid(),
+        parentId: z.string().uuid().nullable().optional(),
         orderedIds: z.array(z.string().uuid()).min(1),
       })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
+    const parentId = data.parentId ?? null;
+    let siblingQuery = context.supabase
+      .from("schedule_wbs_sections")
+      .select("id,parent_id")
+      .eq("project_id", data.projectId)
+      .in("id", data.orderedIds);
+    siblingQuery = scheduleWbsParentFilter(siblingQuery, parentId);
+    let { data: siblingRows, error: siblingError } = await siblingQuery;
+    if (siblingError && isMissingRestColumn(siblingError, "parent_id")) {
+      const fallback = await context.supabase
+        .from("schedule_wbs_sections")
+        .select("id")
+        .eq("project_id", data.projectId)
+        .in("id", data.orderedIds);
+      siblingRows = fallback.data as typeof siblingRows;
+      siblingError = fallback.error;
+    }
+    if (siblingError) throw new Error(siblingError.message);
+    if ((siblingRows ?? []).length !== data.orderedIds.length) {
+      throw new Error("WBS order can only be saved for sections under the same parent.");
+    }
+
     const updates = await Promise.all(
       data.orderedIds.map((id, index) =>
         context.supabase
@@ -1133,6 +1157,11 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
+    const wbsSectionId = await ensureScheduleWbsPath(
+      context.supabase,
+      projectId,
+      rest.division || "General",
+    );
     const { data: last } = await context.supabase
       .from("schedule_activities")
       .select("sort_order")
@@ -1143,18 +1172,28 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
     const sortOrder =
       rest.sort_order ?? ((last as { sort_order?: number } | null)?.sort_order ?? 0) + 1;
     const activityId = rest.activity_id || `A-${String(sortOrder).padStart(3, "0")}`;
-    const { data: createdRow, error } = await context.supabase
+    const basePayload: ScheduleActivityInsert = {
+      project_id: projectId,
+      ...rest,
+      activity_id: activityId,
+      sort_order: sortOrder,
+    };
+    let { data: createdRow, error } = await context.supabase
       .from("schedule_activities")
       .insert({
-        project_id: projectId,
-        ...rest,
-        activity_id: activityId,
-        sort_order: sortOrder,
+        ...basePayload,
+        wbs_section_id: wbsSectionId,
       })
       .select("*")
       .single();
+    if (error && isMissingRestColumn(error, "wbs_section_id")) {
+      ({ data: createdRow, error } = await context.supabase
+        .from("schedule_activities")
+        .insert(basePayload)
+        .select("*")
+        .single());
+    }
     if (error) throw new Error(error.message);
-    await ensureScheduleWbsPath(context.supabase, projectId, rest.division || "General");
     const createdActivity = normalizeScheduleActivity(
       createdRow as unknown as Record<string, unknown>,
     );
@@ -1210,11 +1249,18 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
     }
 
     if ("division" in data.patch) {
-      await ensureScheduleWbsPath(
+      const wbsSectionId = await ensureScheduleWbsPath(
         context.supabase,
         afterActivity.project_id,
         afterActivity.division || "General",
       );
+      const { error: wbsLinkError } = await context.supabase
+        .from("schedule_activities")
+        .update({ wbs_section_id: wbsSectionId })
+        .eq("id", data.id);
+      if (wbsLinkError && !isMissingRestColumn(wbsLinkError, "wbs_section_id")) {
+        throw new Error(wbsLinkError.message);
+      }
     }
 
     if (shouldSyncLogic) {
