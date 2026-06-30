@@ -1925,7 +1925,6 @@ export type Database = {
           start_date: string | null
           successor_activity_ids: string[]
           updated_at: string
-          wbs_section_id: string | null
         }
         Insert: {
           activity_id?: string
@@ -1942,7 +1941,6 @@ export type Database = {
           start_date?: string | null
           successor_activity_ids?: string[]
           updated_at?: string
-          wbs_section_id?: string | null
         }
         Update: {
           activity_id?: string
@@ -1959,7 +1957,6 @@ export type Database = {
           start_date?: string | null
           successor_activity_ids?: string[]
           updated_at?: string
-          wbs_section_id?: string | null
         }
         Relationships: [
           {
@@ -1967,79 +1964,6 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "schedule_activities_wbs_section_id_fkey"
-            columns: ["wbs_section_id"]
-            isOneToOne: false
-            referencedRelation: "schedule_wbs_sections"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      schedule_delay_fragments: {
-        Row: {
-          activity_id: string
-          created_at: string
-          delay_days: number
-          id: string
-          identified_on: string
-          owner: string
-          project_id: string
-          reason: string
-          resolved_on: string | null
-          schedule_activity_id: string | null
-          source: string
-          status: string
-          title: string
-          updated_at: string
-        }
-        Insert: {
-          activity_id?: string
-          created_at?: string
-          delay_days?: number
-          id?: string
-          identified_on?: string
-          owner?: string
-          project_id: string
-          reason?: string
-          resolved_on?: string | null
-          schedule_activity_id?: string | null
-          source?: string
-          status?: string
-          title: string
-          updated_at?: string
-        }
-        Update: {
-          activity_id?: string
-          created_at?: string
-          delay_days?: number
-          id?: string
-          identified_on?: string
-          owner?: string
-          project_id?: string
-          reason?: string
-          resolved_on?: string | null
-          schedule_activity_id?: string | null
-          source?: string
-          status?: string
-          title?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "schedule_delay_fragments_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
-            referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "schedule_delay_fragments_schedule_activity_id_fkey"
-            columns: ["schedule_activity_id"]
-            isOneToOne: false
-            referencedRelation: "schedule_activities"
             referencedColumns: ["id"]
           },
         ]
@@ -2247,16 +2171,11 @@ export type Database = {
           baseline_completion_date: string | null
           created_at: string
           created_by: string | null
-          data_date: string | null
           forecast_completion_date: string
           id: string
           movement_weeks: number
-          money_notes: string
           notes: string
           project_id: string
-          schedule_money_exposure: number
-          schedule_money_net: number
-          schedule_money_recovery: number
           update_date: string
           update_number: number
           updated_at: string
@@ -2266,16 +2185,11 @@ export type Database = {
           baseline_completion_date?: string | null
           created_at?: string
           created_by?: string | null
-          data_date?: string | null
           forecast_completion_date: string
           id?: string
           movement_weeks?: number
-          money_notes?: string
           notes?: string
           project_id: string
-          schedule_money_exposure?: number
-          schedule_money_net?: number
-          schedule_money_recovery?: number
           update_date?: string
           update_number: number
           updated_at?: string
@@ -2285,16 +2199,11 @@ export type Database = {
           baseline_completion_date?: string | null
           created_at?: string
           created_by?: string | null
-          data_date?: string | null
           forecast_completion_date?: string
           id?: string
           movement_weeks?: number
-          money_notes?: string
           notes?: string
           project_id?: string
-          schedule_money_exposure?: number
-          schedule_money_net?: number
-          schedule_money_recovery?: number
           update_date?: string
           update_number?: number
           updated_at?: string
@@ -2312,31 +2221,25 @@ export type Database = {
       }
       schedule_wbs_sections: {
         Row: {
-          code: string
           created_at: string
           id: string
           name: string
-          parent_id: string | null
           project_id: string
           sort_order: number
           updated_at: string
         }
         Insert: {
-          code?: string
           created_at?: string
           id?: string
           name: string
-          parent_id?: string | null
           project_id: string
           sort_order?: number
           updated_at?: string
         }
         Update: {
-          code?: string
           created_at?: string
           id?: string
           name?: string
-          parent_id?: string | null
           project_id?: string
           sort_order?: number
           updated_at?: string
@@ -2347,13 +2250,6 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "schedule_wbs_sections_parent_id_fkey"
-            columns: ["parent_id"]
-            isOneToOne: false
-            referencedRelation: "schedule_wbs_sections"
             referencedColumns: ["id"]
           },
         ]
@@ -2453,6 +2349,7 @@ export type Database = {
         Args: { message_id: number; queue_name: string }
         Returns: boolean
       }
+      email_queue_dispatch: { Args: never; Returns: undefined }
       enqueue_email: {
         Args: { payload: Json; queue_name: string }
         Returns: number
@@ -2489,14 +2386,6 @@ export type Database = {
           p_user_agent?: string
         }
         Returns: string
-      }
-      reorder_schedule_wbs_sections: {
-        Args: {
-          p_ordered_ids: string[]
-          p_parent_id: string | null
-          p_project_id: string
-        }
-        Returns: number
       }
       storage_project_id: { Args: { p_name: string }; Returns: string }
       sync_billing_application_from_lines: {
