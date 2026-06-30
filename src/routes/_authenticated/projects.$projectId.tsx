@@ -1212,6 +1212,15 @@ function ProjectPage() {
                 An IOR operating record, not a budget report. Start from the SOV, work the schedule,
                 then price the exposure.
               </p>
+              {project.source_opportunity_id && (
+                <a
+                  href={`/?tab=pipeline&opportunity=${project.source_opportunity_id}`}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent hover:border-accent/50"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Source: Pipeline
+                </a>
+              )}
             </div>
             <div className="flex flex-col items-end gap-3">
               <div className="flex flex-wrap items-center justify-end gap-2">

@@ -5,6 +5,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
 import { createProject, listProjects, seedDemoIfEmpty } from "@/lib/projects.functions";
+import { PipelineWorkspace } from "@/components/pipeline/PipelineWorkspace";
 import {
   assignProjectMember,
   createTeamInvite,
@@ -43,6 +44,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Activity,
   AlertTriangle,
@@ -158,6 +160,16 @@ function PortfolioPage() {
   const [reviewFilter, setReviewFilter] = useState<PortfolioReviewFilter>("all");
   const [dailyFilter, setDailyFilter] = useState<PortfolioDailyFilter>("all");
   const [sortMode, setSortMode] = useState<PortfolioSortMode>("manager");
+  const [portfolioTab, setPortfolioTab] = useState<"projects" | "pipeline">(() => {
+    if (typeof window === "undefined") return "projects";
+    return new URLSearchParams(window.location.search).get("tab") === "pipeline"
+      ? "pipeline"
+      : "projects";
+  });
+  const [initialPipelineOpportunityId] = useState(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("opportunity");
+  });
   const companyNames = useMemo(
     () =>
       Array.from(new Set(projects.map((p) => p.organization_name.trim()).filter(Boolean))).sort(
@@ -259,6 +271,19 @@ function PortfolioPage() {
     setReviewFilter("all");
     setDailyFilter("all");
   };
+  const setPortfolioTabWithUrl = (value: string) => {
+    const nextTab = value === "pipeline" ? "pipeline" : "projects";
+    setPortfolioTab(nextTab);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (nextTab === "pipeline") {
+      url.searchParams.set("tab", "pipeline");
+    } else {
+      url.searchParams.delete("tab");
+      url.searchParams.delete("opportunity");
+    }
+    window.history.replaceState({}, "", url.toString());
+  };
 
   const seededRef = useRef(false);
   useEffect(() => {
@@ -332,339 +357,372 @@ function PortfolioPage() {
             }}
           />
         )}
-        {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : projectsDidError ? (
-          <PortfolioLoadError
-            title="Portfolio did not load"
-            description="Your projects were not deleted. The app could not read the portfolio from the database with the current access context."
-            detail={errorMessage(projectsError)}
-            onRetry={() => refetchProjects()}
-          />
-        ) : projects.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <div className="space-y-6">
-            <PortfolioDashboard totals={portfolioTotals} />
-            <div className="space-y-3 rounded-lg border border-hairline bg-card p-4 shadow-card">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-                <div className="relative flex-1">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search project, job number, client, PM, or company"
-                    className="pl-9"
-                  />
-                </div>
-                <Select value={managerFilter} onValueChange={setManagerFilter}>
-                  <SelectTrigger className="w-full lg:w-[220px]">
-                    <SelectValue placeholder="Project manager" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All project managers</SelectItem>
-                    {managerNames.map((manager) => (
-                      <SelectItem key={manager} value={manager}>
-                        {manager}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select value={sortMode} onValueChange={(v) => setSortMode(v as PortfolioSortMode)}>
-                  <SelectTrigger className="w-full lg:w-[220px]">
-                    <SelectValue placeholder="Sort" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="manager">PM A-Z</SelectItem>
-                    <SelectItem value="profitability">Profitability low to high</SelectItem>
-                    <SelectItem value="gp-risk">GP at risk high to low</SelectItem>
-                    <SelectItem value="schedule">Schedule risk high to low</SelectItem>
-                    <SelectItem value="overdue">Overdue to-dos high to low</SelectItem>
-                    <SelectItem value="name">Project A-Z</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.1fr_repeat(5,minmax(0,1fr))_auto]">
-                <Select value={companyFilter} onValueChange={setCompanyFilter}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Company" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All companies</SelectItem>
-                    {companyNames.map((company) => (
-                      <SelectItem key={company} value={company}>
-                        {company}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={riskFilter}
-                  onValueChange={(v) => setRiskFilter(v as PortfolioRiskFilter)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Risk status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All risk</SelectItem>
-                    <SelectItem value="at-risk">At risk</SelectItem>
-                    <SelectItem value="watch">Watch</SelectItem>
-                    <SelectItem value="healthy">Healthy</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={scheduleFilter}
-                  onValueChange={(v) => setScheduleFilter(v as PortfolioScheduleFilter)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Schedule" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All schedules</SelectItem>
-                    <SelectItem value="slipped">Slipped</SelectItem>
-                    <SelectItem value="watch">Watch</SelectItem>
-                    <SelectItem value="on-plan">On plan</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={reviewFilter}
-                  onValueChange={(v) => setReviewFilter(v as PortfolioReviewFilter)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="IOR review" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All IOR reviews</SelectItem>
-                    <SelectItem value="stale">Stale 30+ days</SelectItem>
-                    <SelectItem value="current">Current</SelectItem>
-                    <SelectItem value="never">Never reviewed</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={dailyFilter}
-                  onValueChange={(v) => setDailyFilter(v as PortfolioDailyFilter)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Daily reports" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All daily reports</SelectItem>
-                    <SelectItem value="current">Current 7 days</SelectItem>
-                    <SelectItem value="stale">Stale 8+ days</SelectItem>
-                    <SelectItem value="none">No reports</SelectItem>
-                    <SelectItem value="client-visible">Client-visible</SelectItem>
-                  </SelectContent>
-                </Select>
-                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground xl:justify-end">
-                  <span className="whitespace-nowrap">
-                    Showing {visibleProjects.length} of {projects.length}
-                    {activeFilterCount > 0 ? ` · ${activeFilterCount} filters` : ""}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={resetFilters}
-                    disabled={activeFilterCount === 0}
-                    className="gap-1.5"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Reset
-                  </Button>
-                </div>
-              </div>
-            </div>
-            <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
-              <Table className="min-w-[1420px]">
-                <TableHeader>
-                  <TableRow className="bg-surface [&>th]:whitespace-nowrap [&>th]:px-3 [&>th]:py-3 [&>th]:align-bottom">
-                    <TableHead className="w-[250px]">Project</TableHead>
-                    <TableHead className="w-[120px]">Job #</TableHead>
-                    <TableHead className="w-[160px]">Project Manager</TableHead>
-                    <TableHead className="w-[140px] text-right">Original Contract</TableHead>
-                    <TableHead className="w-[95px] text-right">Plan GP %</TableHead>
-                    <TableHead className="w-[115px] text-right">Indicated GP %</TableHead>
-                    <TableHead className="w-[125px] text-right">GP At Risk</TableHead>
-                    <TableHead className="w-[130px] text-right">Risk Allocated</TableHead>
-                    <TableHead className="w-[250px]">Top Exposure</TableHead>
-                    <TableHead className="w-[125px]">To-Dos</TableHead>
-                    <TableHead className="w-[145px]">Schedule</TableHead>
-                    <TableHead className="w-[145px]">Daily Reports</TableHead>
-                    <TableHead className="w-[115px]">Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visibleProjects.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={13}
-                        className="py-10 text-center text-sm text-muted-foreground"
-                      >
-                        No projects match the current portfolio filters.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {visibleProjects.map((p) => {
-                    const s = statusFor(p.original_gp_pct, p.indicated_gp_pct);
-                    const schedule = scheduleFor(p.schedule_variance_weeks, p.schedule_risk_count);
-                    const daily = dailyReportFor(p.daily_report_count, p.days_since_daily_report);
-                    const jobNumber = p.job_number || `ID ${p.id.slice(0, 8).toUpperCase()}`;
-                    const projectHref = `/projects/${p.id}`;
-                    const highlightRisk = s.label === "At Risk" || p.gp_at_risk > 0;
-                    const isDemo = p.job_number === "DEMO-HARBOR";
-                    return (
-                      <TableRow
-                        key={p.id}
-                        role="link"
-                        tabIndex={0}
-                        title={`Open ${p.name}`}
-                        className={`cursor-pointer hover:bg-surface/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>td]:px-3 [&>td]:py-4 [&>td]:align-top ${
-                          highlightRisk ? "border-l-2 border-l-danger/60 bg-danger/5" : ""
-                        }`}
-                        onClick={() => openProject(p.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            openProject(p.id);
-                          }
-                        }}
-                      >
-                        <TableCell>
-                          <a
-                            href={projectHref}
-                            className="block"
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="font-serif text-lg text-foreground">{p.name}</div>
-                              {isDemo && (
-                                <span
-                                  title="Seeded Overwatch teaching project"
-                                  className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent"
-                                >
-                                  Demo IOR
-                                </span>
-                              )}
-                              {p.warning_count > 0 && (
-                                <span
-                                  title={`${p.warning_count} system risk${p.warning_count === 1 ? "" : "s"} detected`}
-                                  className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-danger/15 px-1.5 text-[10px] font-semibold text-danger"
-                                >
-                                  {p.warning_count}
-                                </span>
-                              )}
-                              {p.days_since_review !== null && p.days_since_review > 30 && (
-                                <span
-                                  title="Project has not been reviewed in over 30 days"
-                                  className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold text-warning"
-                                >
-                                  Review {p.days_since_review}d
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {p.organization_name} · {p.client} · {p.phase} · {p.percent_complete}%
-                              complete
-                              {p.top_category && (
-                                <> · Top risk: {p.top_category.replace(/_/g, " ")}</>
-                              )}
-                            </div>
-                          </a>
-                        </TableCell>
-
-                        <TableCell className="whitespace-nowrap text-sm tabular text-foreground">
-                          {jobNumber}
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm text-foreground">
-                          {p.project_manager || "Unassigned"}
-                        </TableCell>
-                        <TableCell className="text-right tabular">
-                          {fmtUSD(p.original_contract)}
-                        </TableCell>
-                        <TableCell className="text-right tabular">
-                          {fmtPct(p.original_gp_pct)}
-                        </TableCell>
-                        <TableCell className="text-right tabular">
-                          {fmtPct(p.indicated_gp_pct)}
-                        </TableCell>
-                        <TableCell
-                          className={`text-right tabular ${p.gp_at_risk > 0 ? "text-danger" : ""}`}
-                        >
-                          {fmtUSD(p.gp_at_risk)}
-                        </TableCell>
-                        <TableCell className="text-right tabular">
-                          {fmtUSD(p.risk_allocated)}
-                        </TableCell>
-                        <TableCell className="max-w-[250px]">
-                          {p.top_exposure_title ? (
-                            <div>
-                              <div className="truncate text-sm font-medium text-foreground">
-                                {p.top_exposure_title}
-                              </div>
-                              <div className="mt-1 text-[11px] text-muted-foreground">
-                                {fmtUSD(p.top_exposure_value)}{" "}
-                                {p.top_exposure_hold_class ? `· ${p.top_exposure_hold_class}` : ""}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">No live exposure</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <PortfolioPill
-                            className={
-                              p.overdue_decision_count > 0
-                                ? "border-danger/40 bg-danger/10 text-danger"
-                                : p.active_decision_count > 0
-                                  ? "border-warning/40 bg-warning/10 text-warning"
-                                  : "border-success/40 bg-success/10 text-success"
-                            }
-                          >
-                            {p.overdue_decision_count > 0
-                              ? `${p.overdue_decision_count} overdue`
-                              : `${p.active_decision_count} open`}
-                          </PortfolioPill>
-                          {p.next_decision_due && (
-                            <div className="mt-1 text-[11px] text-muted-foreground">
-                              next due {p.next_decision_due}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <PortfolioPill className={schedule.className}>
-                            {schedule.label} · {Math.round(schedule.score)}%
-                          </PortfolioPill>
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            {p.schedule_variance_weeks > 0
-                              ? `+${p.schedule_variance_weeks} wk`
-                              : "No slip"}{" "}
-                            · {p.schedule_risk_count} risks
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <PortfolioPill className={daily.className}>{daily.label}</PortfolioPill>
-                          <div className="mt-1 text-[11px] text-muted-foreground">
-                            {p.daily_report_count === 0
-                              ? "No job logs"
-                              : `${p.daily_report_count} logs · last ${shortDate(p.last_daily_report_date)}`}
-                          </div>
-                          {p.client_visible_daily_report_count > 0 && (
-                            <div className="mt-0.5 text-[11px] text-muted-foreground">
-                              {p.client_visible_daily_report_count} client-visible
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <PortfolioPill className={s.className}>{s.label}</PortfolioPill>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+        <Tabs value={portfolioTab} onValueChange={setPortfolioTabWithUrl} className="space-y-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <TabsList>
+              <TabsTrigger value="projects">Projects</TabsTrigger>
+              <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
+            </TabsList>
+            <div className="text-xs text-muted-foreground">
+              {portfolioTab === "projects"
+                ? "Live project IOR control"
+                : "Pre-project CRM and bid pipeline"}
             </div>
           </div>
-        )}
+          <TabsContent value="projects" className="mt-0">
+            {isLoading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : projectsDidError ? (
+              <PortfolioLoadError
+                title="Portfolio did not load"
+                description="Your projects were not deleted. The app could not read the portfolio from the database with the current access context."
+                detail={errorMessage(projectsError)}
+                onRetry={() => refetchProjects()}
+              />
+            ) : projects.length === 0 ? (
+              <EmptyState />
+            ) : (
+              <div className="space-y-6">
+                <PortfolioDashboard totals={portfolioTotals} />
+                <div className="space-y-3 rounded-lg border border-hairline bg-card p-4 shadow-card">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                    <div className="relative flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Search project, job number, client, PM, or company"
+                        className="pl-9"
+                      />
+                    </div>
+                    <Select value={managerFilter} onValueChange={setManagerFilter}>
+                      <SelectTrigger className="w-full lg:w-[220px]">
+                        <SelectValue placeholder="Project manager" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All project managers</SelectItem>
+                        {managerNames.map((manager) => (
+                          <SelectItem key={manager} value={manager}>
+                            {manager}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={sortMode}
+                      onValueChange={(v) => setSortMode(v as PortfolioSortMode)}
+                    >
+                      <SelectTrigger className="w-full lg:w-[220px]">
+                        <SelectValue placeholder="Sort" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="manager">PM A-Z</SelectItem>
+                        <SelectItem value="profitability">Profitability low to high</SelectItem>
+                        <SelectItem value="gp-risk">GP at risk high to low</SelectItem>
+                        <SelectItem value="schedule">Schedule risk high to low</SelectItem>
+                        <SelectItem value="overdue">Overdue to-dos high to low</SelectItem>
+                        <SelectItem value="name">Project A-Z</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.1fr_repeat(5,minmax(0,1fr))_auto]">
+                    <Select value={companyFilter} onValueChange={setCompanyFilter}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Company" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All companies</SelectItem>
+                        {companyNames.map((company) => (
+                          <SelectItem key={company} value={company}>
+                            {company}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={riskFilter}
+                      onValueChange={(v) => setRiskFilter(v as PortfolioRiskFilter)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Risk status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All risk</SelectItem>
+                        <SelectItem value="at-risk">At risk</SelectItem>
+                        <SelectItem value="watch">Watch</SelectItem>
+                        <SelectItem value="healthy">Healthy</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={scheduleFilter}
+                      onValueChange={(v) => setScheduleFilter(v as PortfolioScheduleFilter)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Schedule" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All schedules</SelectItem>
+                        <SelectItem value="slipped">Slipped</SelectItem>
+                        <SelectItem value="watch">Watch</SelectItem>
+                        <SelectItem value="on-plan">On plan</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={reviewFilter}
+                      onValueChange={(v) => setReviewFilter(v as PortfolioReviewFilter)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="IOR review" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All IOR reviews</SelectItem>
+                        <SelectItem value="stale">Stale 30+ days</SelectItem>
+                        <SelectItem value="current">Current</SelectItem>
+                        <SelectItem value="never">Never reviewed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={dailyFilter}
+                      onValueChange={(v) => setDailyFilter(v as PortfolioDailyFilter)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Daily reports" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All daily reports</SelectItem>
+                        <SelectItem value="current">Current 7 days</SelectItem>
+                        <SelectItem value="stale">Stale 8+ days</SelectItem>
+                        <SelectItem value="none">No reports</SelectItem>
+                        <SelectItem value="client-visible">Client-visible</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground xl:justify-end">
+                      <span className="whitespace-nowrap">
+                        Showing {visibleProjects.length} of {projects.length}
+                        {activeFilterCount > 0 ? ` · ${activeFilterCount} filters` : ""}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={resetFilters}
+                        disabled={activeFilterCount === 0}
+                        className="gap-1.5"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        Reset
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
+                  <Table className="min-w-[1420px]">
+                    <TableHeader>
+                      <TableRow className="bg-surface [&>th]:whitespace-nowrap [&>th]:px-3 [&>th]:py-3 [&>th]:align-bottom">
+                        <TableHead className="w-[250px]">Project</TableHead>
+                        <TableHead className="w-[120px]">Job #</TableHead>
+                        <TableHead className="w-[160px]">Project Manager</TableHead>
+                        <TableHead className="w-[140px] text-right">Original Contract</TableHead>
+                        <TableHead className="w-[95px] text-right">Plan GP %</TableHead>
+                        <TableHead className="w-[115px] text-right">Indicated GP %</TableHead>
+                        <TableHead className="w-[125px] text-right">GP At Risk</TableHead>
+                        <TableHead className="w-[130px] text-right">Risk Allocated</TableHead>
+                        <TableHead className="w-[250px]">Top Exposure</TableHead>
+                        <TableHead className="w-[125px]">To-Dos</TableHead>
+                        <TableHead className="w-[145px]">Schedule</TableHead>
+                        <TableHead className="w-[145px]">Daily Reports</TableHead>
+                        <TableHead className="w-[115px]">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {visibleProjects.length === 0 && (
+                        <TableRow>
+                          <TableCell
+                            colSpan={13}
+                            className="py-10 text-center text-sm text-muted-foreground"
+                          >
+                            No projects match the current portfolio filters.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      {visibleProjects.map((p) => {
+                        const s = statusFor(p.original_gp_pct, p.indicated_gp_pct);
+                        const schedule = scheduleFor(
+                          p.schedule_variance_weeks,
+                          p.schedule_risk_count,
+                        );
+                        const daily = dailyReportFor(
+                          p.daily_report_count,
+                          p.days_since_daily_report,
+                        );
+                        const jobNumber = p.job_number || `ID ${p.id.slice(0, 8).toUpperCase()}`;
+                        const projectHref = `/projects/${p.id}`;
+                        const highlightRisk = s.label === "At Risk" || p.gp_at_risk > 0;
+                        const isDemo = p.job_number === "DEMO-HARBOR";
+                        return (
+                          <TableRow
+                            key={p.id}
+                            role="link"
+                            tabIndex={0}
+                            title={`Open ${p.name}`}
+                            className={`cursor-pointer hover:bg-surface/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>td]:px-3 [&>td]:py-4 [&>td]:align-top ${
+                              highlightRisk ? "border-l-2 border-l-danger/60 bg-danger/5" : ""
+                            }`}
+                            onClick={() => openProject(p.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openProject(p.id);
+                              }
+                            }}
+                          >
+                            <TableCell>
+                              <a
+                                href={projectHref}
+                                className="block"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className="font-serif text-lg text-foreground">{p.name}</div>
+                                  {isDemo && (
+                                    <span
+                                      title="Seeded Overwatch teaching project"
+                                      className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent"
+                                    >
+                                      Demo IOR
+                                    </span>
+                                  )}
+                                  {p.warning_count > 0 && (
+                                    <span
+                                      title={`${p.warning_count} system risk${p.warning_count === 1 ? "" : "s"} detected`}
+                                      className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-danger/15 px-1.5 text-[10px] font-semibold text-danger"
+                                    >
+                                      {p.warning_count}
+                                    </span>
+                                  )}
+                                  {p.days_since_review !== null && p.days_since_review > 30 && (
+                                    <span
+                                      title="Project has not been reviewed in over 30 days"
+                                      className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold text-warning"
+                                    >
+                                      Review {p.days_since_review}d
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  {p.organization_name} · {p.client} · {p.phase} ·{" "}
+                                  {p.percent_complete}% complete
+                                  {p.top_category && (
+                                    <> · Top risk: {p.top_category.replace(/_/g, " ")}</>
+                                  )}
+                                </div>
+                              </a>
+                            </TableCell>
+
+                            <TableCell className="whitespace-nowrap text-sm tabular text-foreground">
+                              {jobNumber}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm text-foreground">
+                              {p.project_manager || "Unassigned"}
+                            </TableCell>
+                            <TableCell className="text-right tabular">
+                              {fmtUSD(p.original_contract)}
+                            </TableCell>
+                            <TableCell className="text-right tabular">
+                              {fmtPct(p.original_gp_pct)}
+                            </TableCell>
+                            <TableCell className="text-right tabular">
+                              {fmtPct(p.indicated_gp_pct)}
+                            </TableCell>
+                            <TableCell
+                              className={`text-right tabular ${p.gp_at_risk > 0 ? "text-danger" : ""}`}
+                            >
+                              {fmtUSD(p.gp_at_risk)}
+                            </TableCell>
+                            <TableCell className="text-right tabular">
+                              {fmtUSD(p.risk_allocated)}
+                            </TableCell>
+                            <TableCell className="max-w-[250px]">
+                              {p.top_exposure_title ? (
+                                <div>
+                                  <div className="truncate text-sm font-medium text-foreground">
+                                    {p.top_exposure_title}
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-muted-foreground">
+                                    {fmtUSD(p.top_exposure_value)}{" "}
+                                    {p.top_exposure_hold_class
+                                      ? `· ${p.top_exposure_hold_class}`
+                                      : ""}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  No live exposure
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <PortfolioPill
+                                className={
+                                  p.overdue_decision_count > 0
+                                    ? "border-danger/40 bg-danger/10 text-danger"
+                                    : p.active_decision_count > 0
+                                      ? "border-warning/40 bg-warning/10 text-warning"
+                                      : "border-success/40 bg-success/10 text-success"
+                                }
+                              >
+                                {p.overdue_decision_count > 0
+                                  ? `${p.overdue_decision_count} overdue`
+                                  : `${p.active_decision_count} open`}
+                              </PortfolioPill>
+                              {p.next_decision_due && (
+                                <div className="mt-1 text-[11px] text-muted-foreground">
+                                  next due {p.next_decision_due}
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <PortfolioPill className={schedule.className}>
+                                {schedule.label} · {Math.round(schedule.score)}%
+                              </PortfolioPill>
+                              <div className="mt-1 text-[11px] text-muted-foreground">
+                                {p.schedule_variance_weeks > 0
+                                  ? `+${p.schedule_variance_weeks} wk`
+                                  : "No slip"}{" "}
+                                · {p.schedule_risk_count} risks
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <PortfolioPill className={daily.className}>
+                                {daily.label}
+                              </PortfolioPill>
+                              <div className="mt-1 text-[11px] text-muted-foreground">
+                                {p.daily_report_count === 0
+                                  ? "No job logs"
+                                  : `${p.daily_report_count} logs · last ${shortDate(p.last_daily_report_date)}`}
+                              </div>
+                              {p.client_visible_daily_report_count > 0 && (
+                                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                  {p.client_visible_daily_report_count} client-visible
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <PortfolioPill className={s.className}>{s.label}</PortfolioPill>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+          </TabsContent>
+          <TabsContent value="pipeline" className="mt-0">
+            <PipelineWorkspace initialOpportunityId={initialPipelineOpportunityId} />
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );

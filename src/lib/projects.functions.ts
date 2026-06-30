@@ -20,7 +20,11 @@ import {
 } from "@/lib/ior";
 
 type DynamicSupabaseError = { code?: string; message: string };
-type DynamicSupabaseResult<T = any> = { data: T | null; error: DynamicSupabaseError | null };
+type DynamicSupabaseLooseData = Record<string, unknown> & Record<string, unknown>[];
+type DynamicSupabaseResult<T = DynamicSupabaseLooseData> = {
+  data: T | null;
+  error: DynamicSupabaseError | null;
+};
 type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   select(columns?: string): DynamicSupabaseQuery;
   insert(values: unknown): DynamicSupabaseQuery;
@@ -66,6 +70,7 @@ export interface ProjectRow {
   baseline_completion_date: string | null;
   last_review_summary: string;
   project_manager: string;
+  source_opportunity_id: string | null;
 }
 
 export interface ExposureRow {
@@ -414,6 +419,7 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   baseline_completion_date: (p.baseline_completion_date as string | null) ?? null,
   last_review_summary: str(p.last_review_summary),
   project_manager: str(p.project_manager),
+  source_opportunity_id: (p.source_opportunity_id as string | null) ?? null,
 });
 
 const normalizeBillingApplication = (b: Record<string, unknown>): BillingApplicationRow => ({
@@ -712,6 +718,7 @@ export const listProjects = createServerFn({ method: "GET" })
         name: p.name,
         client: p.client,
         project_manager: p.project_manager,
+        source_opportunity_id: p.source_opportunity_id,
         phase: p.phase,
         percent_complete: p.percent_complete,
         schedule_variance_weeks: p.schedule_variance_weeks,
@@ -1764,6 +1771,7 @@ export const updateBillingInvoice = createServerFn({ method: "POST" })
       .eq("id", data.id)
       .single();
     if (loadError) throw new Error(loadError.message);
+    if (!before) throw new Error("Invoice not found.");
 
     const patch: Record<string, unknown> = { ...data.patch };
     const nextStatus = data.patch.status as InvoiceStatus | undefined;
