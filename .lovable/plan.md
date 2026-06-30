@@ -12,10 +12,14 @@ Overwatch uses the Supabase/database environment managed by Lovable. A GitHub pu
    - `20260629130000_schedule_wbs_sections.sql`
 3. Apply the schedule delay-fragment migration:
    - `20260629165311_schedule_delay_fragments.sql`
+4. For the estimating module release, apply the estimating migration:
+   - `20260629222000_estimating_module.sql`
 
 The WBS migration creates `public.schedule_wbs_sections`, enables RLS, grants authenticated access, uses the existing `can_read_project` / `can_manage_project` policies, and seeds each project from the existing `schedule_activities.division` values.
 
 The delay-fragment migration creates `public.schedule_delay_fragments`, enables RLS, grants authenticated access, and stores activity-linked delay records with days, source, status, owner, identified date, and resolved date. The CPM workspace degrades safely until this table exists, but activity-level delay records will not save without it.
+
+The estimating migration creates `public.cost_library_items`, `public.estimates`, `public.estimate_line_items`, and `public.estimate_markup_defaults`, enables RLS, grants authenticated/service role access, and stores the cost library plus estimate worksheet data used by `/estimates` and `/cost-library`.
 
 ## Why this matters
 
@@ -29,6 +33,10 @@ Run after applying the migrations:
 select to_regclass('public.schedule_activities') as schedule_activities_table;
 select to_regclass('public.schedule_wbs_sections') as schedule_wbs_sections_table;
 select to_regclass('public.schedule_delay_fragments') as schedule_delay_fragments_table;
+select to_regclass('public.cost_library_items') as cost_library_items_table;
+select to_regclass('public.estimates') as estimates_table;
+select to_regclass('public.estimate_line_items') as estimate_line_items_table;
+select to_regclass('public.estimate_markup_defaults') as estimate_markup_defaults_table;
 
 select
   project_id,
@@ -54,3 +62,5 @@ order by delay_fragment_count desc;
 ```
 
 Expected result: all `to_regclass` checks return table names, Harbor/demo projects have CPM activity rows, projects with CPM activities have seeded WBS sections, and the delay-fragment count query runs even when no delay records exist yet.
+
+For the estimating release, also run `supabase/verification/20260629222000_estimating_module.sql` and confirm the estimating tables, RLS policies, grants, generated total columns, and indexes are present before publishing `main` through Lovable.

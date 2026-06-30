@@ -1,0 +1,925 @@
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeft,
+  Copy,
+  Download,
+  FileDown,
+  GripVertical,
+  Library,
+  Plus,
+  Save,
+  Send,
+  Trash2,
+} from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { MoneyInput } from "@/components/ui/money-input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  calculateEstimateTotals,
+  convertEstimateToProject,
+  convertEstimateToSOV,
+  createLineItem,
+  deleteLineItem,
+  duplicateEstimate,
+  reorderLineItems,
+  saveEstimateMarkupDefaults,
+  searchCostLibrary,
+  updateEstimate,
+  updateLineItem,
+  type CostLibraryItemRow,
+  type EstimateLineItemRow,
+  type EstimateRow,
+  type EstimateStatus,
+  type EstimateTotalsBreakdown,
+} from "@/lib/estimates.functions";
+import { downloadPdfBytes, generateEstimatePdf } from "@/lib/estimate-pdf";
+import type { EstimateRegion } from "@/lib/estimate-seed-data";
+import { fmtUSD } from "@/lib/format";
+
+type EstimatePatch = Partial<
+  Pick<
+    EstimateRow,
+    | "name"
+    | "description"
+    | "opportunity_id"
+    | "project_id"
+    | "project_type"
+    | "region"
+    | "region_multiplier"
+    | "status"
+    | "overhead_pct"
+    | "profit_pct"
+    | "contingency_pct"
+    | "bond_pct"
+    | "tax_pct"
+    | "general_conditions_pct"
+    | "custom_markups"
+  >
+>;
+type UpdateEstimatePayload = { id: string; patch: EstimatePatch };
+type LinePatch = Partial<
+  Pick<
+    EstimateLineItemRow,
+    | "csi_division"
+    | "cost_code"
+    | "description"
+    | "unit"
+    | "quantity"
+    | "material_unit_cost_cents"
+    | "labor_unit_cost_cents"
+    | "library_item_id"
+    | "scope_group"
+    | "notes"
+  >
+>;
+type UpdateLinePayload = { id: string; patch: LinePatch };
+
+interface EstimateWorkspaceProps {
+  estimate: EstimateRow;
+  lineItems: EstimateLineItemRow[];
+  totals: EstimateTotalsBreakdown;
+  regions: EstimateRegion[];
+}
+
+const pctToNumber = (basisPoints: number) => Number((basisPoints / 100).toFixed(2));
+const numberToPct = (value: number) => Math.round(value * 100);
+const dollarsToCents = (value: number) => Math.round(value * 100);
+const centsToDollars = (value: number) => Math.round(value) / 100;
+
+const safeFileName = (value: string, ext: string) =>
+  `${
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "") || "estimate"
+  }.${ext}`;
+
+function downloadText(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function toCsvCell(value: unknown) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function buildEstimateCsv(estimate: EstimateRow, lines: EstimateLineItemRow[]) {
+  const rows = [
+    [
+      "Cost Code",
+      "CSI Division",
+      "Description",
+      "Unit",
+      "Qty",
+      "Material $/Unit",
+      "Labor $/Unit",
+      "Material Extended",
+      "Labor Extended",
+      "Total Extended",
+    ],
+    ...lines.map((line) => [
+      line.cost_code,
+      line.csi_division,
+      line.description,
+      line.unit,
+      line.quantity,
+      centsToDollars(line.material_unit_cost_cents),
+      centsToDollars(line.labor_unit_cost_cents),
+      centsToDollars(line.material_extended_cents * estimate.region_multiplier),
+      centsToDollars(line.labor_extended_cents * estimate.region_multiplier),
+      centsToDollars(line.total_extended_cents * estimate.region_multiplier),
+    ]),
+  ];
+  return rows.map((row) => row.map(toCsvCell).join(",")).join("\n");
+}
+
+export function EstimateWorkspace({
+  estimate,
+  lineItems,
+  totals,
+  regions,
+}: EstimateWorkspaceProps) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const updateEstimateFn = useServerFn(updateEstimate);
+  const createLineFn = useServerFn(createLineItem);
+  const updateLineFn = useServerFn(updateLineItem);
+  const deleteLineFn = useServerFn(deleteLineItem);
+  const reorderLineFn = useServerFn(reorderLineItems);
+  const duplicateFn = useServerFn(duplicateEstimate);
+  const convertToSovFn = useServerFn(convertEstimateToSOV);
+  const convertToProjectFn = useServerFn(convertEstimateToProject);
+  const saveDefaultsFn = useServerFn(saveEstimateMarkupDefaults);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState(estimate.name);
+
+  useEffect(() => setNameDraft(estimate.name), [estimate.name]);
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["estimate", estimate.id] });
+
+  const updateEstimateMutation = useMutation({
+    mutationFn: (payload: UpdateEstimatePayload) => updateEstimateFn({ data: payload }),
+    onSuccess: invalidate,
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate did not save"),
+  });
+
+  const createLineMutation = useMutation({
+    mutationFn: () =>
+      createLineFn({
+        data: {
+          estimate_id: estimate.id,
+          description: "New estimate item",
+          unit: "EA",
+          quantity: 0,
+          material_unit_cost_cents: 0,
+          labor_unit_cost_cents: 0,
+        },
+      }),
+    onSuccess: invalidate,
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Line item did not save"),
+  });
+
+  const updateLineMutation = useMutation({
+    mutationFn: (payload: UpdateLinePayload) => updateLineFn({ data: payload }),
+    onSuccess: invalidate,
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Line item did not save"),
+  });
+
+  const deleteLineMutation = useMutation({
+    mutationFn: (id: string) => deleteLineFn({ data: { id } }),
+    onSuccess: invalidate,
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Line item did not delete"),
+  });
+
+  const reorderMutation = useMutation({
+    mutationFn: (item_ids: string[]) =>
+      reorderLineFn({ data: { estimate_id: estimate.id, item_ids } }),
+    onSuccess: invalidate,
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Rows did not reorder"),
+  });
+
+  const duplicateMutation = useMutation({
+    mutationFn: () => duplicateFn({ data: { id: estimate.id } }),
+    onSuccess: (result) => {
+      toast.success("Estimate duplicated");
+      navigate({ to: "/estimates/$estimateId", params: { estimateId: result.id } });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate did not duplicate"),
+  });
+
+  const pushMutation = useMutation({
+    mutationFn: async () => {
+      if (estimate.project_id) {
+        const confirmed = window.confirm(
+          "Push this estimate into the linked project and replace its current cost buckets?",
+        );
+        if (!confirmed) return { project_id: estimate.project_id };
+        await convertToSovFn({
+          data: { estimate_id: estimate.id, project_id: estimate.project_id },
+        });
+        return { project_id: estimate.project_id };
+      }
+      const result = await convertToProjectFn({ data: { estimate_id: estimate.id } });
+      return result;
+    },
+    onSuccess: (result) => {
+      if (!result?.project_id) return;
+      toast.success("Estimate pushed to project");
+      navigate({ to: "/projects/$projectId", params: { projectId: result.project_id } });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate did not push"),
+  });
+
+  const saveDefaultsMutation = useMutation({
+    mutationFn: () =>
+      saveDefaultsFn({
+        data: {
+          overhead_pct: estimate.overhead_pct,
+          profit_pct: estimate.profit_pct,
+          contingency_pct: estimate.contingency_pct,
+          bond_pct: estimate.bond_pct,
+          tax_pct: estimate.tax_pct,
+          general_conditions_pct: estimate.general_conditions_pct,
+          custom_markups: estimate.custom_markups,
+          default_region: estimate.region,
+          default_region_multiplier: estimate.region_multiplier,
+        },
+      }),
+    onSuccess: () => toast.success("Defaults saved"),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Defaults did not save"),
+  });
+
+  const orderedLines = useMemo(
+    () => [...lineItems].sort((a, b) => a.sort_order - b.sort_order),
+    [lineItems],
+  );
+
+  const liveTotals = useMemo(
+    () => calculateEstimateTotals(estimate, orderedLines),
+    [estimate, orderedLines],
+  );
+
+  const updateEstimatePatch = (patch: UpdateEstimatePayload["patch"]) =>
+    updateEstimateMutation.mutate({ id: estimate.id, patch });
+
+  const onDropRow = (targetId: string) => {
+    if (!draggingId || draggingId === targetId) return;
+    const next = [...orderedLines];
+    const from = next.findIndex((line) => line.id === draggingId);
+    const to = next.findIndex((line) => line.id === targetId);
+    if (from === -1 || to === -1) return;
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    reorderMutation.mutate(next.map((line) => line.id));
+    setDraggingId(null);
+  };
+
+  const exportCsv = () => {
+    downloadText(
+      safeFileName(estimate.name, "csv"),
+      buildEstimateCsv(estimate, orderedLines),
+      "text/csv",
+    );
+  };
+
+  const exportPdf = async () => {
+    const bytes = await generateEstimatePdf({
+      estimate,
+      lineItems: orderedLines,
+      totals: liveTotals,
+    });
+    downloadPdfBytes(bytes, safeFileName(estimate.name, "pdf"));
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      <header className="border-b border-hairline bg-surface-elevated">
+        <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-5 py-4 lg:px-8">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <Button asChild variant="ghost" size="icon" title="Back to estimates">
+                <Link to="/estimates">
+                  <ArrowLeft className="h-4 w-4" />
+                </Link>
+              </Button>
+              <div className="min-w-0">
+                <div className="mb-1 flex items-center gap-2">
+                  <Badge variant="outline" className="capitalize">
+                    {estimate.status}
+                  </Badge>
+                  {estimate.project_name && (
+                    <span className="text-xs text-muted-foreground">
+                      Project: {estimate.project_name}
+                    </span>
+                  )}
+                </div>
+                <Input
+                  value={nameDraft}
+                  onChange={(event) => setNameDraft(event.target.value)}
+                  onBlur={() => {
+                    if (nameDraft.trim() && nameDraft !== estimate.name) {
+                      updateEstimateMutation.mutate({
+                        id: estimate.id,
+                        patch: { name: nameDraft },
+                      });
+                    }
+                  }}
+                  className="h-auto border-0 bg-transparent p-0 font-serif text-3xl shadow-none focus-visible:ring-0"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={estimate.status}
+                onValueChange={(status) =>
+                  updateEstimatePatch({ status: status as EstimateStatus })
+                }
+              >
+                <SelectTrigger className="w-[132px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="final">Final</SelectItem>
+                  <SelectItem value="awarded">Awarded</SelectItem>
+                  <SelectItem value="lost">Lost</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => duplicateMutation.mutate()}
+                disabled={duplicateMutation.isPending}
+              >
+                <Copy className="h-3.5 w-3.5" /> Duplicate
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5">
+                    <Download className="h-3.5 w-3.5" /> Export
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={exportCsv}>
+                    <FileDown className="h-4 w-4" /> CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={exportPdf}>
+                    <FileDown className="h-4 w-4" /> PDF
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={() => pushMutation.mutate()}
+                disabled={pushMutation.isPending || orderedLines.length === 0}
+              >
+                <Send className="h-3.5 w-3.5" /> Push to Project
+              </Button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto grid max-w-[1800px] gap-5 px-5 py-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-8">
+        <section className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-hairline bg-surface px-4 py-3">
+            <div>
+              <h2 className="font-serif text-2xl">Line Items</h2>
+              <p className="text-xs text-muted-foreground">{orderedLines.length} rows</p>
+            </div>
+            <Button
+              size="sm"
+              className="gap-1.5"
+              onClick={() => createLineMutation.mutate()}
+              disabled={createLineMutation.isPending}
+            >
+              <Plus className="h-3.5 w-3.5" /> Add Row
+            </Button>
+          </div>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[1280px]">
+              <TableHeader>
+                <TableRow className="bg-surface [&>th]:whitespace-nowrap">
+                  <TableHead className="w-[44px]" />
+                  <TableHead className="w-[58px]">#</TableHead>
+                  <TableHead className="w-[120px]">Cost Code</TableHead>
+                  <TableHead className="w-[130px]">Group</TableHead>
+                  <TableHead className="w-[360px]">Description</TableHead>
+                  <TableHead className="w-[80px]">Unit</TableHead>
+                  <TableHead className="w-[105px] text-right">Qty</TableHead>
+                  <TableHead className="w-[130px] text-right">Mat $/Unit</TableHead>
+                  <TableHead className="w-[130px] text-right">Labor $/Unit</TableHead>
+                  <TableHead className="w-[130px] text-right">Mat Ext</TableHead>
+                  <TableHead className="w-[130px] text-right">Labor Ext</TableHead>
+                  <TableHead className="w-[130px] text-right">Total</TableHead>
+                  <TableHead className="w-[56px]" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {orderedLines.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={13}
+                      className="py-12 text-center text-sm text-muted-foreground"
+                    >
+                      No line items yet.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  orderedLines.map((line, index) => (
+                    <EstimateLineRow
+                      key={line.id}
+                      estimate={estimate}
+                      line={line}
+                      index={index}
+                      onUpdate={(patch) => updateLineMutation.mutate({ id: line.id, patch })}
+                      onDelete={() => deleteLineMutation.mutate(line.id)}
+                      onDragStart={() => setDraggingId(line.id)}
+                      onDrop={() => onDropRow(line.id)}
+                    />
+                  ))
+                )}
+                <TableRow className="bg-surface font-medium">
+                  <TableCell colSpan={9}>Subtotal</TableCell>
+                  <TableCell className="text-right tabular">
+                    {fmtUSD(liveTotals.material_cents / 100)}
+                  </TableCell>
+                  <TableCell className="text-right tabular">
+                    {fmtUSD(liveTotals.labor_cents / 100)}
+                  </TableCell>
+                  <TableCell className="text-right tabular">
+                    {fmtUSD(liveTotals.direct_cents / 100)}
+                  </TableCell>
+                  <TableCell />
+                </TableRow>
+              </TableBody>
+            </Table>
+          </div>
+        </section>
+
+        <EstimateSummaryPanel
+          estimate={estimate}
+          totals={liveTotals}
+          regions={regions}
+          onPatch={updateEstimatePatch}
+          onSaveDefaults={() => saveDefaultsMutation.mutate()}
+          savingDefaults={saveDefaultsMutation.isPending}
+        />
+      </main>
+    </div>
+  );
+}
+
+function EstimateLineRow({
+  estimate,
+  line,
+  index,
+  onUpdate,
+  onDelete,
+  onDragStart,
+  onDrop,
+}: {
+  estimate: EstimateRow;
+  line: EstimateLineItemRow;
+  index: number;
+  onUpdate: (patch: UpdateLinePayload["patch"]) => void;
+  onDelete: () => void;
+  onDragStart: () => void;
+  onDrop: () => void;
+}) {
+  const [draft, setDraft] = useState(line);
+  useEffect(() => setDraft(line), [line]);
+  const materialExt = Math.round(
+    draft.quantity * draft.material_unit_cost_cents * estimate.region_multiplier,
+  );
+  const laborExt = Math.round(
+    draft.quantity * draft.labor_unit_cost_cents * estimate.region_multiplier,
+  );
+
+  const commit = (patch: UpdateLinePayload["patch"]) => onUpdate(patch);
+  const selectLibraryItem = (item: CostLibraryItemRow) => {
+    const patch = {
+      description: item.description,
+      unit: item.unit,
+      material_unit_cost_cents: item.material_cost_cents,
+      labor_unit_cost_cents: item.labor_cost_cents,
+      csi_division: item.csi_division,
+      library_item_id: item.id,
+    };
+    setDraft((current) => ({ ...current, ...patch }));
+    onUpdate(patch);
+  };
+
+  return (
+    <TableRow
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
+        event.preventDefault();
+        onDrop();
+      }}
+      className="[&>td]:px-2 [&>td]:py-2"
+    >
+      <TableCell>
+        <Button variant="ghost" size="icon" className="h-8 w-8 cursor-grab" title="Drag row">
+          <GripVertical className="h-4 w-4 text-muted-foreground" />
+        </Button>
+      </TableCell>
+      <TableCell className="text-xs text-muted-foreground">{index + 1}</TableCell>
+      <TableCell>
+        <Input
+          value={draft.cost_code}
+          onChange={(event) => setDraft({ ...draft, cost_code: event.target.value })}
+          onBlur={() => commit({ cost_code: draft.cost_code })}
+          className="h-8"
+        />
+      </TableCell>
+      <TableCell>
+        <Input
+          value={draft.scope_group}
+          onChange={(event) => setDraft({ ...draft, scope_group: event.target.value })}
+          onBlur={() => commit({ scope_group: draft.scope_group })}
+          className="h-8"
+        />
+      </TableCell>
+      <TableCell>
+        <CostLibraryAutocomplete
+          value={draft.description}
+          csiDivision={draft.csi_division}
+          regionMultiplier={estimate.region_multiplier}
+          onChange={(description) => setDraft({ ...draft, description })}
+          onBlur={() => commit({ description: draft.description })}
+          onSelect={selectLibraryItem}
+        />
+      </TableCell>
+      <TableCell>
+        <Input
+          value={draft.unit}
+          onChange={(event) => setDraft({ ...draft, unit: event.target.value })}
+          onBlur={() => commit({ unit: draft.unit })}
+          className="h-8 uppercase"
+        />
+      </TableCell>
+      <TableCell>
+        <Input
+          type="number"
+          min={0}
+          step="0.01"
+          value={draft.quantity}
+          onChange={(event) => setDraft({ ...draft, quantity: Number(event.target.value) || 0 })}
+          onBlur={() => commit({ quantity: draft.quantity })}
+          className="h-8 text-right tabular"
+        />
+      </TableCell>
+      <TableCell>
+        <MoneyInput
+          value={centsToDollars(draft.material_unit_cost_cents)}
+          onValueChange={(value) =>
+            setDraft({ ...draft, material_unit_cost_cents: dollarsToCents(value) })
+          }
+          onBlur={() => commit({ material_unit_cost_cents: draft.material_unit_cost_cents })}
+          align="right"
+          className="h-8"
+        />
+      </TableCell>
+      <TableCell>
+        <MoneyInput
+          value={centsToDollars(draft.labor_unit_cost_cents)}
+          onValueChange={(value) =>
+            setDraft({ ...draft, labor_unit_cost_cents: dollarsToCents(value) })
+          }
+          onBlur={() => commit({ labor_unit_cost_cents: draft.labor_unit_cost_cents })}
+          align="right"
+          className="h-8"
+        />
+      </TableCell>
+      <TableCell className="text-right tabular">{fmtUSD(materialExt / 100)}</TableCell>
+      <TableCell className="text-right tabular">{fmtUSD(laborExt / 100)}</TableCell>
+      <TableCell className="text-right font-medium tabular">
+        {fmtUSD((materialExt + laborExt) / 100)}
+      </TableCell>
+      <TableCell>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={onDelete}
+          title="Delete row"
+        >
+          <Trash2 className="h-4 w-4 text-danger" />
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function CostLibraryAutocomplete({
+  value,
+  csiDivision,
+  regionMultiplier,
+  onChange,
+  onBlur,
+  onSelect,
+}: {
+  value: string;
+  csiDivision: string;
+  regionMultiplier: number;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+  onSelect: (item: CostLibraryItemRow) => void;
+}) {
+  const search = useServerFn(searchCostLibrary);
+  const [open, setOpen] = useState(false);
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), 300);
+    return () => window.clearTimeout(timer);
+  }, [value]);
+  const query = useQuery({
+    queryKey: ["cost-library-search", debounced, csiDivision, regionMultiplier],
+    queryFn: () =>
+      search({
+        data: {
+          query: debounced,
+          csi_division: "",
+          region_multiplier: regionMultiplier,
+          limit: 8,
+        },
+      }),
+    enabled: debounced.trim().length >= 2,
+  });
+  const items = query.data?.items ?? [];
+  return (
+    <div className="relative">
+      <Input
+        value={value}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+        onBlur={() => {
+          window.setTimeout(() => setOpen(false), 120);
+          onBlur();
+        }}
+        className="h-8"
+      />
+      {open && items.length > 0 && (
+        <div className="absolute left-0 top-9 z-40 w-[520px] overflow-hidden rounded-md border border-hairline bg-popover shadow-elevated">
+          <div className="flex items-center gap-2 border-b border-hairline px-3 py-2 text-xs text-muted-foreground">
+            <Library className="h-3.5 w-3.5" /> {debounced}
+          </div>
+          <div className="max-h-72 overflow-y-auto p-1">
+            {items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="grid w-full grid-cols-[1fr_48px_88px_88px] gap-2 rounded-sm px-2 py-2 text-left text-xs hover:bg-surface"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onSelect(item);
+                  setOpen(false);
+                }}
+              >
+                <span className="min-w-0 truncate text-sm text-foreground">{item.description}</span>
+                <span className="text-muted-foreground">{item.unit}</span>
+                <span className="text-right tabular">
+                  {fmtUSD(item.display_material_cost_cents / 100)}
+                </span>
+                <span className="text-right tabular">
+                  {fmtUSD(item.display_labor_cost_cents / 100)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EstimateSummaryPanel({
+  estimate,
+  totals,
+  regions,
+  onPatch,
+  onSaveDefaults,
+  savingDefaults,
+}: {
+  estimate: EstimateRow;
+  totals: EstimateTotalsBreakdown;
+  regions: EstimateRegion[];
+  onPatch: (patch: UpdateEstimatePayload["patch"]) => void;
+  onSaveDefaults: () => void;
+  savingDefaults: boolean;
+}) {
+  const patchPct =
+    (
+      field: keyof Pick<
+        EstimateRow,
+        | "overhead_pct"
+        | "profit_pct"
+        | "contingency_pct"
+        | "bond_pct"
+        | "tax_pct"
+        | "general_conditions_pct"
+      >,
+    ) =>
+    (value: number) =>
+      onPatch({ [field]: numberToPct(value) } as UpdateEstimatePayload["patch"]);
+
+  const selectedRegion = regions.find((region) => region.code === estimate.region);
+
+  return (
+    <aside className="h-max rounded-lg border border-hairline bg-card p-4 shadow-card lg:sticky lg:top-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-serif text-2xl">Markup</h2>
+          <p className="text-xs text-muted-foreground">Bid summary</p>
+        </div>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={onSaveDefaults}
+          disabled={savingDefaults}
+          title="Save defaults"
+        >
+          <Save className="h-4 w-4" />
+        </Button>
+      </div>
+      <div className="mt-4 space-y-3">
+        <div className="space-y-1.5">
+          <Label>Region</Label>
+          <Select
+            value={estimate.region || "national"}
+            onValueChange={(regionCode) => {
+              const region = regions.find((item) => item.code === regionCode);
+              onPatch({
+                region: regionCode === "national" ? "" : regionCode,
+                region_multiplier: region?.multiplier_decimal ?? 1,
+              });
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {regions.map((region) => (
+                <SelectItem key={region.code} value={region.code}>
+                  {region.name} ({region.multiplier_decimal.toFixed(2)}x)
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <PctField
+          label="Overhead"
+          value={pctToNumber(estimate.overhead_pct)}
+          onCommit={patchPct("overhead_pct")}
+        />
+        <PctField
+          label="Profit"
+          value={pctToNumber(estimate.profit_pct)}
+          onCommit={patchPct("profit_pct")}
+        />
+        <PctField
+          label="Contingency"
+          value={pctToNumber(estimate.contingency_pct)}
+          onCommit={patchPct("contingency_pct")}
+        />
+        <PctField
+          label="Bond"
+          value={pctToNumber(estimate.bond_pct)}
+          onCommit={patchPct("bond_pct")}
+        />
+        <PctField
+          label="Tax"
+          value={pctToNumber(estimate.tax_pct)}
+          onCommit={patchPct("tax_pct")}
+        />
+        <PctField
+          label="General Conditions"
+          value={pctToNumber(estimate.general_conditions_pct)}
+          onCommit={patchPct("general_conditions_pct")}
+        />
+      </div>
+      <Separator className="my-5" />
+      <div className="space-y-2 text-sm">
+        <SummaryRow label="Direct Cost (Material)" value={totals.material_cents} />
+        <SummaryRow label="Direct Cost (Labor)" value={totals.labor_cents} />
+        <SummaryRow
+          label={`Regional Adjustment (${(selectedRegion?.multiplier_decimal ?? estimate.region_multiplier).toFixed(2)}x)`}
+          value={totals.regional_adjustment_cents}
+        />
+        <SummaryRow label="Tax (materials)" value={totals.tax_cents} />
+        <SummaryRow label="Overhead" value={totals.overhead_cents} />
+        <SummaryRow label="Profit" value={totals.profit_cents} />
+        <SummaryRow label="Contingency" value={totals.contingency_cents} />
+        <SummaryRow label="Bond" value={totals.bond_cents} />
+        <SummaryRow label="General Conditions" value={totals.general_conditions_cents} />
+        {totals.custom_markup_cents > 0 && (
+          <SummaryRow label="Custom Markups" value={totals.custom_markup_cents} />
+        )}
+      </div>
+      <Separator className="my-4" />
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase text-muted-foreground">Total Bid</div>
+          <div className="font-serif text-3xl text-accent">{fmtUSD(totals.total_cents / 100)}</div>
+        </div>
+        <div className="text-right text-xs text-muted-foreground">
+          Indicated GP
+          <div className="text-base font-semibold text-foreground">
+            {totals.indicated_gp_pct.toFixed(1)}%
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function PctField({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <div className="grid grid-cols-[1fr_96px] items-center gap-3">
+      <Label>{label}</Label>
+      <div className="relative">
+        <Input
+          type="number"
+          min={0}
+          step="0.01"
+          value={draft}
+          onChange={(event) => setDraft(Number(event.target.value) || 0)}
+          onBlur={() => onCommit(draft)}
+          className="h-8 pr-7 text-right tabular"
+        />
+        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+          %
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="tabular">{fmtUSD(value / 100)}</span>
+    </div>
+  );
+}
