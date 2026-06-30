@@ -391,6 +391,7 @@ function ProjectPage() {
   const [activeProjectTab, setActiveProjectTab] = useState<ProjectTabValue>(
     search.tab ?? "dashboard",
   );
+  const [companyLogoFailedUrl, setCompanyLogoFailedUrl] = useState("");
   const setProjectTab = (value: string) => {
     if (PROJECT_TAB_VALUES.includes(value as ProjectTabValue)) {
       setActiveProjectTab(value as ProjectTabValue);
@@ -1218,6 +1219,10 @@ function ProjectPage() {
       icon: FileText,
     },
   ];
+  const companyLogoUrl =
+    project.organization_logo_url && project.organization_logo_url !== companyLogoFailedUrl
+      ? project.organization_logo_url
+      : "";
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-background text-foreground">
@@ -1262,11 +1267,12 @@ function ProjectPage() {
             <div className="min-w-0">
               {(project.organization_name || project.organization_logo_url) && (
                 <div className="mb-4 flex max-w-xl items-center gap-3 rounded-md border border-hairline bg-card/70 px-3 py-2">
-                  {project.organization_logo_url ? (
+                  {companyLogoUrl ? (
                     <img
-                      src={project.organization_logo_url}
+                      src={companyLogoUrl}
                       alt={`${project.organization_name || "Company"} logo`}
                       className="h-10 w-10 shrink-0 rounded-sm object-contain"
+                      onError={() => setCompanyLogoFailedUrl(companyLogoUrl)}
                     />
                   ) : (
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-surface text-xs font-semibold text-muted-foreground">

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 
 const ACCOUNT_ROLES = [
   "owner",
@@ -22,6 +23,7 @@ export type InviteStatus = "pending" | "accepted" | "revoked" | "expired";
 
 export interface TeamOrganization {
   id: string;
+  updated_at: string;
   name: string;
   slug: string;
   legal_name: string;
@@ -155,7 +157,7 @@ const CONTRACTOR_CIRCLE_GRANT_LIMITS = {
 } as const;
 
 const ORGANIZATION_BASE_SELECT =
-  "id,name,slug,plan_code,billing_status,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month,contractor_circle_grant";
+  "id,updated_at,name,slug,plan_code,billing_status,project_limit,seat_limit,storage_limit_mb,daily_report_limit_per_month,contractor_circle_grant";
 
 const ORGANIZATION_COMMERCIAL_COLUMNS = [
   "billing_email",
@@ -210,9 +212,11 @@ function missingIdentityOrganizationColumn(error: { code?: string; message?: str
 
 function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
   const contractorCircleGrant = bool(row.contractor_circle_grant);
+  const organizationId = row.id as string;
 
   return {
-    id: row.id as string,
+    id: organizationId,
+    updated_at: str(row.updated_at),
     name: str(row.name),
     slug: str(row.slug),
     legal_name: str(row.legal_name),
@@ -227,7 +231,7 @@ function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
     license_number: str(row.license_number),
     tax_identifier: str(row.tax_identifier),
     logo_url: str(row.logo_url),
-    logo_path: str(row.logo_path),
+    logo_path: str(row.logo_path) || companyLogoPath(organizationId),
     plan_code: str(row.plan_code),
     billing_status: str(row.billing_status),
     billing_email: str(row.billing_email),
@@ -253,6 +257,17 @@ function normalizeOrganization(row: Record<string, unknown>): TeamOrganization {
       : num(row.daily_report_limit_per_month),
     contractor_circle_grant: contractorCircleGrant,
   };
+}
+
+function organizationLogoUrl(
+  supabase: SupabaseClient,
+  organization: Pick<TeamOrganization, "id" | "logo_url" | "updated_at">,
+) {
+  if (organization.logo_url) return organization.logo_url;
+  const { data } = supabase.storage
+    .from(COMPANY_ASSET_BUCKET)
+    .getPublicUrl(companyLogoPath(organization.id));
+  return versionAssetUrl(data.publicUrl, organization.updated_at);
 }
 
 type DailyReportUsageRow = {
@@ -344,7 +359,7 @@ export const getCompanyWorkspaceContext = createServerFn({ method: "GET" })
     return {
       id: organization.id,
       name: organization.name || "Company",
-      logo_url: organization.logo_url,
+      logo_url: organizationLogoUrl(context.supabase, organization),
       plan_code: organization.plan_code,
       billing_status: organization.billing_status,
     };

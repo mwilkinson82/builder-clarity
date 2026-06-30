@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { normalizeBillingNumberLabel } from "@/lib/billing-labels";
+import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 import {
   computeRollup,
   computeScheduleVarianceWeeks,
@@ -324,6 +325,30 @@ export interface ReviewRow {
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 
+type SupabaseWithStorage = {
+  storage: {
+    from: (bucket: string) => {
+      getPublicUrl: (path: string) => { data: { publicUrl: string } };
+    };
+  };
+};
+
+function organizationLogoUrl(
+  supabase: unknown,
+  organization: { id?: unknown; logo_url?: unknown; updated_at?: unknown },
+) {
+  const storedLogoUrl = str(organization.logo_url);
+  if (storedLogoUrl) return storedLogoUrl;
+
+  const organizationId = str(organization.id);
+  if (!organizationId) return "";
+
+  const { data } = (supabase as SupabaseWithStorage).storage
+    .from(COMPANY_ASSET_BUCKET)
+    .getPublicUrl(companyLogoPath(organizationId));
+  return versionAssetUrl(data.publicUrl, str(organization.updated_at));
+}
+
 const normalizeSovMappingProfile = (row: Record<string, unknown>): SovMappingProfileRow => ({
   id: row.id as string,
   organization_id: row.organization_id as string,
@@ -567,7 +592,7 @@ export const listProjects = createServerFn({ method: "GET" })
       organizationIds.length === 0
         ? { data: [], error: null }
         : dynamicTable(context.supabase, "organizations")
-            .select("id,name,logo_url")
+            .select("id,name,logo_url,updated_at")
             .in("id", organizationIds),
     ]);
     if (expRes.error) throw new Error(expRes.error.message);
@@ -583,7 +608,7 @@ export const listProjects = createServerFn({ method: "GET" })
         organizationIds.length === 0
           ? { data: [], error: null }
           : await dynamicTable(context.supabase, "organizations")
-              .select("id,name")
+              .select("id,name,updated_at")
               .in("id", organizationIds);
       if (fallbackOrganizationsRes.error) throw new Error(fallbackOrganizationsRes.error.message);
       organizationRows = (fallbackOrganizationsRes.data ?? []) as Record<string, unknown>[];
@@ -622,13 +647,16 @@ export const listProjects = createServerFn({ method: "GET" })
     const dByP = groupBy<{ project_id: string } & Record<string, unknown>>(decisionsRes.data ?? []);
     const drByP = groupBy<{ project_id: string } & Record<string, unknown>>(dailyReportRows);
     const organizationsById = new Map(
-      organizationRows.map((organization) => [
-        organization.id as string,
-        {
-          name: str(organization.name),
-          logo_url: str(organization.logo_url),
-        },
-      ]),
+      organizationRows.map((organization) => {
+        const organizationId = str(organization.id);
+        return [
+          organizationId,
+          {
+            name: str(organization.name),
+            logo_url: organizationLogoUrl(context.supabase, organization),
+          },
+        ] as const;
+      }),
     );
 
     return projects.map((p) => {
@@ -890,7 +918,7 @@ export const getProject = createServerFn({ method: "GET" })
     let project = normalizeProject(pRes.data as Record<string, unknown>);
     if (project.organization_id) {
       const organizationRes = await dynamicTable(context.supabase, "organizations")
-        .select("id,name,logo_url")
+        .select("id,name,logo_url,updated_at")
         .eq("id", project.organization_id)
         .maybeSingle();
       if (organizationRes.error) {
@@ -898,7 +926,7 @@ export const getProject = createServerFn({ method: "GET" })
           throw new Error(organizationRes.error.message);
         }
         const fallbackOrganizationRes = await dynamicTable(context.supabase, "organizations")
-          .select("id,name")
+          .select("id,name,updated_at")
           .eq("id", project.organization_id)
           .maybeSingle();
         if (fallbackOrganizationRes.error) throw new Error(fallbackOrganizationRes.error.message);
@@ -906,13 +934,14 @@ export const getProject = createServerFn({ method: "GET" })
         project = {
           ...project,
           organization_name: str(fallbackOrganization?.name),
+          organization_logo_url: organizationLogoUrl(context.supabase, fallbackOrganization ?? {}),
         };
       } else if (organizationRes.data) {
         const organization = organizationRes.data as Record<string, unknown>;
         project = {
           ...project,
           organization_name: str(organization.name),
-          organization_logo_url: str(organization.logo_url),
+          organization_logo_url: organizationLogoUrl(context.supabase, organization),
         };
       }
     }

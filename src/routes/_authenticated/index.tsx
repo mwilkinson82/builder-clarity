@@ -184,6 +184,9 @@ function PortfolioPage() {
   const [reviewFilter, setReviewFilter] = useState<PortfolioReviewFilter>("all");
   const [dailyFilter, setDailyFilter] = useState<PortfolioDailyFilter>("all");
   const [sortMode, setSortMode] = useState<PortfolioSortMode>("manager");
+  const [failedOrganizationLogos, setFailedOrganizationLogos] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [portfolioTab, setPortfolioTab] = useState<"projects" | "pipeline">(() => {
     if (typeof window === "undefined") return "projects";
     const tab = new URLSearchParams(window.location.search).get("tab");
@@ -610,6 +613,11 @@ function PortfolioPage() {
                         const projectHref = `/projects/${p.id}`;
                         const highlightRisk = s.label === "At Risk" || p.gp_at_risk > 0;
                         const isDemo = p.job_number === "DEMO-HARBOR";
+                        const organizationLogoUrl =
+                          p.organization_logo_url &&
+                          !failedOrganizationLogos.has(p.organization_logo_url)
+                            ? p.organization_logo_url
+                            : "";
                         return (
                           <TableRow
                             key={p.id}
@@ -633,11 +641,16 @@ function PortfolioPage() {
                                 className="flex min-w-0 items-start gap-3"
                                 onClick={(event) => event.stopPropagation()}
                               >
-                                {p.organization_logo_url && (
+                                {organizationLogoUrl && (
                                   <img
-                                    src={p.organization_logo_url}
+                                    src={organizationLogoUrl}
                                     alt={`${p.organization_name} logo`}
                                     className="mt-0.5 h-9 w-9 shrink-0 rounded-sm object-contain"
+                                    onError={() =>
+                                      setFailedOrganizationLogos((current) =>
+                                        new Set(current).add(organizationLogoUrl),
+                                      )
+                                    }
                                   />
                                 )}
                                 <div className="min-w-0">

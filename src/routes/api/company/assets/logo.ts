@@ -7,8 +7,8 @@ import {
   requireCanManageOrganization,
   RouteError,
 } from "@/lib/stripe.server";
+import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 
-const COMPANY_ASSET_BUCKET = "company-assets";
 const COMPANY_LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const COMPANY_LOGO_TYPES = new Set(["image/png", "image/jpeg"]);
 
@@ -52,13 +52,12 @@ function isAlreadyExistsError(error: StorageErrorLike | null | undefined) {
   return message.includes("already exists") || message.includes("already been taken");
 }
 
-function sanitizeAssetName(name: string) {
-  return name
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 120);
+function isMissingLogoColumnError(error: { message?: string; code?: string } | null | undefined) {
+  const message = (error?.message ?? "").toLowerCase();
+  return (
+    (error?.code === "PGRST204" || message.includes("schema cache")) &&
+    (message.includes("'logo_url'") || message.includes("'logo_path'"))
+  );
 }
 
 function normalizeStoragePath(path: string | undefined, organizationId: string) {
@@ -115,22 +114,28 @@ export const Route = createFileRoute("/api/company/assets/logo")({
           const logo = readLogoFile(formData);
           await ensureCompanyAssetBucket(context.admin.storage);
 
-          const safeName = sanitizeAssetName(logo.name) || "company-logo";
-          const path = `${input.organizationId}/logo-${crypto.randomUUID()}-${safeName}`;
+          const path = companyLogoPath(input.organizationId);
           const { error: uploadError } = await context.admin.storage
             .from(COMPANY_ASSET_BUCKET)
             .upload(path, logo, {
+              cacheControl: "60",
               contentType: logo.type,
-              upsert: false,
+              upsert: true,
             });
           if (uploadError) throw new Error(uploadError.message);
 
           const { data } = context.admin.storage.from(COMPANY_ASSET_BUCKET).getPublicUrl(path);
-          const logoUrl = data.publicUrl;
+          const uploadVersion = Date.now();
+          const logoUrl = versionAssetUrl(data.publicUrl, uploadVersion);
           const { error: updateError } = await dynamicTable(context.admin, "organizations")
-            .update({ logo_url: logoUrl, logo_path: path })
+            .update({ logo_url: logoUrl, logo_path: path, updated_at: new Date().toISOString() })
             .eq("id", input.organizationId);
-          if (updateError) throw new Error(updateError.message);
+          if (updateError) {
+            if (!isMissingLogoColumnError(updateError)) throw new Error(updateError.message);
+            await dynamicTable(context.admin, "organizations")
+              .update({ updated_at: new Date().toISOString() })
+              .eq("id", input.organizationId);
+          }
 
           const oldPath = normalizeStoragePath(input.oldPath, input.organizationId);
           if (oldPath && oldPath !== path) {

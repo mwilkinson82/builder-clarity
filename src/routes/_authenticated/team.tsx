@@ -31,6 +31,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 import {
   Select,
   SelectContent,
@@ -334,6 +335,7 @@ function TeamPage() {
   const [projectRole, setProjectRole] = useState<ProjectMemberRole>("viewer");
   const [logoInputKey, setLogoInputKey] = useState(0);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const [logoImageFailedUrl, setLogoImageFailedUrl] = useState("");
   const [clientInviteForm, setClientInviteForm] = useState(emptyClientInvite);
 
   useEffect(() => {
@@ -475,6 +477,7 @@ function TeamPage() {
     },
     onSuccess: async ({ logoUrl, path }) => {
       setOrgForm((current) => ({ ...current, logo_url: logoUrl, logo_path: path }));
+      setLogoImageFailedUrl("");
       setLogoInputKey((key) => key + 1);
       await refreshWorkspace();
       toast.success("Company logo saved");
@@ -751,7 +754,16 @@ function TeamPage() {
     navigate({ to: "/auth" });
   };
 
-  const logoPreviewUrl = orgForm.logo_url || team?.organization.logo_url || "";
+  const storageLogoUrl = useMemo(() => {
+    if (!team?.organization.id) return "";
+    const { data } = supabase.storage
+      .from(COMPANY_ASSET_BUCKET)
+      .getPublicUrl(companyLogoPath(team.organization.id));
+    return versionAssetUrl(data.publicUrl, team.organization.updated_at);
+  }, [team?.organization.id, team?.organization.updated_at]);
+  const logoPreviewUrl = orgForm.logo_url || team?.organization.logo_url || storageLogoUrl;
+  const visibleLogoPreviewUrl =
+    logoPreviewUrl && logoImageFailedUrl !== logoPreviewUrl ? logoPreviewUrl : "";
   const clientPermissionSavingKey =
     clientAccessPermissionMutation.isPending && clientAccessPermissionMutation.variables
       ? `${clientAccessPermissionMutation.variables.accessId}:${clientAccessPermissionMutation.variables.field}`
@@ -950,11 +962,12 @@ function TeamPage() {
                   <div className="grid gap-4 lg:grid-cols-[180px_1fr]">
                     <div className="space-y-3">
                       <div className="flex h-32 w-32 items-center justify-center overflow-hidden rounded-md border border-hairline bg-surface text-xl font-semibold text-muted-foreground">
-                        {logoPreviewUrl ? (
+                        {visibleLogoPreviewUrl ? (
                           <img
-                            src={logoPreviewUrl}
+                            src={visibleLogoPreviewUrl}
                             alt={`${orgForm.name || "Company"} logo`}
                             className="h-full w-full object-contain p-2"
+                            onError={() => setLogoImageFailedUrl(visibleLogoPreviewUrl)}
                           />
                         ) : (
                           companyInitials(orgForm.name)
@@ -986,7 +999,7 @@ function TeamPage() {
                             <Upload className="h-3.5 w-3.5" />
                             {logoUploadMutation.isPending
                               ? "Uploading..."
-                              : logoPreviewUrl
+                              : visibleLogoPreviewUrl
                                 ? "Replace logo"
                                 : "Upload logo"}
                           </Button>
@@ -1187,7 +1200,7 @@ function TeamPage() {
                     <ContactFact
                       icon={<FileImage className="h-3.5 w-3.5" />}
                       label="Logo"
-                      value={logoPreviewUrl ? "Ready" : "Not set"}
+                      value={visibleLogoPreviewUrl ? "Ready" : "Not set"}
                     />
                     <ContactFact
                       icon={<ShieldCheck className="h-3.5 w-3.5" />}
