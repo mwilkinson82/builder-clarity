@@ -706,6 +706,12 @@ await expectContains(
 );
 
 await expectContains(
+  "src/routes/_authenticated/estimates.tsx",
+  [/Outlet/, /useLocation/, /\^\\\/estimates\\\/\[\^\/\]\+/],
+  "estimate detail route renders its workspace instead of being masked by the list route",
+);
+
+await expectContains(
   "src/components/estimates/EstimateWorkspace.tsx",
   [
     /Import Rows/,
