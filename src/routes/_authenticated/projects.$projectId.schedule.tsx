@@ -261,9 +261,9 @@ function ScheduleWorkspacePage() {
       const previous = qc.getQueryData(["schedule", projectId]);
       const toastId = wbsOrderToastRef.current ?? "wbs-order-save";
       wbsOrderToastRef.current = toastId;
-      toast.loading("Saving WBS order", {
+      toast.success("WBS order applied", {
         id: toastId,
-        description: "Applied in the grid. Saving project order now.",
+        description: "The grid moved immediately. Saving the project order in the background.",
       });
       void qc.cancelQueries({ queryKey: ["schedule", projectId] });
       qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
@@ -283,7 +283,7 @@ function ScheduleWorkspacePage() {
       const toastId = context?.toastId ?? wbsOrderToastRef.current ?? "wbs-order-save";
       toast.success("WBS order saved", {
         id: toastId,
-        description: "The saved order is now the CPM WBS order.",
+        description: "The saved project order now matches the CPM grid.",
       });
       wbsOrderToastRef.current = null;
     },

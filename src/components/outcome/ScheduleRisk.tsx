@@ -3569,8 +3569,8 @@ function WbsManagerDialog({
         <DialogFooter className="flex-col gap-2 border-t border-hairline px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="text-xs text-muted-foreground">
             {isSavingOrder
-              ? "Saving WBS order..."
-              : "Drag rows to reorder. Use the Nest target while dragging to create parent-child sections."}
+              ? "Order is applied in the grid; background save is confirming it now."
+              : "Drag rows to reorder. Drop onto a parent to build child areas such as Concrete / Northwest corner."}
           </div>
           <Button type="button" onClick={() => onOpenChange(false)} disabled={isSaving}>
             Done
