@@ -1186,6 +1186,7 @@ export type Database = {
           created_by: string | null
           custom_markups: Json
           description: string
+          folder: string
           general_conditions_pct: number
           id: string
           name: string
@@ -1212,6 +1213,7 @@ export type Database = {
           created_by?: string | null
           custom_markups?: Json
           description?: string
+          folder?: string
           general_conditions_pct?: number
           id?: string
           name: string
@@ -1238,6 +1240,7 @@ export type Database = {
           created_by?: string | null
           custom_markups?: Json
           description?: string
+          folder?: string
           general_conditions_pct?: number
           id?: string
           name?: string
