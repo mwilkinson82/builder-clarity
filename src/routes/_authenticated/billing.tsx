@@ -7,6 +7,7 @@ import { listPortfolioBilling, type PortfolioBillingProject } from "@/lib/billin
 import { fmtPct, fmtUSD } from "@/lib/format";
 import {
   ArrowDownRight,
+  ArrowRight,
   ArrowUpRight,
   Banknote,
   BriefcaseBusiness,
@@ -56,7 +57,10 @@ function BillingPortfolioPage() {
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               Overwatch
             </div>
-            <h1 className="mt-1 font-serif text-3xl text-foreground">Billing</h1>
+            <h1 className="mt-1 font-serif text-3xl text-foreground">Portfolio Billing</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Portfolio-level WIP, receivables, aging, and project billing entry points.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Button asChild size="sm" variant="outline">
@@ -135,7 +139,8 @@ function BillingPortfolioPage() {
                     WIP schedule
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Earned revenue, billing position, cost, retainage, and cash by project.
+                    Earned revenue, billing position, cost, retainage, and cash by project. Open a
+                    project to manage pay apps, invoices, WIP, and client billing.
                   </p>
                 </div>
                 <div className="text-sm tabular text-muted-foreground">
@@ -230,6 +235,7 @@ function BillingPortfolioPage() {
                               <Link
                                 to="/projects/$projectId"
                                 params={{ projectId: project.project_id }}
+                                search={{ tab: "billing" }}
                               >
                                 {project.project_name}
                               </Link>
@@ -275,14 +281,23 @@ function BillingProjectCard({ project }: { project: PortfolioBillingProject }) {
           : "Clear";
 
   return (
-    <div className="rounded-md border border-hairline bg-surface p-4">
+    <Link
+      to="/projects/$projectId"
+      params={{ projectId: project.project_id }}
+      search={{ tab: "billing" }}
+      className="group block rounded-md border border-hairline bg-surface p-4 transition hover:border-foreground hover:bg-card hover:shadow-card focus:outline-none focus:ring-2 focus:ring-foreground/30"
+    >
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <Button asChild variant="link" className="h-auto justify-start p-0 text-left font-medium">
-            <Link to="/projects/$projectId" params={{ projectId: project.project_id }}>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-medium text-foreground group-hover:underline">
               {project.project_name}
-            </Link>
-          </Button>
+            </h2>
+            <span className="inline-flex items-center gap-1 rounded-full border border-foreground/20 bg-card px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground">
+              Open project billing
+              <ArrowRight className="h-3 w-3" />
+            </span>
+          </div>
           <div className="mt-1 text-xs text-muted-foreground">
             {[project.job_number, project.client].filter(Boolean).join(" · ") || "No client set"}
           </div>
@@ -331,7 +346,7 @@ function BillingProjectCard({ project }: { project: PortfolioBillingProject }) {
         Oldest A/R: <span className="font-medium tabular text-foreground">{fmtUSD(oldestAr)}</span>{" "}
         · {agingLabel} · {project.open_invoice_count} open of {project.invoice_count} invoices
       </div>
-    </div>
+    </Link>
   );
 }
 

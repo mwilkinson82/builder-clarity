@@ -192,20 +192,24 @@ function drawSectionTitle(ctx: PdfCtx, label: string) {
 }
 
 function drawAmountRow(ctx: PdfCtx, label: string, value: string, strong = false) {
-  ensure(ctx, 24);
+  const font = strong ? ctx.sansBold : ctx.sans;
+  const size = strong ? 11 : 10;
+  const rowHeight = strong ? 28 : 26;
+  ensure(ctx, rowHeight + 6);
   drawText(ctx, label, M, ctx.y, {
-    font: strong ? ctx.sansBold : ctx.sans,
-    size: strong ? 11 : 10,
+    font,
+    size,
     color: strong ? INK : MUTED,
   });
-  const textWidth = (strong ? ctx.sansBold : ctx.sans).widthOfTextAtSize(value, strong ? 11 : 10);
+  const textWidth = font.widthOfTextAtSize(value, size);
   drawText(ctx, value, PAGE_W - M - textWidth, ctx.y, {
-    font: strong ? ctx.sansBold : ctx.sans,
-    size: strong ? 11 : 10,
+    font,
+    size,
     color: strong ? INK : MUTED,
   });
-  ctx.y -= 20;
-  drawRule(ctx, ctx.y + 8);
+  const ruleY = ctx.y - rowHeight + 8;
+  drawRule(ctx, ruleY);
+  ctx.y = ruleY - 12;
 }
 
 export async function generateInvoicePdf({

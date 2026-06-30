@@ -9,6 +9,7 @@ import type {
   COType,
   PaymentLedgerRow,
 } from "@/lib/projects.functions";
+import type { BillingLineItemRow } from "@/lib/billing.functions";
 
 export type ClientAccessStatus = "pending" | "active" | "revoked";
 export type ClientChangeOrderStatus = "not_sent" | "sent" | "approved" | "rejected";
@@ -104,6 +105,7 @@ export interface ClientPortalBillingApplication {
   notes: string;
   sort_order: number;
   status_events: BillingApplicationEventRow[];
+  line_items: BillingLineItemRow[];
 }
 
 export interface ChangeOrderApprovalRow {
@@ -167,7 +169,7 @@ type ServerContext = {
   claims?: Record<string, unknown>;
 };
 
-type SupabaseResult<T = any> = {
+type SupabaseResult<T = unknown> = {
   data: T;
   error: { message?: string; code?: string } | null;
 };
@@ -181,6 +183,7 @@ type SupabaseQuery = PromiseLike<SupabaseResult> & {
   eq: (...args: unknown[]) => SupabaseQuery;
   neq: (...args: unknown[]) => SupabaseQuery;
   ilike: (...args: unknown[]) => SupabaseQuery;
+  in: (...args: unknown[]) => SupabaseQuery;
   order: (...args: unknown[]) => SupabaseQuery;
   limit: (...args: unknown[]) => SupabaseQuery;
   single: (...args: unknown[]) => Promise<SupabaseResult>;
@@ -236,6 +239,14 @@ function isMissingPaymentLedgerError(error: unknown) {
   const code = str((error as { code?: unknown })?.code);
   return (
     code === "PGRST205" || /payment_ledger|schema cache|could not find the table/i.test(message)
+  );
+}
+
+function isMissingBillingLineItemsError(error: unknown) {
+  const message = str((error as { message?: unknown })?.message);
+  const code = str((error as { code?: unknown })?.code);
+  return (
+    code === "PGRST205" || /billing_line_items|schema cache|could not find the table/i.test(message)
   );
 }
 
@@ -374,6 +385,36 @@ function normalizeBillingApplication(row: Record<string, unknown>): ClientPortal
     notes: str(row.notes),
     sort_order: num(row.sort_order),
     status_events: [],
+    line_items: [],
+  };
+}
+
+function normalizeBillingLineItem(row: Record<string, unknown>): BillingLineItemRow {
+  return {
+    id: row.id as string,
+    billing_application_id: row.billing_application_id as string,
+    project_id: row.project_id as string,
+    cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+    cost_code: str(row.cost_code),
+    description: str(row.description),
+    billing_method: str(row.billing_method, "percent") as BillingLineItemRow["billing_method"],
+    scheduled_value_cents: num(row.scheduled_value_cents),
+    change_order_value_cents: num(row.change_order_value_cents),
+    work_completed_previous_cents: num(row.work_completed_previous_cents),
+    materials_stored_previous_cents: num(row.materials_stored_previous_cents),
+    work_completed_this_period_cents: num(row.work_completed_this_period_cents),
+    materials_stored_this_period_cents: num(row.materials_stored_this_period_cents),
+    work_completed_to_date_cents: num(row.work_completed_to_date_cents),
+    materials_stored_to_date_cents: num(row.materials_stored_to_date_cents),
+    total_completed_and_stored_cents: num(row.total_completed_and_stored_cents),
+    billing_percent_complete: num(row.billing_percent_complete),
+    balance_to_finish_cents: num(row.balance_to_finish_cents),
+    retainage_pct: num(row.retainage_pct),
+    retainage_held_cents: num(row.retainage_held_cents),
+    retainage_released_cents: num(row.retainage_released_cents),
+    sort_order: num(row.sort_order),
+    created_at: str(row.created_at),
+    updated_at: str(row.updated_at),
   };
 }
 
@@ -869,6 +910,35 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
       existing.push(payment);
       paymentsByInvoice.set(payment.invoice_id, existing);
     });
+    const normalizedBillingApplications = billingApplicationsRes.error
+      ? []
+      : (billingApplicationsRes.data ?? []).map((row: Record<string, unknown>) =>
+          normalizeBillingApplication(row),
+        );
+    const lineItemsByApplication = new Map<string, BillingLineItemRow[]>();
+    if (canViewBilling && normalizedBillingApplications.length > 0) {
+      const lineItemsRes = await db(context)
+        .from("billing_line_items")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .in(
+          "billing_application_id",
+          normalizedBillingApplications.map((app: ClientPortalBillingApplication) => app.id),
+        )
+        .order("sort_order");
+      if (lineItemsRes.error && !isMissingBillingLineItemsError(lineItemsRes.error)) {
+        throw new Error(lineItemsRes.error.message);
+      }
+      if (!lineItemsRes.error) {
+        (lineItemsRes.data ?? [])
+          .map((row: Record<string, unknown>) => normalizeBillingLineItem(row))
+          .forEach((line: BillingLineItemRow) => {
+            const existing = lineItemsByApplication.get(line.billing_application_id) ?? [];
+            existing.push(line);
+            lineItemsByApplication.set(line.billing_application_id, existing);
+          });
+      }
+    }
 
     return {
       project: normalizeClientProject(projectRes.data as Record<string, unknown>),
@@ -878,15 +948,13 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
       approvals: (approvalsRes.data ?? []).map((row: Record<string, unknown>) =>
         normalizeApproval(row),
       ),
-      billingApplications: billingApplicationsRes.error
-        ? []
-        : (billingApplicationsRes.data ?? []).map((row: Record<string, unknown>) => {
-            const app = normalizeBillingApplication(row);
-            return {
-              ...app,
-              status_events: billingEventsByApplication.get(app.id) ?? [],
-            };
-          }),
+      billingApplications: normalizedBillingApplications.map(
+        (app: ClientPortalBillingApplication) => ({
+          ...app,
+          status_events: billingEventsByApplication.get(app.id) ?? [],
+          line_items: lineItemsByApplication.get(app.id) ?? [],
+        }),
+      ),
       billingInvoices: billingInvoicesRes.error
         ? []
         : (billingInvoicesRes.data ?? []).map((row: Record<string, unknown>) => {

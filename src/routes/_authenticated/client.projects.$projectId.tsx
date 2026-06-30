@@ -4,11 +4,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   CheckCircle2,
+  CreditCard,
   Download,
+  Eye,
   ExternalLink,
   FileText,
   LogOut,
   MessageSquare,
+  ReceiptText,
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -87,6 +90,7 @@ function ClientProjectPage() {
   const recordDecision = useServerFn(recordClientChangeOrderDecision);
   const [notesByCo, setNotesByCo] = useState<Record<string, string>>({});
   const [exportingDailyPacket, setExportingDailyPacket] = useState(false);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
 
   const projectQuery = useQuery({
     queryKey: ["client-portal-project", projectId],
@@ -253,6 +257,15 @@ function ClientProjectPage() {
   const canViewChangeOrders = portalPermissions?.canViewChangeOrders ?? true;
   const canViewDailyReports = portalPermissions?.canViewDailyReports ?? true;
   const canViewBilling = portalPermissions?.canViewBilling ?? false;
+  const selectedInvoice =
+    billingInvoices.find((invoice: BillingInvoiceRow) => invoice.id === selectedInvoiceId) ??
+    billingInvoices[0] ??
+    null;
+  const selectedInvoicePayApp = selectedInvoice?.billing_application_id
+    ? billingApplications.find(
+        (app: ClientPortalBillingApplication) => app.id === selectedInvoice.billing_application_id,
+      )
+    : undefined;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -290,8 +303,8 @@ function ClientProjectPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
-        <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+      <main className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-8">
+        <section className="order-2 rounded-lg border border-hairline bg-card p-6 shadow-card">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <h2 className="font-serif text-3xl">Change orders for client response</h2>
@@ -430,7 +443,7 @@ function ClientProjectPage() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+        <section className="order-1 rounded-lg border border-hairline bg-card p-6 shadow-card">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <h2 className="font-serif text-3xl">Billing shared with client</h2>
@@ -473,165 +486,48 @@ function ClientProjectPage() {
                   />
                 </dl>
                 {billingInvoices.length > 0 ? (
-                  <div className="overflow-x-auto rounded-md border border-hairline">
-                    <table className="w-full min-w-[760px] text-sm">
-                      <thead className="bg-muted/45 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        <tr>
-                          <th className="px-3 py-3">Invoice</th>
-                          <th className="px-3 py-3">Issued / due</th>
-                          <th className="px-3 py-3 text-right">Total due</th>
-                          <th className="px-3 py-3 text-right">Paid</th>
-                          <th className="px-3 py-3 text-right">Open</th>
-                          <th className="px-3 py-3">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {billingInvoices.map((invoice: BillingInvoiceRow) => {
-                          const open = Math.max(0, invoice.total_due - invoice.paid_amount);
-                          const latestPayment = invoice.payment_events[0];
-                          return (
-                            <tr key={invoice.id} className="border-t border-hairline">
-                              <td className="px-3 py-3 align-top">
-                                <div className="font-medium text-foreground">
-                                  {billingDocumentLabel(
-                                    invoice.invoice_number,
-                                    invoice.title,
-                                    "Invoice",
-                                  )}
-                                </div>
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  {normalizeBillingNumberLabel(invoice.title) || "Current invoice"}
-                                </div>
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-muted-foreground">
-                                <div>
-                                  Issued{" "}
-                                  {invoice.issue_date
-                                    ? formatClientDate(invoice.issue_date)
-                                    : "not set"}
-                                </div>
-                                <div>
-                                  Due{" "}
-                                  {invoice.due_date
-                                    ? formatClientDate(invoice.due_date)
-                                    : "not set"}
-                                </div>
-                              </td>
-                              <td className="px-3 py-3 text-right align-top tabular">
-                                {fmtUSD(invoice.total_due)}
-                              </td>
-                              <td className="px-3 py-3 text-right align-top tabular">
-                                {fmtUSD(invoice.paid_amount)}
-                              </td>
-                              <td className="px-3 py-3 text-right align-top tabular font-medium">
-                                {fmtUSD(open)}
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                <span className="inline-flex rounded-md border border-hairline bg-muted/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] capitalize">
-                                  {invoice.status.replace("_", " ")}
-                                </span>
-                                {latestPayment ? (
-                                  <div className="mt-1 text-[11px] text-muted-foreground">
-                                    Last payment {formatClientDate(latestPayment.paid_at)}
-                                  </div>
-                                ) : null}
-                                {invoice.payment_enabled && invoice.payment_url && open > 0 ? (
-                                  <Button
-                                    asChild
-                                    size="sm"
-                                    className="mt-2 h-8 gap-1.5 whitespace-nowrap"
-                                  >
-                                    <a href={invoice.payment_url} target="_blank" rel="noreferrer">
-                                      <ExternalLink className="h-3.5 w-3.5" />
-                                      Pay online
-                                    </a>
-                                  </Button>
-                                ) : null}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                    <div className="space-y-3">
+                      <div>
+                        <h3 className="font-serif text-2xl">Invoices ready for review</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Select an invoice to review backup and payment options.
+                        </p>
+                      </div>
+                      {billingInvoices.map((invoice: BillingInvoiceRow) => (
+                        <ClientInvoiceReviewCard
+                          key={invoice.id}
+                          invoice={invoice}
+                          linkedPayApp={billingApplications.find(
+                            (app: ClientPortalBillingApplication) =>
+                              app.id === invoice.billing_application_id,
+                          )}
+                          selected={selectedInvoice?.id === invoice.id}
+                          onSelect={() => setSelectedInvoiceId(invoice.id)}
+                        />
+                      ))}
+                    </div>
+                    {selectedInvoice ? (
+                      <ClientInvoiceBackupPanel
+                        invoice={selectedInvoice}
+                        linkedPayApp={selectedInvoicePayApp}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
                 {billingApplications.length > 0 ? (
-                  <div className="overflow-x-auto rounded-md border border-hairline">
-                    <table className="w-full min-w-[760px] text-sm">
-                      <thead className="bg-muted/45 text-left text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        <tr>
-                          <th className="px-3 py-3">Pay app</th>
-                          <th className="px-3 py-3">Invoice</th>
-                          <th className="px-3 py-3">Submitted / due</th>
-                          <th className="px-3 py-3 text-right">Billed</th>
-                          <th className="px-3 py-3 text-right">Paid</th>
-                          <th className="px-3 py-3 text-right">Retainage</th>
-                          <th className="px-3 py-3 text-right">Open</th>
-                          <th className="px-3 py-3">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {billingApplications.map((app: ClientPortalBillingApplication) => {
-                          const open = Math.max(
-                            0,
-                            app.amount_billed - app.paid_to_date - app.retainage,
-                          );
-                          const latestEvent = app.status_events[0];
-                          return (
-                            <tr key={app.id} className="border-t border-hairline">
-                              <td className="px-3 py-3 align-top">
-                                <div className="font-medium text-foreground">
-                                  {billingDocumentLabel(
-                                    app.application_number,
-                                    app.invoice_number,
-                                    "Pay application",
-                                  )}
-                                </div>
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  {app.billing_period || "Current billing cycle"}
-                                </div>
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                {normalizeBillingNumberLabel(app.invoice_number) || "Not issued"}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-muted-foreground">
-                                <div>
-                                  Submitted{" "}
-                                  {app.submitted_date
-                                    ? formatClientDate(app.submitted_date)
-                                    : "not set"}
-                                </div>
-                                <div>
-                                  Due {app.due_date ? formatClientDate(app.due_date) : "not set"}
-                                </div>
-                              </td>
-                              <td className="px-3 py-3 text-right align-top tabular">
-                                {fmtUSD(app.amount_billed)}
-                              </td>
-                              <td className="px-3 py-3 text-right align-top tabular">
-                                {fmtUSD(app.paid_to_date)}
-                              </td>
-                              <td className="px-3 py-3 text-right align-top tabular">
-                                {fmtUSD(app.retainage)}
-                              </td>
-                              <td className="px-3 py-3 text-right align-top tabular font-medium">
-                                {fmtUSD(open)}
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                <span className="inline-flex rounded-md border border-hairline bg-muted/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]">
-                                  {app.status}
-                                </span>
-                                {latestEvent ? (
-                                  <div className="mt-1 text-[11px] text-muted-foreground">
-                                    Updated {formatClientDate(latestEvent.created_at)}
-                                  </div>
-                                ) : null}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                  <div className="space-y-3">
+                    <div>
+                      <h3 className="font-serif text-2xl">Pay applications</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Submitted pay applications tied to the invoice backup.
+                      </p>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {billingApplications.map((app: ClientPortalBillingApplication) => (
+                        <ClientPayApplicationCard key={app.id} app={app} />
+                      ))}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -639,7 +535,7 @@ function ClientProjectPage() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+        <section className="order-3 rounded-lg border border-hairline bg-card p-6 shadow-card">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <h2 className="font-serif text-3xl">Daily reports shared with client</h2>
@@ -695,6 +591,323 @@ function ClientMetric({ label, value }: { label: string; value: string }) {
       </dt>
       <dd className="mt-1 truncate font-serif text-2xl">{value}</dd>
     </div>
+  );
+}
+
+function clientStatusLabel(value: string) {
+  return value.replace(/_/g, " ");
+}
+
+function formatOptionalClientDate(value?: string | null) {
+  return value ? formatClientDate(value) : "Not set";
+}
+
+function invoiceOpenBalance(invoice: BillingInvoiceRow) {
+  return Math.max(0, invoice.total_due - invoice.paid_amount);
+}
+
+function payAppOpenBalance(app: ClientPortalBillingApplication) {
+  return Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
+}
+
+function fmtCents(value: number) {
+  return fmtUSD(value / 100);
+}
+
+function ClientInvoiceReviewCard({
+  invoice,
+  linkedPayApp,
+  selected,
+  onSelect,
+}: {
+  invoice: BillingInvoiceRow;
+  linkedPayApp?: ClientPortalBillingApplication;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const open = invoiceOpenBalance(invoice);
+  const latestPayment = invoice.payment_events[0];
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`w-full rounded-md border p-4 text-left transition ${
+        selected
+          ? "border-foreground bg-foreground text-background shadow-card"
+          : "border-hairline bg-background hover:border-foreground hover:bg-surface"
+      }`}
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <ReceiptText className="h-4 w-4 shrink-0" />
+            <div className="font-medium">
+              {billingDocumentLabel(invoice.invoice_number, invoice.title, "Invoice")}
+            </div>
+          </div>
+          <div
+            className={`mt-1 text-xs ${selected ? "text-background/75" : "text-muted-foreground"}`}
+          >
+            {linkedPayApp
+              ? billingDocumentLabel(
+                  linkedPayApp.application_number,
+                  linkedPayApp.invoice_number,
+                  "Pay application",
+                )
+              : normalizeBillingNumberLabel(invoice.title) || "Direct invoice"}
+          </div>
+        </div>
+        <span
+          className={`inline-flex rounded-md border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
+            selected ? "border-background/30 bg-background/10" : "border-hairline bg-muted/20"
+          }`}
+        >
+          {clientStatusLabel(invoice.status)}
+        </span>
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        <div>
+          <div
+            className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${selected ? "text-background/65" : "text-muted-foreground"}`}
+          >
+            Due
+          </div>
+          <div className="mt-1 text-sm tabular">{fmtUSD(invoice.total_due)}</div>
+        </div>
+        <div>
+          <div
+            className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${selected ? "text-background/65" : "text-muted-foreground"}`}
+          >
+            Open
+          </div>
+          <div className="mt-1 text-sm font-medium tabular">{fmtUSD(open)}</div>
+        </div>
+        <div>
+          <div
+            className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${selected ? "text-background/65" : "text-muted-foreground"}`}
+          >
+            Due date
+          </div>
+          <div className="mt-1 text-sm">{formatOptionalClientDate(invoice.due_date)}</div>
+        </div>
+      </div>
+      <div
+        className={`mt-3 flex items-center gap-1.5 text-xs ${selected ? "text-background/75" : "text-muted-foreground"}`}
+      >
+        <Eye className="h-3.5 w-3.5" />
+        Review invoice backup
+        {latestPayment ? ` · Last payment ${formatClientDate(latestPayment.paid_at)}` : ""}
+      </div>
+    </button>
+  );
+}
+
+function ClientInvoiceBackupPanel({
+  invoice,
+  linkedPayApp,
+}: {
+  invoice: BillingInvoiceRow;
+  linkedPayApp?: ClientPortalBillingApplication;
+}) {
+  const open = invoiceOpenBalance(invoice);
+  const canPayOnline = Boolean(invoice.payment_enabled && invoice.payment_url && open > 0);
+  return (
+    <article className="rounded-md border border-hairline bg-background p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Invoice backup
+          </div>
+          <h3 className="mt-1 font-serif text-3xl">
+            {billingDocumentLabel(invoice.invoice_number, invoice.title, "Invoice")}
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Review the invoice, linked pay application, and continuation detail before paying.
+          </p>
+        </div>
+        {canPayOnline ? (
+          <Button asChild className="gap-1.5 whitespace-nowrap">
+            <a href={invoice.payment_url ?? ""} target="_blank" rel="noreferrer">
+              <CreditCard className="h-3.5 w-3.5" />
+              Pay invoice online
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </Button>
+        ) : open > 0 ? (
+          <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+            Online payment setup is pending. The project team can send a payment link or record a
+            manual payment.
+          </div>
+        ) : (
+          <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
+            This invoice has no open balance.
+          </div>
+        )}
+      </div>
+
+      <dl className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <ClientMetric label="Invoice total" value={fmtUSD(invoice.total_due)} />
+        <ClientMetric label="Paid" value={fmtUSD(invoice.paid_amount)} />
+        <ClientMetric label="Open" value={fmtUSD(open)} />
+        <ClientMetric label="Status" value={clientStatusLabel(invoice.status)} />
+      </dl>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-md border border-hairline bg-muted/20 p-3 text-sm">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Issued / due
+          </div>
+          <div className="mt-1 text-foreground">
+            Issued {formatOptionalClientDate(invoice.issue_date)} · Due{" "}
+            {formatOptionalClientDate(invoice.due_date)}
+          </div>
+        </div>
+        <div className="rounded-md border border-hairline bg-muted/20 p-3 text-sm">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Source
+          </div>
+          <div className="mt-1 text-foreground">
+            {linkedPayApp
+              ? billingDocumentLabel(
+                  linkedPayApp.application_number,
+                  linkedPayApp.invoice_number,
+                  "Pay application",
+                )
+              : "Direct invoice"}
+          </div>
+        </div>
+      </div>
+
+      {linkedPayApp ? (
+        <div className="mt-5 rounded-md border border-hairline bg-surface p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Pay app backup
+              </div>
+              <div className="mt-1 font-medium text-foreground">
+                {billingDocumentLabel(
+                  linkedPayApp.application_number,
+                  linkedPayApp.invoice_number,
+                  "Pay application",
+                )}
+              </div>
+              <div className="mt-1 text-sm text-muted-foreground">
+                {linkedPayApp.billing_period || "Current billing cycle"}
+              </div>
+            </div>
+            <span className="rounded-md border border-hairline bg-card px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]">
+              {clientStatusLabel(linkedPayApp.status)}
+            </span>
+          </div>
+          <dl className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <ClientMetric label="Billed" value={fmtUSD(linkedPayApp.amount_billed)} />
+            <ClientMetric label="Paid" value={fmtUSD(linkedPayApp.paid_to_date)} />
+            <ClientMetric label="Retainage" value={fmtUSD(linkedPayApp.retainage)} />
+            <ClientMetric label="Open" value={fmtUSD(payAppOpenBalance(linkedPayApp))} />
+          </dl>
+          <div className="mt-4 text-sm text-muted-foreground">
+            Submitted {formatOptionalClientDate(linkedPayApp.submitted_date)} · Due{" "}
+            {formatOptionalClientDate(linkedPayApp.due_date)}
+          </div>
+
+          {linkedPayApp.line_items.length > 0 ? (
+            <div className="mt-4 space-y-2">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Continuation detail
+              </div>
+              {linkedPayApp.line_items.map((line) => (
+                <div
+                  key={line.id}
+                  className="rounded-md border border-hairline bg-card p-3 text-sm"
+                >
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground">
+                        {[line.cost_code, line.description].filter(Boolean).join(" · ") ||
+                          "Billing line"}
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {line.billing_percent_complete.toFixed(1)}% complete · Retainage{" "}
+                        {line.retainage_pct.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div className="text-right text-sm font-medium tabular">
+                      {fmtCents(line.total_completed_and_stored_cents)}
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    <ClientMiniMetric
+                      label="Scheduled"
+                      value={fmtCents(line.scheduled_value_cents)}
+                    />
+                    <ClientMiniMetric
+                      label="This period"
+                      value={fmtCents(line.work_completed_this_period_cents)}
+                    />
+                    <ClientMiniMetric
+                      label="Stored"
+                      value={fmtCents(line.materials_stored_to_date_cents)}
+                    />
+                    <ClientMiniMetric
+                      label="Balance"
+                      value={fmtCents(line.balance_to_finish_cents)}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-4 rounded-md border border-hairline bg-card p-3 text-sm text-muted-foreground">
+              Continuation line detail has not been generated for this pay application yet.
+            </div>
+          )}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function ClientMiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-hairline bg-muted/20 px-2.5 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 text-sm font-medium tabular text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function ClientPayApplicationCard({ app }: { app: ClientPortalBillingApplication }) {
+  const latestEvent = app.status_events[0];
+  return (
+    <article className="rounded-md border border-hairline bg-background p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="font-medium text-foreground">
+            {billingDocumentLabel(app.application_number, app.invoice_number, "Pay application")}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {app.billing_period || "Current billing cycle"}
+          </div>
+        </div>
+        <span className="rounded-md border border-hairline bg-muted/20 px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em]">
+          {clientStatusLabel(app.status)}
+        </span>
+      </div>
+      <dl className="mt-4 grid gap-2 sm:grid-cols-2">
+        <ClientMiniMetric label="Billed" value={fmtUSD(app.amount_billed)} />
+        <ClientMiniMetric label="Open" value={fmtUSD(payAppOpenBalance(app))} />
+        <ClientMiniMetric label="Retainage" value={fmtUSD(app.retainage)} />
+        <ClientMiniMetric label="Due" value={formatOptionalClientDate(app.due_date)} />
+      </dl>
+      {latestEvent ? (
+        <div className="mt-3 text-xs text-muted-foreground">
+          Updated {formatClientDate(latestEvent.created_at)}
+        </div>
+      ) : null}
+    </article>
   );
 }
 

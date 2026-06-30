@@ -866,10 +866,11 @@ export function WipAnalysisPanel({
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            WIP analysis
+            WIP analysis (Work in Progress)
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Over/under billing by earned progress, billing, cost, and forecast to complete.
+            Work in Progress compares earned revenue, billed revenue, cost, and forecast to complete
+            so overbilling or underbilling is visible before the next pay application.
           </p>
         </div>
         <div

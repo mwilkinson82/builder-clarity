@@ -133,9 +133,32 @@ import {
   Users,
 } from "lucide-react";
 
+const PROJECT_TAB_VALUES = [
+  "dashboard",
+  "schedule",
+  "risk-tally",
+  "todos",
+  "sov",
+  "billing",
+  "change-orders",
+  "client-portal",
+  "ior-report",
+  "daily-reports",
+] as const;
+
+type ProjectTabValue = (typeof PROJECT_TAB_VALUES)[number];
+
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   ssr: false,
   head: () => ({ meta: [{ title: "Project IOR — Overwatch" }] }),
+  validateSearch: (search: Record<string, unknown>): { tab?: ProjectTabValue } => {
+    const tab = typeof search.tab === "string" ? search.tab : "";
+    return {
+      tab: PROJECT_TAB_VALUES.includes(tab as ProjectTabValue)
+        ? (tab as ProjectTabValue)
+        : undefined,
+    };
+  },
   component: ProjectRoute,
 });
 
@@ -360,11 +383,16 @@ function ProjectRoute() {
 
 function ProjectPage() {
   const { projectId } = Route.useParams();
+  const search = Route.useSearch();
   const get = useServerFn(getProject);
   const list = useServerFn(listProjects);
   const qc = useQueryClient();
   const [creatingCoRiskId, setCreatingCoRiskId] = useState<string | null>(null);
-  const [activeProjectTab, setActiveProjectTab] = useState("dashboard");
+  const [activeProjectTab, setActiveProjectTab] = useState(search.tab ?? "dashboard");
+
+  useEffect(() => {
+    if (search.tab) setActiveProjectTab(search.tab);
+  }, [search.tab]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["project", projectId],
@@ -1352,10 +1380,10 @@ function ProjectPage() {
           }`}
         >
           <aside className="lg:sticky lg:top-6">
-            <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1 shadow-card lg:flex-col lg:items-stretch lg:overflow-visible">
+            <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1.5 shadow-card ring-1 ring-foreground/5 lg:flex-col lg:items-stretch lg:overflow-visible">
               <a
                 href="/?tab=crm"
-                className={`inline-flex min-w-[148px] items-center justify-start rounded-md px-3 py-3 text-left text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground lg:w-full ${
+                className={`inline-flex min-w-[148px] items-center justify-start rounded-md border border-transparent px-3 py-3 text-left text-muted-foreground transition hover:border-hairline hover:bg-secondary/70 hover:text-foreground lg:w-full ${
                   activeProjectTab === "billing" ? "lg:min-w-0 lg:justify-center lg:px-2" : ""
                 }`}
               >
@@ -1375,7 +1403,7 @@ function ProjectPage() {
                   <TabsTrigger
                     key={item.value}
                     value={item.value}
-                    className={`min-w-[148px] justify-start rounded-md px-3 py-3 text-left data-[state=active]:bg-foreground data-[state=active]:text-background lg:w-full ${
+                    className={`min-w-[148px] justify-start rounded-md border border-transparent px-3 py-3 text-left transition hover:border-hairline hover:bg-secondary/70 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-sm lg:w-full ${
                       activeProjectTab === "billing" ? "lg:min-w-0 lg:justify-center lg:px-2" : ""
                     }`}
                   >
@@ -2432,26 +2460,47 @@ function BillingWorkspace({
             Remaining to bill is forecasted contract less billed to date. Open A/R is billed less
             paid and retainage.
           </p>
-          <TabsList className="mt-5 h-auto w-full justify-start gap-1 overflow-x-auto rounded-md border border-hairline bg-surface p-1 sm:flex-wrap sm:overflow-visible">
-            <TabsTrigger value="billing" className="whitespace-nowrap">
+          <TabsList className="mt-5 h-auto w-full justify-start gap-1 overflow-x-auto rounded-md border border-hairline bg-card p-1.5 shadow-card ring-1 ring-foreground/5 sm:flex-wrap sm:overflow-visible">
+            <TabsTrigger
+              value="billing"
+              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
+            >
               Billing
             </TabsTrigger>
-            <TabsTrigger value="pay-app-detail" className="whitespace-nowrap">
+            <TabsTrigger
+              value="pay-app-detail"
+              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
+            >
               Pay App Detail
             </TabsTrigger>
-            <TabsTrigger value="project-costs" className="whitespace-nowrap">
+            <TabsTrigger
+              value="project-costs"
+              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
+            >
               Project Costs
             </TabsTrigger>
-            <TabsTrigger value="wip-analysis" className="whitespace-nowrap">
+            <TabsTrigger
+              value="wip-analysis"
+              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
+            >
               WIP Analysis
             </TabsTrigger>
-            <TabsTrigger value="pay-app-ledger" className="whitespace-nowrap">
+            <TabsTrigger
+              value="pay-app-ledger"
+              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
+            >
               Pay App Ledger
             </TabsTrigger>
-            <TabsTrigger value="invoice-ledger" className="whitespace-nowrap">
+            <TabsTrigger
+              value="invoice-ledger"
+              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
+            >
               Invoices & Payments
             </TabsTrigger>
-            <TabsTrigger value="pending-cos" className="whitespace-nowrap">
+            <TabsTrigger
+              value="pending-cos"
+              className="whitespace-nowrap rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background"
+            >
               Pending COs
             </TabsTrigger>
           </TabsList>
@@ -2827,7 +2876,11 @@ function BillingWorkspace({
                       {fmtUSD(onlinePayReadyBalance)}
                     </div>
                   </div>
-                  <Button asChild variant="outline" className="h-full min-h-[58px] justify-start">
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="h-full min-h-[58px] min-w-0 justify-center px-3 text-center text-xs leading-tight whitespace-normal sm:text-sm"
+                  >
                     <Link to="/team">Finish payment setup</Link>
                   </Button>
                 </div>
@@ -2942,6 +2995,88 @@ function invoiceStatusLabel(status: BillingInvoiceRow["status"]) {
   return status.replace("_", " ");
 }
 
+function parseBillingDate(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(`${value}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatBillingDate(value?: string | null) {
+  const date = parseBillingDate(value);
+  if (!date) return "Not set";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function daysBetween(start: Date, end: Date) {
+  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+  return Math.round((endDay - startDay) / 86_400_000);
+}
+
+function payAppAgingStatus(app: BillingApplicationRow, openReceivable: number) {
+  const submittedDate = parseBillingDate(app.submitted_date);
+  const dueDate = parseBillingDate(app.due_date);
+  const today = new Date();
+  const submittedAge = submittedDate ? Math.max(0, daysBetween(submittedDate, today)) : null;
+
+  if (openReceivable <= 0) {
+    return {
+      label: "Clear",
+      detail: "No open A/R",
+      className: "border-success/30 bg-success/10 text-success",
+    };
+  }
+
+  if (dueDate) {
+    const dueDelta = daysBetween(dueDate, today);
+    if (dueDelta > 0) {
+      return {
+        label:
+          dueDelta >= 90
+            ? "90+ days past due"
+            : `${dueDelta} ${dueDelta === 1 ? "day" : "days"} past due`,
+        detail:
+          submittedAge === null
+            ? "Aged from due date"
+            : `Submitted ${submittedAge} ${submittedAge === 1 ? "day" : "days"} ago`,
+        className:
+          dueDelta >= 60
+            ? "border-danger/30 bg-danger/10 text-danger"
+            : "border-warning/30 bg-warning/10 text-warning",
+      };
+    }
+    return {
+      label:
+        dueDelta === 0
+          ? "Due today"
+          : `Due in ${Math.abs(dueDelta)} ${Math.abs(dueDelta) === 1 ? "day" : "days"}`,
+      detail:
+        submittedAge === null
+          ? "Not past due"
+          : `Submitted ${submittedAge} ${submittedAge === 1 ? "day" : "days"} ago`,
+      className: "border-hairline bg-card text-foreground",
+    };
+  }
+
+  if (submittedAge !== null) {
+    return {
+      label: `Submitted ${submittedAge} ${submittedAge === 1 ? "day" : "days"} ago`,
+      detail: "No due date set",
+      className: "border-warning/30 bg-warning/10 text-warning",
+    };
+  }
+
+  return {
+    label: "No aging dates",
+    detail: "Add submitted and due dates",
+    className: "border-hairline bg-card text-muted-foreground",
+  };
+}
+
 function LedgerDetail({
   label,
   value,
@@ -2978,6 +3113,7 @@ function BillingApplicationRowEditor({
   const events = app.status_events.slice(0, 3);
   const appLabel = billingDocumentLabel(app.application_number, app.invoice_number);
   const invoiceLabel = normalizeBillingNumberLabel(app.invoice_number);
+  const aging = payAppAgingStatus(app, openReceivable);
 
   return (
     <div className="rounded-md border border-hairline bg-surface p-4">
@@ -3115,8 +3251,20 @@ function BillingApplicationRowEditor({
           />
         </div>
       </div>
-      <div className="mt-3">
-        <LedgerDetail label="Open A/R" value={fmtUSD(openReceivable)} className="max-w-[180px]" />
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <LedgerDetail label="Open A/R" value={fmtUSD(openReceivable)} />
+        <LedgerDetail
+          label="A/R aging"
+          value={
+            <span>
+              {aging.label}
+              <span className="mt-0.5 block text-[11px] font-normal text-current/75">
+                {aging.detail}
+              </span>
+            </span>
+          }
+          className={aging.className}
+        />
       </div>
       {events.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
@@ -3198,6 +3346,7 @@ function BillingInvoiceRowEditor({
                 };
   const today = new Date().toISOString().slice(0, 10);
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
   const [invoiceAction, setInvoiceAction] = useState<"pdf" | "email" | null>(null);
   const [paymentDraft, setPaymentDraft] = useState<PaymentDraft>({
     invoiceId: invoice.id,
@@ -3214,6 +3363,14 @@ function BillingInvoiceRowEditor({
     0,
     paymentDraft.amount - paymentDraft.processor_fee - paymentDraft.overwatch_fee,
   );
+  const sendBlockingMessage =
+    invoice.status === "void"
+      ? "Void invoices cannot be sent to clients."
+      : invoiceRecipientsError
+        ? `Client billing recipients did not load: ${invoiceRecipientsError}`
+        : invoiceRecipients.length === 0
+          ? "No client seats have Billing On. Open Client Portal, grant a client seat, and turn Billing On."
+          : "";
 
   const openPaymentDialog = () => {
     setPaymentDraft({
@@ -3289,6 +3446,7 @@ function BillingInvoiceRowEditor({
         client_visible: true,
         status: invoice.status === "draft" ? "sent" : invoice.status,
       });
+      setSendOpen(false);
 
       toast.success("Invoice email queued", {
         description:
@@ -3383,12 +3541,87 @@ function BillingInvoiceRowEditor({
             size="sm"
             variant="outline"
             className="h-8 gap-1.5"
-            onClick={emailInvoice}
+            onClick={() => setSendOpen(true)}
             disabled={invoiceAction === "email" || invoiceRecipientsLoading}
           >
             <Mail className="h-3.5 w-3.5" />
-            {invoiceAction === "email" ? "Sending..." : "Send"}
+            Send
           </Button>
+          <Dialog open={sendOpen} onOpenChange={setSendOpen}>
+            <DialogContent className="sm:max-w-xl">
+              <DialogHeader>
+                <DialogTitle className="font-serif text-2xl">Send invoice</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <div className="rounded-md border border-hairline bg-surface p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Invoice
+                  </div>
+                  <div className="mt-1 font-medium text-foreground">{invoiceLabel}</div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    <LedgerDetail label="Open" value={fmtUSD(openBalance)} />
+                    <LedgerDetail label="Due" value={formatBillingDate(invoice.due_date)} />
+                    <LedgerDetail
+                      label="Client"
+                      value={invoice.client_visible ? "Visible" : "Hidden"}
+                    />
+                  </div>
+                </div>
+
+                <div className="rounded-md border border-hairline bg-card p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Recipients
+                  </div>
+                  {invoiceRecipientsLoading ? (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Loading billing recipients...
+                    </p>
+                  ) : invoiceRecipients.length > 0 ? (
+                    <div className="mt-3 space-y-2">
+                      {invoiceRecipients.map((recipient) => (
+                        <div
+                          key={recipient.id}
+                          className="rounded-md border border-hairline bg-surface px-3 py-2 text-sm"
+                        >
+                          <div className="font-medium text-foreground">{recipient.email}</div>
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            Billing On · {recipient.status}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      No billing recipients are available for this project yet.
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-md border border-hairline bg-surface p-4 text-sm text-muted-foreground">
+                  Confirming will queue the invoice email and mark the invoice visible to the
+                  client. It will not enable online payment unless Stripe Connect is already
+                  configured for the company.
+                </div>
+
+                {sendBlockingMessage ? (
+                  <div className="rounded-md border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
+                    {sendBlockingMessage}
+                  </div>
+                ) : null}
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setSendOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={emailInvoice}
+                  disabled={Boolean(sendBlockingMessage) || invoiceAction === "email"}
+                >
+                  {invoiceAction === "email" ? "Sending..." : "Send invoice"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <Button
             type="button"
             size="sm"
