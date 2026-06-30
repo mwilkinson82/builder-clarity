@@ -792,6 +792,18 @@ expectSql(
 expectSql(
   sql,
   [
+    /harbor-beta-cost:sitework:ap-1007/i,
+    /harbor-beta-cost:mep:com-221/i,
+    /bucket_adjustments/i,
+    /actual_to_date = GREATEST\(0, COALESCE\(cb\.actual_to_date, 0\) - ba\.amount\)/i,
+    /INSERT INTO public\.cost_actuals/i,
+  ],
+  "Harbor billing beta sample cost actuals are seeded without inflating WIP totals",
+);
+
+expectSql(
+  sql,
+  [
     /alter table public\.subscription_plans[\s\S]*stripe_price_id/i,
     /alter table public\.organizations[\s\S]*billing_email/i,
     /alter table public\.organizations[\s\S]*stripe_connect_account_id/i,
