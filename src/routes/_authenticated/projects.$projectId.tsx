@@ -1214,11 +1214,11 @@ function ProjectPage() {
               </p>
               {project.source_opportunity_id && (
                 <a
-                  href={`/?tab=pipeline&opportunity=${project.source_opportunity_id}`}
+                  href={`/?tab=crm&opportunity=${project.source_opportunity_id}`}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent hover:border-accent/50"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
-                  Source: Pipeline
+                  Source: CRM
                 </a>
               )}
             </div>
@@ -1292,14 +1292,14 @@ function ProjectPage() {
           <aside className="lg:sticky lg:top-6">
             <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1 shadow-card lg:flex-col lg:items-stretch lg:overflow-visible">
               <a
-                href="/?tab=pipeline"
+                href="/?tab=crm"
                 className="inline-flex min-w-[148px] items-center justify-start rounded-md px-3 py-3 text-left text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground lg:w-full"
               >
                 <BriefcaseBusiness className="mr-2 h-4 w-4 shrink-0" />
                 <span className="min-w-0">
-                  <span className="block text-sm font-medium leading-tight">Pipeline CRM</span>
+                  <span className="block text-sm font-medium leading-tight">CRM</span>
                   <span className="mt-0.5 block truncate text-[11px] font-normal opacity-80">
-                    Bid pipeline
+                    Relationships
                   </span>
                 </span>
               </a>

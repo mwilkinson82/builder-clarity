@@ -35,15 +35,16 @@ type PipelineListProps = {
 export function PipelineList({ opportunities, onOpen, onStageChange }: PipelineListProps) {
   return (
     <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
-      <Table className="min-w-[1100px]">
+      <Table className="min-w-[1280px]">
         <TableHeader>
           <TableRow className="bg-surface [&>th]:whitespace-nowrap">
             <TableHead>Name</TableHead>
-            <TableHead>Client</TableHead>
+            <TableHead>Account / Contact</TableHead>
             <TableHead>Stage</TableHead>
             <TableHead className="text-right">Est. Contract</TableHead>
             <TableHead className="text-right">GP%</TableHead>
             <TableHead>Bid Due</TableHead>
+            <TableHead>Next Action</TableHead>
             <TableHead className="text-right">Probability</TableHead>
             <TableHead>Assigned</TableHead>
             <TableHead>Last Activity</TableHead>
@@ -52,8 +53,8 @@ export function PipelineList({ opportunities, onOpen, onStageChange }: PipelineL
         <TableBody>
           {opportunities.length === 0 && (
             <TableRow>
-              <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
-                No opportunities match the current pipeline filters.
+              <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
+                No opportunities match the current CRM filters.
               </TableCell>
             </TableRow>
           )}
@@ -72,7 +73,12 @@ export function PipelineList({ opportunities, onOpen, onStageChange }: PipelineL
                 </div>
               </TableCell>
               <TableCell className="max-w-[200px] truncate text-muted-foreground">
-                {opportunity.client || "No client"}
+                <div className="truncate text-sm text-foreground">
+                  {opportunity.account_name || opportunity.client || "No account"}
+                </div>
+                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  {opportunity.primary_contact_name || "No primary contact"}
+                </div>
               </TableCell>
               <TableCell onClick={(event) => event.stopPropagation()}>
                 <Select
@@ -104,6 +110,16 @@ export function PipelineList({ opportunities, onOpen, onStageChange }: PipelineL
               </TableCell>
               <TableCell className={cn("whitespace-nowrap", bidUrgencyClass(opportunity))}>
                 {shortDate(opportunity.bid_due_date)}
+              </TableCell>
+              <TableCell className="max-w-[220px]">
+                <div className="truncate text-sm text-foreground">
+                  {opportunity.next_action_title || "No action"}
+                </div>
+                {opportunity.next_action_due_date && (
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    Due {shortDate(opportunity.next_action_due_date)}
+                  </div>
+                )}
               </TableCell>
               <TableCell className="text-right tabular-nums">{opportunity.probability}%</TableCell>
               <TableCell className="max-w-[160px] truncate">

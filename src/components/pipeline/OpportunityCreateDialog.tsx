@@ -92,6 +92,37 @@ export function OpportunityCreateDialog({
               onChange={(event) => update("client", event.target.value)}
             />
           </Field>
+          <Field label="Project type">
+            <Input
+              value={draft.project_type}
+              onChange={(event) => update("project_type", event.target.value)}
+            />
+          </Field>
+          <Field label="Contact name">
+            <Input
+              value={draft.client_contact_name}
+              onChange={(event) => update("client_contact_name", event.target.value)}
+            />
+          </Field>
+          <Field label="Contact email">
+            <Input
+              type="email"
+              value={draft.client_contact_email}
+              onChange={(event) => update("client_contact_email", event.target.value)}
+            />
+          </Field>
+          <Field label="Contact phone">
+            <Input
+              value={draft.client_contact_phone}
+              onChange={(event) => update("client_contact_phone", event.target.value)}
+            />
+          </Field>
+          <Field label="Source">
+            <Input
+              value={draft.source}
+              onChange={(event) => update("source", event.target.value)}
+            />
+          </Field>
           <Field label="Bid due">
             <Input
               type="date"

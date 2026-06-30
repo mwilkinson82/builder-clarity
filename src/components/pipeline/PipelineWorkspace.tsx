@@ -6,12 +6,17 @@ import { toast } from "sonner";
 import {
   addOpportunityNote,
   archiveOpportunity,
+  completeNextAction,
   convertToProject,
+  createNextAction,
   createOpportunity,
+  ensurePipelineCrmDemo,
   getOpportunity,
+  listCrmSnapshot,
   listOpportunities,
   listPipelineMembers,
   updateOpportunity,
+  type CreateNextActionInput,
   type CreateOpportunityInput,
   type PipelineOpportunityRow,
   type PipelineStage,
@@ -30,6 +35,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PipelineKanban } from "./PipelineKanban";
 import { PipelineList } from "./PipelineList";
 import { PipelineMetrics } from "./PipelineMetrics";
+import { PipelineCrmOverview } from "./PipelineCrmOverview";
 import { OpportunityCreateDialog } from "./OpportunityCreateDialog";
 import { OpportunityDetail } from "./OpportunityDetail";
 import {
@@ -49,12 +55,16 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   const queryClient = useQueryClient();
   const listFn = useServerFn(listOpportunities);
   const membersFn = useServerFn(listPipelineMembers);
+  const crmSnapshotFn = useServerFn(listCrmSnapshot);
+  const ensureDemoFn = useServerFn(ensurePipelineCrmDemo);
   const getFn = useServerFn(getOpportunity);
   const createFn = useServerFn(createOpportunity);
+  const createActionFn = useServerFn(createNextAction);
   const updateFn = useServerFn(updateOpportunity);
   const noteFn = useServerFn(addOpportunityNote);
   const convertFn = useServerFn(convertToProject);
   const archiveFn = useServerFn(archiveOpportunity);
+  const completeActionFn = useServerFn(completeNextAction);
 
   const [viewMode, setViewMode] = useState<PipelineViewMode>("kanban");
   const [search, setSearch] = useState("");
@@ -64,6 +74,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   const [sortMode, setSortMode] = useState<PipelineSortMode>("last_activity_at");
   const [showArchived, setShowArchived] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(initialOpportunityId ?? null);
+  const [demoSeedChecked, setDemoSeedChecked] = useState(false);
 
   useEffect(() => {
     if (initialOpportunityId) setSelectedId(initialOpportunityId);
@@ -76,6 +87,10 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   const membersQuery = useQuery({
     queryKey: ["pipeline-members"],
     queryFn: () => membersFn(),
+  });
+  const crmSnapshotQuery = useQuery({
+    queryKey: ["pipeline-crm-snapshot"],
+    queryFn: () => crmSnapshotFn(),
   });
   const detailQuery = useQuery({
     queryKey: ["pipeline-opportunity", selectedId],
@@ -135,8 +150,47 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["pipeline-opportunities"] }),
       queryClient.invalidateQueries({ queryKey: ["pipeline-opportunity", selectedId] }),
+      queryClient.invalidateQueries({ queryKey: ["pipeline-crm-snapshot"] }),
     ]);
   };
+
+  const ensureDemoMutation = useMutation({
+    mutationFn: () => ensureDemoFn(),
+    onSuccess: async (result) => {
+      if (result.seeded) {
+        toast.success("CRM sample data loaded", {
+          description: `${result.opportunityCount} sample opportunities are ready to review.`,
+        });
+      }
+      await invalidatePipeline();
+    },
+    onError: (error) =>
+      toast.error("CRM sample data did not load", { description: errorMessage(error) }),
+  });
+
+  useEffect(() => {
+    if (
+      demoSeedChecked ||
+      showArchived ||
+      opportunitiesQuery.isLoading ||
+      opportunitiesQuery.isError
+    ) {
+      return;
+    }
+    if (opportunities.length > 0) {
+      setDemoSeedChecked(true);
+      return;
+    }
+    setDemoSeedChecked(true);
+    ensureDemoMutation.mutate();
+  }, [
+    demoSeedChecked,
+    ensureDemoMutation,
+    opportunities.length,
+    opportunitiesQuery.isError,
+    opportunitiesQuery.isLoading,
+    showArchived,
+  ]);
 
   const createMutation = useMutation({
     mutationFn: (input: CreateOpportunityInput) => createFn({ data: input }),
@@ -145,7 +199,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
       toast.success("Opportunity created");
       if (result.duplicateWarning) {
         toast.warning("Possible duplicate opportunity", {
-          description: "Same client and opportunity name already exist in this pipeline.",
+          description: "Same client and opportunity name already exist in this CRM.",
         });
       }
     },
@@ -171,6 +225,15 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
       toast.success("Note added");
     },
     onError: (error) => toast.error("Note did not save", { description: errorMessage(error) }),
+  });
+
+  const createActionMutation = useMutation({
+    mutationFn: (input: CreateNextActionInput) => createActionFn({ data: input }),
+    onSuccess: async () => {
+      await invalidatePipeline();
+      toast.success("CRM action added");
+    },
+    onError: (error) => toast.error("Action did not save", { description: errorMessage(error) }),
   });
 
   const convertMutation = useMutation({
@@ -199,6 +262,16 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
       toast.error("Opportunity did not archive", { description: errorMessage(error) }),
   });
 
+  const completeActionMutation = useMutation({
+    mutationFn: (id: string) => completeActionFn({ data: { id } }),
+    onSuccess: async () => {
+      await invalidatePipeline();
+      toast.success("CRM action completed");
+    },
+    onError: (error) =>
+      toast.error("Action did not complete", { description: errorMessage(error) }),
+  });
+
   const resetFilters = () => {
     setSearch("");
     setStageFilter("all");
@@ -212,6 +285,18 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   return (
     <div className="space-y-6">
       <PipelineMetrics opportunities={opportunities} />
+
+      <PipelineCrmOverview
+        snapshot={crmSnapshotQuery.data ?? null}
+        opportunities={opportunities}
+        isLoading={crmSnapshotQuery.isLoading || ensureDemoMutation.isPending}
+        completingActionId={
+          typeof completeActionMutation.variables === "string"
+            ? completeActionMutation.variables
+            : null
+        }
+        onCompleteAction={(id) => completeActionMutation.mutate(id)}
+      />
 
       <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -322,7 +407,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
 
       {opportunitiesQuery.isLoading ? (
         <div className="rounded-lg border border-hairline bg-card p-8 text-sm text-muted-foreground shadow-card">
-          Loading pipeline…
+          Loading CRM…
         </div>
       ) : opportunitiesQuery.isError ? (
         <div className="rounded-lg border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
@@ -350,6 +435,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
         isLoading={detailQuery.isLoading}
         isSaving={updateMutation.isPending}
         isAddingNote={noteMutation.isPending}
+        isCreatingAction={createActionMutation.isPending}
         isConverting={convertMutation.isPending}
         isArchiving={archiveMutation.isPending}
         onOpenChange={(open) => {
@@ -363,6 +449,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
           if (!selectedId) return Promise.resolve();
           return noteMutation.mutateAsync({ id: selectedId, note }).then(() => undefined);
         }}
+        onCreateAction={(input) => createActionMutation.mutateAsync(input).then(() => undefined)}
         onConvert={() => {
           if (!selectedId) return Promise.resolve();
           if (selected?.estimated_contract === 0) {

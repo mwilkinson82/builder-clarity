@@ -162,9 +162,8 @@ function PortfolioPage() {
   const [sortMode, setSortMode] = useState<PortfolioSortMode>("manager");
   const [portfolioTab, setPortfolioTab] = useState<"projects" | "pipeline">(() => {
     if (typeof window === "undefined") return "projects";
-    return new URLSearchParams(window.location.search).get("tab") === "pipeline"
-      ? "pipeline"
-      : "projects";
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    return tab === "pipeline" || tab === "crm" ? "pipeline" : "projects";
   });
   const [initialPipelineOpportunityId] = useState(() => {
     if (typeof window === "undefined") return null;
@@ -277,7 +276,7 @@ function PortfolioPage() {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     if (nextTab === "pipeline") {
-      url.searchParams.set("tab", "pipeline");
+      url.searchParams.set("tab", "crm");
     } else {
       url.searchParams.delete("tab");
       url.searchParams.delete("opportunity");
@@ -327,6 +326,11 @@ function PortfolioPage() {
           </div>
           <div className="flex items-center gap-2">
             <Button asChild size="sm" variant="outline" className="gap-1.5">
+              <a href="/?tab=crm">
+                <BriefcaseBusiness className="h-3.5 w-3.5" /> CRM
+              </a>
+            </Button>
+            <Button asChild size="sm" variant="outline" className="gap-1.5">
               <Link to="/estimates">
                 <ClipboardList className="h-3.5 w-3.5" /> Estimates
               </Link>
@@ -371,12 +375,12 @@ function PortfolioPage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <TabsList>
               <TabsTrigger value="projects">Projects</TabsTrigger>
-              <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
+              <TabsTrigger value="pipeline">CRM</TabsTrigger>
             </TabsList>
             <div className="text-xs text-muted-foreground">
               {portfolioTab === "projects"
                 ? "Live project IOR control"
-                : "Pre-project CRM and bid pipeline"}
+                : "Sales CRM, relationships, and bid pursuits"}
             </div>
           </div>
           <TabsContent value="projects" className="mt-0">

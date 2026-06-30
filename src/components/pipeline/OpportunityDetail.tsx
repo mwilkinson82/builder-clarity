@@ -3,7 +3,9 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { fmtPct } from "@/lib/format";
 import type {
+  CreateNextActionInput,
   PipelineActivityRow,
+  PipelineActionPriority,
   PipelineBidDecision,
   PipelineMember,
   PipelineOpportunityRow,
@@ -62,11 +64,13 @@ type OpportunityDetailProps = {
   isLoading: boolean;
   isSaving: boolean;
   isAddingNote: boolean;
+  isCreatingAction: boolean;
   isConverting: boolean;
   isArchiving: boolean;
   onOpenChange: (open: boolean) => void;
   onUpdate: (patch: OpportunityPatch) => Promise<void>;
   onAddNote: (note: string) => Promise<void>;
+  onCreateAction: (input: CreateNextActionInput) => Promise<void>;
   onConvert: () => Promise<void>;
   onArchive: () => Promise<void>;
 };
@@ -79,15 +83,22 @@ export function OpportunityDetail({
   isLoading,
   isSaving,
   isAddingNote,
+  isCreatingAction,
   isConverting,
   isArchiving,
   onOpenChange,
   onUpdate,
   onAddNote,
+  onCreateAction,
   onConvert,
   onArchive,
 }: OpportunityDetailProps) {
   const [draft, setDraft] = useState<OpportunityPatch>({});
+  const [actionDraft, setActionDraft] = useState({
+    title: "",
+    due_date: "",
+    priority: "normal" as PipelineActionPriority,
+  });
   useEffect(() => {
     if (!opportunity) return;
     setDraft({
@@ -111,6 +122,11 @@ export function OpportunityDetail({
       assigned_to: opportunity.assigned_to,
       notes: opportunity.notes,
     });
+    setActionDraft({
+      title: opportunity.next_action_title ? `Follow up: ${opportunity.next_action_title}` : "",
+      due_date: "",
+      priority: "normal",
+    });
   }, [opportunity]);
 
   const gpPct = useMemo(() => {
@@ -125,6 +141,22 @@ export function OpportunityDetail({
   const save = async () => {
     if (!opportunity) return;
     await onUpdate(draft);
+  };
+
+  const createAction = async () => {
+    if (!opportunity || !actionDraft.title.trim()) return;
+    await onCreateAction({
+      opportunity_id: opportunity.id,
+      account_id: opportunity.account_id,
+      contact_id: opportunity.primary_contact_id,
+      owner_name: draft.assigned_to ?? opportunity.assigned_to,
+      action_type: "follow_up",
+      priority: actionDraft.priority,
+      title: actionDraft.title.trim(),
+      notes: "",
+      due_date: actionDraft.due_date || null,
+    });
+    setActionDraft({ title: "", due_date: "", priority: "normal" });
   };
 
   const canConvert = opportunity?.stage === "won" && !opportunity.converted_project_id;
@@ -282,7 +314,27 @@ export function OpportunityDetail({
             </section>
 
             <section className="space-y-3">
-              <h3 className="font-serif text-xl text-foreground">Client</h3>
+              <h3 className="font-serif text-xl text-foreground">CRM relationship</h3>
+              <div className="rounded-md border border-hairline bg-surface px-3 py-3">
+                <div className="grid gap-3 text-sm sm:grid-cols-3">
+                  <RelationshipStat
+                    label="Account"
+                    value={opportunity.account_name || opportunity.client || "No account"}
+                  />
+                  <RelationshipStat
+                    label="Primary contact"
+                    value={
+                      opportunity.primary_contact_name ||
+                      opportunity.client_contact_name ||
+                      "No contact"
+                    }
+                  />
+                  <RelationshipStat
+                    label="Next action"
+                    value={opportunity.next_action_title || "No open action"}
+                  />
+                </div>
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Client">
                   <Input
@@ -309,6 +361,57 @@ export function OpportunityDetail({
                     onChange={(event) => updateDraft("client_contact_phone", event.target.value)}
                   />
                 </Field>
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="font-serif text-xl text-foreground">Next Action</h3>
+              <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 sm:grid-cols-[minmax(0,1fr)_150px_130px_auto] sm:items-end">
+                <Field label="Action">
+                  <Input
+                    value={actionDraft.title}
+                    onChange={(event) =>
+                      setActionDraft((current) => ({ ...current, title: event.target.value }))
+                    }
+                    placeholder="Call, send proposal, confirm decision..."
+                  />
+                </Field>
+                <Field label="Due date">
+                  <Input
+                    type="date"
+                    value={actionDraft.due_date}
+                    onChange={(event) =>
+                      setActionDraft((current) => ({ ...current, due_date: event.target.value }))
+                    }
+                  />
+                </Field>
+                <Field label="Priority">
+                  <Select
+                    value={actionDraft.priority}
+                    onValueChange={(value) =>
+                      setActionDraft((current) => ({
+                        ...current,
+                        priority: value as PipelineActionPriority,
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="normal">Normal</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Button
+                  type="button"
+                  onClick={createAction}
+                  disabled={isCreatingAction || !actionDraft.title.trim()}
+                >
+                  Add action
+                </Button>
               </div>
             </section>
 
@@ -409,6 +512,17 @@ function Field({
     <div className={className}>
       <Label className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</Label>
       {children}
+    </div>
+  );
+}
+
+function RelationshipStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 truncate font-medium text-foreground">{value}</div>
     </div>
   );
 }

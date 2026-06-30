@@ -45,7 +45,7 @@ export function PipelineMetrics({ opportunities }: PipelineMetricsProps) {
       />
       <MetricCard
         icon={<Gauge className="h-3.5 w-3.5" />}
-        label="Weighted pipeline"
+        label="Weighted pursuits"
         value={fmtUSD(weightedPipeline)}
       />
       <MetricCard icon={<Percent className="h-3.5 w-3.5" />} label="Avg GP" value={fmtPct(avgGp)} />
