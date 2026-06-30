@@ -575,7 +575,7 @@ export const listSchedule = createServerFn({ method: "GET" })
             name: section.name,
             code: section.code,
             sort_order: section.sort_order,
-          })),
+          })) as any,
       );
       if (!seedWbsError) {
         const seededWbs = await context.supabase
