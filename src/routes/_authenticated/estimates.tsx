@@ -266,7 +266,8 @@ function EstimatesPage() {
                 <h2 className="text-sm font-semibold text-foreground">Estimate Folders</h2>
                 <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
                   Keep active bids, won work, and not-won estimates separated before they become
-                  projects or get cleaned out.
+                  projects or get cleaned out. Archived keeps a record; Delete permanently removes
+                  it.
                 </p>
               </div>
             </div>
@@ -494,8 +495,9 @@ function EstimatesPage() {
           <DialogHeader>
             <DialogTitle>Delete Estimate?</DialogTitle>
             <DialogDescription>
-              This removes {deleteTarget?.name ? `"${deleteTarget.name}"` : "this estimate"} and its
-              line items from Overwatch. This is meant for estimates you truly do not need to keep.
+              This permanently removes{" "}
+              {deleteTarget?.name ? `"${deleteTarget.name}"` : "this estimate"} and its line items
+              from Overwatch. This does not move it to Archived.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

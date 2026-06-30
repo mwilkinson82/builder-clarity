@@ -293,6 +293,7 @@ export function EstimateWorkspace({
     colIndex: number;
   } | null>(null);
   const isMasterSheet = estimate.project_type === MASTER_ESTIMATE_PROJECT_TYPE;
+  const titleRows = Math.min(3, Math.max(1, Math.ceil(Math.max(nameDraft.length, 1) / 42)));
 
   useEffect(() => setNameDraft(estimate.name), [estimate.name]);
 
@@ -549,8 +550,8 @@ export function EstimateWorkspace({
     <div className="min-h-screen bg-background">
       <header className="border-b border-hairline bg-surface-elevated">
         <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-5 py-4 lg:px-8">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+            <div className="flex min-w-0 flex-1 items-start gap-3">
               {isMasterSheet ? (
                 <Button asChild variant="ghost" size="icon" title="Back to master sheets">
                   <Link to="/estimate-masters">
@@ -564,7 +565,7 @@ export function EstimateWorkspace({
                   </Link>
                 </Button>
               )}
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="mb-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">
                   {companyName}
                 </p>
@@ -582,7 +583,8 @@ export function EstimateWorkspace({
                     </span>
                   )}
                 </div>
-                <Input
+                <Textarea
+                  rows={titleRows}
                   value={nameDraft}
                   onChange={(event) => setNameDraft(event.target.value)}
                   onBlur={() => {
@@ -593,11 +595,11 @@ export function EstimateWorkspace({
                       });
                     }
                   }}
-                  className="h-auto border-0 bg-transparent p-0 font-serif text-3xl shadow-none focus-visible:ring-0"
+                  className="min-h-[2.4rem] w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-serif text-3xl leading-tight shadow-none focus-visible:ring-0"
                 />
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
               <Select
                 value={estimate.status}
                 onValueChange={(status) =>
@@ -829,8 +831,9 @@ export function EstimateWorkspace({
           <DialogHeader>
             <DialogTitle>{isMasterSheet ? "Delete Master Sheet?" : "Delete Estimate?"}</DialogTitle>
             <DialogDescription>
-              This removes "{estimate.name}" and all of its worksheet rows from Overwatch. Use this
-              only when you do not need to keep the bid or master sheet for later.
+              This permanently removes "{estimate.name}" and all of its worksheet rows from
+              Overwatch. This does not move it to Archived. Use the Archived folder instead if you
+              want to keep the record out of the way.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
