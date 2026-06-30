@@ -6,7 +6,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -407,6 +407,7 @@ function ProjectPage() {
   const [activeProjectTab, setActiveProjectTab] = useState<ProjectTabValue>(
     search.tab ?? "dashboard",
   );
+  const [focusedRiskExposureId, setFocusedRiskExposureId] = useState<string | null>(null);
   const [companyLogoFailedUrl, setCompanyLogoFailedUrl] = useState("");
   const setProjectTab = (value: string) => {
     if (PROJECT_TAB_VALUES.includes(value as ProjectTabValue)) {
@@ -1158,6 +1159,12 @@ function ProjectPage() {
     );
   };
 
+  const openDashboardExposure = (exposureId: string) => {
+    setActiveProjectTab("risk-tally");
+    setFocusedRiskExposureId(exposureId);
+  };
+  const handleRiskFocusHandled = useCallback(() => setFocusedRiskExposureId(null), []);
+
   const downloadCurrentReport = async (style: IorPdfStyle) => {
     const bytes = await generateIorPdf(
       {
@@ -1496,6 +1503,7 @@ function ProjectPage() {
                 scheduleRiskCount={activeScheduleRiskCount}
                 lastReviewForecast={lastReviewForecast}
                 scheduleMovementSinceLastUpdate={scheduleMovementSinceLastUpdate}
+                onOpenExposure={openDashboardExposure}
               />
             </TabsContent>
 
@@ -1516,6 +1524,8 @@ function ProjectPage() {
                 exposures={exposures}
                 rollup={rollup}
                 guidance={guidance}
+                focusedExposureId={focusedRiskExposureId}
+                onFocusExposureHandled={handleRiskFocusHandled}
                 onCreateExposure={(d) => expCreate.mutate({ projectId, ...d })}
                 onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
                 onDeleteExposure={handleDeleteExposure}
