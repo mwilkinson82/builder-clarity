@@ -2941,7 +2941,10 @@ function WbsManagerDialog({
   };
   const reorderDivision = (targetDivision: string) => {
     if (!draggingDivision || draggingDivision === targetDivision) return;
-    const orderedDivisions = divisions.map((row) => row.division);
+    const draggingRow = divisions.find((row) => row.division === draggingDivision);
+    const targetRow = divisions.find((row) => row.division === targetDivision);
+    if (!draggingRow?.id || !targetRow?.id || !isSameWbsParent(draggingRow, targetRow)) return;
+    const orderedDivisions = getWbsSiblingRows(divisions, draggingRow).map((row) => row.division);
     const fromIndex = orderedDivisions.indexOf(draggingDivision);
     const toIndex = orderedDivisions.indexOf(targetDivision);
     if (fromIndex < 0 || toIndex < 0) return;
@@ -2962,7 +2965,8 @@ function WbsManagerDialog({
         <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
           <DialogTitle className="font-serif text-2xl">WBS manager</DialogTitle>
           <DialogDescription>
-            Organize schedule divisions and control the WBS order used by the CPM grid.
+            Organize parent WBS sections and child areas. Drag rows within the same parent level to
+            control the CPM grid order.
           </DialogDescription>
         </DialogHeader>
 
@@ -3034,6 +3038,12 @@ function WbsManagerDialog({
                   normalizeWbsDivisionName(draftName) !== normalizeWbsDivisionName(row.title);
                 const isRowSaving = savingDivision === row.division || isSaving;
                 const canPersistRow = Boolean(row.id);
+                const siblingPosition = getWbsSiblingPosition(divisions, row);
+                const canMoveUp = canPersistRow && siblingPosition.index > 0;
+                const canMoveDown =
+                  canPersistRow &&
+                  siblingPosition.index >= 0 &&
+                  siblingPosition.index < siblingPosition.count - 1;
                 return (
                   <div
                     key={row.division}
@@ -3052,6 +3062,10 @@ function WbsManagerDialog({
                         !canPersistRow
                       )
                         return;
+                      const draggingRow = divisions.find(
+                        (item) => item.division === draggingDivision,
+                      );
+                      if (!draggingRow?.id || !isSameWbsParent(draggingRow, row)) return;
                       event.preventDefault();
                       event.dataTransfer.dropEffect = "move";
                       setDropTargetDivision(row.division);
@@ -3066,7 +3080,14 @@ function WbsManagerDialog({
                     }}
                     onDrop={(event) => {
                       event.preventDefault();
-                      if (!canPersistRow) {
+                      const draggingRow = divisions.find(
+                        (item) => item.division === draggingDivision,
+                      );
+                      if (
+                        !canPersistRow ||
+                        !draggingRow?.id ||
+                        !isSameWbsParent(draggingRow, row)
+                      ) {
                         resetDragState();
                         return;
                       }
@@ -3079,7 +3100,7 @@ function WbsManagerDialog({
                       draggable={!isSaving && canPersistRow}
                       className="flex h-9 w-9 cursor-grab items-center justify-center self-end rounded border border-hairline bg-surface text-muted-foreground transition hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50"
                       aria-label={`Drag ${row.division} to reorder WBS`}
-                      title="Drag to reorder"
+                      title="Drag to reorder within this WBS level"
                       disabled={isSaving || !canPersistRow}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = "move";
@@ -3148,7 +3169,7 @@ function WbsManagerDialog({
                         variant="outline"
                         size="icon"
                         className="h-9 w-9"
-                        disabled={index === 0 || isSaving || !canPersistRow}
+                        disabled={!canMoveUp || isSaving}
                         onClick={() => onMoveDivision(row.division, -1)}
                         aria-label={`Move ${row.division} up`}
                       >
@@ -3159,7 +3180,7 @@ function WbsManagerDialog({
                         variant="outline"
                         size="icon"
                         className="h-9 w-9"
-                        disabled={index === divisions.length - 1 || isSaving || !canPersistRow}
+                        disabled={!canMoveDown || isSaving}
                         onClick={() => onMoveDivision(row.division, 1)}
                         aria-label={`Move ${row.division} down`}
                       >
@@ -4578,13 +4599,32 @@ function buildWbsDivisionOrder(
 }
 
 function moveWbsDivisionInOrder(order: WbsDivisionRow[], division: string, direction: -1 | 1) {
-  const index = order.findIndex((row) => row.division === division);
+  const row = order.find((item) => item.division === division);
+  if (!row?.id) return [];
+  const siblings = getWbsSiblingRows(order, row);
+  const index = siblings.findIndex((item) => item.division === division);
   const targetIndex = index + direction;
-  if (index < 0 || targetIndex < 0 || targetIndex >= order.length) return order;
-  const nextOrder = [...order];
+  if (index < 0 || targetIndex < 0 || targetIndex >= siblings.length) return siblings;
+  const nextOrder = [...siblings];
   const [item] = nextOrder.splice(index, 1);
   nextOrder.splice(targetIndex, 0, item);
   return nextOrder;
+}
+
+function getWbsSiblingRows(rows: WbsDivisionRow[], row: WbsDivisionRow) {
+  return rows.filter((candidate) => candidate.id && isSameWbsParent(candidate, row));
+}
+
+function getWbsSiblingPosition(rows: WbsDivisionRow[], row: WbsDivisionRow) {
+  const siblings = getWbsSiblingRows(rows, row);
+  return {
+    index: siblings.findIndex((candidate) => candidate.division === row.division),
+    count: siblings.length,
+  };
+}
+
+function isSameWbsParent(a: WbsDivisionRow, b: WbsDivisionRow) {
+  return (a.parentId ?? null) === (b.parentId ?? null);
 }
 
 function buildWbsDivisionRows(

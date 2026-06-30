@@ -223,18 +223,17 @@ function ScheduleWorkspacePage() {
       });
       return { previous, toastId };
     },
-    onSuccess: async () => {
-      await refreshSchedule();
+    onSuccess: (_result, _orderedIds, context) => {
+      if (context?.toastId) toast.dismiss(context.toastId);
       toast.success("WBS order saved");
+      void refreshSchedule();
     },
     onError: (error, _orderedIds, context) => {
+      if (context?.toastId) toast.dismiss(context.toastId);
       if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS order did not save", {
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
-    },
-    onSettled: (_data, _error, _orderedIds, context) => {
-      if (context?.toastId) toast.dismiss(context.toastId);
     },
   });
 
