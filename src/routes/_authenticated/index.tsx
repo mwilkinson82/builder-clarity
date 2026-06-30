@@ -44,14 +44,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Activity,
@@ -335,9 +327,6 @@ function PortfolioPage() {
 
   const navigate = useNavigate();
   const router = useRouter();
-  const openProject = (projectId: string) => {
-    window.location.assign(`/projects/${projectId}`);
-  };
   const signOut = async () => {
     await supabase.auth.signOut();
     router.invalidate();
@@ -347,14 +336,14 @@ function PortfolioPage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-6 lg:px-10">
+        <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-6 py-6 lg:flex-row lg:items-center lg:justify-between lg:px-10">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
               {headerCompanyName}
             </div>
             <h1 className="mt-1 font-serif text-3xl text-foreground">{headerTitle}</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button asChild size="sm" variant="outline" className="gap-1.5">
               <a href="/?tab=crm">
                 <BriefcaseBusiness className="h-3.5 w-3.5" /> CRM
@@ -569,228 +558,13 @@ function PortfolioPage() {
                     </div>
                   </div>
                 </div>
-                <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
-                  <Table className="min-w-[1420px]">
-                    <TableHeader>
-                      <TableRow className="bg-surface [&>th]:whitespace-nowrap [&>th]:px-3 [&>th]:py-3 [&>th]:align-bottom">
-                        <TableHead className="w-[250px]">Project</TableHead>
-                        <TableHead className="w-[120px]">Job #</TableHead>
-                        <TableHead className="w-[160px]">Project Manager</TableHead>
-                        <TableHead className="w-[140px] text-right">Original Contract</TableHead>
-                        <TableHead className="w-[95px] text-right">Plan GP %</TableHead>
-                        <TableHead className="w-[115px] text-right">Indicated GP %</TableHead>
-                        <TableHead className="w-[125px] text-right">GP At Risk</TableHead>
-                        <TableHead className="w-[130px] text-right">Risk Allocated</TableHead>
-                        <TableHead className="w-[250px]">Top Exposure</TableHead>
-                        <TableHead className="w-[125px]">To-Dos</TableHead>
-                        <TableHead className="w-[145px]">Schedule</TableHead>
-                        <TableHead className="w-[145px]">Daily Reports</TableHead>
-                        <TableHead className="w-[115px]">Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {visibleProjects.length === 0 && (
-                        <TableRow>
-                          <TableCell
-                            colSpan={13}
-                            className="py-10 text-center text-sm text-muted-foreground"
-                          >
-                            No projects match the current portfolio filters.
-                          </TableCell>
-                        </TableRow>
-                      )}
-                      {visibleProjects.map((p) => {
-                        const s = statusFor(p.original_gp_pct, p.indicated_gp_pct);
-                        const schedule = scheduleFor(
-                          p.schedule_variance_weeks,
-                          p.schedule_risk_count,
-                        );
-                        const daily = dailyReportFor(
-                          p.daily_report_count,
-                          p.days_since_daily_report,
-                        );
-                        const jobNumber = p.job_number || `ID ${p.id.slice(0, 8).toUpperCase()}`;
-                        const projectHref = `/projects/${p.id}`;
-                        const highlightRisk = s.label === "At Risk" || p.gp_at_risk > 0;
-                        const isDemo = p.job_number === "DEMO-HARBOR";
-                        const organizationLogoUrl =
-                          p.organization_logo_url &&
-                          !failedOrganizationLogos.has(p.organization_logo_url)
-                            ? p.organization_logo_url
-                            : "";
-                        return (
-                          <TableRow
-                            key={p.id}
-                            role="link"
-                            tabIndex={0}
-                            title={`Open ${p.name}`}
-                            className={`cursor-pointer hover:bg-surface/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>td]:px-3 [&>td]:py-4 [&>td]:align-top ${
-                              highlightRisk ? "border-l-2 border-l-danger/60 bg-danger/5" : ""
-                            }`}
-                            onClick={() => openProject(p.id)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                openProject(p.id);
-                              }
-                            }}
-                          >
-                            <TableCell>
-                              <a
-                                href={projectHref}
-                                className="flex min-w-0 items-start gap-3"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                {organizationLogoUrl && (
-                                  <img
-                                    src={organizationLogoUrl}
-                                    alt={`${p.organization_name} logo`}
-                                    className="mt-0.5 h-9 w-9 shrink-0 rounded-sm object-contain"
-                                    onError={() =>
-                                      setFailedOrganizationLogos((current) =>
-                                        new Set(current).add(organizationLogoUrl),
-                                      )
-                                    }
-                                  />
-                                )}
-                                <div className="min-w-0">
-                                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                                    <div className="truncate font-serif text-lg text-foreground">
-                                      {p.name}
-                                    </div>
-                                    {isDemo && (
-                                      <span
-                                        title="Seeded Overwatch teaching project"
-                                        className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent"
-                                      >
-                                        Demo IOR
-                                      </span>
-                                    )}
-                                    {p.warning_count > 0 && (
-                                      <span
-                                        title={`${p.warning_count} system risk${p.warning_count === 1 ? "" : "s"} detected`}
-                                        className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-danger/15 px-1.5 text-[10px] font-semibold text-danger"
-                                      >
-                                        {p.warning_count}
-                                      </span>
-                                    )}
-                                    {p.days_since_review !== null && p.days_since_review > 30 && (
-                                      <span
-                                        title="Project has not been reviewed in over 30 days"
-                                        className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold text-warning"
-                                      >
-                                        Review {p.days_since_review}d
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="truncate text-xs text-muted-foreground">
-                                    {p.organization_name} · {p.client} · {p.phase} ·{" "}
-                                    {p.percent_complete}% complete
-                                    {p.top_category && (
-                                      <> · Top risk: {p.top_category.replace(/_/g, " ")}</>
-                                    )}
-                                  </div>
-                                </div>
-                              </a>
-                            </TableCell>
-
-                            <TableCell className="whitespace-nowrap text-sm tabular text-foreground">
-                              {jobNumber}
-                            </TableCell>
-                            <TableCell className="whitespace-nowrap text-sm text-foreground">
-                              {p.project_manager || "Unassigned"}
-                            </TableCell>
-                            <TableCell className="text-right tabular">
-                              {fmtUSD(p.original_contract)}
-                            </TableCell>
-                            <TableCell className="text-right tabular">
-                              {fmtPct(p.original_gp_pct)}
-                            </TableCell>
-                            <TableCell className="text-right tabular">
-                              {fmtPct(p.indicated_gp_pct)}
-                            </TableCell>
-                            <TableCell
-                              className={`text-right tabular ${p.gp_at_risk > 0 ? "text-danger" : ""}`}
-                            >
-                              {fmtUSD(p.gp_at_risk)}
-                            </TableCell>
-                            <TableCell className="text-right tabular">
-                              {fmtUSD(p.risk_allocated)}
-                            </TableCell>
-                            <TableCell className="max-w-[250px]">
-                              {p.top_exposure_title ? (
-                                <div>
-                                  <div className="truncate text-sm font-medium text-foreground">
-                                    {p.top_exposure_title}
-                                  </div>
-                                  <div className="mt-1 text-[11px] text-muted-foreground">
-                                    {fmtUSD(p.top_exposure_value)}{" "}
-                                    {p.top_exposure_hold_class
-                                      ? `· ${p.top_exposure_hold_class}`
-                                      : ""}
-                                  </div>
-                                </div>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">
-                                  No live exposure
-                                </span>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <PortfolioPill
-                                className={
-                                  p.overdue_decision_count > 0
-                                    ? "border-danger/40 bg-danger/10 text-danger"
-                                    : p.active_decision_count > 0
-                                      ? "border-warning/40 bg-warning/10 text-warning"
-                                      : "border-success/40 bg-success/10 text-success"
-                                }
-                              >
-                                {p.overdue_decision_count > 0
-                                  ? `${p.overdue_decision_count} overdue`
-                                  : `${p.active_decision_count} open`}
-                              </PortfolioPill>
-                              {p.next_decision_due && (
-                                <div className="mt-1 text-[11px] text-muted-foreground">
-                                  next due {p.next_decision_due}
-                                </div>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <PortfolioPill className={schedule.className}>
-                                {schedule.label} · {Math.round(schedule.score)}%
-                              </PortfolioPill>
-                              <div className="mt-1 text-[11px] text-muted-foreground">
-                                {p.schedule_variance_weeks > 0
-                                  ? `+${p.schedule_variance_weeks} wk`
-                                  : "No slip"}{" "}
-                                · {p.schedule_risk_count} risks
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <PortfolioPill className={daily.className}>
-                                {daily.label}
-                              </PortfolioPill>
-                              <div className="mt-1 text-[11px] text-muted-foreground">
-                                {p.daily_report_count === 0
-                                  ? "No job logs"
-                                  : `${p.daily_report_count} logs · last ${shortDate(p.last_daily_report_date)}`}
-                              </div>
-                              {p.client_visible_daily_report_count > 0 && (
-                                <div className="mt-0.5 text-[11px] text-muted-foreground">
-                                  {p.client_visible_daily_report_count} client-visible
-                                </div>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <PortfolioPill className={s.className}>{s.label}</PortfolioPill>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
+                <PortfolioProjectLedger
+                  projects={visibleProjects}
+                  failedOrganizationLogos={failedOrganizationLogos}
+                  onOrganizationLogoError={(logoUrl) =>
+                    setFailedOrganizationLogos((current) => new Set(current).add(logoUrl))
+                  }
+                />
               </div>
             )}
           </TabsContent>
@@ -810,6 +584,332 @@ function PortfolioPill({ children, className }: { children: ReactNode; className
     >
       {children}
     </span>
+  );
+}
+
+const PROJECT_LEDGER_GRID_CLASS =
+  "xl:grid-cols-[minmax(260px,1.35fr)_minmax(210px,0.95fr)_minmax(205px,0.9fr)_minmax(230px,1fr)_minmax(120px,0.55fr)]";
+
+function PortfolioProjectLedger({
+  projects,
+  failedOrganizationLogos,
+  onOrganizationLogoError,
+}: {
+  projects: PortfolioProject[];
+  failedOrganizationLogos: Set<string>;
+  onOrganizationLogoError: (logoUrl: string) => void;
+}) {
+  return (
+    <section
+      data-testid="portfolio-project-ledger"
+      className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card"
+    >
+      <div className="flex flex-col gap-3 border-b border-hairline bg-surface/80 px-4 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Project ledger
+          </div>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Active jobs grouped by project identity, financial posture, risk, and field controls.
+          </p>
+        </div>
+        <div className="inline-flex w-fit items-center justify-center rounded-md border border-hairline bg-card px-3 py-2 text-center">
+          <div>
+            <div className="text-xl font-medium leading-none tabular text-foreground">
+              {projects.length}
+            </div>
+            <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              showing
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        className={`hidden gap-4 border-b border-hairline px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground xl:grid ${PROJECT_LEDGER_GRID_CLASS}`}
+      >
+        <div>Project</div>
+        <div className="text-center">Financials</div>
+        <div>Risk exposure</div>
+        <div>IOR controls</div>
+        <div className="text-right">Posture</div>
+      </div>
+
+      {projects.length === 0 ? (
+        <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+          No projects match the current portfolio filters.
+        </div>
+      ) : (
+        <div className="divide-y divide-hairline">
+          {projects.map((project) => {
+            const status = statusFor(project.original_gp_pct, project.indicated_gp_pct);
+            const schedule = scheduleFor(
+              project.schedule_variance_weeks,
+              project.schedule_risk_count,
+            );
+            const daily = dailyReportFor(
+              project.daily_report_count,
+              project.days_since_daily_report,
+            );
+            const jobNumber = project.job_number || `ID ${project.id.slice(0, 8).toUpperCase()}`;
+            const projectHref = `/projects/${project.id}`;
+            const highlightRisk = status.label === "At Risk" || project.gp_at_risk > 0;
+            const isDemo = project.job_number === "DEMO-HARBOR";
+            const organizationLogoUrl =
+              project.organization_logo_url &&
+              !failedOrganizationLogos.has(project.organization_logo_url)
+                ? project.organization_logo_url
+                : "";
+            const fallbackInitial = (
+              project.organization_name ||
+              project.client ||
+              project.name ||
+              "O"
+            )
+              .trim()
+              .slice(0, 1)
+              .toUpperCase();
+            return (
+              <a
+                key={project.id}
+                href={projectHref}
+                className={`group grid gap-4 px-4 py-4 text-foreground transition hover:bg-surface/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-2 ${PROJECT_LEDGER_GRID_CLASS} ${
+                  highlightRisk ? "border-l-2 border-l-danger/60 bg-danger/5" : ""
+                }`}
+              >
+                <div className="flex min-w-0 gap-3">
+                  {organizationLogoUrl ? (
+                    <img
+                      src={organizationLogoUrl}
+                      alt={`${project.organization_name} logo`}
+                      className="mt-0.5 h-10 w-10 shrink-0 rounded-sm border border-hairline bg-card object-contain p-1"
+                      onError={() => onOrganizationLogoError(organizationLogoUrl)}
+                    />
+                  ) : (
+                    <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-sm border border-hairline bg-card text-sm font-semibold uppercase text-muted-foreground">
+                      {fallbackInitial}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <div className="truncate font-serif text-xl leading-tight text-foreground">
+                        {project.name}
+                      </div>
+                      {isDemo && (
+                        <span
+                          title="Seeded Overwatch teaching project"
+                          className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent"
+                        >
+                          Demo IOR
+                        </span>
+                      )}
+                      {project.warning_count > 0 && (
+                        <span
+                          title={`${project.warning_count} system risk${
+                            project.warning_count === 1 ? "" : "s"
+                          } detected`}
+                          className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-danger/15 px-1.5 text-[10px] font-semibold text-danger"
+                        >
+                          {project.warning_count}
+                        </span>
+                      )}
+                      {project.days_since_review !== null && project.days_since_review > 30 && (
+                        <span
+                          title="Project has not been reviewed in over 30 days"
+                          className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] font-semibold text-warning"
+                        >
+                          Review {project.days_since_review}d
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      <span className="font-medium text-foreground">{jobNumber}</span>
+                      {" · "}
+                      {project.project_manager || "Unassigned"}
+                      {" · "}
+                      {project.organization_name}
+                    </div>
+                    <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                      {project.client} · {project.phase} · {project.percent_complete}% complete
+                      {project.top_category && (
+                        <> · Top risk: {project.top_category.replace(/_/g, " ")}</>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid min-w-0 grid-cols-2 gap-2">
+                  <PortfolioLedgerStat
+                    label="Contract"
+                    value={fmtUSD(project.original_contract)}
+                    sub={`Plan ${fmtPct(project.original_gp_pct)}`}
+                  />
+                  <PortfolioLedgerStat
+                    label="Indicated"
+                    value={fmtUSD(project.indicated_gp)}
+                    sub={fmtPct(project.indicated_gp_pct)}
+                    tone={project.indicated_gp_pct < project.original_gp_pct ? "warning" : "accent"}
+                  />
+                  <PortfolioLedgerStat
+                    label="GP risk"
+                    value={fmtUSD(project.gp_at_risk)}
+                    sub="Margin erosion"
+                    tone={project.gp_at_risk > 0 ? "danger" : undefined}
+                  />
+                  <PortfolioLedgerStat
+                    label="Allocated"
+                    value={fmtUSD(project.risk_allocated)}
+                    sub="Current holds"
+                  />
+                </div>
+
+                <div className="min-w-0 rounded-md border border-hairline bg-surface/70 p-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Top exposure
+                  </div>
+                  {project.top_exposure_title ? (
+                    <div className="mt-2">
+                      <div className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
+                        {project.top_exposure_title}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        <span className="font-medium tabular text-danger">
+                          {fmtUSD(project.top_exposure_value)}
+                        </span>
+                        {project.top_exposure_hold_class && (
+                          <span>{project.top_exposure_hold_class}</span>
+                        )}
+                        {project.top_exposure_owner && <span>{project.top_exposure_owner}</span>}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-sm text-muted-foreground">No live exposure</div>
+                  )}
+                </div>
+
+                <div className="grid min-w-0 gap-2">
+                  <PortfolioLedgerState
+                    label="To-dos"
+                    detail={
+                      project.next_decision_due
+                        ? `Due ${shortDate(project.next_decision_due)}`
+                        : "No dated action"
+                    }
+                  >
+                    <PortfolioPill
+                      className={
+                        project.overdue_decision_count > 0
+                          ? "border-danger/40 bg-danger/10 text-danger"
+                          : project.active_decision_count > 0
+                            ? "border-warning/40 bg-warning/10 text-warning"
+                            : "border-success/40 bg-success/10 text-success"
+                      }
+                    >
+                      {project.overdue_decision_count > 0
+                        ? `${project.overdue_decision_count} overdue`
+                        : `${project.active_decision_count} open`}
+                    </PortfolioPill>
+                  </PortfolioLedgerState>
+                  <PortfolioLedgerState
+                    label="Schedule"
+                    detail={`${
+                      project.schedule_variance_weeks > 0
+                        ? `+${project.schedule_variance_weeks} wk`
+                        : "No slip"
+                    } · ${project.schedule_risk_count} risks`}
+                  >
+                    <PortfolioPill className={schedule.className}>
+                      {schedule.label} · {Math.round(schedule.score)}%
+                    </PortfolioPill>
+                  </PortfolioLedgerState>
+                  <PortfolioLedgerState
+                    label="Daily reports"
+                    detail={
+                      project.daily_report_count === 0
+                        ? "No job logs"
+                        : `${project.daily_report_count} logs · last ${shortDate(
+                            project.last_daily_report_date,
+                          )}${
+                            project.client_visible_daily_report_count > 0
+                              ? ` · ${project.client_visible_daily_report_count} client-visible`
+                              : ""
+                          }`
+                    }
+                  >
+                    <PortfolioPill className={daily.className}>{daily.label}</PortfolioPill>
+                  </PortfolioLedgerState>
+                </div>
+
+                <div className="flex min-w-0 flex-col items-start gap-2 md:items-end md:text-right">
+                  <PortfolioPill className={status.className}>{status.label}</PortfolioPill>
+                  <span className="text-xs font-medium text-muted-foreground transition group-hover:text-accent">
+                    Open project
+                  </span>
+                </div>
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PortfolioLedgerStat({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  tone?: "danger" | "accent" | "warning";
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "text-danger"
+      : tone === "accent"
+        ? "text-accent"
+        : tone === "warning"
+          ? "text-warning"
+          : "text-foreground";
+  return (
+    <div className="min-w-0 rounded-md border border-hairline bg-card/80 px-2.5 py-2 text-center">
+      <div className="min-h-[22px] text-center text-[9px] font-semibold uppercase leading-[1.15] tracking-[0.08em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 truncate text-sm font-semibold leading-tight tabular ${toneClass}`}>
+        {value}
+      </div>
+      <div className="mt-1 truncate text-[11px] leading-tight tabular text-muted-foreground">
+        {sub}
+      </div>
+    </div>
+  );
+}
+
+function PortfolioLedgerState({
+  label,
+  detail,
+  children,
+}: {
+  label: string;
+  detail: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-hairline bg-surface/70 px-3 py-2">
+      <div className="min-w-0">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          {label}
+        </div>
+        <div className="mt-1 line-clamp-2 text-[11px] leading-tight text-muted-foreground">
+          {detail}
+        </div>
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
   );
 }
 
@@ -1004,7 +1104,7 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
             Rollup of active jobs, margin at risk, current indicated profit, and schedule pressure.
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3 2xl:grid-cols-6">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
           <PortfolioSignal
             icon={<Activity className="h-3.5 w-3.5" />}
             label="Open projects"
@@ -1045,7 +1145,7 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(136px,1fr))]">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <PortfolioMetric label="Original GP" value={fmtUSD(totals.originalGP)} />
         <PortfolioMetric label="GP at risk" value={fmtUSD(totals.gpAtRisk)} tone="danger" />
         <PortfolioMetric
@@ -1186,7 +1286,7 @@ function PortfolioCrmDashboard({
         </Button>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-3 2xl:grid-cols-6">
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         <PortfolioSignal
           icon={<BriefcaseBusiness className="h-3.5 w-3.5" />}
           label="Open opps"
@@ -1331,12 +1431,14 @@ function PortfolioMetric({
           ? "text-warning"
           : "text-foreground";
   return (
-    <div className="flex min-h-[96px] min-w-0 flex-col justify-between rounded-md border border-hairline bg-surface p-3">
+    <div className="flex min-h-[104px] min-w-0 flex-col items-center justify-center rounded-md border border-hairline bg-surface p-3 text-center">
       <div className="min-h-[28px] text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
-      <div className="mt-auto">
-        <div className={`text-lg font-medium leading-none tabular ${toneClass}`}>{value}</div>
+      <div className="mt-3 min-w-0">
+        <div className={`truncate text-xl font-medium leading-none tabular ${toneClass}`}>
+          {value}
+        </div>
         <div className="mt-1 min-h-4 text-xs leading-4 tabular text-muted-foreground">
           {sub || "\u00a0"}
         </div>
@@ -1366,13 +1468,15 @@ function PortfolioSignal({
           : "border-hairline bg-surface text-foreground";
   return (
     <div
-      className={`flex min-h-[86px] min-w-0 flex-col justify-between rounded-md border p-3 ${toneClass}`}
+      className={`flex min-h-[88px] min-w-0 flex-col items-center justify-center rounded-md border p-3 text-center ${toneClass}`}
     >
-      <div className="flex min-h-[28px] items-start gap-1.5 text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.12em]">
+      <div className="flex min-h-[28px] items-start justify-center gap-1.5 text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.12em]">
         <span className="mt-0.5 shrink-0">{icon}</span>
         <span>{label}</span>
       </div>
-      <div className="mt-auto text-2xl font-medium leading-none tabular">{value}</div>
+      <div className="mt-3 max-w-full truncate text-3xl font-medium leading-none tabular">
+        {value}
+      </div>
     </div>
   );
 }

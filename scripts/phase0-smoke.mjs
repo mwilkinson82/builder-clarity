@@ -61,6 +61,26 @@ async function expectContains(relPath, patterns, label) {
   }
 }
 
+async function expectNotContains(relPath, patterns, label) {
+  let text;
+  try {
+    text = await read(relPath);
+  } catch (error) {
+    fail(label, `${relPath}: ${error.message}`);
+    return;
+  }
+
+  const present = patterns.filter((pattern) => pattern.test(text));
+  if (present.length === 0) {
+    pass(label);
+  } else {
+    fail(
+      label,
+      `Unexpected: ${present.map((pattern) => pattern.toString()).join(", ")} in ${relPath}`,
+    );
+  }
+}
+
 async function readAllMigrationSql() {
   const dir = path.join(root, "supabase/migrations");
   const files = (await readdir(dir)).filter((file) => file.endsWith(".sql")).sort();
@@ -228,9 +248,17 @@ await expectContains(
     /company-workspace-context/,
     /toast\.loading\("Creating project/,
     /toast\.success\("Project created/,
-    /window\.location\.assign\(`\/projects\/\$\{projectId\}`\)/,
+    /data-testid="portfolio-project-ledger"/,
+    /PROJECT_LEDGER_GRID_CLASS/,
+    /href=\{projectHref\}/,
   ],
-  "portfolio route supports member project creation, direct project navigation, and company-scoped header identity",
+  "portfolio route supports member project creation, responsive project ledger navigation, and company-scoped header identity",
+);
+
+await expectNotContains(
+  "src/routes/_authenticated/index.tsx",
+  [/min-w-\[1420px\]/, /from "@\/components\/ui\/table"/],
+  "portfolio project ledger does not use the old forced-width table",
 );
 
 await expectContains(
