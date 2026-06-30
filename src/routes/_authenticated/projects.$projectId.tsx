@@ -108,6 +108,7 @@ import { generateInvoicePdf } from "@/lib/invoice-pdf";
 import { toast } from "sonner";
 import {
   CalendarClock,
+  BriefcaseBusiness,
   ClipboardList,
   Download,
   ExternalLink,
@@ -1291,6 +1292,18 @@ function ProjectPage() {
         >
           <aside className="lg:sticky lg:top-6">
             <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1 shadow-card lg:flex-col lg:items-stretch lg:overflow-visible">
+              <a
+                href="/?tab=pipeline"
+                className="inline-flex min-w-[148px] items-center justify-start rounded-md border border-accent/25 bg-accent/10 px-3 py-3 text-left text-accent transition hover:border-accent/50 hover:bg-accent/15 lg:w-full"
+              >
+                <BriefcaseBusiness className="mr-2 h-4 w-4 shrink-0" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium leading-tight">Pipeline CRM</span>
+                  <span className="mt-0.5 block truncate text-[11px] font-normal opacity-80">
+                    Bid pipeline
+                  </span>
+                </span>
+              </a>
               {projectNavItems.map((item) => {
                 const Icon = item.icon;
                 return (
