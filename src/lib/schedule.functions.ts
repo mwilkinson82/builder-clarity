@@ -921,7 +921,7 @@ async function ensureScheduleWbsSection(
     name: sectionName,
     code: "",
     sort_order: ((last as { sort_order?: number } | null)?.sort_order ?? 0) + 10,
-  };
+  } as any;
   let { data: inserted, error: insertError } = await supabase
     .from("schedule_wbs_sections")
     .insert(payload)
