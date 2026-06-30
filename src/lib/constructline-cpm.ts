@@ -90,6 +90,17 @@ interface BuildOptions {
 
 const RELATIONSHIP_TYPES = new Set<ConstructLineRelationshipType>(["FS", "SS", "FF", "SF"]);
 
+type ActivityLogicSnapshot = Pick<
+  ScheduleActivityRow,
+  "id" | "activity_id" | "predecessor_activity_ids" | "successor_activity_ids"
+>;
+
+export type ActivityLogicReciprocalPatch = {
+  id: string;
+  predecessor_activity_ids: string[];
+  successor_activity_ids: string[];
+};
+
 interface WorkingTask {
   activity: ScheduleActivityRow;
   activityKey: string;
@@ -154,6 +165,71 @@ export function formatRelationshipLabel(
 ) {
   const lag = clampLagDays(link.lagDays);
   return `${link.relationshipType}${lag === 0 ? "" : lag > 0 ? `+${lag}d` : `${lag}d`}`;
+}
+
+export function buildReciprocalActivityLogicPatches(
+  before: ActivityLogicSnapshot,
+  after: ActivityLogicSnapshot,
+  activities: ActivityLogicSnapshot[],
+): ActivityLogicReciprocalPatch[] {
+  const oldKey = before.activity_id.trim();
+  const currentKey = after.activity_id.trim();
+  const currentKeyCandidates = [oldKey, currentKey].filter(Boolean);
+  if (currentKeyCandidates.length === 0) return [];
+
+  const predecessorLinks = parseDependencyLinks(after.predecessor_activity_ids);
+  const successorLinks = parseDependencyLinks(after.successor_activity_ids);
+  const predecessorByTarget = new Map(
+    predecessorLinks.map((link) => [normalizeActivityLogicKey(link.activityId), link]),
+  );
+  const successorByTarget = new Map(
+    successorLinks.map((link) => [normalizeActivityLogicKey(link.activityId), link]),
+  );
+  const patches: ActivityLogicReciprocalPatch[] = [];
+
+  for (const activity of activities) {
+    if (activity.id === after.id) continue;
+    const targetKey = normalizeActivityLogicKey(activity.activity_id);
+    if (!targetKey) continue;
+
+    let nextPredecessors = removeDependencyLinksToActivities(
+      activity.predecessor_activity_ids,
+      currentKeyCandidates,
+    );
+    let nextSuccessors = removeDependencyLinksToActivities(
+      activity.successor_activity_ids,
+      currentKeyCandidates,
+    );
+    const successorLink = successorByTarget.get(targetKey);
+    if (successorLink && currentKey) {
+      nextPredecessors = upsertDependencyLink(nextPredecessors, {
+        activityId: currentKey,
+        relationshipType: successorLink.relationshipType,
+        lagDays: successorLink.lagDays,
+      });
+    }
+    const predecessorLink = predecessorByTarget.get(targetKey);
+    if (predecessorLink && currentKey) {
+      nextSuccessors = upsertDependencyLink(nextSuccessors, {
+        activityId: currentKey,
+        relationshipType: predecessorLink.relationshipType,
+        lagDays: predecessorLink.lagDays,
+      });
+    }
+
+    if (
+      !areStringArraysEqual(nextPredecessors, activity.predecessor_activity_ids) ||
+      !areStringArraysEqual(nextSuccessors, activity.successor_activity_ids)
+    ) {
+      patches.push({
+        id: activity.id,
+        predecessor_activity_ids: nextPredecessors,
+        successor_activity_ids: nextSuccessors,
+      });
+    }
+  }
+
+  return patches;
 }
 
 export function buildConstructLineCpmModel(
@@ -559,6 +635,33 @@ function getRelationshipDrivenFreeFloat(
 
 function normalizeDependencyKey(value: string) {
   return parseConstructLineDependencyToken(value).activityId.trim().toLowerCase();
+}
+
+function parseDependencyLinks(values: string[]) {
+  return values.map(parseConstructLineDependencyToken).filter((link) => link.activityId.trim());
+}
+
+function normalizeActivityLogicKey(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function removeDependencyLinksToActivities(values: string[], activityIds: string[]) {
+  const idsToRemove = new Set(activityIds.map(normalizeActivityLogicKey).filter(Boolean));
+  return parseDependencyLinks(values)
+    .filter((link) => !idsToRemove.has(normalizeActivityLogicKey(link.activityId)))
+    .map(formatConstructLineDependencyToken);
+}
+
+function upsertDependencyLink(values: string[], link: ConstructLineDependencyToken) {
+  const targetKey = normalizeActivityLogicKey(link.activityId);
+  const withoutTarget = parseDependencyLinks(values).filter(
+    (item) => normalizeActivityLogicKey(item.activityId) !== targetKey,
+  );
+  return [...withoutTarget, link].map(formatConstructLineDependencyToken);
+}
+
+function areStringArraysEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 
 function parseLagDays(value: string | undefined) {

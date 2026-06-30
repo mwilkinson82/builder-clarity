@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  buildReciprocalActivityLogicPatches,
   buildConstructLineCpmModel,
   describeConstructLineDependencyToken,
   formatConstructLineDependencyToken,
@@ -93,5 +94,93 @@ assert.equal(byId.get("MS-001")?.isMilestone, true);
 assert.equal(byId.get("MS-001")?.totalFloat, 0);
 assert.equal(byId.get("C")?.isNearCritical, true);
 assert.equal(byId.get("C")?.isCritical, false);
+
+const reciprocalPatches = buildReciprocalActivityLogicPatches(
+  {
+    id: "b",
+    activity_id: "B",
+    predecessor_activity_ids: ["A|FS|0"],
+    successor_activity_ids: [],
+  },
+  {
+    id: "b",
+    activity_id: "B-REV",
+    predecessor_activity_ids: ["A|SS|2"],
+    successor_activity_ids: ["C|FF|-1"],
+  },
+  [
+    {
+      id: "a",
+      activity_id: "A",
+      predecessor_activity_ids: [],
+      successor_activity_ids: ["B|FS|0"],
+    },
+    {
+      id: "b",
+      activity_id: "B-REV",
+      predecessor_activity_ids: ["A|SS|2"],
+      successor_activity_ids: ["C|FF|-1"],
+    },
+    {
+      id: "c",
+      activity_id: "C",
+      predecessor_activity_ids: [],
+      successor_activity_ids: [],
+    },
+  ],
+);
+assert.deepEqual(reciprocalPatches, [
+  {
+    id: "a",
+    predecessor_activity_ids: [],
+    successor_activity_ids: ["B-REV|SS|2"],
+  },
+  {
+    id: "c",
+    predecessor_activity_ids: ["B-REV|FF|-1"],
+    successor_activity_ids: [],
+  },
+]);
+
+const deleteReciprocalPatches = buildReciprocalActivityLogicPatches(
+  {
+    id: "b",
+    activity_id: "B-REV",
+    predecessor_activity_ids: ["A|SS|2"],
+    successor_activity_ids: ["C|FF|-1"],
+  },
+  {
+    id: "b",
+    activity_id: "",
+    predecessor_activity_ids: [],
+    successor_activity_ids: [],
+  },
+  [
+    {
+      id: "a",
+      activity_id: "A",
+      predecessor_activity_ids: [],
+      successor_activity_ids: ["B-REV|SS|2"],
+    },
+    {
+      id: "c",
+      activity_id: "C",
+      predecessor_activity_ids: ["B-REV|FF|-1"],
+      successor_activity_ids: [],
+    },
+  ],
+);
+assert.deepEqual(deleteReciprocalPatches, [
+  {
+    id: "a",
+    predecessor_activity_ids: [],
+    successor_activity_ids: [],
+  },
+  {
+    id: "c",
+    predecessor_activity_ids: [],
+    successor_activity_ids: [],
+  },
+]);
 
 console.log("ConstructLine CPM smoke checks passed.");

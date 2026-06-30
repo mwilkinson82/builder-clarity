@@ -11,6 +11,7 @@ import {
   ensureHarborDemoCpmActivitiesForProject,
   getHarborDemoCpmActivityRows,
 } from "@/lib/projects.functions";
+import { buildReciprocalActivityLogicPatches } from "@/lib/constructline-cpm";
 
 export type MilestoneStatus = "on_track" | "at_risk" | "delayed" | "complete";
 export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_decision";
@@ -716,6 +717,44 @@ async function ensureScheduleWbsSection(
   }
 }
 
+async function syncReciprocalScheduleActivityLogic(
+  supabase: {
+    from: (table: string) => any;
+  },
+  projectId: string,
+  beforeActivity: ScheduleActivityRow,
+  afterActivity: ScheduleActivityRow,
+) {
+  const { data: activityRows, error: activityRowsError } = await supabase
+    .from("schedule_activities")
+    .select("*")
+    .eq("project_id", projectId);
+  if (activityRowsError) throw new Error(activityRowsError.message);
+  const reciprocalPatches = buildReciprocalActivityLogicPatches(
+    beforeActivity,
+    afterActivity,
+    ((activityRows ?? []) as unknown as Array<Record<string, unknown>>).map((row) =>
+      normalizeScheduleActivity(row),
+    ),
+  );
+  if (reciprocalPatches.length === 0) return;
+
+  const reciprocalResults = await Promise.all(
+    reciprocalPatches.map((patch) =>
+      supabase
+        .from("schedule_activities")
+        .update({
+          predecessor_activity_ids: patch.predecessor_activity_ids,
+          successor_activity_ids: patch.successor_activity_ids,
+        })
+        .eq("id", patch.id)
+        .eq("project_id", projectId),
+    ),
+  );
+  const reciprocalError = reciprocalResults.find((result) => result.error)?.error;
+  if (reciprocalError) throw new Error(reciprocalError.message);
+}
+
 export const createScheduleWbsSection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId: string; name: string }) =>
@@ -889,14 +928,32 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
     const sortOrder =
       rest.sort_order ?? (((last as any)?.sort_order as number | undefined) ?? 0) + 1;
     const activityId = rest.activity_id || `A-${String(sortOrder).padStart(3, "0")}`;
-    const { error } = await context.supabase.from("schedule_activities" as any).insert({
-      project_id: projectId,
-      ...rest,
-      activity_id: activityId,
-      sort_order: sortOrder,
-    });
+    const { data: createdRow, error } = await context.supabase
+      .from("schedule_activities" as any)
+      .insert({
+        project_id: projectId,
+        ...rest,
+        activity_id: activityId,
+        sort_order: sortOrder,
+      })
+      .select("*")
+      .single();
     if (error) throw new Error(error.message);
     await ensureScheduleWbsSection(context.supabase as any, projectId, rest.division || "General");
+    const createdActivity = normalizeScheduleActivity(
+      createdRow as unknown as Record<string, unknown>,
+    );
+    await syncReciprocalScheduleActivityLogic(
+      context.supabase as any,
+      projectId,
+      {
+        ...createdActivity,
+        activity_id: "",
+        predecessor_activity_ids: [],
+        successor_activity_ids: [],
+      },
+      createdActivity,
+    );
     return { ok: true };
   });
 
@@ -906,24 +963,54 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), patch: activityPatch }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    const { data: beforeRow, error: beforeError } = await context.supabase
+      .from("schedule_activities" as any)
+      .select("*")
+      .eq("id", data.id)
+      .single();
+    if (beforeError) throw new Error(beforeError.message);
+    const beforeActivity = normalizeScheduleActivity(
+      beforeRow as unknown as Record<string, unknown>,
+    );
+
     const { error } = await context.supabase
       .from("schedule_activities" as any)
       .update(data.patch as any)
       .eq("id", data.id);
     if (error) throw new Error(error.message);
-    if (data.patch.division) {
-      const { data: activity, error: activityError } = await context.supabase
+
+    const shouldSyncLogic =
+      "activity_id" in data.patch ||
+      "predecessor_activity_ids" in data.patch ||
+      "successor_activity_ids" in data.patch;
+    let afterActivity = beforeActivity;
+    if ("division" in data.patch || shouldSyncLogic) {
+      const { data: afterRow, error: afterError } = await context.supabase
         .from("schedule_activities" as any)
-        .select("project_id,division")
+        .select("*")
         .eq("id", data.id)
         .single();
-      if (activityError) throw new Error(activityError.message);
+      if (afterError) throw new Error(afterError.message);
+      afterActivity = normalizeScheduleActivity(afterRow as unknown as Record<string, unknown>);
+    }
+
+    if ("division" in data.patch) {
       await ensureScheduleWbsSection(
         context.supabase as any,
-        (activity as unknown as Record<string, unknown>).project_id as string,
-        str((activity as unknown as Record<string, unknown>).division, "General"),
+        afterActivity.project_id,
+        afterActivity.division || "General",
       );
     }
+
+    if (shouldSyncLogic) {
+      await syncReciprocalScheduleActivityLogic(
+        context.supabase as any,
+        afterActivity.project_id,
+        beforeActivity,
+        afterActivity,
+      );
+    }
+
     return { ok: true };
   });
 
@@ -931,11 +1018,32 @@ export const deleteScheduleActivity = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
+    const { data: beforeRow, error: beforeError } = await context.supabase
+      .from("schedule_activities" as any)
+      .select("*")
+      .eq("id", data.id)
+      .single();
+    if (beforeError) throw new Error(beforeError.message);
+    const beforeActivity = normalizeScheduleActivity(
+      beforeRow as unknown as Record<string, unknown>,
+    );
+
     const { error } = await context.supabase
       .from("schedule_activities" as any)
       .delete()
       .eq("id", data.id);
     if (error) throw new Error(error.message);
+    await syncReciprocalScheduleActivityLogic(
+      context.supabase as any,
+      beforeActivity.project_id,
+      beforeActivity,
+      {
+        ...beforeActivity,
+        activity_id: "",
+        predecessor_activity_ids: [],
+        successor_activity_ids: [],
+      },
+    );
     return { ok: true };
   });
 

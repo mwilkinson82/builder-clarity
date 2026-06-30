@@ -1711,8 +1711,14 @@ export function CpmActivityPlanner({
   }, [isFocusOpen]);
 
   const addActivity = () => {
+    const validationError = validateActivityDraft(draft, sortedActivities);
+    if (validationError) {
+      toast.error("Activity is not ready to save", {
+        description: validationError,
+      });
+      return;
+    }
     const name = draft.name.trim();
-    if (!name) return;
     const milestoneDate = getMilestoneDraftDate(draft);
     onAddActivity({
       activity_id: draft.activity_id.trim() || undefined,
@@ -1727,6 +1733,21 @@ export function CpmActivityPlanner({
     });
     setDraft(emptyActivityDraft());
     setShowDraft(false);
+  };
+  const openActivityDraft = () => {
+    setDraft({
+      ...emptyActivityDraft(),
+      activity_id: getNextActivityId(sortedActivities),
+      division: knownWbsDivisions[0] ?? "General",
+    });
+    setShowDraft(true);
+  };
+  const toggleActivityDraft = () => {
+    if (showDraft) {
+      setShowDraft(false);
+      return;
+    }
+    openActivityDraft();
   };
   const openMilestoneDraft = () => {
     const existingIds = new Set(sortedActivities.map((activity) => activity.activity_id));
@@ -1845,6 +1866,19 @@ export function CpmActivityPlanner({
   const saveDataDate = () => {
     if (!dataDateDraft || dataDateUpdate.isPending || !isDataDateDirty) return;
     dataDateUpdate.mutate(dataDateDraft);
+  };
+  const confirmDeleteActivity = (activity: ScheduleActivityRow) => {
+    const label = activity.activity_id
+      ? `${activity.activity_id} - ${activity.name}`
+      : activity.name;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(`Delete ${label}? This also removes its logic ties from linked activities.`)
+    ) {
+      return;
+    }
+    if (selectedActivityId === activity.id) setSelectedActivityId(null);
+    onDeleteActivity(activity.id);
   };
 
   return (
@@ -2114,11 +2148,11 @@ export function CpmActivityPlanner({
                 />
               </LabeledField>
               <LabeledField label="Division">
-                <Input
+                <ActivityDivisionInput
                   value={draft.division}
-                  onChange={(e) => setDraft({ ...draft, division: e.target.value })}
-                  placeholder="06 Wood"
-                  className="h-10"
+                  onChange={(division) => setDraft({ ...draft, division })}
+                  options={knownWbsDivisions}
+                  listId="new-activity-wbs-divisions"
                 />
               </LabeledField>
               <LabeledField label="Start">
@@ -2211,7 +2245,7 @@ export function CpmActivityPlanner({
               canSeedActivities={milestoneSeedRows.length > 0}
               isSeedingActivities={isSeedingActivities}
               onPrint={() => typeof window !== "undefined" && window.print()}
-              onToggleActivityDraft={() => setShowDraft((open) => !open)}
+              onToggleActivityDraft={toggleActivityDraft}
               isActivityDraftOpen={showDraft}
               onAddMilestone={openMilestoneDraft}
               dataDateDraft={dataDateDraft}
@@ -2237,8 +2271,8 @@ export function CpmActivityPlanner({
           showLogicLines={showLogicLines}
           onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
           onDeleteActivity={(id) => {
-            if (selectedActivityId === id) setSelectedActivityId(null);
-            onDeleteActivity(id);
+            const activity = sortedActivities.find((item) => item.id === id);
+            if (activity) confirmDeleteActivity(activity);
           }}
         />
       </div>
@@ -2322,8 +2356,8 @@ export function CpmActivityPlanner({
             isFocusMode
             onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
             onDeleteActivity={(id) => {
-              if (selectedActivityId === id) setSelectedActivityId(null);
-              onDeleteActivity(id);
+              const activity = sortedActivities.find((item) => item.id === id);
+              if (activity) confirmDeleteActivity(activity);
             }}
           />
         </div>
@@ -2336,11 +2370,8 @@ export function CpmActivityPlanner({
           isSaving={isSavingActivity}
           onClose={() => setSelectedActivityId(null)}
           onSave={(patch) => onPatchActivity(selectedActivity.id, patch)}
-          onDelete={() => {
-            const id = selectedActivity.id;
-            setSelectedActivityId(null);
-            onDeleteActivity(id);
-          }}
+          onDelete={() => confirmDeleteActivity(selectedActivity)}
+          divisionOptions={knownWbsDivisions}
           delayFragments={delayFragments}
           delayFragmentPersistence={delayFragmentPersistence}
           isSavingDelayFragment={isSavingDelayFragment}
@@ -2537,8 +2568,8 @@ function CpmGridToolbar({
   onSaveDataDate: () => void;
 }) {
   return (
-    <div className="grid w-full min-w-0 gap-2 lg:grid-cols-2 2xl:grid-cols-[minmax(320px,1.15fr)_minmax(430px,1.35fr)_minmax(390px,1.25fr)]">
-      <CpmToolbarGroup label="Data Date" className="lg:col-span-2 2xl:col-span-1">
+    <div className="grid w-full min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-12">
+      <CpmToolbarGroup label="Schedule snapshot" className="xl:col-span-4 2xl:col-span-3">
         <CpmDataDateControl
           value={dataDateDraft}
           savedValue={latestDataDate}
@@ -2549,10 +2580,10 @@ function CpmGridToolbar({
           embedded
         />
       </CpmToolbarGroup>
-      <CpmToolbarGroup label="View">
+      <CpmToolbarGroup label="Show" className="xl:col-span-8 2xl:col-span-5">
         <ScheduleViewControls value={scheduleView} onChange={onScheduleViewChange} />
       </CpmToolbarGroup>
-      <CpmToolbarGroup label="Sort & WBS">
+      <CpmToolbarGroup label="Order and WBS" className="xl:col-span-6 2xl:col-span-4">
         <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
         <Button
           type="button"
@@ -2564,7 +2595,7 @@ function CpmGridToolbar({
           Manage WBS
         </Button>
       </CpmToolbarGroup>
-      <CpmToolbarGroup label="Scale & Logic">
+      <CpmToolbarGroup label="Scale and logic" className="xl:col-span-6 2xl:col-span-4">
         <ScheduleZoomControls dayPx={dayPx} onChange={onZoomChange} />
         <Button
           type="button"
@@ -2586,7 +2617,7 @@ function CpmGridToolbar({
           Expand
         </Button>
       </CpmToolbarGroup>
-      <CpmToolbarGroup label="Output">
+      <CpmToolbarGroup label="Output" className="xl:col-span-6 2xl:col-span-4">
         <Button
           type="button"
           variant="outline"
@@ -2608,7 +2639,7 @@ function CpmGridToolbar({
           Print 11x17
         </Button>
       </CpmToolbarGroup>
-      <CpmToolbarGroup label="Add">
+      <CpmToolbarGroup label="Add schedule rows" className="xl:col-span-6 2xl:col-span-4">
         <Button
           type="button"
           className="h-9 gap-2 whitespace-nowrap"
@@ -2642,7 +2673,10 @@ function CpmToolbarGroup({
 }) {
   return (
     <div
-      className={cn("min-w-0 rounded-md border border-hairline bg-surface/70 px-3 py-2", className)}
+      className={cn(
+        "min-w-0 rounded-md border border-hairline bg-surface/70 px-3 py-2.5",
+        className,
+      )}
     >
       <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
@@ -3480,6 +3514,40 @@ function LabeledField({ label, children }: { label: string; children: ReactNode 
   );
 }
 
+function ActivityDivisionInput({
+  value,
+  onChange,
+  options,
+  listId,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  listId: string;
+}) {
+  const normalizedOptions = Array.from(
+    new Set(options.map((option) => option.trim()).filter(Boolean)),
+  );
+  return (
+    <>
+      <Input
+        list={normalizedOptions.length > 0 ? listId : undefined}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Choose or type WBS"
+        className="h-10 min-w-0"
+      />
+      {normalizedOptions.length > 0 && (
+        <datalist id={listId}>
+          {normalizedOptions.map((option) => (
+            <option key={option} value={option} />
+          ))}
+        </datalist>
+      )}
+    </>
+  );
+}
+
 function ActivityScheduleMatrix({
   model,
   delayFragments,
@@ -3514,11 +3582,11 @@ function ActivityScheduleMatrix({
   const tableWidth = isPrintMode ? CONSTRUCTLINE_PRINT_TABLE_WIDTH : isFitZoom ? 760 : 860;
   const matrixScrollRef = useRef<HTMLDivElement | null>(null);
   const [matrixViewportWidth, setMatrixViewportWidth] = useState(0);
-  const fitTimelineWidth = Math.max(0, matrixViewportWidth - tableWidth);
+  const fitTimelineTargetWidth = Math.max(560, matrixViewportWidth - tableWidth);
   const printDayPx = CONSTRUCTLINE_PRINT_TIMELINE_WIDTH / Math.max(1, model.totalTimelineDays);
   const fitDayPx = Math.max(
     CONSTRUCTLINE_FIT_DAY_PX,
-    fitTimelineWidth / Math.max(1, model.totalTimelineDays),
+    fitTimelineTargetWidth / Math.max(1, model.totalTimelineDays),
   );
   const activeDayPx = isPrintMode ? printDayPx : isFitZoom ? fitDayPx : dayPx;
   const tableColumns = isPrintMode
@@ -3532,7 +3600,7 @@ function ActivityScheduleMatrix({
   const timelineWidth = isPrintMode
     ? CONSTRUCTLINE_PRINT_TIMELINE_WIDTH
     : isFitZoom
-      ? Math.max(480, fitTimelineWidth, model.totalTimelineDays * activeDayPx)
+      ? Math.ceil(model.totalTimelineDays * activeDayPx)
       : Math.max(720, model.totalTimelineDays * activeDayPx);
   useEffect(() => {
     if (isPrintMode || model.groups.length === 0 || typeof ResizeObserver === "undefined") return;
@@ -5098,6 +5166,7 @@ function ActivityGanttRow({
 function ActivityDetailDialog({
   activity,
   activities,
+  divisionOptions,
   delayFragments,
   delayFragmentPersistence,
   isSaving,
@@ -5111,6 +5180,7 @@ function ActivityDetailDialog({
 }: {
   activity: ScheduleActivityRow;
   activities: ScheduleActivityRow[];
+  divisionOptions: string[];
   delayFragments: ScheduleDelayFragmentRow[];
   delayFragmentPersistence: "ready" | "migration_required";
   isSaving: boolean;
@@ -5144,11 +5214,12 @@ function ActivityDetailDialog({
 
   const saveActivity = async () => {
     if (saving) return;
-    const name = draft.name.trim();
-    if (!name) {
-      setSaveError("Activity name is required.");
+    const validationError = validateActivityDraft(draft, activities, activity.id);
+    if (validationError) {
+      setSaveError(validationError);
       return;
     }
+    const name = draft.name.trim();
     const milestoneDate = getMilestoneDraftDate(draft);
     setSaveError(null);
     setIsSubmitting(true);
@@ -5258,10 +5329,11 @@ function ActivityDetailDialog({
                 />
               </LabeledField>
               <LabeledField label="Division">
-                <Input
+                <ActivityDivisionInput
                   value={draft.division}
-                  onChange={(e) => setDraft({ ...draft, division: e.target.value })}
-                  className="h-10 min-w-0"
+                  onChange={(division) => setDraft({ ...draft, division })}
+                  options={divisionOptions}
+                  listId={`activity-${activity.id}-wbs-divisions`}
                 />
               </LabeledField>
               <LabeledField label="Start">
@@ -5743,6 +5815,42 @@ function milestoneActivityNotes(milestone: MilestoneRow) {
   pieces.push(`Milestone status: ${STATUS_LABEL[milestone.status]}.`);
   if (milestone.delay_reason) pieces.push(`Milestone note: ${milestone.delay_reason}`);
   return pieces.join(" ");
+}
+
+function getNextActivityId(activities: ScheduleActivityRow[]) {
+  const maxAutoNumber = activities.reduce((max, activity) => {
+    const match = activity.activity_id.trim().match(/^A-(\d+)$/i);
+    if (!match) return max;
+    return Math.max(max, Number.parseInt(match[1], 10) || 0);
+  }, 0);
+  const existingIds = new Set(activities.map((activity) => activity.activity_id).filter(Boolean));
+  return uniqueActivityId(`A-${String(maxAutoNumber + 1).padStart(3, "0")}`, existingIds);
+}
+
+function validateActivityDraft(
+  draft: ActivityDraft,
+  activities: ScheduleActivityRow[],
+  currentActivityId?: string,
+) {
+  const activityId = draft.activity_id.trim();
+  const name = draft.name.trim();
+  if (!activityId) return "Activity ID is required.";
+  if (!name) return "Activity name is required.";
+  const duplicate = activities.find(
+    (activity) =>
+      activity.id !== currentActivityId &&
+      activity.activity_id.trim().toLowerCase() === activityId.toLowerCase(),
+  );
+  if (duplicate) return `${activityId} is already used by ${duplicate.name}.`;
+
+  const milestoneDate = getMilestoneDraftDate(draft);
+  if (draft.is_milestone && !milestoneDate) return "Milestones need a schedule date.";
+  const start = parseDateMs(draft.start_date);
+  const finish = parseDateMs(draft.finish_date);
+  if (start != null && finish != null && finish < start) {
+    return "Finish date cannot be earlier than start date.";
+  }
+  return null;
 }
 
 function parsePercent(value: string | number | null | undefined) {

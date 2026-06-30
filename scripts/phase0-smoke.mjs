@@ -484,6 +484,19 @@ await expectContains(
 );
 
 await expectContains(
+  "src/routes/_authenticated/projects.$projectId.schedule.tsx",
+  [
+    /createScheduleActivity/,
+    /updateScheduleActivity/,
+    /deleteScheduleActivity/,
+    /onAddActivity/,
+    /onPatchActivity/,
+    /onDeleteActivity/,
+  ],
+  "dedicated schedule route wires CPM activity create, update, and delete mutations",
+);
+
+await expectContains(
   "src/components/outcome/ScheduleRisk.tsx",
   [
     /createScheduleUpdate/,
@@ -494,6 +507,7 @@ await expectContains(
     /Money exposure in update/,
     /schedule_money_exposure/,
     /Construction schedule/,
+    /CPM schedule workbench/,
     /Activity table \+ Gantt/,
     /Build from milestones/,
     /CPM activity detail/,
