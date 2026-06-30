@@ -306,7 +306,7 @@ export const costLibraryTemplateCsv = [
   .map((row) => row.join(","))
   .join("\n");
 
-export const estimateLineTemplateCsv = [
+export const estimateLineTemplateRows = [
   [
     "Cost Code",
     "CSI Division",
@@ -318,8 +318,30 @@ export const estimateLineTemplateCsv = [
     "Labor $/Unit",
     "Notes",
   ],
-  ["06-100", "06", "Rough framing package", "Structure", "LS", "1", "185000", "62000", ""],
-  ["09-510", "09", "Interior paint", "Finishes", "SF", "18500", "0.58", "1.35", ""],
-]
+  [
+    "06-100",
+    "06",
+    "Rough framing package",
+    "Structure",
+    "LS",
+    "1",
+    "185000",
+    "62000",
+    "Keep reusable master sheet scopes here.",
+  ],
+  [
+    "09-510",
+    "09",
+    "Interior paint",
+    "Finishes",
+    "SF",
+    "18500",
+    "0.58",
+    "1.35",
+    "Update quantities and unit costs before importing.",
+  ],
+];
+
+export const estimateLineTemplateCsv = estimateLineTemplateRows
   .map((row) => row.join(","))
   .join("\n");

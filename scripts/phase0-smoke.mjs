@@ -147,6 +147,7 @@ await expectFile("src/routes/_authenticated/projects.$projectId.tsx", "project r
 await expectFile("src/routes/_authenticated/client.projects.$projectId.tsx", "client portal route");
 await expectFile("src/routes/_authenticated/team.tsx", "company workspace route");
 await expectFile("src/routes/_authenticated/estimates.tsx", "estimates route");
+await expectFile("src/routes/_authenticated/estimate-masters.tsx", "estimate master sheets route");
 await expectFile("src/routes/_authenticated/estimates.$estimateId.tsx", "estimate workspace route");
 await expectFile("src/routes/_authenticated/cost-library.tsx", "cost library route");
 await expectFile("src/components/estimates/EstimateWorkspace.tsx", "estimate workspace component");
@@ -189,8 +190,8 @@ await expectContains(
 
 await expectContains(
   "src/routeTree.gen.ts",
-  [/fullPath:\s*'\/estimates'/, /fullPath:\s*'\/cost-library'/],
-  "generated route tree includes estimating workspace and cost library routes",
+  [/fullPath:\s*'\/estimates'/, /fullPath:\s*'\/estimate-masters'/, /fullPath:\s*'\/cost-library'/],
+  "generated route tree includes estimating workspace, master sheets, and cost library routes",
 );
 
 await expectContains(
@@ -710,32 +711,56 @@ await expectContains(
 
 await expectContains(
   "src/routes/_authenticated/estimates.tsx",
-  [/Outlet/, /useLocation/, /\^\\\/estimates\\\/\[\^\/\]\+/],
-  "estimate detail route renders its workspace instead of being masked by the list route",
+  [
+    /Outlet/,
+    /useLocation/,
+    /\^\\\/estimates\\\/\[\^\/\]\+/,
+    /Master Sheets/,
+    /MASTER_ESTIMATE_PROJECT_TYPE/,
+  ],
+  "estimate detail route renders its workspace and project estimates stay separate from master sheets",
+);
+
+await expectContains(
+  "src/routes/_authenticated/estimate-masters.tsx",
+  [
+    /Master Estimate Sheets/,
+    /MASTER_ESTIMATE_PROJECT_TYPE/,
+    /New Master Sheet/,
+    /Project Estimates/,
+    /Create Master Sheet/,
+    /window\.location\.assign\(`\/estimates\/\$\{result\.id\}`\)/,
+    /window\.location\.assign\(`\/estimates\/\$\{estimate\.id\}`\)/,
+  ],
+  "estimate master sheets route provides a separate prep workspace",
 );
 
 await expectContains(
   "src/components/estimates/EstimateWorkspace.tsx",
   [
-    /Import Rows/,
-    /Template/,
-    /Import Estimate Rows/,
-    /Replace worksheet/,
-    /Append rows/,
+    /Import Master Sheet/,
+    /Master Sheet Template/,
+    /Import Master Estimate/,
+    /Replace this worksheet/,
+    /Add to this worksheet/,
+    /MASTER_ESTIMATE_PROJECT_TYPE/,
+    /Create Estimate/,
     /parseEstimateLineRows/,
     /parseCsv/,
     /parseXlsx/,
     /parsePaste/,
     /estimateLineTemplateCsv/,
+    /estimateLineTemplateRows/,
     /materialTotal/,
     /laborTotal/,
     /direct/,
+    /min-w-\[1720px\] table-fixed/,
     /data-estimate-grid-cell/,
     /handleGridKeyDown/,
     /ArrowDown/,
     /onCreateNextRow/,
   ],
-  "estimate workspace UI can bulk import worksheet rows and supports spreadsheet navigation",
+  "estimate workspace UI can bulk import master sheets and keeps the worksheet grid readable",
 );
 
 const sql = await readAllMigrationSql();
