@@ -1406,7 +1406,7 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       );
       const { error: wbsLinkError } = await context.supabase
         .from("schedule_activities")
-        .update({ wbs_section_id: wbsSectionId })
+        .update({ wbs_section_id: wbsSectionId } as any)
         .eq("id", data.id);
       if (wbsLinkError && !isMissingRestColumn(wbsLinkError, "wbs_section_id")) {
         throw new Error(wbsLinkError.message);
