@@ -6,7 +6,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -465,7 +465,23 @@ function ProjectPage() {
   const billingCreate = useServerMutation<Record<string, unknown>>(createBillingFn as never);
   const billingUpdate = useServerMutation<Record<string, unknown>>(updateBillingFn as never);
   const billingDelete = useServerMutation<{ id: string }>(deleteBillingFn);
-  const invoiceCreate = useServerMutation<Record<string, unknown>>(createInvoiceFn as never);
+  const invoiceCreate = useMutation({
+    mutationFn: (input: { projectId: string } & InvoiceDraft) => createInvoiceFn({ data: input }),
+    onSuccess: (_result, input) => {
+      invalidate();
+      toast.success("Invoice created", {
+        description: `${input.invoice_number || "Invoice"} is now in the billing ledger.`,
+      });
+    },
+    onError: (err) => {
+      toast.error("Invoice did not save", {
+        description:
+          err instanceof Error
+            ? err.message
+            : "Publish the invoice/payment migration and try again.",
+      });
+    },
+  });
   const invoiceUpdate = useServerMutation<Record<string, unknown>>(updateInvoiceFn as never);
   const invoiceDelete = useServerMutation<{ id: string }>(deleteInvoiceFn);
   const paymentRecord = useServerMutation<Record<string, unknown>>(recordPaymentFn as never);
@@ -958,25 +974,8 @@ function ProjectPage() {
     );
   };
 
-  const handleCreateInvoice = (input: InvoiceDraft) => {
-    invoiceCreate.mutate(
-      { projectId, ...input },
-      {
-        onSuccess: () => {
-          toast.success("Invoice created", {
-            description: `${input.invoice_number || "Invoice"} is now in the billing ledger.`,
-          });
-        },
-        onError: (err) => {
-          toast.error("Invoice did not save", {
-            description:
-              err instanceof Error
-                ? err.message
-                : "Publish the invoice/payment migration and try again.",
-          });
-        },
-      },
-    );
+  const handleCreateInvoice = async (input: InvoiceDraft) => {
+    await invoiceCreate.mutateAsync({ projectId, ...input });
   };
 
   const handleUpdateInvoice = (id: string, patch: Partial<BillingInvoiceRow>) => {
@@ -1927,7 +1926,7 @@ function BillingWorkspace({
       unit?: string;
     },
   ) => void;
-  onCreateInvoice: (input: InvoiceDraft) => void;
+  onCreateInvoice: (input: InvoiceDraft) => Promise<void>;
   onUpdateInvoice: (id: string, patch: Partial<BillingInvoiceRow>) => void;
   onDeleteInvoice: (id: string) => void;
   onRecordPayment: (input: PaymentDraft) => void;
@@ -2008,6 +2007,12 @@ function BillingWorkspace({
         : onlinePayReadyInvoices.length === 0
           ? "PDF and email are ready. Online pay links unlock after Stripe Connect is finished in Your Company."
           : `${onlinePayReadyInvoices.length} invoice${onlinePayReadyInvoices.length === 1 ? "" : "s"} can be paid online by the client.`;
+  const activeBillingInvoices = billingInvoices.filter((invoice) => invoice.status !== "void");
+  const getActiveInvoiceForPayApp = (payAppId: string) =>
+    activeBillingInvoices.find((invoice) => invoice.billing_application_id === payAppId);
+  const uninvoicedBillingApplications = billingApplications.filter(
+    (app) => !getActiveInvoiceForPayApp(app.id),
+  );
 
   const buildDraft = (): BillingDraft => {
     const nextNumber = String(billingApplications.length + 1).padStart(3, "0");
@@ -2071,10 +2076,26 @@ function BillingWorkspace({
   const [draft, setDraft] = useState<BillingDraft>(() => buildDraft());
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(() => buildInvoiceDraft());
+  const [invoiceError, setInvoiceError] = useState("");
   const draftOpenReceivable = Math.max(
     0,
     draft.amount_billed - draft.paid_to_date - draft.retainage,
   );
+  const selectedPayAppInvoice = invoiceDraft.billing_application_id
+    ? getActiveInvoiceForPayApp(invoiceDraft.billing_application_id)
+    : undefined;
+  const normalizedInvoiceNumber = invoiceDraft.invoice_number.trim().toLowerCase();
+  const duplicateInvoiceNumber = normalizedInvoiceNumber
+    ? activeBillingInvoices.find(
+        (invoice) => invoice.invoice_number.trim().toLowerCase() === normalizedInvoiceNumber,
+      )
+    : undefined;
+  const invoiceBlockingMessage = selectedPayAppInvoice
+    ? `This pay app already has invoice ${selectedPayAppInvoice.invoice_number}. Edit or void the existing invoice before creating another.`
+    : duplicateInvoiceNumber
+      ? `Invoice ${invoiceDraft.invoice_number.trim()} already exists. Use a unique invoice number.`
+      : "";
+  const invoiceDialogMessage = invoiceError || invoiceBlockingMessage;
 
   const openPayAppDialog = () => {
     setDraft(buildDraft());
@@ -2086,19 +2107,50 @@ function BillingWorkspace({
     setPayAppOpen(false);
   };
 
-  const openInvoiceDialog = () => {
-    setInvoiceDraft(buildInvoiceDraft(billingApplications[0]));
+  const openInvoiceDialog = (app?: BillingApplicationRow) => {
+    setInvoiceError("");
+    if (app) {
+      const existingInvoice = getActiveInvoiceForPayApp(app.id);
+      if (existingInvoice) {
+        toast.warning("Pay app already invoiced", {
+          description: `${app.application_number || "This pay app"} is linked to ${existingInvoice.invoice_number}.`,
+        });
+        setInvoiceOpen(false);
+        return;
+      }
+      setInvoiceDraft(buildInvoiceDraft(app));
+      setInvoiceOpen(true);
+      return;
+    }
+    setInvoiceDraft(buildInvoiceDraft(uninvoicedBillingApplications[0]));
     setInvoiceOpen(true);
   };
 
   const selectInvoiceSource = (payAppId: string) => {
     const app = billingApplications.find((item) => item.id === payAppId);
+    const existingInvoice = app ? getActiveInvoiceForPayApp(app.id) : undefined;
+    if (app && existingInvoice) {
+      setInvoiceError(
+        `${app.application_number || "This pay app"} already has invoice ${existingInvoice.invoice_number}.`,
+      );
+      return;
+    }
+    setInvoiceError("");
     setInvoiceDraft(buildInvoiceDraft(app));
   };
 
-  const saveInvoice = () => {
-    onCreateInvoice(invoiceDraft);
-    setInvoiceOpen(false);
+  const saveInvoice = async () => {
+    setInvoiceError("");
+    if (invoiceBlockingMessage) {
+      setInvoiceError(invoiceBlockingMessage);
+      return;
+    }
+    try {
+      await onCreateInvoice(invoiceDraft);
+      setInvoiceOpen(false);
+    } catch (error) {
+      setInvoiceError(error instanceof Error ? error.message : "Invoice did not save.");
+    }
   };
 
   return (
@@ -2310,45 +2362,26 @@ function BillingWorkspace({
               Holds {fmtUSD(holds)}
             </div>
           </div>
-          <div className="overflow-x-auto rounded-md border border-hairline">
-            <table className="min-w-[1180px] w-full text-sm">
-              <thead className="bg-surface text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left">Pay app</th>
-                  <th className="px-3 py-2 text-left">Invoice</th>
-                  <th className="px-3 py-2 text-left">Submitted / Due</th>
-                  <th className="px-3 py-2 text-right">Contract</th>
-                  <th className="px-3 py-2 text-right">COs</th>
-                  <th className="px-3 py-2 text-right">Billed</th>
-                  <th className="px-3 py-2 text-right">Paid</th>
-                  <th className="px-3 py-2 text-right">Retainage</th>
-                  <th className="px-3 py-2 text-right">Open A/R</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                  <th className="w-10 px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-hairline">
-                {billingApplications.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={11}
-                      className="px-3 py-8 text-center text-sm text-muted-foreground"
-                    >
-                      No pay applications logged yet. Add the first pay app above.
-                    </td>
-                  </tr>
-                ) : (
-                  billingApplications.map((app) => (
-                    <BillingApplicationRowEditor
-                      key={app.id}
-                      app={app}
-                      onPatch={(patch) => onUpdate(app.id, patch)}
-                      onDelete={() => onDelete(app.id)}
-                    />
-                  ))
-                )}
-              </tbody>
-            </table>
+          <div className="space-y-3">
+            {billingApplications.length === 0 ? (
+              <div className="rounded-md border border-hairline bg-surface px-3 py-8 text-center text-sm text-muted-foreground">
+                No pay applications logged yet. Add the first pay app above.
+              </div>
+            ) : (
+              billingApplications.map((app) => {
+                const linkedInvoice = getActiveInvoiceForPayApp(app.id);
+                return (
+                  <BillingApplicationRowEditor
+                    key={app.id}
+                    app={app}
+                    linkedInvoice={linkedInvoice}
+                    onPatch={(patch) => onUpdate(app.id, patch)}
+                    onCreateInvoice={() => openInvoiceDialog(app)}
+                    onDelete={() => onDelete(app.id)}
+                  />
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -2363,12 +2396,21 @@ function BillingWorkspace({
                 receivables.
               </p>
             </div>
-            <Dialog open={invoiceOpen} onOpenChange={setInvoiceOpen}>
-              <DialogTrigger asChild>
-                <Button size="sm" variant="outline" onClick={openInvoiceDialog} className="gap-1.5">
-                  <ReceiptText className="h-3.5 w-3.5" /> Create invoice
-                </Button>
-              </DialogTrigger>
+            <Dialog
+              open={invoiceOpen}
+              onOpenChange={(open) => {
+                setInvoiceOpen(open);
+                if (!open) setInvoiceError("");
+              }}
+            >
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => openInvoiceDialog()}
+                className="gap-1.5"
+              >
+                <ReceiptText className="h-3.5 w-3.5" /> Create invoice
+              </Button>
               <DialogContent className="sm:max-w-3xl">
                 <DialogHeader>
                   <DialogTitle className="font-serif text-2xl">Create invoice</DialogTitle>
@@ -2390,11 +2432,21 @@ function BillingWorkspace({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">No linked pay app</SelectItem>
-                          {billingApplications.map((app) => (
-                            <SelectItem key={app.id} value={app.id}>
-                              {app.application_number || app.invoice_number || "Pay app"}
-                            </SelectItem>
-                          ))}
+                          {billingApplications.map((app) => {
+                            const existingInvoice = getActiveInvoiceForPayApp(app.id);
+                            return (
+                              <SelectItem
+                                key={app.id}
+                                value={app.id}
+                                disabled={Boolean(existingInvoice)}
+                              >
+                                {app.application_number || app.invoice_number || "Pay app"}
+                                {existingInvoice
+                                  ? ` - invoiced as ${existingInvoice.invoice_number}`
+                                  : ""}
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
                     </div>
@@ -2534,11 +2586,19 @@ function BillingWorkspace({
                     />
                   </div>
                 </div>
+                {invoiceDialogMessage ? (
+                  <div className="rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                    {invoiceDialogMessage}
+                  </div>
+                ) : null}
                 <DialogFooter>
                   <Button variant="ghost" onClick={() => setInvoiceOpen(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={saveInvoice} disabled={savingInvoice}>
+                  <Button
+                    onClick={saveInvoice}
+                    disabled={savingInvoice || Boolean(invoiceBlockingMessage)}
+                  >
                     {savingInvoice ? "Saving..." : "Save invoice"}
                   </Button>
                 </DialogFooter>
@@ -2588,59 +2648,40 @@ function BillingWorkspace({
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-md border border-hairline">
-            <table className="min-w-[1280px] w-full text-sm">
-              <thead className="bg-surface text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left">Invoice</th>
-                  <th className="px-3 py-2 text-left">Source</th>
-                  <th className="px-3 py-2 text-left">Issued / Due</th>
-                  <th className="px-3 py-2 text-right">Total due</th>
-                  <th className="px-3 py-2 text-right">Paid</th>
-                  <th className="px-3 py-2 text-right">Open</th>
-                  <th className="px-3 py-2 text-left">Client</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                  <th className="w-[300px] px-3 py-2 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-hairline">
-                {billingInvoices.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                      No invoices logged yet. Create one from a pay app when it is ready for client
-                      billing.
-                    </td>
-                  </tr>
-                ) : (
-                  billingInvoices.map((invoice) => {
-                    const linkedPayApp = billingApplications.find(
-                      (app) => app.id === invoice.billing_application_id,
-                    );
-                    return (
-                      <BillingInvoiceRowEditor
-                        key={invoice.id}
-                        project={project}
-                        invoice={invoice}
-                        linkedPayApp={linkedPayApp}
-                        invoiceRecipients={invoiceRecipients}
-                        invoiceRecipientsLoading={clientPortalQuery.isLoading}
-                        invoiceRecipientsError={
-                          clientPortalQuery.error instanceof Error
-                            ? clientPortalQuery.error.message
-                            : ""
-                        }
-                        savingPayment={savingPayment}
-                        onPatch={(patch) => onUpdateInvoice(invoice.id, patch)}
-                        onDelete={() => onDeleteInvoice(invoice.id)}
-                        onRecordPayment={onRecordPayment}
-                        onEnablePayment={() => onEnableInvoicePayment(invoice)}
-                        enablingPayment={enablingInvoicePaymentId === invoice.id}
-                      />
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+          <div className="space-y-3">
+            {billingInvoices.length === 0 ? (
+              <div className="rounded-md border border-hairline bg-surface px-3 py-8 text-center text-sm text-muted-foreground">
+                No invoices logged yet. Create one from a pay app when it is ready for client
+                billing.
+              </div>
+            ) : (
+              billingInvoices.map((invoice) => {
+                const linkedPayApp = billingApplications.find(
+                  (app) => app.id === invoice.billing_application_id,
+                );
+                return (
+                  <BillingInvoiceRowEditor
+                    key={invoice.id}
+                    project={project}
+                    invoice={invoice}
+                    linkedPayApp={linkedPayApp}
+                    invoiceRecipients={invoiceRecipients}
+                    invoiceRecipientsLoading={clientPortalQuery.isLoading}
+                    invoiceRecipientsError={
+                      clientPortalQuery.error instanceof Error
+                        ? clientPortalQuery.error.message
+                        : ""
+                    }
+                    savingPayment={savingPayment}
+                    onPatch={(patch) => onUpdateInvoice(invoice.id, patch)}
+                    onDelete={() => onDeleteInvoice(invoice.id)}
+                    onRecordPayment={onRecordPayment}
+                    onEnablePayment={() => onEnableInvoicePayment(invoice)}
+                    enablingPayment={enablingInvoicePaymentId === invoice.id}
+                  />
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -2710,140 +2751,186 @@ function invoiceStatusLabel(status: BillingInvoiceRow["status"]) {
   return status.replace("_", " ");
 }
 
+function LedgerDetail({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`rounded-md border border-hairline bg-card px-3 py-2 ${className}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 text-sm font-medium tabular text-foreground">{value}</div>
+    </div>
+  );
+}
+
 function BillingApplicationRowEditor({
   app,
+  linkedInvoice,
   onPatch,
+  onCreateInvoice,
   onDelete,
 }: {
   app: BillingApplicationRow;
+  linkedInvoice?: BillingInvoiceRow;
   onPatch: (patch: Partial<BillingApplicationRow>) => void;
+  onCreateInvoice: () => void;
   onDelete: () => void;
 }) {
   const openReceivable = Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
   const events = app.status_events.slice(0, 3);
 
   return (
-    <>
-      <tr>
-        <td className="px-3 py-2 align-top">
-          <EditableText
-            value={app.application_number}
-            onCommit={(application_number) => onPatch({ application_number })}
-          />
-          <EditableText
-            value={app.billing_period}
-            placeholder="Billing period"
-            small
-            onCommit={(billing_period) => onPatch({ billing_period })}
-          />
-        </td>
-        <td className="px-3 py-2 align-top">
-          <EditableText
-            value={app.invoice_number}
-            placeholder="Invoice #"
-            onCommit={(invoice_number) => onPatch({ invoice_number })}
-          />
-        </td>
-        <td className="px-3 py-2 align-top">
+    <div className="rounded-md border border-hairline bg-surface p-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-3">
+          <div className="space-y-1.5">
+            <Label>Pay app</Label>
+            <EditableText
+              value={app.application_number}
+              onCommit={(application_number) => onPatch({ application_number })}
+            />
+            <EditableText
+              value={app.billing_period}
+              placeholder="Billing period"
+              small
+              onCommit={(billing_period) => onPatch({ billing_period })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Invoice #</Label>
+            <EditableText
+              value={app.invoice_number}
+              placeholder="Invoice #"
+              onCommit={(invoice_number) => onPatch({ invoice_number })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Status</Label>
+            <Select
+              value={app.status}
+              onValueChange={(status) =>
+                onPatch({ status: status as BillingApplicationRow["status"] })
+              }
+            >
+              <SelectTrigger className="h-8 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="draft">Draft</SelectItem>
+                <SelectItem value="submitted">Submitted</SelectItem>
+                <SelectItem value="partial">Partial</SelectItem>
+                <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 lg:justify-end">
+          {linkedInvoice ? (
+            <div className="flex min-h-9 items-center rounded-md border border-hairline bg-card px-2.5 text-xs text-muted-foreground">
+              <ReceiptText className="mr-1.5 h-3.5 w-3.5" />
+              {linkedInvoice.invoice_number} · {invoiceStatusLabel(linkedInvoice.status)}
+            </div>
+          ) : (
+            <Button size="sm" variant="outline" className="h-9 gap-1.5" onClick={onCreateInvoice}>
+              <ReceiptText className="h-3.5 w-3.5" />
+              Invoice
+            </Button>
+          )}
+          <Button size="icon" variant="ghost" className="h-9 w-9" onClick={onDelete}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        <div className="space-y-1.5">
+          <Label>Submitted</Label>
           <Input
             type="date"
             value={app.submitted_date ?? ""}
             onChange={(e) => onPatch({ submitted_date: e.target.value || null })}
-            className="h-8 min-w-[138px]"
+            className="h-8 w-full"
           />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Due</Label>
           <Input
             type="date"
             value={app.due_date ?? ""}
             onChange={(e) => onPatch({ due_date: e.target.value || null })}
-            className="mt-1 h-8 min-w-[138px]"
+            className="h-8 w-full"
           />
-        </td>
-        <td className="px-3 py-2 align-top">
+        </div>
+        <div className="space-y-1.5">
+          <Label>Contract</Label>
           <MoneyInput
             value={app.contract_amount}
             onValueChange={(contract_amount) => onPatch({ contract_amount })}
             align="right"
-            className="ml-auto h-8 w-28"
+            className="h-8 w-full"
           />
-        </td>
-        <td className="px-3 py-2 align-top">
+        </div>
+        <div className="space-y-1.5">
+          <Label>COs</Label>
           <MoneyInput
             value={app.change_order_amount}
             onValueChange={(change_order_amount) => onPatch({ change_order_amount })}
             align="right"
-            className="ml-auto h-8 w-28"
+            className="h-8 w-full"
           />
-        </td>
-        <td className="px-3 py-2 align-top">
+        </div>
+        <div className="space-y-1.5">
+          <Label>Billed</Label>
           <MoneyInput
             value={app.amount_billed}
             onValueChange={(amount_billed) => onPatch({ amount_billed })}
             align="right"
-            className="ml-auto h-8 w-28"
+            className="h-8 w-full"
           />
-        </td>
-        <td className="px-3 py-2 align-top">
+        </div>
+        <div className="space-y-1.5">
+          <Label>Paid</Label>
           <MoneyInput
             value={app.paid_to_date}
             onValueChange={(paid_to_date) => onPatch({ paid_to_date })}
             align="right"
-            className="ml-auto h-8 w-28"
+            className="h-8 w-full"
           />
-        </td>
-        <td className="px-3 py-2 align-top">
+        </div>
+        <div className="space-y-1.5">
+          <Label>Retainage</Label>
           <MoneyInput
             value={app.retainage}
             onValueChange={(retainage) => onPatch({ retainage })}
             align="right"
-            className="ml-auto h-8 w-28"
+            className="h-8 w-full"
           />
-        </td>
-        <td className="px-3 py-3 text-right align-top tabular font-medium">
-          {fmtUSD(openReceivable)}
-        </td>
-        <td className="px-3 py-2 align-top">
-          <Select
-            value={app.status}
-            onValueChange={(status) =>
-              onPatch({ status: status as BillingApplicationRow["status"] })
-            }
-          >
-            <SelectTrigger className="h-8 w-[118px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="draft">Draft</SelectItem>
-              <SelectItem value="submitted">Submitted</SelectItem>
-              <SelectItem value="partial">Partial</SelectItem>
-              <SelectItem value="paid">Paid</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-            </SelectContent>
-          </Select>
-        </td>
-        <td className="px-3 py-2 align-top">
-          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onDelete}>
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </td>
-      </tr>
+        </div>
+      </div>
+      <div className="mt-3">
+        <LedgerDetail label="Open A/R" value={fmtUSD(openReceivable)} className="max-w-[180px]" />
+      </div>
       {events.length > 0 && (
-        <tr className="bg-surface/45">
-          <td colSpan={11} className="px-3 pb-3 pt-0">
-            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-              {events.map((event) => (
-                <span
-                  key={event.id}
-                  className="inline-flex items-center gap-2 rounded-md border border-hairline bg-card px-2.5 py-1"
-                >
-                  <span className="font-medium text-foreground">{billingEventLabel(event)}</span>
-                  <span>{formatShortDateTime(event.created_at)}</span>
-                </span>
-              ))}
-            </div>
-          </td>
-        </tr>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+          {events.map((event) => (
+            <span
+              key={event.id}
+              className="inline-flex items-center gap-2 rounded-md border border-hairline bg-card px-2.5 py-1"
+            >
+              <span className="font-medium text-foreground">{billingEventLabel(event)}</span>
+              <span>{formatShortDateTime(event.created_at)}</span>
+            </span>
+          ))}
+        </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -3021,95 +3108,59 @@ function BillingInvoiceRowEditor({
   };
 
   return (
-    <tr>
-      <td className="px-3 py-3 align-top">
-        <EditableText
-          value={invoice.invoice_number}
-          placeholder="Invoice #"
-          onCommit={(invoice_number) => onPatch({ invoice_number })}
-        />
-        <EditableText
-          value={invoice.title}
-          placeholder="Invoice title"
-          small
-          onCommit={(title) => onPatch({ title })}
-        />
-        {invoice.notes ? (
-          <div className="mt-1 max-w-[260px] text-xs text-muted-foreground">{invoice.notes}</div>
-        ) : null}
-      </td>
-      <td className="px-3 py-3 align-top">
-        <div className="text-sm text-foreground">
-          {linkedPayApp?.application_number || "Direct invoice"}
+    <div className="rounded-md border border-hairline bg-surface p-4">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="grid min-w-0 flex-1 gap-3 lg:grid-cols-[minmax(180px,1fr)_minmax(160px,0.8fr)_minmax(220px,1fr)]">
+          <div className="space-y-1.5">
+            <Label>Invoice</Label>
+            <EditableText
+              value={invoice.invoice_number}
+              placeholder="Invoice #"
+              onCommit={(invoice_number) => onPatch({ invoice_number })}
+            />
+            <EditableText
+              value={invoice.title}
+              placeholder="Invoice title"
+              small
+              onCommit={(title) => onPatch({ title })}
+            />
+            {invoice.notes ? (
+              <div className="mt-1 text-xs text-muted-foreground">{invoice.notes}</div>
+            ) : null}
+          </div>
+          <div>
+            <Label>Source</Label>
+            <div className="mt-2 text-sm text-foreground">
+              {linkedPayApp?.application_number || "Direct invoice"}
+            </div>
+            {linkedPayApp?.billing_period ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                {linkedPayApp.billing_period}
+              </div>
+            ) : null}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Issued</Label>
+              <Input
+                type="date"
+                value={invoice.issue_date ?? ""}
+                onChange={(e) => onPatch({ issue_date: e.target.value || null })}
+                className="h-8 w-full"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Due</Label>
+              <Input
+                type="date"
+                value={invoice.due_date ?? ""}
+                onChange={(e) => onPatch({ due_date: e.target.value || null })}
+                className="h-8 w-full"
+              />
+            </div>
+          </div>
         </div>
-        {linkedPayApp?.billing_period ? (
-          <div className="mt-1 text-xs text-muted-foreground">{linkedPayApp.billing_period}</div>
-        ) : null}
-      </td>
-      <td className="px-3 py-2 align-top">
-        <Input
-          type="date"
-          value={invoice.issue_date ?? ""}
-          onChange={(e) => onPatch({ issue_date: e.target.value || null })}
-          className="h-8 min-w-[138px]"
-        />
-        <Input
-          type="date"
-          value={invoice.due_date ?? ""}
-          onChange={(e) => onPatch({ due_date: e.target.value || null })}
-          className="mt-1 h-8 min-w-[138px]"
-        />
-      </td>
-      <td className="px-3 py-2 align-top">
-        <MoneyInput
-          value={invoice.total_due}
-          onValueChange={(total_due) => onPatch({ total_due })}
-          align="right"
-          className="ml-auto h-8 w-28"
-        />
-        <div className="mt-1 text-right text-xs text-muted-foreground">
-          Subtotal {fmtUSD(invoice.subtotal)}
-        </div>
-      </td>
-      <td className="px-3 py-3 text-right align-top tabular font-medium">
-        {fmtUSD(invoice.paid_amount)}
-      </td>
-      <td className="px-3 py-3 text-right align-top tabular font-medium">{fmtUSD(openBalance)}</td>
-      <td className="px-3 py-2 align-top">
-        <Button
-          type="button"
-          size="sm"
-          variant={invoice.client_visible ? "default" : "outline"}
-          className="h-8"
-          onClick={() => onPatch({ client_visible: !invoice.client_visible })}
-        >
-          {invoice.client_visible ? "Visible" : "Hidden"}
-        </Button>
-      </td>
-      <td className="px-3 py-2 align-top">
-        <Select
-          value={invoice.status}
-          onValueChange={(status) => onPatch({ status: status as BillingInvoiceRow["status"] })}
-        >
-          <SelectTrigger className="h-8 w-[132px] capitalize">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="draft">Draft</SelectItem>
-            <SelectItem value="sent">Sent</SelectItem>
-            <SelectItem value="viewed">Viewed</SelectItem>
-            <SelectItem value="partially_paid">Partially paid</SelectItem>
-            <SelectItem value="paid">Paid</SelectItem>
-            <SelectItem value="overdue">Overdue</SelectItem>
-            <SelectItem value="void">Void</SelectItem>
-          </SelectContent>
-        </Select>
-        <div className="mt-1 text-xs capitalize text-muted-foreground">
-          {invoiceStatusLabel(invoice.status)}
-        </div>
-      </td>
-      <td className="px-3 py-2 text-right align-top">
-        <div className="flex flex-wrap justify-end gap-1">
+        <div className="flex flex-wrap gap-1 xl:max-w-[500px] xl:justify-end">
           <Button
             type="button"
             size="sm"
@@ -3254,19 +3305,72 @@ function BillingInvoiceRowEditor({
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>
-        {invoice.payment_events.length > 0 ? (
-          <div className="mt-2 text-right text-[11px] text-muted-foreground">
-            Last payment {fmtUSD(invoice.payment_events[0].amount)} ·{" "}
-            {formatShortDateTime(invoice.payment_events[0].paid_at)}
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        <div className="space-y-1.5">
+          <Label>Total due</Label>
+          <MoneyInput
+            value={invoice.total_due}
+            onValueChange={(total_due) => onPatch({ total_due })}
+            align="right"
+            className="h-8 w-full"
+          />
+          <div className="text-right text-xs text-muted-foreground">
+            Subtotal {fmtUSD(invoice.subtotal)}
           </div>
-        ) : null}
+        </div>
+        <LedgerDetail label="Paid" value={fmtUSD(invoice.paid_amount)} />
+        <LedgerDetail label="Open" value={fmtUSD(openBalance)} />
+        <div className="space-y-1.5">
+          <Label>Status</Label>
+          <Select
+            value={invoice.status}
+            onValueChange={(status) => onPatch({ status: status as BillingInvoiceRow["status"] })}
+          >
+            <SelectTrigger className="h-8 w-full capitalize">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="sent">Sent</SelectItem>
+              <SelectItem value="viewed">Viewed</SelectItem>
+              <SelectItem value="partially_paid">Partially paid</SelectItem>
+              <SelectItem value="paid">Paid</SelectItem>
+              <SelectItem value="overdue">Overdue</SelectItem>
+              <SelectItem value="void">Void</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="text-xs capitalize text-muted-foreground">
+            {invoiceStatusLabel(invoice.status)}
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Client</Label>
+          <Button
+            type="button"
+            size="sm"
+            variant={invoice.client_visible ? "default" : "outline"}
+            className="h-8 w-full justify-start"
+            onClick={() => onPatch({ client_visible: !invoice.client_visible })}
+          >
+            {invoice.client_visible ? "Visible" : "Hidden"}
+          </Button>
+        </div>
         <div
-          className={`ml-auto mt-2 w-fit rounded-sm border px-2 py-1 text-right text-[10px] font-semibold uppercase tracking-[0.12em] ${paymentReadiness.className}`}
+          className={`rounded-md border px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] ${paymentReadiness.className}`}
         >
           {paymentReadiness.label}
         </div>
-      </td>
-    </tr>
+      </div>
+
+      {invoice.payment_events.length > 0 ? (
+        <div className="mt-3 text-[11px] text-muted-foreground">
+          Last payment {fmtUSD(invoice.payment_events[0].amount)} ·{" "}
+          {formatShortDateTime(invoice.payment_events[0].paid_at)}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -3291,7 +3395,7 @@ function EditableText({
       onBlur={() => {
         if (local !== value) onCommit(local);
       }}
-      className={`h-8 min-w-[128px] ${small ? "mt-1 text-xs text-muted-foreground" : ""}`}
+      className={`h-8 w-full min-w-0 ${small ? "mt-1 text-xs text-muted-foreground" : ""}`}
     />
   );
 }

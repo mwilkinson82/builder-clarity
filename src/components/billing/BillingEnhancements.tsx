@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,14 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { fmtPct, fmtUSD } from "@/lib/format";
 import type {
@@ -242,60 +234,37 @@ function LineItemsPanel({
         </div>
       </div>
 
-      <div className="mt-4 overflow-hidden rounded-md border border-hairline">
-        <Table className="min-w-[1400px]">
-          <TableHeader>
-            <TableRow className="bg-surface text-[10px] uppercase tracking-[0.12em]">
-              <TableHead className="w-[90px]">Code</TableHead>
-              <TableHead className="w-[250px]">Description</TableHead>
-              <TableHead className="text-right">Scheduled</TableHead>
-              <TableHead className="text-right">CO</TableHead>
-              <TableHead className="text-right">Previous</TableHead>
-              <TableHead className="w-[150px] text-right">This period</TableHead>
-              <TableHead className="w-[150px] text-right">Stored</TableHead>
-              <TableHead className="text-right">Total</TableHead>
-              <TableHead className="text-right">%</TableHead>
-              <TableHead className="text-right">Balance</TableHead>
-              <TableHead className="w-[150px] text-right">Retainage release</TableHead>
-              <TableHead className="text-right">Held</TableHead>
-              <TableHead className="w-[92px]" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {selectedLines.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={13} className="py-9 text-center text-sm text-muted-foreground">
-                  Generate line detail from the SOV to start billing by cost code.
-                </TableCell>
-              </TableRow>
-            ) : (
-              selectedLines.map((line) => (
-                <BillingLineItemEditor
-                  key={line.id}
-                  line={line}
-                  saving={savingLine}
-                  onSave={(patch) => onUpdateLine(line.id, patch)}
-                />
-              ))
-            )}
-            {selectedLines.length > 0 && (
-              <TableRow className="bg-surface font-medium">
-                <TableCell colSpan={2}>Totals</TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(totals.scheduled)}</TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(totals.co)}</TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(totals.previous)}</TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(totals.thisPeriod)}</TableCell>
-                <TableCell />
-                <TableCell className="text-right tabular">{fmtUSD(totals.total)}</TableCell>
-                <TableCell />
-                <TableCell className="text-right tabular">{fmtUSD(totals.balance)}</TableCell>
-                <TableCell />
-                <TableCell className="text-right tabular">{fmtUSD(totals.retainage)}</TableCell>
-                <TableCell />
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+      <div className="mt-4 space-y-3">
+        {selectedLines.length === 0 ? (
+          <div className="rounded-md border border-hairline bg-surface py-9 text-center text-sm text-muted-foreground">
+            Generate line detail from the SOV to start billing by cost code.
+          </div>
+        ) : (
+          <>
+            <div className="rounded-md border border-hairline bg-surface p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Pay app totals
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+                <BillingDetail label="Scheduled" value={fmtUSD(totals.scheduled)} />
+                <BillingDetail label="COs" value={fmtUSD(totals.co)} />
+                <BillingDetail label="Previous" value={fmtUSD(totals.previous)} />
+                <BillingDetail label="This period" value={fmtUSD(totals.thisPeriod)} />
+                <BillingDetail label="Total" value={fmtUSD(totals.total)} />
+                <BillingDetail label="Balance" value={fmtUSD(totals.balance)} />
+                <BillingDetail label="Retainage" value={fmtUSD(totals.retainage)} />
+              </div>
+            </div>
+            {selectedLines.map((line) => (
+              <BillingLineItemEditor
+                key={line.id}
+                line={line}
+                saving={savingLine}
+                onSave={(patch) => onUpdateLine(line.id, patch)}
+              />
+            ))}
+          </>
+        )}
       </div>
     </section>
   );
@@ -320,42 +289,66 @@ function BillingLineItemEditor({
   const overbilled = line.balance_to_finish_cents < 0;
 
   return (
-    <TableRow className={overbilled ? "bg-danger/5" : ""}>
-      <TableCell className="tabular text-muted-foreground">{line.cost_code || "-"}</TableCell>
-      <TableCell>
-        <div className="font-medium text-foreground">{line.description}</div>
-        <div className="text-[11px] text-muted-foreground">{line.billing_method}</div>
-      </TableCell>
-      <TableCell className="text-right tabular">
-        {fmtUSD(centsToDollars(line.scheduled_value_cents))}
-      </TableCell>
-      <TableCell className="text-right tabular">
-        {fmtUSD(centsToDollars(line.change_order_value_cents))}
-      </TableCell>
-      <TableCell className="text-right tabular">{fmtUSD(previous)}</TableCell>
-      <TableCell>
-        <MoneyInput value={work} onValueChange={setWork} align="right" />
-      </TableCell>
-      <TableCell>
-        <MoneyInput value={stored} onValueChange={setStored} align="right" />
-      </TableCell>
-      <TableCell className="text-right tabular">
-        {fmtUSD(centsToDollars(line.total_completed_and_stored_cents))}
-      </TableCell>
-      <TableCell className="text-right tabular">{fmtPct(line.billing_percent_complete)}</TableCell>
-      <TableCell className={`text-right tabular ${overbilled ? "text-danger" : ""}`}>
-        {fmtUSD(centsToDollars(line.balance_to_finish_cents))}
-      </TableCell>
-      <TableCell>
-        <MoneyInput value={released} onValueChange={setReleased} align="right" />
-      </TableCell>
-      <TableCell className="text-right tabular">{fmtUSD(retainageHeld)}</TableCell>
-      <TableCell>
+    <div
+      className={`rounded-md border border-hairline bg-card p-4 ${overbilled ? "border-danger/30 bg-danger/5" : ""}`}
+    >
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            {line.cost_code || "No code"} · {line.billing_method}
+          </div>
+          <div className="mt-1 font-medium text-foreground">{line.description}</div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3 lg:w-full xl:max-w-[420px]">
+          <BillingDetail
+            label="Total"
+            value={fmtUSD(centsToDollars(line.total_completed_and_stored_cents))}
+          />
+          <BillingDetail label="Complete" value={fmtPct(line.billing_percent_complete)} />
+          <BillingDetail
+            label="Balance"
+            value={fmtUSD(centsToDollars(line.balance_to_finish_cents))}
+            tone={overbilled ? "danger" : undefined}
+          />
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+        <BillingDetail
+          label="Scheduled"
+          value={fmtUSD(centsToDollars(line.scheduled_value_cents))}
+        />
+        <BillingDetail label="COs" value={fmtUSD(centsToDollars(line.change_order_value_cents))} />
+        <BillingDetail label="Previous" value={fmtUSD(previous)} />
+        <div className="space-y-1.5">
+          <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            This period
+          </Label>
+          <MoneyInput value={work} onValueChange={setWork} align="right" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            Stored
+          </Label>
+          <MoneyInput value={stored} onValueChange={setStored} align="right" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            Retainage release
+          </Label>
+          <MoneyInput value={released} onValueChange={setReleased} align="right" />
+        </div>
+      </div>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <BillingDetail
+          label="Retainage held"
+          value={fmtUSD(retainageHeld)}
+          className="sm:w-[180px]"
+        />
         <Button
           type="button"
           size="sm"
           variant="outline"
-          className="h-8 gap-1.5"
+          className="h-9 gap-1.5 sm:w-auto"
           disabled={saving}
           onClick={() =>
             onSave({
@@ -365,10 +358,10 @@ function BillingLineItemEditor({
             })
           }
         >
-          <Save className="h-3.5 w-3.5" /> Save
+          <Save className="h-3.5 w-3.5" /> Save line
         </Button>
-      </TableCell>
-    </TableRow>
+      </div>
+    </div>
   );
 }
 
@@ -586,48 +579,37 @@ function CostTrackingPanel({
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="overflow-hidden rounded-md border border-hairline">
-          <Table className="min-w-[900px]">
-            <TableHeader>
-              <TableRow className="bg-surface text-[10px] uppercase tracking-[0.12em]">
-                <TableHead>Date</TableHead>
-                <TableHead>Code</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Vendor</TableHead>
-                <TableHead>Reference</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="w-[76px]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {costActuals.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
-                    No cost actuals recorded yet.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                costActuals.map((actual) => (
-                  <TableRow
-                    key={actual.id}
-                    className={actual.status === "void" ? "opacity-50" : ""}
-                  >
-                    <TableCell className="whitespace-nowrap tabular">{actual.cost_date}</TableCell>
-                    <TableCell className="tabular text-muted-foreground">
-                      {actual.cost_code || "-"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium text-foreground">{actual.description}</div>
-                      <div className="text-[11px] capitalize text-muted-foreground">
+        <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Cost actuals
+          </div>
+          {costActuals.length === 0 ? (
+            <div className="mt-3 rounded-md border border-hairline bg-card py-8 text-center text-sm text-muted-foreground">
+              No cost actuals recorded yet.
+            </div>
+          ) : (
+            <div className="mt-3 space-y-3">
+              {costActuals.map((actual) => (
+                <div
+                  key={actual.id}
+                  className={`rounded-md border border-hairline bg-card p-4 ${
+                    actual.status === "void" ? "opacity-50" : ""
+                  }`}
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        {actual.cost_date} · {actual.cost_code || "No code"} · {actual.status}
+                      </div>
+                      <div className="mt-1 font-medium text-foreground">{actual.description}</div>
+                      <div className="mt-1 text-xs capitalize text-muted-foreground">
                         {actual.category}
                       </div>
-                    </TableCell>
-                    <TableCell>{actual.vendor || "-"}</TableCell>
-                    <TableCell>{actual.reference_number || "-"}</TableCell>
-                    <TableCell className="capitalize">{actual.status}</TableCell>
-                    <TableCell className="text-right tabular">{fmtUSD(actual.amount)}</TableCell>
-                    <TableCell>
+                    </div>
+                    <div className="flex items-center justify-between gap-3 sm:justify-end">
+                      <div className="text-right text-sm tabular font-medium">
+                        {fmtUSD(actual.amount)}
+                      </div>
                       {actual.status !== "void" && (
                         <Button
                           type="button"
@@ -639,61 +621,48 @@ function CostTrackingPanel({
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       )}
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <BillingDetail label="Vendor" value={actual.vendor || "-"} />
+                    <BillingDetail label="Reference" value={actual.reference_number || "-"} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        <div className="overflow-hidden rounded-md border border-hairline">
-          <Table className="min-w-[720px]">
-            <TableHeader>
-              <TableRow className="bg-surface text-[10px] uppercase tracking-[0.12em]">
-                <TableHead>Cost code</TableHead>
-                <TableHead>Bucket</TableHead>
-                <TableHead className="text-right">Budget</TableHead>
-                <TableHead className="text-right">Actual</TableHead>
-                <TableHead className="text-right">FTC</TableHead>
-                <TableHead className="text-right">Variance</TableHead>
-                <TableHead className="text-right">% Spent</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {buckets.map((bucket) => {
-                const forecast = bucket.actual_to_date + bucket.ftc;
-                const variance = bucket.original_budget - forecast;
-                const spentPct =
-                  bucket.original_budget > 0
-                    ? (bucket.actual_to_date / bucket.original_budget) * 100
-                    : 0;
-                const tone =
-                  variance < 0 ? "text-danger" : spentPct >= 80 ? "text-warning" : "text-success";
-                return (
-                  <TableRow key={bucket.id}>
-                    <TableCell className="tabular text-muted-foreground">
-                      {bucket.cost_code || "-"}
-                    </TableCell>
-                    <TableCell>{bucket.bucket}</TableCell>
-                    <TableCell className="text-right tabular">
-                      {fmtUSD(bucket.original_budget)}
-                    </TableCell>
-                    <TableCell className="text-right tabular">
-                      {fmtUSD(bucket.actual_to_date)}
-                    </TableCell>
-                    <TableCell className="text-right tabular">{fmtUSD(bucket.ftc)}</TableCell>
-                    <TableCell className={`text-right tabular ${tone}`}>
-                      {fmtUSD(variance)}
-                    </TableCell>
-                    <TableCell className={`text-right tabular ${tone}`}>
-                      {fmtPct(spentPct)}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+        <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Cost bucket variance
+          </div>
+          <div className="mt-3 space-y-3">
+            {buckets.map((bucket) => {
+              const forecast = bucket.actual_to_date + bucket.ftc;
+              const variance = bucket.original_budget - forecast;
+              const spentPct =
+                bucket.original_budget > 0
+                  ? (bucket.actual_to_date / bucket.original_budget) * 100
+                  : 0;
+              const tone = variance < 0 ? "danger" : spentPct >= 80 ? "warning" : "success";
+              return (
+                <div key={bucket.id} className="rounded-md border border-hairline bg-card p-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    {bucket.cost_code || "No code"}
+                  </div>
+                  <div className="mt-1 font-medium text-foreground">{bucket.bucket}</div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <BillingDetail label="Budget" value={fmtUSD(bucket.original_budget)} />
+                    <BillingDetail label="Actual" value={fmtUSD(bucket.actual_to_date)} />
+                    <BillingDetail label="FTC" value={fmtUSD(bucket.ftc)} />
+                    <BillingDetail label="Variance" value={fmtUSD(variance)} tone={tone} />
+                    <BillingDetail label="% spent" value={fmtPct(spentPct)} tone={tone} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </section>
@@ -772,47 +741,27 @@ function WipAnalysisPanel({
             : "Billing is aligned with earned revenue on the current WIP view."}
       </div>
 
-      <div className="mt-4 overflow-hidden rounded-md border border-hairline">
-        <Table className="min-w-[1180px]">
-          <TableHeader>
-            <TableRow className="bg-surface text-[10px] uppercase tracking-[0.12em]">
-              <TableHead>Code</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead className="w-[120px] text-right">Earned %</TableHead>
-              <TableHead className="text-right">Contract</TableHead>
-              <TableHead className="text-right">Earned</TableHead>
-              <TableHead className="text-right">Billed</TableHead>
-              <TableHead className="text-right">Over / under</TableHead>
-              <TableHead className="text-right">Cost</TableHead>
-              <TableHead className="text-right">FTC</TableHead>
-              <TableHead className="text-right">GP</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {wip.buckets.map((bucket) => {
-              const editableBucket = bucketById.get(bucket.cost_bucket_id);
-              const earnedPct =
-                bucket.contract_value > 0
-                  ? (bucket.earned_revenue / bucket.contract_value) * 100
-                  : 0;
-              return (
-                <WipBucketRow
-                  key={bucket.cost_bucket_id}
-                  bucket={bucket}
-                  earnedPct={earnedPct}
-                  editable={Boolean(editableBucket)}
-                  saving={savingBucket}
-                  onSave={(nextPct) =>
-                    editableBucket &&
-                    onUpdateBucketSettings(editableBucket.id, {
-                      earned_percent_complete: nextPct,
-                    })
-                  }
-                />
-              );
-            })}
-          </TableBody>
-        </Table>
+      <div className="mt-4 space-y-3">
+        {wip.buckets.map((bucket) => {
+          const editableBucket = bucketById.get(bucket.cost_bucket_id);
+          const earnedPct =
+            bucket.contract_value > 0 ? (bucket.earned_revenue / bucket.contract_value) * 100 : 0;
+          return (
+            <WipBucketRow
+              key={bucket.cost_bucket_id}
+              bucket={bucket}
+              earnedPct={earnedPct}
+              editable={Boolean(editableBucket)}
+              saving={savingBucket}
+              onSave={(nextPct) =>
+                editableBucket &&
+                onUpdateBucketSettings(editableBucket.id, {
+                  earned_percent_complete: nextPct,
+                })
+              }
+            />
+          );
+        })}
       </div>
     </section>
   );
@@ -839,46 +788,99 @@ function WipBucketRow({
         ? "text-success"
         : "";
   return (
-    <TableRow>
-      <TableCell className="tabular text-muted-foreground">{bucket.cost_code || "-"}</TableCell>
-      <TableCell>{bucket.bucket}</TableCell>
-      <TableCell>
-        {editable ? (
-          <div className="flex items-center justify-end gap-1.5">
-            <Input
-              value={value}
-              inputMode="decimal"
-              className="h-8 w-16 text-right tabular"
-              onChange={(event) => setValue(event.target.value)}
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 w-8 p-0"
-              disabled={saving}
-              onClick={() => onSave(Math.max(0, Math.min(100, Number(value) || 0)))}
-            >
-              <Save className="h-3.5 w-3.5" />
-            </Button>
+    <div className="rounded-md border border-hairline bg-card p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            {bucket.cost_code || "No code"}
           </div>
-        ) : (
-          <div className="text-right tabular">{fmtPct(earnedPct)}</div>
-        )}
-      </TableCell>
-      <TableCell className="text-right tabular">{fmtUSD(bucket.contract_value)}</TableCell>
-      <TableCell className="text-right tabular">{fmtUSD(bucket.earned_revenue)}</TableCell>
-      <TableCell className="text-right tabular">{fmtUSD(bucket.billed_to_date)}</TableCell>
-      <TableCell className={`text-right tabular ${overUnderClass}`}>
-        {fmtUSD(bucket.over_under_billing)}
-      </TableCell>
-      <TableCell className="text-right tabular">{fmtUSD(bucket.cost_to_date)}</TableCell>
-      <TableCell className="text-right tabular">{fmtUSD(bucket.cost_to_complete)}</TableCell>
-      <TableCell className="text-right tabular">
-        {fmtUSD(bucket.estimated_gross_profit)}
-        <div className="text-[11px] text-muted-foreground">{fmtPct(bucket.gross_profit_pct)}</div>
-      </TableCell>
-    </TableRow>
+          <div className="mt-1 font-medium text-foreground">{bucket.bucket}</div>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          {editable ? (
+            <div className="flex items-center gap-1.5">
+              <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                Earned %
+              </Label>
+              <Input
+                value={value}
+                inputMode="decimal"
+                className="h-8 w-16 text-right tabular"
+                onChange={(event) => setValue(event.target.value)}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 w-8 p-0"
+                disabled={saving}
+                onClick={() => onSave(Math.max(0, Math.min(100, Number(value) || 0)))}
+              >
+                <Save className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ) : (
+            <BillingDetail label="Earned %" value={fmtPct(earnedPct)} />
+          )}
+        </div>
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        <BillingDetail label="Contract" value={fmtUSD(bucket.contract_value)} />
+        <BillingDetail label="Earned" value={fmtUSD(bucket.earned_revenue)} />
+        <BillingDetail label="Billed" value={fmtUSD(bucket.billed_to_date)} />
+        <BillingDetail
+          label="Over / under"
+          value={fmtUSD(bucket.over_under_billing)}
+          valueClassName={overUnderClass}
+        />
+        <BillingDetail label="Cost" value={fmtUSD(bucket.cost_to_date)} />
+        <BillingDetail label="FTC" value={fmtUSD(bucket.cost_to_complete)} />
+        <BillingDetail
+          label="GP"
+          value={
+            <>
+              {fmtUSD(bucket.estimated_gross_profit)}
+              <span className="ml-1 text-[11px] text-muted-foreground">
+                {fmtPct(bucket.gross_profit_pct)}
+              </span>
+            </>
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+function BillingDetail({
+  label,
+  value,
+  tone,
+  className = "",
+  valueClassName = "",
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: "success" | "warning" | "danger";
+  className?: string;
+  valueClassName?: string;
+}) {
+  const toneClass =
+    tone === "success"
+      ? "text-success"
+      : tone === "warning"
+        ? "text-warning"
+        : tone === "danger"
+          ? "text-danger"
+          : "text-foreground";
+  return (
+    <div className={`rounded-md border border-hairline bg-card px-3 py-2 ${className}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 text-sm font-medium tabular ${toneClass} ${valueClassName}`}>
+        {value}
+      </div>
+    </div>
   );
 }
 

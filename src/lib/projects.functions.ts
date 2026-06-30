@@ -1731,6 +1731,16 @@ function paymentAdjustedInvoiceStatus(totalDue: number, paidAmount: number): Inv
   return "sent";
 }
 
+function firstActiveInvoice(data: unknown) {
+  const rows = Array.isArray(data) ? data : data ? [data] : [];
+  return rows.find(
+    (row): row is Record<string, unknown> =>
+      Boolean(row) &&
+      typeof row === "object" &&
+      str((row as Record<string, unknown>).status, "draft") !== "void",
+  );
+}
+
 export const createBillingInvoice = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId: string } & z.input<typeof billingInvoiceInput>) =>
@@ -1741,10 +1751,42 @@ export const createBillingInvoice = createServerFn({ method: "POST" })
     const status = rest.status as InvoiceStatus;
     const sentAt = isInvoiceSentStatus(status) ? new Date().toISOString() : null;
     const paidAt = status === "paid" ? new Date().toISOString() : null;
+    if (rest.billing_application_id) {
+      const { data: existingPayAppInvoices, error: existingPayAppInvoiceError } =
+        await dynamicTable(context.supabase, "billing_invoices")
+          .select("id,invoice_number,status")
+          .eq("project_id", projectId)
+          .eq("billing_application_id", rest.billing_application_id)
+          .limit(5);
+      if (existingPayAppInvoiceError) throw new Error(existingPayAppInvoiceError.message);
+      const existingPayAppInvoice = firstActiveInvoice(existingPayAppInvoices);
+      if (existingPayAppInvoice) {
+        throw new Error(
+          `This pay app already has invoice ${str(existingPayAppInvoice.invoice_number, "")}. Void or edit the existing invoice before creating another.`,
+        );
+      }
+    }
+    const invoiceNumber = rest.invoice_number.trim();
+    if (invoiceNumber) {
+      const { data: existingInvoiceNumbers, error: existingInvoiceNumberError } =
+        await dynamicTable(context.supabase, "billing_invoices")
+          .select("id,invoice_number,status")
+          .eq("project_id", projectId)
+          .eq("invoice_number", invoiceNumber)
+          .limit(5);
+      if (existingInvoiceNumberError) throw new Error(existingInvoiceNumberError.message);
+      const existingInvoiceNumber = firstActiveInvoice(existingInvoiceNumbers);
+      if (existingInvoiceNumber) {
+        throw new Error(
+          `Invoice ${invoiceNumber} already exists for this project. Use a unique invoice number or edit the existing invoice.`,
+        );
+      }
+    }
     const { data: created, error } = await dynamicTable(context.supabase, "billing_invoices")
       .insert({
         project_id: projectId,
         ...rest,
+        invoice_number: invoiceNumber,
         sent_at: sentAt,
         paid_at: paidAt,
       })
