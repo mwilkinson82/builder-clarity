@@ -39,6 +39,20 @@ type WbsParentMoveInput = {
   parentId: string | null;
 };
 
+function formatDelayFragmentError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  const lowerMessage = message.toLowerCase();
+  if (
+    lowerMessage.includes("schedule_delay_fragments") ||
+    lowerMessage.includes("schema cache") ||
+    lowerMessage.includes("could not find the table") ||
+    lowerMessage.includes("does not exist")
+  ) {
+    return "Delay tracking storage is not available yet. Use Notes / Constraint for the delay narrative; CPM activity details still save normally.";
+  }
+  return message || "Refresh and try again.";
+}
+
 export const Route = createFileRoute("/_authenticated/projects/$projectId/schedule")({
   ssr: false,
   head: () => ({ meta: [{ title: "Construction Schedule — Overwatch" }] }),
@@ -295,7 +309,7 @@ function ScheduleWorkspacePage() {
     },
     onError: (error) => {
       toast.error("Delay fragment did not save", {
-        description: error instanceof Error ? error.message : "Refresh and try again.",
+        description: formatDelayFragmentError(error),
       });
     },
   });
@@ -309,7 +323,7 @@ function ScheduleWorkspacePage() {
     },
     onError: (error) => {
       toast.error("Delay fragment did not update", {
-        description: error instanceof Error ? error.message : "Refresh and try again.",
+        description: formatDelayFragmentError(error),
       });
     },
   });
@@ -322,7 +336,7 @@ function ScheduleWorkspacePage() {
     },
     onError: (error) => {
       toast.error("Delay fragment did not delete", {
-        description: error instanceof Error ? error.message : "Refresh and try again.",
+        description: formatDelayFragmentError(error),
       });
     },
   });
@@ -496,68 +510,87 @@ function ScheduleWorkspaceOperations({
   const tradeRisks = risks.filter((risk) => risk.kind === "trade_performance").slice(0, 4);
 
   return (
-    <section className="constructline-screen-ops mb-4 mt-5 grid gap-3 xl:grid-cols-3 2xl:grid-cols-5">
-      <ScheduleOpsCard
-        label="Schedule update history"
-        title={`${updates.length} saved ${updates.length === 1 ? "update" : "updates"}`}
-        sub={`Baseline ${formatDate(project.baseline_completion_date)} · Forecast ${formatDate(
-          project.forecast_completion_date,
-        )}`}
-        className="xl:col-span-3 2xl:col-span-1"
-      >
-        {updates.length === 0 ? (
-          <ScheduleOpsEmpty>No saved schedule updates yet.</ScheduleOpsEmpty>
-        ) : (
-          updates
-            .slice(0, 4)
-            .map((update) => (
+    <section className="constructline-screen-ops mb-4 mt-5 rounded-lg border border-hairline bg-surface p-4">
+      <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Schedule operations
+          </div>
+          <h2 className="mt-1 font-serif text-2xl text-foreground">
+            Updates, milestones, and schedule-linked risks
+          </h2>
+        </div>
+        <div className="max-w-2xl text-sm leading-6 text-muted-foreground">
+          This workspace keeps CPM activity planning beside the operational signals that explain why
+          the schedule moved.
+        </div>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-6">
+        <ScheduleOpsCard
+          label="Schedule update history"
+          title={`${updates.length} saved ${updates.length === 1 ? "update" : "updates"}`}
+          sub={`Baseline ${formatDate(project.baseline_completion_date)} · Forecast ${formatDate(
+            project.forecast_completion_date,
+          )}`}
+          className="xl:col-span-2"
+        >
+          {updates.length === 0 ? (
+            <ScheduleOpsEmpty>No saved schedule updates yet.</ScheduleOpsEmpty>
+          ) : (
+            updates
+              .slice(0, 4)
+              .map((update) => (
+                <ScheduleOpsItem
+                  key={update.id}
+                  title={`Update #${update.update_number} · ${formatDate(update.data_date)}`}
+                  meta={`${formatVariance(update.variance_weeks)} vs baseline · finish ${formatDate(
+                    update.forecast_completion_date,
+                  )}`}
+                />
+              ))
+          )}
+        </ScheduleOpsCard>
+
+        <ScheduleOpsCard
+          label="Interim milestones"
+          title={`${activeMilestones.length} active`}
+          sub="Forecast checkpoints"
+          className="xl:col-span-2"
+        >
+          {activeMilestones.length === 0 ? (
+            <ScheduleOpsEmpty>No active interim milestones.</ScheduleOpsEmpty>
+          ) : (
+            activeMilestones.map((milestone) => (
               <ScheduleOpsItem
-                key={update.id}
-                title={`Update #${update.update_number} · ${formatDate(update.data_date)}`}
-                meta={`${formatVariance(update.variance_weeks)} vs baseline · finish ${formatDate(
-                  update.forecast_completion_date,
+                key={milestone.id}
+                title={milestone.name}
+                meta={`${formatDate(milestone.forecast_date ?? milestone.baseline_date)} · ${milestone.status.replace(
+                  "_",
+                  " ",
                 )}`}
               />
             ))
-        )}
-      </ScheduleOpsCard>
+          )}
+        </ScheduleOpsCard>
 
-      <ScheduleOpsCard
-        label="Interim milestones"
-        title={`${activeMilestones.length} active`}
-        sub="Forecast checkpoints"
-      >
-        {activeMilestones.length === 0 ? (
-          <ScheduleOpsEmpty>No active interim milestones.</ScheduleOpsEmpty>
-        ) : (
-          activeMilestones.map((milestone) => (
-            <ScheduleOpsItem
-              key={milestone.id}
-              title={milestone.name}
-              meta={`${formatDate(milestone.forecast_date ?? milestone.baseline_date)} · ${milestone.status.replace(
-                "_",
-                " ",
-              )}`}
-            />
-          ))
-        )}
-      </ScheduleOpsCard>
-
-      <RiskOpsCard
-        label="Critical delayed decisions"
-        risks={delayedDecisions}
-        empty="No critical decision risks."
-      />
-      <RiskOpsCard
-        label="Procurement risks"
-        risks={procurementRisks}
-        empty="No procurement risks."
-      />
-      <RiskOpsCard
-        label="Trade performance risks"
-        risks={tradeRisks}
-        empty="No trade performance risks."
-      />
+        <RiskOpsCard
+          label="Critical delayed decisions"
+          risks={delayedDecisions}
+          empty="No critical decision risks."
+        />
+        <RiskOpsCard
+          label="Procurement risks"
+          risks={procurementRisks}
+          empty="No procurement risks."
+        />
+        <RiskOpsCard
+          label="Trade performance risks"
+          risks={tradeRisks}
+          empty="No trade performance risks."
+          className="xl:col-span-2"
+        />
+      </div>
     </section>
   );
 }
@@ -566,13 +599,20 @@ function RiskOpsCard({
   label,
   risks,
   empty,
+  className,
 }: {
   label: string;
   risks: ScheduleRiskRow[];
   empty: string;
+  className?: string;
 }) {
   return (
-    <ScheduleOpsCard label={label} title={`${risks.length} open`} sub="Schedule-linked risk">
+    <ScheduleOpsCard
+      label={label}
+      title={`${risks.length} open`}
+      sub="Schedule-linked risk"
+      className={className}
+    >
       {risks.length === 0 ? (
         <ScheduleOpsEmpty>{empty}</ScheduleOpsEmpty>
       ) : (
@@ -611,7 +651,7 @@ function ScheduleOpsCard({
         {label}
       </div>
       <div className="mt-2 text-lg font-semibold text-foreground">{title}</div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
+      <div className="mt-1 text-xs leading-5 text-muted-foreground">{sub}</div>
       <div className="mt-3 grid gap-2">{children}</div>
     </div>
   );
@@ -620,8 +660,8 @@ function ScheduleOpsCard({
 function ScheduleOpsItem({ title, meta }: { title: string; meta: string }) {
   return (
     <div className="min-w-0 rounded border border-hairline bg-surface px-3 py-2">
-      <div className="truncate text-sm font-semibold text-foreground">{title}</div>
-      <div className="mt-1 truncate text-xs text-muted-foreground">{meta}</div>
+      <div className="text-sm font-semibold leading-5 text-foreground">{title}</div>
+      <div className="mt-1 text-xs leading-5 text-muted-foreground">{meta}</div>
     </div>
   );
 }
