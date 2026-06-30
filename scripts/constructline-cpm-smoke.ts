@@ -333,6 +333,9 @@ for (const requiredScheduleRiskText of [
   "Critical Path Report",
   "Company: {contractorName}",
   "Legend: critical red",
+  "Schedule snapshot",
+  "View filters",
+  "Schedule actions",
   "Concrete / Northwest corner",
   "Schedule update history",
 ]) {

@@ -2683,96 +2683,99 @@ function CpmGridToolbar({
   onSaveDataDate: () => void;
 }) {
   return (
-    <div className="grid w-full min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-12">
-      <CpmToolbarGroup label="Schedule snapshot" className="xl:col-span-4 2xl:col-span-3">
-        <CpmDataDateControl
-          value={dataDateDraft}
-          savedValue={latestDataDate}
-          isSaving={isSavingDataDate}
-          onChange={onDataDateChange}
-          onSave={onSaveDataDate}
-          className="w-full"
-          embedded
-        />
-      </CpmToolbarGroup>
-      <CpmToolbarGroup label="Show" className="xl:col-span-8 2xl:col-span-5">
-        <ScheduleViewControls value={scheduleView} onChange={onScheduleViewChange} />
-      </CpmToolbarGroup>
-      <CpmToolbarGroup label="Order and WBS" className="xl:col-span-6 2xl:col-span-4">
-        <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
-        <Button
-          type="button"
-          variant="outline"
-          className="h-9 gap-2 whitespace-nowrap"
-          onClick={onManageWbs}
-        >
-          <ListTree className="h-4 w-4" />
-          Manage WBS
-        </Button>
-      </CpmToolbarGroup>
-      <CpmToolbarGroup label="Scale and logic" className="xl:col-span-6 2xl:col-span-4">
-        <ScheduleZoomControls dayPx={dayPx} onChange={onZoomChange} />
-        <Button
-          type="button"
-          variant={showLogicLines ? "default" : "outline"}
-          className="h-9 gap-2 whitespace-nowrap"
-          aria-pressed={showLogicLines}
-          onClick={onToggleLogicLines}
-        >
-          <GitBranch className="h-4 w-4" />
-          Logic lines
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-9 gap-2 whitespace-nowrap"
-          onClick={onExpand}
-        >
-          <Maximize2 className="h-4 w-4" />
-          Expand
-        </Button>
-      </CpmToolbarGroup>
-      <CpmToolbarGroup label="Output" className="xl:col-span-6 2xl:col-span-4">
-        <Button
-          type="button"
-          variant="outline"
-          className="h-9 gap-2 whitespace-nowrap"
-          disabled={!canSeedActivities || isSeedingActivities}
-          onClick={onSeedActivities}
-        >
-          <ClipboardList className="h-4 w-4" />
-          {isSeedingActivities ? "Building..." : "Build from milestones"}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-9 gap-2 whitespace-nowrap"
-          title="Print optimized for Tabloid / 11 x 17 landscape"
-          onClick={onPrint}
-        >
-          <Printer className="h-4 w-4" />
-          Print 11x17
-        </Button>
-      </CpmToolbarGroup>
-      <CpmToolbarGroup label="Add schedule rows" className="xl:col-span-6 2xl:col-span-4">
-        <Button
-          type="button"
-          className="h-9 gap-2 whitespace-nowrap"
-          onClick={onToggleActivityDraft}
-        >
-          <Plus className="h-4 w-4" />
-          {isActivityDraftOpen ? "Close form" : "Add activity"}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-9 gap-2 whitespace-nowrap"
-          onClick={onAddMilestone}
-        >
-          <Diamond className="h-4 w-4" />
-          Add milestone
-        </Button>
-      </CpmToolbarGroup>
+    <div className="flex w-full min-w-0 flex-col gap-3">
+      <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(300px,0.9fr)_minmax(0,1.7fr)_minmax(280px,0.9fr)]">
+        <CpmToolbarGroup label="Schedule snapshot">
+          <CpmDataDateControl
+            value={dataDateDraft}
+            savedValue={latestDataDate}
+            isSaving={isSavingDataDate}
+            onChange={onDataDateChange}
+            onSave={onSaveDataDate}
+            className="w-full"
+            embedded
+          />
+        </CpmToolbarGroup>
+        <CpmToolbarGroup label="View filters">
+          <ScheduleViewControls value={scheduleView} onChange={onScheduleViewChange} />
+        </CpmToolbarGroup>
+        <CpmToolbarGroup label="Sort and WBS">
+          <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 gap-2 whitespace-nowrap"
+            onClick={onManageWbs}
+          >
+            <ListTree className="h-4 w-4" />
+            Manage WBS
+          </Button>
+        </CpmToolbarGroup>
+      </div>
+
+      <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(540px,1.15fr)]">
+        <CpmToolbarGroup label="Scale and logic">
+          <ScheduleZoomControls dayPx={dayPx} onChange={onZoomChange} />
+          <Button
+            type="button"
+            variant={showLogicLines ? "default" : "outline"}
+            className="h-9 gap-2 whitespace-nowrap"
+            aria-pressed={showLogicLines}
+            onClick={onToggleLogicLines}
+          >
+            <GitBranch className="h-4 w-4" />
+            Logic lines
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 gap-2 whitespace-nowrap"
+            onClick={onExpand}
+          >
+            <Maximize2 className="h-4 w-4" />
+            Expand
+          </Button>
+        </CpmToolbarGroup>
+        <CpmToolbarGroup label="Schedule actions">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 gap-2 whitespace-nowrap"
+            disabled={!canSeedActivities || isSeedingActivities}
+            onClick={onSeedActivities}
+          >
+            <ClipboardList className="h-4 w-4" />
+            {isSeedingActivities ? "Building..." : "Build from milestones"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 gap-2 whitespace-nowrap"
+            title="Print optimized for Tabloid / 11 x 17 landscape"
+            onClick={onPrint}
+          >
+            <Printer className="h-4 w-4" />
+            Print 11x17
+          </Button>
+          <Button
+            type="button"
+            className="h-9 gap-2 whitespace-nowrap"
+            onClick={onToggleActivityDraft}
+          >
+            <Plus className="h-4 w-4" />
+            {isActivityDraftOpen ? "Close form" : "Add activity"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 gap-2 whitespace-nowrap"
+            onClick={onAddMilestone}
+          >
+            <Diamond className="h-4 w-4" />
+            Add milestone
+          </Button>
+        </CpmToolbarGroup>
+      </div>
     </div>
   );
 }
@@ -5526,7 +5529,7 @@ function ActivityDependencyPicker({
             return (
               <div
                 key={activityId}
-                className="grid min-w-0 gap-3 rounded-md border border-hairline bg-card p-3 lg:grid-cols-[minmax(220px,1fr)_minmax(150px,180px)_120px_32px] lg:items-end"
+                className="grid min-w-0 gap-3 rounded-md border border-hairline bg-card p-3 xl:grid-cols-[minmax(300px,1fr)_minmax(150px,180px)_120px_32px] xl:items-end"
               >
                 <div className="min-w-0">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
