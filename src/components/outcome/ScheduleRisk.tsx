@@ -189,12 +189,18 @@ type WbsDivisionRow = {
   parentPath: string | null;
   level: number;
   activityCount: number;
+  directActivityCount: number;
   firstStart: string | null;
   lastFinish: string | null;
   childCount: number;
   isPlaceholder: boolean;
   isPersisted: boolean;
 };
+
+type ActivityMatrixRow =
+  | { kind: "parent"; division: string; tasks: ConstructLineCpmTask[] }
+  | { kind: "group"; division: string; tasks: ConstructLineCpmTask[] }
+  | { kind: "task"; task: ConstructLineCpmTask };
 type WbsSectionDescriptor = {
   id: string;
   title: string;
@@ -3223,7 +3229,9 @@ function WbsManagerDialog({
                       </div>
                       <div className="truncate text-[11px] text-muted-foreground">
                         {row.childCount > 0
-                          ? `${row.childCount} child ${row.childCount === 1 ? "area" : "areas"}`
+                          ? `${row.directActivityCount} direct · ${row.childCount} child ${
+                              row.childCount === 1 ? "area" : "areas"
+                            }`
                           : !row.isPersisted
                             ? "derived from activities"
                             : row.isPlaceholder
@@ -3735,7 +3743,7 @@ function ActivityDivisionInput({
         list={normalizedOptions.length > 0 ? listId : undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="Choose or type WBS"
+        placeholder="Choose WBS / child area"
         className="h-10 min-w-0"
       />
       {normalizedOptions.length > 0 && (
@@ -3831,22 +3839,12 @@ function ActivityScheduleMatrix({
     [delayFragments],
   );
   const activeDelayFragmentCount = delayFragments.filter(isOpenDelayFragment).length;
-  const rows = useMemo(
-    () =>
-      model.groups.flatMap<
-        | { kind: "group"; division: string; tasks: ConstructLineCpmTask[] }
-        | { kind: "task"; task: ConstructLineCpmTask }
-      >((group) => [
-        { kind: "group", division: group.division, tasks: group.tasks },
-        ...group.tasks.map((task) => ({ kind: "task" as const, task })),
-      ]),
-    [model.groups],
-  );
+  const rows = useMemo(() => buildActivityMatrixRows(model.groups), [model.groups]);
   const { bodyHeight, rowPositions } = useMemo(() => {
     const positions = new Map<string, number>();
     let height = 0;
     for (const row of rows) {
-      if (row.kind === "group") {
+      if (row.kind === "parent" || row.kind === "group") {
         height += groupHeight;
       } else {
         positions.set(row.task.activityKey, height + rowHeight / 2);
@@ -4026,6 +4024,56 @@ function ActivityScheduleMatrix({
             </div>
 
             {rows.map((row) => {
+              if (row.kind === "parent") {
+                const groupMeta = getWbsDisplayMeta(row.division);
+                const groupStart = Math.min(
+                  ...row.tasks.map((task) =>
+                    offsetFromTimelineStart(task.visualStartDate, model.timelineStartDate),
+                  ),
+                );
+                const groupFinish = Math.max(
+                  ...row.tasks.map((task) =>
+                    offsetFromTimelineStart(task.visualFinishDate, model.timelineStartDate),
+                  ),
+                );
+                const childCount = new Set(
+                  row.tasks
+                    .map((task) => getImmediateChildWbsTitle(row.division, task.activity.division))
+                    .filter(Boolean),
+                ).size;
+                return (
+                  <div
+                    key={`parent-${row.division}`}
+                    className="flex border-b border-hairline bg-foreground/[0.045]"
+                    style={{ height: groupHeight }}
+                  >
+                    <div
+                      className="sticky left-0 z-20 flex shrink-0 items-center border-r border-hairline bg-muted/75 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground"
+                      style={{ width: tableWidth }}
+                    >
+                      <div
+                        className="min-w-0"
+                        style={{ paddingLeft: `${Math.min(groupMeta.level, 4) * 14}px` }}
+                      >
+                        <div className="truncate">
+                          {groupMeta.title} · {childCount} child{" "}
+                          {childCount === 1 ? "area" : "areas"} · {row.tasks.length} activities
+                        </div>
+                      </div>
+                    </div>
+                    <div className="relative shrink-0" style={{ width: timelineWidth }}>
+                      <div
+                        className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-foreground/45"
+                        style={{
+                          left: groupStart * activeDayPx,
+                          width: Math.max(8, (groupFinish - groupStart + 1) * activeDayPx),
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              }
+
               if (row.kind === "group") {
                 const groupMeta = getWbsDisplayMeta(row.division);
                 const groupStart = Math.min(
@@ -4496,6 +4544,37 @@ function orderConstructLineCpmModel(
   };
 }
 
+function buildActivityMatrixRows(
+  groups: Array<{ division: string; tasks: ConstructLineCpmTask[] }>,
+): ActivityMatrixRow[] {
+  const parentRollups = new Map<string, ConstructLineCpmTask[]>();
+  for (const group of groups) {
+    const parts = splitWbsPath(group.division);
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      const parentPath = joinWbsPath(parts.slice(0, depth));
+      parentRollups.set(parentPath, [...(parentRollups.get(parentPath) ?? []), ...group.tasks]);
+    }
+  }
+
+  const insertedParents = new Set<string>();
+  const rows: ActivityMatrixRow[] = [];
+  for (const group of groups) {
+    const parts = splitWbsPath(group.division);
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      const parentPath = joinWbsPath(parts.slice(0, depth));
+      if (insertedParents.has(parentPath)) continue;
+      const parentTasks = parentRollups.get(parentPath) ?? [];
+      if (parentTasks.length > 0) {
+        rows.push({ kind: "parent", division: parentPath, tasks: parentTasks });
+      }
+      insertedParents.add(parentPath);
+    }
+    rows.push({ kind: "group", division: group.division, tasks: group.tasks });
+    rows.push(...group.tasks.map((task) => ({ kind: "task" as const, task })));
+  }
+  return rows;
+}
+
 function filterConstructLineCpmModel(
   model: ConstructLineCpmModel,
   view: ScheduleGridView,
@@ -4701,6 +4780,15 @@ function getWbsDisplayMeta(value?: string | null) {
   };
 }
 
+function getImmediateChildWbsTitle(parentPath: string, value?: string | null) {
+  const parentParts = splitWbsPath(parentPath);
+  const parts = splitWbsPath(value);
+  if (parts.length <= parentParts.length) return null;
+  const actualParent = joinWbsPath(parts.slice(0, parentParts.length));
+  if (actualParent !== joinWbsPath(parentParts)) return null;
+  return parts[parentParts.length] ?? null;
+}
+
 function getWbsOrderIndex(division: string, order: string[]) {
   const index = order.findIndex((item) => item === division);
   return index === -1 ? Number.MAX_SAFE_INTEGER : index;
@@ -4776,6 +4864,7 @@ function buildWbsDivisionRows(
       parentPath: section.parentPath,
       level: section.level,
       activityCount: 0,
+      directActivityCount: 0,
       firstStart: null,
       lastFinish: null,
       childCount: 0,
@@ -4786,6 +4875,26 @@ function buildWbsDivisionRows(
   for (const activity of activities) {
     const division = normalizeWbsDivisionName(activity.division);
     const parts = splitWbsPath(division);
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      const parentPath = joinWbsPath(parts.slice(0, depth));
+      if (!rows.has(parentPath)) {
+        rows.set(parentPath, {
+          id: null,
+          division: parentPath,
+          title: parts[depth - 1] ?? parentPath,
+          parentId: null,
+          parentPath: depth > 1 ? joinWbsPath(parts.slice(0, depth - 1)) : null,
+          level: depth - 1,
+          activityCount: 0,
+          directActivityCount: 0,
+          firstStart: null,
+          lastFinish: null,
+          childCount: 0,
+          isPlaceholder: true,
+          isPersisted: false,
+        });
+      }
+    }
     const existing =
       rows.get(division) ??
       ({
@@ -4796,6 +4905,7 @@ function buildWbsDivisionRows(
         parentPath: parts.length > 1 ? joinWbsPath(parts.slice(0, -1)) : null,
         level: Math.max(0, parts.length - 1),
         activityCount: 0,
+        directActivityCount: 0,
         firstStart: null,
         lastFinish: null,
         childCount: 0,
@@ -4805,6 +4915,7 @@ function buildWbsDivisionRows(
     rows.set(division, {
       ...existing,
       activityCount: existing.activityCount + 1,
+      directActivityCount: existing.directActivityCount + 1,
       firstStart: earlierDate(existing.firstStart, activity.start_date),
       lastFinish: laterDate(existing.lastFinish, activity.finish_date),
       isPlaceholder: existing.isPersisted ? false : existing.activityCount + 1 === 0,
@@ -4816,8 +4927,38 @@ function buildWbsDivisionRows(
     if (!row.parentPath) continue;
     childCounts.set(row.parentPath, (childCounts.get(row.parentPath) ?? 0) + 1);
   }
+  const rollups = new Map<
+    string,
+    { activityCount: number; firstStart: string | null; lastFinish: string | null }
+  >();
+  for (const row of rowList) {
+    if (row.directActivityCount === 0) continue;
+    const parts = splitWbsPath(row.division);
+    for (let depth = 1; depth <= parts.length; depth += 1) {
+      const path = joinWbsPath(parts.slice(0, depth));
+      const current = rollups.get(path) ?? {
+        activityCount: 0,
+        firstStart: null,
+        lastFinish: null,
+      };
+      rollups.set(path, {
+        activityCount: current.activityCount + row.directActivityCount,
+        firstStart: earlierDate(current.firstStart, row.firstStart),
+        lastFinish: laterDate(current.lastFinish, row.lastFinish),
+      });
+    }
+  }
   return rowList
-    .map((row) => ({ ...row, childCount: childCounts.get(row.division) ?? 0 }))
+    .map((row) => {
+      const rollup = rollups.get(row.division);
+      return {
+        ...row,
+        activityCount: rollup?.activityCount ?? row.activityCount,
+        firstStart: rollup?.firstStart ?? row.firstStart,
+        lastFinish: rollup?.lastFinish ?? row.lastFinish,
+        childCount: childCounts.get(row.division) ?? 0,
+      };
+    })
     .sort((a, b) => compareWbsDivision(a.division, b.division, wbsDivisionOrder));
 }
 
@@ -5633,7 +5774,8 @@ function ActivityDetailDialog({
                   Activity setup
                 </div>
                 <div className="mt-1 text-sm text-muted-foreground">
-                  Edit the row identity, WBS division, dates, progress, and milestone status.
+                  Edit the row identity, parent / child WBS path, dates, progress, and milestone
+                  status.
                 </div>
               </div>
               <Button
@@ -5663,7 +5805,7 @@ function ActivityDetailDialog({
                   className="h-10 min-w-0"
                 />
               </LabeledField>
-              <LabeledField label="Division">
+              <LabeledField label="WBS / area">
                 <ActivityDivisionInput
                   value={draft.division}
                   onChange={(division) => setDraft({ ...draft, division })}
@@ -5890,8 +6032,8 @@ function ActivityDelayFragmentPanel({
 
       {persistence === "migration_required" ? (
         <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
-          Delay logging is temporarily unavailable for this workspace. Activity details and CPM
-          logic still save normally.
+          Delay logging is not enabled for this workspace yet. Activity details and CPM logic still
+          save normally; delay records can be added after this workspace is enabled.
         </div>
       ) : (
         <>
