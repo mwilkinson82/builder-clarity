@@ -547,37 +547,28 @@ export const listSchedule = createServerFn({ method: "GET" })
       }
     }
 
+    const uniqueActivityDivisions = Array.from(
+      new Set(activityRows.map((row) => str(row.division, "General").trim() || "General")),
+    );
     const derivedWbsSections = buildDerivedWbsSectionsFromActivityDivisions(
       data.projectId,
-      Array.from(
-        new Set(activityRows.map((row) => str(row.division, "General").trim() || "General")),
-      ),
+      uniqueActivityDivisions,
     );
     let persistedWbsRows = wbsSectionsMissing
       ? []
       : ((wRes.data ?? []) as unknown as Array<Record<string, unknown>>);
     if (!wbsSectionsMissing && persistedWbsRows.length === 0 && derivedWbsSections.length > 0) {
-      const seedWbsRows: ScheduleWbsSectionInsert[] = derivedWbsSections
-        .filter((section) => section.parent_id == null)
-        .map((section) => ({
-          project_id: section.project_id,
-          name: section.name,
-          code: section.code,
-          sort_order: section.sort_order,
-        }));
-      const { error: seedWbsError } = await context.supabase
+      for (const division of uniqueActivityDivisions) {
+        await ensureScheduleWbsPath(context.supabase, data.projectId, division);
+      }
+      const seededWbs = await context.supabase
         .from("schedule_wbs_sections")
-        .insert(seedWbsRows);
-      if (!seedWbsError) {
-        const seededWbs = await context.supabase
-          .from("schedule_wbs_sections")
-          .select("*")
-          .eq("project_id", data.projectId)
-          .order("sort_order")
-          .order("name");
-        if (!seededWbs.error) {
-          persistedWbsRows = (seededWbs.data ?? []) as unknown as Array<Record<string, unknown>>;
-        }
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("sort_order")
+        .order("name");
+      if (!seededWbs.error) {
+        persistedWbsRows = (seededWbs.data ?? []) as unknown as Array<Record<string, unknown>>;
       }
     }
     const wbsSectionRows =

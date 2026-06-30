@@ -325,6 +325,7 @@ const scheduleRiskSource = readProjectFile("src/components/outcome/ScheduleRisk.
 const scheduleRouteSource = readProjectFile(
   "src/routes/_authenticated/projects.$projectId.schedule.tsx",
 );
+const scheduleFunctionsSource = readProjectFile("src/lib/schedule.functions.ts");
 const stylesSource = readProjectFile("src/styles.css");
 
 for (const requiredScheduleRiskText of [
@@ -355,6 +356,22 @@ for (const requiredScheduleRouteText of [
     `Schedule route is missing required CPM workspace text: ${requiredScheduleRouteText}`,
   );
 }
+
+for (const requiredScheduleFunctionText of [
+  "const uniqueActivityDivisions = Array.from(",
+  "await ensureScheduleWbsPath(context.supabase, data.projectId, division);",
+]) {
+  assert.ok(
+    scheduleFunctionsSource.includes(requiredScheduleFunctionText),
+    `Schedule functions are missing required WBS persistence contract: ${requiredScheduleFunctionText}`,
+  );
+}
+
+assert.equal(
+  scheduleFunctionsSource.includes(".filter((section) => section.parent_id == null)"),
+  false,
+  "Derived WBS seeding must persist child sections, not only top-level sections.",
+);
 
 for (const requiredPrintStyle of [
   ".constructline-cpm-print-footer",
