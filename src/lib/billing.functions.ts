@@ -10,7 +10,7 @@ import {
 } from "@/lib/wip";
 
 type DynamicSupabaseError = { code?: string; message: string };
-type DynamicSupabaseResult<T = any> = { data: T | null; error: DynamicSupabaseError | null };
+type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
 type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   select(columns?: string): DynamicSupabaseQuery;
   insert(values: unknown): DynamicSupabaseQuery;
@@ -117,6 +117,19 @@ export interface CostActualRow {
   voided_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CostActualImportRow {
+  cost_bucket_id?: string | null;
+  cost_code?: string;
+  description: string;
+  category?: "direct" | "labor" | "material" | "equipment" | "subcontract" | "overhead";
+  amount: number;
+  vendor?: string;
+  reference_number?: string;
+  cost_date: string;
+  status?: "committed" | "paid";
+  notes?: string;
 }
 
 export interface ChangeOrderAllocationRow {
@@ -934,6 +947,156 @@ export const createCostActual = createServerFn({ method: "POST" })
     });
     if (insertRes.error) throw new Error(insertRes.error.message);
     return { ok: true };
+  });
+
+const importCostActualsInput = z.object({
+  projectId: z.string().uuid(),
+  source_name: z.string().max(200).default("CSV import"),
+  rows: z
+    .array(
+      z.object({
+        cost_bucket_id: z.string().uuid().nullable().optional(),
+        cost_code: z.string().max(64).default(""),
+        description: z.string().min(1).max(500),
+        category: z
+          .enum(["direct", "labor", "material", "equipment", "subcontract", "overhead"])
+          .default("direct"),
+        amount: z.number().min(0.01),
+        vendor: z.string().max(200).default(""),
+        reference_number: z.string().max(200).default(""),
+        cost_date: z.string().min(1),
+        status: z.enum(["committed", "paid"]).default("committed"),
+        notes: z.string().max(2000).default(""),
+      }),
+    )
+    .min(1)
+    .max(500),
+});
+
+const sourceExternalId = (
+  projectId: string,
+  sourceName: string,
+  row: z.infer<typeof importCostActualsInput>["rows"][number],
+) =>
+  [
+    projectId,
+    sourceName,
+    row.cost_date,
+    row.reference_number,
+    row.vendor,
+    row.amount.toFixed(2),
+    row.cost_code,
+    row.description,
+  ]
+    .map((part) => normalizeKey(String(part ?? "")))
+    .join("|");
+
+export const importCostActuals = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof importCostActualsInput>) =>
+    importCostActualsInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    await requireCanManageProject(ctx, data.projectId);
+
+    const bucketRes = await dynamicTable(ctx.supabase, "cost_buckets")
+      .select("id,cost_code,bucket")
+      .eq("project_id", data.projectId);
+    if (bucketRes.error) throw new Error(bucketRes.error.message);
+
+    const buckets = (bucketRes.data ?? []) as Record<string, unknown>[];
+    const bucketById = new Map(buckets.map((bucket) => [bucket.id as string, bucket]));
+    const bucketByCode = new Map(
+      buckets
+        .filter((bucket) => str(bucket.cost_code))
+        .map((bucket) => [normalizeKey(str(bucket.cost_code)), bucket]),
+    );
+
+    const requestedExternalIds = data.rows.map((row) =>
+      sourceExternalId(data.projectId, data.source_name, row),
+    );
+    const existingRes = await dynamicTable(ctx.supabase, "cost_actuals")
+      .select("source_external_id")
+      .eq("project_id", data.projectId)
+      .in("source_external_id", requestedExternalIds);
+    if (existingRes.error) throw new Error(existingRes.error.message);
+    const existingIds = new Set(
+      ((existingRes.data ?? []) as Record<string, unknown>[]).map((row) =>
+        str(row.source_external_id),
+      ),
+    );
+
+    let unmatchedCount = 0;
+    let skippedCount = 0;
+    const seenExternalIds = new Set<string>();
+    const rows = data.rows.flatMap((row) => {
+      const externalId = sourceExternalId(data.projectId, data.source_name, row);
+      if (existingIds.has(externalId) || seenExternalIds.has(externalId)) {
+        skippedCount += 1;
+        return [];
+      }
+      seenExternalIds.add(externalId);
+
+      let bucketId = row.cost_bucket_id ?? null;
+      if (bucketId && !bucketById.has(bucketId)) bucketId = null;
+      if (!bucketId && row.cost_code.trim()) {
+        bucketId =
+          (bucketByCode.get(normalizeKey(row.cost_code))?.id as string | undefined) ?? null;
+      }
+      if (!bucketId) unmatchedCount += 1;
+
+      return [
+        {
+          project_id: data.projectId,
+          cost_bucket_id: bucketId,
+          cost_code: row.cost_code.trim(),
+          description: row.description.trim(),
+          category: row.category,
+          amount: row.amount,
+          vendor: row.vendor.trim(),
+          reference_number: row.reference_number.trim(),
+          cost_date: row.cost_date,
+          status: row.status,
+          notes: row.notes.trim(),
+          source_external_id: externalId,
+        },
+      ];
+    });
+
+    if (rows.length === 0) {
+      return { ok: true, imported_count: 0, skipped_count: skippedCount, unmatched_count: 0 };
+    }
+
+    const batchRes = await dynamicTable(ctx.supabase, "cost_actual_import_batches")
+      .insert({
+        project_id: data.projectId,
+        source_type: "csv",
+        source_name: data.source_name,
+        row_count: data.rows.length,
+        matched_count: rows.length - unmatchedCount,
+        unmatched_count: unmatchedCount,
+        status: unmatchedCount > 0 ? "review" : "imported",
+      })
+      .select("id")
+      .single();
+    if (batchRes.error) throw new Error(batchRes.error.message);
+    const importBatchId = str((batchRes.data as Record<string, unknown> | null)?.id);
+
+    const insertRes = await dynamicTable(ctx.supabase, "cost_actuals").insert(
+      rows.map((row) => ({
+        ...row,
+        import_batch_id: importBatchId || null,
+      })),
+    );
+    if (insertRes.error) throw new Error(insertRes.error.message);
+
+    return {
+      ok: true,
+      imported_count: rows.length,
+      skipped_count: skippedCount,
+      unmatched_count: unmatchedCount,
+    };
   });
 
 const voidCostActualInput = z.object({

@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from "react";
+import * as Papa from "papaparse";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,14 +20,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { aiaBillingFilename, downloadPdfBytes, generateAiaBillingPdf } from "@/lib/aia-pdf";
 import { fmtPct, fmtUSD } from "@/lib/format";
 import type {
   BillingLineItemRow,
   BillingWorkspaceData,
+  CostActualImportRow,
   CostActualRow,
 } from "@/lib/billing.functions";
-import type { BillingApplicationRow, BucketRow } from "@/lib/projects.functions";
-import { Check, Plus, Save, Trash2, Wand2 } from "lucide-react";
+import type { BillingApplicationRow, BucketRow, ProjectRow } from "@/lib/projects.functions";
+import { Check, Download, Plus, Save, Trash2, Upload, Wand2 } from "lucide-react";
 
 type LinePatch = {
   work_completed_this_period?: number;
@@ -56,6 +59,7 @@ type BucketSettingsPatch = {
 };
 
 type BillingEnhancementProps = {
+  project: ProjectRow;
   projectId: string;
   payApps: BillingApplicationRow[];
   buckets: BucketRow[];
@@ -67,6 +71,7 @@ type BillingEnhancementProps = {
   onGenerateLines: (billingApplicationId: string) => void;
   onUpdateLine: (id: string, patch: LinePatch) => void;
   onCreateCostActual: (input: CostActualDraft) => void;
+  onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   onUpdateBucketSettings: (id: string, patch: BucketSettingsPatch) => void;
 };
@@ -74,7 +79,60 @@ type BillingEnhancementProps = {
 const centsToDollars = (value: number) => value / 100;
 const today = () => new Date().toISOString().slice(0, 10);
 
+const normalizeHeader = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+const getImportCell = (row: Record<string, unknown>, aliases: string[]) => {
+  const lookup = new Map(
+    Object.entries(row).map(([key, value]) => [normalizeHeader(key), String(value ?? "").trim()]),
+  );
+  for (const alias of aliases) {
+    const value = lookup.get(normalizeHeader(alias));
+    if (value) return value;
+  }
+  return "";
+};
+const parseImportAmount = (value: string) => {
+  const normalized = value.replace(/[,$\s]/g, "").replace(/^\((.*)\)$/, "-$1");
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? Math.abs(amount) : 0;
+};
+const parseImportDate = (value: string) => {
+  if (!value) return today();
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return today();
+  return date.toISOString().slice(0, 10);
+};
+const normalizeImportCategory = (value: string): CostActualImportRow["category"] => {
+  const key = normalizeHeader(value);
+  if (key.includes("labor")) return "labor";
+  if (key.includes("material")) return "material";
+  if (key.includes("equipment")) return "equipment";
+  if (key.includes("overhead")) return "overhead";
+  if (key.includes("sub")) return "subcontract";
+  return "direct";
+};
+const normalizeImportStatus = (value: string): CostActualImportRow["status"] => {
+  const key = normalizeHeader(value);
+  return key.includes("paid") || key.includes("cleared") ? "paid" : "committed";
+};
+const normalizeCostImportRow = (row: Record<string, unknown>): CostActualImportRow | null => {
+  const description = getImportCell(row, ["description", "memo", "name", "item", "account"]);
+  const amount = parseImportAmount(getImportCell(row, ["amount", "debit", "cost", "total"]));
+  if (!description || amount <= 0) return null;
+  return {
+    cost_code: getImportCell(row, ["cost code", "cost_code", "code", "costcode"]),
+    description,
+    category: normalizeImportCategory(getImportCell(row, ["category", "type", "cost type"])),
+    amount,
+    vendor: getImportCell(row, ["vendor", "name", "payee", "supplier"]),
+    reference_number: getImportCell(row, ["reference", "ref", "invoice", "invoice #", "check"]),
+    cost_date: parseImportDate(getImportCell(row, ["date", "cost date", "transaction date"])),
+    status: normalizeImportStatus(getImportCell(row, ["status", "paid status"])),
+    notes: getImportCell(row, ["notes", "memo", "class"]),
+  };
+};
+
 export function BillingEnhancementPanels({
+  project,
   projectId,
   payApps,
   buckets,
@@ -86,6 +144,7 @@ export function BillingEnhancementPanels({
   onGenerateLines,
   onUpdateLine,
   onCreateCostActual,
+  onImportCostActuals,
   onVoidCostActual,
   onUpdateBucketSettings,
 }: BillingEnhancementProps) {
@@ -109,6 +168,7 @@ export function BillingEnhancementPanels({
   return (
     <div className="space-y-5">
       <LineItemsPanel
+        project={project}
         payApps={payApps}
         lineItems={workspace.lineItems}
         onGenerateLines={onGenerateLines}
@@ -120,6 +180,7 @@ export function BillingEnhancementPanels({
         buckets={buckets}
         costActuals={workspace.costActuals}
         onCreateCostActual={onCreateCostActual}
+        onImportCostActuals={onImportCostActuals}
         onVoidCostActual={onVoidCostActual}
         savingCost={savingCost}
       />
@@ -134,18 +195,21 @@ export function BillingEnhancementPanels({
 }
 
 function LineItemsPanel({
+  project,
   payApps,
   lineItems,
   onGenerateLines,
   onUpdateLine,
   savingLine,
 }: {
+  project: ProjectRow;
   payApps: BillingApplicationRow[];
   lineItems: BillingLineItemRow[];
   onGenerateLines: (billingApplicationId: string) => void;
   onUpdateLine: (id: string, patch: LinePatch) => void;
   savingLine?: boolean;
 }) {
+  const [pdfBusy, setPdfBusy] = useState(false);
   const firstDetailedPayAppId = lineItems[0]?.billing_application_id ?? payApps[0]?.id ?? "";
   const [activePayAppId, setActivePayAppId] = useState(firstDetailedPayAppId);
   const selectedPayAppId = activePayAppId || firstDetailedPayAppId;
@@ -179,12 +243,34 @@ function LineItemsPanel({
 
   const releaseAll = () => {
     if (!selectedLines.length) return;
-    if (!window.confirm("Release all remaining retainage for this pay application?")) return;
+    const earlyLines = selectedLines.filter((line) => line.billing_percent_complete < 95);
+    const message =
+      earlyLines.length > 0
+        ? `${earlyLines.length} line(s) are below 95% complete. Release all remaining retainage anyway?`
+        : "Release all remaining retainage for this pay application?";
+    if (!window.confirm(message)) return;
     selectedLines.forEach((line) =>
       onUpdateLine(line.id, {
         retainage_released: centsToDollars(line.retainage_held_cents),
       }),
     );
+  };
+
+  const downloadAiaPdf = async () => {
+    if (!selectedPayApp || selectedLines.length === 0) return;
+    setPdfBusy(true);
+    try {
+      const bytes = await generateAiaBillingPdf({
+        project,
+        payApp: selectedPayApp,
+        lineItems: selectedLines,
+      });
+      downloadPdfBytes(bytes, aiaBillingFilename(project, selectedPayApp));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "AIA PDF could not be generated.");
+    } finally {
+      setPdfBusy(false);
+    }
   };
 
   return (
@@ -220,6 +306,16 @@ function LineItemsPanel({
             onClick={() => selectedPayApp && onGenerateLines(selectedPayApp.id)}
           >
             <Wand2 className="h-3.5 w-3.5" /> Generate from SOV
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            disabled={pdfBusy || selectedLines.length === 0}
+            onClick={downloadAiaPdf}
+          >
+            <Download className="h-3.5 w-3.5" /> AIA PDF
           </Button>
           <Button
             type="button"
@@ -370,6 +466,7 @@ function CostTrackingPanel({
   buckets,
   costActuals,
   onCreateCostActual,
+  onImportCostActuals,
   onVoidCostActual,
   savingCost,
 }: {
@@ -377,10 +474,12 @@ function CostTrackingPanel({
   buckets: BucketRow[];
   costActuals: CostActualRow[];
   onCreateCostActual: (input: CostActualDraft) => void;
+  onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   savingCost?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState<CostActualDraft>(() => ({
     cost_bucket_id: buckets[0]?.id ?? null,
     cost_code: buckets[0]?.cost_code ?? "",
@@ -429,6 +528,28 @@ function CostTrackingPanel({
     });
   };
 
+  const importCsv = (file: File) => {
+    Papa.parse<Record<string, unknown>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (result) => {
+        const rows = result.data
+          .map(normalizeCostImportRow)
+          .filter((row): row is CostActualImportRow => Boolean(row));
+        if (rows.length === 0) {
+          window.alert(
+            "No valid cost rows were found. Check the CSV headers and amount/date fields.",
+          );
+          return;
+        }
+        onImportCostActuals({ source_name: file.name, rows });
+      },
+      error: (error) => {
+        window.alert(error.message || "Cost CSV could not be parsed.");
+      },
+    });
+  };
+
   return (
     <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -440,136 +561,162 @@ function CostTrackingPanel({
             Record subcontractor invoices, commitments, direct costs, and paid actuals by cost code.
           </p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm" className="gap-1.5">
-              <Plus className="h-3.5 w-3.5" /> Add cost
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-3xl">
-            <DialogHeader>
-              <DialogTitle className="font-serif text-2xl">Add cost actual</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-4 py-2">
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="space-y-1.5">
-                  <Label>Cost code</Label>
-                  <Select value={draft.cost_bucket_id ?? "unmatched"} onValueChange={chooseBucket}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="unmatched">Unmatched</SelectItem>
-                      {buckets.map((bucket) => (
-                        <SelectItem key={bucket.id} value={bucket.id}>
-                          {bucket.cost_code ? `${bucket.cost_code} - ` : ""}
-                          {bucket.bucket}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Category</Label>
-                  <Select
-                    value={draft.category}
-                    onValueChange={(category) =>
-                      setDraft({ ...draft, category: category as CostActualRow["category"] })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="subcontract">Subcontract</SelectItem>
-                      <SelectItem value="material">Material</SelectItem>
-                      <SelectItem value="labor">Labor</SelectItem>
-                      <SelectItem value="equipment">Equipment</SelectItem>
-                      <SelectItem value="overhead">Overhead</SelectItem>
-                      <SelectItem value="direct">Direct</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Status</Label>
-                  <Select
-                    value={draft.status}
-                    onValueChange={(status) =>
-                      setDraft({ ...draft, status: status as CostActualDraft["status"] })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="committed">Committed</SelectItem>
-                      <SelectItem value="paid">Paid</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid gap-3 md:grid-cols-[1fr_150px_150px]">
-                <div className="space-y-1.5">
-                  <Label>Description</Label>
-                  <Input
-                    value={draft.description}
-                    onChange={(event) => setDraft({ ...draft, description: event.target.value })}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Amount</Label>
-                  <MoneyInput
-                    value={draft.amount}
-                    onValueChange={(amount) => setDraft({ ...draft, amount })}
-                    align="right"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Date</Label>
-                  <Input
-                    type="date"
-                    value={draft.cost_date}
-                    onChange={(event) => setDraft({ ...draft, cost_date: event.target.value })}
-                  />
-                </div>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label>Vendor</Label>
-                  <Input
-                    value={draft.vendor}
-                    onChange={(event) => setDraft({ ...draft, vendor: event.target.value })}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Reference #</Label>
-                  <Input
-                    value={draft.reference_number}
-                    onChange={(event) =>
-                      setDraft({ ...draft, reference_number: event.target.value })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Notes</Label>
-                <Textarea
-                  rows={3}
-                  value={draft.notes}
-                  onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="ghost" onClick={() => setOpen(false)}>
-                Cancel
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) importCsv(file);
+              event.currentTarget.value = "";
+            }}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            disabled={savingCost}
+            onClick={() => importInputRef.current?.click()}
+          >
+            <Upload className="h-3.5 w-3.5" /> Import CSV
+          </Button>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" className="gap-1.5">
+                <Plus className="h-3.5 w-3.5" /> Add cost
               </Button>
-              <Button onClick={save} disabled={savingCost || !draft.description.trim()}>
-                Save cost
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-3xl">
+              <DialogHeader>
+                <DialogTitle className="font-serif text-2xl">Add cost actual</DialogTitle>
+              </DialogHeader>
+              <div className="grid gap-4 py-2">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-1.5">
+                    <Label>Cost code</Label>
+                    <Select
+                      value={draft.cost_bucket_id ?? "unmatched"}
+                      onValueChange={chooseBucket}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="unmatched">Unmatched</SelectItem>
+                        {buckets.map((bucket) => (
+                          <SelectItem key={bucket.id} value={bucket.id}>
+                            {bucket.cost_code ? `${bucket.cost_code} - ` : ""}
+                            {bucket.bucket}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Category</Label>
+                    <Select
+                      value={draft.category}
+                      onValueChange={(category) =>
+                        setDraft({ ...draft, category: category as CostActualRow["category"] })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="subcontract">Subcontract</SelectItem>
+                        <SelectItem value="material">Material</SelectItem>
+                        <SelectItem value="labor">Labor</SelectItem>
+                        <SelectItem value="equipment">Equipment</SelectItem>
+                        <SelectItem value="overhead">Overhead</SelectItem>
+                        <SelectItem value="direct">Direct</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Status</Label>
+                    <Select
+                      value={draft.status}
+                      onValueChange={(status) =>
+                        setDraft({ ...draft, status: status as CostActualDraft["status"] })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="committed">Committed</SelectItem>
+                        <SelectItem value="paid">Paid</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-[1fr_150px_150px]">
+                  <div className="space-y-1.5">
+                    <Label>Description</Label>
+                    <Input
+                      value={draft.description}
+                      onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Amount</Label>
+                    <MoneyInput
+                      value={draft.amount}
+                      onValueChange={(amount) => setDraft({ ...draft, amount })}
+                      align="right"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Date</Label>
+                    <Input
+                      type="date"
+                      value={draft.cost_date}
+                      onChange={(event) => setDraft({ ...draft, cost_date: event.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Vendor</Label>
+                    <Input
+                      value={draft.vendor}
+                      onChange={(event) => setDraft({ ...draft, vendor: event.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Reference #</Label>
+                    <Input
+                      value={draft.reference_number}
+                      onChange={(event) =>
+                        setDraft({ ...draft, reference_number: event.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Notes</Label>
+                  <Textarea
+                    rows={3}
+                    value={draft.notes}
+                    onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={save} disabled={savingCost || !draft.description.trim()}>
+                  Save cost
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -616,7 +763,16 @@ function CostTrackingPanel({
                           variant="ghost"
                           size="sm"
                           className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
-                          onClick={() => onVoidCostActual(actual.id, "Voided from cost tracking.")}
+                          onClick={() => {
+                            if (
+                              !window.confirm(
+                                "Void this cost actual? The linked bucket actuals will update.",
+                              )
+                            ) {
+                              return;
+                            }
+                            onVoidCostActual(actual.id, "Voided from cost tracking.");
+                          }}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>

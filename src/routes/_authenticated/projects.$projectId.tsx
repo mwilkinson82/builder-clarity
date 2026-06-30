@@ -51,10 +51,12 @@ import {
   createCostActual,
   generateBillingLineItems,
   getBillingWorkspace,
+  importCostActuals,
   updateBillingLineItem,
   updateCostBucketBillingSettings,
   voidCostActual,
   type BillingWorkspaceData,
+  type CostActualImportRow,
 } from "@/lib/billing.functions";
 import {
   createExposure,
@@ -393,6 +395,7 @@ function ProjectPage() {
   const generateBillingLinesFn = useServerFn(generateBillingLineItems);
   const updateBillingLineFn = useServerFn(updateBillingLineItem);
   const createCostActualFn = useServerFn(createCostActual);
+  const importCostActualsFn = useServerFn(importCostActuals);
   const voidCostActualFn = useServerFn(voidCostActual);
   const updateBucketBillingSettingsFn = useServerFn(updateCostBucketBillingSettings);
 
@@ -533,6 +536,21 @@ function ProjectPage() {
     onError: (err) => {
       toast.error("Cost actual did not save", {
         description: err instanceof Error ? err.message : "Check the cost entry and try again.",
+      });
+    },
+  });
+  const costActualImport = useMutation({
+    mutationFn: (input: Parameters<typeof importCostActualsFn>[0]["data"]) =>
+      importCostActualsFn({ data: input }),
+    onSuccess: (result) => {
+      invalidate();
+      toast.success("Cost import complete", {
+        description: `${result.imported_count} imported · ${result.skipped_count} skipped · ${result.unmatched_count} unmatched.`,
+      });
+    },
+    onError: (err) => {
+      toast.error("Cost import did not save", {
+        description: err instanceof Error ? err.message : "Check the CSV headers and try again.",
       });
     },
   });
@@ -1479,7 +1497,11 @@ function ProjectPage() {
                 savingInvoice={invoiceCreate.isPending}
                 savingPayment={paymentRecord.isPending}
                 savingBillingLine={billingLineGenerate.isPending || billingLineUpdate.isPending}
-                savingCostActual={costActualCreate.isPending || costActualVoid.isPending}
+                savingCostActual={
+                  costActualCreate.isPending ||
+                  costActualImport.isPending ||
+                  costActualVoid.isPending
+                }
                 savingBucketBilling={bucketBillingUpdate.isPending}
                 onCreate={handleCreatePayApp}
                 onUpdate={handleUpdatePayApp}
@@ -1494,6 +1516,7 @@ function ProjectPage() {
                     ...input,
                   })
                 }
+                onImportCostActuals={(input) => costActualImport.mutate({ projectId, ...input })}
                 onVoidCostActual={(id, notes) => costActualVoid.mutate({ id, notes })}
                 onUpdateBucketBillingSettings={(id, patch) =>
                   bucketBillingUpdate.mutate({ id, patch })
@@ -1868,6 +1891,7 @@ function BillingWorkspace({
   onGenerateBillingLines,
   onUpdateBillingLine,
   onCreateCostActual,
+  onImportCostActuals,
   onVoidCostActual,
   onUpdateBucketBillingSettings,
   onCreateInvoice,
@@ -1915,6 +1939,7 @@ function BillingWorkspace({
     status: "committed" | "paid";
     notes: string;
   }) => void;
+  onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   onUpdateBucketBillingSettings: (
     id: string,
@@ -2330,6 +2355,7 @@ function BillingWorkspace({
       </div>
 
       <BillingEnhancementPanels
+        project={project}
         projectId={project.id}
         payApps={billingApplications}
         buckets={buckets}
@@ -2341,6 +2367,7 @@ function BillingWorkspace({
         onGenerateLines={onGenerateBillingLines}
         onUpdateLine={onUpdateBillingLine}
         onCreateCostActual={onCreateCostActual}
+        onImportCostActuals={onImportCostActuals}
         onVoidCostActual={onVoidCostActual}
         onUpdateBucketSettings={onUpdateBucketBillingSettings}
       />
