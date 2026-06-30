@@ -1951,6 +1951,7 @@ export function CpmActivityPlanner({
   const isDataDateDirty = dataDateDraft !== (latestDataDate ?? "");
   const scheduleReportTitle = getScheduleReportTitle(scheduleView);
   const isCriticalPathReport = scheduleView === "critical";
+  const printReportLabel = isCriticalPathReport ? "Critical Path Report" : scheduleReportTitle;
   const contractorName = project.organization_name || "Overwatch";
   const saveDataDate = () => {
     if (!dataDateDraft || dataDateUpdate.isPending || !isDataDateDirty) return;
@@ -1990,7 +1991,7 @@ export function CpmActivityPlanner({
               {contractorName} · ConstructLine CPM
             </div>
             <h1>
-              {project.name} · {scheduleReportTitle}
+              {project.name} · {printReportLabel}
             </h1>
             <div className="constructline-cpm-print-meta">
               {project.job_number && <span>Job # {project.job_number}</span>}
@@ -2020,7 +2021,7 @@ export function CpmActivityPlanner({
           </div>
           <div className="constructline-cpm-print-status">
             <span>{isCriticalPathReport ? "Critical path report" : "Report type"}</span>
-            <strong>{isCriticalPathReport ? "Critical Path" : scheduleReportTitle}</strong>
+            <strong>{printReportLabel}</strong>
             <em>
               {displayedCpmModel.criticalPathReliable ? "Critical basis valid" : "Provisional"} ·
               Finish {shortDate(displayedCpmModel.cpmFinishDate)}
@@ -2043,9 +2044,7 @@ export function CpmActivityPlanner({
         />
         <footer className="constructline-cpm-print-footer">
           <span className="constructline-cpm-print-footer-primary">Company: {contractorName}</span>
-          <span className="constructline-cpm-print-footer-report">
-            Report: {scheduleReportTitle}
-          </span>
+          <span className="constructline-cpm-print-footer-report">Report: {printReportLabel}</span>
           <span>Critical path finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
           <span>Project finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
           <span>Data date {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}</span>

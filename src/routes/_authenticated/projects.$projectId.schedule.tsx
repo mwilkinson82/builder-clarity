@@ -2,7 +2,17 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useRef, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { ArrowLeft, Printer } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ClipboardList,
+  Diamond,
+  History,
+  PackageSearch,
+  Printer,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/outcome/ScheduleRisk";
@@ -501,10 +511,11 @@ function ScheduleWorkspaceOperations({
   const delayedDecisions = risks.filter((risk) => risk.kind === "critical_decision").slice(0, 4);
   const procurementRisks = risks.filter((risk) => risk.kind === "procurement").slice(0, 4);
   const tradeRisks = risks.filter((risk) => risk.kind === "trade_performance").slice(0, 4);
+  const latestUpdate = updates[0] ?? null;
 
   return (
-    <section className="constructline-screen-ops mb-4 mt-5 rounded-lg border border-hairline bg-surface p-4">
-      <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+    <section className="constructline-screen-ops mb-4 mt-5 rounded-lg border border-hairline bg-surface p-5">
+      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             Schedule operations
@@ -513,20 +524,25 @@ function ScheduleWorkspaceOperations({
             Updates, milestones, and schedule-linked risks
           </h2>
         </div>
-        <div className="max-w-2xl text-sm leading-6 text-muted-foreground">
+        <div className="max-w-3xl text-sm leading-6 text-muted-foreground">
           This workspace keeps CPM activity planning beside the operational signals that explain why
           the schedule moved.
         </div>
       </div>
 
-      <div className="grid gap-3 xl:grid-cols-6">
+      <div className="grid gap-4 xl:grid-cols-12">
         <ScheduleOpsCard
+          icon={History}
           label="Schedule update history"
           title={`${updates.length} saved ${updates.length === 1 ? "update" : "updates"}`}
-          sub={`Baseline ${formatDate(project.baseline_completion_date)} · Forecast ${formatDate(
-            project.forecast_completion_date,
-          )}`}
-          className="xl:col-span-2"
+          sub={
+            latestUpdate
+              ? `Latest ${formatDate(latestUpdate.data_date)} · ${formatVariance(latestUpdate.variance_weeks)} vs baseline`
+              : `Baseline ${formatDate(project.baseline_completion_date)} · Forecast ${formatDate(
+                  project.forecast_completion_date,
+                )}`
+          }
+          className="xl:col-span-4"
         >
           {updates.length === 0 ? (
             <ScheduleOpsEmpty>No saved schedule updates yet.</ScheduleOpsEmpty>
@@ -546,10 +562,11 @@ function ScheduleWorkspaceOperations({
         </ScheduleOpsCard>
 
         <ScheduleOpsCard
+          icon={Diamond}
           label="Interim milestones"
           title={`${activeMilestones.length} active`}
           sub="Forecast checkpoints"
-          className="xl:col-span-2"
+          className="xl:col-span-4"
         >
           {activeMilestones.length === 0 ? (
             <ScheduleOpsEmpty>No active interim milestones.</ScheduleOpsEmpty>
@@ -568,20 +585,25 @@ function ScheduleWorkspaceOperations({
         </ScheduleOpsCard>
 
         <RiskOpsCard
+          icon={ClipboardList}
           label="Critical delayed decisions"
           risks={delayedDecisions}
           empty="No critical decision risks."
+          className="xl:col-span-4"
         />
         <RiskOpsCard
+          icon={PackageSearch}
           label="Procurement risks"
           risks={procurementRisks}
           empty="No procurement risks."
+          className="xl:col-span-6"
         />
         <RiskOpsCard
+          icon={Users}
           label="Trade performance risks"
           risks={tradeRisks}
           empty="No trade performance risks."
-          className="xl:col-span-2"
+          className="xl:col-span-6"
         />
       </div>
     </section>
@@ -589,11 +611,13 @@ function ScheduleWorkspaceOperations({
 }
 
 function RiskOpsCard({
+  icon,
   label,
   risks,
   empty,
   className,
 }: {
+  icon: LucideIcon;
   label: string;
   risks: ScheduleRiskRow[];
   empty: string;
@@ -601,6 +625,7 @@ function RiskOpsCard({
 }) {
   return (
     <ScheduleOpsCard
+      icon={icon}
       label={label}
       title={`${risks.length} open`}
       sub="Schedule-linked risk"
@@ -626,12 +651,14 @@ function RiskOpsCard({
 }
 
 function ScheduleOpsCard({
+  icon: Icon = AlertTriangle,
   label,
   title,
   sub,
   children,
   className,
 }: {
+  icon?: LucideIcon;
   label: string;
   title: string;
   sub: string;
@@ -639,12 +666,23 @@ function ScheduleOpsCard({
   className?: string;
 }) {
   return (
-    <div className={`min-w-0 rounded-lg border border-hairline bg-card p-4 ${className ?? ""}`}>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-        {label}
+    <div
+      className={`min-w-0 rounded-lg border border-hairline bg-card p-4 shadow-sm ${className ?? ""}`}
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-hairline bg-surface text-muted-foreground">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            {label}
+          </div>
+          <div className="mt-1 break-words text-lg font-semibold leading-6 text-foreground">
+            {title}
+          </div>
+          <div className="mt-1 break-words text-xs leading-5 text-muted-foreground">{sub}</div>
+        </div>
       </div>
-      <div className="mt-2 text-lg font-semibold text-foreground">{title}</div>
-      <div className="mt-1 text-xs leading-5 text-muted-foreground">{sub}</div>
       <div className="mt-3 grid gap-2">{children}</div>
     </div>
   );
@@ -653,8 +691,8 @@ function ScheduleOpsCard({
 function ScheduleOpsItem({ title, meta }: { title: string; meta: string }) {
   return (
     <div className="min-w-0 rounded border border-hairline bg-surface px-3 py-2">
-      <div className="text-sm font-semibold leading-5 text-foreground">{title}</div>
-      <div className="mt-1 text-xs leading-5 text-muted-foreground">{meta}</div>
+      <div className="break-words text-sm font-semibold leading-5 text-foreground">{title}</div>
+      <div className="mt-1 break-words text-xs leading-5 text-muted-foreground">{meta}</div>
     </div>
   );
 }
