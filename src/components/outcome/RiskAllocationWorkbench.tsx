@@ -42,6 +42,8 @@ export function RiskAllocationWorkbench({
   exposures,
   rollup,
   guidance,
+  focusedExposureId,
+  onFocusExposureHandled,
   onCreateExposure,
   onUpdateExposure,
   onDeleteExposure,
@@ -50,6 +52,8 @@ export function RiskAllocationWorkbench({
   exposures: ExposureRow[];
   rollup: Rollup;
   guidance: { ePct: number; cPct: number; eTarget: number; cTarget: number };
+  focusedExposureId?: string | null;
+  onFocusExposureHandled?: () => void;
   onCreateExposure: (d: ExposureDraft) => void;
   onUpdateExposure: (id: string, patch: Partial<ExposureDraft>) => void;
   onDeleteExposure: (id: string) => void;
@@ -212,6 +216,8 @@ export function RiskAllocationWorkbench({
           </div>
           <ExposuresTable
             exposures={exposures}
+            focusedExposureId={focusedExposureId}
+            onFocusExposureHandled={onFocusExposureHandled}
             onCreate={onCreateExposure}
             onUpdate={onUpdateExposure}
             onDelete={onDeleteExposure}

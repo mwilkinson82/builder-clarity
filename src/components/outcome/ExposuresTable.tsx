@@ -193,8 +193,10 @@ export function ExposuresTable({
         ?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
 
-    const timeout = window.setTimeout(() => setSpotlightExposureId(null), 3500);
-    onFocusExposureHandled?.();
+    const timeout = window.setTimeout(() => {
+      setSpotlightExposureId(null);
+      onFocusExposureHandled?.();
+    }, 3500);
     return () => window.clearTimeout(timeout);
   }, [exposures, focusedExposureId, onFocusExposureHandled]);
 
@@ -736,6 +738,10 @@ function remainingValue(e: ExposureRow) {
   return remainingExposureValue(e);
 }
 
+function planText(value: string) {
+  return value.trim().replace(/^plan:\s*/i, "");
+}
+
 function RiskDetailMetric({
   label,
   value,
@@ -902,7 +908,7 @@ function RiskRow({
               Plan
             </div>
             <div className="max-h-24 overflow-y-auto overscroll-contain pr-2">
-              <p className="whitespace-pre-wrap">{exposure.notes}</p>
+              <p className="whitespace-pre-wrap">{planText(exposure.notes)}</p>
             </div>
           </div>
         )}
