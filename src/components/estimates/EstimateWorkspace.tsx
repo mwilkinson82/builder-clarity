@@ -614,6 +614,9 @@ export function EstimateWorkspace({
               <Button
                 size="sm"
                 className="gap-1.5"
+                title={
+                  isMasterSheet ? "Create a project estimate from this master sheet" : undefined
+                }
                 onClick={() =>
                   isMasterSheet ? duplicateMutation.mutate(true) : pushMutation.mutate()
                 }
@@ -624,7 +627,7 @@ export function EstimateWorkspace({
                 }
               >
                 <Send className="h-3.5 w-3.5" />
-                {isMasterSheet ? "Create Estimate" : "Push to Project"}
+                {isMasterSheet ? "Create Estimate From Master" : "Push to Project"}
               </Button>
             </div>
           </div>
