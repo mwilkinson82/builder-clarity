@@ -50,6 +50,36 @@ type PipelineWorkspaceProps = {
 };
 
 const EMPTY_OPPORTUNITIES: PipelineOpportunityRow[] = [];
+const DEMO_OPPORTUNITY_STORAGE_KEY = "overwatch.crm.demo-opportunity-overrides.v1";
+const DEMO_OPPORTUNITY_ID_PREFIX = "00000000-0000-4000-8000-00000000010";
+
+type DemoOpportunityOverride = Partial<
+  Pick<
+    PipelineOpportunityRow,
+    | "name"
+    | "client"
+    | "client_contact_name"
+    | "client_contact_email"
+    | "client_contact_phone"
+    | "stage"
+    | "estimated_contract"
+    | "estimated_cost"
+    | "estimated_gp_pct"
+    | "bid_due_date"
+    | "decision_date"
+    | "probability"
+    | "source"
+    | "project_type"
+    | "scope_summary"
+    | "bid_decision"
+    | "bid_decision_reason"
+    | "bid_decision_date"
+    | "assigned_to"
+    | "notes"
+    | "last_activity_at"
+    | "updated_at"
+  >
+>;
 
 export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspaceProps) {
   const queryClient = useQueryClient();
@@ -75,6 +105,9 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   const [showArchived, setShowArchived] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(initialOpportunityId ?? null);
   const [demoSeedChecked, setDemoSeedChecked] = useState(false);
+  const [demoOpportunityOverrides, setDemoOpportunityOverrides] = useState<
+    Record<string, DemoOpportunityOverride>
+  >(readDemoOpportunityOverrides);
 
   useEffect(() => {
     if (initialOpportunityId) setSelectedId(initialOpportunityId);
@@ -98,8 +131,19 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
     enabled: Boolean(selectedId),
   });
 
-  const opportunities = opportunitiesQuery.data ?? EMPTY_OPPORTUNITIES;
+  const rawOpportunities = opportunitiesQuery.data ?? EMPTY_OPPORTUNITIES;
+  const opportunities = useMemo(
+    () =>
+      rawOpportunities.map((opportunity) =>
+        applyDemoOpportunityOverride(opportunity, demoOpportunityOverrides),
+      ),
+    [demoOpportunityOverrides, rawOpportunities],
+  );
   const members = membersQuery.data ?? [];
+
+  useEffect(() => {
+    writeDemoOpportunityOverrides(demoOpportunityOverrides);
+  }, [demoOpportunityOverrides]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -282,7 +326,39 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
     setShowArchived(false);
   };
 
-  const selected = detailQuery.data?.opportunity ?? null;
+  const applyLocalDemoPatch = (id: string, patch: Record<string, unknown>) => {
+    if (!isDemoOpportunityId(id)) return;
+    const normalizedPatch = normalizeDemoOpportunityPatch(patch);
+    if (Object.keys(normalizedPatch).length === 0) return;
+    const now = new Date().toISOString();
+    const source = opportunities.find((opportunity) => opportunity.id === id);
+    setDemoOpportunityOverrides((current) => {
+      const merged: DemoOpportunityOverride = {
+        ...current[id],
+        ...normalizedPatch,
+        last_activity_at: now,
+        updated_at: now,
+      };
+      if (
+        Object.prototype.hasOwnProperty.call(normalizedPatch, "estimated_contract") ||
+        Object.prototype.hasOwnProperty.call(normalizedPatch, "estimated_cost")
+      ) {
+        const contract = Number(merged.estimated_contract ?? source?.estimated_contract ?? 0);
+        const cost = Number(merged.estimated_cost ?? source?.estimated_cost ?? 0);
+        merged.estimated_gp_pct = contract > 0 ? ((contract - cost) / contract) * 100 : 0;
+      }
+      return { ...current, [id]: merged };
+    });
+  };
+
+  const handleStageChange = (id: string, stage: PipelineStage) => {
+    applyLocalDemoPatch(id, { stage });
+    updateMutation.mutate({ id, patch: { stage } });
+  };
+
+  const selected = detailQuery.data?.opportunity
+    ? applyDemoOpportunityOverride(detailQuery.data.opportunity, demoOpportunityOverrides)
+    : null;
 
   return (
     <div className="space-y-6">
@@ -419,13 +495,13 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
         <PipelineKanban
           opportunities={filtered}
           onOpen={setSelectedId}
-          onStageChange={(id, stage) => updateMutation.mutate({ id, patch: { stage } })}
+          onStageChange={handleStageChange}
         />
       ) : (
         <PipelineList
           opportunities={filtered}
           onOpen={setSelectedId}
-          onStageChange={(id, stage) => updateMutation.mutate({ id, patch: { stage } })}
+          onStageChange={handleStageChange}
         />
       )}
 
@@ -445,6 +521,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
         }}
         onUpdate={(patch) => {
           if (!selectedId) return Promise.resolve();
+          applyLocalDemoPatch(selectedId, patch);
           return updateMutation.mutateAsync({ id: selectedId, patch }).then(() => undefined);
         }}
         onAddNote={(note) => {
@@ -494,4 +571,121 @@ function isMissingPipelineSchemaMessage(error: unknown) {
   return /pipeline_(opportunities|accounts|contacts|next_actions|activity_log)/i.test(
     errorMessage(error),
   );
+}
+
+function isDemoOpportunityId(id: string) {
+  return id.startsWith(DEMO_OPPORTUNITY_ID_PREFIX);
+}
+
+function applyDemoOpportunityOverride(
+  opportunity: PipelineOpportunityRow,
+  overrides: Record<string, DemoOpportunityOverride>,
+) {
+  if (!isDemoOpportunityId(opportunity.id)) return opportunity;
+  const override = overrides[opportunity.id];
+  return override ? { ...opportunity, ...override } : opportunity;
+}
+
+function readDemoOpportunityOverrides(): Record<string, DemoOpportunityOverride> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(DEMO_OPPORTUNITY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(([id, value]) => isDemoOpportunityId(id) && value && typeof value === "object")
+        .map(([id, value]) => [
+          id,
+          normalizeDemoOpportunityPatch(value as Record<string, unknown>),
+        ]),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeDemoOpportunityOverrides(overrides: Record<string, DemoOpportunityOverride>) {
+  if (typeof window === "undefined") return;
+  const entries = Object.entries(overrides).filter(([, override]) => Object.keys(override).length);
+  if (entries.length === 0) {
+    window.localStorage.removeItem(DEMO_OPPORTUNITY_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(
+    DEMO_OPPORTUNITY_STORAGE_KEY,
+    JSON.stringify(Object.fromEntries(entries)),
+  );
+}
+
+function normalizeDemoOpportunityPatch(patch: Record<string, unknown>): DemoOpportunityOverride {
+  const normalized: DemoOpportunityOverride = {};
+  assignStringPatch(normalized, patch, "name");
+  assignStringPatch(normalized, patch, "client");
+  assignStringPatch(normalized, patch, "client_contact_name");
+  assignStringPatch(normalized, patch, "client_contact_email");
+  assignStringPatch(normalized, patch, "client_contact_phone");
+  assignStagePatch(normalized, patch);
+  assignNumberPatch(normalized, patch, "estimated_contract");
+  assignNumberPatch(normalized, patch, "estimated_cost");
+  assignNumberPatch(normalized, patch, "probability");
+  assignStringPatch(normalized, patch, "source");
+  assignStringPatch(normalized, patch, "project_type");
+  assignStringPatch(normalized, patch, "scope_summary");
+  assignStringPatch(normalized, patch, "bid_decision_reason");
+  assignStringPatch(normalized, patch, "assigned_to");
+  assignStringPatch(normalized, patch, "notes");
+  assignNullableStringPatch(normalized, patch, "bid_due_date");
+  assignNullableStringPatch(normalized, patch, "decision_date");
+  assignNullableStringPatch(normalized, patch, "bid_decision_date");
+  assignBidDecisionPatch(normalized, patch);
+  assignStringPatch(normalized, patch, "last_activity_at");
+  assignStringPatch(normalized, patch, "updated_at");
+  return normalized;
+}
+
+function assignStringPatch<K extends keyof DemoOpportunityOverride>(
+  target: DemoOpportunityOverride,
+  patch: Record<string, unknown>,
+  key: K,
+) {
+  const value = patch[key];
+  if (typeof value === "string") target[key] = value as DemoOpportunityOverride[K];
+}
+
+function assignNullableStringPatch<K extends keyof DemoOpportunityOverride>(
+  target: DemoOpportunityOverride,
+  patch: Record<string, unknown>,
+  key: K,
+) {
+  const value = patch[key];
+  if (typeof value === "string" || value === null) {
+    target[key] = value as DemoOpportunityOverride[K];
+  }
+}
+
+function assignNumberPatch<K extends keyof DemoOpportunityOverride>(
+  target: DemoOpportunityOverride,
+  patch: Record<string, unknown>,
+  key: K,
+) {
+  const value = Number(patch[key]);
+  if (Number.isFinite(value)) target[key] = value as DemoOpportunityOverride[K];
+}
+
+function assignStagePatch(target: DemoOpportunityOverride, patch: Record<string, unknown>) {
+  if (typeof patch.stage === "string" && STAGE_ORDER.includes(patch.stage as PipelineStage)) {
+    target.stage = patch.stage as PipelineStage;
+  }
+}
+
+function assignBidDecisionPatch(target: DemoOpportunityOverride, patch: Record<string, unknown>) {
+  if (
+    patch.bid_decision === "undecided" ||
+    patch.bid_decision === "bid" ||
+    patch.bid_decision === "no_bid"
+  ) {
+    target.bid_decision = patch.bid_decision;
+  }
 }
