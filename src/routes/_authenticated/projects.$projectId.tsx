@@ -1294,7 +1294,7 @@ function ProjectPage() {
             <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1 shadow-card lg:flex-col lg:items-stretch lg:overflow-visible">
               <a
                 href="/?tab=pipeline"
-                className="inline-flex min-w-[148px] items-center justify-start rounded-md border border-accent/25 bg-accent/10 px-3 py-3 text-left text-accent transition hover:border-accent/50 hover:bg-accent/15 lg:w-full"
+                className="inline-flex min-w-[148px] items-center justify-start rounded-md px-3 py-3 text-left text-muted-foreground transition hover:bg-secondary/70 hover:text-foreground lg:w-full"
               >
                 <BriefcaseBusiness className="mr-2 h-4 w-4 shrink-0" />
                 <span className="min-w-0">
