@@ -693,7 +693,7 @@ export function DailyReportsWorkspace({
         ) : error ? (
           <div className="rounded-md border border-danger/20 bg-danger/5 p-4 text-sm text-danger">
             {missingTable
-              ? "Daily Reports are ready in the app, but the new Supabase migration still needs to be applied in Lovable/Supabase."
+              ? "Daily Reports are ready in the app, but the project database setup still needs to finish before reports can save."
               : error.message}
           </div>
         ) : reports.length === 0 ? (
