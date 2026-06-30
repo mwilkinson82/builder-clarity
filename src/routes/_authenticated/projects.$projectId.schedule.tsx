@@ -260,6 +260,12 @@ function ScheduleWorkspacePage() {
     onMutate: async ({ orderedIds }) => {
       await qc.cancelQueries({ queryKey: ["schedule", projectId] });
       const previous = qc.getQueryData(["schedule", projectId]);
+      const toastId = wbsOrderToastRef.current ?? "wbs-order-save";
+      wbsOrderToastRef.current = toastId;
+      toast.loading("Saving WBS order", {
+        id: toastId,
+        description: "The grid updates immediately while the project order is saved.",
+      });
       qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
         if (!current?.wbsSections) return current;
         const orderMap = new Map(orderedIds.map((id, index) => [id, (index + 1) * 10]));
@@ -271,20 +277,20 @@ function ScheduleWorkspacePage() {
           })),
         };
       });
-      return { previous };
+      return { previous, toastId };
     },
-    onSuccess: () => {
-      const toastId = wbsOrderToastRef.current ?? "wbs-order-saved";
+    onSuccess: (_result, _orderedIds, context) => {
+      const toastId = context?.toastId ?? wbsOrderToastRef.current ?? "wbs-order-save";
       toast.success("WBS order saved", {
         id: toastId,
         description: "The saved order is now the CPM WBS order.",
       });
-      wbsOrderToastRef.current = toastId;
+      wbsOrderToastRef.current = null;
     },
     onError: (error, _orderedIds, context) => {
       if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS order did not save", {
-        id: wbsOrderToastRef.current ?? "wbs-order-error",
+        id: context?.toastId ?? wbsOrderToastRef.current ?? "wbs-order-error",
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
       wbsOrderToastRef.current = null;
