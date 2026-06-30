@@ -1,4 +1,4 @@
-import { Archive, ExternalLink, Save } from "lucide-react";
+import { Archive, ExternalLink, Mail, Phone, Save } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { fmtPct } from "@/lib/format";
@@ -160,10 +160,32 @@ export function OpportunityDetail({
   };
 
   const canConvert = opportunity?.stage === "won" && !opportunity.converted_project_id;
+  const contactName =
+    draft.client_contact_name ||
+    opportunity?.primary_contact_name ||
+    opportunity?.client_contact_name ||
+    "";
+  const contactEmail = (
+    draft.client_contact_email ||
+    opportunity?.primary_contact_email ||
+    opportunity?.client_contact_email ||
+    ""
+  ).trim();
+  const contactPhone = (
+    draft.client_contact_phone ||
+    opportunity?.client_contact_phone ||
+    ""
+  ).trim();
+  const emailHref = contactEmail
+    ? `mailto:${contactEmail}?subject=${encodeURIComponent(
+        `Regarding ${draft.name || opportunity?.name || "Overwatch opportunity"}`,
+      )}`
+    : "";
+  const phoneHref = phoneHrefFor(contactPhone);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] max-w-[1180px] overflow-y-auto p-0">
+      <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] max-w-[1320px] overflow-x-hidden overflow-y-auto p-0">
         {isLoading || !opportunity ? (
           <div className="p-6">
             <DialogHeader className="sr-only">
@@ -173,7 +195,7 @@ export function OpportunityDetail({
             <div className="text-sm text-muted-foreground">Loading opportunity...</div>
           </div>
         ) : (
-          <div className="space-y-6 p-6 md:p-8">
+          <div className="min-w-0 space-y-6 p-6 md:p-8">
             <DialogHeader className="pr-12">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0">
@@ -225,7 +247,7 @@ export function OpportunityDetail({
               </Button>
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.75fr)]">
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,0.85fr)]">
               <div className="space-y-6">
                 <section className="space-y-3">
                   <h3 className="font-serif text-xl text-foreground">Pursuit</h3>
@@ -333,14 +355,17 @@ export function OpportunityDetail({
                         label="Account"
                         value={opportunity.account_name || opportunity.client || "No account"}
                       />
-                      <RelationshipStat
-                        label="Primary contact"
-                        value={
-                          opportunity.primary_contact_name ||
-                          opportunity.client_contact_name ||
-                          "No contact"
-                        }
-                      />
+                      <RelationshipStat label="Primary contact" value={contactName || "No contact"}>
+                        {contactEmail && (
+                          <a
+                            href={emailHref}
+                            className="mt-1 inline-flex max-w-full items-center gap-1.5 truncate text-xs font-medium text-accent hover:underline"
+                          >
+                            <Mail className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate">{contactEmail}</span>
+                          </a>
+                        )}
+                      </RelationshipStat>
                       <RelationshipStat
                         label="Next action"
                         value={opportunity.next_action_title || "No open action"}
@@ -368,6 +393,11 @@ export function OpportunityDetail({
                           updateDraft("client_contact_email", event.target.value)
                         }
                       />
+                      {contactEmail && (
+                        <ContactLink href={emailHref} icon={<Mail className="h-3.5 w-3.5" />}>
+                          Email {contactEmail}
+                        </ContactLink>
+                      )}
                     </Field>
                     <Field label="Contact phone">
                       <Input
@@ -376,6 +406,11 @@ export function OpportunityDetail({
                           updateDraft("client_contact_phone", event.target.value)
                         }
                       />
+                      {phoneHref && (
+                        <ContactLink href={phoneHref} icon={<Phone className="h-3.5 w-3.5" />}>
+                          Call on device
+                        </ContactLink>
+                      )}
                     </Field>
                   </div>
                 </section>
@@ -393,8 +428,8 @@ export function OpportunityDetail({
               <div className="space-y-6">
                 <section className="space-y-3">
                   <h3 className="font-serif text-xl text-foreground">Next Action</h3>
-                  <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 sm:grid-cols-[minmax(0,1fr)_150px_130px_auto] sm:items-end">
-                    <Field label="Action">
+                  <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 sm:grid-cols-2">
+                    <Field label="Action" className="sm:col-span-2">
                       <Input
                         value={actionDraft.title}
                         onChange={(event) =>
@@ -438,6 +473,7 @@ export function OpportunityDetail({
                     <Button
                       type="button"
                       onClick={createAction}
+                      className="w-full sm:col-span-2"
                       disabled={isCreatingAction || !actionDraft.title.trim()}
                     >
                       Add action
@@ -539,13 +575,47 @@ function Field({
   );
 }
 
-function RelationshipStat({ label, value }: { label: string; value: string }) {
+function ContactLink({
+  href,
+  icon,
+  children,
+}: {
+  href: string;
+  icon: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-md border border-hairline bg-background px-2 py-1 text-xs font-medium text-accent hover:border-accent/40 hover:underline"
+    >
+      {icon}
+      <span className="truncate">{children}</span>
+    </a>
+  );
+}
+
+function RelationshipStat({
+  label,
+  value,
+  children,
+}: {
+  label: string;
+  value: string;
+  children?: ReactNode;
+}) {
   return (
     <div className="min-w-0">
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {label}
       </div>
       <div className="mt-1 truncate font-medium text-foreground">{value}</div>
+      {children}
     </div>
   );
+}
+
+function phoneHrefFor(phone: string) {
+  const dialable = phone.replace(/[^\d+]/g, "");
+  return dialable ? `tel:${dialable}` : "";
 }
