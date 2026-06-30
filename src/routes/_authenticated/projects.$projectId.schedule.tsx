@@ -597,6 +597,10 @@ function ScheduleWorkspaceShell({
             </div>
           </div>
           <div className="flex flex-wrap gap-2 print:hidden">
+            <WorkspaceNavLink href="#cpm-grid">CPM grid</WorkspaceNavLink>
+            <WorkspaceNavLink href="#schedule-update-history">Updates</WorkspaceNavLink>
+            <WorkspaceNavLink href="#interim-milestones">Milestones</WorkspaceNavLink>
+            <WorkspaceNavLink href="#critical-delayed-decisions">Risks</WorkspaceNavLink>
             <Button
               type="button"
               variant="outline"
@@ -612,6 +616,17 @@ function ScheduleWorkspaceShell({
       </header>
       <main className="mx-auto w-full max-w-[1840px] px-4 py-5 lg:px-8">{children}</main>
     </div>
+  );
+}
+
+function WorkspaceNavLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      className="inline-flex h-10 items-center rounded-md border border-hairline bg-card px-3 text-sm font-semibold text-foreground shadow-sm transition hover:bg-muted"
+    >
+      {children}
+    </a>
   );
 }
 
@@ -658,6 +673,7 @@ function ScheduleWorkspaceOperations({
 
       <div className="grid gap-4 xl:grid-cols-12">
         <ScheduleOpsCard
+          id="schedule-update-history"
           icon={History}
           label="Schedule update history"
           title={`${updates.length} saved ${updates.length === 1 ? "update" : "updates"}`}
@@ -688,6 +704,7 @@ function ScheduleWorkspaceOperations({
         </ScheduleOpsCard>
 
         <ScheduleOpsCard
+          id="interim-milestones"
           icon={Diamond}
           label="Interim milestones"
           title={`${activeMilestones.length} active`}
@@ -711,6 +728,7 @@ function ScheduleWorkspaceOperations({
         </ScheduleOpsCard>
 
         <RiskOpsCard
+          id="critical-delayed-decisions"
           icon={ClipboardList}
           label="Critical delayed decisions"
           risks={delayedDecisions}
@@ -718,6 +736,7 @@ function ScheduleWorkspaceOperations({
           className="xl:col-span-4"
         />
         <RiskOpsCard
+          id="procurement-risks"
           icon={PackageSearch}
           label="Procurement risks"
           risks={procurementRisks}
@@ -725,6 +744,7 @@ function ScheduleWorkspaceOperations({
           className="xl:col-span-6"
         />
         <RiskOpsCard
+          id="trade-performance-risks"
           icon={Users}
           label="Trade performance risks"
           risks={tradeRisks}
@@ -737,12 +757,14 @@ function ScheduleWorkspaceOperations({
 }
 
 function RiskOpsCard({
+  id,
   icon,
   label,
   risks,
   empty,
   className,
 }: {
+  id?: string;
   icon: LucideIcon;
   label: string;
   risks: ScheduleRiskRow[];
@@ -751,6 +773,7 @@ function RiskOpsCard({
 }) {
   return (
     <ScheduleOpsCard
+      id={id}
       icon={icon}
       label={label}
       title={`${risks.length} open`}
@@ -777,6 +800,7 @@ function RiskOpsCard({
 }
 
 function ScheduleOpsCard({
+  id,
   icon: Icon = AlertTriangle,
   label,
   title,
@@ -784,6 +808,7 @@ function ScheduleOpsCard({
   children,
   className,
 }: {
+  id?: string;
   icon?: LucideIcon;
   label: string;
   title: string;
@@ -793,6 +818,7 @@ function ScheduleOpsCard({
 }) {
   return (
     <div
+      id={id}
       className={`min-w-0 rounded-lg border border-hairline bg-card p-4 shadow-sm ${className ?? ""}`}
     >
       <div className="flex min-w-0 items-start gap-3">
