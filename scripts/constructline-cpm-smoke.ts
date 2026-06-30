@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildReciprocalActivityLogicPatches,
   buildConstructLineCpmModel,
@@ -13,6 +16,9 @@ import {
   getWbsChildRows,
   moveWbsDivisionInOrder,
 } from "../src/lib/constructline-wbs.ts";
+
+const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const readProjectFile = (filePath: string) => readFileSync(resolve(rootDir, filePath), "utf8");
 
 const parsed = parseConstructLineDependencyToken("A-010 FF +2d");
 assert.deepEqual(parsed, {
@@ -314,5 +320,59 @@ assert.deepEqual(reorderedConcreteChildren, [
   "03 - Concrete / Eastern corner",
   "03 - Concrete / Southwest corner",
 ]);
+
+const scheduleRiskSource = readProjectFile("src/components/outcome/ScheduleRisk.tsx");
+const scheduleRouteSource = readProjectFile(
+  "src/routes/_authenticated/projects.$projectId.schedule.tsx",
+);
+const stylesSource = readProjectFile("src/styles.css");
+
+for (const requiredScheduleRiskText of [
+  "Open full schedule workspace",
+  "Critical Path Report",
+  "Company: {contractorName}",
+  "Legend: critical red",
+  "Concrete / Northwest corner",
+  "Schedule update history",
+]) {
+  assert.ok(
+    scheduleRiskSource.includes(requiredScheduleRiskText),
+    `ScheduleRisk is missing required CPM workspace text: ${requiredScheduleRiskText}`,
+  );
+}
+
+for (const requiredScheduleRouteText of [
+  "WBS order applied",
+  "The grid moved immediately. Saving the project order in the background.",
+  "Schedule operations",
+  "Critical delayed decisions",
+  "Procurement risks",
+  "Trade performance risks",
+  "Delay impact logging is not enabled",
+]) {
+  assert.ok(
+    scheduleRouteSource.includes(requiredScheduleRouteText),
+    `Schedule route is missing required CPM workspace text: ${requiredScheduleRouteText}`,
+  );
+}
+
+for (const requiredPrintStyle of [
+  ".constructline-cpm-print-footer",
+  ".constructline-cpm-print-report-strip",
+  "size: 17in 11in",
+]) {
+  assert.ok(
+    stylesSource.includes(requiredPrintStyle),
+    `Print styles are missing required CPM report contract: ${requiredPrintStyle}`,
+  );
+}
+
+assert.equal(
+  /Lovable still needs|Lovable needs delay|schedule_delay_fragments migration/i.test(
+    `${scheduleRiskSource}\n${scheduleRouteSource}`,
+  ),
+  false,
+  "CPM schedule UI must not expose Lovable migration wording to users.",
+);
 
 console.log("ConstructLine CPM smoke checks passed.");
