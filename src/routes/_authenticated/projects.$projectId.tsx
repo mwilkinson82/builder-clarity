@@ -2541,14 +2541,14 @@ function BillingWorkspace({
             <TabsTrigger value="wip-analysis" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               WIP Analysis
             </TabsTrigger>
-            <TabsTrigger value="pay-app-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Pay App Ledger
-            </TabsTrigger>
             <TabsTrigger value="invoice-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Invoices & Payments
             </TabsTrigger>
             <TabsTrigger value="pending-cos" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Pending COs
+            </TabsTrigger>
+            <TabsTrigger value="pay-app-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
+              Pay App Ledger
             </TabsTrigger>
           </TabsList>
         </div>
@@ -2621,47 +2621,6 @@ function BillingWorkspace({
               savingBucket={savingBucketBilling}
             />
           ))}
-        </TabsContent>
-
-        <TabsContent value="pay-app-ledger" className="mt-0">
-          <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
-            <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  Pay application ledger
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Contract billing, change-order billing, invoice dates, paid-to-date, retainage,
-                  and open A/R.
-                </p>
-              </div>
-              <div className="text-sm tabular text-muted-foreground">
-                Remaining to bill {fmtUSD(contractRemaining)} · Open A/R {fmtUSD(openReceivable)} ·
-                Holds {fmtUSD(holds)}
-              </div>
-            </div>
-            <div className="space-y-3">
-              {billingApplications.length === 0 ? (
-                <div className="rounded-md border border-hairline bg-surface px-3 py-8 text-center text-sm text-muted-foreground">
-                  No pay applications logged yet. Add the first pay app above.
-                </div>
-              ) : (
-                billingApplications.map((app) => {
-                  const linkedInvoice = getActiveInvoiceForPayApp(app.id);
-                  return (
-                    <BillingApplicationRowEditor
-                      key={app.id}
-                      app={app}
-                      linkedInvoice={linkedInvoice}
-                      onPatch={(patch) => onUpdate(app.id, patch)}
-                      onCreateInvoice={() => openInvoiceDialog(app)}
-                      onDelete={() => onDelete(app.id)}
-                    />
-                  );
-                })
-              )}
-            </div>
-          </div>
         </TabsContent>
 
         <TabsContent value="invoice-ledger" className="mt-0">
@@ -3015,6 +2974,47 @@ function BillingWorkspace({
                 </table>
               </div>
             )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="pay-app-ledger" className="mt-0">
+          <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
+            <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                  Pay application source ledger
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Source pay applications used to prepare invoices. Use Invoices & Payments for
+                  client-facing invoices, payment links, receipts, and collection status.
+                </p>
+              </div>
+              <div className="text-sm tabular text-muted-foreground">
+                Remaining to bill {fmtUSD(contractRemaining)} · Open A/R {fmtUSD(openReceivable)} ·
+                Holds {fmtUSD(holds)}
+              </div>
+            </div>
+            <div className="space-y-3">
+              {billingApplications.length === 0 ? (
+                <div className="rounded-md border border-hairline bg-surface px-3 py-8 text-center text-sm text-muted-foreground">
+                  No pay applications logged yet. Add the first pay app above.
+                </div>
+              ) : (
+                billingApplications.map((app) => {
+                  const linkedInvoice = getActiveInvoiceForPayApp(app.id);
+                  return (
+                    <BillingApplicationRowEditor
+                      key={app.id}
+                      app={app}
+                      linkedInvoice={linkedInvoice}
+                      onPatch={(patch) => onUpdate(app.id, patch)}
+                      onCreateInvoice={() => openInvoiceDialog(app)}
+                      onDelete={() => onDelete(app.id)}
+                    />
+                  );
+                })
+              )}
+            </div>
           </div>
         </TabsContent>
       </Tabs>
