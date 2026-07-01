@@ -1062,6 +1062,12 @@ await expectContains(
 );
 
 await expectContains(
+  "src/routes/_authenticated/estimates.$estimateId.tsx",
+  [/useChildMatches/, /<Outlet \/>/, /EstimateDetailRoute/, /EstimateWorkspace/],
+  "estimate detail route renders nested estimate workspaces such as Plan Room",
+);
+
+await expectContains(
   "src/routes/_authenticated/estimates.tsx",
   [
     /Outlet/,
@@ -1143,6 +1149,8 @@ await expectContains(
     /getEstimate/,
     /getPlanRoom/,
     /PlanRoomWorkspace/,
+    /schemaReady/,
+    /schemaMessage/,
   ],
   "estimate plan room route loads the estimate, takeoff data, and workspace",
 );
@@ -1164,6 +1172,8 @@ await expectContains(
     /syncTakeoffToEstimateLine/,
     /Send Total Qty to Estimate/,
     /HARBOR RESIDENCE/,
+    /schemaReady/,
+    /Plan Room backend is still coming online/,
   ],
   "plan room workspace supports upload, scale, takeoff tools, source markup, and estimate sync",
 );
@@ -1182,6 +1192,8 @@ await expectContains(
     /syncTakeoffQuantityToLine/,
     /recalculateEstimateTotalsInternal/,
     /calculateEstimateTotals/,
+    /isMissingPlanRoomSchemaError/,
+    /schema_ready/,
   ],
   "plan room server functions seed Harbor sample drawings and sync takeoff quantities into estimates",
 );

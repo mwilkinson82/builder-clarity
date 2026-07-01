@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useChildMatches } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
@@ -18,8 +18,13 @@ export const Route = createFileRoute("/_authenticated/estimates/$estimateId")({
       },
     ],
   }),
-  component: EstimateDetailPage,
+  component: EstimateDetailRoute,
 });
+
+function EstimateDetailRoute() {
+  const childMatches = useChildMatches();
+  return childMatches.length > 0 ? <Outlet /> : <EstimateDetailPage />;
+}
 
 function EstimateDetailPage() {
   const { estimateId } = Route.useParams();
