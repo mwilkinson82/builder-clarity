@@ -225,6 +225,7 @@ export async function generateInvoicePdf({
   const page = doc.addPage([PAGE_W, PAGE_H]);
   const ctx: PdfCtx = { doc, page, y: PAGE_H - M, serif, sans, sansBold };
   const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
+  const hasRetainage = Math.abs(invoice.retainage) > 0.005;
   const companyLogo = await embedPdfLogo(doc, project.organization_logo_url);
 
   drawText(ctx, "OVERWATCH BILLING", M, ctx.y, {
@@ -289,7 +290,9 @@ export async function generateInvoicePdf({
 
   drawSectionTitle(ctx, "Billing summary");
   drawAmountRow(ctx, "Subtotal", fmtUSD(invoice.subtotal));
-  drawAmountRow(ctx, "Less retainage", fmtUSD(invoice.retainage));
+  if (hasRetainage) {
+    drawAmountRow(ctx, "Less retainage", fmtUSD(invoice.retainage));
+  }
   drawAmountRow(ctx, "Total due", fmtUSD(invoice.total_due), true);
   drawAmountRow(ctx, "Paid to date", fmtUSD(invoice.paid_amount));
   drawAmountRow(ctx, "Open balance", fmtUSD(openBalance), true);

@@ -251,20 +251,22 @@ function drawCoverSheet(
     x: PORTRAIT_W - M - 170,
     y: ctx.y + 2,
     maxWidth: 170,
-    maxHeight: 34,
+    maxHeight: 30,
     color: MUTED,
   });
-  text(ctx, "APPLICATION AND CERTIFICATE FOR PAYMENT", M, ctx.y - 26, {
+  drawWrappedText(ctx, "APPLICATION AND CERTIFICATE FOR PAYMENT", M, ctx.y - 28, 360, {
     font: ctx.serif,
-    size: 21,
+    size: 18,
+    lineHeight: 20,
+    maxLines: 2,
   });
-  text(ctx, `Prepared ${generatedAt.toLocaleString("en-US")}`, PORTRAIT_W - 210, ctx.y - 2, {
+  text(ctx, `Prepared ${generatedAt.toLocaleString("en-US")}`, M, ctx.y - 70, {
     size: 8,
     color: MUTED,
   });
-  drawRule(ctx, M, PORTRAIT_W - M, ctx.y - 39);
+  drawRule(ctx, M, PORTRAIT_W - M, ctx.y - 80);
 
-  ctx.y -= 82;
+  ctx.y -= 112;
   const fieldW = (PORTRAIT_W - M * 2 - 12) / 2;
   drawField(ctx, "Project", project.name, M, ctx.y, fieldW, 40);
   drawField(ctx, "Owner / Company", project.client || "-", M + fieldW + 12, ctx.y, fieldW, 40);
@@ -418,7 +420,7 @@ function drawContinuationHeader(
       size: 8,
     },
   );
-  text(ctx, `Page ${pageNumber}`, LANDSCAPE_W - 82, LANDSCAPE_H - M - 18, { size: 8 });
+  rightText(ctx, `Page ${pageNumber}`, LANDSCAPE_W - M - 56, LANDSCAPE_H - M - 36, 56, 8);
   ctx.y = LANDSCAPE_H - M - 48;
   ctx.page.drawRectangle({
     x: M,

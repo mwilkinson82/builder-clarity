@@ -1175,15 +1175,20 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
       .filter((row) => currentOrder.get(row.id) !== row.sort_order);
     if (changedRows.length === 0) return { ok: true, changed: 0 };
 
-    const { error } = await context.supabase.from("schedule_wbs_sections").upsert(
-      changedRows.map((row) => ({
-        id: row.id,
-        project_id: data.projectId,
-        parent_id: parentId,
-        sort_order: row.sort_order,
-      })),
-      { onConflict: "id" },
+    const updates = await Promise.all(
+      changedRows.map((row) => {
+        const patch: ScheduleWbsSectionUpdate = {
+          parent_id: parentId,
+          sort_order: row.sort_order,
+        };
+        return context.supabase
+          .from("schedule_wbs_sections")
+          .update(patch)
+          .eq("id", row.id)
+          .eq("project_id", data.projectId);
+      }),
     );
+    const error = updates.find((result) => result.error)?.error;
     if (error) throw new Error(error.message);
     return { ok: true, changed: changedRows.length, method: "batch" };
   });
