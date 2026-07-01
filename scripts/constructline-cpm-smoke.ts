@@ -182,6 +182,14 @@ assert.equal(statusedById.get("B")?.isCritical, true);
 assert.equal(statusedById.get("A")?.totalFloat, -3);
 assert.equal(statusedById.get("B")?.totalFloat, -3);
 assert.equal(statusedModel.cpmFinishDate, "2026-01-18");
+assert.equal(statusedModel.criticalPathReliable, false);
+assert.equal(statusedModel.unanchoredOpenFinishCount, 1);
+assert.equal(
+  statusedModel.criticalPathReliabilityNote.includes(
+    "Terminate the completion path at a finish milestone.",
+  ),
+  true,
+);
 assert.equal(
   statusedModel.recommendations.includes("Recover 2 activities with negative total float."),
   true,
@@ -493,6 +501,10 @@ for (const requiredScheduleRiskText of [
   "Provisional",
   "Open starts",
   "Open finishes",
+  "Finish anchor",
+  "finish anchor needed",
+  "Finish anchor missing",
+  "Create a finish milestone",
   "Negative float",
   "formatCpmEndpointTitle",
   "View filters",

@@ -930,6 +930,15 @@ function buildScheduleQualityQueue(model: ConstructLineCpmModel): ScheduleQualit
       reasons.push("Open finish");
       sort = Math.min(sort, 22);
     }
+    if (
+      model.openFinishCount === 1 &&
+      model.unanchoredOpenFinishCount > 0 &&
+      task.isOpenFinish &&
+      !task.isMilestone
+    ) {
+      reasons.push("Finish anchor missing");
+      sort = Math.min(sort, 24);
+    }
     if (task.isOutOfSequence) {
       reasons.push("Out-of-sequence progress");
       severity = "danger";
@@ -1055,6 +1064,9 @@ function buildScheduleQualityGuidance(task: ConstructLineCpmTask, reasons: strin
   if (reasons.includes("Open finish")) {
     return "Tie this row to a downstream completion path.";
   }
+  if (reasons.includes("Finish anchor missing")) {
+    return "Create a finish milestone and tie this row to it before relying on the critical path.";
+  }
   if (reasons.includes("Out-of-sequence progress")) {
     return "Review progress against predecessor completion before the next update.";
   }
@@ -1115,6 +1127,9 @@ function buildCpmScheduleUpdateDraft({
     : [`Critical path provisional: ${model.criticalPathReliabilityNote}`];
   if (model.openStartCount > 1 || model.openFinishCount > 1) {
     qualityParts.push(`${model.openStartCount}/${model.openFinishCount} open starts/finishes`);
+  }
+  if (model.openFinishCount === 1 && model.unanchoredOpenFinishCount > 0) {
+    qualityParts.push("finish anchor needed");
   }
   if (model.lateCount > 0) qualityParts.push(`${model.lateCount} late`);
   if (model.outOfSequenceCount > 0) {
@@ -5103,8 +5118,22 @@ function CpmNetworkBasisStrip({
       <CpmBasisPill
         label="Open finishes"
         value={String(model.openFinishCount)}
-        tone={model.openFinishCount <= 1 ? "default" : "warning"}
+        tone={
+          model.openFinishCount <= 1 && model.unanchoredOpenFinishCount === 0
+            ? "default"
+            : "warning"
+        }
         title={formatCpmEndpointTitle(openFinishTasks, "open finish")}
+      />
+      <CpmBasisPill
+        label="Finish anchor"
+        value={model.unanchoredOpenFinishCount === 0 ? "Set" : "Needed"}
+        tone={model.unanchoredOpenFinishCount === 0 ? "success" : "warning"}
+        title={
+          model.unanchoredOpenFinishCount === 0
+            ? "The completion path terminates at a milestone."
+            : "Tie the final open finish to a finish milestone before treating the critical path as reliable."
+        }
       />
       <CpmBasisPill
         label="Critical / near"

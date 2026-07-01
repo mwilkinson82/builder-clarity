@@ -84,6 +84,7 @@ export interface ConstructLineCpmModel {
   criticalPathReliabilityNote: string;
   openStartCount: number;
   openFinishCount: number;
+  unanchoredOpenFinishCount: number;
   missingDateCount: number;
   missingLogicCount: number;
   lateCount: number;
@@ -543,12 +544,15 @@ export function buildConstructLineCpmModel(
   const nearCriticalCount = modelTasks.filter((task) => task.isNearCritical).length;
   const negativeFloatCount = modelTasks.filter((task) => task.totalFloat < 0).length;
   const openStartCount = modelTasks.filter((task) => task.isOpenStart).length;
-  const openFinishCount = modelTasks.filter((task) => task.isOpenFinish).length;
+  const openFinishTasks = modelTasks.filter((task) => task.isOpenFinish);
+  const openFinishCount = openFinishTasks.length;
+  const unanchoredOpenFinishCount = openFinishTasks.filter((task) => !task.isMilestone).length;
   const criticalPathReliabilityIssues = buildCriticalPathReliabilityIssues({
     topoOk: topo.ok,
     diagnosticsCount: diagnostics.length,
     openStartCount,
     openFinishCount,
+    unanchoredOpenFinishCount,
   });
   const criticalPathReliable = modelTasks.length > 0 && criticalPathReliabilityIssues.length === 0;
   const criticalPathReliabilityNote = criticalPathReliable
@@ -571,6 +575,7 @@ export function buildConstructLineCpmModel(
     missingLogicCount,
     openStartCount,
     openFinishCount,
+    unanchoredOpenFinishCount,
     lateCount,
     outOfSequenceCount,
     diagnosticsCount: diagnostics.length,
@@ -594,6 +599,7 @@ export function buildConstructLineCpmModel(
     criticalPathReliabilityNote,
     openStartCount,
     openFinishCount,
+    unanchoredOpenFinishCount,
     missingDateCount,
     missingLogicCount,
     lateCount,
@@ -607,6 +613,7 @@ export function buildConstructLineCpmModel(
       missingLogicCount,
       openStartCount,
       openFinishCount,
+      unanchoredOpenFinishCount,
       lateCount,
       outOfSequenceCount,
       diagnostics,
@@ -977,6 +984,7 @@ function scoreSchedule({
   missingLogicCount,
   openStartCount,
   openFinishCount,
+  unanchoredOpenFinishCount,
   lateCount,
   outOfSequenceCount,
   diagnosticsCount,
@@ -986,6 +994,7 @@ function scoreSchedule({
   missingLogicCount: number;
   openStartCount: number;
   openFinishCount: number;
+  unanchoredOpenFinishCount: number;
   lateCount: number;
   outOfSequenceCount: number;
   diagnosticsCount: number;
@@ -999,6 +1008,7 @@ function scoreSchedule({
     missingLogicCount * 7 -
     extraOpenStarts * 4 -
     extraOpenFinishes * 4 -
+    unanchoredOpenFinishCount * 5 -
     lateCount * 5 -
     outOfSequenceCount * 6 -
     diagnosticsCount * 6;
@@ -1010,11 +1020,13 @@ function buildCriticalPathReliabilityIssues({
   diagnosticsCount,
   openStartCount,
   openFinishCount,
+  unanchoredOpenFinishCount,
 }: {
   topoOk: boolean;
   diagnosticsCount: number;
   openStartCount: number;
   openFinishCount: number;
+  unanchoredOpenFinishCount: number;
 }) {
   const issues: string[] = [];
   if (!topoOk) issues.push("Logic cycle blocks a reliable backward pass.");
@@ -1023,6 +1035,8 @@ function buildCriticalPathReliabilityIssues({
     issues.push(`Reduce open starts from ${openStartCount} to one project start.`);
   if (openFinishCount > 1)
     issues.push(`Reduce open finishes from ${openFinishCount} to one project finish.`);
+  if (openFinishCount === 1 && unanchoredOpenFinishCount > 0)
+    issues.push("Terminate the completion path at a finish milestone.");
   return issues;
 }
 
@@ -1032,6 +1046,7 @@ function buildRecommendations({
   missingLogicCount,
   openStartCount,
   openFinishCount,
+  unanchoredOpenFinishCount,
   lateCount,
   outOfSequenceCount,
   diagnostics,
@@ -1046,6 +1061,7 @@ function buildRecommendations({
   missingLogicCount: number;
   openStartCount: number;
   openFinishCount: number;
+  unanchoredOpenFinishCount: number;
   lateCount: number;
   outOfSequenceCount: number;
   diagnostics: string[];
@@ -1065,6 +1081,8 @@ function buildRecommendations({
     items.push(`Reduce open starts from ${openStartCount} to a controlled launch path.`);
   if (openFinishCount > 1)
     items.push(`Reduce open finishes from ${openFinishCount} to a clear completion path.`);
+  if (openFinishCount === 1 && unanchoredOpenFinishCount > 0)
+    items.push("Add a finish milestone as the single completion anchor.");
   if (lateCount > 0) items.push(`Review ${lateCount} incomplete activities beyond the data date.`);
   if (outOfSequenceCount > 0)
     items.push(`Resolve ${outOfSequenceCount} out-of-sequence progress conditions.`);
