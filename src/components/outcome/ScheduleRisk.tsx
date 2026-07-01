@@ -240,6 +240,13 @@ type ScheduleUpdateReadinessSummary = {
   lateCount: number;
   items: ScheduleUpdateReadinessItem[];
 };
+type ScheduleUpdateQueueDialogContext = {
+  position: number;
+  total: number;
+  reason: string;
+  nextActivity: ScheduleActivityRow | null;
+  nextLabel: string | null;
+};
 type WbsReorderInput = {
   parentId: string | null;
   orderedIds: string[];
@@ -1987,6 +1994,30 @@ export function CpmActivityPlanner({
     () => sortedActivities.find((activity) => activity.id === selectedActivityId) ?? null,
     [selectedActivityId, sortedActivities],
   );
+  const selectedUpdateQueueContext = useMemo<ScheduleUpdateQueueDialogContext | null>(() => {
+    if (!selectedActivity) return null;
+    const selectedIndex = updateReadiness.items.findIndex(
+      (item) => item.task.activity.id === selectedActivity.id,
+    );
+    if (selectedIndex === -1) return null;
+    const selectedItem = updateReadiness.items[selectedIndex];
+    const nextItem =
+      updateReadiness.items
+        .slice(selectedIndex + 1)
+        .find((item) => item.task.activity.id !== selectedActivity.id) ??
+      updateReadiness.items.find((item) => item.task.activity.id !== selectedActivity.id) ??
+      null;
+
+    return {
+      position: selectedIndex + 1,
+      total: updateReadiness.items.length,
+      reason: selectedItem.reasons.join(", "),
+      nextActivity: nextItem?.task.activity ?? null,
+      nextLabel: nextItem
+        ? `${nextItem.task.dependencyKey} - ${nextItem.task.activity.name}`
+        : null,
+    };
+  }, [selectedActivity, updateReadiness.items]);
   const milestoneSeedRows = useMemo(
     () => buildActivityRowsFromMilestones(milestones, sortedActivities),
     [milestones, sortedActivities],
@@ -3006,9 +3037,14 @@ export function CpmActivityPlanner({
           activity={selectedActivity}
           activities={sortedActivities}
           dataDate={effectiveDataDate}
+          updateQueueContext={selectedUpdateQueueContext}
           isSaving={isSavingActivity}
           onClose={() => setSelectedActivityId(null)}
           onSave={(patch) => onPatchActivity(selectedActivity.id, patch)}
+          onSaveAndContinue={(nextActivity) => {
+            setScheduleView("update_queue");
+            setSelectedActivityId(nextActivity?.id ?? null);
+          }}
           onDelete={() => confirmDeleteActivity(selectedActivity)}
           divisionOptions={knownWbsDivisions}
           delayFragments={delayFragments}
@@ -6434,6 +6470,7 @@ function ActivityDetailDialog({
   activity,
   activities,
   dataDate,
+  updateQueueContext,
   divisionOptions,
   delayFragments,
   delayFragmentPersistence,
@@ -6441,6 +6478,7 @@ function ActivityDetailDialog({
   isSavingDelayFragment,
   onClose,
   onSave,
+  onSaveAndContinue,
   onDelete,
   onAddDelayFragment,
   onPatchDelayFragment,
@@ -6451,6 +6489,7 @@ function ActivityDetailDialog({
   activity: ScheduleActivityRow;
   activities: ScheduleActivityRow[];
   dataDate: string | null;
+  updateQueueContext: ScheduleUpdateQueueDialogContext | null;
   divisionOptions: string[];
   delayFragments: ScheduleDelayFragmentRow[];
   delayFragmentPersistence: "ready" | "migration_required";
@@ -6458,6 +6497,7 @@ function ActivityDetailDialog({
   isSavingDelayFragment: boolean;
   onClose: () => void;
   onSave: (patch: Partial<ScheduleActivityRow>) => Promise<void>;
+  onSaveAndContinue: (nextActivity: ScheduleActivityRow | null) => void;
   onDelete: () => void;
   onAddDelayFragment: (fragment: DelayFragmentCreateInput) => Promise<void>;
   onPatchDelayFragment: (id: string, patch: DelayFragmentPatchInput) => Promise<void>;
@@ -6499,6 +6539,9 @@ function ActivityDetailDialog({
   const updateImpact = useMemo(() => buildActivityUpdateImpact(draft, dataDate), [draft, dataDate]);
   const isMilestone = isConstructLineMilestoneActivity(activity);
   const saving = isSaving || isSubmitting;
+  const saveAndContinueLabel = updateQueueContext?.nextActivity
+    ? "Save & next update row"
+    : "Save & close queue";
   const currentActivityBlockedIds = useMemo(
     () =>
       Array.from(
@@ -6513,7 +6556,7 @@ function ActivityDetailDialog({
     setIsSubmitting(false);
   }, [activity]);
 
-  const saveActivity = async () => {
+  const saveActivity = async (afterSave: "close" | "queue" = "close") => {
     if (saving) return;
     const validationError = validateActivityDraft(draft, activities, activity.id);
     if (validationError) {
@@ -6555,7 +6598,11 @@ function ActivityDetailDialog({
         successor_activity_ids: serializeActivityLinksToArray(draft.successor_activity_ids),
         notes: draft.notes.trim(),
       });
-      onClose();
+      if (afterSave === "queue" && updateQueueContext) {
+        onSaveAndContinue(updateQueueContext.nextActivity);
+      } else {
+        onClose();
+      }
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Activity did not update.");
       setIsSubmitting(false);
@@ -6574,6 +6621,27 @@ function ActivityDetailDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6">
+          {updateQueueContext && (
+            <div className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-sm text-warning">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em]">
+                    Data-date update queue
+                  </div>
+                  <div className="mt-1 text-foreground">
+                    Row {updateQueueContext.position} of {updateQueueContext.total} needs{" "}
+                    {updateQueueContext.reason.toLowerCase()}.
+                  </div>
+                </div>
+                <div className="min-w-0 text-xs text-muted-foreground sm:text-right">
+                  {updateQueueContext.nextLabel
+                    ? `Next: ${updateQueueContext.nextLabel}`
+                    : "Save this row, then save the CPM update snapshot."}
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <ScheduleWorkbenchStat
               label="Activity ID"
@@ -6943,9 +7011,23 @@ function ActivityDetailDialog({
             <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
               Close
             </Button>
-            <Button type="button" onClick={saveActivity} disabled={!draft.name.trim() || saving}>
+            <Button
+              type="button"
+              variant={updateQueueContext ? "outline" : "default"}
+              onClick={() => void saveActivity()}
+              disabled={!draft.name.trim() || saving}
+            >
               {saving ? "Saving..." : "Save activity"}
             </Button>
+            {updateQueueContext && (
+              <Button
+                type="button"
+                onClick={() => void saveActivity("queue")}
+                disabled={!draft.name.trim() || saving}
+              >
+                {saving ? "Saving..." : saveAndContinueLabel}
+              </Button>
+            )}
           </div>
         </DialogFooter>
       </DialogContent>
