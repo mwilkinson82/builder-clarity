@@ -123,9 +123,9 @@ const EMPTY_COST_ITEMS: CostLibraryItemRow[] = [];
 
 const costFocusOptions: Array<{ value: CostFocus; label: string; description: string }> = [
   { value: "all", label: "All Costs", description: "Material, labor, and installed costs." },
-  { value: "material", label: "Material", description: "Rows with material pricing." },
-  { value: "labor", label: "Labor", description: "Rows with labor pricing and crew data." },
-  { value: "installed", label: "Installed", description: "Rows with both material and labor." },
+  { value: "material", label: "Material", description: "Material price per unit." },
+  { value: "labor", label: "Labor", description: "Labor price per unit, with crew assumptions." },
+  { value: "installed", label: "Installed", description: "Material and labor in one row." },
 ];
 
 const getCostProfile = (
@@ -154,21 +154,94 @@ const matchesCostFocus = (item: CostLibraryItemRow, focus: CostFocus) => {
   return item.material_cost_cents > 0;
 };
 
-const formatCrew = (
-  item: Pick<CostLibraryItemRow, "crew_size" | "productivity_per_hour" | "unit">,
-) => {
+const unitLabel = (unit: string) => unit.trim().toUpperCase() || "unit";
+
+function CostRateDisplay({
+  cents,
+  unit,
+  kind,
+}: {
+  cents: number;
+  unit: string;
+  kind: "Material" | "Labor";
+}) {
+  const normalizedUnit = unitLabel(unit);
+  if (cents <= 0) {
+    return (
+      <div className="text-right text-xs text-muted-foreground">
+        <div className="font-medium">Not priced</div>
+        <div>{kind === "Material" ? "No material cost" : "No labor cost"}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="text-right">
+      <div className="font-medium tabular">
+        {fmtUSD(cents / 100)}{" "}
+        <span className="text-xs text-muted-foreground">/ {normalizedUnit}</span>
+      </div>
+      <div className="text-[11px] text-muted-foreground">
+        {kind === "Labor"
+          ? `Labor price per ${normalizedUnit}, not per worker`
+          : `Material price per ${normalizedUnit}`}
+      </div>
+    </div>
+  );
+}
+
+function CostMoneyInput({
+  value,
+  unit,
+  onValueChange,
+  ariaLabel,
+}: {
+  value: number;
+  unit: string;
+  onValueChange: (value: number) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <div className="relative">
+      <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+        $
+      </span>
+      <MoneyInput
+        value={value}
+        onValueChange={onValueChange}
+        align="right"
+        aria-label={ariaLabel}
+        className="h-8 pl-6 pr-12"
+      />
+      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-muted-foreground">
+        /{unitLabel(unit)}
+      </span>
+    </div>
+  );
+}
+
+function CrewProductionDisplay({
+  item,
+}: {
+  item: Pick<CostLibraryItemRow, "crew_size" | "productivity_per_hour" | "unit">;
+}) {
   const crew = item.crew_size
-    ? Number(item.crew_size).toLocaleString("en-US", { maximumFractionDigits: 1 })
+    ? `${Number(item.crew_size).toLocaleString("en-US", {
+        maximumFractionDigits: 1,
+      })}-person crew`
     : "";
   const production = item.productivity_per_hour
     ? `${Number(item.productivity_per_hour).toLocaleString("en-US", {
         maximumFractionDigits: 2,
-      })} ${item.unit}/hr`
+      })} ${unitLabel(item.unit)}/hr production`
     : "";
-  if (crew && production) return `${crew} crew · ${production}`;
-  if (crew) return `${crew} crew`;
-  return production || "-";
-};
+  if (!crew && !production) return <span className="text-muted-foreground">No assumption</span>;
+  return (
+    <div className="text-xs">
+      {crew && <div className="font-medium text-foreground">{crew}</div>}
+      {production && <div className="text-muted-foreground">{production}</div>}
+    </div>
+  );
+}
 
 function CostLibraryPage() {
   const qc = useQueryClient();
@@ -466,8 +539,8 @@ function CostLibraryPage() {
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
                 Start from Overwatch material and labor pricing, import your spreadsheet, or add
-                costs by hand. Master sheets and project estimates search the saved costs in this
-                library.
+                costs by hand. My Cost Library is the editable price book used by master sheets and
+                project estimates.
               </p>
             </div>
             <Tabs
@@ -512,6 +585,32 @@ function CostLibraryPage() {
             </div>
             <p className="text-xs text-muted-foreground lg:max-w-sm">{activeViewDescription}</p>
           </div>
+          <div className="mt-4 grid gap-2 rounded-lg border border-hairline bg-surface p-3 md:grid-cols-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Material $/Unit
+              </div>
+              <p className="mt-1 text-sm text-foreground">
+                The material price for one unit, like one LF, SF, EA, or MO.
+              </p>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Labor $/Unit
+              </div>
+              <p className="mt-1 text-sm text-foreground">
+                The labor price for one unit. It is not multiplied by crew size.
+              </p>
+            </div>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Crew / Production
+              </div>
+              <p className="mt-1 text-sm text-foreground">
+                The crew and speed assumption behind the labor price.
+              </p>
+            </div>
+          </div>
         </section>
 
         <div className="grid gap-3 rounded-lg border border-hairline bg-card p-4 shadow-card lg:grid-cols-[1fr_180px_220px]">
@@ -553,7 +652,7 @@ function CostLibraryPage() {
         </div>
 
         <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
-          <Table className="min-w-[1360px]">
+          <Table className="min-w-[1480px]">
             <TableHeader>
               <TableRow className="bg-surface [&>th]:whitespace-nowrap">
                 <TableHead className="w-[110px]">Source</TableHead>
@@ -562,10 +661,10 @@ function CostLibraryPage() {
                 <TableHead>Description</TableHead>
                 <TableHead className="w-[110px]">Category</TableHead>
                 <TableHead className="w-[80px]">Unit</TableHead>
-                <TableHead className="w-[130px] text-right">Material</TableHead>
-                <TableHead className="w-[130px] text-right">Labor</TableHead>
-                <TableHead className="w-[170px]">Crew / Production</TableHead>
-                <TableHead className="w-[104px]" />
+                <TableHead className="w-[150px] text-right">Material $/Unit</TableHead>
+                <TableHead className="w-[170px] text-right">Labor $/Unit</TableHead>
+                <TableHead className="w-[190px]">Crew / Production</TableHead>
+                <TableHead className="w-[190px] text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -653,19 +752,23 @@ function CostLibraryPage() {
               />
             </Field>
             <Field label="Material $/Unit">
-              <MoneyInput
+              <CostMoneyInput
                 value={centsToDollars(draft.material_cost_cents)}
                 onValueChange={(value) =>
                   setDraft({ ...draft, material_cost_cents: dollarsToCents(value) })
                 }
+                unit={draft.unit}
+                ariaLabel="Material dollars per unit"
               />
             </Field>
-            <Field label="Labor $/Unit">
-              <MoneyInput
+            <Field label="Labor $/Unit (not per worker)">
+              <CostMoneyInput
                 value={centsToDollars(draft.labor_cost_cents)}
                 onValueChange={(value) =>
                   setDraft({ ...draft, labor_cost_cents: dollarsToCents(value) })
                 }
+                unit={draft.unit}
+                ariaLabel="Labor dollars per unit"
               />
             </Field>
             <Field label="Crew Size">
@@ -839,30 +942,30 @@ function CostLibraryRow({
       </TableCell>
       <TableCell className="text-right">
         {editable ? (
-          <MoneyInput
+          <CostMoneyInput
             value={centsToDollars(draft.material_cost_cents)}
             onValueChange={(value) =>
               setDraft({ ...draft, material_cost_cents: dollarsToCents(value) })
             }
-            align="right"
-            className="h-8"
+            unit={draft.unit}
+            ariaLabel="Material dollars per unit"
           />
         ) : (
-          <span className="tabular">{fmtUSD(item.material_cost_cents / 100)}</span>
+          <CostRateDisplay cents={item.material_cost_cents} unit={item.unit} kind="Material" />
         )}
       </TableCell>
       <TableCell className="text-right">
         {editable ? (
-          <MoneyInput
+          <CostMoneyInput
             value={centsToDollars(draft.labor_cost_cents)}
             onValueChange={(value) =>
               setDraft({ ...draft, labor_cost_cents: dollarsToCents(value) })
             }
-            align="right"
-            className="h-8"
+            unit={draft.unit}
+            ariaLabel="Labor dollars per unit"
           />
         ) : (
-          <span className="tabular">{fmtUSD(item.labor_cost_cents / 100)}</span>
+          <CostRateDisplay cents={item.labor_cost_cents} unit={item.unit} kind="Labor" />
         )}
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
@@ -899,7 +1002,7 @@ function CostLibraryRow({
             />
           </div>
         ) : (
-          formatCrew(item)
+          <CrewProductionDisplay item={item} />
         )}
       </TableCell>
       <TableCell>
@@ -929,14 +1032,14 @@ function CostLibraryRow({
             </>
           ) : (
             <Button
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8"
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 whitespace-nowrap"
               onClick={onCopy}
               title="Add to My Cost Library"
               aria-label="Add to My Cost Library"
             >
-              <Copy className="h-4 w-4" />
+              <Copy className="h-3.5 w-3.5" /> Add to My Cost Library
             </Button>
           )}
         </div>
@@ -987,8 +1090,9 @@ function CostImportDialog({
           <DialogTitle>Import My Costs</DialogTitle>
           <DialogDescription>
             Bring in your own price list from pasted rows, CSV, or Excel. Use Download Import Format
-            for the column guide; imported rows save to My Cost Library. Labor rows can include Crew
-            Size and Production / Hour.
+            for the column guide; imported rows save to My Cost Library. Labor $/Unit is the unit
+            price used in estimates. Crew Size and Production / Hour are assumptions behind that
+            price.
           </DialogDescription>
         </DialogHeader>
 
@@ -1078,8 +1182,8 @@ function CostImportDialog({
                     <TableHead className="w-[90px]">CSI</TableHead>
                     <TableHead className="w-[110px]">Category</TableHead>
                     <TableHead className="w-[80px]">Unit</TableHead>
-                    <TableHead className="w-[120px] text-right">Material</TableHead>
-                    <TableHead className="w-[120px] text-right">Labor</TableHead>
+                    <TableHead className="w-[140px] text-right">Material $/Unit</TableHead>
+                    <TableHead className="w-[150px] text-right">Labor $/Unit</TableHead>
                     <TableHead className="w-[150px]">Crew / Production</TableHead>
                     <TableHead className="w-[190px]">Status</TableHead>
                   </TableRow>
@@ -1095,17 +1199,23 @@ function CostImportDialog({
                       <TableCell>{row.category || "-"}</TableCell>
                       <TableCell>{row.unit}</TableCell>
                       <TableCell className="text-right tabular">
-                        {fmtUSD(row.material_cost_cents / 100)}
+                        {row.material_cost_cents > 0
+                          ? `${fmtUSD(row.material_cost_cents / 100)} / ${unitLabel(row.unit)}`
+                          : "Not priced"}
                       </TableCell>
                       <TableCell className="text-right tabular">
-                        {fmtUSD(row.labor_cost_cents / 100)}
+                        {row.labor_cost_cents > 0
+                          ? `${fmtUSD(row.labor_cost_cents / 100)} / ${unitLabel(row.unit)}`
+                          : "Not priced"}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {formatCrew({
-                          crew_size: row.crew_size,
-                          productivity_per_hour: row.productivity_per_hour,
-                          unit: row.unit,
-                        })}
+                        <CrewProductionDisplay
+                          item={{
+                            crew_size: row.crew_size,
+                            productivity_per_hour: row.productivity_per_hour,
+                            unit: row.unit,
+                          }}
+                        />
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {row.issues.length === 0
