@@ -7795,6 +7795,17 @@ function ScheduleUpdateLedger({
   milestoneUpdates: ScheduleMilestoneUpdateRow[];
   activityUpdates: ScheduleActivityUpdateRow[];
 }) {
+  const [expandedUpdateNumber, setExpandedUpdateNumber] = useState<number | null>(
+    updates[0]?.update_number ?? null,
+  );
+  useEffect(() => {
+    if (updates.length === 0) return;
+    if (expandedUpdateNumber == null) return;
+    if (!updates.some((update) => update.update_number === expandedUpdateNumber)) {
+      setExpandedUpdateNumber(updates[0]?.update_number ?? null);
+    }
+  }, [expandedUpdateNumber, updates]);
+
   if (updates.length === 0) {
     return (
       <section className="rounded-lg border border-hairline bg-card p-6">
@@ -7811,6 +7822,7 @@ function ScheduleUpdateLedger({
     return acc;
   }, {});
   const activitySnapshotByUpdate = buildActivityUpdateSnapshotSummaries(activityUpdates);
+  const activityRowsByUpdate = groupActivityUpdateSnapshots(activityUpdates);
   return (
     <section className="rounded-lg border border-hairline bg-card p-6">
       <div className="mb-4">
@@ -7820,7 +7832,7 @@ function ScheduleUpdateLedger({
           float, critical path signals, milestone movement, and schedule-dollar movement.
         </p>
       </div>
-      <div className="overflow-hidden rounded-md border border-hairline">
+      <div className="overflow-x-auto rounded-md border border-hairline">
         <div className="grid grid-cols-[64px_100px_120px_140px_100px_100px_110px_minmax(180px,1fr)] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
           <div>Update</div>
           <div>Data date</div>
@@ -7833,6 +7845,8 @@ function ScheduleUpdateLedger({
         </div>
         {updates.map((update) => {
           const activitySummary = activitySnapshotByUpdate[update.update_number];
+          const activitySnapshotRows = activityRowsByUpdate[update.update_number] ?? [];
+          const isSnapshotExpanded = expandedUpdateNumber === update.update_number;
           return (
             <div
               key={update.id}
@@ -7872,6 +7886,21 @@ function ScheduleUpdateLedger({
                     Drivers: {activitySummary.driverLabels.join("; ")}
                   </div>
                 )}
+                {activitySnapshotRows.length > 0 && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 h-7 px-2 text-xs"
+                    onClick={() =>
+                      setExpandedUpdateNumber((current) =>
+                        current === update.update_number ? null : update.update_number,
+                      )
+                    }
+                  >
+                    {isSnapshotExpanded ? "Hide activity snapshot" : "View activity snapshot"}
+                  </Button>
+                )}
                 {update.notes && (
                   <div className="mt-1 max-w-2xl text-xs text-muted-foreground">{update.notes}</div>
                 )}
@@ -7881,6 +7910,63 @@ function ScheduleUpdateLedger({
                   </div>
                 )}
               </div>
+              {isSnapshotExpanded && activitySnapshotRows.length > 0 && (
+                <div className="col-span-8 mt-3 overflow-hidden rounded-md border border-hairline bg-card">
+                  <div className="grid grid-cols-[74px_minmax(180px,1.2fr)_90px_90px_70px_64px_minmax(180px,1fr)] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                    <div>ID</div>
+                    <div>Activity</div>
+                    <div>Current start</div>
+                    <div>Expected finish</div>
+                    <div>Rem</div>
+                    <div>TF</div>
+                    <div>Status</div>
+                  </div>
+                  {activitySnapshotRows.slice(0, 10).map((snapshot) => (
+                    <div
+                      key={snapshot.id}
+                      className="grid grid-cols-[74px_minmax(180px,1.2fr)_90px_90px_70px_64px_minmax(180px,1fr)] items-start border-t border-hairline px-3 py-2 text-xs"
+                    >
+                      <div className="font-semibold tabular text-foreground">
+                        {snapshot.activity_id || "No ID"}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="break-words font-semibold text-foreground">
+                          {snapshot.name}
+                        </div>
+                        <div className="mt-0.5 break-words text-[11px] text-muted-foreground">
+                          {snapshot.division}
+                        </div>
+                      </div>
+                      <div className="tabular text-muted-foreground">
+                        {shortDate(snapshot.current_start_date)}
+                      </div>
+                      <div className="tabular text-muted-foreground">
+                        {shortDate(snapshot.current_finish_date)}
+                      </div>
+                      <div className="tabular text-muted-foreground">
+                        {snapshot.remaining_duration_days}d
+                      </div>
+                      <div
+                        className={cn(
+                          "font-semibold tabular",
+                          snapshot.total_float_days <= 0 ? "text-danger" : "text-muted-foreground",
+                        )}
+                      >
+                        {snapshot.total_float_days}d
+                      </div>
+                      <div className="break-words text-muted-foreground">
+                        {formatActivityUpdateSnapshotStatus(snapshot)}
+                      </div>
+                    </div>
+                  ))}
+                  {activitySnapshotRows.length > 10 && (
+                    <div className="border-t border-hairline px-3 py-2 text-xs text-muted-foreground">
+                      Showing 10 of {activitySnapshotRows.length} activity snapshots for this
+                      update.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
@@ -7913,6 +7999,21 @@ function buildActivityUpdateSnapshotSummaries(activityUpdates: ScheduleActivityU
       summarizeActivityUpdateSnapshots(rows),
     ]),
   ) as Record<number, ActivityUpdateSnapshotSummary>;
+}
+
+function groupActivityUpdateSnapshots(activityUpdates: ScheduleActivityUpdateRow[]) {
+  const grouped = activityUpdates.reduce<Record<number, ScheduleActivityUpdateRow[]>>(
+    (acc, update) => {
+      acc[update.update_number] = acc[update.update_number] ?? [];
+      acc[update.update_number].push(update);
+      return acc;
+    },
+    {},
+  );
+  for (const rows of Object.values(grouped)) {
+    rows.sort((a, b) => scoreActivityUpdateDriver(b) - scoreActivityUpdateDriver(a));
+  }
+  return grouped;
 }
 
 function summarizeActivityUpdateSnapshots(
@@ -7954,6 +8055,19 @@ function formatActivityUpdateDriver(row: ScheduleActivityUpdateRow) {
     `TF ${row.total_float_days}d`,
   ].filter(Boolean);
   return `${row.activity_id || row.name} ${tags.join(" · ")}`;
+}
+
+function formatActivityUpdateSnapshotStatus(row: ScheduleActivityUpdateRow) {
+  const tags = [
+    row.is_critical ? "critical" : null,
+    row.is_near_critical ? "near critical" : null,
+    row.is_late ? "late" : null,
+    row.is_out_of_sequence ? "out-of-seq" : null,
+    row.is_open_start ? "open start" : null,
+    row.is_open_finish ? "open finish" : null,
+    row.is_milestone ? "milestone" : null,
+  ].filter(Boolean);
+  return tags.length > 0 ? tags.join(" · ") : `${row.percent_complete}% complete`;
 }
 
 function DateField({
