@@ -2576,6 +2576,139 @@ export function CpmActivityPlanner({
     if (selectedActivityId === activity.id) setSelectedActivityId(null);
     onDeleteActivity(activity.id);
   };
+  const activityDraftEditor = showDraft ? (
+    <div
+      ref={draftFormRef}
+      className="scroll-mt-28 rounded-md border border-hairline bg-card p-4 shadow-sm"
+    >
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            {draft.is_milestone ? "New completion milestone" : "New CPM activity"}
+          </div>
+          <div className="mt-1 font-serif text-xl text-foreground">
+            {draft.is_milestone ? "Add a schedule milestone" : "Add an activity row"}
+          </div>
+          <div className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Fill the row, choose predecessor/successor activities from the schedule, then save it
+            into the CPM table.
+          </div>
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            type="button"
+            variant={draft.is_milestone ? "default" : "outline"}
+            className="gap-2 print:hidden"
+            aria-pressed={draft.is_milestone}
+            onClick={() => setDraft(toggleMilestoneDraft(draft, !draft.is_milestone))}
+          >
+            <Diamond className="h-4 w-4" />
+            Milestone
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            className="print:hidden"
+            onClick={() => {
+              setDraft(emptyActivityDraft());
+              setShowDraft(false);
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+      </div>
+      <div className="grid gap-3 xl:grid-cols-[140px_minmax(280px,1fr)_210px_160px_160px_110px]">
+        <LabeledField label="Activity ID">
+          <Input
+            value={draft.activity_id}
+            onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
+            placeholder="A-010"
+            className="h-10"
+          />
+        </LabeledField>
+        <LabeledField label="Activity">
+          <Input
+            value={draft.name}
+            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            placeholder={draft.is_milestone ? "Substantial completion" : "Frame exterior walls"}
+            className="h-10"
+          />
+        </LabeledField>
+        <LabeledField label="WBS / area">
+          <ActivityDivisionInput
+            value={draft.division}
+            onChange={(division) => setDraft({ ...draft, division })}
+            options={knownWbsDivisions}
+            listId="new-activity-wbs-divisions"
+          />
+        </LabeledField>
+        <LabeledField label="Baseline start">
+          <Input
+            type="date"
+            value={draft.baseline_start_date}
+            onChange={(e) => setDraft(updateDraftBaselineStartDate(draft, e.target.value))}
+            className="h-10"
+          />
+        </LabeledField>
+        <LabeledField label="Baseline finish">
+          <Input
+            type="date"
+            value={draft.baseline_finish_date}
+            onChange={(e) => setDraft(updateDraftBaselineFinishDate(draft, e.target.value))}
+            className="h-10"
+          />
+        </LabeledField>
+        <LabeledField label="% done">
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            value={draft.percent_complete}
+            onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
+            className="h-10 tabular"
+          />
+        </LabeledField>
+      </div>
+      <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(260px,0.8fr)_minmax(260px,0.8fr)_minmax(320px,1fr)_auto] xl:items-end">
+        <ActivityDependencyPicker
+          label="Predecessors - work before this row"
+          emptyLabel="Choose activities that must finish first"
+          selectedIds={draft.predecessor_activity_ids}
+          activities={sortedActivities}
+          blockedActivityId={draft.activity_id}
+          blockedIds={parseActivityIds(draft.successor_activity_ids)}
+          onChange={(value) => setDraft({ ...draft, predecessor_activity_ids: value })}
+        />
+        <ActivityDependencyPicker
+          label="Successors - work after this row"
+          emptyLabel="Choose activities that follow this one"
+          selectedIds={draft.successor_activity_ids}
+          activities={sortedActivities}
+          blockedActivityId={draft.activity_id}
+          blockedIds={parseActivityIds(draft.predecessor_activity_ids)}
+          onChange={(value) => setDraft({ ...draft, successor_activity_ids: value })}
+        />
+        <LabeledField label="Notes / constraint">
+          <Textarea
+            value={draft.notes}
+            onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+            placeholder="Scope, sequencing constraint, crew assumption, or schedule risk."
+            className="min-h-10 resize-y"
+          />
+        </LabeledField>
+        <Button
+          type="button"
+          className="h-10 gap-2"
+          disabled={!draft.name.trim()}
+          onClick={addActivity}
+        >
+          {draft.is_milestone ? <Diamond className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+          {draft.is_milestone ? "Save milestone" : "Save activity"}
+        </Button>
+      </div>
+    </div>
+  ) : null;
 
   return (
     <>
@@ -2737,145 +2870,11 @@ export function CpmActivityPlanner({
           </div>
         )}
 
-        {showDraft && (
-          <div
-            ref={draftFormRef}
-            className="mt-5 scroll-mt-28 rounded-md border border-hairline bg-card p-4 shadow-sm"
-          >
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  {draft.is_milestone ? "New milestone" : "New activity"}
-                </div>
-                <div className="mt-1 text-sm text-muted-foreground">
-                  Add one schedule row now. Choose predecessors and successors from the current
-                  activity list.
-                </div>
-              </div>
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button
-                  type="button"
-                  variant={draft.is_milestone ? "default" : "outline"}
-                  className="gap-2 print:hidden"
-                  aria-pressed={draft.is_milestone}
-                  onClick={() => setDraft(toggleMilestoneDraft(draft, !draft.is_milestone))}
-                >
-                  <Diamond className="h-4 w-4" />
-                  Milestone
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="print:hidden"
-                  onClick={() => {
-                    setDraft(emptyActivityDraft());
-                    setShowDraft(false);
-                  }}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-            <div className="grid gap-3 lg:grid-cols-[130px_minmax(240px,1fr)_170px_150px_150px_110px]">
-              <LabeledField label="Activity ID">
-                <Input
-                  value={draft.activity_id}
-                  onChange={(e) => setDraft({ ...draft, activity_id: e.target.value })}
-                  placeholder="A-010"
-                  className="h-10"
-                />
-              </LabeledField>
-              <LabeledField label="Activity">
-                <Input
-                  value={draft.name}
-                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                  placeholder="Frame exterior walls"
-                  className="h-10"
-                />
-              </LabeledField>
-              <LabeledField label="WBS / area">
-                <ActivityDivisionInput
-                  value={draft.division}
-                  onChange={(division) => setDraft({ ...draft, division })}
-                  options={knownWbsDivisions}
-                  listId="new-activity-wbs-divisions"
-                />
-              </LabeledField>
-              <LabeledField label="Baseline start">
-                <Input
-                  type="date"
-                  value={draft.baseline_start_date}
-                  onChange={(e) => setDraft(updateDraftBaselineStartDate(draft, e.target.value))}
-                  className="h-10"
-                />
-              </LabeledField>
-              <LabeledField label="Baseline finish">
-                <Input
-                  type="date"
-                  value={draft.baseline_finish_date}
-                  onChange={(e) => setDraft(updateDraftBaselineFinishDate(draft, e.target.value))}
-                  className="h-10"
-                />
-              </LabeledField>
-              <LabeledField label="% done">
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={draft.percent_complete}
-                  onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
-                  className="h-10 tabular"
-                />
-              </LabeledField>
-            </div>
-            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(220px,0.8fr)_minmax(220px,0.8fr)_minmax(260px,1fr)_auto] lg:items-end">
-              <ActivityDependencyPicker
-                label="Predecessors"
-                emptyLabel="Choose activities that must finish first"
-                selectedIds={draft.predecessor_activity_ids}
-                activities={sortedActivities}
-                blockedActivityId={draft.activity_id}
-                blockedIds={parseActivityIds(draft.successor_activity_ids)}
-                onChange={(value) => setDraft({ ...draft, predecessor_activity_ids: value })}
-              />
-              <ActivityDependencyPicker
-                label="Successors"
-                emptyLabel="Choose activities that follow this one"
-                selectedIds={draft.successor_activity_ids}
-                activities={sortedActivities}
-                blockedActivityId={draft.activity_id}
-                blockedIds={parseActivityIds(draft.predecessor_activity_ids)}
-                onChange={(value) => setDraft({ ...draft, successor_activity_ids: value })}
-              />
-              <LabeledField label="Notes">
-                <Textarea
-                  value={draft.notes}
-                  onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
-                  placeholder="Scope, sequencing constraint, crew assumption, or schedule risk."
-                  className="min-h-10 resize-y"
-                />
-              </LabeledField>
-              <Button
-                type="button"
-                className="h-10 gap-2"
-                disabled={!draft.name.trim()}
-                onClick={addActivity}
-              >
-                {draft.is_milestone ? (
-                  <Diamond className="h-4 w-4" />
-                ) : (
-                  <Plus className="h-4 w-4" />
-                )}
-                {draft.is_milestone ? "Add milestone" : "Add activity"}
-              </Button>
-            </div>
-          </div>
-        )}
-
         <ActivityScheduleMatrix
           matrixId="cpm-grid"
           model={displayedCpmModel}
           delayFragments={delayFragments}
+          draftEditor={isFocusOpen ? null : activityDraftEditor}
           toolbar={
             <CpmGridToolbar
               scheduleView={scheduleView}
@@ -3094,6 +3093,7 @@ export function CpmActivityPlanner({
           <ActivityScheduleMatrix
             model={displayedCpmModel}
             delayFragments={delayFragments}
+            draftEditor={activityDraftEditor}
             dayPx={dayPx}
             dataDate={effectiveDataDate}
             viewSummary={scheduleViewSummary}
@@ -3814,7 +3814,9 @@ function CpmDataDateControl({
 function scrollActivityDraftIntoView(ref: RefObject<HTMLDivElement | null>) {
   if (typeof window === "undefined") return;
   window.requestAnimationFrame(() => {
-    ref.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    window.requestAnimationFrame(() => {
+      ref.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
   });
 }
 
@@ -4697,6 +4699,7 @@ function ActivityScheduleMatrix({
   model,
   delayFragments,
   toolbar,
+  draftEditor,
   viewSummary,
   emptyTitle = "No CPM activities yet.",
   emptyDescription = "Add the first activity to start building the working schedule.",
@@ -4712,6 +4715,7 @@ function ActivityScheduleMatrix({
   model: ConstructLineCpmModel;
   delayFragments: ScheduleDelayFragmentRow[];
   toolbar?: ReactNode;
+  draftEditor?: ReactNode;
   viewSummary?: string;
   emptyTitle?: string;
   emptyDescription?: string;
@@ -4731,15 +4735,17 @@ function ActivityScheduleMatrix({
     matrixViewportWidth > 0 ? matrixViewportWidth : isFocusMode ? 1320 : 1180;
   const fitTableWidth = Math.round(
     Math.min(
-      isFocusMode ? 1040 : 980,
-      Math.max(isFocusMode ? 920 : 900, measuredMatrixWidth * (isFocusMode ? 0.52 : 0.64)),
+      isFocusMode ? 1180 : 1080,
+      Math.max(isFocusMode ? 1040 : 980, measuredMatrixWidth * (isFocusMode ? 0.56 : 0.7)),
     ),
   );
   const tableWidth = isPrintMode
     ? CONSTRUCTLINE_PRINT_TABLE_WIDTH
     : isFitZoom
       ? fitTableWidth
-      : 860;
+      : isFocusMode
+        ? 1060
+        : 1020;
   const fitTimelineTargetWidth =
     matrixViewportWidth > 0
       ? Math.max(360, measuredMatrixWidth - tableWidth - 1)
@@ -4752,8 +4758,8 @@ function ActivityScheduleMatrix({
   const tableColumns = isPrintMode
     ? "44px minmax(116px,1fr) 26px 30px 36px 36px 42px 30px 30px 24px 26px"
     : isFitZoom
-      ? "68px minmax(260px,1fr) 52px 58px 70px 72px 82px 62px 58px 48px 50px"
-      : "78px minmax(280px,1fr) 58px 64px 80px 84px 92px 66px 68px 54px 58px";
+      ? "70px minmax(300px,1fr) 58px 68px 74px 74px 88px 68px 58px 48px 54px"
+      : "82px minmax(320px,1fr) 62px 72px 86px 88px 98px 72px 70px 54px 64px";
   const compactHeaders = isFitZoom || isPrintMode;
   const baseRowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
@@ -4912,6 +4918,9 @@ function ActivityScheduleMatrix({
           </div>
         </div>
         {toolbar && <div className="constructline-cpm-matrix-toolbar print:hidden">{toolbar}</div>}
+        {draftEditor && (
+          <div className="constructline-cpm-matrix-editor print:hidden">{draftEditor}</div>
+        )}
       </div>
 
       {model.groups.length === 0 ? (
@@ -5455,7 +5464,7 @@ function ConstructLineTaskRow({
           }
         }}
       >
-        <div className="flex items-center px-3 font-semibold tabular text-foreground">
+        <div className="flex min-w-0 items-center px-3 font-semibold leading-tight tabular text-foreground">
           {activity.activity_id || "No ID"}
         </div>
         <div className="flex min-w-0 flex-col justify-center px-3">
@@ -5489,13 +5498,13 @@ function ConstructLineTaskRow({
           </div>
         </div>
         <div
-          className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground"
+          className="flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground"
           title="Original planned duration from baseline start to baseline finish."
         >
-          {task.isMilestone ? "M" : task.durationDays}
+          <span className="truncate">{task.isMilestone ? "M" : task.durationDays}</span>
         </div>
         <div
-          className="flex min-w-0 flex-col items-end justify-center border-l border-hairline/50 px-2 tabular"
+          className="flex min-w-0 flex-col items-end justify-center overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular"
           title={formatTaskStatusBasisTitle(task)}
         >
           <span className="font-semibold text-foreground">{task.remainingDurationDays}</span>
@@ -5509,31 +5518,31 @@ function ConstructLineTaskRow({
           </span>
         </div>
         <div
-          className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground"
+          className="flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground"
           title="Original planned baseline finish."
         >
-          {shortPrintDate(task.baselineFinishDate)}
+          <span className="truncate">{shortPrintDate(task.baselineFinishDate)}</span>
         </div>
-        <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
-          {shortPrintDate(task.statusStartDate)}
+        <div className="flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground">
+          <span className="truncate">{shortPrintDate(task.statusStartDate)}</span>
         </div>
-        <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
-          {shortPrintDate(task.statusFinishDate)}
+        <div className="flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground">
+          <span className="truncate">{shortPrintDate(task.statusFinishDate)}</span>
         </div>
         <div
           className={cn(
-            "flex items-center justify-end border-l border-hairline/50 px-2 font-semibold tabular",
+            "flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] font-semibold tabular",
             finishVarianceClass,
           )}
         >
-          {finishVarianceLabel}
+          <span className="truncate">{finishVarianceLabel}</span>
         </div>
-        <div className="flex items-center justify-end border-l border-hairline/50 px-2 font-semibold tabular text-foreground">
-          {percent}%
+        <div className="flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] font-semibold tabular text-foreground">
+          <span className="truncate">{percent}%</span>
         </div>
         <div
           className={cn(
-            "flex items-center justify-end border-l border-hairline/50 px-2 font-semibold tabular",
+            "flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] font-semibold tabular",
             task.isCritical
               ? "text-danger"
               : task.isNearCritical
@@ -5541,7 +5550,7 @@ function ConstructLineTaskRow({
                 : "text-muted-foreground",
           )}
         >
-          {task.totalFloat}
+          <span className="truncate">{task.totalFloat}</span>
         </div>
         <div className="flex items-center justify-end gap-1 border-l border-hairline/50 px-1.5 tabular text-muted-foreground">
           <span>{logicCount}</span>
