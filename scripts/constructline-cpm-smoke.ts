@@ -422,6 +422,10 @@ for (const requiredScheduleRiskText of [
 
 for (const requiredScheduleRouteText of [
   "WBS order applied",
+  "queueWbsReorder",
+  "wbsOrderSaveTimerRef",
+  "applyOptimisticWbsOrderChange",
+  "Final order saves after you stop moving rows.",
   "Child WBS added",
   "WBS title applied",
   "WBS nested",

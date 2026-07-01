@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -54,6 +54,9 @@ type WbsReorderInput = {
   parentId: string | null;
   orderedIds: string[];
 };
+type WbsReorderPersistInput = WbsReorderInput & {
+  saveVersion: number;
+};
 type WbsParentMoveInput = {
   id: string;
   parentId: string | null;
@@ -104,6 +107,21 @@ function applyOptimisticWbsPathChange(
   };
 }
 
+function applyOptimisticWbsOrderChange(
+  current: ScheduleQueryCache | undefined,
+  orderedIds: string[],
+) {
+  if (!current?.wbsSections) return current;
+  const orderMap = new Map(orderedIds.map((id, index) => [id, (index + 1) * 10]));
+  return {
+    ...current,
+    wbsSections: current.wbsSections.map((section: ScheduleWbsSectionRow) => ({
+      ...section,
+      sort_order: orderMap.get(section.id) ?? section.sort_order,
+    })),
+  };
+}
+
 export const Route = createFileRoute("/_authenticated/projects/$projectId/schedule")({
   ssr: false,
   head: () => ({ meta: [{ title: "Construction Schedule — Overwatch" }] }),
@@ -126,6 +144,11 @@ function ScheduleWorkspacePage() {
   const renameWbsSectionFn = useServerFn(renameScheduleWbsSection);
   const reorderWbsSectionsFn = useServerFn(reorderScheduleWbsSections);
   const wbsOrderToastRef = useRef<string | number | null>(null);
+  const wbsOrderSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wbsOrderRollbackRef = useRef<ScheduleQueryCache | undefined>(undefined);
+  const wbsQueuedOrderRef = useRef<WbsReorderInput | null>(null);
+  const wbsOrderVersionRef = useRef(0);
+  const [isWbsOrderSaveQueued, setIsWbsOrderSaveQueued] = useState(false);
 
   const projectQuery = useQuery({
     queryKey: ["project", projectId],
@@ -178,6 +201,15 @@ function ScheduleWorkspacePage() {
     await qc.invalidateQueries({ queryKey: ["project", projectId] });
     await qc.invalidateQueries({ queryKey: ["projects"] });
   };
+
+  useEffect(
+    () => () => {
+      if (wbsOrderSaveTimerRef.current) {
+        clearTimeout(wbsOrderSaveTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const activityCreate = useMutation({
     mutationFn: (activity: ActivityCreateInput) =>
@@ -377,49 +409,76 @@ function ScheduleWorkspacePage() {
   });
 
   const wbsReorder = useMutation({
-    mutationFn: ({ parentId, orderedIds }: WbsReorderInput) =>
+    mutationFn: ({ parentId, orderedIds }: WbsReorderPersistInput) =>
       reorderWbsSectionsFn({ data: { projectId, parentId, orderedIds } }),
-    onMutate: async ({ orderedIds }) => {
-      const previous = qc.getQueryData(["schedule", projectId]);
+    onSuccess: (_result, variables) => {
+      if (variables.saveVersion !== wbsOrderVersionRef.current) return;
+      void refreshSchedule();
       const toastId = wbsOrderToastRef.current ?? "wbs-order-save";
-      wbsOrderToastRef.current = toastId;
-      toast.success("WBS order applied", {
-        id: toastId,
-        description: "The grid moved immediately. Saving in the background.",
-        duration: 1800,
-      });
-      await qc.cancelQueries({ queryKey: ["schedule", projectId] });
-      qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) => {
-        if (!current?.wbsSections) return current;
-        const orderMap = new Map(orderedIds.map((id, index) => [id, (index + 1) * 10]));
-        return {
-          ...current,
-          wbsSections: current.wbsSections.map((section: ScheduleWbsSectionRow) => ({
-            ...section,
-            sort_order: orderMap.get(section.id) ?? section.sort_order,
-          })),
-        };
-      });
-      return { previous, toastId };
-    },
-    onSuccess: (_result, _orderedIds, context) => {
-      const toastId = context?.toastId ?? wbsOrderToastRef.current ?? "wbs-order-save";
       toast.success("WBS order saved", {
         id: toastId,
         description: "The saved project order now matches the CPM grid.",
         duration: 1400,
       });
       wbsOrderToastRef.current = null;
+      wbsOrderRollbackRef.current = undefined;
+      wbsQueuedOrderRef.current = null;
+      setIsWbsOrderSaveQueued(false);
     },
-    onError: (error, _orderedIds, context) => {
-      if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
+    onError: (error, variables) => {
+      if (variables.saveVersion !== wbsOrderVersionRef.current) return;
+      if (wbsOrderRollbackRef.current) {
+        qc.setQueryData(["schedule", projectId], wbsOrderRollbackRef.current);
+      }
       toast.error("WBS order did not save", {
-        id: context?.toastId ?? wbsOrderToastRef.current ?? "wbs-order-error",
+        id: wbsOrderToastRef.current ?? "wbs-order-error",
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
       wbsOrderToastRef.current = null;
+      wbsOrderRollbackRef.current = undefined;
+      wbsQueuedOrderRef.current = null;
+      setIsWbsOrderSaveQueued(false);
     },
   });
+
+  const queueWbsReorder = useCallback(
+    async (payload: WbsReorderInput) => {
+      const toastId = wbsOrderToastRef.current ?? "wbs-order-save";
+      wbsOrderToastRef.current = toastId;
+      if (wbsOrderSaveTimerRef.current) {
+        clearTimeout(wbsOrderSaveTimerRef.current);
+      }
+
+      const saveVersion = wbsOrderVersionRef.current + 1;
+      wbsOrderVersionRef.current = saveVersion;
+      await qc.cancelQueries({ queryKey: ["schedule", projectId] });
+      const previous = qc.getQueryData<ScheduleQueryCache>(["schedule", projectId]);
+      if (!wbsOrderRollbackRef.current) {
+        wbsOrderRollbackRef.current = previous;
+      }
+      qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) =>
+        applyOptimisticWbsOrderChange(current, payload.orderedIds),
+      );
+      wbsQueuedOrderRef.current = payload;
+      setIsWbsOrderSaveQueued(true);
+      toast.success("WBS order applied", {
+        id: toastId,
+        description: "The grid moved immediately. Final order saves after you stop moving rows.",
+        duration: 1800,
+      });
+
+      wbsOrderSaveTimerRef.current = setTimeout(() => {
+        const queuedOrder = wbsQueuedOrderRef.current;
+        wbsOrderSaveTimerRef.current = null;
+        if (!queuedOrder) {
+          setIsWbsOrderSaveQueued(false);
+          return;
+        }
+        wbsReorder.mutate({ ...queuedOrder, saveVersion });
+      }, 650);
+    },
+    [projectId, qc, wbsReorder],
+  );
 
   const delayFragmentCreate = useMutation({
     mutationFn: (fragment: {
@@ -556,10 +615,10 @@ function ScheduleWorkspacePage() {
           await wbsParentMove.mutateAsync({ id, parentId });
         }}
         onReorderWbsSections={async (payload) => {
-          await wbsReorder.mutateAsync(payload);
+          await queueWbsReorder(payload);
         }}
         isSavingWbs={wbsCreate.isPending || wbsRename.isPending || wbsParentMove.isPending}
-        isSavingWbsOrder={wbsReorder.isPending}
+        isSavingWbsOrder={wbsReorder.isPending || isWbsOrderSaveQueued}
       />
 
       <ScheduleWorkspaceOperations
