@@ -223,6 +223,21 @@ type ActivityMatrixRow =
   | { kind: "parent"; division: string; tasks: ConstructLineCpmTask[] }
   | { kind: "group"; division: string; tasks: ConstructLineCpmTask[] }
   | { kind: "task"; task: ConstructLineCpmTask };
+type ScheduleUpdateReadinessItem = {
+  task: ConstructLineCpmTask;
+  reasons: string[];
+  severity: "warning" | "danger";
+  sort: number;
+};
+type ScheduleUpdateReadinessSummary = {
+  openTaskCount: number;
+  readyTaskCount: number;
+  needsStatusCount: number;
+  missingRemainingCount: number;
+  missingExpectedFinishCount: number;
+  lateCount: number;
+  items: ScheduleUpdateReadinessItem[];
+};
 type WbsReorderInput = {
   parentId: string | null;
   orderedIds: string[];
@@ -931,6 +946,81 @@ function buildScheduleQualityQueue(model: ConstructLineCpmModel): ScheduleQualit
     if (severity !== 0) return severity;
     return a.sort - b.sort || a.task.totalFloat - b.task.totalFloat;
   });
+}
+
+function buildScheduleUpdateReadiness(
+  model: ConstructLineCpmModel,
+  dataDate: string | null,
+): ScheduleUpdateReadinessSummary {
+  const openTasks = model.tasks.filter((task) => task.activity.percent_complete < 100);
+  const referenceDate = dataDate || todayIsoDate();
+  const referenceMs = parseDateMs(referenceDate) ?? parseDateMs(todayIsoDate()) ?? Date.now();
+  const lookaheadFinish = isoDateFromMs(referenceMs + 14 * DAY_MS);
+
+  const items = openTasks.flatMap((task) => {
+    const activity = task.activity;
+    const percent = Math.max(0, Math.min(100, activity.percent_complete));
+    const isInUpdateWindow =
+      task.isLate ||
+      task.isOutOfSequence ||
+      task.isCritical ||
+      percent > 0 ||
+      taskIntersectsDateWindow(task, referenceDate, lookaheadFinish);
+    if (!isInUpdateWindow) return [];
+
+    const reasons: string[] = [];
+    let severity: ScheduleUpdateReadinessItem["severity"] = "warning";
+    let sort = 80;
+
+    if (!activity.forecast_finish_date && !activity.finish_date && !activity.baseline_finish_date) {
+      reasons.push("Expected finish missing");
+      severity = "danger";
+      sort = Math.min(sort, 10);
+    }
+    if (activity.remaining_duration_days == null && !activity.actual_finish_date) {
+      reasons.push("Remaining duration missing");
+      sort = Math.min(sort, 16);
+    }
+    if (percent > 0 && !activity.actual_start_date) {
+      reasons.push("Actual start missing");
+      sort = Math.min(sort, 22);
+    }
+    if (task.isLate) {
+      reasons.push("Past data date");
+      severity = "danger";
+      sort = Math.min(sort, 6);
+    }
+    if (task.isOutOfSequence) {
+      reasons.push("Out of sequence");
+      sort = Math.min(sort, 28);
+    }
+
+    if (reasons.length === 0) return [];
+    return [{ task, reasons, severity, sort }];
+  });
+
+  const sortedItems = items.sort((a, b) => {
+    const severity = a.severity === b.severity ? 0 : a.severity === "danger" ? -1 : 1;
+    if (severity !== 0) return severity;
+    return a.sort - b.sort || a.task.earlyStart - b.task.earlyStart;
+  });
+  const missingRemainingCount = sortedItems.filter((item) =>
+    item.reasons.includes("Remaining duration missing"),
+  ).length;
+  const missingExpectedFinishCount = sortedItems.filter((item) =>
+    item.reasons.includes("Expected finish missing"),
+  ).length;
+  const lateCount = sortedItems.filter((item) => item.reasons.includes("Past data date")).length;
+
+  return {
+    openTaskCount: openTasks.length,
+    readyTaskCount: Math.max(0, openTasks.length - sortedItems.length),
+    needsStatusCount: sortedItems.length,
+    missingRemainingCount,
+    missingExpectedFinishCount,
+    lateCount,
+    items: sortedItems,
+  };
 }
 
 function buildScheduleQualityGuidance(task: ConstructLineCpmTask, reasons: string[]) {
@@ -1837,6 +1927,10 @@ export function CpmActivityPlanner({
     [activityOrder, baseCpmModel, wbsDivisionOrder],
   );
   const qualityQueueItems = useMemo(() => buildScheduleQualityQueue(cpmModel), [cpmModel]);
+  const updateReadiness = useMemo(
+    () => buildScheduleUpdateReadiness(cpmModel, effectiveDataDate),
+    [cpmModel, effectiveDataDate],
+  );
   const gridViewReferenceDate = effectiveDataDate ?? todayIsoDate();
   const displayedCpmModel = useMemo(
     () =>
@@ -2700,6 +2794,13 @@ export function CpmActivityPlanner({
           }}
         />
 
+        <ScheduleUpdateReadinessPanel
+          summary={updateReadiness}
+          dataDate={effectiveDataDate}
+          onShowActive={() => setScheduleView("active")}
+          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
+        />
+
         <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="rounded-md border border-hairline bg-card p-4">
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -2937,6 +3038,164 @@ function ScheduleWorkbenchStat({
       </div>
       <div className={`mt-1 truncate text-xl font-semibold tabular ${toneClass}`}>{value}</div>
       <div className="mt-1 truncate text-xs text-muted-foreground">{sub}</div>
+    </div>
+  );
+}
+
+function ScheduleUpdateReadinessPanel({
+  summary,
+  dataDate,
+  onShowActive,
+  onOpenActivity,
+}: {
+  summary: ScheduleUpdateReadinessSummary;
+  dataDate: string | null;
+  onShowActive: () => void;
+  onOpenActivity: (activity: ScheduleActivityRow) => void;
+}) {
+  const visibleItems = summary.items.slice(0, 5);
+  const hiddenCount = Math.max(0, summary.items.length - visibleItems.length);
+  const tone =
+    summary.needsStatusCount === 0 ? "success" : summary.lateCount > 0 ? "danger" : "warning";
+
+  return (
+    <div
+      className={cn(
+        "mt-4 rounded-md border bg-card p-4",
+        tone === "success"
+          ? "border-success/25"
+          : tone === "danger"
+            ? "border-danger/20"
+            : "border-warning/25",
+      )}
+    >
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            {summary.needsStatusCount === 0 ? (
+              <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+            ) : (
+              <AlertTriangle
+                className={cn("h-3.5 w-3.5", tone === "danger" ? "text-danger" : "text-warning")}
+              />
+            )}
+            Data-date update readiness
+          </div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {dataDate
+              ? `Status basis ${shortDate(dataDate)}.`
+              : "Set a data date before saving the next CPM update."}
+          </div>
+        </div>
+        <Button type="button" variant="outline" className="h-9 gap-2" onClick={onShowActive}>
+          <CalendarDays className="h-4 w-4" />
+          Show active rows
+        </Button>
+      </div>
+
+      <div className="mt-3 grid gap-2 md:grid-cols-4">
+        <ActivityUpdateImpactTile
+          label="Open rows"
+          value={String(summary.openTaskCount)}
+          sub="not complete"
+        />
+        <ActivityUpdateImpactTile
+          label="Ready"
+          value={String(summary.readyTaskCount)}
+          sub="status fields present"
+          tone={summary.readyTaskCount > 0 ? "success" : "default"}
+        />
+        <ActivityUpdateImpactTile
+          label="Need status"
+          value={String(summary.needsStatusCount)}
+          sub="update before snapshot"
+          tone={summary.needsStatusCount > 0 ? "warning" : "success"}
+        />
+        <ActivityUpdateImpactTile
+          label="Late rows"
+          value={String(summary.lateCount)}
+          sub="past data date"
+          tone={summary.lateCount > 0 ? "danger" : "default"}
+        />
+      </div>
+
+      {summary.missingRemainingCount > 0 || summary.missingExpectedFinishCount > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+          {summary.missingRemainingCount > 0 && (
+            <span className="rounded border border-warning/25 bg-warning/10 px-2 py-1 text-warning">
+              {summary.missingRemainingCount} missing remaining duration
+            </span>
+          )}
+          {summary.missingExpectedFinishCount > 0 && (
+            <span className="rounded border border-danger/20 bg-danger/10 px-2 py-1 text-danger">
+              {summary.missingExpectedFinishCount} missing expected finish
+            </span>
+          )}
+        </div>
+      ) : null}
+
+      {visibleItems.length === 0 ? (
+        <div className="mt-3 rounded border border-success/25 bg-success/10 px-3 py-2 text-sm text-success">
+          Open activities in the current update window have a status basis for this data date.
+        </div>
+      ) : (
+        <div className="mt-3 grid gap-2">
+          {visibleItems.map((item) => (
+            <div
+              key={item.task.activity.id}
+              className={cn(
+                "grid gap-3 rounded border px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+                item.severity === "danger"
+                  ? "border-danger/20 bg-danger/10"
+                  : "border-warning/25 bg-warning/10",
+              )}
+            >
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="font-semibold tabular text-foreground">
+                    {item.task.dependencyKey}
+                  </span>
+                  <span className="min-w-0 truncate text-sm font-semibold text-foreground">
+                    {item.task.activity.name}
+                  </span>
+                  <span
+                    className={cn(
+                      "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em]",
+                      item.severity === "danger"
+                        ? "bg-danger/15 text-danger"
+                        : "bg-warning/15 text-warning",
+                    )}
+                  >
+                    {item.reasons[0]}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Expected finish {shortDate(item.task.statusFinishDate)} · remaining{" "}
+                  {item.task.remainingDurationDays}d · TF {item.task.totalFloat}d
+                </div>
+                {item.reasons.length > 1 && (
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    Also: {item.reasons.slice(1).join(", ")}
+                  </div>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 justify-self-start px-3 text-xs sm:justify-self-end"
+                onClick={() => onOpenActivity(item.task.activity)}
+              >
+                Open
+              </Button>
+            </div>
+          ))}
+          {hiddenCount > 0 && (
+            <div className="rounded border border-hairline bg-surface px-3 py-2 text-sm text-muted-foreground">
+              {hiddenCount} more {hiddenCount === 1 ? "row" : "rows"} need status.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -7150,10 +7409,16 @@ function ActivityUpdateImpactTile({
   label: string;
   value: string;
   sub: string;
-  tone?: "default" | "danger" | "success";
+  tone?: "default" | "danger" | "success" | "warning";
 }) {
   const toneClass =
-    tone === "danger" ? "text-danger" : tone === "success" ? "text-success" : "text-foreground";
+    tone === "danger"
+      ? "text-danger"
+      : tone === "success"
+        ? "text-success"
+        : tone === "warning"
+          ? "text-warning"
+          : "text-foreground";
   return (
     <div className="min-w-0 rounded-md border border-hairline bg-surface px-3 py-2">
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
