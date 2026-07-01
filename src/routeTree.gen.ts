@@ -34,6 +34,7 @@ import { Route as ApiStripeCheckoutSubscriptionRouteImport } from './routes/api/
 import { Route as ApiStripeCheckoutInvoiceRouteImport } from './routes/api/stripe/checkout/invoice'
 import { Route as ApiCompanyAssetsLogoRouteImport } from './routes/api/company/assets/logo'
 import { Route as AuthenticatedProjectsProjectIdScheduleRouteImport } from './routes/_authenticated/projects.$projectId.schedule'
+import { Route as AuthenticatedEstimatesEstimateIdPlanRoomRouteImport } from './routes/_authenticated/estimates.$estimateId.plan-room'
 import { Route as AuthenticatedClientProjectsProjectIdRouteImport } from './routes/_authenticated/client.projects.$projectId'
 
 const AuthRoute = AuthRouteImport.update({
@@ -171,6 +172,12 @@ const AuthenticatedProjectsProjectIdScheduleRoute =
     path: '/schedule',
     getParentRoute: () => AuthenticatedProjectsProjectIdRoute,
   } as any)
+const AuthenticatedEstimatesEstimateIdPlanRoomRoute =
+  AuthenticatedEstimatesEstimateIdPlanRoomRouteImport.update({
+    id: '/plan-room',
+    path: '/plan-room',
+    getParentRoute: () => AuthenticatedEstimatesEstimateIdRoute,
+  } as any)
 const AuthenticatedClientProjectsProjectIdRoute =
   AuthenticatedClientProjectsProjectIdRouteImport.update({
     id: '/client/projects/$projectId',
@@ -188,12 +195,13 @@ export interface FileRoutesByFullPath {
   '/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
-  '/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRoute
+  '/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRouteWithChildren
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
+  '/estimates/$estimateId/plan-room': typeof AuthenticatedEstimatesEstimateIdPlanRoomRoute
   '/projects/$projectId/schedule': typeof AuthenticatedProjectsProjectIdScheduleRoute
   '/api/company/assets/logo': typeof ApiCompanyAssetsLogoRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
@@ -215,12 +223,13 @@ export interface FileRoutesByTo {
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/': typeof AuthenticatedIndexRoute
-  '/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRoute
+  '/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRouteWithChildren
   '/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
+  '/estimates/$estimateId/plan-room': typeof AuthenticatedEstimatesEstimateIdPlanRoomRoute
   '/projects/$projectId/schedule': typeof AuthenticatedProjectsProjectIdScheduleRoute
   '/api/company/assets/logo': typeof ApiCompanyAssetsLogoRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
@@ -244,12 +253,13 @@ export interface FileRoutesById {
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
-  '/_authenticated/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRoute
+  '/_authenticated/estimates/$estimateId': typeof AuthenticatedEstimatesEstimateIdRouteWithChildren
   '/_authenticated/projects/$projectId': typeof AuthenticatedProjectsProjectIdRouteWithChildren
   '/api/auth/magic-link': typeof ApiAuthMagicLinkRoute
   '/api/stripe/webhook': typeof ApiStripeWebhookRoute
   '/lovable/email/suppression': typeof LovableEmailSuppressionRoute
   '/_authenticated/client/projects/$projectId': typeof AuthenticatedClientProjectsProjectIdRoute
+  '/_authenticated/estimates/$estimateId/plan-room': typeof AuthenticatedEstimatesEstimateIdPlanRoomRoute
   '/_authenticated/projects/$projectId/schedule': typeof AuthenticatedProjectsProjectIdScheduleRoute
   '/api/company/assets/logo': typeof ApiCompanyAssetsLogoRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
@@ -279,6 +289,7 @@ export interface FileRouteTypes {
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
+    | '/estimates/$estimateId/plan-room'
     | '/projects/$projectId/schedule'
     | '/api/company/assets/logo'
     | '/api/stripe/checkout/invoice'
@@ -306,6 +317,7 @@ export interface FileRouteTypes {
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/client/projects/$projectId'
+    | '/estimates/$estimateId/plan-room'
     | '/projects/$projectId/schedule'
     | '/api/company/assets/logo'
     | '/api/stripe/checkout/invoice'
@@ -334,6 +346,7 @@ export interface FileRouteTypes {
     | '/api/stripe/webhook'
     | '/lovable/email/suppression'
     | '/_authenticated/client/projects/$projectId'
+    | '/_authenticated/estimates/$estimateId/plan-room'
     | '/_authenticated/projects/$projectId/schedule'
     | '/api/company/assets/logo'
     | '/api/stripe/checkout/invoice'
@@ -541,6 +554,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProjectsProjectIdScheduleRouteImport
       parentRoute: typeof AuthenticatedProjectsProjectIdRoute
     }
+    '/_authenticated/estimates/$estimateId/plan-room': {
+      id: '/_authenticated/estimates/$estimateId/plan-room'
+      path: '/plan-room'
+      fullPath: '/estimates/$estimateId/plan-room'
+      preLoaderRoute: typeof AuthenticatedEstimatesEstimateIdPlanRoomRouteImport
+      parentRoute: typeof AuthenticatedEstimatesEstimateIdRoute
+    }
     '/_authenticated/client/projects/$projectId': {
       id: '/_authenticated/client/projects/$projectId'
       path: '/client/projects/$projectId'
@@ -551,14 +571,29 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthenticatedEstimatesEstimateIdRouteChildren {
+  AuthenticatedEstimatesEstimateIdPlanRoomRoute: typeof AuthenticatedEstimatesEstimateIdPlanRoomRoute
+}
+
+const AuthenticatedEstimatesEstimateIdRouteChildren: AuthenticatedEstimatesEstimateIdRouteChildren =
+  {
+    AuthenticatedEstimatesEstimateIdPlanRoomRoute:
+      AuthenticatedEstimatesEstimateIdPlanRoomRoute,
+  }
+
+const AuthenticatedEstimatesEstimateIdRouteWithChildren =
+  AuthenticatedEstimatesEstimateIdRoute._addFileChildren(
+    AuthenticatedEstimatesEstimateIdRouteChildren,
+  )
+
 interface AuthenticatedEstimatesRouteChildren {
-  AuthenticatedEstimatesEstimateIdRoute: typeof AuthenticatedEstimatesEstimateIdRoute
+  AuthenticatedEstimatesEstimateIdRoute: typeof AuthenticatedEstimatesEstimateIdRouteWithChildren
 }
 
 const AuthenticatedEstimatesRouteChildren: AuthenticatedEstimatesRouteChildren =
   {
     AuthenticatedEstimatesEstimateIdRoute:
-      AuthenticatedEstimatesEstimateIdRoute,
+      AuthenticatedEstimatesEstimateIdRouteWithChildren,
   }
 
 const AuthenticatedEstimatesRouteWithChildren =
@@ -638,3 +673,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

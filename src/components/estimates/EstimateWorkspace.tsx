@@ -13,6 +13,7 @@ import {
   FileSpreadsheet,
   GripVertical,
   Library,
+  PencilRuler,
   Plus,
   Save,
   Send,
@@ -648,6 +649,11 @@ export function EstimateWorkspace({
                   </SelectContent>
                 </Select>
               )}
+              <Button variant="outline" size="sm" className="gap-1.5" asChild>
+                <Link to="/estimates/$estimateId/plan-room" params={{ estimateId: estimate.id }}>
+                  <PencilRuler className="h-3.5 w-3.5" /> Plan Room
+                </Link>
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

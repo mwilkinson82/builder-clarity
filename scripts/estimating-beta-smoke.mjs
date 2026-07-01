@@ -11,6 +11,7 @@ import {
 } from "../src/lib/estimate-import.ts";
 import { analyzeSovIntake, applyMapping, guessColumnMap } from "../src/lib/sov-import.ts";
 import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "../src/lib/estimate-seed-data.ts";
+import { calculateTakeoffQuantity } from "../src/lib/plan-room-math.ts";
 
 const parseDelimited = (text, delimiter) =>
   text
@@ -183,6 +184,47 @@ assert.ok(ESTIMATE_SEED_LIBRARY_ITEMS.reduce((sum, item) => sum + item.synonyms.
 assert.ok(new Set(ESTIMATE_SEED_LIBRARY_ITEMS.map((item) => item.csi_division)).size >= 15);
 assert.ok(ESTIMATE_REGIONS.length >= 70);
 assert.ok(ESTIMATE_REGIONS.some((region) => region.code === "national"));
+
+const takeoffViewSize = { width: 100, height: 100 };
+assert.equal(
+  calculateTakeoffQuantity({
+    tool: "linear",
+    points: [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+    ],
+    scaleFeetPerPixel: 0.5,
+    viewSize: takeoffViewSize,
+  }),
+  50,
+);
+assert.equal(
+  calculateTakeoffQuantity({
+    tool: "area",
+    points: [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ],
+    scaleFeetPerPixel: 0.5,
+    viewSize: takeoffViewSize,
+  }),
+  2500,
+);
+assert.equal(
+  calculateTakeoffQuantity({
+    tool: "count",
+    points: [
+      { x: 0.25, y: 0.25 },
+      { x: 0.75, y: 0.25 },
+      { x: 0.75, y: 0.75 },
+    ],
+    scaleFeetPerPixel: 0,
+    viewSize: takeoffViewSize,
+  }),
+  3,
+);
 
 const slab = ESTIMATE_SEED_LIBRARY_ITEMS.find((item) => item.external_id === "slab-4in");
 assert.ok(slab);
