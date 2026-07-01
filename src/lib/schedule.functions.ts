@@ -706,7 +706,7 @@ export const listSchedule = createServerFn({ method: "GET" })
 
 // ---------- CPM TEMPLATES ----------
 const templateLibraryUnavailableMessage =
-  "CPM template library is not enabled for this workspace yet. The live schedule still works; enable the template table before saving reusable CPM templates.";
+  "Shared CPM template storage is unavailable for this workspace. The live schedule still works; use browser template mode for reusable CPM templates.";
 
 const scheduleActivityTemplatePayload = (activity: ScheduleActivityRow): Record<string, Json> => ({
   activity_id: activity.activity_id,

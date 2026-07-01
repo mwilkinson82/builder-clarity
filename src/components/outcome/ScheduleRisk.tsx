@@ -2100,7 +2100,7 @@ export function CpmActivityPlanner({
     setSelectedTemplateId(template.id);
     toast.success("CPM template saved", {
       description:
-        "Template storage is local to this browser until the shared template library is enabled.",
+        "Template saved in this browser and available from the template picker on other projects opened here.",
     });
   };
   const templateSave = useMutation({
@@ -3148,8 +3148,8 @@ function CpmGridToolbar({
         </Button>
         {templatePersistence === "migration_required" && (
           <span className="text-xs text-muted-foreground">
-            Device template mode is active. Templates saved here are available in this browser for
-            other projects.
+            Browser template mode is active. Templates saved here stay in this browser and can be
+            reused on other projects opened here.
           </span>
         )}
       </CpmToolbarGroup>
@@ -3980,7 +3980,7 @@ function WbsManagerDialog({
         <DialogFooter className="flex-col gap-2 border-t border-hairline px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="text-xs text-muted-foreground">
             {isSavingOrder
-              ? "Order is applied in the grid; background save is confirming it now."
+              ? "Order applied in the grid; final save is confirming now."
               : isLocked
                 ? "This project is grouped by the WBS field on each activity."
                 : "Drag rows to reorder. Drop onto a parent to build child areas such as Concrete / Northwest corner."}

@@ -428,7 +428,8 @@ for (const requiredScheduleRiskText of [
   "saveBrowserTemplate",
   "templateSave",
   "templateImport",
-  "Device template mode is active",
+  "Browser template mode is active",
+  "Template saved in this browser",
   "Send to Risk Tally",
   "createActivityExposureFn",
   "activityRiskCreate",
@@ -441,6 +442,7 @@ for (const requiredScheduleRiskText of [
   "constructline-delay-extension",
   "constructline-delay-marker",
   "delay extension",
+  "Order applied in the grid; final save is confirming now.",
 ]) {
   assert.ok(
     scheduleRiskSource.includes(requiredScheduleRiskText),
@@ -452,9 +454,9 @@ for (const requiredScheduleRouteText of [
   "queueWbsReorder",
   "wbsOrderSaveTimerRef",
   "applyOptimisticWbsOrderChange",
-  "WBS_ORDER_SAVE_DEBOUNCE_MS = 125",
-  "Saving WBS order",
-  "Confirming the final order.",
+  "WBS_ORDER_SAVE_DEBOUNCE_MS = 75",
+  "WBS order applied",
+  "Saving the final order.",
   "Child WBS added",
   "WBS title applied",
   "WBS nested",
@@ -578,6 +580,14 @@ assert.equal(
   ),
   false,
   "CPM schedule UI must not expose setup or migration-state wording to users.",
+);
+
+assert.equal(
+  /shared template library is enabled|enable the template table/i.test(
+    `${scheduleRiskSource}\n${scheduleFunctionsSource}`,
+  ),
+  false,
+  "CPM template fallback must use user-facing browser template language, not backend setup wording.",
 );
 
 console.log("ConstructLine CPM smoke checks passed.");
