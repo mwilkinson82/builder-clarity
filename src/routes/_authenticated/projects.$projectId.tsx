@@ -1491,31 +1491,69 @@ function ProjectPage() {
     project.organization_logo_url && project.organization_logo_url !== companyLogoFailedUrl
       ? project.organization_logo_url
       : "";
+  const companyName = project.organization_name || "Overwatch company";
+  const companyInitials = project.organization_name
+    ? project.organization_name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase())
+        .join("") || "OW"
+    : "OW";
+  const headerStats = [
+    { label: "Job #", value: jobNumber },
+    { label: "Client", value: project.client || "—" },
+    { label: "Project Manager", value: project.project_manager || "—" },
+    { label: "Original Contract", value: fmtUSD(project.original_contract), tabular: true },
+    { label: "Forecasted Final", value: fmtUSD(rollup.forecastedFinalContract), tabular: true },
+  ];
   const compactProjectNav = COMPACT_PROJECT_NAV_TABS.has(activeProjectTab);
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-background text-foreground">
-      <header className="relative border-b border-hairline bg-surface-elevated">
-        <div className="absolute inset-0 grid-bg opacity-40" />
-        <div className="relative mx-auto max-w-[1400px] px-6 py-5 lg:px-10 lg:py-6">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <Link
-                to="/"
-                className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground hover:text-foreground"
-              >
-                ← Portfolio
-              </Link>
-              <span className="hidden text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground sm:inline">
-                {project.organization_name || "Company"}
-              </span>
+      <header className="relative border-b border-hairline bg-surface-elevated/95 shadow-[0_10px_30px_rgb(31_28_23_/_0.05)]">
+        <div className="absolute inset-0 grid-bg opacity-25" />
+        <div className="relative mx-auto flex max-w-[1760px] flex-col gap-2 px-4 py-2.5 sm:px-6 lg:px-8">
+          <div className="flex flex-col gap-2 border-b border-hairline/70 pb-2.5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:gap-3">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
+                  <Link
+                    to="/"
+                    className="inline-flex h-8 items-center rounded-md px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:text-foreground"
+                  >
+                    ← Portfolio
+                  </Link>
+                  <div className="hidden h-4 w-px bg-hairline sm:block" />
+                  <div className="flex min-w-0 items-center gap-2 rounded-md border border-hairline bg-card/70 px-2.5 py-1.5 shadow-sm">
+                    {companyLogoUrl ? (
+                      <img
+                        src={companyLogoUrl}
+                        alt={`${companyName} logo`}
+                        className="h-6 w-6 shrink-0 rounded-sm object-contain"
+                        onError={() => setCompanyLogoFailedUrl(companyLogoUrl)}
+                      />
+                    ) : (
+                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-surface text-[10px] font-semibold text-muted-foreground">
+                        {companyInitials}
+                      </div>
+                    )}
+                    <span className="max-w-[180px] truncate text-xs font-semibold text-foreground">
+                      {companyName}
+                    </span>
+                  </div>
+                </div>
+                <Button variant="ghost" size="sm" onClick={signOut} className="gap-1.5 lg:hidden">
+                  <LogOut className="h-3.5 w-3.5" /> Sign out
+                </Button>
+              </div>
               <Select
                 value={projectId}
                 onValueChange={(v) =>
                   navigate({ to: "/projects/$projectId", params: { projectId: v } })
                 }
               >
-                <SelectTrigger className="h-8 w-[260px] text-sm">
+                <SelectTrigger className="h-8 w-full min-w-[220px] max-w-[360px] text-sm sm:w-[300px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1527,191 +1565,157 @@ function ProjectPage() {
                 </SelectContent>
               </Select>
             </div>
-            <Button variant="ghost" size="sm" onClick={signOut} className="gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={signOut}
+              className="hidden w-fit gap-1.5 self-start lg:inline-flex lg:self-auto"
+            >
               <LogOut className="h-3.5 w-3.5" /> Sign out
             </Button>
           </div>
 
-          <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="min-w-0">
-              {(project.organization_name || project.organization_logo_url) && (
-                <div className="mb-4 flex max-w-xl items-center gap-3 rounded-md border border-hairline bg-card/70 px-3 py-2">
-                  {companyLogoUrl ? (
-                    <img
-                      src={companyLogoUrl}
-                      alt={`${project.organization_name || "Company"} logo`}
-                      className="h-10 w-10 shrink-0 rounded-sm object-contain"
-                      onError={() => setCompanyLogoFailedUrl(companyLogoUrl)}
-                    />
-                  ) : (
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-surface text-xs font-semibold text-muted-foreground">
-                      {project.organization_name
-                        .split(/\s+/)
-                        .slice(0, 2)
-                        .map((part) => part[0]?.toUpperCase())
-                        .join("") || "OW"}
-                    </div>
-                  )}
-                  <div className="min-w-0">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                      Company
-                    </div>
-                    <div className="truncate text-sm font-medium text-foreground">
-                      {project.organization_name || "Overwatch company"}
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div className="flex items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                <span className="inline-block h-px w-8 bg-accent" />
-                IOR · {project.phase} Phase · {project.percent_complete}% complete
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+            <div className="min-w-0 space-y-2">
+              <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                <span className="rounded-sm border border-accent/25 bg-accent/10 px-2 py-1 text-accent">
+                  IOR
+                </span>
+                <span>{project.phase} Phase</span>
+                <span>{project.percent_complete}% complete</span>
                 {lastReviewDays !== null && (
                   <span className={lastReviewDays > 30 ? "text-danger" : ""}>
-                    · Last reviewed {lastReviewDays}d ago
+                    Last reviewed {lastReviewDays}d ago
                   </span>
                 )}
+                {project.source_opportunity_id && (
+                  <a
+                    href={`/?tab=crm&opportunity=${project.source_opportunity_id}`}
+                    className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-sm border border-accent/30 bg-accent/10 px-2 py-1 text-[10px] font-semibold text-accent transition hover:border-accent/50 hover:bg-accent/15"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Source: CRM
+                  </a>
+                )}
               </div>
-              <h1 className="mt-2 font-serif text-4xl leading-[1.05] text-foreground lg:text-5xl">
+              <h1 className="truncate font-serif text-2xl leading-none text-foreground lg:text-3xl">
                 {project.name}
               </h1>
-              <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+              <p className="max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm xl:truncate">
                 An IOR operating record, not a budget report. Start from the SOV, work the schedule,
                 then price the exposure.
               </p>
-              {project.source_opportunity_id && (
-                <a
-                  href={`/?tab=crm&opportunity=${project.source_opportunity_id}`}
-                  className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent hover:border-accent/50"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Source: CRM
-                </a>
-              )}
             </div>
-            <div className="flex flex-col items-end gap-3">
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <ProjectTruthReview
-                  project={project}
-                  exposures={exposures}
-                  changeOrders={changeOrders}
-                  buckets={buckets}
-                  decisions={decisions}
-                  rollup={rollup}
-                  onSubmit={handleSubmitReview}
-                  pending={reviewSubmit.isPending}
-                />
-                <DownloadReportMenu onDownload={downloadCurrentReport} />
-                <EditFinancialsDialog
-                  project={project}
-                  rollup={rollup}
-                  guidance={guidance}
-                  onSave={(patch) => finUpdate.mutate({ projectId, patch })}
-                  pending={finUpdate.isPending}
-                />
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1.5">
-                      <Archive className="h-3.5 w-3.5" /> Archive
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Archive this project?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        “{project.name}” will be hidden from the portfolio. Its data — SOV,
-                        exposures, change orders, billing, and reports — stays in the database and
-                        can be restored later. No records are deleted.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        disabled={archiveMutation.isPending}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          archiveMutation.mutate();
-                        }}
-                      >
-                        {archiveMutation.isPending ? "Archiving…" : "Archive project"}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5 text-danger hover:text-danger"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Delete
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete this project permanently?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This permanently deletes “{project.name}” and every related record —
-                        SOV/cost buckets, exposures, change orders, decisions, schedule, daily
-                        reports, billing applications, invoices, and payments. This cannot be
-                        undone. Prefer <strong>Archive</strong> if you might need it back.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        disabled={deleteMutation.isPending}
-                        className="bg-danger text-destructive-foreground hover:bg-danger/90"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          deleteMutation.mutate();
-                        }}
-                      >
-                        {deleteMutation.isPending ? "Deleting…" : "Delete forever"}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
 
-              <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm md:grid-cols-5">
-                <div>
-                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    Job #
-                  </dt>
-                  <dd className="mt-0.5 tabular text-foreground">{jobNumber}</dd>
-                </div>
-                <div>
-                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    Client
-                  </dt>
-                  <dd className="mt-0.5 text-foreground">{project.client || "—"}</dd>
-                </div>
-                <div>
-                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    Project Manager
-                  </dt>
-                  <dd className="mt-0.5 text-foreground">{project.project_manager || "—"}</dd>
-                </div>
-                <div>
-                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    Original Contract
-                  </dt>
-                  <dd className="mt-0.5 tabular text-foreground">
-                    {fmtUSD(project.original_contract)}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    Forecasted Final
-                  </dt>
-                  <dd className="mt-0.5 tabular text-foreground">
-                    {fmtUSD(rollup.forecastedFinalContract)}
-                  </dd>
-                </div>
-              </dl>
+            <div className="flex flex-wrap items-center gap-2 lg:max-w-[620px] lg:justify-end">
+              <ProjectTruthReview
+                project={project}
+                exposures={exposures}
+                changeOrders={changeOrders}
+                buckets={buckets}
+                decisions={decisions}
+                rollup={rollup}
+                onSubmit={handleSubmitReview}
+                pending={reviewSubmit.isPending}
+              />
+              <DownloadReportMenu onDownload={downloadCurrentReport} />
+              <EditFinancialsDialog
+                project={project}
+                rollup={rollup}
+                guidance={guidance}
+                onSave={(patch) => finUpdate.mutate({ projectId, patch })}
+                pending={finUpdate.isPending}
+              />
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5">
+                    <Archive className="h-3.5 w-3.5" /> Archive
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Archive this project?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      “{project.name}” will be hidden from the portfolio. Its data — SOV, exposures,
+                      change orders, billing, and reports — stays in the database and can be
+                      restored later. No records are deleted.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={archiveMutation.isPending}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        archiveMutation.mutate();
+                      }}
+                    >
+                      {archiveMutation.isPending ? "Archiving…" : "Archive project"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-danger hover:text-danger"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this project permanently?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This permanently deletes “{project.name}” and every related record — SOV/cost
+                      buckets, exposures, change orders, decisions, schedule, daily reports, billing
+                      applications, invoices, and payments. This cannot be undone. Prefer{" "}
+                      <strong>Archive</strong> if you might need it back.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={deleteMutation.isPending}
+                      className="bg-danger text-destructive-foreground hover:bg-danger/90"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        deleteMutation.mutate();
+                      }}
+                    >
+                      {deleteMutation.isPending ? "Deleting…" : "Delete forever"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           </div>
+
+          <dl className="grid grid-cols-2 overflow-hidden rounded-md border border-hairline bg-card/65 shadow-sm lg:grid-cols-5">
+            {headerStats.map((stat, index) => (
+              <div
+                key={stat.label}
+                className={cn(
+                  "min-w-0 border-b border-hairline px-3 py-2 odd:border-r last:border-b-0 lg:border-b-0 lg:border-r lg:last:border-r-0",
+                  index === headerStats.length - 1 ? "col-span-2 lg:col-span-1" : "",
+                )}
+              >
+                <dt className="truncate text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  {stat.label}
+                </dt>
+                <dd
+                  className={cn(
+                    "mt-1 break-words text-sm font-semibold leading-tight text-foreground lg:truncate",
+                    stat.tabular ? "tabular" : "",
+                  )}
+                >
+                  {stat.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
         </div>
       </header>
 
