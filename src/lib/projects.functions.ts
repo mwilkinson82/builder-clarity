@@ -741,6 +741,7 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   last_review_summary: str(p.last_review_summary),
   project_manager: str(p.project_manager),
   source_opportunity_id: (p.source_opportunity_id as string | null) ?? null,
+  archived_at: (p.archived_at as string | null) ?? null,
 });
 
 async function loadDecisionOwnerOptions(
