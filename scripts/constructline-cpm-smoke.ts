@@ -604,6 +604,7 @@ for (const requiredPrintStyle of [
   ".constructline-delay-marker",
   ".constructline-delay-label",
   ".constructline-delay-legend-swatch",
+  ".constructline-schedule-page main > :not(.constructline-cpm-print-shell)",
   "repeating-linear-gradient",
   "size: 17in 11in",
 ]) {
