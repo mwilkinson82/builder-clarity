@@ -969,6 +969,7 @@ export const listProjects = createServerFn({ method: "GET" })
     const { data: rawProjects, error } = await context.supabase
       .from("projects")
       .select("*")
+      .is("archived_at", null)
       .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
 
