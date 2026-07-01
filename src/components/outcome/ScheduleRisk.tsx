@@ -4733,10 +4733,12 @@ function ActivityScheduleMatrix({
   const [matrixViewportWidth, setMatrixViewportWidth] = useState(0);
   const measuredMatrixWidth =
     matrixViewportWidth > 0 ? matrixViewportWidth : isFocusMode ? 1320 : 1180;
+  const minimumTableWidth = isFocusMode ? 1160 : 1120;
+  const preferredFitTableWidth = isFocusMode ? 1220 : 1160;
   const fitTableWidth = Math.round(
     Math.min(
-      isFocusMode ? 1180 : 1080,
-      Math.max(isFocusMode ? 1040 : 980, measuredMatrixWidth * (isFocusMode ? 0.56 : 0.7)),
+      preferredFitTableWidth,
+      Math.max(minimumTableWidth, measuredMatrixWidth * (isFocusMode ? 0.62 : 0.76)),
     ),
   );
   const tableWidth = isPrintMode
@@ -4744,8 +4746,8 @@ function ActivityScheduleMatrix({
     : isFitZoom
       ? fitTableWidth
       : isFocusMode
-        ? 1060
-        : 1020;
+        ? 1220
+        : 1160;
   const fitTimelineTargetWidth =
     matrixViewportWidth > 0
       ? Math.max(360, measuredMatrixWidth - tableWidth - 1)
@@ -4758,8 +4760,8 @@ function ActivityScheduleMatrix({
   const tableColumns = isPrintMode
     ? "44px minmax(116px,1fr) 26px 30px 36px 36px 42px 30px 30px 24px 26px"
     : isFitZoom
-      ? "70px minmax(300px,1fr) 58px 68px 74px 74px 88px 68px 58px 48px 54px"
-      : "82px minmax(320px,1fr) 62px 72px 86px 88px 98px 72px 70px 54px 64px";
+      ? "72px minmax(340px,1fr) 60px 70px 78px 78px 94px 70px 62px 50px 56px"
+      : "82px minmax(390px,1fr) 64px 78px 92px 92px 110px 78px 70px 56px 66px";
   const compactHeaders = isFitZoom || isPrintMode;
   const baseRowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
@@ -5468,7 +5470,7 @@ function ConstructLineTaskRow({
           {activity.activity_id || "No ID"}
         </div>
         <div className="flex min-w-0 flex-col justify-center px-3">
-          <div className="constructline-task-name text-sm font-semibold leading-snug text-foreground">
+          <div className="constructline-task-name break-words text-sm font-semibold leading-snug text-foreground">
             {activity.name}
           </div>
           <div className="mt-0.5 flex flex-wrap gap-1">
@@ -6793,14 +6795,63 @@ function ActivityDetailDialog({
     activity.baseline_start_date ?? activity.start_date,
     activity.baseline_finish_date ?? activity.finish_date,
   );
-  const remainingDuration =
+  const enteredRemainingDuration =
+    activity.percent_complete >= 100 ? 0 : activity.remaining_duration_days;
+  const inferredRemainingDuration =
     activity.percent_complete >= 100
       ? 0
-      : (activity.remaining_duration_days ??
-        getDateDurationDays(
+      : getDateDurationDays(
           dataDate ?? activity.forecast_start_date ?? activity.start_date,
           activity.forecast_finish_date ?? activity.finish_date,
-        ));
+        );
+  const remainingDuration =
+    activity.percent_complete >= 100 ? 0 : (enteredRemainingDuration ?? inferredRemainingDuration);
+  const needsRemainingDuration = shouldFlagMissingRemainingDuration(activity);
+  const needsExpectedFinish = shouldFlagMissingExpectedFinish(activity);
+  const needsActualStart = shouldFlagMissingActualStart(activity);
+  const missingUpdateFields = [
+    needsRemainingDuration && "remaining duration",
+    needsExpectedFinish && "expected finish",
+    needsActualStart && "actual start",
+  ].filter((value): value is string => Boolean(value));
+  const remainingStat =
+    activity.percent_complete >= 100
+      ? { value: "0", sub: "complete", tone: "success" as const }
+      : needsRemainingDuration
+        ? {
+            value: remainingDuration == null ? "Missing" : String(remainingDuration),
+            sub: remainingDuration == null ? "enter remaining duration" : "inferred, not saved",
+            tone: "warning" as const,
+          }
+        : remainingDuration == null
+          ? { value: "Missing", sub: "enter remaining duration", tone: "warning" as const }
+          : {
+              value: String(remainingDuration),
+              sub: dataDate ? `saved as of ${shortDate(dataDate)}` : "saved update basis",
+              tone: "default" as const,
+            };
+  const updateBasisTone =
+    missingUpdateFields.length > 0
+      ? ("warning" as const)
+      : activity.percent_complete >= 100
+        ? ("success" as const)
+        : ("default" as const);
+  const updateBasisValue =
+    missingUpdateFields.length > 0
+      ? "Needs update"
+      : activity.percent_complete >= 100
+        ? "Complete"
+        : enteredRemainingDuration != null
+          ? "Remaining"
+          : "Forecast";
+  const updateBasisSub =
+    missingUpdateFields.length > 0
+      ? `Missing ${missingUpdateFields.join(", ")}`
+      : activity.percent_complete >= 100
+        ? "actual finish controls"
+        : enteredRemainingDuration != null
+          ? "remaining duration controls"
+          : "expected finish controls";
   const linkedDelayFragments = useMemo(() => {
     const delayFragmentsByActivity = groupDelayFragmentsByActivity(delayFragments);
     return getDelayFragmentsForActivity(activity, delayFragmentsByActivity);
@@ -6923,7 +6974,7 @@ function ActivityDetailDialog({
             </div>
           )}
 
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-6">
             <ScheduleWorkbenchStat
               label="Activity ID"
               value={activity.activity_id || "No ID"}
@@ -6948,9 +6999,15 @@ function ActivityDetailDialog({
             />
             <ScheduleWorkbenchStat
               label="Remaining"
-              value={remainingDuration == null ? "Set" : String(remainingDuration)}
-              sub={dataDate ? `as of ${shortDate(dataDate)}` : "set data date"}
-              tone={remainingDuration === 0 ? "success" : "default"}
+              value={remainingStat.value}
+              sub={remainingStat.sub}
+              tone={remainingStat.tone}
+            />
+            <ScheduleWorkbenchStat
+              label="Update basis"
+              value={updateBasisValue}
+              sub={updateBasisSub}
+              tone={updateBasisTone}
             />
             <ScheduleWorkbenchStat
               label="Progress"
@@ -8172,7 +8229,7 @@ function buildActivityUpdateImpact(draft: ActivityDraft, dataDate?: string | nul
     remainingValue: isComplete
       ? "Complete"
       : remainingDuration == null
-        ? "Set"
+        ? "Missing"
         : String(remainingDuration),
     remainingBasis: isComplete
       ? "actual finish controls"
