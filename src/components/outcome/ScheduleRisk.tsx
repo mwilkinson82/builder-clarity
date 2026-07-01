@@ -66,6 +66,7 @@ import {
   ArrowUp,
   ArrowDown,
   GripVertical,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -220,7 +221,7 @@ const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
 const CONSTRUCTLINE_MIN_DAY_PX = 1.1;
 const CONSTRUCTLINE_MAX_DAY_PX = 28;
-const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v1";
+const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v2";
 const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
   { id: "id", label: "ID", compactLabel: "ID", min: 50, default: 58, max: 104, align: "left" },
   {
@@ -228,24 +229,24 @@ const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
     label: "Activity",
     compactLabel: "Activity",
     min: 190,
-    default: 268,
-    max: 520,
+    default: 220,
+    max: 460,
     align: "left",
   },
-  { id: "dur", label: "Duration", compactLabel: "Dur", min: 44, default: 54, max: 88 },
-  { id: "plan", label: "Planned dates", compactLabel: "Plan", min: 70, default: 86, max: 128 },
+  { id: "dur", label: "Duration", compactLabel: "Dur", min: 44, default: 50, max: 88 },
+  { id: "plan", label: "Planned dates", compactLabel: "Plan", min: 68, default: 76, max: 128 },
   {
     id: "current",
     label: "Current dates",
     compactLabel: "Current",
     min: 82,
-    default: 98,
+    default: 88,
     max: 148,
   },
-  { id: "slip", label: "Slip", compactLabel: "Slip", min: 42, default: 50, max: 82 },
-  { id: "done", label: "% done", compactLabel: "% done", min: 48, default: 58, max: 84 },
-  { id: "tf", label: "TF", compactLabel: "TF", min: 34, default: 42, max: 66 },
-  { id: "logic", label: "Logic", compactLabel: "Logic", min: 38, default: 46, max: 76 },
+  { id: "slip", label: "Slip", compactLabel: "Slip", min: 40, default: 46, max: 82 },
+  { id: "done", label: "% done", compactLabel: "% done", min: 46, default: 54, max: 84 },
+  { id: "tf", label: "TF", compactLabel: "TF", min: 34, default: 40, max: 66 },
+  { id: "logic", label: "Logic", compactLabel: "Logic", min: 38, default: 44, max: 76 },
 ] as const;
 const CONSTRUCTLINE_TABLE_PRINT_COLUMNS =
   "42px minmax(130px,1fr) 34px 48px 54px 34px 30px 24px 26px";
@@ -2243,6 +2244,10 @@ export function CpmActivityPlanner({
       division: knownWbsDivisions[0] ?? "General",
     });
     setShowDraft(true);
+    toast.success("Activity form opened", {
+      description: "Finish the row in the highlighted form above the table, then save it.",
+      duration: 1800,
+    });
     scrollActivityDraftIntoView(draftFormRef);
   };
   const toggleActivityDraft = () => {
@@ -2295,6 +2300,10 @@ export function CpmActivityPlanner({
       is_milestone: true,
     });
     setShowDraft(true);
+    toast.success("Milestone form opened", {
+      description: "Finish the highlighted milestone form above the table, then save it.",
+      duration: 1800,
+    });
     scrollActivityDraftIntoView(draftFormRef);
   };
   const addWbsDivision = (divisionName: string, parentId: string | null = null) => {
@@ -2647,7 +2656,7 @@ export function CpmActivityPlanner({
       ref={draftFormRef}
       tabIndex={-1}
       aria-label={draft.is_milestone ? "New milestone form" : "New activity form"}
-      className="scroll-mt-28 rounded-md border border-hairline bg-card p-4 shadow-sm"
+      className="scroll-mt-28 rounded-md border border-accent/35 bg-accent/10 p-4 shadow-sm outline-none ring-1 ring-accent/10 focus-visible:ring-2 focus-visible:ring-accent/40"
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
@@ -5110,6 +5119,13 @@ function ActivityScheduleMatrix({
     },
     [activeDayPx, isPrintMode, onDayPxChange],
   );
+  const resetGridLayout = useCallback(() => {
+    if (isPrintMode) return;
+    const defaultWidths = buildDefaultTableColumnWidths(isFocusMode);
+    setColumnWidths(defaultWidths);
+    if (onDayPxChange) onDayPxChange(CONSTRUCTLINE_FIT_DAY_PX);
+    writeTableColumnWidths(layoutStorageKey, defaultWidths);
+  }, [isFocusMode, isPrintMode, layoutStorageKey, onDayPxChange]);
   const monthBands = buildConstructLineMonthBands(
     model.timelineStartDate,
     model.totalTimelineDays,
@@ -5243,6 +5259,18 @@ function ActivityScheduleMatrix({
                 <GitBranch className="h-3.5 w-3.5" />
                 {logicLines.length} ties shown
               </span>
+            )}
+            {!isPrintMode && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 px-2 text-[11px]"
+                onClick={resetGridLayout}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset grid
+              </Button>
             )}
           </div>
         </div>
