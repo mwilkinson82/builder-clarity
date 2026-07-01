@@ -688,6 +688,16 @@ export const updateTakeoffMeasurement = createServerFn({ method: "POST" })
     updateMeasurementInput.parse(input),
   )
   .handler(async ({ data, context }) => {
+    const current = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+      .select("estimate_id,estimate_line_item_id")
+      .eq("id", data.id)
+      .single();
+    if (current.error || !current.data) {
+      throw new Error(current.error?.message ?? "Takeoff was not found.");
+    }
+    const estimateId = str((current.data as Record<string, unknown>).estimate_id);
+    const previousLineId = (current.data as Record<string, unknown>).estimate_line_item_id as
+      string | null;
     const patch: Record<string, unknown> = { ...data.patch };
     if (typeof patch.label === "string") patch.label = clean(patch.label, 240);
     if (typeof patch.unit === "string") patch.unit = clean(patch.unit.toUpperCase(), 16);
@@ -706,12 +716,12 @@ export const updateTakeoffMeasurement = createServerFn({ method: "POST" })
     if (error || !row) throw new Error(error?.message ?? "Takeoff did not update.");
 
     const measurement = normalizeTakeoffMeasurement(row as Record<string, unknown>);
-    if (measurement.estimate_line_item_id) {
-      await syncTakeoffQuantityToLine(
-        context,
-        measurement.estimate_id,
-        measurement.estimate_line_item_id,
-      );
+    const nextLineId = measurement.estimate_line_item_id;
+    if (previousLineId && previousLineId !== nextLineId) {
+      await syncTakeoffQuantityToLine(context, estimateId, previousLineId);
+    }
+    if (nextLineId) {
+      await syncTakeoffQuantityToLine(context, estimateId, nextLineId);
     }
     return { measurement };
   });
