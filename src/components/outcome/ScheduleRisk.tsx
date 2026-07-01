@@ -2446,7 +2446,7 @@ export function CpmActivityPlanner({
       toast.warning("CPM update has status gaps", {
         description: `${updateReadiness.needsStatusCount} open ${
           updateReadiness.needsStatusCount === 1 ? "activity needs" : "activities need"
-        } remaining duration, expected finish, actual start, or late-status review. Click Save update again to save anyway.`,
+        } remaining duration, expected finish, actual start, or late-status review. Click Save snapshot to save anyway.`,
       });
       return;
     }
@@ -3607,6 +3607,13 @@ function CpmDataDateControl({
 }) {
   const isDirty = value !== (savedValue ?? "");
   const hasReadinessWarning = isDirty && readinessWarningCount > 0;
+  const saveButtonLabel = isSaving
+    ? "Saving..."
+    : hasReadinessWarning && !isReadinessWarningArmed
+      ? "Review gaps"
+      : isDirty
+        ? "Save snapshot"
+        : "Saved";
   return (
     <div
       className={cn(
@@ -3615,9 +3622,12 @@ function CpmDataDateControl({
         className,
       )}
     >
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-        <CalendarDays className="h-3.5 w-3.5" />
-        Data date
+      <div className="flex min-w-[120px] flex-col gap-0.5">
+        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          <CalendarDays className="h-3.5 w-3.5" />
+          Set data date
+        </div>
+        <div className="text-[11px] leading-tight text-muted-foreground">Runs the update view</div>
       </div>
       <Input
         type="date"
@@ -3635,19 +3645,19 @@ function CpmDataDateControl({
         onClick={onSave}
       >
         <CheckCircle2 className="h-3.5 w-3.5" />
-        {isSaving ? "Saving..." : "Save update"}
+        {saveButtonLabel}
       </Button>
       <div className="basis-full text-[11px] text-muted-foreground sm:basis-auto">
         {isReadinessWarningArmed
-          ? "Status gaps acknowledged. Click Save update again to save anyway."
+          ? "Status gaps acknowledged. Click Save snapshot to save anyway."
           : hasReadinessWarning
             ? `${readinessWarningCount} open ${
                 readinessWarningCount === 1 ? "row needs" : "rows need"
-              } status before this update is clean.`
+              } status before this snapshot is clean.`
             : isDirty
-              ? "Unsaved data date is driving this CPM view; save it to update history."
+              ? "Unsaved data date is driving the CPM view. Save the snapshot after status review."
               : savedValue
-                ? `Update history saved ${shortDate(savedValue)}`
+                ? `Snapshot saved ${shortDate(savedValue)}`
                 : "Not set"}
       </div>
     </div>
