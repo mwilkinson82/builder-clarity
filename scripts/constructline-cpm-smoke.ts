@@ -334,6 +334,48 @@ assert.deepEqual(reorderedConcreteChildren, [
   "03 - Concrete / Southwest corner",
 ]);
 
+const pathFallbackWbsSections = [
+  {
+    id: "path-concrete",
+    project_id: "project",
+    name: "03 - Concrete",
+    code: "03",
+    parent_id: null,
+    sort_order: 10,
+  },
+  {
+    id: "path-northwest",
+    project_id: "project",
+    name: "03 - Concrete / Northwest corner",
+    code: "",
+    parent_id: null,
+    sort_order: 20,
+  },
+  {
+    id: "path-southwest",
+    project_id: "project",
+    name: "03 - Concrete / Southwest corner",
+    code: "",
+    parent_id: null,
+    sort_order: 30,
+  },
+];
+const pathFallbackRows = buildWbsDivisionRows(
+  [],
+  pathFallbackWbsSections,
+  buildWbsDivisionOrder([], pathFallbackWbsSections),
+);
+assert.deepEqual(
+  getWbsChildRows(pathFallbackRows, "path-concrete").map((row) => row.division),
+  ["03 - Concrete / Northwest corner", "03 - Concrete / Southwest corner"],
+);
+assert.deepEqual(
+  moveWbsDivisionInOrder(pathFallbackRows, "03 - Concrete / Southwest corner", -1).map(
+    (row) => row.division,
+  ),
+  ["03 - Concrete / Southwest corner", "03 - Concrete / Northwest corner"],
+);
+
 const scheduleRiskSource = readProjectFile("src/components/outcome/ScheduleRisk.tsx");
 const scheduleRouteSource = readProjectFile(
   "src/routes/_authenticated/projects.$projectId.schedule.tsx",
@@ -361,13 +403,14 @@ for (const requiredScheduleRiskText of [
   "WBS / areas",
   "WBS / area manager",
   "Custom WBS / child area path",
-  "Nested WBS setup is pending",
-  "Nested WBS controls unlock automatically",
+  "WBS setup is still being enabled",
+  "Path-based WBS mode is active",
   "Schedule update history",
   "1 wk lookahead",
   "2 wk lookahead",
   "Save current CPM as template",
   "Use template",
+  "Browser templates are available",
   "Send to Risk Tally",
   "delay days extend past the current activity bar",
 ]) {
@@ -410,6 +453,9 @@ for (const requiredScheduleFunctionText of [
   "saveCurrentScheduleAsCpmTemplate",
   "importScheduleCpmTemplate",
   "schedule_cpm_templates",
+  "path_fallback",
+  "ensureScheduleWbsPathLabel",
+  "syncPathBasedWbsSectionNamesForPathChange",
   "path: str(row.path, name)",
   "scheduleWbsTemplatePayload(section, wbsPathMap.get(section.id) ?? section.name)",
   "section.path || section.name",

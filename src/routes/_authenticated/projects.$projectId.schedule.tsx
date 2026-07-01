@@ -162,7 +162,11 @@ function ScheduleWorkspacePage() {
     [scheduleQuery.data?.delayFragments],
   );
   const wbsPersistence =
-    scheduleQuery.data?.wbsPersistence === "migration_required" ? "migration_required" : "ready";
+    scheduleQuery.data?.wbsPersistence === "migration_required"
+      ? "migration_required"
+      : scheduleQuery.data?.wbsPersistence === "path_fallback"
+        ? "path_fallback"
+        : "ready";
   const delayFragmentPersistence =
     scheduleQuery.data?.delayFragmentPersistence === "migration_required"
       ? "migration_required"
@@ -200,7 +204,7 @@ function ScheduleWorkspacePage() {
     onSuccess: (_result, items) => {
       void refreshSchedule();
       toast.success("CPM rows created", {
-        description: `${items.length} milestone ${items.length === 1 ? "row" : "rows"} added to the schedule workspace.`,
+        description: `${items.length} schedule ${items.length === 1 ? "row" : "rows"} added to the schedule workspace.`,
       });
     },
     onError: (error) => {

@@ -79,6 +79,7 @@ import {
   type ScheduleActivityRow,
   type ScheduleCpmTemplateRow,
   type ScheduleDelayFragmentRow,
+  type ScheduleWbsPersistence,
   type ScheduleWbsSectionRow,
   type ScheduleRiskRow,
   type ScheduleUpdateRow,
@@ -133,6 +134,7 @@ const EMPTY_CPM_TEMPLATES: ScheduleCpmTemplateRow[] = [];
 const EMPTY_SCHEDULE_RISKS: ScheduleRiskRow[] = [];
 const EMPTY_SCHEDULE_UPDATES: ScheduleUpdateRow[] = [];
 const EMPTY_MILESTONE_UPDATES: ScheduleMilestoneUpdateRow[] = [];
+const BROWSER_CPM_TEMPLATE_STORAGE_KEY = "constructline:cpm-templates:v1";
 
 const STATUS_LABEL: Record<MilestoneStatus, string> = {
   on_track: "On track",
@@ -275,6 +277,11 @@ export type ActivityCreateInput = { name: string } & Partial<
     | "sort_order"
   >
 >;
+type BrowserCpmTemplate = ScheduleCpmTemplateRow & {
+  source: "browser";
+  activities: ActivityCreateInput[];
+  wbsSections: ScheduleWbsSectionRow[];
+};
 
 export type DelayFragmentCreateInput = { title: string } & Partial<
   Pick<
@@ -1663,7 +1670,7 @@ export function CpmActivityPlanner({
   workspaceMode?: "embedded" | "full";
   activities: ScheduleActivityRow[];
   wbsSections: ScheduleWbsSectionRow[];
-  wbsPersistence?: "ready" | "migration_required";
+  wbsPersistence?: ScheduleWbsPersistence;
   delayFragments: ScheduleDelayFragmentRow[];
   delayFragmentPersistence?: "ready" | "migration_required";
   milestones: MilestoneRow[];
@@ -1708,6 +1715,7 @@ export function CpmActivityPlanner({
   const [dataDateDraft, setDataDateDraft] = useState(() => latestDataDate ?? todayIsoDate());
   const [templateName, setTemplateName] = useState(() => `${project.name} CPM`);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [browserTemplates, setBrowserTemplates] = useState<BrowserCpmTemplate[]>([]);
   const [isWbsManagerOpen, setIsWbsManagerOpen] = useState(false);
   const [isFocusOpen, setIsFocusOpen] = useState(false);
   const didScrollToGridRef = useRef(false);
@@ -1738,10 +1746,11 @@ export function CpmActivityPlanner({
     [wbsDivisionRows],
   );
   const isWbsMigrationRequired = wbsPersistence === "migration_required";
+  const isWbsPathFallback = wbsPersistence === "path_fallback";
   const showWbsMigrationPending = () => {
-    toast.error("Nested WBS setup is pending", {
+    toast.error("WBS setup is still being enabled", {
       description:
-        "The nested WBS database upgrade needs to finish before WBS add, nest, rename, and reorder can save.",
+        "Activity paths still display now; saved WBS management will unlock once setup is complete.",
     });
   };
   const delaySummary = useMemo(() => buildDelayFragmentSummary(delayFragments), [delayFragments]);
@@ -1807,8 +1816,15 @@ export function CpmActivityPlanner({
     queryFn: () => listTemplatesFn({ data: { projectId: project.id } }),
     staleTime: 30_000,
   });
-  const cpmTemplates = templateQuery.data?.templates ?? EMPTY_CPM_TEMPLATES;
   const templatePersistence = templateQuery.data?.persistence ?? "ready";
+  const cpmTemplates = useMemo(
+    () => [...(templateQuery.data?.templates ?? EMPTY_CPM_TEMPLATES), ...browserTemplates],
+    [browserTemplates, templateQuery.data?.templates],
+  );
+
+  useEffect(() => {
+    setBrowserTemplates(readBrowserCpmTemplates());
+  }, []);
 
   useEffect(() => {
     if (!selectedTemplateId && cpmTemplates[0]?.id) setSelectedTemplateId(cpmTemplates[0].id);
@@ -1955,7 +1971,9 @@ export function CpmActivityPlanner({
       return;
     }
     const row = wbsDivisionRows.find((item) => item.division === division);
-    if (!row?.id || (row.parentId ?? null) === parentId) return;
+    const alreadyInTargetParent =
+      (row?.parentId ?? null) === parentId && (!isWbsPathFallback || !row?.parentPath);
+    if (!row?.id || alreadyInTargetParent) return;
     const parentRow = parentId ? wbsDivisionRows.find((item) => item.id === parentId) : null;
     const nextPath = parentRow
       ? joinWbsPath([...splitWbsPath(parentRow.division), row.title])
@@ -2043,6 +2061,25 @@ export function CpmActivityPlanner({
       });
     },
   });
+  const saveBrowserTemplate = () => {
+    const template = buildBrowserCpmTemplate(
+      project,
+      templateName.trim() || `${project.name} CPM`,
+      sortedActivities,
+      wbsSections,
+    );
+    const nextTemplates = [
+      template,
+      ...browserTemplates.filter((item) => item.name !== template.name),
+    ].slice(0, 25);
+    writeBrowserCpmTemplates(nextTemplates);
+    setBrowserTemplates(nextTemplates);
+    setSelectedTemplateId(template.id);
+    toast.success("CPM template saved", {
+      description:
+        "Template storage is local to this browser until the shared template library is enabled.",
+    });
+  };
   const templateSave = useMutation({
     mutationFn: () =>
       saveTemplateFn({
@@ -2081,6 +2118,43 @@ export function CpmActivityPlanner({
       });
     },
   });
+  const applyBrowserTemplate = (template: BrowserCpmTemplate) => {
+    const existingIds = new Set(sortedActivities.map((activity) => activity.activity_id));
+    const rows = template.activities
+      .filter((activity) => !activity.activity_id || !existingIds.has(activity.activity_id))
+      .map((activity, index) => ({
+        ...activity,
+        percent_complete: 0,
+        sort_order: sortedActivities.length + index + 1,
+      }));
+    if (rows.length === 0) {
+      toast.info("Template already matches this schedule", {
+        description: "No new activity IDs were available to add.",
+      });
+      return;
+    }
+    onSeedActivities(rows);
+    toast.success("CPM template applied", {
+      description: `${rows.length} browser template ${rows.length === 1 ? "activity" : "activities"} queued for this project.`,
+    });
+  };
+  const saveCpmTemplate = () => {
+    if (!templateName.trim()) return;
+    if (templatePersistence === "migration_required") {
+      saveBrowserTemplate();
+      return;
+    }
+    templateSave.mutate();
+  };
+  const applySelectedCpmTemplate = () => {
+    if (!selectedTemplateId) return;
+    const browserTemplate = browserTemplates.find((template) => template.id === selectedTemplateId);
+    if (browserTemplate) {
+      applyBrowserTemplate(browserTemplate);
+      return;
+    }
+    templateImport.mutate(selectedTemplateId);
+  };
   const activityRiskCreate = useMutation({
     mutationFn: async (activity: ScheduleActivityRow) => {
       const linkedDelaySummary = buildDelayFragmentSummary(
@@ -2294,9 +2368,16 @@ export function CpmActivityPlanner({
 
         {isWbsMigrationRequired && (
           <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
-            Saved WBS sections are still being enabled for this project. Sections are visible from
+            Saved WBS management is still being enabled for this project. Sections are visible from
             activity divisions now; WBS add, rename, and drag reorder will save once setup is
             complete.
+          </div>
+        )}
+
+        {isWbsPathFallback && (
+          <div className="mt-4 rounded-md border border-hairline bg-card px-4 py-3 text-sm text-muted-foreground">
+            Path-based WBS mode is active. Parent / child areas save as WBS paths now and will keep
+            working after the database hierarchy upgrade is applied.
           </div>
         )}
 
@@ -2468,11 +2549,9 @@ export function CpmActivityPlanner({
               templatePersistence={templatePersistence}
               isTemplateLoading={templateQuery.isLoading}
               isSavingTemplate={templateSave.isPending}
-              isApplyingTemplate={templateImport.isPending}
-              onSaveTemplate={() => templateSave.mutate()}
-              onApplyTemplate={() => {
-                if (selectedTemplateId) templateImport.mutate(selectedTemplateId);
-              }}
+              isApplyingTemplate={templateImport.isPending || isSeedingActivities}
+              onSaveTemplate={saveCpmTemplate}
+              onApplyTemplate={applySelectedCpmTemplate}
             />
           }
           viewSummary={scheduleViewSummary}
@@ -2700,6 +2779,7 @@ export function CpmActivityPlanner({
         onReorderDivisions={reorderWbsDivisions}
         isSavingOrder={isSavingWbsOrder}
         isPersistenceReady={!isWbsMigrationRequired}
+        isPathFallback={isWbsPathFallback}
       />
     </>
   );
@@ -2889,7 +2969,7 @@ function CpmGridToolbar({
   onSaveDataDate: () => void;
   templateName: string;
   onTemplateNameChange: (value: string) => void;
-  templates: ScheduleCpmTemplateRow[];
+  templates: Array<ScheduleCpmTemplateRow | BrowserCpmTemplate>;
   selectedTemplateId: string;
   onSelectedTemplateChange: (value: string) => void;
   templatePersistence: "ready" | "migration_required";
@@ -3000,15 +3080,13 @@ function CpmGridToolbar({
           onChange={(event) => onTemplateNameChange(event.target.value)}
           className="h-9 w-[min(100%,280px)] min-w-[220px] bg-card"
           placeholder="Template name"
-          disabled={isSavingTemplate || templatePersistence === "migration_required"}
+          disabled={isSavingTemplate}
         />
         <Button
           type="button"
           variant="outline"
           className="h-9 gap-2 whitespace-nowrap"
-          disabled={
-            !templateName.trim() || isSavingTemplate || templatePersistence === "migration_required"
-          }
+          disabled={!templateName.trim() || isSavingTemplate}
           onClick={onSaveTemplate}
         >
           <ClipboardList className="h-4 w-4" />
@@ -3017,12 +3095,7 @@ function CpmGridToolbar({
         <Select
           value={selectedTemplateId}
           onValueChange={onSelectedTemplateChange}
-          disabled={
-            isTemplateLoading ||
-            templates.length === 0 ||
-            isApplyingTemplate ||
-            templatePersistence === "migration_required"
-          }
+          disabled={isTemplateLoading || templates.length === 0 || isApplyingTemplate}
         >
           <SelectTrigger className="h-9 w-[min(100%,260px)] min-w-[220px] bg-card">
             <SelectValue
@@ -3033,6 +3106,7 @@ function CpmGridToolbar({
             {templates.map((template) => (
               <SelectItem key={template.id} value={template.id}>
                 {template.name} · {template.activity_count} activities
+                {"source" in template ? " · browser" : ""}
               </SelectItem>
             ))}
           </SelectContent>
@@ -3041,12 +3115,7 @@ function CpmGridToolbar({
           type="button"
           variant="outline"
           className="h-9 gap-2 whitespace-nowrap"
-          disabled={
-            !selectedTemplateId ||
-            isApplyingTemplate ||
-            templates.length === 0 ||
-            templatePersistence === "migration_required"
-          }
+          disabled={!selectedTemplateId || isApplyingTemplate || templates.length === 0}
           onClick={onApplyTemplate}
         >
           <Plus className="h-4 w-4" />
@@ -3054,7 +3123,8 @@ function CpmGridToolbar({
         </Button>
         {templatePersistence === "migration_required" && (
           <span className="text-xs text-muted-foreground">
-            Template library is being enabled for this workspace.
+            Shared template library is being enabled. Browser templates are available on this device
+            for beta testing.
           </span>
         )}
       </CpmToolbarGroup>
@@ -3257,12 +3327,14 @@ function WbsManagerDialog({
   onMoveDivision,
   onReorderDivisions,
   isPersistenceReady,
+  isPathFallback,
 }: {
   open: boolean;
   divisions: WbsDivisionRow[];
   isSaving: boolean;
   isSavingOrder: boolean;
   isPersistenceReady: boolean;
+  isPathFallback: boolean;
   onOpenChange: (open: boolean) => void;
   onAddDivision: (division: string, parentId?: string | null) => void;
   onRenameDivision: (fromDivision: string, toDivision: string) => Promise<void>;
@@ -3508,6 +3580,11 @@ function WbsManagerDialog({
       const parentOptions = getValidWbsParentRows(divisions, row);
       const childRowsForRow = getChildRowsForRender(row.id ?? null, row.division);
       const hasChildren = childRowsForRow.length > 0;
+      const selectedParentId =
+        row.parentId ??
+        (row.parentPath
+          ? (divisions.find((candidate) => candidate.division === row.parentPath)?.id ?? null)
+          : null);
 
       return (
         <div key={row.division} className="grid gap-2">
@@ -3617,7 +3694,7 @@ function WbsManagerDialog({
             </div>
             <LabeledField label="Parent WBS">
               <Select
-                value={row.parentId ?? "root"}
+                value={selectedParentId ?? "root"}
                 disabled={!canPersistRow || isRowSaving || isLocked}
                 onValueChange={(value) => {
                   void moveDivisionParent(row.division, value === "root" ? null : value);
@@ -3738,9 +3815,15 @@ function WbsManagerDialog({
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
           {isLocked && (
             <div className="rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
-              Nested WBS saving is waiting on the database migration. Existing activity paths can
-              still display as WBS groups, but add, nest, rename, and reorder actions are disabled
-              until the schedule WBS parent column is live.
+              Saved WBS management is still being enabled. Existing activity paths can still display
+              as WBS groups, but add, nest, rename, and reorder actions are disabled until setup is
+              complete.
+            </div>
+          )}
+          {isPathFallback && !isLocked && (
+            <div className="rounded-md border border-hairline bg-card px-4 py-3 text-sm text-muted-foreground">
+              Path-based WBS mode is active. Parent / child areas save as schedule paths now and
+              will continue working after the hierarchy upgrade is applied.
             </div>
           )}
 
@@ -3873,7 +3956,7 @@ function WbsManagerDialog({
             {isSavingOrder
               ? "Order is applied in the grid; background save is confirming it now."
               : isLocked
-                ? "Nested WBS controls unlock automatically after the schedule WBS migration is applied."
+                ? "WBS controls unlock automatically after setup is complete."
                 : "Drag rows to reorder. Drop onto a parent to build child areas such as Concrete / Northwest corner."}
           </div>
           <Button type="button" onClick={() => onOpenChange(false)} disabled={isSaving}>
@@ -6664,6 +6747,72 @@ function buildActivityRowsFromMilestones(
         notes: milestoneActivityNotes(milestone),
       };
     });
+}
+
+function scheduleActivityToTemplateCreateInput(activity: ScheduleActivityRow): ActivityCreateInput {
+  return {
+    activity_id: activity.activity_id,
+    name: activity.name,
+    division: activity.division,
+    start_date: activity.start_date,
+    finish_date: activity.finish_date,
+    percent_complete: 0,
+    predecessor_activity_ids: activity.predecessor_activity_ids,
+    successor_activity_ids: activity.successor_activity_ids,
+    notes: activity.notes,
+    sort_order: activity.sort_order,
+  };
+}
+
+function buildBrowserCpmTemplate(
+  project: ProjectRow,
+  name: string,
+  activities: ScheduleActivityRow[],
+  wbsSections: ScheduleWbsSectionRow[],
+): BrowserCpmTemplate {
+  const now = new Date().toISOString();
+  const templateId =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return {
+    id: `browser-${templateId}`,
+    project_id: project.id,
+    name,
+    description: `Browser template saved from ${project.name}.`,
+    activity_count: activities.length,
+    created_at: now,
+    updated_at: now,
+    source: "browser",
+    activities: activities.map(scheduleActivityToTemplateCreateInput),
+    wbsSections,
+  };
+}
+
+function readBrowserCpmTemplates(): BrowserCpmTemplate[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(BROWSER_CPM_TEMPLATE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is BrowserCpmTemplate => {
+        const row = item as Partial<BrowserCpmTemplate>;
+        return Boolean(row.id && row.name && Array.isArray(row.activities));
+      })
+      .slice(0, 25);
+  } catch {
+    return [];
+  }
+}
+
+function writeBrowserCpmTemplates(templates: BrowserCpmTemplate[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    BROWSER_CPM_TEMPLATE_STORAGE_KEY,
+    JSON.stringify(templates.slice(0, 25)),
+  );
 }
 
 function normalizeActivityName(value: string) {

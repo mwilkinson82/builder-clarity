@@ -143,7 +143,7 @@ export function getWbsSiblingPosition(rows: WbsDivisionRow[], row: WbsDivisionRo
 }
 
 export function isSameWbsParent(a: WbsDivisionRow, b: WbsDivisionRow) {
-  return (a.parentId ?? null) === (b.parentId ?? null);
+  return getWbsParentKey(a) === getWbsParentKey(b);
 }
 
 export function getValidWbsParentRows(rows: WbsDivisionRow[], row: WbsDivisionRow) {
@@ -193,6 +193,26 @@ export function buildWbsDivisionRows(
 ): WbsDivisionRow[] {
   const rows = new Map<string, WbsDivisionRow>();
   for (const section of buildWbsSectionDescriptors(sections)) {
+    const parts = splitWbsPath(section.path);
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      const parentPath = joinWbsPath(parts.slice(0, depth));
+      if (rows.has(parentPath)) continue;
+      rows.set(parentPath, {
+        id: null,
+        division: parentPath,
+        title: parts[depth - 1] ?? parentPath,
+        parentId: null,
+        parentPath: depth > 1 ? joinWbsPath(parts.slice(0, depth - 1)) : null,
+        level: depth - 1,
+        activityCount: 0,
+        directActivityCount: 0,
+        firstStart: null,
+        lastFinish: null,
+        childCount: 0,
+        isPlaceholder: true,
+        isPersisted: false,
+      });
+    }
     rows.set(section.path, {
       id: section.isDerived ? null : section.id,
       division: section.path,
@@ -326,15 +346,25 @@ export function buildWbsSectionDescriptors(
     trail = new Set<string>(),
   ) => {
     if (trail.has(section.id)) return;
-    const title = cleanWbsDivisionInput(section.name) || "General";
-    const path = parentPath ? joinWbsPath([...splitWbsPath(parentPath), title]) : title;
+    const name = cleanWbsDivisionInput(section.name) || "General";
+    const nameParts = splitWbsPath(name);
+    const isPathBasedSection = !section.parent_id && nameParts.length > 1;
+    const title = isPathBasedSection ? (nameParts[nameParts.length - 1] ?? name) : name;
+    const path = isPathBasedSection
+      ? joinWbsPath(nameParts)
+      : parentPath
+        ? joinWbsPath([...splitWbsPath(parentPath), title])
+        : title;
+    const resolvedParentPath = isPathBasedSection
+      ? joinWbsPath(nameParts.slice(0, -1))
+      : parentPath;
     descriptors.push({
       id: section.id,
       title,
       path,
       parentId: section.parent_id,
-      parentPath,
-      level,
+      parentPath: resolvedParentPath,
+      level: isPathBasedSection ? nameParts.length - 1 : level,
       sortOrder: section.sort_order,
       isDerived: section.id.startsWith("derived-"),
     });
@@ -356,6 +386,11 @@ export function formatIndentedWbsLabel(row: WbsDivisionRow) {
 function getWbsOrderIndex(division: string, order: string[]) {
   const index = order.findIndex((item) => item === division);
   return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function getWbsParentKey(row: WbsDivisionRow) {
+  if (row.parentId) return `id:${row.parentId}`;
+  return `path:${row.parentPath ?? ""}`;
 }
 
 function getWbsDivisionSortKey(value?: string | null) {

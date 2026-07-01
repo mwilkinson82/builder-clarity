@@ -118,6 +118,8 @@ export interface ScheduleCpmTemplateRow {
   updated_at: string;
 }
 
+export type ScheduleWbsPersistence = "ready" | "path_fallback" | "migration_required";
+
 export interface ScheduleRiskRow {
   id: string;
   project_id: string;
@@ -371,6 +373,21 @@ const scheduleWbsParentFilter = <TQuery extends ScheduleWbsParentFilterQuery<TQu
   query: TQuery,
   parentId: string | null,
 ) => (parentId ? query.eq("parent_id", parentId) : query.is("parent_id", null));
+
+async function getScheduleWbsPersistenceMode(
+  supabase: ScheduleSupabaseClient,
+  projectId: string,
+): Promise<ScheduleWbsPersistence> {
+  const { error } = await supabase
+    .from("schedule_wbs_sections")
+    .select("parent_id")
+    .eq("project_id", projectId)
+    .limit(1);
+  if (!error) return "ready";
+  if (isMissingRestRelation(error, "schedule_wbs_sections")) return "migration_required";
+  if (isMissingRestColumn(error, "parent_id")) return "path_fallback";
+  throw new Error(error.message);
+}
 
 const buildDerivedWbsSectionsFromActivityDivisions = (
   projectId: string,
@@ -666,8 +683,11 @@ export const listSchedule = createServerFn({ method: "GET" })
       milestones: (mRes.data ?? []) as unknown as MilestoneRow[],
       activities: activitiesMissing ? [] : activityRows.map((r) => normalizeScheduleActivity(r)),
       wbsSections: wbsSectionRows,
-      wbsPersistence:
-        wbsSectionsMissing || wbsNestedColumnsMissing ? "migration_required" : "ready",
+      wbsPersistence: wbsSectionsMissing
+        ? "migration_required"
+        : wbsNestedColumnsMissing
+          ? "path_fallback"
+          : "ready",
       delayFragments: delayFragmentsMissing
         ? []
         : (dRes.data ?? []).map((r) =>
@@ -1212,16 +1232,141 @@ async function ensureScheduleWbsSection(
   return ((inserted as Record<string, unknown> | null)?.id as string | undefined) ?? null;
 }
 
+async function ensureScheduleWbsPathLabel(
+  supabase: ScheduleSupabaseClient,
+  projectId: string,
+  value: string,
+) {
+  const sectionName = joinScheduleWbsPath(splitScheduleWbsPath(value));
+  const existing = await supabase
+    .from("schedule_wbs_sections")
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("name", sectionName)
+    .maybeSingle();
+  if (isMissingRestRelation(existing.error, "schedule_wbs_sections")) return null;
+  if (existing.error) throw new Error(existing.error.message);
+  if (existing.data?.id) return existing.data.id as string;
+
+  const { data: last, error: lastError } = await supabase
+    .from("schedule_wbs_sections")
+    .select("sort_order")
+    .eq("project_id", projectId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastError) throw new Error(lastError.message);
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("schedule_wbs_sections")
+    .insert({
+      project_id: projectId,
+      name: sectionName,
+      sort_order: ((last as { sort_order?: number } | null)?.sort_order ?? 0) + 10,
+    })
+    .select("id")
+    .single();
+  if (insertError) {
+    const message = (insertError.message ?? "").toLowerCase();
+    if (!message.includes("duplicate")) throw new Error(insertError.message);
+  }
+  return ((inserted as Record<string, unknown> | null)?.id as string | undefined) ?? null;
+}
+
 async function ensureScheduleWbsPath(
   supabase: ScheduleSupabaseClient,
   projectId: string,
   value: string,
 ) {
+  const mode = await getScheduleWbsPersistenceMode(supabase, projectId);
+  if (mode === "migration_required") return null;
+  if (mode === "path_fallback") {
+    let sectionId: string | null = null;
+    const parts = splitScheduleWbsPath(value);
+    for (let depth = 1; depth <= parts.length; depth += 1) {
+      sectionId = await ensureScheduleWbsPathLabel(
+        supabase,
+        projectId,
+        joinScheduleWbsPath(parts.slice(0, depth)),
+      );
+    }
+    return sectionId;
+  }
+
   let parentId: string | null = null;
   for (const segment of splitScheduleWbsPath(value)) {
     parentId = await ensureScheduleWbsSection(supabase, projectId, segment, parentId);
   }
   return parentId;
+}
+
+function replaceScheduleWbsPath(value: string, oldPath: string, newPath: string) {
+  const normalizedValue = joinScheduleWbsPath(splitScheduleWbsPath(value));
+  const normalizedOldPath = joinScheduleWbsPath(splitScheduleWbsPath(oldPath));
+  const normalizedNewPath = joinScheduleWbsPath(splitScheduleWbsPath(newPath));
+  if (normalizedValue === normalizedOldPath) return normalizedNewPath;
+  if (normalizedValue.startsWith(`${normalizedOldPath}${WBS_PATH_SEPARATOR}`)) {
+    return `${normalizedNewPath}${normalizedValue.slice(normalizedOldPath.length)}`;
+  }
+  return value;
+}
+
+async function getPersistedScheduleWbsSections(
+  supabase: ScheduleSupabaseClient,
+  projectId: string,
+) {
+  const { data, error } = await supabase
+    .from("schedule_wbs_sections")
+    .select("*")
+    .eq("project_id", projectId);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as unknown as Array<Record<string, unknown>>).map((row) =>
+    normalizeScheduleWbsSection(row),
+  );
+}
+
+async function getScheduleWbsPathContext(
+  supabase: ScheduleSupabaseClient,
+  projectId: string,
+  sectionId: string,
+) {
+  const sections = await getPersistedScheduleWbsSections(supabase, projectId);
+  const section = sections.find((item) => item.id === sectionId);
+  if (!section) throw new Error("Choose a WBS section from this project.");
+  const pathMap = buildWbsSectionPathMap(sections);
+  return {
+    sections,
+    section,
+    pathMap,
+    path: joinScheduleWbsPath(splitScheduleWbsPath(pathMap.get(section.id) ?? section.name)),
+  };
+}
+
+async function syncPathBasedWbsSectionNamesForPathChange(
+  supabase: ScheduleSupabaseClient,
+  projectId: string,
+  oldPath: string,
+  newPath: string,
+) {
+  const sections = await getPersistedScheduleWbsSections(supabase, projectId);
+  const payload = sections
+    .map((section) => {
+      const nextName = replaceScheduleWbsPath(section.name, oldPath, newPath);
+      if (nextName === section.name) return null;
+      return {
+        id: section.id,
+        project_id: projectId,
+        name: nextName,
+        code: section.code,
+        sort_order: section.sort_order,
+      } satisfies ScheduleWbsSectionInsert;
+    })
+    .filter((section): section is ScheduleWbsSectionInsert => Boolean(section));
+  if (payload.length === 0) return;
+  const { error } = await supabase
+    .from("schedule_wbs_sections")
+    .upsert(payload, { onConflict: "id" });
+  if (error) throw new Error(error.message);
 }
 
 async function syncReciprocalScheduleActivityLogic(
@@ -1272,6 +1417,24 @@ export const createScheduleWbsSection = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
+    const mode = await getScheduleWbsPersistenceMode(context.supabase, data.projectId);
+    if (mode === "migration_required") {
+      throw new Error("WBS setup is not enabled for this workspace yet.");
+    }
+    if (mode === "path_fallback") {
+      let sectionPath = data.name;
+      if (data.parentId) {
+        const parentContext = await getScheduleWbsPathContext(
+          context.supabase,
+          data.projectId,
+          data.parentId,
+        );
+        sectionPath = joinScheduleWbsPath([...splitScheduleWbsPath(parentContext.path), data.name]);
+      }
+      await ensureScheduleWbsPath(context.supabase, data.projectId, sectionPath);
+      return { ok: true };
+    }
+
     await ensureScheduleWbsSection(
       context.supabase,
       data.projectId,
@@ -1289,12 +1452,31 @@ export const renameScheduleWbsSection = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { data: section, error: sectionError } = await context.supabase
       .from("schedule_wbs_sections")
-      .select("id,project_id,parent_id,name")
+      .select("*")
       .eq("id", data.id)
       .single();
     if (sectionError) throw new Error(sectionError.message);
-    const oldName = str((section as unknown as Record<string, unknown>).name, "General");
-    const projectId = (section as unknown as Record<string, unknown>).project_id as string;
+    const sectionRecord = section as unknown as Record<string, unknown>;
+    const oldName = str(sectionRecord.name, "General");
+    const projectId = sectionRecord.project_id as string;
+    const mode = await getScheduleWbsPersistenceMode(context.supabase, projectId);
+    if (mode === "path_fallback") {
+      const pathContext = await getScheduleWbsPathContext(context.supabase, projectId, data.id);
+      const oldPath = pathContext.path;
+      const parentPath = joinScheduleWbsPath(splitScheduleWbsPath(oldPath).slice(0, -1));
+      const newPath =
+        splitScheduleWbsPath(oldPath).length > 1
+          ? joinScheduleWbsPath([...splitScheduleWbsPath(parentPath), data.name])
+          : data.name;
+      await syncPathBasedWbsSectionNamesForPathChange(
+        context.supabase,
+        projectId,
+        oldPath,
+        newPath,
+      );
+      await syncActivityDivisionsForWbsPathChange(context.supabase, projectId, oldPath, newPath);
+      return { ok: true };
+    }
 
     const { error: updateError } = await context.supabase
       .from("schedule_wbs_sections")
@@ -1341,6 +1523,7 @@ export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
     const section = normalizeScheduleWbsSection(sectionRow as unknown as Record<string, unknown>);
     if ((section.parent_id ?? null) === nextParentId) return { ok: true };
 
+    const mode = await getScheduleWbsPersistenceMode(context.supabase, section.project_id);
     const { data: allRows, error: allRowsError } = await context.supabase
       .from("schedule_wbs_sections")
       .select("*")
@@ -1349,6 +1532,59 @@ export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
     const sections = ((allRows ?? []) as unknown as Array<Record<string, unknown>>).map((row) =>
       normalizeScheduleWbsSection(row),
     );
+    const previousPaths = buildWbsSectionPathMap(sections);
+    if (mode === "path_fallback") {
+      const oldPath = joinScheduleWbsPath(
+        splitScheduleWbsPath(previousPaths.get(section.id) ?? section.name),
+      );
+      const oldPathParts = splitScheduleWbsPath(oldPath);
+      const title = oldPathParts[oldPathParts.length - 1] ?? section.name;
+      const nextParentPath = nextParentId
+        ? joinScheduleWbsPath(splitScheduleWbsPath(previousPaths.get(nextParentId) ?? ""))
+        : null;
+      if (nextParentId && !previousPaths.has(nextParentId)) {
+        throw new Error("Choose a WBS parent from this project.");
+      }
+      if (
+        nextParentPath &&
+        (nextParentPath === oldPath || nextParentPath.startsWith(`${oldPath}${WBS_PATH_SEPARATOR}`))
+      ) {
+        throw new Error("A WBS section cannot be moved under one of its child sections.");
+      }
+      const newPath = nextParentPath
+        ? joinScheduleWbsPath([...splitScheduleWbsPath(nextParentPath), title])
+        : title;
+      const siblingRows = sections.filter((item) => {
+        if (item.id === section.id) return false;
+        const path = joinScheduleWbsPath(
+          splitScheduleWbsPath(previousPaths.get(item.id) ?? item.name),
+        );
+        const parentPath = splitScheduleWbsPath(path).slice(0, -1);
+        const normalizedParentPath = parentPath.length ? joinScheduleWbsPath(parentPath) : null;
+        return normalizedParentPath === nextParentPath;
+      });
+      const sortOrder = Math.max(0, ...siblingRows.map((item) => item.sort_order)) + 10;
+      await syncPathBasedWbsSectionNamesForPathChange(
+        context.supabase,
+        section.project_id,
+        oldPath,
+        newPath,
+      );
+      const { error: sortOrderError } = await context.supabase
+        .from("schedule_wbs_sections")
+        .update({ sort_order: sortOrder })
+        .eq("id", section.id)
+        .eq("project_id", section.project_id);
+      if (sortOrderError) throw new Error(sortOrderError.message);
+      await syncActivityDivisionsForWbsPathChange(
+        context.supabase,
+        section.project_id,
+        oldPath,
+        newPath,
+      );
+      return { ok: true };
+    }
+
     if (nextParentId) {
       const parent = sections.find((item) => item.id === nextParentId);
       if (!parent) throw new Error("Choose a WBS parent from this project.");
@@ -1371,7 +1607,6 @@ export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
       .maybeSingle();
     if (lastSiblingError) throw new Error(lastSiblingError.message);
 
-    const previousPaths = buildWbsSectionPathMap(sections);
     const sortOrder = ((lastSibling as { sort_order?: number } | null)?.sort_order ?? 0) + 10;
     const updatePayload: ScheduleWbsSectionUpdate = {
       parent_id: nextParentId,
