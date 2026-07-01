@@ -3125,6 +3125,48 @@ export function CpmActivityPlanner({
                 <Printer className="h-4 w-4" />
                 Print 11x17
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                disabled={milestoneSeedRows.length === 0 || isSeedingActivities}
+                onClick={() => onSeedActivities(milestoneSeedRows)}
+              >
+                <ClipboardList className="h-4 w-4" />
+                {isSeedingActivities ? "Building..." : "Build from milestones"}
+              </Button>
+              <Button
+                type="button"
+                variant={activityDraftMode === "activity" ? "default" : "outline"}
+                className="gap-2"
+                onClick={toggleActivityDraft}
+              >
+                <Plus className="h-4 w-4" />
+                {activityDraftMode === "activity"
+                  ? "Activity form open"
+                  : showDraft
+                    ? "Close form"
+                    : "Add activity"}
+              </Button>
+              <Button
+                type="button"
+                variant={activityDraftMode === "milestone" ? "default" : "outline"}
+                className="gap-2"
+                onClick={openMilestoneDraft}
+              >
+                <Diamond className="h-4 w-4" />
+                {activityDraftMode === "milestone" ? "Milestone form open" : "Add milestone"}
+              </Button>
+              {activityDraftMode && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => scrollActivityDraftIntoView(draftFormRef)}
+                >
+                  Jump to form
+                </Button>
+              )}
               <Button type="button" className="gap-2" onClick={() => setIsFocusOpen(false)}>
                 <Minimize2 className="h-4 w-4" />
                 Close

@@ -89,6 +89,16 @@ assertMatches(
   /style=\{\{ width: tableWidth, gridTemplateColumns: tableColumns \}\}[\s\S]*onClick=\{onOpen\}/,
   "CPM activity rows must use the shared table column contract and remain clickable.",
 );
+assertMatches(
+  scheduleRiskSource,
+  /isFocusOpen &&[\s\S]*onClick=\{toggleActivityDraft\}[\s\S]*onClick=\{openMilestoneDraft\}/,
+  "Expanded CPM workspace must keep Add activity and Add milestone controls available.",
+);
+assertMatches(
+  scheduleRiskSource,
+  /isFocusOpen &&[\s\S]*scrollActivityDraftIntoView\(draftFormRef\)/,
+  "Expanded CPM workspace must expose a jump-to-form action when an activity form is open.",
+);
 
 // Text-fit and modal guardrails: activity detail and WBS manager must not force horizontal modal
 // scrolling when dependency rows, WBS names, or delay fragments get longer.
