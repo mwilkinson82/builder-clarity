@@ -85,6 +85,7 @@ export interface ProjectRow {
   last_review_summary: string;
   project_manager: string;
   source_opportunity_id: string | null;
+  archived_at: string | null;
 }
 
 export interface ExposureRow {
