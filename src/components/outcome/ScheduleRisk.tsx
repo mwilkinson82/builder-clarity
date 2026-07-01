@@ -4800,6 +4800,7 @@ function ActivityScheduleMatrix({
             {viewSummary && (
               <div className="mt-1 text-xs font-semibold text-foreground">{viewSummary}</div>
             )}
+            <CpmNetworkBasisStrip model={model} dataDate={dataDate} />
           </div>
           <div className="constructline-cpm-matrix-legend flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-muted-foreground xl:justify-end">
             <span className="inline-flex items-center gap-1">
@@ -5065,6 +5066,107 @@ function ActivityScheduleMatrix({
       </div>
     </div>
   );
+}
+
+function CpmNetworkBasisStrip({
+  model,
+  dataDate,
+}: {
+  model: ConstructLineCpmModel;
+  dataDate: string | null;
+}) {
+  const openStartTasks = model.tasks.filter((task) => task.isOpenStart);
+  const openFinishTasks = model.tasks.filter((task) => task.isOpenFinish);
+  const negativeFloatCount = model.tasks.filter((task) => task.totalFloat < 0).length;
+  const basisTone = model.criticalPathReliable ? "success" : "warning";
+  return (
+    <div className="constructline-cpm-basis-strip mt-3 flex flex-wrap gap-2 text-[11px]">
+      <CpmBasisPill
+        label="CPM basis"
+        value={model.criticalPathReliable ? "Reliable" : "Provisional"}
+        tone={basisTone}
+        title={model.criticalPathReliabilityNote}
+        icon={
+          model.criticalPathReliable ? (
+            <CheckCircle2 className="h-3.5 w-3.5" />
+          ) : (
+            <AlertTriangle className="h-3.5 w-3.5" />
+          )
+        }
+      />
+      <CpmBasisPill
+        label="Open starts"
+        value={String(model.openStartCount)}
+        tone={model.openStartCount <= 1 ? "default" : "warning"}
+        title={formatCpmEndpointTitle(openStartTasks, "open start")}
+      />
+      <CpmBasisPill
+        label="Open finishes"
+        value={String(model.openFinishCount)}
+        tone={model.openFinishCount <= 1 ? "default" : "warning"}
+        title={formatCpmEndpointTitle(openFinishTasks, "open finish")}
+      />
+      <CpmBasisPill
+        label="Critical / near"
+        value={`${model.criticalCount}/${model.nearCriticalCount}`}
+        tone={model.criticalCount > 0 ? "danger" : "default"}
+      />
+      <CpmBasisPill
+        label="Negative float"
+        value={String(negativeFloatCount)}
+        tone={negativeFloatCount > 0 ? "danger" : "default"}
+      />
+      <CpmBasisPill
+        label="Data date"
+        value={dataDate ? shortDate(dataDate) : "Not set"}
+        tone={dataDate ? "default" : "warning"}
+      />
+    </div>
+  );
+}
+
+function CpmBasisPill({
+  label,
+  value,
+  tone = "default",
+  title,
+  icon,
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "success" | "warning" | "danger";
+  title?: string;
+  icon?: ReactNode;
+}) {
+  const toneClass =
+    tone === "success"
+      ? "border-success/25 bg-success/10 text-success"
+      : tone === "warning"
+        ? "border-warning/25 bg-warning/10 text-warning"
+        : tone === "danger"
+          ? "border-danger/20 bg-danger/10 text-danger"
+          : "border-hairline bg-surface text-muted-foreground";
+  return (
+    <span
+      className={cn(
+        "inline-flex min-h-8 items-center gap-1.5 rounded border px-2 py-1 font-semibold",
+        toneClass,
+      )}
+      title={title}
+    >
+      {icon}
+      <span className="uppercase tracking-[0.1em]">{label}</span>
+      <span className="tabular text-foreground">{value}</span>
+    </span>
+  );
+}
+
+function formatCpmEndpointTitle(tasks: ConstructLineCpmTask[], label: string) {
+  if (tasks.length === 0) return `No ${label} activities.`;
+  return `${tasks.length} ${label} ${tasks.length === 1 ? "activity" : "activities"}: ${tasks
+    .slice(0, 6)
+    .map((task) => task.dependencyKey || task.activity.name)
+    .join(", ")}${tasks.length > 6 ? ", ..." : ""}`;
 }
 
 function ConstructLineLogicOverlay({
