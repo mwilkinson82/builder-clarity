@@ -256,6 +256,12 @@ const ACTIVITY_UPDATE_SNAPSHOT_COLUMNS =
 const DAY_MS = 24 * 60 * 60 * 1000;
 type ConstructLineTableColumnId = (typeof CONSTRUCTLINE_TABLE_COLUMN_SPECS)[number]["id"];
 type ConstructLineTableColumnWidths = Record<ConstructLineTableColumnId, number>;
+type ConstructLineStoredGridLayout = {
+  version?: string;
+  widths?: Partial<Record<ConstructLineTableColumnId, number>>;
+  dayPx?: number;
+  updatedAt?: string;
+};
 type ConstructLineGridLayoutPreset = "gantt" | "balanced" | "detail";
 type ScheduleActivityOrder = "start" | "wbs";
 type ScheduleGridView =
@@ -1970,7 +1976,8 @@ export function CpmActivityPlanner({
   const [showDraft, setShowDraft] = useState(false);
   const [draftSaveError, setDraftSaveError] = useState<string | null>(null);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
-  const [dayPx, setDayPx] = useState<number>(CONSTRUCTLINE_FIT_DAY_PX);
+  const cpmGridLayoutStorageKey = getCpmGridLayoutStorageKey(project.id);
+  const [dayPx, setDayPx] = useState<number>(() => readStoredGridDayPx(cpmGridLayoutStorageKey));
   const [showLogicLines, setShowLogicLines] = useState(true);
   const [showBaselineBars, setShowBaselineBars] = useState(true);
   const [activityOrder, setActivityOrder] = useState<ScheduleActivityOrder>("start");
@@ -1985,6 +1992,8 @@ export function CpmActivityPlanner({
     null,
   );
   const didScrollToGridRef = useRef(false);
+  const lastCpmGridLayoutStorageKeyRef = useRef(cpmGridLayoutStorageKey);
+  const pendingCpmGridLayoutStorageKeyRef = useRef<string | null>(null);
   const draftFormRef = useRef<HTMLDivElement | null>(null);
   const effectiveDataDate = dataDateDraft || latestDataDate || null;
   const wbsDivisionOrder = useMemo(
@@ -2020,6 +2029,19 @@ export function CpmActivityPlanner({
         "The grid still groups by each activity WBS path. Edit an activity WBS to adjust the visible schedule structure.",
     });
   };
+  useEffect(() => {
+    if (lastCpmGridLayoutStorageKeyRef.current === cpmGridLayoutStorageKey) return;
+    pendingCpmGridLayoutStorageKeyRef.current = cpmGridLayoutStorageKey;
+    lastCpmGridLayoutStorageKeyRef.current = cpmGridLayoutStorageKey;
+    setDayPx(readStoredGridDayPx(cpmGridLayoutStorageKey));
+  }, [cpmGridLayoutStorageKey]);
+  useEffect(() => {
+    if (pendingCpmGridLayoutStorageKeyRef.current === cpmGridLayoutStorageKey) {
+      pendingCpmGridLayoutStorageKeyRef.current = null;
+      return;
+    }
+    writeStoredGridLayout(cpmGridLayoutStorageKey, { dayPx });
+  }, [cpmGridLayoutStorageKey, dayPx]);
   const delaySummary = useMemo(() => buildDelayFragmentSummary(delayFragments), [delayFragments]);
   const latestScheduleUpdate = updates[0] ?? null;
   const baseCpmModel = useMemo(
@@ -2971,7 +2993,7 @@ export function CpmActivityPlanner({
           matrixId="cpm-grid"
           model={displayedCpmModel}
           delayFragments={delayFragments}
-          layoutStorageKey={`${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_NAMESPACE}:${project.id}`}
+          layoutStorageKey={cpmGridLayoutStorageKey}
           draftEditor={isFocusOpen ? null : activityDraftEditor}
           toolbar={
             <CpmGridToolbar
@@ -3249,7 +3271,7 @@ export function CpmActivityPlanner({
           <ActivityScheduleMatrix
             model={displayedCpmModel}
             delayFragments={delayFragments}
-            layoutStorageKey={`${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_NAMESPACE}:${project.id}`}
+            layoutStorageKey={cpmGridLayoutStorageKey}
             draftEditor={activityDraftEditor}
             dayPx={dayPx}
             onDayPxChange={setDayPx}
@@ -4956,6 +4978,10 @@ function getTableColumnWidth(widths: ConstructLineTableColumnWidths) {
   return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((sum, column) => sum + widths[column.id], 0);
 }
 
+function getCpmGridLayoutStorageKey(projectId: string) {
+  return `${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_NAMESPACE}:${projectId}`;
+}
+
 function getTableColumnLayoutStorageKeys(storageKey: string | undefined) {
   if (!storageKey) return [];
   const versionSuffix = `:${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION}`;
@@ -4965,17 +4991,28 @@ function getTableColumnLayoutStorageKeys(storageKey: string | undefined) {
   return Array.from(new Set([stableKey, `${stableKey}${versionSuffix}`, storageKey]));
 }
 
+function readStoredGridLayoutRecord(storageKey: string | undefined) {
+  if (!storageKey || typeof window === "undefined") return null;
+  for (const key of getTableColumnLayoutStorageKeys(storageKey)) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as ConstructLineStoredGridLayout;
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      // Ignore one bad saved layout and keep looking for a legacy key before falling back.
+    }
+  }
+  return null;
+}
+
 function parseStoredTableColumnWidths(
-  raw: string,
+  layout: ConstructLineStoredGridLayout,
   fallback: ConstructLineTableColumnWidths,
 ): ConstructLineTableColumnWidths | null {
-  const parsed = JSON.parse(raw) as {
-    version?: string;
-    widths?: Partial<Record<ConstructLineTableColumnId, number>>;
-  };
-  if (!parsed.widths) return null;
+  if (!layout.widths) return null;
   return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((widths, column) => {
-    const storedWidth = parsed.widths?.[column.id];
+    const storedWidth = layout.widths?.[column.id];
     widths[column.id] =
       typeof storedWidth === "number"
         ? Math.round(clampNumber(storedWidth, column.min, column.max))
@@ -4990,20 +5027,38 @@ function readTableColumnWidths(
 ): ConstructLineTableColumnWidths {
   const fallback = buildDefaultTableColumnWidths(isFocusMode);
   if (!storageKey || typeof window === "undefined") return fallback;
+  const storedLayout = readStoredGridLayoutRecord(storageKey);
+  if (!storedLayout) return fallback;
+  return parseStoredTableColumnWidths(storedLayout, fallback) ?? fallback;
+}
+
+function readStoredGridDayPx(storageKey: string | undefined) {
+  const storedDayPx = readStoredGridLayoutRecord(storageKey)?.dayPx;
+  return typeof storedDayPx === "number" && Number.isFinite(storedDayPx)
+    ? clampNumber(storedDayPx, CONSTRUCTLINE_MIN_DAY_PX, CONSTRUCTLINE_MAX_DAY_PX)
+    : CONSTRUCTLINE_FIT_DAY_PX;
+}
+
+function writeStoredGridLayout(
+  storageKey: string | undefined,
+  patch: Partial<Pick<ConstructLineStoredGridLayout, "widths" | "dayPx">>,
+) {
+  if (!storageKey || typeof window === "undefined") return;
   try {
-    for (const key of getTableColumnLayoutStorageKeys(storageKey)) {
-      const raw = window.localStorage.getItem(key);
-      if (!raw) continue;
-      try {
-        const widths = parseStoredTableColumnWidths(raw, fallback);
-        if (widths) return widths;
-      } catch {
-        // Ignore one bad saved layout and keep looking for a legacy key before falling back.
-      }
-    }
-    return fallback;
+    const [primaryStorageKey] = getTableColumnLayoutStorageKeys(storageKey);
+    if (!primaryStorageKey) return;
+    const current = readStoredGridLayoutRecord(storageKey) ?? {};
+    window.localStorage.setItem(
+      primaryStorageKey,
+      JSON.stringify({
+        ...current,
+        ...patch,
+        version: CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
   } catch {
-    return fallback;
+    // Browser storage can be unavailable in private sessions; the grid still works in memory.
   }
 }
 
@@ -5011,20 +5066,7 @@ function writeTableColumnWidths(
   storageKey: string | undefined,
   widths: ConstructLineTableColumnWidths,
 ) {
-  if (!storageKey || typeof window === "undefined") return;
-  try {
-    const [primaryStorageKey] = getTableColumnLayoutStorageKeys(storageKey);
-    if (!primaryStorageKey) return;
-    window.localStorage.setItem(
-      primaryStorageKey,
-      JSON.stringify({
-        version: CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION,
-        widths,
-      }),
-    );
-  } catch {
-    // Browser storage can be unavailable in private sessions; the grid still works in memory.
-  }
+  writeStoredGridLayout(storageKey, { widths });
 }
 
 function MatrixHeaderCell({

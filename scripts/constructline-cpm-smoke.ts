@@ -677,8 +677,13 @@ for (const requiredScheduleRiskText of [
   "buildDefaultTableColumnWidths",
   "buildTableColumnWidthsForPreset",
   "buildTableColumnTemplate(columnWidths)",
+  "getCpmGridLayoutStorageKey",
   "getTableColumnLayoutStorageKeys",
+  "readStoredGridLayoutRecord",
   "parseStoredTableColumnWidths",
+  "readStoredGridDayPx",
+  "writeStoredGridLayout",
+  "writeStoredGridLayout(cpmGridLayoutStorageKey, { dayPx })",
   "readTableColumnWidths(layoutStorageKey, isFocusMode)",
   "writeTableColumnWidths(layoutStorageKey, columnWidths)",
   "resetGridLayout",
@@ -925,7 +930,7 @@ for (const requiredScheduleFunctionText of [
   "const { wbs_section_id: requestedWbsSectionId, ...activityFields } = rest;",
   ".insert(basePayload as any)",
   "const { error: wbsLinkError } = await context.supabase",
-  'update({ wbs_section_id: wbsSectionId } as any)',
+  "update({ wbs_section_id: wbsSectionId } as any)",
   "stripScheduleActivityMissingColumns(",
 ]) {
   assert.ok(
@@ -1018,8 +1023,10 @@ assert.ok(
 );
 
 assert.ok(
-  scheduleRiskSource.includes("useState<number>(CONSTRUCTLINE_FIT_DAY_PX)"),
-  "The CPM schedule must open in Fit scale by default.",
+  scheduleRiskSource.includes(
+    "useState<number>(() => readStoredGridDayPx(cpmGridLayoutStorageKey))",
+  ) && scheduleRiskSource.includes(": CONSTRUCTLINE_FIT_DAY_PX"),
+  "The CPM schedule must open in Fit scale by default when no saved layout exists.",
 );
 
 assert.ok(
