@@ -218,6 +218,7 @@ type ScheduleGridView =
   | "lookahead_1w"
   | "lookahead_2w"
   | "lookahead_6w"
+  | "recovery"
   | "critical"
   | "issues"
   | "milestones";
@@ -260,6 +261,7 @@ const SCHEDULE_GRID_VIEW_OPTIONS: Array<{ value: ScheduleGridView; label: string
   { value: "lookahead_1w", label: "1 week lookahead" },
   { value: "lookahead_2w", label: "2 week lookahead" },
   { value: "lookahead_6w", label: "6 week lookahead" },
+  { value: "recovery", label: "Recovery" },
   { value: "critical", label: "Critical" },
   { value: "issues", label: "Issues" },
   { value: "milestones", label: "Milestones" },
@@ -5762,6 +5764,17 @@ function taskMatchesScheduleGridView(
     const finishDate = isoDateFromMs(referenceMs + lookaheadDays * DAY_MS);
     return isIncomplete && taskIntersectsDateWindow(task, referenceDate, finishDate);
   }
+  if (view === "recovery") {
+    return (
+      isIncomplete &&
+      (task.totalFloat < 0 ||
+        task.isLate ||
+        task.isOutOfSequence ||
+        getDelayFragmentsForActivity(task.activity, delayFragmentsByActivity).some(
+          isOpenDelayFragment,
+        ))
+    );
+  }
   if (view === "critical") return task.isCritical || task.isNearCritical;
   if (view === "issues") {
     return (
@@ -5816,6 +5829,8 @@ function describeScheduleGridView(
       lookaheadDays % 7 === 0 ? `${lookaheadDays / 7}-week` : `${lookaheadDays}-day`;
     return `${lookaheadLabel} lookahead from ${shortDate(referenceDate)} · ${countText}`;
   }
+  if (view === "recovery")
+    return `Recovery needed · negative float, delay, or status exceptions · ${countText}`;
   if (view === "critical") return `Critical and near-critical path · ${countText}`;
   if (view === "issues") return `Schedule issues · ${countText}`;
   if (view === "milestones") return `Milestones only · ${countText}`;
@@ -5823,6 +5838,7 @@ function describeScheduleGridView(
 }
 
 function getScheduleReportTitle(view: ScheduleGridView) {
+  if (view === "recovery") return "Recovery Schedule Report";
   if (view === "critical") return "Critical Path Report";
   if (view === "lookahead_1w") return "1-Week Lookahead Report";
   if (view === "lookahead_2w") return "2-Week Lookahead Report";
