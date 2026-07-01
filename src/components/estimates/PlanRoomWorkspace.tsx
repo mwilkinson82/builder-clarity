@@ -1,9 +1,10 @@
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChangeEvent,
+  KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   WheelEvent as ReactWheelEvent,
@@ -17,6 +18,7 @@ import {
   Image as ImageIcon,
   Layers,
   Link2,
+  Map as MapIcon,
   Maximize2,
   Minimize2,
   MousePointer2,
@@ -76,6 +78,19 @@ type RevisionOverlayMode = "compare" | "ghost";
 type Point = PlanRoomPoint;
 type ViewSize = PlanRoomViewSize;
 type ZoomWindowDraft = { start: Point; end: Point };
+type ViewportFrame = { x: number; y: number; width: number; height: number };
+type PdfRenderPlan = {
+  renderScale: number;
+  desiredScale: number;
+  capped: boolean;
+  maxEdge: number;
+  maxPixels: number;
+};
+type RenderQualityStatus = {
+  label: string;
+  details: string;
+  capped?: boolean;
+};
 type GeometryEditDraft = {
   measurementId: string;
   pointIndex: number;
@@ -106,6 +121,7 @@ const PDF_STANDARD_RENDER_MAX_EDGE = 8192;
 const PDF_STANDARD_RENDER_MAX_PIXELS = 24_000_000;
 const PDF_HIGH_DETAIL_RENDER_MAX_EDGE = 12_288;
 const PDF_HIGH_DETAIL_RENDER_MAX_PIXELS = 72_000_000;
+const EMPTY_VIEWPORT_FRAME: ViewportFrame = { x: 0, y: 0, width: 1, height: 1 };
 
 type PdfViewportLike = { width: number; height: number };
 
@@ -176,15 +192,29 @@ const pdfCssScaleFor = (viewport: PdfViewportLike) => {
   return Math.min(3, Math.max(0.2, PDF_BASE_LONG_EDGE / longEdge));
 };
 
-const pdfRenderScaleFor = (viewport: PdfViewportLike, cssScale: number, zoom: number) => {
+const pdfRenderPlanFor = (
+  viewport: PdfViewportLike,
+  cssScale: number,
+  zoom: number,
+): PdfRenderPlan => {
   const pagePixels = Math.max(1, viewport.width * viewport.height);
   const longEdge = Math.max(1, viewport.width, viewport.height);
   const desiredScale = cssScale * Math.max(1, zoom) * devicePixelRatioForPdf();
   const limits = pdfRenderLimits();
   const maxPixelScale = Math.sqrt(limits.maxPixels / pagePixels);
   const maxEdgeScale = limits.maxEdge / longEdge;
-  return Math.max(0.2, Math.min(desiredScale, maxPixelScale, maxEdgeScale));
+  const renderScale = Math.max(0.2, Math.min(desiredScale, maxPixelScale, maxEdgeScale));
+  return {
+    renderScale,
+    desiredScale,
+    capped: renderScale + 0.01 < desiredScale,
+    maxEdge: limits.maxEdge,
+    maxPixels: limits.maxPixels,
+  };
 };
+
+const pdfRenderScaleFor = (viewport: PdfViewportLike, cssScale: number, zoom: number) =>
+  pdfRenderPlanFor(viewport, cssScale, zoom).renderScale;
 
 const isPdfRenderCancelled = (error: unknown) =>
   error instanceof Error && error.name === "RenderingCancelledException";
@@ -1521,6 +1551,8 @@ function PlanCanvas({
   const [isPanning, setIsPanning] = useState(false);
   const [isZoomWindowMode, setIsZoomWindowMode] = useState(false);
   const [zoomWindowDraft, setZoomWindowDraft] = useState<ZoomWindowDraft | null>(null);
+  const [viewportFrame, setViewportFrame] = useState<ViewportFrame>(EMPTY_VIEWPORT_FRAME);
+  const [renderQuality, setRenderQuality] = useState<RenderQualityStatus | null>(null);
   const [geometryEditDraft, setGeometryEditDraft] = useState<GeometryEditDraft | null>(null);
   const [geometryPreview, setGeometryPreview] = useState<{
     measurementId: string;
@@ -1538,6 +1570,7 @@ function PlanCanvas({
     let active = true;
     setSignedUrl("");
     setRenderError("");
+    setRenderQuality(null);
     if (!planSet?.file_path) return;
     if (isDirectPlanFileUrl(planSet.file_path)) {
       setSignedUrl(directPlanFileUrl(planSet.file_path));
@@ -1557,6 +1590,15 @@ function PlanCanvas({
   }, [planSet?.file_path]);
 
   useEffect(() => {
+    if (planSet?.sample_key === "harbor-residence" || !planSet?.file_path) {
+      setRenderQuality({
+        label: "Vector sample",
+        details: "Sample sheets render as vector training drawings.",
+      });
+    }
+  }, [planSet?.file_path, planSet?.sample_key]);
+
+  useEffect(() => {
     let cancelled = false;
     let renderTask: { promise: Promise<unknown>; cancel: () => void } | null = null;
     const renderPdf = async () => {
@@ -1571,7 +1613,8 @@ function PlanCanvas({
         const page = await pdf.getPage(sheet?.page_number ?? 1);
         const viewport = page.getViewport({ scale: 1 });
         const cssScale = pdfCssScaleFor(viewport);
-        const renderScale = pdfRenderScaleFor(viewport, cssScale, zoom);
+        const renderPlan = pdfRenderPlanFor(viewport, cssScale, zoom);
+        const renderScale = renderPlan.renderScale;
         const cssViewport = page.getViewport({ scale: cssScale });
         const renderViewport = page.getViewport({ scale: renderScale });
         const canvas = canvasRef.current;
@@ -1581,6 +1624,15 @@ function PlanCanvas({
         canvas.dataset.pdfRenderScale = renderScale.toFixed(3);
         canvas.dataset.pdfRenderWidth = String(canvas.width);
         canvas.dataset.pdfRenderHeight = String(canvas.height);
+        setRenderQuality({
+          label: renderPlan.capped ? "Max detail" : "HD detail",
+          details: `${canvas.width.toLocaleString()} x ${canvas.height.toLocaleString()} PDF render at ${renderScale.toFixed(
+            2,
+          )}x. Device limit: ${renderPlan.maxEdge.toLocaleString()}px edge / ${(
+            renderPlan.maxPixels / 1_000_000
+          ).toFixed(0)}M pixels.`,
+          capped: renderPlan.capped,
+        });
         onViewSizeChange({
           width: Math.round(cssViewport.width),
           height: Math.round(cssViewport.height),
@@ -1631,6 +1683,22 @@ function PlanCanvas({
   const clampZoom = (nextZoom: number) =>
     Math.min(MAX_PLAN_ZOOM, Math.max(MIN_PLAN_ZOOM, nextZoom));
 
+  const updateViewportFrame = useCallback(() => {
+    const stage = scrollRef.current;
+    if (!stage || stage.scrollWidth <= 0 || stage.scrollHeight <= 0) {
+      setViewportFrame(EMPTY_VIEWPORT_FRAME);
+      return;
+    }
+    const scrollableWidth = Math.max(1, stage.scrollWidth);
+    const scrollableHeight = Math.max(1, stage.scrollHeight);
+    setViewportFrame({
+      x: Math.min(1, Math.max(0, stage.scrollLeft / scrollableWidth)),
+      y: Math.min(1, Math.max(0, stage.scrollTop / scrollableHeight)),
+      width: Math.min(1, Math.max(0.05, stage.clientWidth / scrollableWidth)),
+      height: Math.min(1, Math.max(0.05, stage.clientHeight / scrollableHeight)),
+    });
+  }, []);
+
   const setClampedZoom = (nextZoom: number) => {
     setZoom(clampZoom(nextZoom));
   };
@@ -1646,6 +1714,7 @@ function PlanCanvas({
       if (!scrollRef.current) return;
       scrollRef.current.scrollLeft = Math.max(0, scrollLeft);
       scrollRef.current.scrollTop = Math.max(0, scrollTop);
+      updateViewportFrame();
     });
     return clampedZoom;
   };
@@ -1717,6 +1786,95 @@ function PlanCanvas({
     event.preventDefault();
     zoomBy(event.deltaY > 0 ? -PLAN_ZOOM_STEP : PLAN_ZOOM_STEP);
   };
+
+  const panBy = (left: number, top: number) => {
+    scrollRef.current?.scrollBy({ left, top });
+    requestAnimationFrame(updateViewportFrame);
+  };
+
+  const handleKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("input,textarea,button,[role='combobox']")) return;
+
+    if (event.key === "+" || event.key === "=") {
+      event.preventDefault();
+      zoomBy(PLAN_ZOOM_STEP);
+      return;
+    }
+    if (event.key === "-") {
+      event.preventDefault();
+      zoomBy(-PLAN_ZOOM_STEP);
+      return;
+    }
+    if (event.key === "0") {
+      event.preventDefault();
+      setActualSize();
+      return;
+    }
+    if (event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      fitToStage();
+      return;
+    }
+    if (event.key.toLowerCase() === "w") {
+      event.preventDefault();
+      fitToWidth();
+      return;
+    }
+    if (event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      setIsZoomWindowMode((current) => !current);
+      setZoomWindowDraft(null);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setIsZoomWindowMode(false);
+      setZoomWindowDraft(null);
+      setGeometryEditDraft(null);
+      setGeometryPreview(null);
+      return;
+    }
+
+    const panDistance = event.shiftKey ? 260 : 90;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      panBy(-panDistance, 0);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      panBy(panDistance, 0);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      panBy(0, -panDistance);
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      panBy(0, panDistance);
+    }
+  };
+
+  const jumpViewport = (point: Point) => {
+    const stage = scrollRef.current;
+    if (!stage) return;
+    stage.scrollLeft = Math.max(0, point.x * stage.scrollWidth - stage.clientWidth / 2);
+    stage.scrollTop = Math.max(0, point.y * stage.scrollHeight - stage.clientHeight / 2);
+    requestAnimationFrame(updateViewportFrame);
+  };
+
+  useEffect(() => {
+    requestAnimationFrame(updateViewportFrame);
+  }, [updateViewportFrame, viewSize.height, viewSize.width, zoom]);
+
+  useEffect(() => {
+    const stage = scrollRef.current;
+    if (!stage) return;
+    stage.addEventListener("scroll", updateViewportFrame, { passive: true });
+    window.addEventListener("resize", updateViewportFrame);
+    updateViewportFrame();
+    return () => {
+      stage.removeEventListener("scroll", updateViewportFrame);
+      window.removeEventListener("resize", updateViewportFrame);
+    };
+  }, [updateViewportFrame]);
 
   const pointFromClient = (clientX: number, clientY: number): Point | null => {
     const svg = svgRef.current;
@@ -1868,6 +2026,15 @@ function PlanCanvas({
             {toolLabel(tool)}
           </Badge>
           <Badge variant="outline">{zoomPercent}</Badge>
+          {renderQuality && (
+            <Badge
+              variant={renderQuality.capped ? "secondary" : "outline"}
+              title={renderQuality.details}
+              data-testid="plan-render-quality"
+            >
+              {renderQuality.label}
+            </Badge>
+          )}
           {hasRevisionOverlay && (
             <Badge variant="secondary" data-testid="plan-revision-overlay-active">
               Revision overlay
@@ -1971,11 +2138,15 @@ function PlanCanvas({
 
       <div
         ref={scrollRef}
+        tabIndex={0}
         className={cn(
-          "relative min-h-0 overflow-auto rounded-md border border-hairline bg-[#f7f4ef] shadow-inner",
+          "relative min-h-0 overflow-auto rounded-md border border-hairline bg-[#f7f4ef] shadow-inner outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
           isCockpitMode ? "flex-1" : "h-[min(72vh,760px)]",
         )}
         onWheel={handleWheel}
+        onKeyDown={handleKeyboard}
+        aria-label="Plan drawing viewport"
+        title="Plan viewport: use +/- to zoom, arrows to pan, F to fit, W for width, Z for zoom area, Esc to cancel."
         data-testid="plan-viewport"
       >
         <div className="inline-flex min-h-full min-w-full items-start justify-center p-4">
@@ -2001,6 +2172,10 @@ function PlanCanvas({
                   if (!img) return;
                   const ratio = img.naturalWidth / Math.max(1, img.naturalHeight);
                   const width = Math.min(1600, Math.max(960, img.naturalWidth));
+                  setRenderQuality({
+                    label: "Image source",
+                    details: `${img.naturalWidth.toLocaleString()} x ${img.naturalHeight.toLocaleString()} uploaded image source.`,
+                  });
                   onViewSizeChange({ width, height: Math.round(width / ratio) });
                 }}
               />
@@ -2099,8 +2274,146 @@ function PlanCanvas({
             </svg>
           </div>
         </div>
+        <PlanMiniMap
+          viewSize={viewSize}
+          measurements={measurements}
+          viewportFrame={viewportFrame}
+          onJump={jumpViewport}
+        />
       </div>
     </div>
+  );
+}
+
+function PlanMiniMap({
+  viewSize,
+  measurements,
+  viewportFrame,
+  onJump,
+}: {
+  viewSize: ViewSize;
+  measurements: TakeoffMeasurementRow[];
+  viewportFrame: ViewportFrame;
+  onJump: (point: Point) => void;
+}) {
+  const mapRef = useRef<HTMLDivElement | null>(null);
+  const jumpFromEvent = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const rect = mapRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+    const point = {
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+    };
+    onJump(point);
+  };
+
+  return (
+    <div
+      ref={mapRef}
+      className="absolute bottom-3 left-3 z-20 hidden w-52 overflow-hidden rounded-md border border-hairline bg-card/95 text-card-foreground shadow-lg backdrop-blur sm:block"
+      data-testid="plan-minimap"
+      role="button"
+      tabIndex={0}
+      title="Sheet map"
+      onPointerDown={jumpFromEvent}
+      onPointerMove={(event) => {
+        if (event.buttons === 1) jumpFromEvent(event);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onJump({ x: 0.5, y: 0.5 });
+        }
+      }}
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-hairline bg-surface px-2 py-1.5">
+        <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+          <MapIcon className="h-3 w-3" />
+          Sheet Map
+        </div>
+        <span className="text-[10px] tabular-nums text-muted-foreground">
+          {measurements.length} marks
+        </span>
+      </div>
+      <svg
+        viewBox={`0 0 ${viewSize.width} ${viewSize.height}`}
+        className="block aspect-[4/3] w-full bg-[#fffefa]"
+        preserveAspectRatio="xMidYMid meet"
+      >
+        <rect
+          x="0"
+          y="0"
+          width={viewSize.width}
+          height={viewSize.height}
+          fill="#fffefa"
+          stroke="#ded6c8"
+          strokeWidth="8"
+        />
+        {measurements.slice(0, 60).map((measurement) => (
+          <MiniMapMeasurement key={measurement.id} measurement={measurement} viewSize={viewSize} />
+        ))}
+        <rect
+          x={viewportFrame.x * viewSize.width}
+          y={viewportFrame.y * viewSize.height}
+          width={Math.max(18, viewportFrame.width * viewSize.width)}
+          height={Math.max(18, viewportFrame.height * viewSize.height)}
+          fill="#1b7a6e18"
+          stroke="#1b7a6e"
+          strokeWidth="10"
+          data-testid="plan-minimap-frame"
+        />
+      </svg>
+    </div>
+  );
+}
+
+function MiniMapMeasurement({
+  measurement,
+  viewSize,
+}: {
+  measurement: TakeoffMeasurementRow;
+  viewSize: ViewSize;
+}) {
+  const points = geometryPoints(measurement.geometry).map((point) => ({
+    x: point.x * viewSize.width,
+    y: point.y * viewSize.height,
+  }));
+  if (points.length === 0) return null;
+  const pointText = points.map((point) => `${point.x},${point.y}`).join(" ");
+
+  if (measurement.tool_type === "count") {
+    return points.map((point, index) => (
+      <circle
+        key={`${measurement.id}-${index}`}
+        cx={point.x}
+        cy={point.y}
+        r="14"
+        fill={measurement.color}
+        opacity="0.7"
+      />
+    ));
+  }
+
+  if (measurement.tool_type === "area" && points.length >= 3) {
+    return (
+      <polygon
+        points={pointText}
+        fill={`${measurement.color}24`}
+        stroke={measurement.color}
+        strokeWidth="8"
+      />
+    );
+  }
+
+  return (
+    <polyline
+      points={pointText}
+      fill="none"
+      stroke={measurement.color}
+      strokeWidth="10"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
   );
 }
 
