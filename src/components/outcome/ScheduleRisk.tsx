@@ -5234,6 +5234,9 @@ function ConstructLineTaskRow({
             {task.isMilestone && <ScheduleFlag tone="warning">milestone</ScheduleFlag>}
             {task.isCritical && <ScheduleFlag tone="danger">critical</ScheduleFlag>}
             {task.isNearCritical && <ScheduleFlag tone="warning">near critical</ScheduleFlag>}
+            {task.totalFloat < 0 && (
+              <ScheduleFlag tone="danger">{task.totalFloat}d TF</ScheduleFlag>
+            )}
             {task.isLate && <ScheduleFlag tone="danger">late</ScheduleFlag>}
             {task.isOutOfSequence && <ScheduleFlag tone="warning">out of seq</ScheduleFlag>}
             {task.isOpenStart && <ScheduleFlag tone="warning">open start</ScheduleFlag>}
@@ -6774,8 +6777,8 @@ function ActivityDetailDialog({
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">
                     For this data date, enter actual progress and either remaining duration or
-                    expected finish. The other field recalculates so the CPM finish reflects the
-                    update.
+                    current expected finish. The other field recalculates so the CPM finish, float,
+                    and delay impact reflect the update.
                   </div>
                 </div>
                 <div className="text-xs font-semibold text-muted-foreground">
@@ -6811,7 +6814,7 @@ function ActivityDetailDialog({
                     className="h-10 min-w-0 tabular"
                   />
                 </LabeledField>
-                <LabeledField label="Forecast start">
+                <LabeledField label="Current start">
                   <Input
                     type="date"
                     value={draft.forecast_start_date}
@@ -6819,7 +6822,7 @@ function ActivityDetailDialog({
                     className="h-10 min-w-0"
                   />
                 </LabeledField>
-                <LabeledField label="Expected finish">
+                <LabeledField label="Current expected finish">
                   <Input
                     type="date"
                     value={draft.forecast_finish_date}
@@ -6837,7 +6840,7 @@ function ActivityDetailDialog({
                   sub="original planned finish"
                 />
                 <ActivityUpdateImpactTile
-                  label="Expected finish"
+                  label="Current expected finish"
                   value={updateImpact.expectedFinish}
                   sub="current forecast finish"
                   tone={updateImpact.finishTone}
@@ -6858,8 +6861,9 @@ function ActivityDetailDialog({
                 <span className="font-semibold text-foreground">Update rule:</span> baseline dates
                 stay fixed. Remaining duration is counted from{" "}
                 {dataDate ? `the ${shortDate(dataDate)} data date` : "the saved data date"};
-                changing remaining duration moves expected finish, and changing expected finish
-                recalculates remaining duration.
+                changing remaining duration moves current expected finish, and changing current
+                expected finish recalculates remaining duration. After save, the CPM recalculates
+                float against the baseline completion path, including negative total float.
               </div>
               {!dataDate && (
                 <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
