@@ -128,6 +128,79 @@ assert.equal(byId.get("MS-001")?.totalFloat, 0);
 assert.equal(byId.get("C")?.isNearCritical, true);
 assert.equal(byId.get("C")?.isCritical, false);
 
+const relationshipActivities = [
+  {
+    id: "rel-a",
+    project_id: "project",
+    activity_id: "A",
+    name: "Primary sequence",
+    division: "01 - General",
+    start_date: "2026-02-01",
+    finish_date: "2026-02-05",
+    percent_complete: 0,
+    predecessor_activity_ids: [],
+    successor_activity_ids: [],
+    notes: "",
+    sort_order: 10,
+  },
+  {
+    id: "rel-b",
+    project_id: "project",
+    activity_id: "B",
+    name: "Finish-to-finish lagged work",
+    division: "02 - Finish",
+    start_date: "2026-02-01",
+    finish_date: "2026-02-04",
+    percent_complete: 0,
+    predecessor_activity_ids: ["A|FF|2"],
+    successor_activity_ids: [],
+    notes: "",
+    sort_order: 20,
+  },
+  {
+    id: "rel-c",
+    project_id: "project",
+    activity_id: "C",
+    name: "Start-to-finish handoff",
+    division: "02 - Finish",
+    start_date: "2026-02-02",
+    finish_date: "2026-02-03",
+    percent_complete: 0,
+    predecessor_activity_ids: ["A|SF|3"],
+    successor_activity_ids: [],
+    notes: "",
+    sort_order: 30,
+  },
+  {
+    id: "rel-finish",
+    project_id: "project",
+    activity_id: "MS-REL",
+    name: "Relationship completion milestone",
+    division: "Milestones",
+    start_date: "2026-02-08",
+    finish_date: "2026-02-08",
+    percent_complete: 0,
+    predecessor_activity_ids: ["B|FS|0", "C|FS|0"],
+    successor_activity_ids: [],
+    notes: "ConstructLine milestone",
+    sort_order: 40,
+  },
+].map(withScheduleActivityStatus);
+
+const relationshipModel = buildConstructLineCpmModel(relationshipActivities, {
+  dataDate: "2026-02-01",
+  nearCriticalFloat: 5,
+});
+const relationshipById = new Map(relationshipModel.tasks.map((task) => [task.dependencyKey, task]));
+assert.equal(relationshipModel.criticalPathReliable, true);
+assert.equal(relationshipById.get("B")?.statusStartDate, "2026-02-04");
+assert.equal(relationshipById.get("B")?.statusFinishDate, "2026-02-07");
+assert.equal(relationshipById.get("B")?.totalFloat, 0);
+assert.equal(relationshipById.get("C")?.statusStartDate, "2026-02-03");
+assert.equal(relationshipById.get("C")?.statusFinishDate, "2026-02-04");
+assert.equal(relationshipById.get("A")?.totalFloat, 0);
+assert.equal(relationshipById.get("MS-REL")?.totalFloat, 0);
+
 const statusedActivities = [
   withScheduleActivityStatus({
     id: "status-a",
@@ -688,6 +761,12 @@ for (const requiredScheduleRiskText of [
     `ScheduleRisk is missing required CPM workspace text: ${requiredScheduleRiskText}`,
   );
 }
+
+assert.match(
+  scheduleRiskSource,
+  /setScheduleView\("update_queue"\);[\s\S]{0,500}toast\.warning\("CPM update has status gaps"/,
+  "Data-date status-gap warning should switch directly to the Needs update queue.",
+);
 
 for (const removedScheduleRiskText of [
   "function ConstructLinePrintReport",

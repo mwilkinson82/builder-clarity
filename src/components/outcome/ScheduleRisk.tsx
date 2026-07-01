@@ -2550,7 +2550,7 @@ export function CpmActivityPlanner({
     if (!dataDateDraft || dataDateUpdate.isPending) return;
     if (updateReadiness.needsStatusCount > 0 && readinessWarningAcceptedFor !== dataDateDraft) {
       setReadinessWarningAcceptedFor(dataDateDraft);
-      setScheduleView("active");
+      setScheduleView("update_queue");
       toast.warning("CPM update has status gaps", {
         description: `${updateReadiness.needsStatusCount} open ${
           updateReadiness.needsStatusCount === 1 ? "activity needs" : "activities need"
