@@ -75,6 +75,7 @@ type ToolMode = "select" | "calibrate" | TakeoffToolType;
 type RevisionOverlayMode = "compare" | "ghost";
 type Point = PlanRoomPoint;
 type ViewSize = PlanRoomViewSize;
+type ZoomWindowDraft = { start: Point; end: Point };
 
 interface PlanRoomWorkspaceProps {
   estimate: EstimateRow;
@@ -93,6 +94,13 @@ const QUICK_CALIBRATION_FEET = [10, 20, 25, 50, 100];
 const MIN_PLAN_ZOOM = 0.25;
 const MAX_PLAN_ZOOM = 4;
 const PLAN_ZOOM_STEP = 0.25;
+const ZOOM_SLIDER_MIN = MIN_PLAN_ZOOM * 100;
+const ZOOM_SLIDER_MAX = MAX_PLAN_ZOOM * 100;
+const PDF_BASE_LONG_EDGE = 1800;
+const PDF_RENDER_MAX_EDGE = 8192;
+const PDF_RENDER_MAX_PIXELS = 24_000_000;
+
+type PdfViewportLike = { width: number; height: number };
 
 const planSetStatusLabel = (status: PlanSetRow["status"]) => {
   if (status === "superseded") return "Superseded";
@@ -119,6 +127,59 @@ const slugFileName = (name: string) =>
     .replace(/[^a-z0-9.]+/g, "-")
     .replace(/(^-|-$)/g, "")
     .slice(0, 160) || "drawing";
+
+const isDirectPlanFileUrl = (filePath: string) =>
+  /^(https?:|blob:|data:)/i.test(filePath) || filePath.startsWith("/");
+
+const directPlanFileUrl = (filePath: string) => {
+  if (!filePath.startsWith("/")) return filePath;
+  if (typeof window === "undefined") return filePath;
+  return `${window.location.origin}${filePath}`;
+};
+
+const devicePixelRatioForPdf = () => {
+  if (typeof window === "undefined") return 1;
+  return Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+};
+
+const pdfCssScaleFor = (viewport: PdfViewportLike) => {
+  const longEdge = Math.max(viewport.width, viewport.height);
+  if (!Number.isFinite(longEdge) || longEdge <= 0) return 1;
+  return Math.min(3, Math.max(0.2, PDF_BASE_LONG_EDGE / longEdge));
+};
+
+const pdfRenderScaleFor = (viewport: PdfViewportLike, cssScale: number, zoom: number) => {
+  const pagePixels = Math.max(1, viewport.width * viewport.height);
+  const longEdge = Math.max(1, viewport.width, viewport.height);
+  const desiredScale = cssScale * Math.max(1, zoom) * devicePixelRatioForPdf();
+  const maxPixelScale = Math.sqrt(PDF_RENDER_MAX_PIXELS / pagePixels);
+  const maxEdgeScale = PDF_RENDER_MAX_EDGE / longEdge;
+  return Math.max(0.2, Math.min(desiredScale, maxPixelScale, maxEdgeScale));
+};
+
+const isPdfRenderCancelled = (error: unknown) =>
+  error instanceof Error && error.name === "RenderingCancelledException";
+
+const dataUrlToArrayBuffer = (url: string) => {
+  const commaIndex = url.indexOf(",");
+  if (commaIndex < 0) throw new Error("Invalid PDF data URL.");
+  const meta = url.slice(0, commaIndex);
+  const payload = url.slice(commaIndex + 1);
+  const binary =
+    meta.includes(";base64") && typeof atob !== "undefined"
+      ? atob(payload)
+      : decodeURIComponent(payload);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+};
+
+const pdfDocumentSourceFor = async (url: string) => {
+  if (!url.startsWith("data:")) return { url };
+  return { data: dataUrlToArrayBuffer(url) };
+};
 
 function geometryPoints(geometry: unknown): Point[] {
   if (!geometry || typeof geometry !== "object") return [];
@@ -1384,7 +1445,10 @@ function PlanCanvas({
   const [renderError, setRenderError] = useState("");
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
+  const [isZoomWindowMode, setIsZoomWindowMode] = useState(false);
+  const [zoomWindowDraft, setZoomWindowDraft] = useState<ZoomWindowDraft | null>(null);
   const panStartRef = useRef({ x: 0, y: 0, left: 0, top: 0, dragged: false });
+  const zoomWindowClickBlockRef = useRef(false);
   const hasRevisionOverlay = Boolean(overlayPlanSet && overlaySheet);
   const overlayBlendMode = overlayMode === "compare" ? "multiply" : "normal";
 
@@ -1393,6 +1457,10 @@ function PlanCanvas({
     setSignedUrl("");
     setRenderError("");
     if (!planSet?.file_path) return;
+    if (isDirectPlanFileUrl(planSet.file_path)) {
+      setSignedUrl(directPlanFileUrl(planSet.file_path));
+      return;
+    }
     supabase.storage
       .from(planRoomBucket)
       .createSignedUrl(planSet.file_path, 60 * 30)
@@ -1408,6 +1476,7 @@ function PlanCanvas({
 
   useEffect(() => {
     let cancelled = false;
+    let renderTask: { promise: Promise<unknown>; cancel: () => void } | null = null;
     const renderPdf = async () => {
       if (!signedUrl || planSet?.file_mime_type !== "application/pdf" || !canvasRef.current) return;
       try {
@@ -1416,23 +1485,32 @@ function PlanCanvas({
         (
           pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }
         ).GlobalWorkerOptions.workerSrc = workerUrl;
-        const pdf = await pdfjs.getDocument({ url: signedUrl }).promise;
+        const pdf = await pdfjs.getDocument(await pdfDocumentSourceFor(signedUrl)).promise;
         const page = await pdf.getPage(sheet?.page_number ?? 1);
         const viewport = page.getViewport({ scale: 1 });
-        const scale = Math.min(1100 / viewport.width, 720 / viewport.height);
-        const scaled = page.getViewport({ scale });
+        const cssScale = pdfCssScaleFor(viewport);
+        const renderScale = pdfRenderScaleFor(viewport, cssScale, zoom);
+        const cssViewport = page.getViewport({ scale: cssScale });
+        const renderViewport = page.getViewport({ scale: renderScale });
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
-        canvas.width = Math.round(scaled.width);
-        canvas.height = Math.round(scaled.height);
-        onViewSizeChange({ width: canvas.width, height: canvas.height });
-        await page.render({
+        canvas.width = Math.round(renderViewport.width);
+        canvas.height = Math.round(renderViewport.height);
+        canvas.dataset.pdfRenderScale = renderScale.toFixed(3);
+        canvas.dataset.pdfRenderWidth = String(canvas.width);
+        canvas.dataset.pdfRenderHeight = String(canvas.height);
+        onViewSizeChange({
+          width: Math.round(cssViewport.width),
+          height: Math.round(cssViewport.height),
+        });
+        renderTask = page.render({
           canvas,
           canvasContext: canvas.getContext("2d")!,
-          viewport: scaled,
-        }).promise;
+          viewport: renderViewport,
+        });
+        await renderTask.promise;
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && !isPdfRenderCancelled(error)) {
           setRenderError(error instanceof Error ? error.message : "PDF page did not render.");
         }
       }
@@ -1440,11 +1518,14 @@ function PlanCanvas({
     renderPdf();
     return () => {
       cancelled = true;
+      renderTask?.cancel();
     };
-  }, [onViewSizeChange, planSet?.file_mime_type, sheet?.page_number, signedUrl]);
+  }, [onViewSizeChange, planSet?.file_mime_type, sheet?.page_number, signedUrl, zoom]);
 
   useEffect(() => {
     setZoom(1);
+    setIsZoomWindowMode(false);
+    setZoomWindowDraft(null);
     requestAnimationFrame(() => {
       if (!scrollRef.current) return;
       scrollRef.current.scrollLeft = 0;
@@ -1452,12 +1533,31 @@ function PlanCanvas({
     });
   }, [sheet?.id]);
 
+  useEffect(() => {
+    setIsZoomWindowMode(false);
+    setZoomWindowDraft(null);
+  }, [tool]);
+
+  const clampZoom = (nextZoom: number) =>
+    Math.min(MAX_PLAN_ZOOM, Math.max(MIN_PLAN_ZOOM, nextZoom));
+
   const setClampedZoom = (nextZoom: number) => {
-    setZoom(Math.min(MAX_PLAN_ZOOM, Math.max(MIN_PLAN_ZOOM, nextZoom)));
+    setZoom(clampZoom(nextZoom));
   };
 
   const zoomBy = (delta: number) => {
     setClampedZoom(Number((zoom + delta).toFixed(2)));
+  };
+
+  const setZoomAndScroll = (nextZoom: number, scrollLeft = 0, scrollTop = 0) => {
+    const clampedZoom = clampZoom(nextZoom);
+    setZoom(clampedZoom);
+    requestAnimationFrame(() => {
+      if (!scrollRef.current) return;
+      scrollRef.current.scrollLeft = Math.max(0, scrollLeft);
+      scrollRef.current.scrollTop = Math.max(0, scrollTop);
+    });
+    return clampedZoom;
   };
 
   const fitToStage = () => {
@@ -1470,18 +1570,56 @@ function PlanCanvas({
       (stage.clientWidth - 32) / viewSize.width,
       (stage.clientHeight - 32) / viewSize.height,
     );
-    setClampedZoom(Number(Math.min(1, fitZoom).toFixed(2)));
-    stage.scrollLeft = 0;
-    stage.scrollTop = 0;
+    setZoomAndScroll(Number(Math.min(1, fitZoom).toFixed(2)));
+  };
+
+  const fitToWidth = () => {
+    const stage = scrollRef.current;
+    if (!stage || viewSize.width <= 0) {
+      setClampedZoom(1);
+      return;
+    }
+    const fitZoom = (stage.clientWidth - 32) / viewSize.width;
+    setZoomAndScroll(Number(fitZoom.toFixed(2)), 0, stage.scrollTop);
+  };
+
+  const fitToHeight = () => {
+    const stage = scrollRef.current;
+    if (!stage || viewSize.height <= 0) {
+      setClampedZoom(1);
+      return;
+    }
+    const fitZoom = (stage.clientHeight - 32) / viewSize.height;
+    setZoomAndScroll(Number(fitZoom.toFixed(2)), stage.scrollLeft, 0);
   };
 
   const setActualSize = () => {
-    setClampedZoom(1);
-    requestAnimationFrame(() => {
-      if (!scrollRef.current) return;
-      scrollRef.current.scrollLeft = 0;
-      scrollRef.current.scrollTop = 0;
-    });
+    setZoomAndScroll(1);
+  };
+
+  const zoomToWindow = (draft: ZoomWindowDraft) => {
+    const stage = scrollRef.current;
+    if (!stage || viewSize.width <= 0 || viewSize.height <= 0) return;
+    const minX = Math.min(draft.start.x, draft.end.x);
+    const minY = Math.min(draft.start.y, draft.end.y);
+    const maxX = Math.max(draft.start.x, draft.end.x);
+    const maxY = Math.max(draft.start.y, draft.end.y);
+    const width = maxX - minX;
+    const height = maxY - minY;
+    if (width * viewSize.width < 24 || height * viewSize.height < 24) {
+      toast.warning("Drag a larger box around the area you want to inspect.");
+      return;
+    }
+    const targetZoom = Math.min(
+      (stage.clientWidth - 48) / (width * viewSize.width),
+      (stage.clientHeight - 48) / (height * viewSize.height),
+    );
+    const nextZoom = clampZoom(Number(targetZoom.toFixed(2)));
+    const focusedWidth = width * viewSize.width * nextZoom;
+    const focusedHeight = height * viewSize.height * nextZoom;
+    const scrollLeft = minX * viewSize.width * nextZoom - (stage.clientWidth - focusedWidth) / 2;
+    const scrollTop = minY * viewSize.height * nextZoom - (stage.clientHeight - focusedHeight) / 2;
+    setZoomAndScroll(nextZoom, scrollLeft, scrollTop);
   };
 
   const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
@@ -1490,7 +1628,26 @@ function PlanCanvas({
     zoomBy(event.deltaY > 0 ? -PLAN_ZOOM_STEP : PLAN_ZOOM_STEP);
   };
 
+  const pointFromClient = (clientX: number, clientY: number): Point | null => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)),
+    };
+  };
+
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (isZoomWindowMode) {
+      const point = pointFromClient(event.clientX, event.clientY);
+      if (!point) return;
+      setZoomWindowDraft({ start: point, end: point });
+      zoomWindowClickBlockRef.current = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
     if (tool !== "select" || !scrollRef.current) return;
     panStartRef.current = {
       x: event.clientX,
@@ -1504,6 +1661,12 @@ function PlanCanvas({
   };
 
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (isZoomWindowMode && zoomWindowDraft) {
+      const point = pointFromClient(event.clientX, event.clientY);
+      if (!point) return;
+      setZoomWindowDraft((current) => (current ? { ...current, end: point } : current));
+      return;
+    }
     if (!isPanning || !scrollRef.current) return;
     const dx = event.clientX - panStartRef.current.x;
     const dy = event.clientY - panStartRef.current.y;
@@ -1513,23 +1676,29 @@ function PlanCanvas({
   };
 
   const handlePointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (isZoomWindowMode && zoomWindowDraft) {
+      const point = pointFromClient(event.clientX, event.clientY);
+      const completedDraft = point ? { ...zoomWindowDraft, end: point } : zoomWindowDraft;
+      setZoomWindowDraft(null);
+      setIsZoomWindowMode(false);
+      event.currentTarget.releasePointerCapture(event.pointerId);
+      zoomToWindow(completedDraft);
+      return;
+    }
     if (!isPanning) return;
     setIsPanning(false);
     event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
   const pointFromEvent = (event: ReactMouseEvent<SVGSVGElement>): Point | null => {
-    const svg = svgRef.current;
-    if (!svg) return null;
-    const rect = svg.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return null;
-    return {
-      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
-      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
-    };
+    return pointFromClient(event.clientX, event.clientY);
   };
 
   const handleClick = (event: ReactMouseEvent<SVGSVGElement>) => {
+    if (zoomWindowClickBlockRef.current || isZoomWindowMode) {
+      zoomWindowClickBlockRef.current = false;
+      return;
+    }
     if (panStartRef.current.dragged) {
       panStartRef.current.dragged = false;
       return;
@@ -1540,6 +1709,7 @@ function PlanCanvas({
 
   const viewBox = `0 0 ${viewSize.width} ${viewSize.height}`;
   const zoomPercent = `${Math.round(zoom * 100)}%`;
+  const zoomSliderValue = Math.round(zoom * 100);
 
   return (
     <div
@@ -1561,7 +1731,21 @@ function PlanCanvas({
             {Math.round(viewSize.width)} x {Math.round(viewSize.height)}
           </span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant={isZoomWindowMode ? "default" : "outline"}
+            title="Zoom to area"
+            onClick={() => {
+              setIsZoomWindowMode((current) => !current);
+              setZoomWindowDraft(null);
+            }}
+            data-testid="plan-zoom-window"
+          >
+            <ZoomIn className="h-3.5 w-3.5" />
+            Zoom Area
+          </Button>
           <Button
             type="button"
             size="icon"
@@ -1588,6 +1772,26 @@ function PlanCanvas({
             type="button"
             size="sm"
             variant="outline"
+            title="Fit width"
+            onClick={fitToWidth}
+            data-testid="plan-fit-width"
+          >
+            Width
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            title="Fit height"
+            onClick={fitToHeight}
+            data-testid="plan-fit-height"
+          >
+            Height
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
             title="Actual size"
             onClick={setActualSize}
             data-testid="plan-actual-size"
@@ -1606,6 +1810,16 @@ function PlanCanvas({
           >
             <ZoomIn className="h-3.5 w-3.5" />
           </Button>
+          <div className="flex w-36 items-center px-2" data-testid="plan-zoom-slider">
+            <Slider
+              min={ZOOM_SLIDER_MIN}
+              max={ZOOM_SLIDER_MAX}
+              step={5}
+              value={[zoomSliderValue]}
+              onValueChange={(value) => setClampedZoom((value[0] ?? 100) / 100)}
+              aria-label="Plan zoom percentage"
+            />
+          </div>
         </div>
       </div>
 
@@ -1663,6 +1877,7 @@ function PlanCanvas({
                   planSet={overlayPlanSet}
                   sheet={overlaySheet}
                   viewSize={viewSize}
+                  zoom={zoom}
                 />
               </div>
             )}
@@ -1678,11 +1893,13 @@ function PlanCanvas({
               viewBox={viewBox}
               className={cn(
                 "absolute inset-0 h-full w-full",
-                tool === "select"
-                  ? isPanning
-                    ? "cursor-grabbing"
-                    : "cursor-grab"
-                  : "cursor-crosshair",
+                isZoomWindowMode
+                  ? "cursor-zoom-in"
+                  : tool === "select"
+                    ? isPanning
+                      ? "cursor-grabbing"
+                      : "cursor-grab"
+                    : "cursor-crosshair",
               )}
               data-testid="plan-canvas"
               onClick={handleClick}
@@ -1721,6 +1938,7 @@ function PlanCanvas({
                 dashed
                 closed={false}
               />
+              <ZoomWindowShape draft={zoomWindowDraft} viewSize={viewSize} />
             </svg>
           </div>
         </div>
@@ -1729,14 +1947,54 @@ function PlanCanvas({
   );
 }
 
+function ZoomWindowShape({
+  draft,
+  viewSize,
+}: {
+  draft: ZoomWindowDraft | null;
+  viewSize: ViewSize;
+}) {
+  if (!draft) return null;
+  const minX = Math.min(draft.start.x, draft.end.x) * viewSize.width;
+  const minY = Math.min(draft.start.y, draft.end.y) * viewSize.height;
+  const width = Math.abs(draft.start.x - draft.end.x) * viewSize.width;
+  const height = Math.abs(draft.start.y - draft.end.y) * viewSize.height;
+  return (
+    <g pointerEvents="none" data-testid="plan-zoom-window-draft">
+      <rect
+        x={minX}
+        y={minY}
+        width={width}
+        height={height}
+        fill="#1b7a6e18"
+        stroke="#1b7a6e"
+        strokeWidth="3"
+        strokeDasharray="10 8"
+      />
+      <rect
+        x={minX + 4}
+        y={minY + 4}
+        width={Math.max(0, width - 8)}
+        height={Math.max(0, height - 8)}
+        fill="none"
+        stroke="white"
+        strokeWidth="1.5"
+        strokeDasharray="10 8"
+      />
+    </g>
+  );
+}
+
 function PlanSheetOverlayLayer({
   planSet,
   sheet,
   viewSize,
+  zoom,
 }: {
   planSet: PlanSetRow;
   sheet: PlanSheetRow;
   viewSize: ViewSize;
+  zoom: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -1748,6 +2006,10 @@ function PlanSheetOverlayLayer({
     setSignedUrl("");
     setRenderError("");
     if (!planSet.file_path) return;
+    if (isDirectPlanFileUrl(planSet.file_path)) {
+      setSignedUrl(directPlanFileUrl(planSet.file_path));
+      return;
+    }
     supabase.storage
       .from(planRoomBucket)
       .createSignedUrl(planSet.file_path, 60 * 30)
@@ -1763,6 +2025,7 @@ function PlanSheetOverlayLayer({
 
   useEffect(() => {
     let cancelled = false;
+    let renderTask: { promise: Promise<unknown>; cancel: () => void } | null = null;
     const renderPdf = async () => {
       if (!signedUrl || planSet.file_mime_type !== "application/pdf" || !canvasRef.current) return;
       try {
@@ -1771,22 +2034,28 @@ function PlanSheetOverlayLayer({
         (
           pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }
         ).GlobalWorkerOptions.workerSrc = workerUrl;
-        const pdf = await pdfjs.getDocument({ url: signedUrl }).promise;
+        const pdf = await pdfjs.getDocument(await pdfDocumentSourceFor(signedUrl)).promise;
         const page = await pdf.getPage(sheet.page_number || 1);
         const viewport = page.getViewport({ scale: 1 });
         const scale = Math.min(viewSize.width / viewport.width, viewSize.height / viewport.height);
-        const scaled = page.getViewport({ scale: Math.max(0.1, scale) });
+        const cssScale = Math.max(0.1, scale);
+        const renderScale = pdfRenderScaleFor(viewport, cssScale, zoom);
+        const scaled = page.getViewport({ scale: renderScale });
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
         canvas.width = Math.round(scaled.width);
         canvas.height = Math.round(scaled.height);
-        await page.render({
+        canvas.dataset.pdfRenderScale = renderScale.toFixed(3);
+        canvas.dataset.pdfRenderWidth = String(canvas.width);
+        canvas.dataset.pdfRenderHeight = String(canvas.height);
+        renderTask = page.render({
           canvas,
           canvasContext: canvas.getContext("2d")!,
           viewport: scaled,
-        }).promise;
+        });
+        await renderTask.promise;
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && !isPdfRenderCancelled(error)) {
           setRenderError(
             error instanceof Error ? error.message : "Revision overlay did not render.",
           );
@@ -1796,8 +2065,9 @@ function PlanSheetOverlayLayer({
     renderPdf();
     return () => {
       cancelled = true;
+      renderTask?.cancel();
     };
-  }, [planSet.file_mime_type, sheet.page_number, signedUrl, viewSize.height, viewSize.width]);
+  }, [planSet.file_mime_type, sheet.page_number, signedUrl, viewSize.height, viewSize.width, zoom]);
 
   if (planSet.sample_key === "harbor-residence" || !planSet.file_path) {
     return <SamplePlanBackground sheet={sheet} viewSize={viewSize} overlay />;
