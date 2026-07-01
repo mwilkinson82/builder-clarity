@@ -506,6 +506,10 @@ for (const requiredScheduleRiskText of [
   "Current dates",
   "CONSTRUCTLINE_FIT_DAY_PX",
   "CpmDataDateControl",
+  "updates = EMPTY_SCHEDULE_UPDATES",
+  "const workbenchDraft = buildCpmScheduleUpdateDraft",
+  "previousUpdate: latestScheduleUpdate",
+  "milestone_forecasts: workbenchDraft.milestone_forecasts",
   "Save current CPM as template",
   "Use template",
   "BROWSER_CPM_TEMPLATE_STORAGE_KEY",
@@ -570,6 +574,7 @@ for (const requiredScheduleRouteText of [
   "Trade performance risks",
   "Use Notes / Constraint for the delay narrative",
   'workspaceMode="full"',
+  "updates={updates}",
 ]) {
   assert.ok(
     scheduleRouteSource.includes(requiredScheduleRouteText),

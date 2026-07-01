@@ -613,6 +613,7 @@ function ScheduleWorkspacePage() {
         delayFragments={delayFragments}
         delayFragmentPersistence={delayFragmentPersistence}
         milestones={milestones}
+        updates={updates}
         project={project}
         latestDataDate={latestUpdate?.data_date ?? null}
         onAddActivity={(activity) => activityCreate.mutate(activity)}

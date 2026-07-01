@@ -1708,6 +1708,7 @@ export function CpmActivityPlanner({
   delayFragments,
   delayFragmentPersistence = "ready",
   milestones,
+  updates = EMPTY_SCHEDULE_UPDATES,
   project,
   latestDataDate,
   onAddActivity,
@@ -1734,6 +1735,7 @@ export function CpmActivityPlanner({
   delayFragments: ScheduleDelayFragmentRow[];
   delayFragmentPersistence?: "ready" | "migration_required";
   milestones: MilestoneRow[];
+  updates?: ScheduleUpdateRow[];
   project: ProjectRow;
   latestDataDate: string | null;
   onAddActivity: (activity: ActivityCreateInput) => void;
@@ -1814,6 +1816,7 @@ export function CpmActivityPlanner({
     });
   };
   const delaySummary = useMemo(() => buildDelayFragmentSummary(delayFragments), [delayFragments]);
+  const latestScheduleUpdate = updates[0] ?? null;
   const baseCpmModel = useMemo(
     () =>
       buildConstructLineCpmModel(sortedActivities, {
@@ -2119,26 +2122,29 @@ export function CpmActivityPlanner({
     setActivityOrder("wbs");
   };
   const dataDateUpdate = useMutation({
-    mutationFn: (nextDataDate: string) =>
-      createUpdateFn({
+    mutationFn: (nextDataDate: string) => {
+      const workbenchDraft = buildCpmScheduleUpdateDraft({
+        dataDate: nextDataDate,
+        delaySummary,
+        milestones,
+        model: cpmModel,
+        previousUpdate: latestScheduleUpdate,
+        project,
+      });
+      return createUpdateFn({
         data: {
           projectId: project.id,
-          forecast_completion_date:
-            project.forecast_completion_date ||
-            cpmModel.cpmFinishDate ||
-            project.baseline_completion_date ||
-            todayIsoDate(),
+          forecast_completion_date: workbenchDraft.forecast_completion_date,
           data_date: nextDataDate,
           update_date: nextDataDate,
           schedule_money_exposure: 0,
           schedule_money_recovery: 0,
-          money_notes: "No schedule dollars auto-calculated from CPM data-date save.",
-          notes: `Data date set from the CPM schedule workbench. CPM finish: ${shortDate(
-            cpmModel.cpmFinishDate,
-          )}.`,
-          milestone_forecasts: [],
+          money_notes: workbenchDraft.money_notes,
+          notes: workbenchDraft.notes,
+          milestone_forecasts: workbenchDraft.milestone_forecasts,
         },
-      }),
+      });
+    },
     onSuccess: async () => {
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["schedule", project.id] }),
