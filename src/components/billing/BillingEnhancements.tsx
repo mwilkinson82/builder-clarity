@@ -270,6 +270,12 @@ export function BillingLineItemsPanel({
       ),
     [selectedLines],
   );
+  const showRetainageAmounts = selectedLines.some(
+    (line) =>
+      Math.abs(line.retainage_pct) > 0.01 ||
+      Math.abs(line.retainage_held_cents - line.retainage_released_cents) > 0 ||
+      line.retainage_released_cents > 0,
+  );
 
   const releaseAll = () => {
     if (!selectedLines.length) return;
@@ -321,7 +327,7 @@ export function BillingLineItemsPanel({
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             Continuation sheet detail by scheduled value, previous work, this period, stored
-            materials, retainage, and balance to finish.
+            materials, and balance to finish.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -362,7 +368,7 @@ export function BillingLineItemsPanel({
             size="sm"
             variant="ghost"
             className="gap-1.5"
-            disabled={selectedLines.length === 0}
+            disabled={selectedLines.length === 0 || !showRetainageAmounts}
             onClick={releaseAll}
           >
             <Check className="h-3.5 w-3.5" /> Release retainage
@@ -381,7 +387,11 @@ export function BillingLineItemsPanel({
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 Pay app totals
               </div>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+              <div
+                className={`mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 ${
+                  showRetainageAmounts ? "xl:grid-cols-7" : "xl:grid-cols-6"
+                }`}
+              >
                 <BillingDetail label="Scheduled" value={fmtUSD(totals.scheduled)} />
                 <BillingDetail
                   label="Change orders"
@@ -392,7 +402,9 @@ export function BillingLineItemsPanel({
                 <BillingDetail label="This period" value={fmtUSD(totals.thisPeriod)} />
                 <BillingDetail label="Total" value={fmtUSD(totals.total)} />
                 <BillingDetail label="Balance" value={fmtUSD(totals.balance)} />
-                <BillingDetail label="Retainage" value={fmtUSD(totals.retainage)} />
+                {showRetainageAmounts ? (
+                  <BillingDetail label="Retainage" value={fmtUSD(totals.retainage)} />
+                ) : null}
               </div>
             </div>
             <div className="rounded-md border border-hairline bg-surface p-4">

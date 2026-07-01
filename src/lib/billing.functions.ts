@@ -44,6 +44,22 @@ const bool = (value: unknown) => (typeof value === "boolean" ? value : Boolean(v
 const dollarsToCents = (value: number) => Math.round((Number.isFinite(value) ? value : 0) * 100);
 const centsToDollars = (value: unknown) => num(value) / 100;
 const normalizeKey = (value: string) => value.trim().toLowerCase();
+const billingLineRetainageSelect =
+  "id,project_id,billing_application_id,work_completed_previous_cents,materials_stored_previous_cents,work_completed_this_period_cents,materials_stored_this_period_cents,retainage_pct,retainage_released_cents";
+
+function billingLineRetainageCapCents(
+  line: Record<string, unknown>,
+  retainagePct: number,
+  patch: Record<string, number> = {},
+) {
+  const completedAndStored =
+    num(line.work_completed_previous_cents) +
+    num(line.materials_stored_previous_cents) +
+    num(patch.work_completed_this_period_cents ?? line.work_completed_this_period_cents) +
+    num(patch.materials_stored_this_period_cents ?? line.materials_stored_this_period_cents);
+
+  return Math.max(0, Math.round(completedAndStored * (retainagePct / 100)));
+}
 
 function isMissingRestRelation(error: DynamicSupabaseError | null, relation: string) {
   const message = error?.message ?? "";
@@ -832,7 +848,7 @@ export const updateBillingLineItem = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const ctx = context as unknown as BillingServerContext;
     const lineRes = await dynamicTable(ctx.supabase, "billing_line_items")
-      .select("id,project_id,billing_application_id")
+      .select(billingLineRetainageSelect)
       .eq("id", data.id)
       .single();
     if (lineRes.error) throw new Error(lineRes.error.message);
@@ -853,8 +869,25 @@ export const updateBillingLineItem = createServerFn({ method: "POST" })
     if (typeof data.patch.retainage_pct === "number") {
       patch.retainage_pct = data.patch.retainage_pct;
     }
+    const retainagePct =
+      typeof data.patch.retainage_pct === "number"
+        ? data.patch.retainage_pct
+        : num(line.retainage_pct);
+    const retainageReleaseCap = billingLineRetainageCapCents(line, retainagePct, patch);
     if (typeof data.patch.retainage_released === "number") {
-      patch.retainage_released_cents = dollarsToCents(data.patch.retainage_released);
+      patch.retainage_released_cents = Math.min(
+        dollarsToCents(data.patch.retainage_released),
+        retainageReleaseCap,
+      );
+    } else if (
+      typeof data.patch.retainage_pct === "number" ||
+      typeof data.patch.work_completed_this_period === "number" ||
+      typeof data.patch.materials_stored_this_period === "number"
+    ) {
+      patch.retainage_released_cents = Math.min(
+        num(line.retainage_released_cents),
+        retainageReleaseCap,
+      );
     }
 
     const updateRes = await dynamicTable(ctx.supabase, "billing_line_items")
@@ -888,11 +921,28 @@ export const updateBillingApplicationRetainageRate = createServerFn({ method: "P
     const app = appRes.data as Record<string, unknown>;
     await requireCanManageProject(ctx, app.project_id as string);
 
-    const updateRes = await dynamicTable(ctx.supabase, "billing_line_items")
-      .update({ retainage_pct: data.retainage_pct })
-      .eq("billing_application_id", data.billingApplicationId)
-      .select("id");
-    if (updateRes.error) throw new Error(updateRes.error.message);
+    const linesRes = await dynamicTable(ctx.supabase, "billing_line_items")
+      .select(billingLineRetainageSelect)
+      .eq("billing_application_id", data.billingApplicationId);
+    if (linesRes.error) throw new Error(linesRes.error.message);
+    const lines = Array.isArray(linesRes.data) ? (linesRes.data as Record<string, unknown>[]) : [];
+
+    const updateResults = await Promise.all(
+      lines.map((line) => {
+        const retainageReleaseCap = billingLineRetainageCapCents(line, data.retainage_pct);
+        return dynamicTable(ctx.supabase, "billing_line_items")
+          .update({
+            retainage_pct: data.retainage_pct,
+            retainage_released_cents: Math.min(
+              num(line.retainage_released_cents),
+              retainageReleaseCap,
+            ),
+          })
+          .eq("id", line.id);
+      }),
+    );
+    const failedUpdate = updateResults.find((result) => result.error);
+    if (failedUpdate?.error) throw new Error(failedUpdate.error.message);
 
     const syncRes = await ctx.supabase.rpc("sync_billing_application_from_lines", {
       p_billing_application_id: data.billingApplicationId,
@@ -900,7 +950,7 @@ export const updateBillingApplicationRetainageRate = createServerFn({ method: "P
     if (syncRes.error) throw new Error(syncRes.error.message);
     return {
       ok: true,
-      line_count: Array.isArray(updateRes.data) ? updateRes.data.length : 0,
+      line_count: lines.length,
     };
   });
 

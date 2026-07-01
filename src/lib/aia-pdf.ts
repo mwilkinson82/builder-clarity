@@ -236,6 +236,7 @@ function drawCoverSheet(
   payApp: BillingApplicationRow,
   totals: PaymentTotals,
   generatedAt: Date,
+  hasLineItems: boolean,
   companyLogo?: PDFImage | null,
 ) {
   const page = ctx.doc.addPage([PORTRAIT_W, PORTRAIT_H]);
@@ -313,13 +314,19 @@ function drawCoverSheet(
   );
 
   const contractSumToDate = payApp.contract_amount + payApp.change_order_amount;
+  const contractSumToDateCents = Math.round(contractSumToDate * 100);
   const totalCompletedStored =
     totals.totalCompletedStored || Math.round(payApp.amount_billed * 100);
-  const retainage = Math.max(totals.retainage, Math.round(payApp.retainage * 100));
-  const earnedLessRetainage = Math.max(0, totalCompletedStored - retainage);
+  const retainage = hasLineItems
+    ? Math.max(0, totals.retainage)
+    : Math.max(0, Math.round(payApp.retainage * 100));
+  const hasRetainage = retainage > 0;
+  const earnedLessRetainage = hasRetainage
+    ? Math.max(0, totalCompletedStored - retainage)
+    : totalCompletedStored;
   const previousCertificates = Math.max(0, Math.round(payApp.paid_to_date * 100));
   const currentPaymentDue = Math.max(0, earnedLessRetainage - previousCertificates);
-  const balanceToFinish = Math.max(0, Math.round(contractSumToDate * 100) - earnedLessRetainage);
+  const balanceToFinish = Math.max(0, contractSumToDateCents - earnedLessRetainage);
 
   ctx.y -= 66;
   text(ctx, "CONTRACT SUMMARY", M, ctx.y, { font: ctx.sansBold, size: 8, color: MUTED });
@@ -345,12 +352,19 @@ function drawCoverSheet(
     ctx.y,
   );
   ctx.y -= 25;
-  drawCoverSummaryRow(ctx, "Retainage held less retainage released", money(retainage), ctx.y);
-  ctx.y -= 25;
-  drawCoverSummaryRow(ctx, "Total earned less retainage", money(earnedLessRetainage), ctx.y, {
-    bold: true,
-    fill: SURFACE,
-  });
+  if (hasRetainage) {
+    drawCoverSummaryRow(ctx, "Retainage held less retainage released", money(retainage), ctx.y);
+    ctx.y -= 25;
+    drawCoverSummaryRow(ctx, "Total earned less retainage", money(earnedLessRetainage), ctx.y, {
+      bold: true,
+      fill: SURFACE,
+    });
+  } else {
+    drawCoverSummaryRow(ctx, "Total earned to date", money(earnedLessRetainage), ctx.y, {
+      bold: true,
+      fill: SURFACE,
+    });
+  }
   ctx.y -= 25;
   drawCoverSummaryRow(ctx, "Less previous payments recorded", money(previousCertificates), ctx.y);
   ctx.y -= 25;
@@ -359,14 +373,21 @@ function drawCoverSheet(
     fill: SURFACE,
   });
   ctx.y -= 25;
-  drawCoverSummaryRow(ctx, "Balance to finish, including retainage", money(balanceToFinish), ctx.y);
+  drawCoverSummaryRow(
+    ctx,
+    hasRetainage ? "Balance to finish, including retainage" : "Balance to finish",
+    money(balanceToFinish),
+    ctx.y,
+  );
 
   ctx.y -= 58;
   text(ctx, "CONTRACTOR CERTIFICATION", M, ctx.y, { font: ctx.sansBold, size: 8, color: MUTED });
   drawBox(ctx, M, ctx.y - 76, PORTRAIT_W - M * 2, 64, WHITE);
   drawWrappedText(
     ctx,
-    "The contractor confirms this application reflects work completed, stored materials, retainage, payments received, and known contract adjustments for the billing period shown above.",
+    hasRetainage
+      ? "The contractor confirms this application reflects work completed, stored materials, retainage, payments received, and known contract adjustments for the billing period shown above."
+      : "The contractor confirms this application reflects work completed, stored materials, payments received, and known contract adjustments for the billing period shown above.",
     M + 10,
     ctx.y - 28,
     PORTRAIT_W - M * 2 - 20,
@@ -391,11 +412,16 @@ const CONTINUATION_COLUMNS = [
   { key: "retainage", label: "Retainage", x: 672, width: 90, align: "right" },
 ] as const;
 
+function getContinuationColumns(showRetainage: boolean) {
+  return CONTINUATION_COLUMNS.filter((column) => showRetainage || column.key !== "retainage");
+}
+
 function drawContinuationHeader(
   ctx: PdfCtx,
   project: ProjectRow,
   payApp: BillingApplicationRow,
   pageNumber: number,
+  showRetainage: boolean,
   companyLogo?: PDFImage | null,
 ) {
   text(ctx, "CONTINUATION SHEET", M, LANDSCAPE_H - M, { font: ctx.serif, size: 18 });
@@ -431,7 +457,7 @@ function drawContinuationHeader(
     borderColor: HAIR,
     borderWidth: 0.5,
   });
-  CONTINUATION_COLUMNS.forEach((column) =>
+  getContinuationColumns(showRetainage).forEach((column) =>
     drawWrappedText(ctx, column.label.toUpperCase(), column.x + 4, ctx.y - 9, column.width - 8, {
       font: ctx.sansBold,
       size: 5.5,
@@ -442,7 +468,13 @@ function drawContinuationHeader(
   ctx.y -= 31;
 }
 
-function drawContinuationRow(ctx: PdfCtx, line: BillingLineItemRow, rowNumber: number, y: number) {
+function drawContinuationRow(
+  ctx: PdfCtx,
+  line: BillingLineItemRow,
+  rowNumber: number,
+  y: number,
+  showRetainage: boolean,
+) {
   drawBox(ctx, M, y - 8, LANDSCAPE_W - M * 2, 27, WHITE);
   text(ctx, line.cost_code || String(rowNumber), 34, y + 4, { size: 7 });
   drawWrappedText(ctx, line.description || "-", 72, y + 6, 154, {
@@ -463,7 +495,15 @@ function drawContinuationRow(ctx: PdfCtx, line: BillingLineItemRow, rowNumber: n
   rightText(ctx, money(line.total_completed_and_stored_cents), 506, y + 4, 64);
   rightText(ctx, `${line.billing_percent_complete.toFixed(1)}%`, 580, y + 4, 24);
   rightText(ctx, money(line.balance_to_finish_cents), 614, y + 4, 52);
-  rightText(ctx, money(line.retainage_held_cents - line.retainage_released_cents), 676, y + 4, 80);
+  if (showRetainage) {
+    rightText(
+      ctx,
+      money(line.retainage_held_cents - line.retainage_released_cents),
+      676,
+      y + 4,
+      80,
+    );
+  }
 }
 
 function addContinuationPage(
@@ -471,10 +511,11 @@ function addContinuationPage(
   project: ProjectRow,
   payApp: BillingApplicationRow,
   pageNumber: number,
+  showRetainage: boolean,
   companyLogo?: PDFImage | null,
 ) {
   ctx.page = ctx.doc.addPage([LANDSCAPE_W, LANDSCAPE_H]);
-  drawContinuationHeader(ctx, project, payApp, pageNumber, companyLogo);
+  drawContinuationHeader(ctx, project, payApp, pageNumber, showRetainage, companyLogo);
 }
 
 function drawContinuationSheets(
@@ -486,20 +527,26 @@ function drawContinuationSheets(
   companyLogo?: PDFImage | null,
 ) {
   let pageNumber = 1;
-  addContinuationPage(ctx, project, payApp, pageNumber, companyLogo);
+  const showRetainage = lineItems.some(
+    (line) =>
+      line.retainage_pct > 0 ||
+      line.retainage_released_cents > 0 ||
+      line.retainage_held_cents - line.retainage_released_cents > 0,
+  );
+  addContinuationPage(ctx, project, payApp, pageNumber, showRetainage, companyLogo);
 
   lineItems.forEach((line, index) => {
     if (ctx.y < M + 44) {
       pageNumber += 1;
-      addContinuationPage(ctx, project, payApp, pageNumber, companyLogo);
+      addContinuationPage(ctx, project, payApp, pageNumber, showRetainage, companyLogo);
     }
-    drawContinuationRow(ctx, line, index + 1, ctx.y);
+    drawContinuationRow(ctx, line, index + 1, ctx.y, showRetainage);
     ctx.y -= 27;
   });
 
   if (ctx.y < M + 58) {
     pageNumber += 1;
-    addContinuationPage(ctx, project, payApp, pageNumber);
+    addContinuationPage(ctx, project, payApp, pageNumber, showRetainage, companyLogo);
   }
   drawBox(ctx, M, ctx.y - 8, LANDSCAPE_W - M * 2, 30, SURFACE);
   text(ctx, "TOTALS", 72, ctx.y + 4, { font: ctx.sansBold, size: 7 });
@@ -509,7 +556,9 @@ function drawContinuationSheets(
   rightText(ctx, money(totals.stored), 440, ctx.y + 4, 56, 7, ctx.sansBold);
   rightText(ctx, money(totals.totalCompletedStored), 506, ctx.y + 4, 64, 7, ctx.sansBold);
   rightText(ctx, money(totals.balance), 614, ctx.y + 4, 52, 7, ctx.sansBold);
-  rightText(ctx, money(totals.retainage), 676, ctx.y + 4, 80, 7, ctx.sansBold);
+  if (showRetainage) {
+    rightText(ctx, money(totals.retainage), 676, ctx.y + 4, 80, 7, ctx.sansBold);
+  }
 }
 
 export async function generateAiaBillingPdf({
@@ -534,7 +583,7 @@ export async function generateAiaBillingPdf({
 
   const totals = computeTotals(lineItems);
   const companyLogo = await embedPdfLogo(doc, project.organization_logo_url);
-  drawCoverSheet(ctx, project, payApp, totals, generatedAt, companyLogo);
+  drawCoverSheet(ctx, project, payApp, totals, generatedAt, lineItems.length > 0, companyLogo);
   drawContinuationSheets(ctx, project, payApp, lineItems, totals, companyLogo);
 
   return doc.save();
