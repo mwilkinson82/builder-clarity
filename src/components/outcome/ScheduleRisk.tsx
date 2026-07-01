@@ -213,6 +213,7 @@ type ScheduleActivityOrder = "start" | "wbs";
 type ScheduleGridView =
   | "all"
   | "active"
+  | "update_queue"
   | "lookahead_1w"
   | "lookahead_2w"
   | "lookahead_6w"
@@ -247,6 +248,7 @@ const CONSTRUCTLINE_RELATIONSHIP_TYPES: ConstructLineRelationshipType[] = ["FS",
 const SCHEDULE_GRID_VIEW_OPTIONS: Array<{ value: ScheduleGridView; label: string }> = [
   { value: "all", label: "All" },
   { value: "active", label: "Active" },
+  { value: "update_queue", label: "Needs update" },
   { value: "lookahead_1w", label: "1 week lookahead" },
   { value: "lookahead_2w", label: "2 week lookahead" },
   { value: "lookahead_6w", label: "6 week lookahead" },
@@ -960,18 +962,10 @@ function buildScheduleUpdateReadiness(
 ): ScheduleUpdateReadinessSummary {
   const openTasks = model.tasks.filter((task) => task.activity.percent_complete < 100);
   const referenceDate = dataDate || todayIsoDate();
-  const referenceMs = parseDateMs(referenceDate) ?? parseDateMs(todayIsoDate()) ?? Date.now();
-  const lookaheadFinish = isoDateFromMs(referenceMs + 14 * DAY_MS);
 
   const items = openTasks.flatMap((task) => {
     const activity = task.activity;
-    const percent = Math.max(0, Math.min(100, activity.percent_complete));
-    const isInUpdateWindow =
-      task.isLate ||
-      task.isOutOfSequence ||
-      task.isCritical ||
-      percent > 0 ||
-      taskIntersectsDateWindow(task, referenceDate, lookaheadFinish);
+    const isInUpdateWindow = taskIsInDataDateUpdateWindow(task, referenceDate);
     if (!isInUpdateWindow) return [];
 
     const reasons: string[] = [];
@@ -2829,6 +2823,7 @@ export function CpmActivityPlanner({
           summary={updateReadiness}
           dataDate={effectiveDataDate}
           onShowActive={() => setScheduleView("active")}
+          onShowUpdateQueue={() => setScheduleView("update_queue")}
           onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
         />
 
@@ -3079,15 +3074,18 @@ function ScheduleUpdateReadinessPanel({
   summary,
   dataDate,
   onShowActive,
+  onShowUpdateQueue,
   onOpenActivity,
 }: {
   summary: ScheduleUpdateReadinessSummary;
   dataDate: string | null;
   onShowActive: () => void;
+  onShowUpdateQueue: () => void;
   onOpenActivity: (activity: ScheduleActivityRow) => void;
 }) {
   const visibleItems = summary.items.slice(0, 5);
   const hiddenCount = Math.max(0, summary.items.length - visibleItems.length);
+  const nextItem = summary.items[0] ?? null;
   const tone =
     summary.needsStatusCount === 0 ? "success" : summary.lateCount > 0 ? "danger" : "warning";
 
@@ -3120,10 +3118,25 @@ function ScheduleUpdateReadinessPanel({
               : "Set a data date before saving the next CPM update."}
           </div>
         </div>
-        <Button type="button" variant="outline" className="h-9 gap-2" onClick={onShowActive}>
-          <CalendarDays className="h-4 w-4" />
-          Show active rows
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" className="h-9 gap-2" onClick={onShowUpdateQueue}>
+            <ClipboardList className="h-4 w-4" />
+            Show needs update
+          </Button>
+          <Button
+            type="button"
+            className="h-9 gap-2"
+            disabled={!nextItem}
+            onClick={() => nextItem && onOpenActivity(nextItem.task.activity)}
+          >
+            <Pencil className="h-4 w-4" />
+            Open next update row
+          </Button>
+          <Button type="button" variant="outline" className="h-9 gap-2" onClick={onShowActive}>
+            <CalendarDays className="h-4 w-4" />
+            Show active rows
+          </Button>
+        </div>
       </div>
 
       <div className="mt-3 grid gap-2 md:grid-cols-4">
@@ -3155,7 +3168,7 @@ function ScheduleUpdateReadinessPanel({
       <div className="mt-3 grid gap-2 rounded border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground lg:grid-cols-4">
         {[
           "1. Set the data date",
-          "2. Show active rows",
+          "2. Open needs update",
           "3. Update actuals, remaining duration, and expected finish",
           "4. Save the CPM update snapshot",
         ].map((step) => (
@@ -3186,6 +3199,10 @@ function ScheduleUpdateReadinessPanel({
         </div>
       ) : (
         <div className="mt-3 grid gap-2">
+          <div className="rounded border border-hairline bg-card px-3 py-2 text-xs text-muted-foreground">
+            Work this queue row by row. Each saved activity updates the CPM forecast basis, then the
+            data-date snapshot can be saved with a defensible status record.
+          </div>
           {visibleItems.map((item) => (
             <div
               key={item.task.activity.id}
@@ -5615,6 +5632,19 @@ function taskNeedsStatusUpdateBasis(task: ConstructLineCpmTask) {
   );
 }
 
+function taskIsInDataDateUpdateWindow(task: ConstructLineCpmTask, referenceDate: string) {
+  const percent = Math.max(0, Math.min(100, task.activity.percent_complete));
+  const referenceMs = parseDateMs(referenceDate) ?? parseDateMs(todayIsoDate()) ?? Date.now();
+  const lookaheadFinish = isoDateFromMs(referenceMs + 14 * DAY_MS);
+  return (
+    task.isLate ||
+    task.isOutOfSequence ||
+    task.isCritical ||
+    percent > 0 ||
+    taskIntersectsDateWindow(task, referenceDate, lookaheadFinish)
+  );
+}
+
 function filterConstructLineCpmModel(
   model: ConstructLineCpmModel,
   view: ScheduleGridView,
@@ -5651,6 +5681,13 @@ function taskMatchesScheduleGridView(
   const hasStartedButIncomplete = percent > 0 && isIncomplete;
 
   if (view === "active") return isActive || hasStartedButIncomplete;
+  if (view === "update_queue") {
+    return (
+      taskIntersectsDateWindow(task, referenceDate, referenceDate) ||
+      (taskIsInDataDateUpdateWindow(task, referenceDate) &&
+        (taskNeedsStatusUpdateBasis(task) || task.isLate || task.isOutOfSequence))
+    );
+  }
   const lookaheadDays = SCHEDULE_LOOKAHEAD_DAYS[view];
   if (lookaheadDays) {
     const referenceMs = parseDateMs(referenceDate) ?? parseDateMs(todayIsoDate()) ?? Date.now();
@@ -5702,6 +5739,9 @@ function describeScheduleGridView(
       : `${visibleCount} of ${totalCount} activities shown`;
   if (view === "all") return `All activities · ${countText}`;
   if (view === "active") return `Active as of ${shortDate(referenceDate)} · ${countText}`;
+  if (view === "update_queue") {
+    return `Needs data-date update as of ${shortDate(referenceDate)} · ${countText}`;
+  }
   const lookaheadDays = SCHEDULE_LOOKAHEAD_DAYS[view];
   if (lookaheadDays) {
     const lookaheadLabel =
@@ -5719,6 +5759,7 @@ function getScheduleReportTitle(view: ScheduleGridView) {
   if (view === "lookahead_1w") return "1-Week Lookahead Report";
   if (view === "lookahead_2w") return "2-Week Lookahead Report";
   if (view === "lookahead_6w") return "6-Week Lookahead Report";
+  if (view === "update_queue") return "CPM Update Queue Report";
   if (view === "issues") return "Schedule Issues Report";
   if (view === "milestones") return "Milestone Report";
   if (view === "active") return "Active Schedule Report";
