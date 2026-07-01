@@ -221,32 +221,32 @@ const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
 const CONSTRUCTLINE_MIN_DAY_PX = 1.1;
 const CONSTRUCTLINE_MAX_DAY_PX = 28;
-const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v3";
+const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v4";
 const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
-  { id: "id", label: "ID", compactLabel: "ID", min: 46, default: 52, max: 92, align: "left" },
+  { id: "id", label: "ID", compactLabel: "ID", min: 44, default: 48, max: 88, align: "left" },
   {
     id: "activity",
     label: "Activity",
     compactLabel: "Activity",
-    min: 150,
-    default: 190,
-    max: 420,
+    min: 124,
+    default: 160,
+    max: 360,
     align: "left",
   },
-  { id: "dur", label: "Duration", compactLabel: "Dur", min: 40, default: 44, max: 78 },
-  { id: "plan", label: "Planned dates", compactLabel: "Plan", min: 62, default: 68, max: 112 },
+  { id: "dur", label: "Duration", compactLabel: "Dur", min: 36, default: 40, max: 72 },
+  { id: "plan", label: "Planned dates", compactLabel: "Plan", min: 58, default: 64, max: 104 },
   {
     id: "current",
     label: "Current dates",
     compactLabel: "Now",
-    min: 70,
-    default: 76,
-    max: 128,
+    min: 62,
+    default: 68,
+    max: 120,
   },
-  { id: "slip", label: "Slip", compactLabel: "Slip", min: 36, default: 40, max: 70 },
-  { id: "done", label: "Done percent", compactLabel: "%", min: 36, default: 40, max: 66 },
-  { id: "tf", label: "TF", compactLabel: "TF", min: 30, default: 34, max: 60 },
-  { id: "logic", label: "Logic", compactLabel: "Logic", min: 34, default: 38, max: 66 },
+  { id: "slip", label: "Slip", compactLabel: "Slip", min: 32, default: 36, max: 64 },
+  { id: "done", label: "Done percent", compactLabel: "%", min: 34, default: 38, max: 62 },
+  { id: "tf", label: "TF", compactLabel: "TF", min: 28, default: 32, max: 56 },
+  { id: "logic", label: "Logic", compactLabel: "Logic", min: 30, default: 34, max: 60 },
 ] as const;
 const CONSTRUCTLINE_TABLE_PRINT_COLUMNS =
   "42px minmax(130px,1fr) 34px 48px 54px 34px 30px 24px 26px";
@@ -255,6 +255,7 @@ const ACTIVITY_UPDATE_SNAPSHOT_COLUMNS =
 const DAY_MS = 24 * 60 * 60 * 1000;
 type ConstructLineTableColumnId = (typeof CONSTRUCTLINE_TABLE_COLUMN_SPECS)[number]["id"];
 type ConstructLineTableColumnWidths = Record<ConstructLineTableColumnId, number>;
+type ConstructLineGridLayoutPreset = "gantt" | "balanced" | "detail";
 type ScheduleActivityOrder = "start" | "wbs";
 type ScheduleGridView =
   | "all"
@@ -4869,9 +4870,37 @@ function clampNumber(value: number, min: number, max: number) {
 function buildDefaultTableColumnWidths(isFocusMode: boolean): ConstructLineTableColumnWidths {
   return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((widths, column) => {
     widths[column.id] =
-      column.id === "activity" && isFocusMode ? Math.min(column.max, 230) : column.default;
+      column.id === "activity" && isFocusMode ? Math.min(column.max, 190) : column.default;
     return widths;
   }, {} as ConstructLineTableColumnWidths);
+}
+
+function buildTableColumnWidthsForPreset(
+  preset: ConstructLineGridLayoutPreset,
+): ConstructLineTableColumnWidths {
+  const widths = buildDefaultTableColumnWidths(false);
+  if (preset === "gantt") {
+    widths.id = 46;
+    widths.activity = 136;
+    widths.dur = 38;
+    widths.plan = 60;
+    widths.current = 64;
+    widths.slip = 34;
+    widths.done = 36;
+    widths.tf = 30;
+    widths.logic = 32;
+  } else if (preset === "detail") {
+    widths.id = 58;
+    widths.activity = 240;
+    widths.dur = 50;
+    widths.plan = 84;
+    widths.current = 96;
+    widths.slip = 48;
+    widths.done = 52;
+    widths.tf = 42;
+    widths.logic = 46;
+  }
+  return widths;
 }
 
 function buildTableColumnTemplate(widths: ConstructLineTableColumnWidths) {
@@ -5139,6 +5168,19 @@ function ActivityScheduleMatrix({
     if (onDayPxChange) onDayPxChange(CONSTRUCTLINE_FIT_DAY_PX);
     writeTableColumnWidths(layoutStorageKey, defaultWidths);
   }, [isFocusMode, isPrintMode, layoutStorageKey, onDayPxChange]);
+  const applyGridLayoutPreset = useCallback(
+    (preset: ConstructLineGridLayoutPreset) => {
+      if (isPrintMode) return;
+      const presetWidths =
+        preset === "balanced"
+          ? buildDefaultTableColumnWidths(isFocusMode)
+          : buildTableColumnWidthsForPreset(preset);
+      setColumnWidths(presetWidths);
+      if (onDayPxChange) onDayPxChange(CONSTRUCTLINE_FIT_DAY_PX);
+      writeTableColumnWidths(layoutStorageKey, presetWidths);
+    },
+    [isFocusMode, isPrintMode, layoutStorageKey, onDayPxChange],
+  );
   const monthBands = buildConstructLineMonthBands(
     model.timelineStartDate,
     model.totalTimelineDays,
@@ -5276,16 +5318,45 @@ function ActivityScheduleMatrix({
               </span>
             )}
             {!isPrintMode && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1.5 px-2 text-[11px]"
-                onClick={resetGridLayout}
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                Reset grid
-              </Button>
+              <div className="flex flex-wrap gap-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={() => applyGridLayoutPreset("gantt")}
+                >
+                  Gantt first
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={() => applyGridLayoutPreset("balanced")}
+                >
+                  Balanced
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={() => applyGridLayoutPreset("detail")}
+                >
+                  Details
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2 text-[11px]"
+                  onClick={resetGridLayout}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Reset grid
+                </Button>
+              </div>
             )}
           </div>
         </div>
@@ -5320,7 +5391,10 @@ function ActivityScheduleMatrix({
             style={{ width: tableWidth + timelineWidth, minWidth: "100%" }}
           >
             <div
-              className="sticky top-0 z-20 flex border-b border-hairline bg-card text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground shadow-sm"
+              className={cn(
+                "z-20 flex border-b border-hairline bg-card text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground shadow-sm",
+                isFocusMode ? "sticky top-0" : "relative",
+              )}
               style={{ height: headerHeight }}
             >
               <div
