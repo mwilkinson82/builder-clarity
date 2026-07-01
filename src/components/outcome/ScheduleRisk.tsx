@@ -6779,6 +6779,14 @@ function ActivityDelayFragmentPanel({
     () => buildDelayFragmentSummary(linkedFragments),
     [linkedFragments],
   );
+  const baselineFinishMs = parseDateMs(activity.baseline_finish_date ?? activity.finish_date);
+  const forecastFinishMs = parseDateMs(activity.forecast_finish_date ?? activity.finish_date);
+  const carriedDelayDays =
+    baselineFinishMs == null || forecastFinishMs == null
+      ? 0
+      : Math.max(0, Math.round((forecastFinishMs - baselineFinishMs) / DAY_MS));
+  const openDelayDays = Math.max(0, linkedSummary.openDays);
+  const uncapturedDelayDays = Math.max(0, openDelayDays - carriedDelayDays);
 
   useEffect(() => {
     setDraft(emptyDelayFragmentDraft(activity.name));
@@ -6815,6 +6823,32 @@ function ActivityDelayFragmentPanel({
             {linkedSummary.totalCount} total
           </div>
         </div>
+      </div>
+
+      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+        <ActivityUpdateImpactTile
+          label="Logged open delay"
+          value={`${openDelayDays}d`}
+          sub="unresolved fragments"
+          tone={openDelayDays > 0 ? "danger" : "default"}
+        />
+        <ActivityUpdateImpactTile
+          label="Carried in forecast"
+          value={`${Math.min(openDelayDays, carriedDelayDays)}d`}
+          sub="baseline to expected finish"
+          tone={carriedDelayDays > 0 ? "warning" : "default"}
+        />
+        <ActivityUpdateImpactTile
+          label="Still not carried"
+          value={`${uncapturedDelayDays}d`}
+          sub="apply to expected finish"
+          tone={uncapturedDelayDays > 0 ? "danger" : "success"}
+        />
+      </div>
+
+      <div className="mt-3 rounded border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
+        Delay fragments document why time was lost. They affect the CPM finish only after the
+        activity expected finish or remaining duration is updated.
       </div>
 
       {persistence === "migration_required" ? (
