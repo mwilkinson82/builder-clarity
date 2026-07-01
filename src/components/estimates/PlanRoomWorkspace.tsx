@@ -76,6 +76,11 @@ type RevisionOverlayMode = "compare" | "ghost";
 type Point = PlanRoomPoint;
 type ViewSize = PlanRoomViewSize;
 type ZoomWindowDraft = { start: Point; end: Point };
+type GeometryEditDraft = {
+  measurementId: string;
+  pointIndex: number;
+  points: Point[];
+};
 
 interface PlanRoomWorkspaceProps {
   estimate: EstimateRow;
@@ -97,8 +102,10 @@ const PLAN_ZOOM_STEP = 0.25;
 const ZOOM_SLIDER_MIN = MIN_PLAN_ZOOM * 100;
 const ZOOM_SLIDER_MAX = MAX_PLAN_ZOOM * 100;
 const PDF_BASE_LONG_EDGE = 1800;
-const PDF_RENDER_MAX_EDGE = 8192;
-const PDF_RENDER_MAX_PIXELS = 24_000_000;
+const PDF_STANDARD_RENDER_MAX_EDGE = 8192;
+const PDF_STANDARD_RENDER_MAX_PIXELS = 24_000_000;
+const PDF_HIGH_DETAIL_RENDER_MAX_EDGE = 12_288;
+const PDF_HIGH_DETAIL_RENDER_MAX_PIXELS = 72_000_000;
 
 type PdfViewportLike = { width: number; height: number };
 
@@ -142,6 +149,27 @@ const devicePixelRatioForPdf = () => {
   return Math.min(2, Math.max(1, window.devicePixelRatio || 1));
 };
 
+const pdfRenderLimits = () => {
+  if (typeof navigator === "undefined") {
+    return {
+      maxEdge: PDF_STANDARD_RENDER_MAX_EDGE,
+      maxPixels: PDF_STANDARD_RENDER_MAX_PIXELS,
+    };
+  }
+  const deviceMemory =
+    Number((navigator as Navigator & { deviceMemory?: number }).deviceMemory) || 8;
+  if (deviceMemory >= 4) {
+    return {
+      maxEdge: PDF_HIGH_DETAIL_RENDER_MAX_EDGE,
+      maxPixels: PDF_HIGH_DETAIL_RENDER_MAX_PIXELS,
+    };
+  }
+  return {
+    maxEdge: PDF_STANDARD_RENDER_MAX_EDGE,
+    maxPixels: PDF_STANDARD_RENDER_MAX_PIXELS,
+  };
+};
+
 const pdfCssScaleFor = (viewport: PdfViewportLike) => {
   const longEdge = Math.max(viewport.width, viewport.height);
   if (!Number.isFinite(longEdge) || longEdge <= 0) return 1;
@@ -152,8 +180,9 @@ const pdfRenderScaleFor = (viewport: PdfViewportLike, cssScale: number, zoom: nu
   const pagePixels = Math.max(1, viewport.width * viewport.height);
   const longEdge = Math.max(1, viewport.width, viewport.height);
   const desiredScale = cssScale * Math.max(1, zoom) * devicePixelRatioForPdf();
-  const maxPixelScale = Math.sqrt(PDF_RENDER_MAX_PIXELS / pagePixels);
-  const maxEdgeScale = PDF_RENDER_MAX_EDGE / longEdge;
+  const limits = pdfRenderLimits();
+  const maxPixelScale = Math.sqrt(limits.maxPixels / pagePixels);
+  const maxEdgeScale = limits.maxEdge / longEdge;
   return Math.max(0.2, Math.min(desiredScale, maxPixelScale, maxEdgeScale));
 };
 
@@ -209,6 +238,16 @@ function calculateQuantity(
     scaleFeetPerPixel: sheet.scale_feet_per_pixel,
     viewSize: size,
   });
+}
+
+function geometryFromPoints(points: Point[], size: ViewSize) {
+  return {
+    points,
+    view_size: {
+      width: Math.round(size.width),
+      height: Math.round(size.height),
+    },
+  };
 }
 
 function unitFor(tool: TakeoffToolType, selectedLine?: EstimateLineItemRow) {
@@ -408,7 +447,7 @@ export function PlanRoomWorkspace({
           quantity,
           waste_pct: 0,
           color: takeoffColor,
-          geometry: { points, view_size: viewSize },
+          geometry: geometryFromPoints(points, viewSize),
           notes: line ? "Quantity produced from Plan Room takeoff." : "",
         },
       });
@@ -605,6 +644,31 @@ export function PlanRoomWorkspace({
       patch: {
         label,
         notes: selectedMeasurementDraft.notes.trim(),
+      },
+    });
+  };
+
+  const saveMeasurementGeometry = async (measurementId: string, points: Point[]) => {
+    const measurement = measurements.find((item) => item.id === measurementId);
+    if (!measurement) throw new Error("Choose an existing takeoff first.");
+    const measurementSheet = sheets.find((sheet) => sheet.id === measurement.plan_sheet_id);
+    if (!measurementSheet) throw new Error("The takeoff sheet could not be found.");
+    if (currentSheet?.id !== measurementSheet.id) {
+      throw new Error("Open the takeoff sheet before editing its geometry.");
+    }
+    const quantity = calculateQuantity(measurement.tool_type, points, measurementSheet, viewSize);
+    if (quantity <= 0) {
+      throw new Error(
+        measurement.tool_type === "count"
+          ? "Place at least one count marker."
+          : "Set the drawing scale before saving this edited takeoff.",
+      );
+    }
+    await updateMeasurementMutation.mutateAsync({
+      id: measurement.id,
+      patch: {
+        quantity,
+        geometry: geometryFromPoints(points, viewSize),
       },
     });
   };
@@ -1007,6 +1071,8 @@ export function PlanRoomWorkspace({
               const measurement = measurements.find((item) => item.id === measurementId);
               if (measurement) selectMeasurement(measurement);
             }}
+            onMeasurementGeometryChange={saveMeasurementGeometry}
+            isGeometrySaving={updateMeasurementMutation.isPending}
           />
         </section>
 
@@ -1138,6 +1204,10 @@ export function PlanRoomWorkspace({
                   </p>
                   <p className="mt-1">
                     Estimate row: {selectedMeasurementLine?.description || "Not linked yet"}
+                  </p>
+                  <p className="mt-2" data-testid="selected-takeoff-edit-guidance">
+                    Geometry: drag the white points on the plan to refine this takeoff. Quantity
+                    recalculates and syncs to the linked estimate row when saved.
                   </p>
                 </div>
                 <div className="space-y-1.5">
@@ -1419,6 +1489,8 @@ function PlanCanvas({
   isCockpitMode,
   selectedMeasurementId,
   onMeasurementSelect,
+  onMeasurementGeometryChange,
+  isGeometrySaving,
 }: {
   planSet: PlanSetRow | null;
   sheet: PlanSheetRow | null;
@@ -1436,6 +1508,8 @@ function PlanCanvas({
   isCockpitMode: boolean;
   selectedMeasurementId: string;
   onMeasurementSelect: (measurementId: string) => void;
+  onMeasurementGeometryChange: (measurementId: string, points: Point[]) => Promise<void>;
+  isGeometrySaving: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -1447,10 +1521,18 @@ function PlanCanvas({
   const [isPanning, setIsPanning] = useState(false);
   const [isZoomWindowMode, setIsZoomWindowMode] = useState(false);
   const [zoomWindowDraft, setZoomWindowDraft] = useState<ZoomWindowDraft | null>(null);
+  const [geometryEditDraft, setGeometryEditDraft] = useState<GeometryEditDraft | null>(null);
+  const [geometryPreview, setGeometryPreview] = useState<{
+    measurementId: string;
+    points: Point[];
+  } | null>(null);
   const panStartRef = useRef({ x: 0, y: 0, left: 0, top: 0, dragged: false });
   const zoomWindowClickBlockRef = useRef(false);
+  const geometryEditClickBlockRef = useRef(false);
   const hasRevisionOverlay = Boolean(overlayPlanSet && overlaySheet);
   const overlayBlendMode = overlayMode === "compare" ? "multiply" : "normal";
+  const selectedMeasurement =
+    measurements.find((measurement) => measurement.id === selectedMeasurementId) ?? null;
 
   useEffect(() => {
     let active = true;
@@ -1526,6 +1608,8 @@ function PlanCanvas({
     setZoom(1);
     setIsZoomWindowMode(false);
     setZoomWindowDraft(null);
+    setGeometryEditDraft(null);
+    setGeometryPreview(null);
     requestAnimationFrame(() => {
       if (!scrollRef.current) return;
       scrollRef.current.scrollLeft = 0;
@@ -1536,7 +1620,13 @@ function PlanCanvas({
   useEffect(() => {
     setIsZoomWindowMode(false);
     setZoomWindowDraft(null);
+    setGeometryEditDraft(null);
   }, [tool]);
+
+  useEffect(() => {
+    setGeometryEditDraft(null);
+    setGeometryPreview(null);
+  }, [selectedMeasurementId]);
 
   const clampZoom = (nextZoom: number) =>
     Math.min(MAX_PLAN_ZOOM, Math.max(MIN_PLAN_ZOOM, nextZoom));
@@ -1639,7 +1729,30 @@ function PlanCanvas({
     };
   };
 
+  const pointsForMeasurement = (measurement: TakeoffMeasurementRow) => {
+    if (geometryPreview?.measurementId === measurement.id) return geometryPreview.points;
+    return geometryPoints(measurement.geometry);
+  };
+
+  const beginGeometryEdit = (
+    event: ReactPointerEvent<SVGCircleElement>,
+    measurement: TakeoffMeasurementRow,
+    pointIndex: number,
+  ) => {
+    if (tool !== "select" || isGeometrySaving) return;
+    event.stopPropagation();
+    event.preventDefault();
+    const points = pointsForMeasurement(measurement);
+    if (!points[pointIndex]) return;
+    onMeasurementSelect(measurement.id);
+    setGeometryEditDraft({ measurementId: measurement.id, pointIndex, points });
+    setGeometryPreview({ measurementId: measurement.id, points });
+    geometryEditClickBlockRef.current = true;
+    svgRef.current?.setPointerCapture(event.pointerId);
+  };
+
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (geometryEditDraft) return;
     if (isZoomWindowMode) {
       const point = pointFromClient(event.clientX, event.clientY);
       if (!point) return;
@@ -1661,6 +1774,16 @@ function PlanCanvas({
   };
 
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (geometryEditDraft) {
+      const point = pointFromClient(event.clientX, event.clientY);
+      if (!point) return;
+      const nextPoints = geometryEditDraft.points.map((current, index) =>
+        index === geometryEditDraft.pointIndex ? point : current,
+      );
+      setGeometryEditDraft((current) => (current ? { ...current, points: nextPoints } : current));
+      setGeometryPreview({ measurementId: geometryEditDraft.measurementId, points: nextPoints });
+      return;
+    }
     if (isZoomWindowMode && zoomWindowDraft) {
       const point = pointFromClient(event.clientX, event.clientY);
       if (!point) return;
@@ -1676,6 +1799,25 @@ function PlanCanvas({
   };
 
   const handlePointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (geometryEditDraft) {
+      const point = pointFromClient(event.clientX, event.clientY);
+      const completedPoints = point
+        ? geometryEditDraft.points.map((current, index) =>
+            index === geometryEditDraft.pointIndex ? point : current,
+          )
+        : geometryEditDraft.points;
+      const measurementId = geometryEditDraft.measurementId;
+      setGeometryEditDraft(null);
+      setGeometryPreview({ measurementId, points: completedPoints });
+      if (svgRef.current?.hasPointerCapture(event.pointerId)) {
+        svgRef.current.releasePointerCapture(event.pointerId);
+      }
+      void onMeasurementGeometryChange(measurementId, completedPoints).catch((error) => {
+        setGeometryPreview(null);
+        toast.error(error instanceof Error ? error.message : "Takeoff geometry did not save");
+      });
+      return;
+    }
     if (isZoomWindowMode && zoomWindowDraft) {
       const point = pointFromClient(event.clientX, event.clientY);
       const completedDraft = point ? { ...zoomWindowDraft, end: point } : zoomWindowDraft;
@@ -1695,6 +1837,10 @@ function PlanCanvas({
   };
 
   const handleClick = (event: ReactMouseEvent<SVGSVGElement>) => {
+    if (geometryEditClickBlockRef.current) {
+      geometryEditClickBlockRef.current = false;
+      return;
+    }
     if (zoomWindowClickBlockRef.current || isZoomWindowMode) {
       zoomWindowClickBlockRef.current = false;
       return;
@@ -1921,7 +2067,18 @@ function PlanCanvas({
                   measurement={measurement}
                   viewSize={viewSize}
                   selected={measurement.id === selectedMeasurementId}
+                  pointsOverride={
+                    geometryPreview?.measurementId === measurement.id
+                      ? geometryPreview.points
+                      : null
+                  }
+                  editable={
+                    tool === "select" &&
+                    selectedMeasurement?.id === measurement.id &&
+                    !isGeometrySaving
+                  }
                   onSelect={onMeasurementSelect}
+                  onPointDragStart={beginGeometryEdit}
                 />
               ))}
               <DraftShape
@@ -2213,14 +2370,24 @@ function MeasurementShape({
   measurement,
   viewSize,
   selected,
+  editable,
+  pointsOverride,
   onSelect,
+  onPointDragStart,
 }: {
   measurement: TakeoffMeasurementRow;
   viewSize: ViewSize;
   selected: boolean;
+  editable: boolean;
+  pointsOverride: Point[] | null;
   onSelect: (measurementId: string) => void;
+  onPointDragStart: (
+    event: ReactPointerEvent<SVGCircleElement>,
+    measurement: TakeoffMeasurementRow,
+    pointIndex: number,
+  ) => void;
 }) {
-  const points = geometryPoints(measurement.geometry);
+  const points = pointsOverride ?? geometryPoints(measurement.geometry);
   if (points.length === 0) return null;
   const scaled = points.map((point) => ({
     x: point.x * viewSize.width,
@@ -2249,6 +2416,12 @@ function MeasurementShape({
             strokeWidth="3"
           />
         )}
+        <MeasurementEditHandles
+          points={scaled}
+          measurement={measurement}
+          editable={editable}
+          onPointDragStart={onPointDragStart}
+        />
         <MeasurementLabel
           x={labelPoint.x}
           y={labelPoint.y}
@@ -2266,6 +2439,18 @@ function MeasurementShape({
           <g key={`${point.x}-${point.y}-${index}`}>
             {selected && <circle cx={point.x} cy={point.y} r="16" fill="white" stroke="#111827" />}
             <circle cx={point.x} cy={point.y} r="11" fill={measurement.color} />
+            {editable && (
+              <circle
+                cx={point.x}
+                cy={point.y}
+                r="18"
+                fill="transparent"
+                className="cursor-move"
+                data-testid="takeoff-edit-handle"
+                aria-label={`Move ${measurement.label} point ${index + 1}`}
+                onPointerDown={(event) => onPointDragStart(event, measurement, index)}
+              />
+            )}
             <text
               x={point.x}
               y={point.y + 4}
@@ -2312,12 +2497,55 @@ function MeasurementShape({
       {scaled.map((point, index) => (
         <circle key={index} cx={point.x} cy={point.y} r="5" fill={measurement.color} />
       ))}
+      <MeasurementEditHandles
+        points={scaled}
+        measurement={measurement}
+        editable={editable}
+        onPointDragStart={onPointDragStart}
+      />
       <MeasurementLabel
         x={labelPoint.x + 10}
         y={labelPoint.y - 10}
         color={measurement.color}
         text={formatQty(measurement.quantity, measurement.unit)}
       />
+    </g>
+  );
+}
+
+function MeasurementEditHandles({
+  points,
+  measurement,
+  editable,
+  onPointDragStart,
+}: {
+  points: Array<{ x: number; y: number }>;
+  measurement: TakeoffMeasurementRow;
+  editable: boolean;
+  onPointDragStart: (
+    event: ReactPointerEvent<SVGCircleElement>,
+    measurement: TakeoffMeasurementRow,
+    pointIndex: number,
+  ) => void;
+}) {
+  if (!editable) return null;
+  return (
+    <g data-testid="takeoff-edit-handles">
+      {points.map((point, index) => (
+        <circle
+          key={`${measurement.id}-edit-${index}`}
+          cx={point.x}
+          cy={point.y}
+          r="9"
+          fill="white"
+          stroke={measurement.color}
+          strokeWidth="3"
+          className="cursor-move"
+          data-testid="takeoff-edit-handle"
+          aria-label={`Move ${measurement.label} point ${index + 1}`}
+          onPointerDown={(event) => onPointDragStart(event, measurement, index)}
+        />
+      ))}
     </g>
   );
 }
