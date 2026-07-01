@@ -93,6 +93,7 @@ for (const requiredModalLayoutText of [
   "Baseline start",
   "Remaining duration",
   "Expected finish",
+  "Apply delay to forecast",
   "ActivityDelayFragmentPanel",
   "sm:w-[min(calc(100vw-2rem),72rem)] sm:max-w-[72rem]",
   "overflow-y-auto px-4 py-4 sm:px-6",
@@ -165,6 +166,7 @@ for (const requiredStatusedCpmText of [
   "remaining_duration_days",
   "updateDraftRemainingDuration",
   "updateDraftForecastFinishDate",
+  "applyOpenDelayToDraftForecast",
 ]) {
   assertIncludes(
     scheduleRiskSource,

@@ -6285,6 +6285,22 @@ function ActivityDetailDialog({
           dataDate ?? activity.forecast_start_date ?? activity.start_date,
           activity.forecast_finish_date ?? activity.finish_date,
         ));
+  const linkedDelayFragments = useMemo(() => {
+    const delayFragmentsByActivity = groupDelayFragmentsByActivity(delayFragments);
+    return getDelayFragmentsForActivity(activity, delayFragmentsByActivity);
+  }, [activity, delayFragments]);
+  const linkedDelaySummary = useMemo(
+    () => buildDelayFragmentSummary(linkedDelayFragments),
+    [linkedDelayFragments],
+  );
+  const delayAdjustedDraft =
+    linkedDelaySummary.openDays > 0
+      ? applyOpenDelayToDraftForecast(draft, linkedDelaySummary.openDays, dataDate)
+      : null;
+  const openDelayForecastAligned =
+    linkedDelaySummary.openDays > 0 &&
+    delayAdjustedDraft?.forecast_finish_date === draft.forecast_finish_date &&
+    delayAdjustedDraft.remaining_duration_days === draft.remaining_duration_days;
   const isMilestone = isConstructLineMilestoneActivity(activity);
   const saving = isSaving || isSubmitting;
   const currentActivityBlockedIds = useMemo(
@@ -6549,6 +6565,37 @@ function ActivityDetailDialog({
                   />
                 </LabeledField>
               </div>
+              {linkedDelaySummary.openDays > 0 && (
+                <div className="mt-3 flex flex-col gap-3 rounded-md border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger md:flex-row md:items-center md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 font-semibold">
+                      <AlertTriangle className="h-4 w-4" />
+                      {linkedDelaySummary.openDays} open delay day
+                      {linkedDelaySummary.openDays === 1 ? "" : "s"} on this activity
+                    </div>
+                    <div className="mt-1 text-xs text-danger/85">
+                      {openDelayForecastAligned
+                        ? "The current expected finish already carries at least this delay against the baseline."
+                        : delayAdjustedDraft?.forecast_finish_date
+                          ? `Apply this to move expected finish to ${shortDate(delayAdjustedDraft.forecast_finish_date)} and recalculate remaining duration.`
+                          : "Set a baseline or expected finish, then apply the delay to the forecast."}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-8 shrink-0 border-danger/30 bg-card text-danger hover:bg-danger/10 hover:text-danger"
+                    disabled={
+                      saving ||
+                      openDelayForecastAligned ||
+                      !delayAdjustedDraft?.forecast_finish_date
+                    }
+                    onClick={() => delayAdjustedDraft && setDraft(delayAdjustedDraft)}
+                  >
+                    Apply delay to forecast
+                  </Button>
+                </div>
+              )}
             </div>
 
             <div className="mt-5 grid min-w-0 gap-3">
@@ -7350,6 +7397,36 @@ function updateDraftForecastFinishDate(
     forecast_finish_date: value,
     remaining_duration_days: String(remainingDuration),
   };
+}
+
+function applyOpenDelayToDraftForecast(
+  draft: ActivityDraft,
+  openDelayDays: number,
+  dataDate?: string | null,
+): ActivityDraft {
+  const delayDays = Math.max(0, Math.round(openDelayDays));
+  if (delayDays <= 0) return draft;
+
+  const baselineFinishMs = parseDateMs(draft.baseline_finish_date || draft.finish_date);
+  const currentForecastFinishMs = parseDateMs(
+    draft.forecast_finish_date || draft.baseline_finish_date || draft.finish_date,
+  );
+  const dataDateMs = parseDateMs(dataDate);
+  const targetFinishMs =
+    baselineFinishMs != null
+      ? baselineFinishMs + delayDays * DAY_MS
+      : currentForecastFinishMs != null
+        ? currentForecastFinishMs + delayDays * DAY_MS
+        : dataDateMs != null
+          ? dataDateMs + Math.max(0, delayDays - 1) * DAY_MS
+          : null;
+
+  if (targetFinishMs == null) return draft;
+  const currentOrTargetFinishMs =
+    currentForecastFinishMs == null
+      ? targetFinishMs
+      : Math.max(currentForecastFinishMs, targetFinishMs);
+  return updateDraftForecastFinishDate(draft, isoDateFromMs(currentOrTargetFinishMs), dataDate);
 }
 
 function ScheduleStat({
