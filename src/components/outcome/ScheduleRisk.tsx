@@ -1086,10 +1086,19 @@ function buildCpmScheduleUpdateDraft({
   );
   const movementWeeks = computeScheduleVarianceWeeks(previousCompletion, forecastCompletion);
   const milestoneForecasts = buildCpmMilestoneForecasts(model, milestones);
-  const criticalDrivers = model.tasks
-    .filter((task) => task.isCritical && task.activity.percent_complete < 100)
+  const incompleteCriticalTasks = model.tasks.filter(
+    (task) => task.isCritical && task.activity.percent_complete < 100,
+  );
+  const negativeFloatDrivers = incompleteCriticalTasks
+    .filter((task) => task.totalFloat < 0)
+    .sort((a, b) => a.totalFloat - b.totalFloat);
+  const criticalDrivers = [...incompleteCriticalTasks]
+    .sort((a, b) => a.totalFloat - b.totalFloat || a.earlyStart - b.earlyStart)
     .slice(0, 3)
     .map((task) => task.dependencyKey || task.activity.name);
+  const negativeDriverLabels = negativeFloatDrivers
+    .slice(0, 3)
+    .map((task) => `${task.dependencyKey || task.activity.name} ${task.totalFloat}d TF`);
   const qualityParts = model.criticalPathReliable
     ? [`${model.criticalCount} critical`, `${model.nearCriticalCount} near-critical`]
     : [`Critical path provisional: ${model.criticalPathReliabilityNote}`];
@@ -1099,6 +1108,13 @@ function buildCpmScheduleUpdateDraft({
   if (model.lateCount > 0) qualityParts.push(`${model.lateCount} late`);
   if (model.outOfSequenceCount > 0) {
     qualityParts.push(`${model.outOfSequenceCount} out-of-sequence`);
+  }
+  if (negativeFloatDrivers.length > 0) {
+    qualityParts.push(
+      `${negativeFloatDrivers.length} negative-float ${
+        negativeFloatDrivers.length === 1 ? "activity" : "activities"
+      }`,
+    );
   }
   if (model.maxStack >= 4) {
     qualityParts.push(`${model.maxStack} peak stack at ${model.maxStackLabel}`);
@@ -1115,6 +1131,9 @@ function buildCpmScheduleUpdateDraft({
     )} vs baseline, ${varianceLabel(movementWeeks)} movement).`,
     qualityParts.join("; ") + ".",
     criticalDrivers.length > 0 ? `Drivers: ${criticalDrivers.join(", ")}.` : null,
+    negativeDriverLabels.length > 0
+      ? `Negative float drivers: ${negativeDriverLabels.join(", ")}.`
+      : null,
     delaySummary.driverLabels.length > 0
       ? `Delay ledger: ${delaySummary.driverLabels.join(", ")}.`
       : null,
@@ -1291,7 +1310,8 @@ function cpmMilestoneReason(
 ) {
   const parts = [`CPM forecast ${shortDate(forecastDate)}`];
   if (varianceWeeks != null) parts.push(`${varianceLabel(varianceWeeks)} vs baseline`);
-  if (task.isCritical) parts.push("critical path");
+  if (task.totalFloat < 0) parts.push(`${task.totalFloat}d total float`);
+  else if (task.isCritical) parts.push("critical path");
   else if (task.isNearCritical) parts.push(`${task.totalFloat}d total float`);
   if (task.isLate) parts.push("past data date");
   if (task.isOutOfSequence) parts.push("out-of-sequence progress");
@@ -8152,6 +8172,13 @@ function ScheduleUpdateLedger({
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   {milestoneCountByUpdate[update.update_number] ?? 0} milestone snapshots
+                  {activitySummary?.negativeFloatCount
+                    ? ` · ${activitySummary.negativeFloatCount} negative-float activities${
+                        activitySummary.worstTotalFloatDays == null
+                          ? ""
+                          : ` · worst ${activitySummary.worstTotalFloatDays}d TF`
+                      }`
+                    : ""}
                   {activitySummary?.openEndCount
                     ? ` · ${activitySummary.openEndCount} open-ended activities`
                     : ""}
@@ -8266,6 +8293,8 @@ function ScheduleUpdateLedger({
 type ActivityUpdateSnapshotSummary = {
   activityCount: number;
   criticalCount: number;
+  negativeFloatCount: number;
+  worstTotalFloatDays: number | null;
   lateCount: number;
   outOfSequenceCount: number;
   openEndCount: number;
@@ -8308,9 +8337,15 @@ function groupActivityUpdateSnapshots(activityUpdates: ScheduleActivityUpdateRow
 function summarizeActivityUpdateSnapshots(
   rows: ScheduleActivityUpdateRow[],
 ): ActivityUpdateSnapshotSummary {
+  const negativeFloatRows = rows.filter((row) => row.total_float_days < 0);
   return {
     activityCount: rows.length,
     criticalCount: rows.filter((row) => row.is_critical).length,
+    negativeFloatCount: negativeFloatRows.length,
+    worstTotalFloatDays:
+      negativeFloatRows.length > 0
+        ? Math.min(...negativeFloatRows.map((row) => row.total_float_days))
+        : null,
     lateCount: rows.filter((row) => row.is_late).length,
     outOfSequenceCount: rows.filter((row) => row.is_out_of_sequence).length,
     openEndCount: rows.filter((row) => row.is_open_start || row.is_open_finish).length,
@@ -8327,6 +8362,7 @@ function summarizeActivityUpdateSnapshots(
 function scoreActivityUpdateDriver(row: ScheduleActivityUpdateRow) {
   return (
     (row.is_critical ? 1000 : 0) +
+    (row.total_float_days < 0 ? 900 : 0) +
     (row.is_late ? 600 : 0) +
     (row.is_out_of_sequence ? 500 : 0) +
     (row.status_basis === "needs_update" ? 400 : 0) +
@@ -8339,6 +8375,7 @@ function scoreActivityUpdateDriver(row: ScheduleActivityUpdateRow) {
 function formatActivityUpdateDriver(row: ScheduleActivityUpdateRow) {
   const tags = [
     row.is_critical ? "critical" : null,
+    row.total_float_days < 0 ? "negative float" : null,
     row.is_late ? "late" : null,
     row.is_out_of_sequence ? "out-of-seq" : null,
     row.status_basis === "needs_update" ? "needs update basis" : null,
@@ -8353,6 +8390,7 @@ function formatActivityUpdateSnapshotStatus(row: ScheduleActivityUpdateRow) {
   const tags = [
     row.is_critical ? "critical" : null,
     row.is_near_critical ? "near critical" : null,
+    row.total_float_days < 0 ? "negative float" : null,
     row.is_late ? "late" : null,
     row.is_out_of_sequence ? "out-of-seq" : null,
     row.status_basis === "needs_update" ? "needs update basis" : null,
