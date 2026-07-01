@@ -113,14 +113,19 @@ function applyOptimisticWbsOrderChange(
   orderedIds: string[],
 ) {
   if (!current?.wbsSections) return current;
-  const orderMap = new Map(orderedIds.map((id, index) => [id, (index + 1) * 10]));
   return {
     ...current,
-    wbsSections: current.wbsSections.map((section: ScheduleWbsSectionRow) => ({
-      ...section,
-      sort_order: orderMap.get(section.id) ?? section.sort_order,
-    })),
+    wbsSections: applyWbsOrderToSections(current.wbsSections, orderedIds),
   };
+}
+
+function applyWbsOrderToSections(sections: ScheduleWbsSectionRow[], orderedIds: string[]) {
+  if (orderedIds.length === 0) return sections;
+  const orderMap = new Map(orderedIds.map((id, index) => [id, (index + 1) * 10]));
+  return sections.map((section) => ({
+    ...section,
+    sort_order: orderMap.get(section.id) ?? section.sort_order,
+  }));
 }
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId/schedule")({
@@ -165,10 +170,12 @@ function ScheduleWorkspacePage() {
     () => (scheduleQuery.data?.activities ?? []) as ScheduleActivityRow[],
     [scheduleQuery.data?.activities],
   );
-  const wbsSections = useMemo(
-    () => (scheduleQuery.data?.wbsSections ?? []) as ScheduleWbsSectionRow[],
-    [scheduleQuery.data?.wbsSections],
-  );
+  const wbsSections = useMemo(() => {
+    const sections = (scheduleQuery.data?.wbsSections ?? []) as ScheduleWbsSectionRow[];
+    const queuedOrder = wbsQueuedOrderRef.current;
+    if (!isWbsOrderSaveQueued || !queuedOrder) return sections;
+    return applyWbsOrderToSections(sections, queuedOrder.orderedIds);
+  }, [isWbsOrderSaveQueued, scheduleQuery.data?.wbsSections]);
   const milestones = useMemo(
     () => (scheduleQuery.data?.milestones ?? []) as MilestoneRow[],
     [scheduleQuery.data?.milestones],
@@ -462,9 +469,10 @@ function ScheduleWorkspacePage() {
       void qc.cancelQueries({ queryKey: ["schedule", projectId] });
       wbsQueuedOrderRef.current = payload;
       setIsWbsOrderSaveQueued(true);
-      toast.loading("WBS order applied", {
+      toast.success("WBS order applied", {
         id: toastId,
         description: "The grid moved now. Final save is confirming in the background.",
+        duration: 1400,
       });
 
       wbsOrderSaveTimerRef.current = setTimeout(() => {
