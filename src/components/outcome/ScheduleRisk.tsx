@@ -110,6 +110,7 @@ import {
 import {
   buildWbsDivisionOrder,
   buildWbsDivisionRows,
+  buildWbsSectionPathMap,
   cleanWbsDivisionInput,
   compareWbsDivision,
   formatIndentedWbsLabel,
@@ -315,7 +316,13 @@ export type ActivityCreateInput = { name: string } & Partial<
 type BrowserCpmTemplate = ScheduleCpmTemplateRow & {
   source: "browser";
   activities: ActivityCreateInput[];
-  wbsSections: ScheduleWbsSectionRow[];
+  wbsSections: BrowserCpmTemplateWbsSection[];
+};
+type BrowserCpmTemplateWbsSection = {
+  path: string;
+  name: string;
+  parentPath: string | null;
+  sort_order: number;
 };
 
 export type DelayFragmentCreateInput = { title: string } & Partial<
@@ -2397,7 +2404,9 @@ export function CpmActivityPlanner({
     }
     onSeedActivities(rows);
     toast.success("CPM template applied", {
-      description: `${rows.length} browser template ${rows.length === 1 ? "activity" : "activities"} queued for this project.`,
+      description: `${rows.length} browser template ${
+        rows.length === 1 ? "activity" : "activities"
+      } queued with saved WBS paths and logic ties.`,
     });
   };
   const saveCpmTemplate = () => {
@@ -7465,8 +7474,26 @@ function buildBrowserCpmTemplate(
     updated_at: now,
     source: "browser",
     activities: activities.map(scheduleActivityToTemplateCreateInput),
-    wbsSections,
+    wbsSections: buildBrowserCpmTemplateWbsSections(wbsSections),
   };
+}
+
+function buildBrowserCpmTemplateWbsSections(
+  wbsSections: ScheduleWbsSectionRow[],
+): BrowserCpmTemplateWbsSection[] {
+  const pathMap = buildWbsSectionPathMap(wbsSections);
+  return wbsSections
+    .map((section) => {
+      const path = pathMap.get(section.id) ?? section.name;
+      const parentPath = section.parent_id ? (pathMap.get(section.parent_id) ?? null) : null;
+      return {
+        path,
+        name: section.name,
+        parentPath,
+        sort_order: section.sort_order,
+      };
+    })
+    .filter((section) => section.path.trim().length > 0);
 }
 
 function readBrowserCpmTemplates(): BrowserCpmTemplate[] {
@@ -7477,14 +7504,73 @@ function readBrowserCpmTemplates(): BrowserCpmTemplate[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .filter((item): item is BrowserCpmTemplate => {
-        const row = item as Partial<BrowserCpmTemplate>;
-        return Boolean(row.id && row.name && Array.isArray(row.activities));
-      })
+      .map(coerceBrowserCpmTemplate)
+      .filter((template): template is BrowserCpmTemplate => Boolean(template))
       .slice(0, 25);
   } catch {
     return [];
   }
+}
+
+function coerceBrowserCpmTemplate(item: unknown): BrowserCpmTemplate | null {
+  const row = item as Partial<BrowserCpmTemplate>;
+  if (!row?.id || !row.name || !Array.isArray(row.activities)) return null;
+  return {
+    ...row,
+    id: String(row.id),
+    project_id: String(row.project_id ?? ""),
+    name: String(row.name),
+    description: String(row.description ?? ""),
+    activity_count: Number(row.activity_count ?? row.activities.length) || row.activities.length,
+    created_at: String(row.created_at ?? new Date().toISOString()),
+    updated_at: String(row.updated_at ?? row.created_at ?? new Date().toISOString()),
+    source: "browser",
+    activities: row.activities,
+    wbsSections: normalizeBrowserCpmTemplateWbsSections(row.wbsSections),
+  };
+}
+
+function normalizeBrowserCpmTemplateWbsSections(value: unknown): BrowserCpmTemplateWbsSection[] {
+  if (!Array.isArray(value)) return [];
+  const legacyRows = value.filter((item): item is Partial<ScheduleWbsSectionRow> =>
+    Boolean(item && typeof item === "object"),
+  );
+  const pathMap = buildWbsSectionPathMap(
+    legacyRows
+      .filter((row) => row.id && row.name)
+      .map((row) => ({
+        id: String(row.id),
+        project_id: String(row.project_id ?? ""),
+        parent_id: row.parent_id ? String(row.parent_id) : null,
+        name: String(row.name),
+        code: String(row.code ?? ""),
+        sort_order: Number(row.sort_order ?? 0) || 0,
+      })),
+  );
+  return legacyRows
+    .map((row) => {
+      const path =
+        "path" in row && typeof row.path === "string"
+          ? row.path
+          : row.id
+            ? (pathMap.get(String(row.id)) ?? "")
+            : "";
+      const name =
+        typeof row.name === "string" ? row.name : path ? splitWbsPath(path).at(-1) || path : "";
+      const parentPath =
+        "parentPath" in row && typeof row.parentPath === "string"
+          ? row.parentPath
+          : row.parent_id
+            ? (pathMap.get(String(row.parent_id)) ?? null)
+            : null;
+      return {
+        path,
+        name,
+        parentPath,
+        sort_order: Number(row.sort_order ?? 0) || 0,
+      };
+    })
+    .filter((row) => row.path.trim().length > 0);
 }
 
 function writeBrowserCpmTemplates(templates: BrowserCpmTemplate[]) {
