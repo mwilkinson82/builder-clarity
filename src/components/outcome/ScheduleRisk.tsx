@@ -4661,6 +4661,10 @@ function ActivityScheduleMatrix({
             <div className="mt-1 text-sm text-muted-foreground">
               {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
             </div>
+            <div className="mt-1 max-w-2xl text-xs text-muted-foreground">
+              Planned duration stays tied to baseline dates. Remaining duration, current start, and
+              expected finish are the active update values used by the CPM calculation.
+            </div>
             {viewSummary && (
               <div className="mt-1 text-xs font-semibold text-foreground">{viewSummary}</div>
             )}
@@ -4737,16 +4741,16 @@ function ActivityScheduleMatrix({
                 <div className="flex items-center px-3">ID</div>
                 <div className="flex min-w-0 items-center px-3">Activity</div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Plan dur
+                  Planned
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Rem dur
+                  Remaining
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
                   Current start
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Exp finish
+                  Expected finish
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
                   % done
@@ -6301,8 +6305,8 @@ function ActivityDetailDialog({
         <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
           <DialogTitle className="font-serif text-2xl">CPM activity detail</DialogTitle>
           <DialogDescription>
-            Review the full activity, dependency logic, planned dates, percent complete, and field
-            notes.
+            Review the activity, logic, fixed baseline, current update status, remaining duration,
+            expected finish, and field notes.
           </DialogDescription>
         </DialogHeader>
 
@@ -6438,8 +6442,9 @@ function ActivityDetailDialog({
                     Status update
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">
-                    Enter actuals, remaining duration, and expected finish for the current data
-                    date.
+                    For this data date, enter actual progress and either remaining duration or
+                    expected finish. The other field recalculates so the CPM finish reflects the
+                    update.
                   </div>
                 </div>
                 <div className="text-xs font-semibold text-muted-foreground">
@@ -6517,6 +6522,13 @@ function ActivityDetailDialog({
                   sub={updateImpact.slipBasis}
                   tone={updateImpact.slipTone}
                 />
+              </div>
+              <div className="mt-3 rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground">Update rule:</span> baseline dates
+                stay fixed. Remaining duration is counted from{" "}
+                {dataDate ? `the ${shortDate(dataDate)} data date` : "the saved data date"};
+                changing remaining duration moves expected finish, and changing expected finish
+                recalculates remaining duration.
               </div>
               {!dataDate && (
                 <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
