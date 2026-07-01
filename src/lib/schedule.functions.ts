@@ -13,7 +13,10 @@ import {
   ensureHarborDemoCpmActivitiesForProject,
   getHarborDemoCpmActivityRows,
 } from "@/lib/projects.functions";
-import { buildReciprocalActivityLogicPatches } from "@/lib/constructline-cpm";
+import {
+  buildConstructLineCpmModel,
+  buildReciprocalActivityLogicPatches,
+} from "@/lib/constructline-cpm";
 
 export type MilestoneStatus = "on_track" | "at_risk" | "delayed" | "complete";
 export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_decision";
@@ -816,6 +819,69 @@ const readTemplateWbsSections = (
   });
 };
 
+async function snapshotScheduleActivityUpdates(
+  supabase: ScheduleSupabaseClient,
+  projectId: string,
+  scheduleUpdateId: string,
+  updateNumber: number,
+  dataDate: string,
+) {
+  const { data: activityRows, error: activityError } = await supabase
+    .from("schedule_activities")
+    .select("*")
+    .eq("project_id", projectId);
+  if (activityError) throw new Error(activityError.message);
+
+  const activities = (activityRows ?? []).map((row) =>
+    normalizeScheduleActivity(row as Record<string, unknown>),
+  );
+  if (activities.length === 0) return "no_activities" as const;
+
+  const cpmModel = buildConstructLineCpmModel(activities, { dataDate });
+  const snapshots = cpmModel.tasks.map((task) => ({
+    project_id: projectId,
+    schedule_update_id: scheduleUpdateId,
+    schedule_activity_id: task.activity.id,
+    update_number: updateNumber,
+    data_date: dataDate,
+    activity_id: task.activity.activity_id,
+    name: task.activity.name,
+    division: task.activity.division,
+    wbs_section_id: task.activity.wbs_section_id,
+    baseline_start_date: task.baselineStartDate || task.activity.baseline_start_date,
+    baseline_finish_date: task.baselineFinishDate || task.activity.baseline_finish_date,
+    current_start_date: task.statusStartDate || task.activity.forecast_start_date,
+    current_finish_date: task.statusFinishDate || task.activity.forecast_finish_date,
+    actual_start_date: task.activity.actual_start_date,
+    actual_finish_date: task.activity.actual_finish_date,
+    planned_duration_days: Math.max(0, Math.round(task.durationDays)),
+    remaining_duration_days: Math.max(0, Math.round(task.remainingDurationDays)),
+    percent_complete: task.activity.percent_complete,
+    total_float_days: Math.round(task.totalFloat),
+    free_float_days: Math.round(task.freeFloat),
+    slippage_days: Math.round(task.slippageDays),
+    is_critical: task.isCritical,
+    is_near_critical: task.isNearCritical,
+    is_late: task.isLate,
+    is_out_of_sequence: task.isOutOfSequence,
+    is_open_start: task.isOpenStart,
+    is_open_finish: task.isOpenFinish,
+    is_milestone: task.isMilestone,
+    predecessor_activity_ids: task.activity.predecessor_activity_ids,
+    successor_activity_ids: task.activity.successor_activity_ids,
+    notes: task.activity.notes,
+  }));
+
+  const { error: snapshotError } = await dynamicTable(supabase, "schedule_activity_updates").insert(
+    snapshots,
+  );
+  if (!snapshotError) return "saved" as const;
+  if (isMissingRestRelation(snapshotError, "schedule_activity_updates")) {
+    return "migration_required" as const;
+  }
+  throw new Error(snapshotError.message ?? "Activity update snapshots did not save.");
+}
+
 export const listScheduleCpmTemplates = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId?: string } | undefined) =>
@@ -1107,6 +1173,14 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
         );
       if (snapshotError) throw new Error(snapshotError.message);
     }
+
+    await snapshotScheduleActivityUpdates(
+      context.supabase,
+      data.projectId,
+      update.id as string,
+      updateNumber,
+      dataDate,
+    );
 
     return { ok: true, update: normalizeScheduleUpdate(update as Record<string, unknown>) };
   });

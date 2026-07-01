@@ -455,6 +455,9 @@ const templateMigrationSource = readProjectFile(
 const nestedWbsRepairMigrationSource = readProjectFile(
   "supabase/migrations/20260701020148_repair_nested_schedule_wbs_sections.sql",
 );
+const activityUpdateSnapshotsMigrationSource = readProjectFile(
+  "supabase/migrations/20260701162000_schedule_activity_update_snapshots.sql",
+);
 const stylesSource = readProjectFile("src/styles.css");
 
 for (const requiredScheduleRiskText of [
@@ -506,6 +509,8 @@ for (const requiredScheduleRiskText of [
   "Current dates",
   "CONSTRUCTLINE_FIT_DAY_PX",
   "CpmDataDateControl",
+  "Save update",
+  "save it to update history",
   "updates = EMPTY_SCHEDULE_UPDATES",
   "const workbenchDraft = buildCpmScheduleUpdateDraft",
   "previousUpdate: latestScheduleUpdate",
@@ -602,10 +607,30 @@ for (const requiredScheduleFunctionText of [
   "section.path || section.name",
   '.select("parent_id")',
   "wbsNestedColumnsMissing",
+  "snapshotScheduleActivityUpdates",
+  "schedule_activity_updates",
+  "total_float_days",
+  "is_out_of_sequence",
+  "is_open_finish",
 ]) {
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),
     `Schedule functions are missing required WBS persistence contract: ${requiredScheduleFunctionText}`,
+  );
+}
+
+for (const requiredActivityUpdateSnapshotMigrationText of [
+  "CREATE TABLE IF NOT EXISTS public.schedule_activity_updates",
+  "schedule_update_id uuid NOT NULL REFERENCES public.schedule_updates(id) ON DELETE CASCADE",
+  "total_float_days integer NOT NULL DEFAULT 0",
+  "is_out_of_sequence boolean NOT NULL DEFAULT false",
+  "GRANT SELECT, INSERT, UPDATE, DELETE ON public.schedule_activity_updates TO authenticated",
+  "public.can_read_project(project_id)",
+  "public.can_manage_project(project_id)",
+]) {
+  assert.ok(
+    activityUpdateSnapshotsMigrationSource.includes(requiredActivityUpdateSnapshotMigrationText),
+    `Activity update snapshot migration is missing required contract: ${requiredActivityUpdateSnapshotMigrationText}`,
   );
 }
 

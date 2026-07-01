@@ -3316,18 +3316,18 @@ function CpmDataDateControl({
         type="button"
         size="sm"
         variant={isDirty ? "default" : "outline"}
-        className="h-8 gap-1.5 px-2.5"
+        className="h-8 gap-1.5 whitespace-nowrap px-2.5"
         disabled={!value || isSaving || !isDirty}
         onClick={onSave}
       >
         <CheckCircle2 className="h-3.5 w-3.5" />
-        {isSaving ? "Saving..." : "Save"}
+        {isSaving ? "Saving..." : "Save update"}
       </Button>
       <div className="basis-full text-[11px] text-muted-foreground sm:basis-auto">
         {isDirty
-          ? "Unsaved date is driving this CPM view."
+          ? "Unsaved data date is driving this CPM view; save it to update history."
           : savedValue
-            ? `Saved ${shortDate(savedValue)}`
+            ? `Update history saved ${shortDate(savedValue)}`
             : "Not set"}
       </div>
     </div>
