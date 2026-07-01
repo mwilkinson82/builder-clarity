@@ -387,6 +387,8 @@ for (const requiredScheduleRouteText of [
 for (const requiredScheduleFunctionText of [
   "const uniqueActivityDivisions = Array.from(",
   "await ensureScheduleWbsPath(context.supabase, data.projectId, division);",
+  '.from("schedule_wbs_sections").upsert(',
+  '{ onConflict: "id" }',
 ]) {
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),
@@ -398,6 +400,12 @@ assert.equal(
   scheduleFunctionsSource.includes(".filter((section) => section.parent_id == null)"),
   false,
   "Derived WBS seeding must persist child sections, not only top-level sections.",
+);
+
+assert.equal(
+  /Promise\.all\(\s*changedRows\.map/.test(scheduleFunctionsSource),
+  false,
+  "WBS reorder fallback must batch save changed rows instead of firing one update per row.",
 );
 
 const printMatrixIndex = scheduleRiskSource.indexOf("isPrintMode");
