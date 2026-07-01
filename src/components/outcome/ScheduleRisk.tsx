@@ -4833,14 +4833,14 @@ function ActivityScheduleMatrix({
   const fitDayPx = Math.max(0.85, fitTimelineTargetWidth / Math.max(1, model.totalTimelineDays));
   const activeDayPx = isPrintMode ? printDayPx : isFitZoom ? fitDayPx : dayPx;
   const tableColumns = isPrintMode
-    ? "44px minmax(116px,1fr) 26px 30px 36px 36px 42px 30px 30px 24px 26px"
+    ? "42px minmax(130px,1fr) 34px 48px 54px 34px 30px 24px 26px"
     : isFitZoom
-      ? "72px minmax(340px,1fr) 60px 70px 78px 78px 94px 70px 62px 50px 56px"
-      : "82px minmax(390px,1fr) 64px 78px 92px 92px 110px 78px 70px 56px 66px";
+      ? "72px minmax(420px,1fr) 74px 104px 118px 72px 64px 50px 58px"
+      : "82px minmax(480px,1fr) 78px 116px 132px 80px 70px 56px 68px";
   const compactHeaders = isFitZoom || isPrintMode;
   const baseRowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
-  const headerHeight = isPrintMode ? 30 : 48;
+  const headerHeight = isPrintMode ? 30 : 54;
   const timelineWidth = isPrintMode
     ? CONSTRUCTLINE_PRINT_TIMELINE_WIDTH
     : isFitZoom
@@ -5034,13 +5034,9 @@ function ActivityScheduleMatrix({
               >
                 <MatrixHeaderCell align="left">ID</MatrixHeaderCell>
                 <MatrixHeaderCell align="left">Activity</MatrixHeaderCell>
-                <MatrixHeaderCell>{compactHeaders ? "Base" : "Base dur"}</MatrixHeaderCell>
-                <MatrixHeaderCell>{compactHeaders ? "Rem" : "Rem dur"}</MatrixHeaderCell>
-                <MatrixHeaderCell>{compactHeaders ? "Base fin" : "Base finish"}</MatrixHeaderCell>
-                <MatrixHeaderCell>{compactHeaders ? "Start" : "Current start"}</MatrixHeaderCell>
-                <MatrixHeaderCell>
-                  {compactHeaders ? "Exp fin" : "Expected finish"}
-                </MatrixHeaderCell>
+                <MatrixHeaderCell>{compactHeaders ? "Dur" : "Duration"}</MatrixHeaderCell>
+                <MatrixHeaderCell>{compactHeaders ? "Plan" : "Planned dates"}</MatrixHeaderCell>
+                <MatrixHeaderCell>{compactHeaders ? "Current" : "Current dates"}</MatrixHeaderCell>
                 <MatrixHeaderCell>Slip</MatrixHeaderCell>
                 <MatrixHeaderCell>{compactHeaders ? "% done" : "% done"}</MatrixHeaderCell>
                 <MatrixHeaderCell>TF</MatrixHeaderCell>
@@ -5575,16 +5571,29 @@ function ConstructLineTaskRow({
           </div>
         </div>
         <div
-          className="flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground"
-          title="Original planned duration from baseline start to baseline finish."
+          className="flex min-w-0 flex-col items-end justify-center overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground"
+          title="Original planned duration and remaining duration for the current update."
         >
-          <span className="truncate">{task.isMilestone ? "M" : task.durationDays}</span>
+          <span className="font-semibold text-foreground">
+            {task.isMilestone ? "M" : `${task.durationDays}d`}
+          </span>
+          <span className="mt-0.5 max-w-full truncate text-[9px] uppercase tracking-[0.08em]">
+            {percent >= 100 ? "done" : `${task.remainingDurationDays} rem`}
+          </span>
         </div>
         <div
-          className="flex min-w-0 flex-col items-end justify-center overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular"
-          title={formatTaskStatusBasisTitle(task)}
+          className="flex min-w-0 flex-col items-end justify-center overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground"
+          title="Original planned baseline start and baseline finish."
         >
-          <span className="font-semibold text-foreground">{task.remainingDurationDays}</span>
+          <span className="truncate">{shortPrintDate(task.baselineStartDate)}</span>
+          <span className="mt-0.5 truncate">{shortPrintDate(task.baselineFinishDate)}</span>
+        </div>
+        <div
+          className="flex min-w-0 flex-col items-end justify-center overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground"
+          title={`Current start and expected finish. ${formatTaskStatusBasisTitle(task)}`}
+        >
+          <span className="truncate">{shortPrintDate(task.statusStartDate)}</span>
+          <span className="truncate">{shortPrintDate(task.statusFinishDate)}</span>
           <span
             className={cn(
               "mt-0.5 max-w-full truncate text-[9px] font-semibold uppercase tracking-[0.08em]",
@@ -5593,18 +5602,6 @@ function ConstructLineTaskRow({
           >
             {formatTaskStatusBasisLabel(task)}
           </span>
-        </div>
-        <div
-          className="flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground"
-          title="Original planned baseline finish."
-        >
-          <span className="truncate">{shortPrintDate(task.baselineFinishDate)}</span>
-        </div>
-        <div className="flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground">
-          <span className="truncate">{shortPrintDate(task.statusStartDate)}</span>
-        </div>
-        <div className="flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground">
-          <span className="truncate">{shortPrintDate(task.statusFinishDate)}</span>
         </div>
         <div
           className={cn(
