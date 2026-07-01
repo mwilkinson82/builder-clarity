@@ -970,6 +970,8 @@ await expectContains(
     /not per worker/,
     /CostRateDisplay/,
     /CostMoneyInput/,
+    /table-fixed/,
+    /colSpan=\{5\}/,
     /Production \/ Hour/,
     /Build your estimating price book/,
     /Add to My Cost Library/,
@@ -988,6 +990,12 @@ await expectContains(
     /aria-label="Add to My Cost Library"/,
   ],
   "cost library UI can copy system rows and bulk import custom contractor pricing",
+);
+
+await expectNotContains(
+  "src/routes/_authenticated/cost-library.tsx",
+  [/min-w-\[1480px\]/],
+  "cost library main table avoids forced horizontal scrolling",
 );
 
 await expectContains(

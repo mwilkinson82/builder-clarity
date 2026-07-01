@@ -168,17 +168,25 @@ function CostRateDisplay({
   const normalizedUnit = unitLabel(unit);
   if (cents <= 0) {
     return (
-      <div className="text-right text-xs text-muted-foreground">
-        <div className="font-medium">Not priced</div>
-        <div>{kind === "Material" ? "No material cost" : "No labor cost"}</div>
+      <div className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-medium text-foreground">{kind}</span>
+          <span className="text-muted-foreground">Not priced</span>
+        </div>
+        <div className="mt-0.5 text-muted-foreground">
+          {kind === "Material" ? "No material cost" : "No labor cost"}
+        </div>
       </div>
     );
   }
   return (
-    <div className="text-right">
-      <div className="font-medium tabular">
-        {fmtUSD(cents / 100)}{" "}
-        <span className="text-xs text-muted-foreground">/ {normalizedUnit}</span>
+    <div className="rounded-md border border-hairline bg-surface px-2 py-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-medium text-muted-foreground">{kind}</span>
+        <span className="text-sm font-semibold tabular text-foreground">
+          {fmtUSD(cents / 100)}{" "}
+          <span className="text-xs font-normal text-muted-foreground">/ {normalizedUnit}</span>
+        </span>
       </div>
       <div className="text-[11px] text-muted-foreground">
         {kind === "Labor"
@@ -652,26 +660,21 @@ function CostLibraryPage() {
         </div>
 
         <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
-          <Table className="min-w-[1480px]">
+          <Table className="w-full table-fixed">
             <TableHeader>
               <TableRow className="bg-surface [&>th]:whitespace-nowrap">
-                <TableHead className="w-[110px]">Source</TableHead>
-                <TableHead className="w-[110px]">Type</TableHead>
-                <TableHead className="w-[120px]">CSI</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="w-[110px]">Category</TableHead>
-                <TableHead className="w-[80px]">Unit</TableHead>
-                <TableHead className="w-[150px] text-right">Material $/Unit</TableHead>
-                <TableHead className="w-[170px] text-right">Labor $/Unit</TableHead>
-                <TableHead className="w-[190px]">Crew / Production</TableHead>
-                <TableHead className="w-[190px] text-right">Action</TableHead>
+                <TableHead className="w-[38%]">Item</TableHead>
+                <TableHead className="w-[13%]">Scope</TableHead>
+                <TableHead className="w-[23%]">Rates</TableHead>
+                <TableHead className="w-[14%]">Crew / Production</TableHead>
+                <TableHead className="w-[12%] text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {libraryQuery.isLoading ? (
                 <TableRow>
                   <TableCell
-                    colSpan={10}
+                    colSpan={5}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     Loading...
@@ -679,7 +682,7 @@ function CostLibraryPage() {
                 </TableRow>
               ) : libraryQuery.isError ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="py-10 text-center text-sm text-danger">
+                  <TableCell colSpan={5} className="py-10 text-center text-sm text-danger">
                     {libraryQuery.error instanceof Error
                       ? libraryQuery.error.message
                       : "Cost library did not load"}
@@ -688,7 +691,7 @@ function CostLibraryPage() {
               ) : visibleItems.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={10}
+                    colSpan={5}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     {activeEmptyMessage}
@@ -881,125 +884,155 @@ function CostLibraryRow({
   }, [item]);
 
   return (
-    <TableRow className="[&>td]:py-3">
-      <TableCell>
-        <Badge variant="outline" className="gap-1 capitalize">
-          {item.source === "system" && <Lock className="h-3 w-3" />}
-          {sourceLabel}
-        </Badge>
-      </TableCell>
-      <TableCell>
-        <Badge variant={profile === "labor" ? "default" : "outline"} className="capitalize">
-          {profileLabel(profile)}
-        </Badge>
-      </TableCell>
+    <TableRow className="[&>td]:align-top [&>td]:py-3">
       <TableCell>
         {editable ? (
-          <Input
-            value={draft.csi_code || draft.csi_division}
-            onChange={(event) => setDraft({ ...draft, csi_code: event.target.value })}
-            className="h-8"
-          />
+          <div className="space-y-2">
+            <div className="grid gap-2 sm:grid-cols-[120px_1fr]">
+              <Input
+                value={draft.csi_code || draft.csi_division}
+                onChange={(event) => setDraft({ ...draft, csi_code: event.target.value })}
+                className="h-8"
+                aria-label="CSI code"
+              />
+              <Input
+                value={draft.description}
+                onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+                className="h-8"
+                aria-label="Cost description"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <Badge variant="outline" className="gap-1 capitalize">
+                {sourceLabel}
+              </Badge>
+              <Badge variant={profile === "labor" ? "default" : "outline"} className="capitalize">
+                {profileLabel(profile)}
+              </Badge>
+            </div>
+          </div>
         ) : (
-          <span className="tabular">{item.csi_code || item.csi_division}</span>
-        )}
-      </TableCell>
-      <TableCell>
-        {editable ? (
-          <Input
-            value={draft.description}
-            onChange={(event) => setDraft({ ...draft, description: event.target.value })}
-            className="h-8"
-          />
-        ) : (
-          <div>
-            <div className="font-medium">{item.description}</div>
-            <div className="text-xs text-muted-foreground">{item.csi_code}</div>
+          <div className="min-w-0 space-y-2">
+            <div className="font-medium leading-snug text-foreground">{item.description}</div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className="gap-1 capitalize">
+                {item.source === "system" && <Lock className="h-3 w-3" />}
+                {sourceLabel}
+              </Badge>
+              <Badge variant={profile === "labor" ? "default" : "outline"} className="capitalize">
+                {profileLabel(profile)}
+              </Badge>
+              <span className="text-xs tabular text-muted-foreground">
+                CSI {item.csi_code || item.csi_division}
+              </span>
+            </div>
           </div>
         )}
       </TableCell>
       <TableCell>
         {editable ? (
-          <Input
-            value={draft.category}
-            onChange={(event) => setDraft({ ...draft, category: event.target.value })}
-            className="h-8"
-          />
+          <div className="space-y-2">
+            <Input
+              value={draft.category}
+              onChange={(event) => setDraft({ ...draft, category: event.target.value })}
+              className="h-8"
+              aria-label="Category"
+            />
+            <Input
+              value={draft.unit}
+              onChange={(event) => setDraft({ ...draft, unit: event.target.value })}
+              className="h-8 uppercase"
+              aria-label="Unit"
+            />
+          </div>
         ) : (
-          item.category
+          <div className="space-y-1 text-sm">
+            <div className="font-medium capitalize">{item.category || "Uncategorized"}</div>
+            <div className="text-xs text-muted-foreground">
+              Unit: <span className="tabular text-foreground">{unitLabel(item.unit)}</span>
+            </div>
+          </div>
         )}
       </TableCell>
       <TableCell>
         {editable ? (
-          <Input
-            value={draft.unit}
-            onChange={(event) => setDraft({ ...draft, unit: event.target.value })}
-            className="h-8 uppercase"
-          />
+          <div className="space-y-2">
+            <div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Material $/Unit
+              </div>
+              <CostMoneyInput
+                value={centsToDollars(draft.material_cost_cents)}
+                onValueChange={(value) =>
+                  setDraft({ ...draft, material_cost_cents: dollarsToCents(value) })
+                }
+                unit={draft.unit}
+                ariaLabel="Material dollars per unit"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Labor $/Unit
+              </div>
+              <CostMoneyInput
+                value={centsToDollars(draft.labor_cost_cents)}
+                onValueChange={(value) =>
+                  setDraft({ ...draft, labor_cost_cents: dollarsToCents(value) })
+                }
+                unit={draft.unit}
+                ariaLabel="Labor dollars per unit"
+              />
+            </div>
+          </div>
         ) : (
-          item.unit
-        )}
-      </TableCell>
-      <TableCell className="text-right">
-        {editable ? (
-          <CostMoneyInput
-            value={centsToDollars(draft.material_cost_cents)}
-            onValueChange={(value) =>
-              setDraft({ ...draft, material_cost_cents: dollarsToCents(value) })
-            }
-            unit={draft.unit}
-            ariaLabel="Material dollars per unit"
-          />
-        ) : (
-          <CostRateDisplay cents={item.material_cost_cents} unit={item.unit} kind="Material" />
-        )}
-      </TableCell>
-      <TableCell className="text-right">
-        {editable ? (
-          <CostMoneyInput
-            value={centsToDollars(draft.labor_cost_cents)}
-            onValueChange={(value) =>
-              setDraft({ ...draft, labor_cost_cents: dollarsToCents(value) })
-            }
-            unit={draft.unit}
-            ariaLabel="Labor dollars per unit"
-          />
-        ) : (
-          <CostRateDisplay cents={item.labor_cost_cents} unit={item.unit} kind="Labor" />
+          <div className="space-y-2">
+            <CostRateDisplay cents={item.material_cost_cents} unit={item.unit} kind="Material" />
+            <CostRateDisplay cents={item.labor_cost_cents} unit={item.unit} kind="Labor" />
+          </div>
         )}
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
         {editable ? (
-          <div className="grid grid-cols-2 gap-2">
-            <Input
-              type="number"
-              min={0}
-              step="0.1"
-              value={draft.crew_size ?? ""}
-              onChange={(event) =>
-                setDraft({
-                  ...draft,
-                  crew_size: event.target.value === "" ? null : Number(event.target.value),
-                })
-              }
-              className="h-8"
-              aria-label="Crew size"
-            />
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              value={draft.productivity_per_hour ?? ""}
-              onChange={(event) =>
-                setDraft({
-                  ...draft,
-                  productivity_per_hour:
-                    event.target.value === "" ? null : Number(event.target.value),
-                })
-              }
-              className="h-8"
-              aria-label="Production per hour"
-            />
+          <div className="space-y-2">
+            <div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Crew
+              </div>
+              <Input
+                type="number"
+                min={0}
+                step="0.1"
+                value={draft.crew_size ?? ""}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    crew_size: event.target.value === "" ? null : Number(event.target.value),
+                  })
+                }
+                className="h-8"
+                aria-label="Crew size"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Production / Hour
+              </div>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={draft.productivity_per_hour ?? ""}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    productivity_per_hour:
+                      event.target.value === "" ? null : Number(event.target.value),
+                  })
+                }
+                className="h-8"
+                aria-label="Production per hour"
+              />
+            </div>
           </div>
         ) : (
           <CrewProductionDisplay item={item} />
@@ -1034,7 +1067,7 @@ function CostLibraryRow({
             <Button
               size="sm"
               variant="outline"
-              className="h-8 gap-1.5 whitespace-nowrap"
+              className="h-auto min-h-8 justify-start gap-1.5 whitespace-normal px-2 py-1.5 text-left leading-tight"
               onClick={onCopy}
               title="Add to My Cost Library"
               aria-label="Add to My Cost Library"
