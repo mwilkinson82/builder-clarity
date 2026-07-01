@@ -555,6 +555,8 @@ for (const requiredScheduleRiskText of [
   "variance compares expected finish",
   "Drivers:",
   "Negative float drivers:",
+  "slipped activities",
+  "worst ${formatFinishVarianceDays(activitySummary.worstSlippageDays)}",
   "negative-float activities",
   "worst ${activitySummary.worstTotalFloatDays}d TF",
   "Interim milestones",

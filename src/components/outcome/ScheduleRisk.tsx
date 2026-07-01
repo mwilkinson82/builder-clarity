@@ -8284,6 +8284,13 @@ function ScheduleUpdateLedger({
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   {milestoneCountByUpdate[update.update_number] ?? 0} milestone snapshots
+                  {activitySummary?.slippedCount
+                    ? ` · ${activitySummary.slippedCount} slipped activities${
+                        activitySummary.worstSlippageDays == null
+                          ? ""
+                          : ` · worst ${formatFinishVarianceDays(activitySummary.worstSlippageDays)}`
+                      }`
+                    : ""}
                   {activitySummary?.negativeFloatCount
                     ? ` · ${activitySummary.negativeFloatCount} negative-float activities${
                         activitySummary.worstTotalFloatDays == null
@@ -8434,6 +8441,8 @@ function ScheduleUpdateLedger({
 type ActivityUpdateSnapshotSummary = {
   activityCount: number;
   criticalCount: number;
+  slippedCount: number;
+  worstSlippageDays: number | null;
   negativeFloatCount: number;
   worstTotalFloatDays: number | null;
   lateCount: number;
@@ -8479,9 +8488,13 @@ function summarizeActivityUpdateSnapshots(
   rows: ScheduleActivityUpdateRow[],
 ): ActivityUpdateSnapshotSummary {
   const negativeFloatRows = rows.filter((row) => row.total_float_days < 0);
+  const slippedRows = rows.filter((row) => row.slippage_days > 0);
   return {
     activityCount: rows.length,
     criticalCount: rows.filter((row) => row.is_critical).length,
+    slippedCount: slippedRows.length,
+    worstSlippageDays:
+      slippedRows.length > 0 ? Math.max(...slippedRows.map((row) => row.slippage_days)) : null,
     negativeFloatCount: negativeFloatRows.length,
     worstTotalFloatDays:
       negativeFloatRows.length > 0
