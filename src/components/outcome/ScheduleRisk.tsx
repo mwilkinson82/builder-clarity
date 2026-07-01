@@ -221,32 +221,32 @@ const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
 const CONSTRUCTLINE_MIN_DAY_PX = 1.1;
 const CONSTRUCTLINE_MAX_DAY_PX = 28;
-const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v2";
+const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v3";
 const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
-  { id: "id", label: "ID", compactLabel: "ID", min: 50, default: 58, max: 104, align: "left" },
+  { id: "id", label: "ID", compactLabel: "ID", min: 46, default: 52, max: 92, align: "left" },
   {
     id: "activity",
     label: "Activity",
     compactLabel: "Activity",
-    min: 190,
-    default: 220,
-    max: 460,
+    min: 150,
+    default: 190,
+    max: 420,
     align: "left",
   },
-  { id: "dur", label: "Duration", compactLabel: "Dur", min: 44, default: 50, max: 88 },
-  { id: "plan", label: "Planned dates", compactLabel: "Plan", min: 68, default: 76, max: 128 },
+  { id: "dur", label: "Duration", compactLabel: "Dur", min: 40, default: 44, max: 78 },
+  { id: "plan", label: "Planned dates", compactLabel: "Plan", min: 62, default: 68, max: 112 },
   {
     id: "current",
     label: "Current dates",
-    compactLabel: "Current",
-    min: 82,
-    default: 88,
-    max: 148,
+    compactLabel: "Now",
+    min: 70,
+    default: 76,
+    max: 128,
   },
-  { id: "slip", label: "Slip", compactLabel: "Slip", min: 40, default: 46, max: 82 },
-  { id: "done", label: "% done", compactLabel: "% done", min: 46, default: 54, max: 84 },
-  { id: "tf", label: "TF", compactLabel: "TF", min: 34, default: 40, max: 66 },
-  { id: "logic", label: "Logic", compactLabel: "Logic", min: 38, default: 44, max: 76 },
+  { id: "slip", label: "Slip", compactLabel: "Slip", min: 36, default: 40, max: 70 },
+  { id: "done", label: "Done percent", compactLabel: "%", min: 36, default: 40, max: 66 },
+  { id: "tf", label: "TF", compactLabel: "TF", min: 30, default: 34, max: 60 },
+  { id: "logic", label: "Logic", compactLabel: "Logic", min: 34, default: 38, max: 66 },
 ] as const;
 const CONSTRUCTLINE_TABLE_PRINT_COLUMNS =
   "42px minmax(130px,1fr) 34px 48px 54px 34px 30px 24px 26px";
@@ -3694,9 +3694,11 @@ function CpmGridToolbar({
   onSaveTemplate: () => void;
   onApplyTemplate: () => void;
 }) {
+  const [showTemplateTools, setShowTemplateTools] = useState(false);
+
   return (
     <div className="flex w-full min-w-0 flex-col gap-3">
-      <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(300px,0.9fr)_minmax(0,1.7fr)_minmax(280px,0.9fr)]">
+      <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(280px,0.82fr)_minmax(0,1.8fr)_minmax(260px,0.78fr)]">
         <CpmToolbarGroup label="Schedule snapshot">
           <CpmDataDateControl
             value={dataDateDraft}
@@ -3727,7 +3729,7 @@ function CpmGridToolbar({
         </CpmToolbarGroup>
       </div>
 
-      <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(540px,1.15fr)]">
+      <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(0,0.72fr)_minmax(520px,1.28fr)]">
         <CpmToolbarGroup label="Scale and logic">
           <ScheduleZoomControls dayPx={dayPx} onChange={onZoomChange} />
           <Button
@@ -3770,6 +3772,16 @@ function CpmGridToolbar({
           >
             <Printer className="h-4 w-4" />
             Print 11x17
+          </Button>
+          <Button
+            type="button"
+            variant={showTemplateTools ? "default" : "outline"}
+            className="h-9 gap-2 whitespace-nowrap"
+            aria-pressed={showTemplateTools}
+            onClick={() => setShowTemplateTools((visible) => !visible)}
+          >
+            <ClipboardList className="h-4 w-4" />
+            Templates
           </Button>
           <Button
             type="button"
@@ -3817,60 +3829,62 @@ function CpmGridToolbar({
         </div>
       )}
 
-      <CpmToolbarGroup label="Templates">
-        <Input
-          value={templateName}
-          onChange={(event) => onTemplateNameChange(event.target.value)}
-          className="h-9 w-[min(100%,280px)] min-w-[220px] bg-card"
-          placeholder="Template name"
-          disabled={isSavingTemplate}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          className="h-9 gap-2 whitespace-nowrap"
-          disabled={!templateName.trim() || isSavingTemplate}
-          onClick={onSaveTemplate}
-        >
-          <ClipboardList className="h-4 w-4" />
-          {isSavingTemplate ? "Saving..." : "Save current CPM as template"}
-        </Button>
-        <Select
-          value={selectedTemplateId}
-          onValueChange={onSelectedTemplateChange}
-          disabled={isTemplateLoading || templates.length === 0 || isApplyingTemplate}
-        >
-          <SelectTrigger className="h-9 w-[min(100%,260px)] min-w-[220px] bg-card">
-            <SelectValue
-              placeholder={isTemplateLoading ? "Loading templates" : "Choose template"}
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {templates.map((template) => (
-              <SelectItem key={template.id} value={template.id}>
-                {template.name} · {template.activity_count} activities
-                {"source" in template ? " · browser" : ""}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-9 gap-2 whitespace-nowrap"
-          disabled={!selectedTemplateId || isApplyingTemplate || templates.length === 0}
-          onClick={onApplyTemplate}
-        >
-          <Plus className="h-4 w-4" />
-          {isApplyingTemplate ? "Applying..." : "Use template"}
-        </Button>
-        {templatePersistence === "migration_required" && (
-          <span className="text-xs text-muted-foreground">
-            Private browser templates are active. Templates saved here stay in this browser and can
-            be reused on other projects opened here.
-          </span>
-        )}
-      </CpmToolbarGroup>
+      {showTemplateTools && (
+        <CpmToolbarGroup label="Templates">
+          <Input
+            value={templateName}
+            onChange={(event) => onTemplateNameChange(event.target.value)}
+            className="h-9 w-[min(100%,280px)] min-w-[220px] bg-card"
+            placeholder="Template name"
+            disabled={isSavingTemplate}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 gap-2 whitespace-nowrap"
+            disabled={!templateName.trim() || isSavingTemplate}
+            onClick={onSaveTemplate}
+          >
+            <ClipboardList className="h-4 w-4" />
+            {isSavingTemplate ? "Saving..." : "Save current CPM as template"}
+          </Button>
+          <Select
+            value={selectedTemplateId}
+            onValueChange={onSelectedTemplateChange}
+            disabled={isTemplateLoading || templates.length === 0 || isApplyingTemplate}
+          >
+            <SelectTrigger className="h-9 w-[min(100%,260px)] min-w-[220px] bg-card">
+              <SelectValue
+                placeholder={isTemplateLoading ? "Loading templates" : "Choose template"}
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {templates.map((template) => (
+                <SelectItem key={template.id} value={template.id}>
+                  {template.name} · {template.activity_count} activities
+                  {"source" in template ? " · browser" : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 gap-2 whitespace-nowrap"
+            disabled={!selectedTemplateId || isApplyingTemplate || templates.length === 0}
+            onClick={onApplyTemplate}
+          >
+            <Plus className="h-4 w-4" />
+            {isApplyingTemplate ? "Applying..." : "Use template"}
+          </Button>
+          {templatePersistence === "migration_required" && (
+            <span className="text-xs text-muted-foreground">
+              Private browser templates are active. Templates saved here stay in this browser and
+              can be reused on other projects opened here.
+            </span>
+          )}
+        </CpmToolbarGroup>
+      )}
     </div>
   );
 }
@@ -3886,10 +3900,7 @@ function CpmToolbarGroup({
 }) {
   return (
     <div
-      className={cn(
-        "min-w-0 rounded-md border border-hairline bg-surface/70 px-3 py-2.5",
-        className,
-      )}
+      className={cn("min-w-0 rounded-md border border-hairline bg-surface px-2.5 py-2", className)}
     >
       <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
@@ -4858,7 +4869,7 @@ function clampNumber(value: number, min: number, max: number) {
 function buildDefaultTableColumnWidths(isFocusMode: boolean): ConstructLineTableColumnWidths {
   return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((widths, column) => {
     widths[column.id] =
-      column.id === "activity" && isFocusMode ? Math.min(column.max, 320) : column.default;
+      column.id === "activity" && isFocusMode ? Math.min(column.max, 230) : column.default;
     return widths;
   }, {} as ConstructLineTableColumnWidths);
 }
@@ -4930,7 +4941,7 @@ function MatrixHeaderCell({
   return (
     <div
       className={cn(
-        "relative flex min-w-0 items-center border-l border-hairline/70 px-2 leading-[1.05]",
+        "relative flex min-w-0 items-center border-l border-hairline/70 px-2 pr-3 leading-[1.05]",
         align === "left" ? "justify-start text-left first:border-l-0" : "justify-end text-right",
       )}
     >
@@ -4938,10 +4949,12 @@ function MatrixHeaderCell({
       {onResizeStart && (
         <button
           type="button"
-          aria-label={`Resize ${String(children)} column`}
-          className="absolute inset-y-0 right-0 z-10 w-2 translate-x-1 cursor-col-resize border-r border-transparent hover:border-foreground/45 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
+          aria-label="Resize column"
+          className="group absolute inset-y-0 right-0 z-10 flex w-3 translate-x-1 cursor-col-resize items-center justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
           onPointerDown={onResizeStart}
-        />
+        >
+          <span className="h-5 w-1 rounded-full bg-foreground/20 transition-colors group-hover:bg-foreground/60" />
+        </button>
       )}
     </div>
   );
@@ -5203,7 +5216,7 @@ function ActivityScheduleMatrix({
         isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : isPrintMode ? "mt-0" : "mt-2",
       )}
     >
-      <div className="constructline-cpm-matrix-head flex flex-col gap-4 border-b border-hairline px-4 py-4">
+      <div className="constructline-cpm-matrix-head flex flex-col gap-3 border-b border-hairline bg-card px-3 py-3">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
           <div className="constructline-cpm-matrix-title">
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -5214,11 +5227,13 @@ function ActivityScheduleMatrix({
             <div className="mt-1 text-sm text-muted-foreground">
               {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
             </div>
-            <div className="mt-1 max-w-2xl text-xs text-muted-foreground">
-              Planned duration stays tied to baseline dates. Remaining duration, current start, and
-              expected finish are the active update values; variance compares expected finish
-              against baseline.
-            </div>
+            {isFocusMode && (
+              <div className="mt-1 max-w-2xl text-xs text-muted-foreground">
+                Planned duration stays tied to baseline dates. Remaining duration, current start,
+                and expected finish are the active update values; variance compares expected finish
+                against baseline.
+              </div>
+            )}
             {viewSummary && (
               <div className="mt-1 text-xs font-semibold text-foreground">{viewSummary}</div>
             )}
@@ -5289,7 +5304,7 @@ function ActivityScheduleMatrix({
         <div
           ref={matrixScrollRef}
           className={cn(
-            "constructline-cpm-matrix-scroll",
+            "constructline-cpm-matrix-scroll bg-card",
             isPrintMode
               ? "overflow-visible"
               : "overflow-auto overscroll-contain print:max-h-none print:overflow-visible",
@@ -5305,11 +5320,11 @@ function ActivityScheduleMatrix({
             style={{ width: tableWidth + timelineWidth, minWidth: "100%" }}
           >
             <div
-              className="sticky top-0 z-30 flex border-b border-hairline bg-muted/65 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"
+              className="sticky top-0 z-20 flex border-b border-hairline bg-card text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground shadow-sm"
               style={{ height: headerHeight }}
             >
               <div
-                className="sticky left-0 z-40 grid shrink-0 border-r border-hairline bg-muted/80"
+                className="sticky left-0 z-30 grid shrink-0 border-r border-hairline bg-card"
                 style={{ width: tableWidth, gridTemplateColumns: tableColumns }}
               >
                 {CONSTRUCTLINE_TABLE_COLUMN_SPECS.map((column) => (
@@ -5326,7 +5341,7 @@ function ActivityScheduleMatrix({
               </div>
               <div
                 className={cn(
-                  "relative shrink-0 bg-muted/45",
+                  "relative shrink-0 bg-card",
                   !isPrintMode && "cursor-grab select-none active:cursor-grabbing",
                 )}
                 style={{ width: timelineWidth }}
@@ -5337,9 +5352,11 @@ function ActivityScheduleMatrix({
                   <button
                     type="button"
                     aria-label="Resize activity table and Gantt split"
-                    className="absolute inset-y-0 left-0 z-30 w-3 -translate-x-1/2 cursor-col-resize border-l border-foreground/20 bg-foreground/5 hover:bg-foreground/15 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
+                    className="group absolute inset-y-0 left-0 z-30 flex w-5 -translate-x-1/2 cursor-col-resize items-center justify-center border-x border-foreground/15 bg-card/95 shadow-sm hover:bg-surface focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
                     onPointerDown={(event) => startColumnResize("activity", event)}
-                  />
+                  >
+                    <span className="h-7 w-1 rounded-full bg-foreground/25 transition-colors group-hover:bg-foreground/70" />
+                  </button>
                 )}
                 {monthBands.map((band) => (
                   <div
