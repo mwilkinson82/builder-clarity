@@ -26,6 +26,8 @@ import {
   Square,
   Target,
   Trash2,
+  Undo2,
+  XCircle,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -42,6 +44,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtUSD } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -83,6 +86,7 @@ interface PlanRoomWorkspaceProps {
 
 const DEFAULT_VIEW_SIZE: ViewSize = { width: 960, height: 620 };
 const TAKEOFF_COLORS = ["#1b7a6e", "#b35035", "#946a21", "#375d8a", "#5d5f6f"];
+const QUICK_CALIBRATION_FEET = [10, 20, 25, 50, 100];
 const MIN_PLAN_ZOOM = 0.25;
 const MAX_PLAN_ZOOM = 4;
 const PLAN_ZOOM_STEP = 0.25;
@@ -187,6 +191,11 @@ export function PlanRoomWorkspace({
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const [uploading, setUploading] = useState(false);
   const [isCockpitMode, setIsCockpitMode] = useState(false);
+  const [selectedMeasurementId, setSelectedMeasurementId] = useState("");
+  const [selectedMeasurementDraft, setSelectedMeasurementDraft] = useState({
+    label: "",
+    notes: "",
+  });
 
   const currentSheet = useMemo(
     () => sheets.find((sheet) => sheet.id === selectedSheetId) ?? sheets[0] ?? null,
@@ -199,6 +208,18 @@ export function PlanRoomWorkspace({
   const sheetMeasurements = measurements.filter(
     (measurement) => measurement.plan_sheet_id === currentSheet?.id,
   );
+  const selectedMeasurement =
+    measurements.find((measurement) => measurement.id === selectedMeasurementId) ?? null;
+  const selectedMeasurementSheet = selectedMeasurement
+    ? (sheets.find((sheet) => sheet.id === selectedMeasurement.plan_sheet_id) ?? null)
+    : null;
+  const selectedMeasurementLine = selectedMeasurement?.estimate_line_item_id
+    ? (lineItems.find((line) => line.id === selectedMeasurement.estimate_line_item_id) ?? null)
+    : null;
+  const selectedMeasurementLabel = selectedMeasurement?.label ?? "";
+  const selectedMeasurementNotes = selectedMeasurement?.notes ?? "";
+  const activeDraftPointCount =
+    tool === "calibrate" ? calibrationPoints.length : pendingPoints.length;
 
   useEffect(() => {
     if (!selectedSheetId && sheets[0]) setSelectedSheetId(sheets[0].id);
@@ -209,6 +230,23 @@ export function PlanRoomWorkspace({
       setMeasurementLabel(selectedLine.description);
     }
   }, [measurementLabel, selectedLine]);
+
+  useEffect(() => {
+    if (selectedMeasurementId && !measurements.some((item) => item.id === selectedMeasurementId)) {
+      setSelectedMeasurementId("");
+    }
+  }, [measurements, selectedMeasurementId]);
+
+  useEffect(() => {
+    if (!selectedMeasurementId) {
+      setSelectedMeasurementDraft({ label: "", notes: "" });
+      return;
+    }
+    setSelectedMeasurementDraft({
+      label: selectedMeasurementLabel,
+      notes: selectedMeasurementNotes,
+    });
+  }, [selectedMeasurementId, selectedMeasurementLabel, selectedMeasurementNotes]);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["plan-room", estimate.id] });
@@ -262,9 +300,10 @@ export function PlanRoomWorkspace({
         },
       });
     },
-    onSuccess: (_result, variables) => {
+    onSuccess: (result, variables) => {
       toast.success(selectedLine ? "Takeoff saved and estimate row updated" : "Takeoff saved");
       setPendingPoints([]);
+      setSelectedMeasurementId(result.measurement.id);
       if (variables.measurementTool !== "count") setTool("select");
       invalidate();
     },
@@ -303,8 +342,9 @@ export function PlanRoomWorkspace({
 
   const deleteMeasurementMutation = useMutation({
     mutationFn: (id: string) => deleteMeasurementFn({ data: { id } }),
-    onSuccess: () => {
+    onSuccess: (_result, id) => {
       toast.success("Takeoff deleted");
+      if (selectedMeasurementId === id) setSelectedMeasurementId("");
       invalidate();
     },
     onError: (error) =>
@@ -383,6 +423,32 @@ export function PlanRoomWorkspace({
     setPendingPoints((current) => [...current, point]);
   };
 
+  const selectMeasurement = (measurement: TakeoffMeasurementRow) => {
+    setSelectedMeasurementId(measurement.id);
+    setTool("select");
+    setPendingPoints([]);
+    setCalibrationPoints([]);
+    if (measurement.plan_sheet_id !== currentSheet?.id) {
+      setSelectedSheetId(measurement.plan_sheet_id);
+    }
+  };
+
+  const undoDraftPoint = () => {
+    if (tool === "calibrate") {
+      setCalibrationPoints((current) => current.slice(0, -1));
+      return;
+    }
+    setPendingPoints((current) => current.slice(0, -1));
+  };
+
+  const clearDraftPoints = () => {
+    if (tool === "calibrate") {
+      setCalibrationPoints([]);
+      return;
+    }
+    setPendingPoints([]);
+  };
+
   const finishArea = () => {
     if (tool !== "area" || pendingPoints.length < 3) {
       toast.warning("Click at least three corners before finishing an area.");
@@ -411,6 +477,22 @@ export function PlanRoomWorkspace({
       scale_label: `${feet} ft calibration`,
       width_px: Math.round(viewSize.width),
       height_px: Math.round(viewSize.height),
+    });
+  };
+
+  const saveSelectedMeasurement = () => {
+    if (!selectedMeasurement) return;
+    const label = selectedMeasurementDraft.label.trim();
+    if (!label) {
+      toast.warning("Give this takeoff a label before saving.");
+      return;
+    }
+    updateMeasurementMutation.mutate({
+      id: selectedMeasurement.id,
+      patch: {
+        label,
+        notes: selectedMeasurementDraft.notes.trim(),
+      },
     });
   };
 
@@ -551,6 +633,9 @@ export function PlanRoomWorkspace({
                               setSelectedSheetId(sheet.id);
                               setPendingPoints([]);
                               setCalibrationPoints([]);
+                              if (selectedMeasurement?.plan_sheet_id !== sheet.id) {
+                                setSelectedMeasurementId("");
+                              }
                             }}
                             className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm transition ${
                               sheet.id === currentSheet?.id
@@ -670,6 +755,28 @@ export function PlanRoomWorkspace({
                   <Check className="h-3.5 w-3.5" /> Finish Area
                 </Button>
               )}
+              {activeDraftPointCount > 0 && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={undoDraftPoint}
+                    data-testid="takeoff-undo-point"
+                  >
+                    <Undo2 className="h-3.5 w-3.5" /> Undo Point
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={clearDraftPoints}
+                    data-testid="takeoff-clear-points"
+                  >
+                    <XCircle className="h-3.5 w-3.5" /> Clear Points
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
@@ -684,6 +791,11 @@ export function PlanRoomWorkspace({
             onViewSizeChange={setViewSize}
             onPoint={onCanvasPoint}
             isCockpitMode={isCockpitMode}
+            selectedMeasurementId={selectedMeasurementId}
+            onMeasurementSelect={(measurementId) => {
+              const measurement = measurements.find((item) => item.id === measurementId);
+              if (measurement) selectMeasurement(measurement);
+            }}
           />
         </section>
 
@@ -735,8 +847,24 @@ export function PlanRoomWorkspace({
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Click two points on a known distance, type the real distance, then save.
+                  Click both ends of a known dimension on the drawing. Type that real field distance
+                  in feet, then save the sheet scale.
                 </p>
+                <div className="grid grid-cols-5 gap-1" data-testid="calibration-distance-presets">
+                  {QUICK_CALIBRATION_FEET.map((feet) => (
+                    <Button
+                      key={feet}
+                      type="button"
+                      size="sm"
+                      variant={calibrationFeet === String(feet) ? "default" : "outline"}
+                      className="h-8 px-1 text-xs"
+                      onClick={() => setCalibrationFeet(String(feet))}
+                      data-testid={`calibration-distance-${feet}`}
+                    >
+                      {feet}'
+                    </Button>
+                  ))}
+                </div>
                 <div className="grid grid-cols-[1fr_auto] gap-2">
                   <Input
                     type="number"
@@ -755,8 +883,145 @@ export function PlanRoomWorkspace({
                     <Save className="h-3.5 w-3.5" /> Save
                   </Button>
                 </div>
+                <div className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
+                  {tool === "calibrate" ? (
+                    <span>{calibrationPoints.length}/2 calibration points selected.</span>
+                  ) : currentSheet?.scale_feet_per_pixel ? (
+                    <span>
+                      Scale locked at {currentSheet.scale_feet_per_pixel.toFixed(4)} feet per
+                      drawing pixel.
+                    </span>
+                  ) : (
+                    <span>Scale is needed before linear or area quantities can calculate.</span>
+                  )}
+                </div>
               </div>
             </div>
+          </section>
+
+          <section
+            className="rounded-lg border border-hairline bg-card p-4 shadow-card"
+            data-testid="selected-takeoff-inspector"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="font-serif text-xl">Selected Takeoff</h2>
+                <p className="text-xs text-muted-foreground">
+                  Click a markup or worksheet item to inspect and clean up its source.
+                </p>
+              </div>
+              {selectedMeasurement && (
+                <Badge variant="secondary">
+                  {toolLabel(selectedMeasurement.tool_type)} ·{" "}
+                  {formatQty(selectedMeasurement.quantity, selectedMeasurement.unit)}
+                </Badge>
+              )}
+            </div>
+            {selectedMeasurement ? (
+              <div className="mt-4 space-y-3">
+                <div className="rounded-md border border-hairline bg-surface p-3 text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground">
+                    {selectedMeasurementSheet
+                      ? `${selectedMeasurementSheet.sheet_number} ${selectedMeasurementSheet.sheet_name}`.trim()
+                      : "Unknown sheet"}
+                  </p>
+                  <p className="mt-1">
+                    Estimate row: {selectedMeasurementLine?.description || "Not linked yet"}
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Takeoff label</Label>
+                  <Input
+                    value={selectedMeasurementDraft.label}
+                    onChange={(event) =>
+                      setSelectedMeasurementDraft((draft) => ({
+                        ...draft,
+                        label: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Notes</Label>
+                  <Textarea
+                    rows={3}
+                    value={selectedMeasurementDraft.notes}
+                    onChange={(event) =>
+                      setSelectedMeasurementDraft((draft) => ({
+                        ...draft,
+                        notes: event.target.value,
+                      }))
+                    }
+                    placeholder="Add assumptions, sheet notes, or scope clarifications."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Select
+                    value={selectedMeasurement.estimate_line_item_id ?? "unlinked"}
+                    onValueChange={(lineId) =>
+                      updateMeasurementMutation.mutate({
+                        id: selectedMeasurement.id,
+                        patch: {
+                          estimate_line_item_id: lineId === "unlinked" ? null : lineId,
+                        },
+                      })
+                    }
+                  >
+                    <SelectTrigger data-testid="selected-takeoff-row-link">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="unlinked">Not linked to estimate</SelectItem>
+                      {lineItems.map((line) => (
+                        <SelectItem key={line.id} value={line.id}>
+                          {line.cost_code ? `${line.cost_code} · ` : ""}
+                          {line.description.slice(0, 70)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-1.5"
+                      onClick={saveSelectedMeasurement}
+                      disabled={updateMeasurementMutation.isPending}
+                    >
+                      <Save className="h-3.5 w-3.5" /> Save Details
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-1.5"
+                      onClick={() => deleteMeasurementMutation.mutate(selectedMeasurement.id)}
+                      disabled={deleteMeasurementMutation.isPending}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-danger" /> Delete
+                    </Button>
+                  </div>
+                  {selectedMeasurementLine ? (
+                    <Button
+                      size="sm"
+                      className="w-full gap-1.5"
+                      onClick={() => syncLineMutation.mutate(selectedMeasurementLine.id)}
+                    >
+                      <Link2 className="h-3.5 w-3.5" />
+                      Send This Takeoff Total to Estimate
+                    </Button>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Link this takeoff to an estimate row before sending quantity.
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
+                No takeoff selected. Use Select, then click a markup on the plan or a worksheet
+                item.
+              </div>
+            )}
           </section>
 
           <section className="rounded-lg border border-hairline bg-card shadow-card">
@@ -780,8 +1045,31 @@ export function PlanRoomWorkspace({
                   const linkedLine = lineItems.find(
                     (line) => line.id === measurement.estimate_line_item_id,
                   );
+                  const measurementSheet = sheets.find(
+                    (sheet) => sheet.id === measurement.plan_sheet_id,
+                  );
+                  const isSelected = measurement.id === selectedMeasurementId;
                   return (
-                    <div key={measurement.id} className="rounded-md border border-hairline p-3">
+                    <div
+                      key={measurement.id}
+                      role="button"
+                      tabIndex={0}
+                      className={cn(
+                        "rounded-md border border-hairline p-3 text-left transition",
+                        isSelected && "border-primary bg-primary/5 shadow-sm",
+                      )}
+                      onClick={(event) => {
+                        const target = event.target as HTMLElement;
+                        if (target.closest("button,[role='combobox'],input,textarea")) return;
+                        selectMeasurement(measurement);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          selectMeasurement(measurement);
+                        }
+                      }}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
@@ -795,6 +1083,12 @@ export function PlanRoomWorkspace({
                             {toolLabel(measurement.tool_type)} ·{" "}
                             {formatQty(measurement.quantity, measurement.unit)}
                           </p>
+                          {measurementSheet && (
+                            <p className="mt-1 truncate text-xs text-muted-foreground">
+                              Source: {measurementSheet.sheet_number} ·{" "}
+                              {measurementSheet.sheet_name}
+                            </p>
+                          )}
                         </div>
                         <Button
                           variant="ghost"
@@ -908,6 +1202,8 @@ function PlanCanvas({
   onViewSizeChange,
   onPoint,
   isCockpitMode,
+  selectedMeasurementId,
+  onMeasurementSelect,
 }: {
   planSet: PlanSetRow | null;
   sheet: PlanSheetRow | null;
@@ -919,6 +1215,8 @@ function PlanCanvas({
   onViewSizeChange: (size: ViewSize) => void;
   onPoint: (point: Point) => void;
   isCockpitMode: boolean;
+  selectedMeasurementId: string;
+  onMeasurementSelect: (measurementId: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -1223,6 +1521,8 @@ function PlanCanvas({
                   key={measurement.id}
                   measurement={measurement}
                   viewSize={viewSize}
+                  selected={measurement.id === selectedMeasurementId}
+                  onSelect={onMeasurementSelect}
                 />
               ))}
               <DraftShape
@@ -1350,9 +1650,13 @@ function SamplePlanBackground({
 function MeasurementShape({
   measurement,
   viewSize,
+  selected,
+  onSelect,
 }: {
   measurement: TakeoffMeasurementRow;
   viewSize: ViewSize;
+  selected: boolean;
+  onSelect: (measurementId: string) => void;
 }) {
   const points = geometryPoints(measurement.geometry);
   if (points.length === 0) return null;
@@ -1361,16 +1665,28 @@ function MeasurementShape({
     y: point.y * viewSize.height,
   }));
   const labelPoint = scaled[0];
+  const handleSelect = (event: ReactMouseEvent<SVGGElement>) => {
+    event.stopPropagation();
+    onSelect(measurement.id);
+  };
 
   if (measurement.tool_type === "area" && scaled.length >= 3) {
     return (
-      <g>
+      <g className="cursor-pointer" onClick={handleSelect}>
         <polygon
           points={scaled.map((point) => `${point.x},${point.y}`).join(" ")}
           fill={`${measurement.color}22`}
-          stroke={measurement.color}
-          strokeWidth="3"
+          stroke={selected ? "#111827" : measurement.color}
+          strokeWidth={selected ? "6" : "3"}
         />
+        {selected && (
+          <polygon
+            points={scaled.map((point) => `${point.x},${point.y}`).join(" ")}
+            fill="none"
+            stroke={measurement.color}
+            strokeWidth="3"
+          />
+        )}
         <MeasurementLabel
           x={labelPoint.x}
           y={labelPoint.y}
@@ -1383,9 +1699,10 @@ function MeasurementShape({
 
   if (measurement.tool_type === "count") {
     return (
-      <g>
+      <g className="cursor-pointer" onClick={handleSelect}>
         {scaled.map((point, index) => (
           <g key={`${point.x}-${point.y}-${index}`}>
+            {selected && <circle cx={point.x} cy={point.y} r="16" fill="white" stroke="#111827" />}
             <circle cx={point.x} cy={point.y} r="11" fill={measurement.color} />
             <text
               x={point.x}
@@ -1410,7 +1727,18 @@ function MeasurementShape({
   }
 
   return (
-    <g>
+    <g className="cursor-pointer" onClick={handleSelect}>
+      {selected && (
+        <polyline
+          points={scaled.map((point) => `${point.x},${point.y}`).join(" ")}
+          fill="none"
+          stroke="#111827"
+          strokeWidth="8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity="0.35"
+        />
+      )}
       <polyline
         points={scaled.map((point) => `${point.x},${point.y}`).join(" ")}
         fill="none"
