@@ -28,6 +28,7 @@ import {
   Plus,
   Ruler,
   Save,
+  Search,
   Square,
   Target,
   Trash2,
@@ -79,6 +80,8 @@ type ToolMode = "select" | "calibrate" | TakeoffToolType;
 type RevisionOverlayMode = "compare" | "ghost";
 type CockpitPanel = "drawings" | "tools" | null;
 type MiniMapDock = "bottom-left" | "bottom-right" | "top-left" | "top-right";
+type SheetFilterMode = "all" | "current" | "needs-scale" | "has-takeoff";
+type TakeoffFilterMode = "all" | "sheet" | "unlinked" | "linked";
 type Point = PlanRoomPoint;
 type ViewSize = PlanRoomViewSize;
 type ZoomWindowDraft = { start: Point; end: Point };
@@ -155,6 +158,18 @@ const formatQty = (value: number, unit: string) =>
   }).format(value)}${unit ? ` ${unit}` : ""}`;
 
 const centsToDollars = (value: number) => Math.round(value) / 100;
+
+const normalizeSearch = (value: string) => value.trim().toLowerCase();
+
+const searchMatches = (query: string, values: Array<string | number | null | undefined>) => {
+  const normalizedQuery = normalizeSearch(query);
+  if (!normalizedQuery) return true;
+  return values.some((value) =>
+    String(value ?? "")
+      .toLowerCase()
+      .includes(normalizedQuery),
+  );
+};
 
 const slugFileName = (name: string) =>
   name
@@ -473,6 +488,10 @@ export function PlanRoomWorkspace({
   const [overlayOpacity, setOverlayOpacity] = useState(65);
   const [overlayMode, setOverlayMode] = useState<RevisionOverlayMode>("compare");
   const [selectedMeasurementId, setSelectedMeasurementId] = useState("");
+  const [sheetSearch, setSheetSearch] = useState("");
+  const [sheetFilter, setSheetFilter] = useState<SheetFilterMode>("all");
+  const [takeoffSearch, setTakeoffSearch] = useState("");
+  const [takeoffFilter, setTakeoffFilter] = useState<TakeoffFilterMode>("all");
   const [selectedMeasurementDraft, setSelectedMeasurementDraft] = useState({
     label: "",
     notes: "",
@@ -512,6 +531,47 @@ export function PlanRoomWorkspace({
   const selectedLine = lineItems.find((line) => line.id === selectedLineId);
   const sheetMeasurements = measurements.filter(
     (measurement) => measurement.plan_sheet_id === currentSheet?.id,
+  );
+  const measurementCountBySheet = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const measurement of measurements) {
+      counts.set(measurement.plan_sheet_id, (counts.get(measurement.plan_sheet_id) ?? 0) + 1);
+    }
+    return counts;
+  }, [measurements]);
+  const filteredSheetsByPlanSet = useMemo(() => {
+    const next = new Map<string, PlanSheetRow[]>();
+    for (const planSet of planSets) next.set(planSet.id, []);
+    for (const sheet of sheets) {
+      const planSet = planSets.find((item) => item.id === sheet.plan_set_id) ?? null;
+      const sheetMeasurementCount = measurementCountBySheet.get(sheet.id) ?? 0;
+      const passesFilter =
+        sheetFilter === "all" ||
+        (sheetFilter === "current" && planSet?.status === "current") ||
+        (sheetFilter === "needs-scale" && !sheet.scale_feet_per_pixel) ||
+        (sheetFilter === "has-takeoff" && sheetMeasurementCount > 0);
+      const passesSearch = searchMatches(sheetSearch, [
+        sheet.sheet_number,
+        sheet.sheet_name,
+        sheet.discipline,
+        sheet.page_number,
+        planSet?.name,
+        planSet?.source_file_name,
+      ]);
+      if (!passesFilter || !passesSearch) continue;
+      const current = next.get(sheet.plan_set_id) ?? [];
+      current.push(sheet);
+      next.set(sheet.plan_set_id, current);
+    }
+    return next;
+  }, [measurementCountBySheet, planSets, sheetFilter, sheetSearch, sheets]);
+  const filteredSheetCount = useMemo(
+    () =>
+      Array.from(filteredSheetsByPlanSet.values()).reduce(
+        (sum, planSetSheets) => sum + planSetSheets.length,
+        0,
+      ),
+    [filteredSheetsByPlanSet],
   );
   const selectedMeasurement =
     measurements.find((measurement) => measurement.id === selectedMeasurementId) ?? null;
@@ -880,6 +940,47 @@ export function PlanRoomWorkspace({
     }
     return totals;
   }, [measurements]);
+  const visibleMeasurements = useMemo(() => {
+    return measurements
+      .filter((measurement) => {
+        const measurementSheet = sheets.find((sheet) => sheet.id === measurement.plan_sheet_id);
+        const linkedLine = lineItems.find((line) => line.id === measurement.estimate_line_item_id);
+        const passesFilter =
+          takeoffFilter === "all" ||
+          (takeoffFilter === "sheet" && measurement.plan_sheet_id === currentSheet?.id) ||
+          (takeoffFilter === "unlinked" && !measurement.estimate_line_item_id) ||
+          (takeoffFilter === "linked" && Boolean(measurement.estimate_line_item_id));
+        const passesSearch = searchMatches(takeoffSearch, [
+          measurement.label,
+          measurement.unit,
+          measurement.quantity,
+          measurement.notes,
+          toolLabel(measurement.tool_type),
+          measurementSheet?.sheet_number,
+          measurementSheet?.sheet_name,
+          linkedLine?.cost_code,
+          linkedLine?.scope_group,
+          linkedLine?.description,
+        ]);
+        return passesFilter && passesSearch;
+      })
+      .sort((a, b) => {
+        if (a.id === selectedMeasurementId) return -1;
+        if (b.id === selectedMeasurementId) return 1;
+        const aSheet = a.plan_sheet_id === currentSheet?.id ? 0 : 1;
+        const bSheet = b.plan_sheet_id === currentSheet?.id ? 0 : 1;
+        if (aSheet !== bSheet) return aSheet - bSheet;
+        return a.updated_at < b.updated_at ? 1 : -1;
+      });
+  }, [
+    currentSheet?.id,
+    lineItems,
+    measurements,
+    selectedMeasurementId,
+    sheets,
+    takeoffFilter,
+    takeoffSearch,
+  ]);
 
   const totalMeasured = measurements.reduce((sum, measurement) => sum + measurement.quantity, 0);
   const linkedCount = measurements.filter(
@@ -1033,65 +1134,147 @@ export function PlanRoomWorkspace({
                 Open a sheet, set scale, then take off quantities.
               </p>
             </div>
+            <div className="border-b border-hairline p-3" data-testid="plan-sheet-finder">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={sheetSearch}
+                  onChange={(event) => setSheetSearch(event.target.value)}
+                  className="h-9 pl-8"
+                  placeholder="Find sheet, page, discipline, or set"
+                  data-testid="plan-sheet-search"
+                />
+              </div>
+              <div
+                className="mt-2 grid grid-cols-2 gap-1.5 text-xs"
+                data-testid="plan-sheet-filter-controls"
+              >
+                {[
+                  { value: "all", label: `All ${sheets.length}`, testId: "plan-sheet-filter-all" },
+                  {
+                    value: "current",
+                    label: `Current ${sheets.filter((sheet) => planSets.find((set) => set.id === sheet.plan_set_id)?.status === "current").length}`,
+                    testId: "plan-sheet-filter-current",
+                  },
+                  {
+                    value: "needs-scale",
+                    label: `Needs scale ${sheets.filter((sheet) => !sheet.scale_feet_per_pixel).length}`,
+                    testId: "plan-sheet-filter-needs-scale",
+                  },
+                  {
+                    value: "has-takeoff",
+                    label: `Marked ${Array.from(measurementCountBySheet.values()).filter(Boolean).length}`,
+                    testId: "plan-sheet-filter-has-takeoff",
+                  },
+                ].map((item) => (
+                  <Button
+                    key={item.value}
+                    type="button"
+                    size="sm"
+                    variant={sheetFilter === item.value ? "default" : "outline"}
+                    className="h-8 px-2 text-xs"
+                    onClick={() => {
+                      setSheetFilter(item.value as SheetFilterMode);
+                      setSheetSearch("");
+                    }}
+                    data-testid={item.testId}
+                  >
+                    {item.label}
+                  </Button>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Showing {filteredSheetCount} of {sheets.length} sheets.
+              </p>
+            </div>
             <div className="max-h-[680px] space-y-2 overflow-y-auto p-3">
               {sheets.length === 0 ? (
                 <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
                   Upload a PDF or image plan set to start measuring this estimate.
                 </div>
+              ) : filteredSheetCount === 0 ? (
+                <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
+                  No sheets match that finder. Clear the search or switch filters.
+                </div>
               ) : (
-                planSets.map((planSet) => (
-                  <div key={planSet.id} className="rounded-md border border-hairline bg-background">
-                    <div className="border-b border-hairline px-3 py-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{planSet.name}</p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {planSet.page_count} pages
-                          </p>
+                planSets.map((planSet) => {
+                  const planSetSheets = filteredSheetsByPlanSet.get(planSet.id) ?? [];
+                  if (planSetSheets.length === 0) return null;
+                  return (
+                    <div
+                      key={planSet.id}
+                      className="rounded-md border border-hairline bg-background"
+                    >
+                      <div className="border-b border-hairline px-3 py-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">{planSet.name}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {planSetSheets.length}/{planSet.page_count} sheets shown
+                            </p>
+                          </div>
+                          <Badge
+                            variant={planSet.status === "current" ? "secondary" : "outline"}
+                            className="shrink-0"
+                          >
+                            {planSetStatusLabel(planSet.status)}
+                          </Badge>
                         </div>
-                        <Badge
-                          variant={planSet.status === "current" ? "secondary" : "outline"}
-                          className="shrink-0"
-                        >
-                          {planSetStatusLabel(planSet.status)}
-                        </Badge>
+                      </div>
+                      <div className="p-1.5">
+                        {planSetSheets.map((sheet) => {
+                          const sheetMeasurementCount = measurementCountBySheet.get(sheet.id) ?? 0;
+                          return (
+                            <button
+                              key={sheet.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedSheetId(sheet.id);
+                                setPendingPoints([]);
+                                setCalibrationPoints([]);
+                                if (selectedMeasurement?.plan_sheet_id !== sheet.id) {
+                                  setSelectedMeasurementId("");
+                                }
+                              }}
+                              data-testid="plan-sheet-row"
+                              className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm transition ${
+                                sheet.id === currentSheet?.id
+                                  ? "bg-primary text-primary-foreground"
+                                  : "hover:bg-surface"
+                              }`}
+                            >
+                              <ImageIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              <span className="min-w-0">
+                                <span className="block truncate font-medium">
+                                  {sheet.sheet_number || `Page ${sheet.page_number}`}
+                                </span>
+                                <span className="block truncate text-xs opacity-75">
+                                  {sheet.sheet_name || "Unnamed sheet"}
+                                </span>
+                                <span className="mt-1 flex flex-wrap gap-1">
+                                  {sheet.scale_feet_per_pixel ? (
+                                    <Badge variant="outline" className="bg-background/80 px-1 py-0">
+                                      Scale set
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="bg-background/80 px-1 py-0">
+                                      Needs scale
+                                    </Badge>
+                                  )}
+                                  {sheetMeasurementCount > 0 && (
+                                    <Badge variant="outline" className="bg-background/80 px-1 py-0">
+                                      {sheetMeasurementCount} marks
+                                    </Badge>
+                                  )}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
-                    <div className="p-1.5">
-                      {sheets
-                        .filter((sheet) => sheet.plan_set_id === planSet.id)
-                        .map((sheet) => (
-                          <button
-                            key={sheet.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedSheetId(sheet.id);
-                              setPendingPoints([]);
-                              setCalibrationPoints([]);
-                              if (selectedMeasurement?.plan_sheet_id !== sheet.id) {
-                                setSelectedMeasurementId("");
-                              }
-                            }}
-                            className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm transition ${
-                              sheet.id === currentSheet?.id
-                                ? "bg-primary text-primary-foreground"
-                                : "hover:bg-surface"
-                            }`}
-                          >
-                            <ImageIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                            <span className="min-w-0">
-                              <span className="block truncate font-medium">
-                                {sheet.sheet_number || `Page ${sheet.page_number}`}
-                              </span>
-                              <span className="block truncate text-xs opacity-75">
-                                {sheet.sheet_name || "Unnamed sheet"}
-                              </span>
-                            </span>
-                          </button>
-                        ))}
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </section>
@@ -1600,14 +1783,76 @@ export function PlanRoomWorkspace({
                 )}
               </p>
             </div>
+            <div className="border-b border-hairline p-3" data-testid="takeoff-navigator">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={takeoffSearch}
+                  onChange={(event) => setTakeoffSearch(event.target.value)}
+                  className="h-9 pl-8"
+                  placeholder="Find takeoff, row, sheet, or note"
+                  data-testid="takeoff-search"
+                />
+              </div>
+              <div
+                className="mt-2 grid grid-cols-2 gap-1.5 text-xs"
+                data-testid="takeoff-filter-controls"
+              >
+                {[
+                  {
+                    value: "all",
+                    label: `All ${measurements.length}`,
+                    testId: "takeoff-filter-all",
+                  },
+                  {
+                    value: "sheet",
+                    label: `This sheet ${sheetMeasurements.length}`,
+                    testId: "takeoff-filter-sheet",
+                  },
+                  {
+                    value: "unlinked",
+                    label: `Unlinked ${measurements.length - linkedCount}`,
+                    testId: "takeoff-filter-unlinked",
+                  },
+                  {
+                    value: "linked",
+                    label: `Linked ${linkedCount}`,
+                    testId: "takeoff-filter-linked",
+                  },
+                ].map((item) => (
+                  <Button
+                    key={item.value}
+                    type="button"
+                    size="sm"
+                    variant={takeoffFilter === item.value ? "default" : "outline"}
+                    className="h-8 px-2 text-xs"
+                    onClick={() => {
+                      setTakeoffFilter(item.value as TakeoffFilterMode);
+                      setTakeoffSearch("");
+                    }}
+                    data-testid={item.testId}
+                  >
+                    {item.label}
+                  </Button>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Showing {visibleMeasurements.length} takeoffs. Selecting one opens its sheet and
+                centers the markup.
+              </p>
+            </div>
             <div className="max-h-[520px] space-y-3 overflow-y-auto p-3">
               {measurements.length === 0 ? (
                 <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
                   No takeoffs yet. Choose a tool, click the plan, and link the result to an estimate
                   row.
                 </div>
+              ) : visibleMeasurements.length === 0 ? (
+                <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
+                  No takeoffs match that navigator view. Clear the search or choose another filter.
+                </div>
               ) : (
-                measurements.map((measurement) => {
+                visibleMeasurements.map((measurement) => {
                   const linkedLine = lineItems.find(
                     (line) => line.id === measurement.estimate_line_item_id,
                   );
@@ -1620,6 +1865,7 @@ export function PlanRoomWorkspace({
                       key={measurement.id}
                       role="button"
                       tabIndex={0}
+                      data-testid="takeoff-navigator-row"
                       className={cn(
                         "rounded-md border border-hairline p-3 text-left transition",
                         isSelected && "border-primary bg-primary/5 shadow-sm",
@@ -1656,15 +1902,34 @@ export function PlanRoomWorkspace({
                             </p>
                           )}
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          title="Delete takeoff"
-                          onClick={() => deleteMeasurementMutation.mutate(measurement.id)}
-                        >
-                          <Trash2 className="h-4 w-4 text-danger" />
-                        </Button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-2 text-xs"
+                            title="Open this takeoff on the drawing"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              selectMeasurement(measurement);
+                            }}
+                            data-testid="takeoff-open-on-plan"
+                          >
+                            Open
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            title="Delete takeoff"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              deleteMeasurementMutation.mutate(measurement.id);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 text-danger" />
+                          </Button>
+                        </div>
                       </div>
                       <div className="mt-3 space-y-2">
                         <Select
@@ -2125,13 +2390,30 @@ function PlanCanvas({
     }
   };
 
-  const jumpViewport = (point: Point) => {
-    const stage = scrollRef.current;
-    if (!stage) return;
-    stage.scrollLeft = Math.max(0, point.x * stage.scrollWidth - stage.clientWidth / 2);
-    stage.scrollTop = Math.max(0, point.y * stage.scrollHeight - stage.clientHeight / 2);
-    requestAnimationFrame(updateViewportFrame);
-  };
+  const jumpViewport = useCallback(
+    (point: Point) => {
+      const stage = scrollRef.current;
+      if (!stage) return;
+      stage.scrollLeft = Math.max(0, point.x * stage.scrollWidth - stage.clientWidth / 2);
+      stage.scrollTop = Math.max(0, point.y * stage.scrollHeight - stage.clientHeight / 2);
+      requestAnimationFrame(updateViewportFrame);
+    },
+    [updateViewportFrame],
+  );
+
+  useEffect(() => {
+    if (!selectedMeasurement) return;
+    const points = geometryPoints(selectedMeasurement.geometry);
+    if (points.length === 0) return;
+    const center =
+      points.length === 1
+        ? points[0]
+        : {
+            x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+            y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+          };
+    requestAnimationFrame(() => jumpViewport(center));
+  }, [jumpViewport, selectedMeasurement, sheet?.id, viewSize.height, viewSize.width, zoom]);
 
   useEffect(() => {
     requestAnimationFrame(updateViewportFrame);
