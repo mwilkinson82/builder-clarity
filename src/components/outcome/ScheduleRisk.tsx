@@ -222,6 +222,7 @@ const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
 const CONSTRUCTLINE_MIN_DAY_PX = 1.1;
 const CONSTRUCTLINE_MAX_DAY_PX = 28;
 const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v7";
+const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_NAMESPACE = "constructline:cpm-grid-layout";
 const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
   { id: "id", label: "ID", compactLabel: "ID", min: 40, default: 44, max: 72 },
   {
@@ -2970,7 +2971,7 @@ export function CpmActivityPlanner({
           matrixId="cpm-grid"
           model={displayedCpmModel}
           delayFragments={delayFragments}
-          layoutStorageKey={`constructline:cpm-grid-layout:${project.id}:${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION}`}
+          layoutStorageKey={`${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_NAMESPACE}:${project.id}`}
           draftEditor={isFocusOpen ? null : activityDraftEditor}
           toolbar={
             <CpmGridToolbar
@@ -3248,7 +3249,7 @@ export function CpmActivityPlanner({
           <ActivityScheduleMatrix
             model={displayedCpmModel}
             delayFragments={delayFragments}
-            layoutStorageKey={`constructline:cpm-grid-layout:${project.id}:${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION}`}
+            layoutStorageKey={`${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_NAMESPACE}:${project.id}`}
             draftEditor={activityDraftEditor}
             dayPx={dayPx}
             onDayPxChange={setDayPx}
@@ -4955,6 +4956,34 @@ function getTableColumnWidth(widths: ConstructLineTableColumnWidths) {
   return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((sum, column) => sum + widths[column.id], 0);
 }
 
+function getTableColumnLayoutStorageKeys(storageKey: string | undefined) {
+  if (!storageKey) return [];
+  const versionSuffix = `:${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION}`;
+  const stableKey = storageKey.endsWith(versionSuffix)
+    ? storageKey.slice(0, -versionSuffix.length)
+    : storageKey;
+  return Array.from(new Set([stableKey, `${stableKey}${versionSuffix}`, storageKey]));
+}
+
+function parseStoredTableColumnWidths(
+  raw: string,
+  fallback: ConstructLineTableColumnWidths,
+): ConstructLineTableColumnWidths | null {
+  const parsed = JSON.parse(raw) as {
+    version?: string;
+    widths?: Partial<Record<ConstructLineTableColumnId, number>>;
+  };
+  if (!parsed.widths) return null;
+  return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((widths, column) => {
+    const storedWidth = parsed.widths?.[column.id];
+    widths[column.id] =
+      typeof storedWidth === "number"
+        ? Math.round(clampNumber(storedWidth, column.min, column.max))
+        : fallback[column.id];
+    return widths;
+  }, {} as ConstructLineTableColumnWidths);
+}
+
 function readTableColumnWidths(
   storageKey: string | undefined,
   isFocusMode: boolean,
@@ -4962,23 +4991,17 @@ function readTableColumnWidths(
   const fallback = buildDefaultTableColumnWidths(isFocusMode);
   if (!storageKey || typeof window === "undefined") return fallback;
   try {
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as {
-      version?: string;
-      widths?: Partial<Record<ConstructLineTableColumnId, number>>;
-    };
-    if (parsed.version !== CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION || !parsed.widths) {
-      return fallback;
+    for (const key of getTableColumnLayoutStorageKeys(storageKey)) {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const widths = parseStoredTableColumnWidths(raw, fallback);
+        if (widths) return widths;
+      } catch {
+        // Ignore one bad saved layout and keep looking for a legacy key before falling back.
+      }
     }
-    return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((widths, column) => {
-      const storedWidth = parsed.widths?.[column.id];
-      widths[column.id] =
-        typeof storedWidth === "number"
-          ? Math.round(clampNumber(storedWidth, column.min, column.max))
-          : fallback[column.id];
-      return widths;
-    }, {} as ConstructLineTableColumnWidths);
+    return fallback;
   } catch {
     return fallback;
   }
@@ -4990,8 +5013,10 @@ function writeTableColumnWidths(
 ) {
   if (!storageKey || typeof window === "undefined") return;
   try {
+    const [primaryStorageKey] = getTableColumnLayoutStorageKeys(storageKey);
+    if (!primaryStorageKey) return;
     window.localStorage.setItem(
-      storageKey,
+      primaryStorageKey,
       JSON.stringify({
         version: CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION,
         widths,
