@@ -2080,11 +2080,14 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
-    const wbsSectionId = await ensureScheduleWbsPath(
-      context.supabase,
-      projectId,
-      rest.division || "General",
-    );
+    const { wbs_section_id: requestedWbsSectionId, ...activityFields } = rest;
+    const wbsSectionId =
+      requestedWbsSectionId ??
+      (await ensureScheduleWbsPath(
+        context.supabase,
+        projectId,
+        activityFields.division || "General",
+      ));
     const { data: last } = await context.supabase
       .from("schedule_activities")
       .select("sort_order")
@@ -2093,28 +2096,24 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
       .limit(1)
       .maybeSingle();
     const sortOrder =
-      rest.sort_order ?? ((last as { sort_order?: number } | null)?.sort_order ?? 0) + 1;
-    const activityId = rest.activity_id || `A-${String(sortOrder).padStart(3, "0")}`;
+      activityFields.sort_order ?? ((last as { sort_order?: number } | null)?.sort_order ?? 0) + 1;
+    const activityId = activityFields.activity_id || `A-${String(sortOrder).padStart(3, "0")}`;
     const basePayload: ScheduleActivityInsert = {
       project_id: projectId,
-      ...rest,
+      ...activityFields,
       activity_id: activityId,
       sort_order: sortOrder,
     };
-    const insertPayload = {
-      ...basePayload,
-      wbs_section_id: wbsSectionId,
-    };
     let { data: createdRow, error } = await context.supabase
       .from("schedule_activities")
-      .insert(insertPayload as any)
+      .insert(basePayload as any)
       .select("*")
       .single();
     if (
       error &&
       (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error))
     ) {
-      const fallbackPayload = stripScheduleActivityMissingColumns(insertPayload, error);
+      const fallbackPayload = stripScheduleActivityMissingColumns(basePayload, error);
       ({ data: createdRow, error } = await context.supabase
         .from("schedule_activities")
         .insert(fallbackPayload as ScheduleActivityInsert)
@@ -2125,6 +2124,15 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
     const createdActivity = normalizeScheduleActivity(
       createdRow as unknown as Record<string, unknown>,
     );
+    if (wbsSectionId) {
+      const { error: wbsLinkError } = await context.supabase
+        .from("schedule_activities")
+        .update({ wbs_section_id: wbsSectionId } as any)
+        .eq("id", createdActivity.id);
+      if (wbsLinkError && !isMissingRestColumn(wbsLinkError, "wbs_section_id")) {
+        throw new Error(wbsLinkError.message);
+      }
+    }
     await syncReciprocalScheduleActivityLogic(
       context.supabase,
       projectId,
@@ -2159,12 +2167,16 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       .from("schedule_activities")
       .update(data.patch as ScheduleActivityUpdate)
       .eq("id", data.id);
-    if (error && isMissingScheduleActivityStatusColumn(error)) {
-      const fallbackPatch = stripScheduleActivityStatusColumns(
+    if (
+      error &&
+      (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error))
+    ) {
+      const fallbackPatch = stripScheduleActivityMissingColumns(
         data.patch as Record<string, unknown>,
+        error,
       );
       if (Object.keys(fallbackPatch).length === 0) {
-        throw new Error("Schedule status fields need the database update before they can save.");
+        throw new Error("Schedule fields need the database update before they can save.");
       }
       ({ error } = await context.supabase
         .from("schedule_activities")

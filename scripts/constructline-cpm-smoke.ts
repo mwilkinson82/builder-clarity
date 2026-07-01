@@ -922,6 +922,11 @@ for (const requiredScheduleFunctionText of [
   "total_float_days",
   "is_out_of_sequence",
   "is_open_finish",
+  "const { wbs_section_id: requestedWbsSectionId, ...activityFields } = rest;",
+  ".insert(basePayload as any)",
+  "const { error: wbsLinkError } = await context.supabase",
+  'update({ wbs_section_id: wbsSectionId } as any)',
+  "stripScheduleActivityMissingColumns(",
 ]) {
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),
