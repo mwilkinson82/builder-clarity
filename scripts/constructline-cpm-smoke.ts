@@ -484,6 +484,7 @@ for (const requiredScheduleRiskText of [
   "Company: {contractorName}",
   "{printReportLabel} · {criticalBasisLabel} · Finish",
   "constructline-cpm-print-status-critical",
+  "constructline-cpm-print-status-recovery",
   "Critical path finish {shortDate(displayedCpmModel.cpmFinishDate)}",
   "Legend: critical red",
   "Schedule snapshot",

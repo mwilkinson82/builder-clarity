@@ -307,6 +307,12 @@
     background: #fff3ef;
   }
 
+  .constructline-cpm-print-status-recovery {
+    border-color: #c68a18;
+    border-left-width: 0.055in;
+    background: #fff8e5;
+  }
+
   .constructline-cpm-print-status span {
     display: block;
     color: #6f6a60;
@@ -326,6 +332,10 @@
 
   .constructline-cpm-print-status-critical strong {
     color: #d53c31;
+  }
+
+  .constructline-cpm-print-status-recovery strong {
+    color: #9a6712;
   }
 
   .constructline-cpm-print-status em {

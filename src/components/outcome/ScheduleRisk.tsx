@@ -2496,6 +2496,7 @@ export function CpmActivityPlanner({
   const isDataDateDirty = dataDateDraft !== (latestDataDate ?? "");
   const scheduleReportTitle = getScheduleReportTitle(scheduleView);
   const isCriticalPathReport = scheduleView === "critical";
+  const isRecoveryReport = scheduleView === "recovery";
   const printReportLabel = isCriticalPathReport ? "Critical Path Report" : scheduleReportTitle;
   const contractorName = project.organization_name || "Overwatch";
   const criticalBasisLabel = displayedCpmModel.criticalPathReliable
@@ -2584,9 +2585,16 @@ export function CpmActivityPlanner({
             className={cn(
               "constructline-cpm-print-status",
               isCriticalPathReport && "constructline-cpm-print-status-critical",
+              isRecoveryReport && "constructline-cpm-print-status-recovery",
             )}
           >
-            <span>{isCriticalPathReport ? "Critical path report" : "Report type"}</span>
+            <span>
+              {isCriticalPathReport
+                ? "Critical path report"
+                : isRecoveryReport
+                  ? "Recovery report"
+                  : "Report type"}
+            </span>
             <strong>{printReportLabel}</strong>
             <em>
               {criticalBasisLabel} · Finish {shortDate(displayedCpmModel.cpmFinishDate)}
