@@ -1877,6 +1877,9 @@ export function CpmActivityPlanner({
   const [browserTemplates, setBrowserTemplates] = useState<BrowserCpmTemplate[]>([]);
   const [isWbsManagerOpen, setIsWbsManagerOpen] = useState(false);
   const [isFocusOpen, setIsFocusOpen] = useState(false);
+  const [readinessWarningAcceptedFor, setReadinessWarningAcceptedFor] = useState<string | null>(
+    null,
+  );
   const didScrollToGridRef = useRef(false);
   const effectiveDataDate = dataDateDraft || latestDataDate || null;
   const wbsDivisionOrder = useMemo(
@@ -1989,6 +1992,10 @@ export function CpmActivityPlanner({
   useEffect(() => {
     setDataDateDraft(latestDataDate ?? todayIsoDate());
   }, [latestDataDate]);
+
+  useEffect(() => {
+    setReadinessWarningAcceptedFor(null);
+  }, [dataDateDraft, updateReadiness.needsStatusCount]);
 
   const templateQuery = useQuery({
     queryKey: ["schedule-cpm-templates", project.id],
@@ -2429,8 +2436,21 @@ export function CpmActivityPlanner({
   const criticalBasisLabel = displayedCpmModel.criticalPathReliable
     ? "Critical basis valid"
     : "Critical basis provisional";
+  const isReadinessSaveWarningArmed =
+    updateReadiness.needsStatusCount > 0 && readinessWarningAcceptedFor === dataDateDraft;
   const saveDataDate = () => {
     if (!dataDateDraft || dataDateUpdate.isPending || !isDataDateDirty) return;
+    if (updateReadiness.needsStatusCount > 0 && readinessWarningAcceptedFor !== dataDateDraft) {
+      setReadinessWarningAcceptedFor(dataDateDraft);
+      setScheduleView("active");
+      toast.warning("CPM update has status gaps", {
+        description: `${updateReadiness.needsStatusCount} open ${
+          updateReadiness.needsStatusCount === 1 ? "activity needs" : "activities need"
+        } remaining duration, expected finish, actual start, or late-status review. Click Save update again to save anyway.`,
+      });
+      return;
+    }
+    setReadinessWarningAcceptedFor(null);
     dataDateUpdate.mutate(dataDateDraft);
   };
   const confirmDeleteActivity = (activity: ScheduleActivityRow) => {
@@ -2760,6 +2780,8 @@ export function CpmActivityPlanner({
               isSavingDataDate={dataDateUpdate.isPending}
               onDataDateChange={setDataDateDraft}
               onSaveDataDate={saveDataDate}
+              readinessWarningCount={updateReadiness.needsStatusCount}
+              isReadinessWarningArmed={isReadinessSaveWarningArmed}
               templateName={templateName}
               onTemplateNameChange={setTemplateName}
               templates={cpmTemplates}
@@ -2906,6 +2928,8 @@ export function CpmActivityPlanner({
                 onChange={setDataDateDraft}
                 onSave={saveDataDate}
                 className="min-w-[300px]"
+                readinessWarningCount={updateReadiness.needsStatusCount}
+                isReadinessWarningArmed={isReadinessSaveWarningArmed}
               />
               <ScheduleViewControls value={scheduleView} onChange={setScheduleView} />
               <ScheduleOrderControls value={activityOrder} onChange={setActivityOrder} />
@@ -3318,6 +3342,8 @@ function CpmGridToolbar({
   isSavingDataDate,
   onDataDateChange,
   onSaveDataDate,
+  readinessWarningCount,
+  isReadinessWarningArmed,
   templateName,
   onTemplateNameChange,
   templates,
@@ -3352,6 +3378,8 @@ function CpmGridToolbar({
   isSavingDataDate: boolean;
   onDataDateChange: (value: string) => void;
   onSaveDataDate: () => void;
+  readinessWarningCount: number;
+  isReadinessWarningArmed: boolean;
   templateName: string;
   onTemplateNameChange: (value: string) => void;
   templates: Array<ScheduleCpmTemplateRow | BrowserCpmTemplate>;
@@ -3375,6 +3403,8 @@ function CpmGridToolbar({
             onChange={onDataDateChange}
             onSave={onSaveDataDate}
             className="w-full"
+            readinessWarningCount={readinessWarningCount}
+            isReadinessWarningArmed={isReadinessWarningArmed}
             embedded
           />
         </CpmToolbarGroup>
@@ -3547,6 +3577,8 @@ function CpmDataDateControl({
   isSaving,
   onChange,
   onSave,
+  readinessWarningCount = 0,
+  isReadinessWarningArmed = false,
   className,
   embedded = false,
 }: {
@@ -3555,10 +3587,13 @@ function CpmDataDateControl({
   isSaving: boolean;
   onChange: (value: string) => void;
   onSave: () => void;
+  readinessWarningCount?: number;
+  isReadinessWarningArmed?: boolean;
   className?: string;
   embedded?: boolean;
 }) {
   const isDirty = value !== (savedValue ?? "");
+  const hasReadinessWarning = isDirty && readinessWarningCount > 0;
   return (
     <div
       className={cn(
@@ -3590,11 +3625,17 @@ function CpmDataDateControl({
         {isSaving ? "Saving..." : "Save update"}
       </Button>
       <div className="basis-full text-[11px] text-muted-foreground sm:basis-auto">
-        {isDirty
-          ? "Unsaved data date is driving this CPM view; save it to update history."
-          : savedValue
-            ? `Update history saved ${shortDate(savedValue)}`
-            : "Not set"}
+        {isReadinessWarningArmed
+          ? "Status gaps acknowledged. Click Save update again to save anyway."
+          : hasReadinessWarning
+            ? `${readinessWarningCount} open ${
+                readinessWarningCount === 1 ? "row needs" : "rows need"
+              } status before this update is clean.`
+            : isDirty
+              ? "Unsaved data date is driving this CPM view; save it to update history."
+              : savedValue
+                ? `Update history saved ${shortDate(savedValue)}`
+                : "Not set"}
       </div>
     </div>
   );
