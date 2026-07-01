@@ -34,6 +34,32 @@ const num = (value: unknown, fallback = 0) => {
 };
 const clean = (value: string, max = 500) => value.trim().slice(0, max);
 
+function isMissingPlanRoomSchemaError(error: DynamicSupabaseError | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? "";
+  return (
+    error?.code === "42P01" ||
+    error?.code === "PGRST205" ||
+    error?.code === "42501" ||
+    (message.includes("schema cache") &&
+      (message.includes("estimate_plan_sets") ||
+        message.includes("estimate_plan_sheets") ||
+        message.includes("estimate_takeoff_measurements") ||
+        message.includes("plan-room"))) ||
+    /relation .*estimate_plan_(sets|sheets).* does not exist/i.test(error?.message ?? "") ||
+    /relation .*estimate_takeoff_measurements.* does not exist/i.test(error?.message ?? "")
+  );
+}
+
+function planRoomSchemaPending(message = "Plan Room backend schema is still being prepared.") {
+  return {
+    plan_sets: [] as PlanSetRow[],
+    sheets: [] as PlanSheetRow[],
+    measurements: [] as TakeoffMeasurementRow[],
+    schema_ready: false,
+    schema_message: message,
+  };
+}
+
 export type TakeoffToolType = "linear" | "area" | "count";
 
 export interface PlanSetRow {
@@ -242,14 +268,15 @@ async function ensureHarborPlanRoomDemo(
 ) {
   const estimateId = str(estimate.id);
   const estimateName = str(estimate.name).toLowerCase();
-  if (!estimateName.includes("harbor residence")) return;
+  if (!estimateName.includes("harbor residence")) return true;
 
   const existing = await dynamicTable(context.supabase, "estimate_plan_sets")
     .select("id")
     .eq("estimate_id", estimateId)
     .limit(1);
+  if (isMissingPlanRoomSchemaError(existing.error)) return false;
   if (existing.error) throw new Error(existing.error.message);
-  if (((existing.data ?? []) as unknown[]).length > 0) return;
+  if (((existing.data ?? []) as unknown[]).length > 0) return true;
 
   const { data: planSet, error: planSetError } = await dynamicTable(
     context.supabase,
@@ -273,6 +300,7 @@ async function ensureHarborPlanRoomDemo(
     .select("*")
     .single();
   if (planSetError || !planSet) {
+    if (isMissingPlanRoomSchemaError(planSetError)) return false;
     throw new Error(planSetError?.message ?? "Sample plan set did not save.");
   }
 
@@ -323,6 +351,7 @@ async function ensureHarborPlanRoomDemo(
   )
     .insert(sheetsToInsert)
     .select("*");
+  if (isMissingPlanRoomSchemaError(sheetsError)) return false;
   if (sheetsError) throw new Error(sheetsError.message);
 
   const sheetRows = ((sheets ?? []) as Record<string, unknown>[]).sort(
@@ -422,8 +451,10 @@ async function ensureHarborPlanRoomDemo(
       context.supabase,
       "estimate_takeoff_measurements",
     ).insert(measurementRows);
+    if (isMissingPlanRoomSchemaError(measurementsError)) return false;
     if (measurementsError) throw new Error(measurementsError.message);
   }
+  return true;
 }
 
 const createPlanSetInput = z.object({
@@ -493,7 +524,12 @@ export const getPlanRoom = createServerFn({ method: "GET" })
   )
   .handler(async ({ data, context }) => {
     const estimate = await loadEstimate(context, data.estimate_id);
-    await ensureHarborPlanRoomDemo(context, estimate);
+    const schemaReadyForDemo = await ensureHarborPlanRoomDemo(context, estimate);
+    if (!schemaReadyForDemo) {
+      return planRoomSchemaPending(
+        "Plan Room tables are not available yet. Lovable may still be applying the backend migration or refreshing the Supabase schema cache.",
+      );
+    }
 
     const [setsResult, sheetsResult, measurementsResult] = await Promise.all([
       dynamicTable(context.supabase, "estimate_plan_sets")
@@ -509,6 +545,12 @@ export const getPlanRoom = createServerFn({ method: "GET" })
         .eq("estimate_id", data.estimate_id)
         .order("updated_at", { ascending: false }),
     ]);
+    const schemaError = setsResult.error ?? sheetsResult.error ?? measurementsResult.error;
+    if (isMissingPlanRoomSchemaError(schemaError)) {
+      return planRoomSchemaPending(
+        "Plan Room tables are not available yet. Lovable may still be applying the backend migration or refreshing the Supabase schema cache.",
+      );
+    }
     if (setsResult.error) throw new Error(setsResult.error.message);
     if (sheetsResult.error) throw new Error(sheetsResult.error.message);
     if (measurementsResult.error) throw new Error(measurementsResult.error.message);
@@ -519,6 +561,8 @@ export const getPlanRoom = createServerFn({ method: "GET" })
       measurements: ((measurementsResult.data ?? []) as Record<string, unknown>[]).map(
         normalizeTakeoffMeasurement,
       ),
+      schema_ready: true,
+      schema_message: "",
     };
   });
 

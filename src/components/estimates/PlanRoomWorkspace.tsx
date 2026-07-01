@@ -66,6 +66,8 @@ interface PlanRoomWorkspaceProps {
   sheets: PlanSheetRow[];
   measurements: TakeoffMeasurementRow[];
   companyName?: string;
+  schemaReady?: boolean;
+  schemaMessage?: string;
 }
 
 const DEFAULT_VIEW_SIZE: ViewSize = { width: 960, height: 620 };
@@ -148,6 +150,8 @@ export function PlanRoomWorkspace({
   sheets,
   measurements,
   companyName = "Company",
+  schemaReady = true,
+  schemaMessage = "",
 }: PlanRoomWorkspaceProps) {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -411,6 +415,7 @@ export function PlanRoomWorkspace({
   const linkedCount = measurements.filter(
     (measurement) => measurement.estimate_line_item_id,
   ).length;
+  const backendReady = schemaReady !== false;
 
   return (
     <div className="min-h-screen bg-background" data-testid="plan-room-workspace">
@@ -451,7 +456,7 @@ export function PlanRoomWorkspace({
                 size="sm"
                 className="gap-1.5"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploading || createSetMutation.isPending}
+                disabled={!backendReady || uploading || createSetMutation.isPending}
               >
                 <FileUp className="h-3.5 w-3.5" />
                 Upload Plans
@@ -462,6 +467,16 @@ export function PlanRoomWorkspace({
       </header>
 
       <main className="mx-auto grid max-w-[1800px] gap-5 px-5 py-6 xl:grid-cols-[220px_minmax(0,1fr)_300px] 2xl:grid-cols-[280px_minmax(0,1fr)_390px] lg:px-8">
+        {!backendReady && (
+          <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 xl:col-span-3">
+            <p className="font-medium">Plan Room backend is still coming online</p>
+            <p className="mt-1 text-amber-900">
+              {schemaMessage ||
+                "Lovable needs to apply the Plan Room migration and refresh the Supabase schema cache before uploads and takeoff saves are available."}
+            </p>
+          </section>
+        )}
+
         <aside className="min-w-0 space-y-4">
           <section className="rounded-lg border border-hairline bg-card shadow-card">
             <div className="border-b border-hairline bg-surface px-4 py-3">
@@ -592,6 +607,7 @@ export function PlanRoomWorkspace({
                     variant={tool === item.value ? "default" : "outline"}
                     className="gap-1.5"
                     data-testid={`takeoff-tool-${item.value}`}
+                    disabled={!backendReady}
                     onClick={() => {
                       setTool(item.value as ToolMode);
                       setPendingPoints([]);
@@ -604,7 +620,7 @@ export function PlanRoomWorkspace({
                 );
               })}
               {tool === "area" && (
-                <Button size="sm" className="gap-1.5" onClick={finishArea}>
+                <Button size="sm" className="gap-1.5" onClick={finishArea} disabled={!backendReady}>
                   <Check className="h-3.5 w-3.5" /> Finish Area
                 </Button>
               )}
@@ -687,7 +703,7 @@ export function PlanRoomWorkspace({
                     variant="outline"
                     className="gap-1.5"
                     onClick={saveScale}
-                    disabled={updateSheetMutation.isPending}
+                    disabled={!backendReady || updateSheetMutation.isPending}
                   >
                     <Save className="h-3.5 w-3.5" /> Save
                   </Button>

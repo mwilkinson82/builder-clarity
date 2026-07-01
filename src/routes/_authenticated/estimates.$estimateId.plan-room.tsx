@@ -88,6 +88,8 @@ function PlanRoomPage() {
       planSets={planRoomQuery.data.plan_sets}
       sheets={planRoomQuery.data.sheets}
       measurements={planRoomQuery.data.measurements}
+      schemaReady={planRoomQuery.data.schema_ready}
+      schemaMessage={planRoomQuery.data.schema_message}
       companyName={companyQuery.data?.name || "Company"}
     />
   );
