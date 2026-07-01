@@ -4193,7 +4193,7 @@ function ConstructLinePrintReport({
         <div className="constructline-print-grid-head">
           <span>ID</span>
           <span>Activity</span>
-          <span>Dates</span>
+          <span>Current dates</span>
           <span>%</span>
           <span>TF</span>
           <span>Schedule Timeline</span>
@@ -4840,10 +4840,10 @@ function ActivityScheduleMatrix({
                   Plan dur
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Start
+                  Current start
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Finish
+                  Exp finish
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
                   % done
