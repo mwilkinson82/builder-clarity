@@ -209,6 +209,8 @@ const CONSTRUCTLINE_ZOOM_LEVELS = [
 const CONSTRUCTLINE_FIT_DAY_PX = CONSTRUCTLINE_ZOOM_LEVELS[0].dayPx;
 const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
+const ACTIVITY_UPDATE_SNAPSHOT_COLUMNS =
+  "64px minmax(170px,1.15fr) 54px 82px 82px 78px 58px 54px 82px 58px minmax(170px,1fr)";
 const DAY_MS = 24 * 60 * 60 * 1000;
 type ScheduleActivityOrder = "start" | "wbs";
 type ScheduleGridView =
@@ -8326,13 +8328,20 @@ function ScheduleUpdateLedger({
                 )}
               </div>
               {isSnapshotExpanded && activitySnapshotRows.length > 0 && (
-                <div className="col-span-8 mt-3 overflow-hidden rounded-md border border-hairline bg-card">
-                  <div className="grid grid-cols-[74px_minmax(180px,1.2fr)_90px_90px_60px_86px_64px_minmax(180px,1fr)] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                <div className="col-span-8 mt-3 overflow-x-auto rounded-md border border-hairline bg-card">
+                  <div
+                    className="grid min-w-[980px] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"
+                    style={{ gridTemplateColumns: ACTIVITY_UPDATE_SNAPSHOT_COLUMNS }}
+                  >
                     <div>ID</div>
                     <div>Activity</div>
+                    <div>Plan</div>
+                    <div>Baseline finish</div>
                     <div>Current start</div>
                     <div>Expected finish</div>
+                    <div>Variance</div>
                     <div>Rem</div>
+                    <div>% done</div>
                     <div>Basis</div>
                     <div>TF</div>
                     <div>Status</div>
@@ -8340,7 +8349,8 @@ function ScheduleUpdateLedger({
                   {activitySnapshotRows.slice(0, 10).map((snapshot) => (
                     <div
                       key={snapshot.id}
-                      className="grid grid-cols-[74px_minmax(180px,1.2fr)_90px_90px_60px_86px_64px_minmax(180px,1fr)] items-start border-t border-hairline px-3 py-2 text-xs"
+                      className="grid min-w-[980px] items-start border-t border-hairline px-3 py-2 text-xs"
+                      style={{ gridTemplateColumns: ACTIVITY_UPDATE_SNAPSHOT_COLUMNS }}
                     >
                       <div className="font-semibold tabular text-foreground">
                         {snapshot.activity_id || "No ID"}
@@ -8354,13 +8364,34 @@ function ScheduleUpdateLedger({
                         </div>
                       </div>
                       <div className="tabular text-muted-foreground">
+                        {snapshot.is_milestone ? "M" : `${snapshot.planned_duration_days}d`}
+                      </div>
+                      <div className="tabular text-muted-foreground">
+                        {shortDate(snapshot.baseline_finish_date)}
+                      </div>
+                      <div className="tabular text-muted-foreground">
                         {shortDate(snapshot.current_start_date)}
                       </div>
                       <div className="tabular text-muted-foreground">
                         {shortDate(snapshot.current_finish_date)}
                       </div>
+                      <div
+                        className={cn(
+                          "font-semibold tabular",
+                          snapshot.slippage_days > 0
+                            ? "text-danger"
+                            : snapshot.slippage_days < 0
+                              ? "text-success"
+                              : "text-muted-foreground",
+                        )}
+                      >
+                        {formatFinishVarianceDays(snapshot.slippage_days)}
+                      </div>
                       <div className="tabular text-muted-foreground">
                         {snapshot.remaining_duration_days}d
+                      </div>
+                      <div className="font-semibold tabular text-foreground">
+                        {Math.round(snapshot.percent_complete)}%
                       </div>
                       <div
                         className={cn(
