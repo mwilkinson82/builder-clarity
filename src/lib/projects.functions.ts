@@ -139,6 +139,38 @@ export interface ChangeOrderRow {
   client_decided_at: string | null;
 }
 
+export type InspectionStatus =
+  "planned" | "requested" | "scheduled" | "passed" | "failed" | "partial" | "cancelled";
+
+export type InspectionResult = "pending" | "pass" | "fail" | "partial" | "cancelled";
+
+export interface InspectionRow {
+  id: string;
+  project_id: string;
+  parent_inspection_id: string | null;
+  seed_key: string;
+  inspection_type: string;
+  authority: string;
+  location: string;
+  responsible_party: string;
+  inspector: string;
+  requested_date: string | null;
+  scheduled_date: string | null;
+  completed_date: string | null;
+  status: InspectionStatus;
+  result: InspectionResult;
+  attempt_number: number;
+  required_reinspection: boolean;
+  cost_impact: number;
+  schedule_impact_weeks: number | null;
+  notes: string;
+  corrective_action: string;
+  risk_exposure_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BucketRow {
   id: string;
   project_id: string;
@@ -246,22 +278,11 @@ export interface BillingApplicationEventRow {
 }
 
 export type InvoiceStatus =
-  | "draft"
-  | "sent"
-  | "viewed"
-  | "partially_paid"
-  | "paid"
-  | "overdue"
-  | "void";
+  "draft" | "sent" | "viewed" | "partially_paid" | "paid" | "overdue" | "void";
 
 export type PaymentStatus = "pending" | "succeeded" | "failed" | "refunded" | "void";
 export type OnlinePaymentStatus =
-  | "not_enabled"
-  | "pending"
-  | "paid"
-  | "expired"
-  | "failed"
-  | "refunded";
+  "not_enabled" | "pending" | "paid" | "expired" | "failed" | "refunded";
 
 export interface BillingInvoiceRow {
   id: string;
@@ -398,6 +419,53 @@ const normalizeSovMappingProfile = (row: Record<string, unknown>): SovMappingPro
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
 });
+
+const INSPECTION_STATUSES = [
+  "planned",
+  "requested",
+  "scheduled",
+  "passed",
+  "failed",
+  "partial",
+  "cancelled",
+] as const;
+const INSPECTION_RESULTS = ["pending", "pass", "fail", "partial", "cancelled"] as const;
+
+const normalizeInspection = (row: Record<string, unknown>): InspectionRow => {
+  const status = str(row.status, "planned");
+  const result = str(row.result, "pending");
+  return {
+    id: row.id as string,
+    project_id: row.project_id as string,
+    parent_inspection_id: (row.parent_inspection_id as string | null) ?? null,
+    seed_key: str(row.seed_key),
+    inspection_type: str(row.inspection_type),
+    authority: str(row.authority),
+    location: str(row.location),
+    responsible_party: str(row.responsible_party),
+    inspector: str(row.inspector),
+    requested_date: (row.requested_date as string | null) ?? null,
+    scheduled_date: (row.scheduled_date as string | null) ?? null,
+    completed_date: (row.completed_date as string | null) ?? null,
+    status: INSPECTION_STATUSES.includes(status as InspectionStatus)
+      ? (status as InspectionStatus)
+      : "planned",
+    result: INSPECTION_RESULTS.includes(result as InspectionResult)
+      ? (result as InspectionResult)
+      : "pending",
+    attempt_number: Math.max(1, num(row.attempt_number) || 1),
+    required_reinspection: Boolean(row.required_reinspection ?? false),
+    cost_impact: num(row.cost_impact),
+    schedule_impact_weeks:
+      row.schedule_impact_weeks == null ? null : Math.max(0, num(row.schedule_impact_weeks)),
+    notes: str(row.notes),
+    corrective_action: str(row.corrective_action),
+    risk_exposure_id: (row.risk_exposure_id as string | null) ?? null,
+    created_by: (row.created_by as string | null) ?? null,
+    created_at: str(row.created_at),
+    updated_at: str(row.updated_at),
+  };
+};
 
 const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) => {
   const message = (error?.message ?? "").toLowerCase();
@@ -1032,7 +1100,13 @@ export const getProject = createServerFn({ method: "GET" })
     if (!pRes.data) throw new Error("Project not found");
     if (isHarborDemoProject(pRes.data as Record<string, unknown>)) {
       await seedHarborDemoCpmActivities(context.supabase, pid, []);
+      await seedHarborDemoInspections(context.supabase, pid, []);
     }
+    const inspectionRes = await dynamicTable(context.supabase, "project_inspections")
+      .select("*")
+      .eq("project_id", pid)
+      .order("scheduled_date", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: false });
     if (eRes.error) throw new Error(eRes.error.message);
     if (cRes.error) throw new Error(cRes.error.message);
     if (bRes.error) throw new Error(bRes.error.message);
@@ -1053,6 +1127,14 @@ export const getProject = createServerFn({ method: "GET" })
         invoiceRes.error.message.includes("billing_invoices") ||
         invoiceRes.error.message.includes("schema cache"));
     if (invoiceRes.error && !billingInvoicesTableMissing) throw new Error(invoiceRes.error.message);
+    const inspectionsTableMissing =
+      inspectionRes.error &&
+      (isMissingRestRelation(inspectionRes.error, "project_inspections") ||
+        inspectionRes.error.message.includes("project_inspections") ||
+        inspectionRes.error.message.includes("schema cache"));
+    if (inspectionRes.error && !inspectionsTableMissing) {
+      throw new Error(inspectionRes.error.message);
+    }
 
     let billingEventRows: BillingApplicationEventRow[] = [];
     if (!billingTableMissing && (billRes.data ?? []).length > 0) {
@@ -1218,6 +1300,11 @@ export const getProject = createServerFn({ method: "GET" })
             payment_events: paymentsByInvoice.get(invoice.id) ?? [],
           };
         });
+    const inspections: InspectionRow[] = inspectionsTableMissing
+      ? []
+      : ((inspectionRes.data ?? []) as unknown[]).map((row) =>
+          normalizeInspection(row as Record<string, unknown>),
+        );
     const decisions: DecisionRow[] = (dRes.data ?? []).map((d) =>
       normalizeDecision(d as Record<string, unknown>),
     );
@@ -1290,6 +1377,7 @@ export const getProject = createServerFn({ method: "GET" })
       sovMappingProfiles,
       billingApplications,
       billingInvoices,
+      inspections,
       rollup,
       guidance,
       warnings,
@@ -1643,6 +1731,74 @@ export const deleteChangeOrder = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { error } = await context.supabase.from("change_orders").delete().eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ---------------- INSPECTIONS ----------------
+
+const inspectionInput = z.object({
+  parent_inspection_id: z.string().uuid().nullable().optional(),
+  seed_key: z.string().max(120).default(""),
+  inspection_type: z.string().min(1).max(200),
+  authority: z.string().max(200).default(""),
+  location: z.string().max(200).default(""),
+  responsible_party: z.string().max(200).default(""),
+  inspector: z.string().max(200).default(""),
+  requested_date: z.string().nullable().optional(),
+  scheduled_date: z.string().nullable().optional(),
+  completed_date: z.string().nullable().optional(),
+  status: z.enum(INSPECTION_STATUSES).default("planned"),
+  result: z.enum(INSPECTION_RESULTS).default("pending"),
+  attempt_number: z.number().int().min(1).default(1),
+  required_reinspection: z.boolean().default(false),
+  cost_impact: z.number().min(0).default(0),
+  schedule_impact_weeks: z.number().min(0).nullable().optional(),
+  notes: z.string().max(2000).default(""),
+  corrective_action: z.string().max(2000).default(""),
+  risk_exposure_id: z.string().uuid().nullable().optional(),
+});
+
+export const createInspection = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string } & z.input<typeof inspectionInput>) =>
+    z.object({ projectId: z.string().uuid() }).merge(inspectionInput).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { projectId, ...rest } = data;
+    const { data: inserted, error } = await dynamicTable(context.supabase, "project_inspections")
+      .insert({
+        project_id: projectId,
+        ...rest,
+        created_by: context.userId,
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    return { ok: true, id: (inserted as { id?: string } | null)?.id ?? "" };
+  });
+
+export const updateInspection = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string } & Partial<z.input<typeof inspectionInput>>) =>
+    z.object({ id: z.string().uuid() }).merge(inspectionInput.partial()).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { id, ...patch } = data;
+    const { error } = await dynamicTable(context.supabase, "project_inspections")
+      .update(patch)
+      .eq("id", id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteInspection = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "project_inspections")
+      .delete()
+      .eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -2922,6 +3078,90 @@ const harborDemoChangeOrders = [
   },
 ] as const;
 
+const harborDemoInspections = [
+  {
+    seed_key: "harbor-demo:inspection:plumbing-rough-pass",
+    inspection_type: "Rough plumbing inspection",
+    authority: "City Building Department",
+    location: "Level 1 bath groups and equipment room",
+    responsible_party: "J. Patel",
+    inspector: "M. Ortiz",
+    requested_date: "2026-05-22",
+    scheduled_date: "2026-05-27",
+    completed_date: "2026-05-27",
+    status: "passed",
+    result: "pass",
+    attempt_number: 1,
+    required_reinspection: false,
+    cost_impact: 0,
+    schedule_impact_weeks: null,
+    notes:
+      "Passed first inspection. Photos and pressure test record are retained in the project file.",
+    corrective_action: "",
+  },
+  {
+    seed_key: "harbor-demo:inspection:electrical-rough-fail",
+    inspection_type: "Electrical rough-in inspection",
+    authority: "City Building Department",
+    location: "Kitchen, service entry, and pool equipment feeders",
+    responsible_party: "BMB Electric",
+    inspector: "T. Reeves",
+    requested_date: "2026-05-29",
+    scheduled_date: "2026-06-03",
+    completed_date: "2026-06-03",
+    status: "failed",
+    result: "fail",
+    attempt_number: 1,
+    required_reinspection: true,
+    cost_impact: 9500,
+    schedule_impact_weeks: 1,
+    notes:
+      "Failed for missing panel directory, unsupported low-voltage runs, and pool equipment bonding corrections.",
+    corrective_action:
+      "Electrical subcontractor must correct bonding, support low-voltage runs, update panel directory, and request reinspection.",
+  },
+  {
+    seed_key: "harbor-demo:inspection:electrical-rough-reinspection-pass",
+    inspection_type: "Electrical rough-in reinspection",
+    authority: "City Building Department",
+    location: "Kitchen, service entry, and pool equipment feeders",
+    responsible_party: "BMB Electric",
+    inspector: "T. Reeves",
+    requested_date: "2026-06-04",
+    scheduled_date: "2026-06-07",
+    completed_date: "2026-06-07",
+    status: "passed",
+    result: "pass",
+    attempt_number: 2,
+    required_reinspection: false,
+    cost_impact: 0,
+    schedule_impact_weeks: null,
+    notes:
+      "Reinspection passed after corrective work. Keep original failure in the log because it drove the schedule and cost risk discussion.",
+    corrective_action: "Corrections accepted by inspector.",
+  },
+  {
+    seed_key: "harbor-demo:inspection:framing-partial",
+    inspection_type: "Framing and shear inspection",
+    authority: "County Structural Inspector",
+    location: "Main residence structural shell",
+    responsible_party: "R. Singh",
+    inspector: "A. Keller",
+    requested_date: "2026-06-10",
+    scheduled_date: "2026-06-14",
+    completed_date: null,
+    status: "scheduled",
+    result: "pending",
+    attempt_number: 1,
+    required_reinspection: false,
+    cost_impact: 0,
+    schedule_impact_weeks: 0.5,
+    notes:
+      "Scheduled before drywall release. Any failed item should become an IOR exposure and a schedule recovery action.",
+    corrective_action: "",
+  },
+] as const;
+
 const HARBOR_DEMO_CPM_ACTIVITIES = [
   {
     activity_id: "01-010",
@@ -3173,6 +3413,15 @@ const isScheduleActivitiesSchemaError = (error: DynamicSupabaseError | null) => 
   return message.includes("schedule_activities") || message.includes("schema cache");
 };
 
+const isProjectInspectionsSchemaError = (error: DynamicSupabaseError | null) => {
+  const message = (error?.message ?? "").toLowerCase();
+  return (
+    isMissingRestRelation(error, "project_inspections") ||
+    message.includes("project_inspections") ||
+    message.includes("schema cache")
+  );
+};
+
 const normalizeDemoText = (value: unknown) =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
 
@@ -3195,6 +3444,57 @@ export const isHarborDemoProject = (project: Record<string, unknown> | null | un
     jobNumber.includes("harbor") ||
     client === HARBOR_DEMO_CLIENT.toLowerCase()
   );
+};
+
+const seedHarborDemoInspections = async (
+  supabase: unknown,
+  projectId: string,
+  seedWarnings: string[],
+) => {
+  const { data: existingRows, error: lookupError } = await dynamicTable(
+    supabase,
+    "project_inspections",
+  )
+    .select("id,seed_key")
+    .eq("project_id", projectId)
+    .limit(50);
+
+  if (lookupError) {
+    if (isProjectInspectionsSchemaError(lookupError)) {
+      seedWarnings.push(`Inspection demo skipped: ${lookupError.message}`);
+      return { insertedCount: 0 };
+    }
+    throw new Error(lookupError.message);
+  }
+
+  const rows = Array.isArray(existingRows)
+    ? (existingRows as Array<{ seed_key?: string | null }>)
+    : [];
+  const existingSeedKeys = new Set(
+    rows.map((row) => row.seed_key).filter((key): key is string => Boolean(key)),
+  );
+  const rowsToInsert = harborDemoInspections.filter(
+    (inspection) => !existingSeedKeys.has(inspection.seed_key),
+  );
+
+  if (rowsToInsert.length === 0) return { insertedCount: 0 };
+
+  const { error: insertError } = await dynamicTable(supabase, "project_inspections").insert(
+    rowsToInsert.map((inspection) => ({
+      project_id: projectId,
+      ...inspection,
+    })),
+  );
+
+  if (insertError) {
+    if (isProjectInspectionsSchemaError(insertError)) {
+      seedWarnings.push(`Inspection demo insert skipped: ${insertError.message}`);
+      return { insertedCount: 0 };
+    }
+    throw new Error(insertError.message);
+  }
+
+  return { insertedCount: rowsToInsert.length };
 };
 
 const seedHarborDemoCpmActivities = async (
@@ -3377,6 +3677,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         seedWarnings,
       );
       await seedHarborDemoCpmActivities(context.supabase, existingDemo.id as string, seedWarnings);
+      await seedHarborDemoInspections(context.supabase, existingDemo.id as string, seedWarnings);
       return {
         seeded: false as const,
         exists: true,
@@ -3405,6 +3706,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         existingHarbor.id as string,
         seedWarnings,
       );
+      await seedHarborDemoInspections(context.supabase, existingHarbor.id as string, seedWarnings);
       return {
         seeded: false as const,
         exists: true,
@@ -3450,6 +3752,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       if (retryError) throw new Error(retryError.message);
       if (retryDemo?.id) {
         await seedHarborDemoCpmActivities(context.supabase, retryDemo.id as string, seedWarnings);
+        await seedHarborDemoInspections(context.supabase, retryDemo.id as string, seedWarnings);
         return {
           seeded: false as const,
           exists: true,
@@ -3651,6 +3954,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
     if (milestoneUpdateError) throw new Error(milestoneUpdateError.message);
 
     await seedHarborDemoCpmActivities(context.supabase, projectId, seedWarnings);
+    await seedHarborDemoInspections(context.supabase, projectId, seedWarnings);
 
     const { error: scheduleRiskError } = await context.supabase.from("schedule_risks").insert([
       {

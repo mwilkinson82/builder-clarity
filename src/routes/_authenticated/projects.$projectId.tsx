@@ -44,6 +44,11 @@ import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
 import {
+  InspectionsWorkspace,
+  type InspectionDraft,
+  type InspectionPatch,
+} from "@/components/outcome/InspectionsWorkspace";
+import {
   BillingLineItemsPanel,
   ProjectCostTrackingPanel,
   WipAnalysisPanel,
@@ -78,6 +83,9 @@ import {
   createChangeOrder,
   updateChangeOrder,
   deleteChangeOrder,
+  createInspection,
+  updateInspection,
+  deleteInspection,
   updateBucket,
   createBucket,
   deleteBucket,
@@ -100,6 +108,7 @@ import {
   type BillingInvoiceRow,
   type PaymentLedgerRow,
   type ExposureRow,
+  type InspectionRow,
   type SovImportRow,
   type BucketRow,
 } from "@/lib/projects.functions";
@@ -138,6 +147,7 @@ import {
 const PROJECT_TAB_VALUES = [
   "dashboard",
   "schedule",
+  "inspections",
   "risk-tally",
   "todos",
   "sov",
@@ -153,6 +163,7 @@ type ProjectTabValue = (typeof PROJECT_TAB_VALUES)[number];
 const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
   "dashboard",
   "schedule",
+  "inspections",
   "risk-tally",
   "todos",
   "sov",
@@ -405,6 +416,7 @@ function ProjectPage() {
   const list = useServerFn(listProjects);
   const qc = useQueryClient();
   const [creatingCoRiskId, setCreatingCoRiskId] = useState<string | null>(null);
+  const [creatingInspectionRiskId, setCreatingInspectionRiskId] = useState<string | null>(null);
   const [activeProjectTab, setActiveProjectTab] = useState<ProjectTabValue>(
     search.tab ?? "dashboard",
   );
@@ -440,6 +452,9 @@ function ProjectPage() {
   const createCoFn = useServerFn(createChangeOrder);
   const updateCoFn = useServerFn(updateChangeOrder);
   const deleteCoFn = useServerFn(deleteChangeOrder);
+  const createInspectionFn = useServerFn(createInspection);
+  const updateInspectionFn = useServerFn(updateInspection);
+  const deleteInspectionFn = useServerFn(deleteInspection);
   const updateBucketFn = useServerFn(updateBucket);
   const createBucketFn = useServerFn(createBucket);
   const deleteBucketFn = useServerFn(deleteBucket);
@@ -508,6 +523,45 @@ function ProjectPage() {
   const coCreate = useServerMutation<Record<string, unknown>>(createCoFn as never);
   const coUpdate = useServerMutation<Record<string, unknown>>(updateCoFn as never);
   const coDelete = useServerMutation<{ id: string }>(deleteCoFn);
+  const inspectionCreate = useMutation({
+    mutationFn: (input: InspectionDraft) => createInspectionFn({ data: { projectId, ...input } }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Inspection logged", {
+        description: "The inspection log and IOR posture are updated.",
+      });
+    },
+    onError: (err) => {
+      toast.error("Inspection did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const inspectionUpdate = useMutation({
+    mutationFn: (input: { id: string; patch: InspectionPatch }) =>
+      updateInspectionFn({ data: { id: input.id, ...input.patch } }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Inspection updated");
+    },
+    onError: (err) => {
+      toast.error("Inspection did not update", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const inspectionDelete = useMutation({
+    mutationFn: (input: { id: string }) => deleteInspectionFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Inspection deleted");
+    },
+    onError: (err) => {
+      toast.error("Inspection did not delete", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
   const bucketUpdate = useServerMutation<Record<string, unknown>>(updateBucketFn as never);
   const bucketCreate = useServerMutation<Record<string, unknown>>(createBucketFn as never);
   const bucketDelete = useServerMutation<{ id: string }>(deleteBucketFn);
@@ -792,6 +846,7 @@ function ProjectPage() {
     sovMappingProfiles,
     billingApplications,
     billingInvoices,
+    inspections = [],
     rollup,
     guidance,
     warnings,
@@ -940,6 +995,89 @@ function ProjectPage() {
     );
   };
 
+  const handleCreateRiskFromInspection = (inspection: InspectionRow) => {
+    if (inspection.risk_exposure_id) {
+      toast.info("Inspection already has a linked risk", {
+        description: "Open the Risk Tally tab to manage the existing exposure.",
+      });
+      return;
+    }
+
+    const scheduleImpact = Number(inspection.schedule_impact_weeks ?? 0);
+    const dollarExposure = Math.max(0, inspection.cost_impact);
+    const riskworthy =
+      inspection.status === "failed" ||
+      inspection.status === "partial" ||
+      inspection.result === "fail" ||
+      inspection.result === "partial" ||
+      scheduleImpact > 0 ||
+      dollarExposure > 0;
+
+    if (!riskworthy) {
+      toast.info("No inspection risk to allocate yet", {
+        description:
+          "Failed, partial, cost-impact, or schedule-impact inspections can be sent to the risk tally.",
+      });
+      return;
+    }
+
+    setCreatingInspectionRiskId(inspection.id);
+    createExposureFn({
+      data: {
+        projectId,
+        title: `Inspection: ${inspection.inspection_type}`,
+        description:
+          inspection.corrective_action ||
+          inspection.notes ||
+          `${inspection.inspection_type} requires follow-through before the inspection cycle closes.`,
+        category: scheduleImpact > 0 ? "schedule_compression" : "field_change",
+        dollar_exposure: dollarExposure,
+        probability: 100,
+        schedule_impact_weeks: scheduleImpact > 0 ? scheduleImpact : null,
+        owner: inspection.responsible_party || project.project_manager || "PM",
+        response_path: "recover",
+        hold_class: "E-Hold",
+        status: "active",
+        due_date: inspection.scheduled_date ?? inspection.completed_date ?? null,
+        next_review_at: null,
+        release_condition: `${inspection.inspection_type} passes and ${inspection.authority || "the inspection authority"} releases the affected work.`,
+        notes: [
+          "Created from Inspections.",
+          `Status: ${inspection.status}. Result: ${inspection.result}. Attempt: ${inspection.attempt_number}.`,
+          inspection.authority ? `Authority: ${inspection.authority}.` : "",
+          inspection.inspector ? `Inspector: ${inspection.inspector}.` : "",
+          inspection.location ? `Location: ${inspection.location}.` : "",
+          `Cost impact: ${fmtUSD(dollarExposure)}.`,
+          `Schedule impact: ${scheduleImpact || 0} week${scheduleImpact === 1 ? "" : "s"}.`,
+          inspection.corrective_action ? `Corrective action: ${inspection.corrective_action}` : "",
+          inspection.notes ? `Inspection notes: ${inspection.notes}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      },
+    })
+      .then((result) =>
+        updateInspectionFn({
+          data: {
+            id: inspection.id,
+            risk_exposure_id: result.id || null,
+          },
+        }),
+      )
+      .then(() => {
+        invalidate();
+        toast.success("Inspection sent to risk tally", {
+          description: `${inspection.inspection_type} is now an E-Hold exposure to recover.`,
+        });
+      })
+      .catch((err) => {
+        toast.error("Inspection risk did not save", {
+          description: err instanceof Error ? err.message : "Try again.",
+        });
+      })
+      .finally(() => setCreatingInspectionRiskId(null));
+  };
+
   const milestones = scheduleData?.milestones ?? [];
   const scheduleRisks = scheduleData?.risks ?? [];
   const scheduleUpdates = scheduleData?.updates ?? [];
@@ -953,6 +1091,9 @@ function ProjectPage() {
     null;
   const jobNumber = project.job_number || `ID ${project.id.slice(0, 8).toUpperCase()}`;
   const openTodoCount = decisions.filter((d) => d.status !== "resolved").length;
+  const openInspectionCount = inspections.filter(
+    (inspection) => !["passed", "cancelled"].includes(inspection.status),
+  ).length;
 
   const createTodoForRisk = (exposure: ExposureRow) => {
     const impact =
@@ -1211,6 +1352,12 @@ function ProjectPage() {
       label: "Schedule",
       detail: `${project.schedule_variance_weeks > 0 ? `+${project.schedule_variance_weeks} wk` : "On plan"}`,
       icon: CalendarClock,
+    },
+    {
+      value: "inspections",
+      label: "Inspections",
+      detail: `${openInspectionCount} open`,
+      icon: ClipboardList,
     },
     {
       value: "risk-tally",
@@ -1515,6 +1662,26 @@ function ProjectPage() {
                 subtitle="Completion forecast, interim milestones, critical path movement, and schedule-linked risk."
               />
               <ScheduleRisk project={project} lastReviewForecast={lastReviewForecast} />
+            </TabsContent>
+
+            <TabsContent value="inspections" className="mt-0">
+              <WorkspaceHeader
+                title="Inspections"
+                subtitle="Required inspections, pass/fail attempts, reinspection cycles, and inspection-driven IOR risk."
+              />
+              <InspectionsWorkspace
+                inspections={inspections}
+                onCreate={(input) => inspectionCreate.mutate(input)}
+                onUpdate={(id, patch) => inspectionUpdate.mutate({ id, patch })}
+                onDelete={(id) => inspectionDelete.mutate({ id })}
+                onCreateRisk={handleCreateRiskFromInspection}
+                savingInspection={
+                  inspectionCreate.isPending ||
+                  inspectionUpdate.isPending ||
+                  inspectionDelete.isPending
+                }
+                creatingRiskId={creatingInspectionRiskId}
+              />
             </TabsContent>
 
             <TabsContent value="daily-reports" className="mt-0">

@@ -316,6 +316,8 @@ await expectContains(
     /successor_activity_ids/,
     /seedHarborDemoCpmActivities/,
     /ensureHarborDemoCpmActivitiesForProject/,
+    /harborDemoInspections/,
+    /seedHarborDemoInspections/,
     /HARBOR_DEMO_PROJECT_MANAGER/,
     /Marshall Wilkinson/,
     /ensureHarborDemoProjectManager/,
@@ -397,6 +399,10 @@ await expectContains(
     /createExposure/,
     /deleteExposure/,
     /createDecision/,
+    /createInspection/,
+    /updateInspection/,
+    /deleteInspection/,
+    /InspectionsWorkspace/,
     /createBillingApplication/,
     /createBillingInvoice/,
     /recordInvoicePayment/,
@@ -416,6 +422,8 @@ await expectContains(
     /Billing recipients/,
     /exposureCategoryFromChangeOrder/,
     /toast\.success\("CO sent to risk tally/,
+    /toast\.success\("Inspection logged/,
+    /toast\.success\("Inspection sent to risk tally/,
     /Finish payment setup/,
     /Invoice email queued/,
     /toast\.success\("Linked to-do created/,
@@ -437,7 +445,7 @@ await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [
     /const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>/,
-    /"schedule"[\s\S]*"risk-tally"[\s\S]*"todos"[\s\S]*"sov"[\s\S]*"billing"[\s\S]*"change-orders"[\s\S]*"client-portal"[\s\S]*"ior-report"[\s\S]*"daily-reports"/,
+    /"schedule"[\s\S]*"inspections"[\s\S]*"risk-tally"[\s\S]*"todos"[\s\S]*"sov"[\s\S]*"billing"[\s\S]*"change-orders"[\s\S]*"client-portal"[\s\S]*"ior-report"[\s\S]*"daily-reports"/,
     /const compactProjectNav = COMPACT_PROJECT_NAV_TABS\.has\(activeProjectTab\)/,
     /max-w-\[1760px\]/,
     /lg:grid-cols-\[76px_minmax\(0,1fr\)\]/,
@@ -459,6 +467,21 @@ await expectContains(
     /WipAnalysisPanel/,
   ],
   "workspace-heavy project tabs open a wide rail layout with labeled icon tooltips",
+);
+
+await expectContains(
+  "src/components/outcome/InspectionsWorkspace.tsx",
+  [
+    /export function InspectionsWorkspace/,
+    /InspectionDraft/,
+    /Reinspection/,
+    /Send to risk/,
+    /Inspection risk posture/,
+    /required_reinspection/,
+    /cost_impact/,
+    /schedule_impact_weeks/,
+  ],
+  "inspections workspace tracks pass/fail attempts, reinspections, impacts, and risk handoff",
 );
 
 await expectContains(
@@ -1050,6 +1073,24 @@ expectSql(
     /cross join demo_activities/i,
   ],
   "existing Harbor Residence demo projects are backfilled with CPM activities",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.project_inspections/i,
+    /parent_inspection_id uuid references public\.project_inspections/i,
+    /risk_exposure_id uuid references public\.exposures/i,
+    /grant select, insert, update, delete on public\.project_inspections to authenticated/i,
+    /alter table public\.project_inspections enable row level security/i,
+    /project_inspections_team_select/i,
+    /public\.can_read_project\(project_id\)/i,
+    /public\.can_manage_project\(project_id\)/i,
+    /harbor-demo:inspection:electrical-rough-fail/i,
+    /harbor-demo:inspection:electrical-rough-reinspection-pass/i,
+    /cross join demo_inspections/i,
+  ],
+  "project inspections table exists with reinspection linkage, RLS/grants, and Harbor backfill rows",
 );
 
 expectSql(
