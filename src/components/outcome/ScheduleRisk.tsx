@@ -139,6 +139,15 @@ import {
   splitWbsPath,
   type WbsDivisionRow,
 } from "@/lib/constructline-wbs";
+import {
+  getScheduleStatusAnchorDate,
+  parseScheduleRemainingDuration,
+  updateScheduleStatusActualStartDate,
+  updateScheduleStatusForecastFinishDate,
+  updateScheduleStatusForecastStartDate,
+  updateScheduleStatusPercentComplete,
+  updateScheduleStatusRemainingDuration,
+} from "@/lib/schedule-status";
 
 const EMPTY_MILESTONES: MilestoneRow[] = [];
 const EMPTY_ACTIVITIES: ScheduleActivityRow[] = [];
@@ -8613,10 +8622,7 @@ function parseDelayDays(value: string | number | null | undefined) {
 }
 
 function parseRemainingDuration(value: string | number | null | undefined) {
-  if (value == null || value === "") return null;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return null;
-  return Math.max(0, Math.min(5000, Math.round(parsed)));
+  return parseScheduleRemainingDuration(value);
 }
 
 function todayIsoDate() {
@@ -8763,13 +8769,7 @@ function updateDraftActualStartDate(
   value: string,
   dataDate?: string | null,
 ): ActivityDraft {
-  const next = { ...draft, actual_start_date: value };
-  if (next.forecast_finish_date)
-    return updateDraftForecastFinishDate(next, next.forecast_finish_date, dataDate);
-  if (next.remaining_duration_days.trim()) {
-    return updateDraftRemainingDuration(next, next.remaining_duration_days, dataDate);
-  }
-  return next;
+  return updateScheduleStatusActualStartDate(draft, value, dataDate);
 }
 
 function updateDraftForecastStartDate(
@@ -8777,13 +8777,7 @@ function updateDraftForecastStartDate(
   value: string,
   dataDate?: string | null,
 ): ActivityDraft {
-  const next = { ...draft, forecast_start_date: value };
-  if (next.remaining_duration_days.trim()) {
-    return updateDraftRemainingDuration(next, next.remaining_duration_days, dataDate);
-  }
-  if (next.forecast_finish_date)
-    return updateDraftForecastFinishDate(next, next.forecast_finish_date, dataDate);
-  return next;
+  return updateScheduleStatusForecastStartDate(draft, value, dataDate);
 }
 
 function updateDraftPercentComplete(
@@ -8791,40 +8785,11 @@ function updateDraftPercentComplete(
   value: string,
   dataDate?: string | null,
 ): ActivityDraft {
-  const next = { ...draft, percent_complete: value };
-  const percentComplete = parsePercent(value);
-  if (percentComplete >= 100) {
-    return {
-      ...next,
-      remaining_duration_days: "0",
-      actual_finish_date: next.actual_finish_date || next.forecast_finish_date || next.finish_date,
-    };
-  }
-  if (next.forecast_finish_date)
-    return updateDraftForecastFinishDate(next, next.forecast_finish_date, dataDate);
-  if (next.remaining_duration_days.trim()) {
-    return updateDraftRemainingDuration(next, next.remaining_duration_days, dataDate);
-  }
-  return next;
+  return updateScheduleStatusPercentComplete(draft, value, dataDate);
 }
 
 function getDraftStatusAnchorDate(draft: ActivityDraft, dataDate?: string | null) {
-  const currentStart =
-    draft.actual_start_date ||
-    draft.forecast_start_date ||
-    draft.baseline_start_date ||
-    draft.start_date ||
-    null;
-  if (!dataDate) return currentStart;
-
-  const percentComplete = parsePercent(draft.percent_complete);
-  if (percentComplete > 0 || draft.actual_start_date) return dataDate;
-
-  const dataDateMs = parseDateMs(dataDate);
-  const currentStartMs = parseDateMs(currentStart);
-  if (dataDateMs == null) return currentStart;
-  if (currentStartMs == null) return dataDate;
-  return isoDateFromMs(Math.max(dataDateMs, currentStartMs));
+  return getScheduleStatusAnchorDate(draft, dataDate);
 }
 
 function updateDraftRemainingDuration(
@@ -8832,17 +8797,7 @@ function updateDraftRemainingDuration(
   value: string,
   dataDate?: string | null,
 ): ActivityDraft {
-  const remainingDuration = parseRemainingDuration(value);
-  const anchorMs = parseDateMs(getDraftStatusAnchorDate(draft, dataDate));
-  if (remainingDuration == null || anchorMs == null) {
-    return { ...draft, remaining_duration_days: value };
-  }
-  const finishOffsetDays = Math.max(0, remainingDuration - 1);
-  return {
-    ...draft,
-    remaining_duration_days: String(remainingDuration),
-    forecast_finish_date: isoDateFromMs(anchorMs + finishOffsetDays * DAY_MS),
-  };
+  return updateScheduleStatusRemainingDuration(draft, value, dataDate);
 }
 
 function updateDraftForecastFinishDate(
@@ -8850,17 +8805,7 @@ function updateDraftForecastFinishDate(
   value: string,
   dataDate?: string | null,
 ): ActivityDraft {
-  const anchorMs = parseDateMs(getDraftStatusAnchorDate(draft, dataDate));
-  const finishMs = parseDateMs(value);
-  if (anchorMs == null || finishMs == null || finishMs < anchorMs) {
-    return { ...draft, forecast_finish_date: value };
-  }
-  const remainingDuration = Math.max(1, Math.round((finishMs - anchorMs) / DAY_MS) + 1);
-  return {
-    ...draft,
-    forecast_finish_date: value,
-    remaining_duration_days: String(remainingDuration),
-  };
+  return updateScheduleStatusForecastFinishDate(draft, value, dataDate);
 }
 
 function applyOpenDelayToDraftForecast(

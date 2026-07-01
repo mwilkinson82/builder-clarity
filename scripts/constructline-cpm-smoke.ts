@@ -10,6 +10,13 @@ import {
   parseConstructLineDependencyToken,
 } from "../src/lib/constructline-cpm.ts";
 import {
+  updateScheduleStatusActualStartDate,
+  updateScheduleStatusForecastFinishDate,
+  updateScheduleStatusForecastStartDate,
+  updateScheduleStatusPercentComplete,
+  updateScheduleStatusRemainingDuration,
+} from "../src/lib/schedule-status.ts";
+import {
   buildWbsDivisionOrder,
   buildWbsDivisionRows,
   buildWbsSectionPathMap,
@@ -51,6 +58,60 @@ assert.equal(
   "A-020|SS|-1",
 );
 assert.equal(describeConstructLineDependencyToken("A-030|FS|3"), "A-030 FS+3d");
+
+const startedStatusDraft = {
+  start_date: "2026-06-17",
+  finish_date: "2026-08-07",
+  baseline_start_date: "2026-06-17",
+  forecast_start_date: "2026-06-17",
+  forecast_finish_date: "2026-08-07",
+  actual_start_date: "2026-06-17",
+  actual_finish_date: "",
+  remaining_duration_days: "",
+  percent_complete: "30",
+};
+assert.equal(
+  updateScheduleStatusForecastFinishDate(startedStatusDraft, "2026-07-10", "2026-06-30")
+    .remaining_duration_days,
+  "11",
+  "Started CPM status rows should count remaining duration from the data date when expected finish changes.",
+);
+assert.equal(
+  updateScheduleStatusRemainingDuration(startedStatusDraft, "12", "2026-06-30")
+    .forecast_finish_date,
+  "2026-07-11",
+  "Started CPM status rows should move expected finish when remaining duration changes.",
+);
+assert.equal(
+  updateScheduleStatusActualStartDate(
+    { ...startedStatusDraft, actual_start_date: "", forecast_finish_date: "2026-07-10" },
+    "2026-06-20",
+    "2026-06-30",
+  ).remaining_duration_days,
+  "11",
+  "Adding actual start should recalculate remaining duration against the data date.",
+);
+assert.equal(
+  updateScheduleStatusForecastStartDate(
+    {
+      ...startedStatusDraft,
+      actual_start_date: "",
+      percent_complete: "0",
+      forecast_start_date: "2026-07-06",
+      remaining_duration_days: "5",
+    },
+    "2026-07-08",
+    "2026-06-30",
+  ).forecast_finish_date,
+  "2026-07-12",
+  "Unstarted future work should count remaining duration from the later current start.",
+);
+assert.equal(
+  updateScheduleStatusPercentComplete(startedStatusDraft, "100", "2026-06-30")
+    .remaining_duration_days,
+  "0",
+  "Completed CPM status rows should carry zero remaining duration.",
+);
 
 const activities = [
   {
@@ -541,6 +602,7 @@ assert.deepEqual(
 );
 
 const scheduleRiskSource = readProjectFile("src/components/outcome/ScheduleRisk.tsx");
+const scheduleStatusSource = readProjectFile("src/lib/schedule-status.ts");
 const scheduleRouteSource = readProjectFile(
   "src/routes/_authenticated/projects.$projectId.schedule.tsx",
 );
@@ -665,8 +727,6 @@ for (const requiredScheduleRiskText of [
   "setDraft(updateDraftForecastStartDate(draft, e.target.value, dataDate))",
   "setDraft(updateDraftPercentComplete(draft, e.target.value, dataDate))",
   "from the later current start for unstarted future work",
-  "Math.max(dataDateMs, currentStartMs)",
-  "percentComplete > 0 || draft.actual_start_date",
   "Schedule variance",
   "Duration",
   "Activity description",
@@ -815,6 +875,22 @@ for (const requiredScheduleRiskText of [
   assert.ok(
     scheduleRiskSource.includes(requiredScheduleRiskText),
     `ScheduleRisk is missing required CPM workspace text: ${requiredScheduleRiskText}`,
+  );
+}
+
+for (const requiredScheduleStatusText of [
+  "getScheduleStatusAnchorDate",
+  "updateScheduleStatusRemainingDuration",
+  "updateScheduleStatusForecastFinishDate",
+  "updateScheduleStatusActualStartDate",
+  "updateScheduleStatusForecastStartDate",
+  "updateScheduleStatusPercentComplete",
+  "Math.max(dataDateMs, currentStartMs)",
+  "percentComplete > 0 || draft.actual_start_date",
+]) {
+  assert.ok(
+    scheduleStatusSource.includes(requiredScheduleStatusText),
+    `Schedule status helper is missing required CPM update math: ${requiredScheduleStatusText}`,
   );
 }
 
