@@ -6129,7 +6129,13 @@ function ConstructLineTaskRow({
             {task.isMilestone ? "M" : `${task.durationDays}d`}
           </span>
           <span className="mt-0.5 max-w-full truncate text-[9px] uppercase tracking-[0.08em]">
-            {percent >= 100 ? "done" : `${task.remainingDurationDays} rem`}
+            {task.isMilestone
+              ? percent >= 100
+                ? "met"
+                : "point"
+              : percent >= 100
+                ? "done"
+                : `${task.remainingDurationDays} rem`}
           </span>
         </div>
         <div

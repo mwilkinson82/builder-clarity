@@ -185,6 +185,9 @@ assert.equal(byId.get("A")?.totalFloat, 0);
 assert.equal(byId.get("B")?.totalFloat, 0);
 assert.equal(byId.get("C")?.totalFloat, 2);
 assert.equal(byId.get("MS-001")?.isMilestone, true);
+assert.equal(byId.get("MS-001")?.durationDays, 0);
+assert.equal(byId.get("MS-001")?.remainingDurationDays, 0);
+assert.equal(byId.get("MS-001")?.statusBasis, "planned_dates");
 assert.equal(byId.get("MS-001")?.totalFloat, 0);
 assert.equal(byId.get("C")?.isNearCritical, true);
 assert.equal(byId.get("C")?.isCritical, false);
@@ -705,6 +708,8 @@ for (const requiredScheduleRiskText of [
   "Milestones are zero-duration schedule points.",
   "Milestones stay at zero duration.",
   "Milestone duration",
+  '? "met"',
+  ': "point"',
   "needs remaining",
   "needs finish",
   "needs actual start",

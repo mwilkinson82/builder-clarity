@@ -288,9 +288,11 @@ export function buildConstructLineCpmModel(
     const baselineFinishDate = getActivityBaselineFinishDate(activity);
     const statusStartDate = getActivityStatusStartDate(activity);
     const statusFinishDate = getActivityStatusFinishDate(activity, dataDateMs);
-    const statusBasis = getActivityStatusBasis(activity, dataDateMs, statusFinishDate);
+    const statusBasis = isMilestone
+      ? getMilestoneStatusBasis(activity)
+      : getActivityStatusBasis(activity, dataDateMs, statusFinishDate);
     const durationDays = isMilestone
-      ? 1
+      ? 0
       : (getDateSpanDays(baselineStartDate, baselineFinishDate) ?? getDurationDays(activity));
     const remainingDurationDays = getActivityRemainingDurationDays({
       activity,
@@ -300,6 +302,11 @@ export function buildConstructLineCpmModel(
       statusFinishDate,
       plannedDurationDays: durationDays,
     });
+    const scheduleDurationDays = isMilestone
+      ? 1
+      : activity.percent_complete >= 100
+        ? Math.max(1, durationDays)
+        : Math.max(1, remainingDurationDays);
     keyLookup.set(normalizeDependencyKey(activity.id), activityKey);
     keyLookup.set(normalizeDependencyKey(dependencyKey), activityKey);
     return {
@@ -308,8 +315,7 @@ export function buildConstructLineCpmModel(
       dependencyKey,
       durationDays,
       remainingDurationDays,
-      scheduleDurationDays:
-        activity.percent_complete >= 100 ? Math.max(1, durationDays) : remainingDurationDays,
+      scheduleDurationDays,
       startOffset: getDayOffset(projectStartMs, statusStartDate),
       finishOffset: getDayOffset(projectStartMs, statusFinishDate),
       baselineStartOffset: getDayOffset(projectStartMs, baselineStartDate),
@@ -830,6 +836,15 @@ function getActivityStatusBasis(
   return "planned_dates";
 }
 
+function getMilestoneStatusBasis(activity: ScheduleActivityRow): ConstructLineStatusBasis {
+  if (activity.actual_finish_date || activity.percent_complete >= 100) return "actual";
+  const baselineFinishDate = activity.baseline_finish_date ?? activity.finish_date;
+  if (activity.forecast_finish_date && activity.forecast_finish_date !== baselineFinishDate) {
+    return "expected_finish";
+  }
+  return "planned_dates";
+}
+
 function getActivityRemainingDurationDays({
   activity,
   isMilestone,
@@ -845,9 +860,10 @@ function getActivityRemainingDurationDays({
   statusFinishDate: string | null;
   plannedDurationDays: number;
 }) {
+  if (isMilestone) return 0;
   if (activity.percent_complete >= 100) return 0;
   if (activity.remaining_duration_days != null) {
-    return Math.max(isMilestone ? 1 : 1, Math.round(activity.remaining_duration_days));
+    return Math.max(1, Math.round(activity.remaining_duration_days));
   }
   const statusFinishMs = parseDateMs(statusFinishDate);
   const statusStartMs = parseDateMs(statusStartDate);
