@@ -2227,13 +2227,13 @@ export const createDecision = createServerFn({ method: "POST" })
     const { projectId, ...rest } = data;
     const { error } = await context.supabase
       .from("decisions")
-      .insert({ project_id: projectId, ...rest });
+      .insert({ project_id: projectId, ...rest } as any);
     if (error) {
       if (isMissingDecisionEnhancementColumn(error)) {
         const { error: fallbackError } = await context.supabase.from("decisions").insert({
           project_id: projectId,
           ...stripDecisionEnhancementFields(rest),
-        });
+        } as any);
         if (fallbackError) throw new Error(fallbackError.message);
         return { ok: true, reminderFieldsPersisted: false };
       }
@@ -2249,12 +2249,12 @@ export const updateDecision = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { id, ...patch } = data;
-    const { error } = await context.supabase.from("decisions").update(patch).eq("id", id);
+    const { error } = await context.supabase.from("decisions").update(patch as any).eq("id", id);
     if (error) {
       if (isMissingDecisionEnhancementColumn(error)) {
         const { error: fallbackError } = await context.supabase
           .from("decisions")
-          .update(stripDecisionEnhancementFields(patch))
+          .update(stripDecisionEnhancementFields(patch) as any)
           .eq("id", id);
         if (fallbackError) throw new Error(fallbackError.message);
         return { ok: true, reminderFieldsPersisted: false };
