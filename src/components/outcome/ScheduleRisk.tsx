@@ -2235,7 +2235,7 @@ export function CpmActivityPlanner({
       setDraft(emptyActivityDraft());
       setShowDraft(false);
     } catch (error) {
-      setDraftSaveError(error instanceof Error ? error.message : "The activity did not save.");
+      setDraftSaveError(formatActivityDraftSaveError(error, draft.is_milestone));
     }
   };
   const openActivityDraft = () => {
@@ -2699,7 +2699,7 @@ export function CpmActivityPlanner({
           </Button>
         </div>
       </div>
-      <div className="grid gap-3 xl:grid-cols-[140px_minmax(280px,1fr)_210px_160px_160px_110px]">
+      <div className="grid gap-3 lg:grid-cols-[140px_minmax(260px,1fr)_210px] xl:grid-cols-[140px_minmax(280px,1fr)_210px_160px_160px_110px]">
         <LabeledField label="Activity ID">
           <Input
             value={draft.activity_id}
@@ -2751,48 +2751,52 @@ export function CpmActivityPlanner({
           />
         </LabeledField>
       </div>
-      <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(260px,0.8fr)_minmax(260px,0.8fr)_minmax(320px,1fr)_auto] xl:items-end">
-        <ActivityDependencyPicker
-          label="Predecessors - work before this row"
-          emptyLabel="Choose activities that must finish first"
-          selectedIds={draft.predecessor_activity_ids}
-          activities={sortedActivities}
-          blockedActivityId={draft.activity_id}
-          blockedIds={parseActivityIds(draft.successor_activity_ids)}
-          onChange={(value) => setDraft({ ...draft, predecessor_activity_ids: value })}
-        />
-        <ActivityDependencyPicker
-          label="Successors - work after this row"
-          emptyLabel="Choose activities that follow this one"
-          selectedIds={draft.successor_activity_ids}
-          activities={sortedActivities}
-          blockedActivityId={draft.activity_id}
-          blockedIds={parseActivityIds(draft.predecessor_activity_ids)}
-          onChange={(value) => setDraft({ ...draft, successor_activity_ids: value })}
-        />
-        <LabeledField label="Notes / constraint">
-          <Textarea
-            value={draft.notes}
-            onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
-            placeholder="Scope, sequencing constraint, crew assumption, or schedule risk."
-            className="min-h-10 resize-y"
+      <div className="mt-4 grid gap-4">
+        <div className="grid gap-3 xl:grid-cols-2">
+          <ActivityDependencyPicker
+            label="Predecessors - work before this row"
+            emptyLabel="Choose activities that must finish first"
+            selectedIds={draft.predecessor_activity_ids}
+            activities={sortedActivities}
+            blockedActivityId={draft.activity_id}
+            blockedIds={parseActivityIds(draft.successor_activity_ids)}
+            onChange={(value) => setDraft({ ...draft, predecessor_activity_ids: value })}
           />
-        </LabeledField>
-        <Button
-          type="button"
-          className="h-10 gap-2"
-          disabled={!draft.name.trim() || isSavingActivity}
-          onClick={() => void addActivity()}
-        >
-          {draft.is_milestone ? <Diamond className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          {isSavingActivity
-            ? draft.is_milestone
-              ? "Saving milestone..."
-              : "Saving activity..."
-            : draft.is_milestone
-              ? "Save milestone"
-              : "Save activity"}
-        </Button>
+          <ActivityDependencyPicker
+            label="Successors - work after this row"
+            emptyLabel="Choose activities that follow this one"
+            selectedIds={draft.successor_activity_ids}
+            activities={sortedActivities}
+            blockedActivityId={draft.activity_id}
+            blockedIds={parseActivityIds(draft.predecessor_activity_ids)}
+            onChange={(value) => setDraft({ ...draft, successor_activity_ids: value })}
+          />
+        </div>
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
+          <LabeledField label="Notes / constraint">
+            <Textarea
+              value={draft.notes}
+              onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+              placeholder="Scope, sequencing constraint, crew assumption, or schedule risk."
+              className="min-h-20 resize-y"
+            />
+          </LabeledField>
+          <Button
+            type="button"
+            className="h-11 min-w-[160px] gap-2 justify-self-end"
+            disabled={!draft.name.trim() || isSavingActivity}
+            onClick={() => void addActivity()}
+          >
+            {draft.is_milestone ? <Diamond className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            {isSavingActivity
+              ? draft.is_milestone
+                ? "Saving milestone..."
+                : "Saving activity..."
+              : draft.is_milestone
+                ? "Save milestone"
+                : "Save activity"}
+          </Button>
+        </div>
       </div>
       {draftSaveError && (
         <div className="mt-3 rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -6997,6 +7001,21 @@ function ActivityIdPills({ ids, emptyLabel }: { ids: string[]; emptyLabel: strin
   );
 }
 
+function formatActivityDraftSaveError(error: unknown, isMilestone: boolean) {
+  const message = error instanceof Error ? error.message : "";
+  const lowerMessage = message.toLowerCase();
+  if (
+    lowerMessage.includes("wbs_section_id") ||
+    lowerMessage.includes("schema cache") ||
+    lowerMessage.includes("schedule_activities")
+  ) {
+    return isMilestone
+      ? "The milestone could not attach to the WBS link yet. Refresh and save again; the row can still be saved as a Milestones activity."
+      : "The activity could not attach to the WBS link yet. Refresh and save again; the row can still be saved with its WBS path.";
+  }
+  return message || (isMilestone ? "The milestone did not save." : "The activity did not save.");
+}
+
 function ActivityDependencyPicker({
   label,
   emptyLabel,
@@ -7140,7 +7159,7 @@ function ActivityDependencyPicker({
             return (
               <div
                 key={activityId}
-                className="grid min-w-0 gap-3 rounded-md border border-hairline bg-card p-3 xl:grid-cols-[minmax(300px,1fr)_minmax(150px,180px)_120px_32px] xl:items-end"
+                className="grid min-w-0 gap-3 rounded-md border border-hairline bg-card p-3 md:grid-cols-[minmax(0,1fr)_minmax(132px,160px)_96px_32px] md:items-end"
               >
                 <div className="min-w-0">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">

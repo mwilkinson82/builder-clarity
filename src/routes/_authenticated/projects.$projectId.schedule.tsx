@@ -87,6 +87,19 @@ function formatDelayFragmentError(error: unknown) {
   return message || "Refresh and try again.";
 }
 
+function formatActivityMutationError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  const lowerMessage = message.toLowerCase();
+  if (
+    lowerMessage.includes("wbs_section_id") ||
+    lowerMessage.includes("schema cache") ||
+    lowerMessage.includes("schedule_activities")
+  ) {
+    return "The schedule database is still catching up to the WBS structure. Try saving again after refresh; the CPM row can save without the WBS link.";
+  }
+  return message || "Refresh and try again.";
+}
+
 function getNextWbsSortOrder(
   sections: ScheduleWbsSectionRow[] | undefined,
   parentId: string | null,
@@ -259,7 +272,7 @@ function ScheduleWorkspacePage() {
     },
     onError: (error) => {
       toast.error("Activity did not save", {
-        description: error instanceof Error ? error.message : "Refresh and try again.",
+        description: formatActivityMutationError(error),
       });
     },
   });
@@ -278,7 +291,7 @@ function ScheduleWorkspacePage() {
     },
     onError: (error) => {
       toast.error("CPM rows did not save", {
-        description: error instanceof Error ? error.message : "Refresh and try again.",
+        description: formatActivityMutationError(error),
       });
     },
   });
@@ -302,7 +315,7 @@ function ScheduleWorkspacePage() {
     },
     onError: (error) => {
       toast.error("Activity did not update", {
-        description: error instanceof Error ? error.message : "Refresh and try again.",
+        description: formatActivityMutationError(error),
       });
     },
   });

@@ -246,8 +246,10 @@ const isMissingRestColumn = (error: { code?: string; message?: string } | null, 
   const message = (error?.message ?? "").toLowerCase();
   const target = column.toLowerCase();
   return (
-    (error?.code === "PGRST204" && message.includes(`'${target}' column`)) ||
+    message.includes(`'${target}' column`) ||
+    message.includes(`"${target}" column`) ||
     message.includes(`column ${target} does not exist`) ||
+    message.includes(`${target} column does not exist`) ||
     message.includes(`.${target} does not exist`)
   );
 };
