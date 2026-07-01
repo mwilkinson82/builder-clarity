@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -1937,6 +1937,7 @@ export function CpmActivityPlanner({
     null,
   );
   const didScrollToGridRef = useRef(false);
+  const draftFormRef = useRef<HTMLDivElement | null>(null);
   const effectiveDataDate = dataDateDraft || latestDataDate || null;
   const wbsDivisionOrder = useMemo(
     () => buildWbsDivisionOrder(activities, wbsSections),
@@ -2184,6 +2185,7 @@ export function CpmActivityPlanner({
       division: knownWbsDivisions[0] ?? "General",
     });
     setShowDraft(true);
+    scrollActivityDraftIntoView(draftFormRef);
   };
   const toggleActivityDraft = () => {
     if (showDraft) {
@@ -2204,6 +2206,7 @@ export function CpmActivityPlanner({
       is_milestone: true,
     });
     setShowDraft(true);
+    scrollActivityDraftIntoView(draftFormRef);
   };
   const addWbsDivision = (divisionName: string, parentId: string | null = null) => {
     if (isWbsMigrationRequired) {
@@ -2711,7 +2714,10 @@ export function CpmActivityPlanner({
         )}
 
         {showDraft && (
-          <div className="mt-5 rounded-md border border-hairline bg-card p-4 shadow-sm">
+          <div
+            ref={draftFormRef}
+            className="mt-5 scroll-mt-28 rounded-md border border-hairline bg-card p-4 shadow-sm"
+          >
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -3781,6 +3787,13 @@ function CpmDataDateControl({
   );
 }
 
+function scrollActivityDraftIntoView(ref: RefObject<HTMLDivElement | null>) {
+  if (typeof window === "undefined") return;
+  window.requestAnimationFrame(() => {
+    ref.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
+}
+
 function ScheduleZoomControls({
   dayPx,
   onChange,
@@ -4636,6 +4649,25 @@ function ActivityDivisionInput({
   );
 }
 
+function MatrixHeaderCell({
+  children,
+  align = "right",
+}: {
+  children: ReactNode;
+  align?: "left" | "right";
+}) {
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 items-center border-l border-hairline/70 px-2 leading-[1.05]",
+        align === "left" ? "justify-start text-left first:border-l-0" : "justify-end text-right",
+      )}
+    >
+      <span className="min-w-0 whitespace-normal break-words">{children}</span>
+    </div>
+  );
+}
+
 function ActivityScheduleMatrix({
   matrixId,
   model,
@@ -4675,8 +4707,8 @@ function ActivityScheduleMatrix({
     matrixViewportWidth > 0 ? matrixViewportWidth : isFocusMode ? 1320 : 1180;
   const fitTableWidth = Math.round(
     Math.min(
-      isFocusMode ? 760 : 680,
-      Math.max(isFocusMode ? 620 : 600, measuredMatrixWidth * (isFocusMode ? 0.42 : 0.45)),
+      isFocusMode ? 900 : 820,
+      Math.max(isFocusMode ? 780 : 760, measuredMatrixWidth * (isFocusMode ? 0.48 : 0.58)),
     ),
   );
   const tableWidth = isPrintMode
@@ -4696,8 +4728,9 @@ function ActivityScheduleMatrix({
   const tableColumns = isPrintMode
     ? "44px minmax(116px,1fr) 26px 30px 36px 36px 42px 30px 30px 24px 26px"
     : isFitZoom
-      ? "58px minmax(140px,1fr) 36px 42px 50px 52px 56px 42px 44px 34px 38px"
+      ? "64px minmax(210px,1fr) 44px 50px 62px 60px 68px 50px 48px 42px 42px"
       : "78px minmax(210px,1fr) 50px 54px 74px 76px 78px 58px 62px 48px 54px";
+  const compactHeaders = isFitZoom || isPrintMode;
   const baseRowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
   const headerHeight = isPrintMode ? 30 : 48;
@@ -4889,35 +4922,19 @@ function ActivityScheduleMatrix({
                 className="sticky left-0 z-40 grid shrink-0 border-r border-hairline bg-muted/80"
                 style={{ width: tableWidth, gridTemplateColumns: tableColumns }}
               >
-                <div className="flex items-center px-3">ID</div>
-                <div className="flex min-w-0 items-center px-3">Activity</div>
-                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Base dur
-                </div>
-                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Rem dur
-                </div>
-                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Base finish
-                </div>
-                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Current start
-                </div>
-                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Expected finish
-                </div>
-                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Slip
-                </div>
-                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  % done
-                </div>
-                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  TF
-                </div>
-                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Logic
-                </div>
+                <MatrixHeaderCell align="left">ID</MatrixHeaderCell>
+                <MatrixHeaderCell align="left">Activity</MatrixHeaderCell>
+                <MatrixHeaderCell>{compactHeaders ? "Base" : "Base dur"}</MatrixHeaderCell>
+                <MatrixHeaderCell>{compactHeaders ? "Rem" : "Rem dur"}</MatrixHeaderCell>
+                <MatrixHeaderCell>{compactHeaders ? "Base fin" : "Base finish"}</MatrixHeaderCell>
+                <MatrixHeaderCell>{compactHeaders ? "Start" : "Current start"}</MatrixHeaderCell>
+                <MatrixHeaderCell>
+                  {compactHeaders ? "Exp fin" : "Expected finish"}
+                </MatrixHeaderCell>
+                <MatrixHeaderCell>Slip</MatrixHeaderCell>
+                <MatrixHeaderCell>{compactHeaders ? "% done" : "% done"}</MatrixHeaderCell>
+                <MatrixHeaderCell>TF</MatrixHeaderCell>
+                <MatrixHeaderCell>Logic</MatrixHeaderCell>
               </div>
               <div className="relative shrink-0 bg-muted/45" style={{ width: timelineWidth }}>
                 {monthBands.map((band) => (
@@ -7087,11 +7104,11 @@ function ActivityDetailDialog({
               </div>
               <div className="mt-3 rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
                 <span className="font-semibold text-foreground">Update rule:</span> baseline dates
-                stay fixed. Remaining duration is counted from{" "}
-                {dataDate ? `the ${shortDate(dataDate)} data date` : "the saved data date"};
-                changing remaining duration moves current expected finish, and changing current
-                expected finish recalculates remaining duration. After save, the CPM recalculates
-                float against the baseline completion path, including negative total float.
+                stay fixed. Remaining duration is counted from the data date for started work, or
+                from the later current start for unstarted future work. Changing remaining duration
+                moves current expected finish, and changing current expected finish recalculates
+                remaining duration. After save, the CPM recalculates float against the baseline
+                completion path, including negative total float.
               </div>
               {!dataDate && (
                 <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -8015,14 +8032,22 @@ function updateDraftBaselineFinishDate(draft: ActivityDraft, value: string): Act
 }
 
 function getDraftStatusAnchorDate(draft: ActivityDraft, dataDate?: string | null) {
-  return (
-    dataDate ||
-    draft.forecast_start_date ||
+  const currentStart =
     draft.actual_start_date ||
+    draft.forecast_start_date ||
     draft.baseline_start_date ||
     draft.start_date ||
-    null
-  );
+    null;
+  if (!dataDate) return currentStart;
+
+  const percentComplete = parsePercent(draft.percent_complete);
+  if (percentComplete > 0 || draft.actual_start_date) return dataDate;
+
+  const dataDateMs = parseDateMs(dataDate);
+  const currentStartMs = parseDateMs(currentStart);
+  if (dataDateMs == null) return currentStart;
+  if (currentStartMs == null) return dataDate;
+  return isoDateFromMs(Math.max(dataDateMs, currentStartMs));
 }
 
 function updateDraftRemainingDuration(
