@@ -396,14 +396,40 @@ await expectContains(
     /window\.location\.replace\(next\)/,
     /Request fresh magic link/,
     /already used or expired/,
+    /notifyLogin/,
+    /login-notification/,
+    /wilkinson\.marshall@gmail\.com/,
+    /idempotencyKey:\s*`login-\$\{session\.user\.id\}-/,
   ],
-  "auth callback supports code/hash magic links and used-link recovery",
+  "auth callback supports code/hash magic links, used-link recovery, and login email notifications",
+);
+
+await expectContains(
+  "src/lib/email-templates/login-notification.tsx",
+  [
+    /LOGIN ACTIVITY/,
+    /Someone just logged in/,
+    /userEmail/,
+    /loginAt/,
+    /wilkinson\.marshall@gmail\.com/,
+  ],
+  "login notification email template sends Marshall user, time, method, and device context",
 );
 
 await expectContains(
   "src/routes/_authenticated/route.tsx",
-  [/getSession/, /getUser/, /continuing with restored session/, /sessionData\.session\.user/],
-  "authenticated route lets restored browser sessions survive refresh",
+  [
+    /getSession/,
+    /getUser/,
+    /continuing with restored session/,
+    /sessionData\.session\.user/,
+    /recordUserActivity/,
+    /ACTIVITY_HEARTBEAT_MS/,
+    /overwatch_activity_session_id/,
+    /useRouterState/,
+    /visibilitychange/,
+  ],
+  "authenticated route lets restored browser sessions survive refresh and records live activity heartbeats",
 );
 
 await expectContains(
@@ -583,10 +609,15 @@ await expectContains(
   "src/routes/_authenticated/team.tsx",
   [
     /data-testid="company-command-center"/,
+    /data-testid="company-live-activity"/,
     /data-testid="company-users-access"/,
     /data-testid="client-access-priority-panel"/,
     /data-testid="project-asset-access-assignments"/,
     /data-testid="company-profile-record"/,
+    /CompanyActivityPanel/,
+    /Active now/,
+    /relativeActivityTime/,
+    /refetchInterval:\s*30_000/,
     /PlanReadinessPanel/,
     /Plan and payment readiness/,
     /Commercial setup/,
@@ -652,8 +683,13 @@ await expectContains(
     /stripe_connect_account_id/,
     /payment_processor_ready/,
     /missingCommercialOrganizationColumn/,
+    /TeamActivitySession/,
+    /recordUserActivity/,
+    /loadActiveActivitySessions/,
+    /user_activity_presence/,
+    /schema_missing/,
   ],
-  "company workspace server functions expose commercial billing readiness with schema-cache fallback",
+  "company workspace server functions expose billing readiness and live activity with schema-cache fallback",
 );
 
 await expectContains(
@@ -1256,6 +1292,23 @@ expectSql(
     /cross join demo_inspections/i,
   ],
   "project inspections table exists with reinspection linkage, RLS/grants, and Harbor backfill rows",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.user_activity_presence/i,
+    /client_session_id text not null/i,
+    /last_seen_at timestamptz not null default now\(\)/i,
+    /user_activity_presence_session_unique/i,
+    /grant select, insert, update, delete on public\.user_activity_presence to authenticated/i,
+    /alter table public\.user_activity_presence enable row level security/i,
+    /user_activity_presence_select_company/i,
+    /public\.can_manage_org\(organization_id\)/i,
+    /public\.is_org_member\(organization_id\)/i,
+    /NOTIFY pgrst, 'reload schema'/i,
+  ],
+  "user activity presence table exists with heartbeat uniqueness, grants, and company-scoped RLS",
 );
 
 expectSql(

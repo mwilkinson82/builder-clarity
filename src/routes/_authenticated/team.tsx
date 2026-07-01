@@ -3,11 +3,13 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
+  Activity,
   AlertTriangle,
   ArrowLeft,
   BriefcaseBusiness,
   Building2,
   CheckCircle2,
+  Clock3,
   ClipboardList,
   CreditCard,
   FileImage,
@@ -24,6 +26,7 @@ import {
   UserCog,
   Users,
   Upload,
+  Wifi,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -58,6 +61,7 @@ import {
   updateProjectMember,
   updateTeamMember,
   type AccountRole,
+  type TeamActivitySession,
   type MemberStatus,
   type ProjectMemberRole,
 } from "@/lib/team.functions";
@@ -131,6 +135,29 @@ function projectRoleLabel(role: string) {
 
 function shortDate(value: string) {
   return value ? value.replace("T", " ").slice(0, 10) : "";
+}
+
+function relativeActivityTime(value: string) {
+  const seenAt = new Date(value).getTime();
+  if (!value || Number.isNaN(seenAt)) return "unknown";
+  const seconds = Math.max(0, Math.round((Date.now() - seenAt) / 1000));
+  if (seconds < 45) return "now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  return `${hours}h ago`;
+}
+
+function compactRoutePath(routePath: string) {
+  const clean = routePath.split("?")[0] || "/";
+  if (clean === "/") return "Portfolio";
+  if (clean === "/team") return "Company";
+  return clean
+    .split("/")
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((part) => (part.length > 18 ? `${part.slice(0, 15)}...` : part))
+    .join(" / ");
 }
 
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -301,6 +328,8 @@ function TeamPage() {
   const { data: team, isLoading } = useQuery({
     queryKey: ["team-workspace"],
     queryFn: () => loadTeam(),
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 
   const [profileForm, setProfileForm] = useState({
@@ -917,6 +946,11 @@ function TeamPage() {
                 executives can change company access.
               </div>
             )}
+
+            <CompanyActivityPanel
+              sessions={team.activeSessions ?? []}
+              canManageTeam={team.canManageTeam}
+            />
 
             <section
               data-testid="company-users-access"
@@ -1931,6 +1965,91 @@ function TeamPage() {
         )}
       </main>
     </div>
+  );
+}
+
+function CompanyActivityPanel({
+  sessions,
+  canManageTeam,
+}: {
+  sessions: TeamActivitySession[];
+  canManageTeam: boolean;
+}) {
+  const visibleSessions = sessions.slice(0, 8);
+
+  return (
+    <section
+      data-testid="company-live-activity"
+      className="rounded-lg border border-hairline bg-card p-5 shadow-card"
+    >
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <SectionHeader
+            icon={<Activity className="h-4 w-4" />}
+            eyebrow="Live activity"
+            title="Active now"
+          />
+          <p className="mt-1 text-sm text-muted-foreground">
+            {canManageTeam ? "Company users seen in the last two minutes." : "Your live session."}
+          </p>
+        </div>
+        <div className="inline-flex w-fit items-center gap-2 rounded-full border border-success/25 bg-success/10 px-3 py-1.5 text-sm font-medium text-success">
+          <Wifi className="h-3.5 w-3.5" />
+          {formatNumber(sessions.length)} active
+        </div>
+      </div>
+
+      {visibleSessions.length === 0 ? (
+        <div className="mt-5 rounded-md border border-hairline bg-surface px-4 py-6 text-center text-sm text-muted-foreground">
+          No active users in the last two minutes.
+        </div>
+      ) : (
+        <div className="mt-5 grid gap-2">
+          {visibleSessions.map((session) => {
+            const displayName = session.full_name || session.email || "Signed-in user";
+            const routeLabel = compactRoutePath(session.route_path);
+            return (
+              <div
+                key={session.id}
+                className="grid gap-3 rounded-md border border-hairline bg-surface px-3 py-3 md:grid-cols-[minmax(180px,1.1fr)_minmax(170px,1fr)_120px] md:items-center"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-success/30 bg-success/10 text-xs font-semibold text-success">
+                    {companyInitials(displayName)}
+                    <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border border-card bg-success" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="truncate font-medium text-foreground">{displayName}</div>
+                      {session.is_current_user && (
+                        <span className="shrink-0 rounded-full border border-hairline bg-card px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                          You
+                        </span>
+                      )}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {session.email || "No email on profile"}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-foreground">{routeLabel}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {session.page_title || session.route_path || "Overwatch"}
+                  </div>
+                </div>
+
+                <div className="inline-flex w-fit items-center gap-2 rounded-md border border-hairline bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground md:ml-auto">
+                  <Clock3 className="h-3.5 w-3.5" />
+                  {relativeActivityTime(session.last_seen_at)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
