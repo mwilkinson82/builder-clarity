@@ -393,6 +393,8 @@ for (const requiredScheduleRiskText of [
   "Open full schedule workspace",
   "Critical Path Report",
   "Company: {contractorName}",
+  "Report: {printReportLabel}",
+  "Critical path finish {shortDate(displayedCpmModel.cpmFinishDate)}",
   "Legend: critical red",
   "Schedule snapshot",
   "View filters",
@@ -418,10 +420,18 @@ for (const requiredScheduleRiskText of [
   "1 week lookahead",
   "2 week lookahead",
   "6 week lookahead",
+  "1-Week Lookahead Report",
+  "2-Week Lookahead Report",
+  "6-Week Lookahead Report",
   "lookahead_1w: 7",
   "lookahead_2w: 14",
   "lookahead_6w: 42",
   "filterConstructLineCpmModel",
+  "useState(true)",
+  'useState<ScheduleActivityOrder>("start")',
+  'useState<ScheduleGridView>("all")',
+  "CONSTRUCTLINE_FIT_DAY_PX",
+  "CpmDataDateControl",
   "Save current CPM as template",
   "Use template",
   "BROWSER_CPM_TEMPLATE_STORAGE_KEY",
@@ -442,6 +452,9 @@ for (const requiredScheduleRiskText of [
   "constructline-delay-extension",
   "constructline-delay-marker",
   "delay extension",
+  'matrixId="cpm-grid"',
+  "isFocusOpen",
+  "WBS order",
   "Order already changed in the grid; final save is confirming in the background.",
 ]) {
   assert.ok(
@@ -551,6 +564,25 @@ const screenGridAnchorIndex = scheduleRiskSource.indexOf('matrixId="cpm-grid"');
 assert.ok(
   screenGridAnchorIndex > printMatrixIndex,
   "The visible screen CPM matrix must own the cpm-grid anchor, not the print-only matrix.",
+);
+
+assert.ok(
+  scheduleRiskSource.includes("const [showLogicLines, setShowLogicLines] = useState(true);"),
+  "Logic lines must be on by default in the CPM schedule.",
+);
+
+assert.ok(
+  scheduleRiskSource.includes(
+    'useState<(typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]>(CONSTRUCTLINE_FIT_DAY_PX)',
+  ),
+  "The CPM schedule must open in Fit scale by default.",
+);
+
+assert.ok(
+  scheduleRiskSource.includes(
+    'const [activityOrder, setActivityOrder] = useState<ScheduleActivityOrder>("start");',
+  ),
+  "The CPM schedule must open in start-date order by default.",
 );
 
 for (const requiredPrintStyle of [
