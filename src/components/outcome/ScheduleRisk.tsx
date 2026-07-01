@@ -2196,13 +2196,35 @@ export function CpmActivityPlanner({
   };
   const openMilestoneDraft = () => {
     const existingIds = new Set(sortedActivities.map((activity) => activity.activity_id));
+    const milestoneDate =
+      cpmModel.cpmFinishDate || project.forecast_completion_date || todayIsoDate();
+    const openFinishPredecessors = cpmModel.tasks
+      .filter((task) => task.isOpenFinish && !task.isMilestone)
+      .map((task) => ({
+        activityId: task.dependencyKey || task.activity.activity_id,
+        relationshipType: "FS" as const,
+        lagDays: 0,
+      }));
     setDraft({
       ...emptyActivityDraft(),
       activity_id: uniqueActivityId(
         `MS-${String(milestones.length + 1).padStart(3, "0")}`,
         existingIds,
       ),
+      name: "Substantial completion milestone",
       division: "Milestones",
+      start_date: milestoneDate,
+      finish_date: milestoneDate,
+      baseline_start_date: milestoneDate,
+      baseline_finish_date: milestoneDate,
+      forecast_start_date: milestoneDate,
+      forecast_finish_date: milestoneDate,
+      remaining_duration_days: "0",
+      predecessor_activity_ids: formatActivityLinks(openFinishPredecessors),
+      notes:
+        openFinishPredecessors.length > 0
+          ? "Completion milestone created from the CPM workspace. Open-finish activities were tied to this milestone so the completion path has a finish anchor."
+          : "Completion milestone created from the CPM workspace. Add predecessor ties from the final activities that drive completion.",
       is_milestone: true,
     });
     setShowDraft(true);
@@ -4707,8 +4729,8 @@ function ActivityScheduleMatrix({
     matrixViewportWidth > 0 ? matrixViewportWidth : isFocusMode ? 1320 : 1180;
   const fitTableWidth = Math.round(
     Math.min(
-      isFocusMode ? 900 : 820,
-      Math.max(isFocusMode ? 780 : 760, measuredMatrixWidth * (isFocusMode ? 0.48 : 0.58)),
+      isFocusMode ? 1040 : 980,
+      Math.max(isFocusMode ? 920 : 900, measuredMatrixWidth * (isFocusMode ? 0.52 : 0.64)),
     ),
   );
   const tableWidth = isPrintMode
@@ -4728,8 +4750,8 @@ function ActivityScheduleMatrix({
   const tableColumns = isPrintMode
     ? "44px minmax(116px,1fr) 26px 30px 36px 36px 42px 30px 30px 24px 26px"
     : isFitZoom
-      ? "64px minmax(210px,1fr) 44px 50px 62px 60px 68px 50px 48px 42px 42px"
-      : "78px minmax(210px,1fr) 50px 54px 74px 76px 78px 58px 62px 48px 54px";
+      ? "68px minmax(260px,1fr) 52px 58px 70px 72px 82px 62px 58px 48px 50px"
+      : "78px minmax(280px,1fr) 58px 64px 80px 84px 92px 66px 68px 54px 58px";
   const compactHeaders = isFitZoom || isPrintMode;
   const baseRowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
