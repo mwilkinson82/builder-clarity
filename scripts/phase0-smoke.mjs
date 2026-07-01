@@ -532,6 +532,8 @@ await expectContains(
     /CONTRACTOR CERTIFICATION/,
     /hasRetainage/,
     /Total earned to date/,
+    /computePreviousCertificateCents/,
+    /Less previous certificates for payment/,
     /getContinuationColumns/,
     /drawContinuationColumnHeader/,
     /PCT_TEXT_X/,

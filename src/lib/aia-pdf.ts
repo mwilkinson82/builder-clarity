@@ -226,6 +226,18 @@ function computeTotals(lineItems: BillingLineItemRow[]): PaymentTotals {
   );
 }
 
+function computePreviousCertificateCents(lineItems: BillingLineItemRow[]) {
+  return lineItems.reduce((sum, line) => {
+    const previousCompletedStored =
+      line.work_completed_previous_cents + line.materials_stored_previous_cents;
+    const previousRetainage = Math.round(
+      previousCompletedStored * (Math.max(0, line.retainage_pct) / 100),
+    );
+
+    return sum + Math.max(0, previousCompletedStored - previousRetainage);
+  }, 0);
+}
+
 function drawCoverSummaryRow(
   ctx: PdfCtx,
   label: string,
@@ -249,7 +261,7 @@ function drawCoverSheet(
   payApp: BillingApplicationRow,
   totals: PaymentTotals,
   generatedAt: Date,
-  hasLineItems: boolean,
+  lineItems: BillingLineItemRow[],
   companyLogo?: PDFImage | null,
 ) {
   const page = ctx.doc.addPage([PORTRAIT_W, PORTRAIT_H]);
@@ -328,6 +340,7 @@ function drawCoverSheet(
 
   const contractSumToDate = payApp.contract_amount + payApp.change_order_amount;
   const contractSumToDateCents = Math.round(contractSumToDate * 100);
+  const hasLineItems = lineItems.length > 0;
   const totalCompletedStored =
     totals.totalCompletedStored || Math.round(payApp.amount_billed * 100);
   const retainage = hasLineItems
@@ -337,7 +350,9 @@ function drawCoverSheet(
   const earnedLessRetainage = hasRetainage
     ? Math.max(0, totalCompletedStored - retainage)
     : totalCompletedStored;
-  const previousCertificates = Math.max(0, Math.round(payApp.paid_to_date * 100));
+  const previousCertificates = hasLineItems
+    ? computePreviousCertificateCents(lineItems)
+    : Math.max(0, Math.round(payApp.paid_to_date * 100));
   const currentPaymentDue = Math.max(0, earnedLessRetainage - previousCertificates);
   const balanceToFinish = Math.max(0, contractSumToDateCents - earnedLessRetainage);
 
@@ -379,7 +394,12 @@ function drawCoverSheet(
     });
   }
   ctx.y -= 25;
-  drawCoverSummaryRow(ctx, "Less previous payments recorded", money(previousCertificates), ctx.y);
+  drawCoverSummaryRow(
+    ctx,
+    "Less previous certificates for payment",
+    money(previousCertificates),
+    ctx.y,
+  );
   ctx.y -= 25;
   drawCoverSummaryRow(ctx, "Current payment due", money(currentPaymentDue), ctx.y, {
     bold: true,
@@ -618,7 +638,7 @@ export async function generateAiaBillingPdf({
 
   const totals = computeTotals(lineItems);
   const companyLogo = await embedPdfLogo(doc, project.organization_logo_url);
-  drawCoverSheet(ctx, project, payApp, totals, generatedAt, lineItems.length > 0, companyLogo);
+  drawCoverSheet(ctx, project, payApp, totals, generatedAt, lineItems, companyLogo);
   drawContinuationSheets(ctx, project, payApp, lineItems, totals, companyLogo);
 
   return doc.save();
