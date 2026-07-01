@@ -2522,7 +2522,7 @@ export function CpmActivityPlanner({
   const isReadinessSaveWarningArmed =
     updateReadiness.needsStatusCount > 0 && readinessWarningAcceptedFor === dataDateDraft;
   const saveDataDate = () => {
-    if (!dataDateDraft || dataDateUpdate.isPending || !isDataDateDirty) return;
+    if (!dataDateDraft || dataDateUpdate.isPending) return;
     if (updateReadiness.needsStatusCount > 0 && readinessWarningAcceptedFor !== dataDateDraft) {
       setReadinessWarningAcceptedFor(dataDateDraft);
       setScheduleView("active");
@@ -3725,13 +3725,12 @@ function CpmDataDateControl({
 }) {
   const isDirty = value !== (savedValue ?? "");
   const hasReadinessWarning = isDirty && readinessWarningCount > 0;
+  const hasSameDateReadinessWarning = !isDirty && readinessWarningCount > 0;
   const saveButtonLabel = isSaving
     ? "Saving..."
-    : hasReadinessWarning && !isReadinessWarningArmed
+    : (hasReadinessWarning || hasSameDateReadinessWarning) && !isReadinessWarningArmed
       ? "Review gaps"
-      : isDirty
-        ? "Save snapshot"
-        : "Saved";
+      : "Save snapshot";
   return (
     <div
       className={cn(
@@ -3759,7 +3758,7 @@ function CpmDataDateControl({
         size="sm"
         variant={isDirty ? "default" : "outline"}
         className="h-8 gap-1.5 whitespace-nowrap px-2.5"
-        disabled={!value || isSaving || !isDirty}
+        disabled={!value || isSaving}
         onClick={onSave}
       >
         <CheckCircle2 className="h-3.5 w-3.5" />
@@ -3768,14 +3767,14 @@ function CpmDataDateControl({
       <div className="basis-full text-[11px] text-muted-foreground sm:basis-auto">
         {isReadinessWarningArmed
           ? "Status gaps acknowledged. Click Save snapshot to save anyway."
-          : hasReadinessWarning
+          : hasReadinessWarning || hasSameDateReadinessWarning
             ? `${readinessWarningCount} open ${
                 readinessWarningCount === 1 ? "row needs" : "rows need"
               } status before this snapshot is clean.`
             : isDirty
               ? "Unsaved data date is driving the CPM view. Save the snapshot after status review."
               : savedValue
-                ? `Snapshot saved ${shortDate(savedValue)}`
+                ? `Snapshot saved ${shortDate(savedValue)}. Save again after activity changes.`
                 : "Not set"}
       </div>
     </div>

@@ -570,6 +570,8 @@ for (const requiredScheduleRiskText of [
   "CPM update has status gaps",
   "Click Save snapshot to save anyway",
   "Status gaps acknowledged",
+  "Save again after activity changes",
+  "hasSameDateReadinessWarning",
   "Update rule:",
   "variance compares expected finish",
   "Base dur",
@@ -671,6 +673,7 @@ for (const removedScheduleRiskText of [
   "function ConstructLinePrintReport",
   "constructline-print-summary",
   "constructline-print-kpis",
+  "disabled={!value || isSaving || !isDirty}",
 ]) {
   assert.ok(
     !scheduleRiskSource.includes(removedScheduleRiskText),
