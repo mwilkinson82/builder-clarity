@@ -467,6 +467,163 @@ const normalizeInspection = (row: Record<string, unknown>): InspectionRow => {
   };
 };
 
+const INSPECTION_FALLBACK_MARKER = "[overwatch:inspection-fallback:v1]";
+
+type InspectionFallbackPayload = {
+  parent_inspection_id?: string | null;
+  seed_key?: string;
+  inspection_type?: string;
+  authority?: string;
+  location?: string;
+  responsible_party?: string;
+  inspector?: string;
+  requested_date?: string | null;
+  scheduled_date?: string | null;
+  completed_date?: string | null;
+  status?: InspectionStatus;
+  result?: InspectionResult;
+  attempt_number?: number;
+  required_reinspection?: boolean;
+  cost_impact?: number;
+  schedule_impact_weeks?: number | null;
+  notes?: string;
+  corrective_action?: string;
+  created_by?: string | null;
+};
+
+const fallbackInspectionPayloadFromNotes = (notes: string): InspectionFallbackPayload | null => {
+  const markerIndex = notes.indexOf(INSPECTION_FALLBACK_MARKER);
+  if (markerIndex === -1) return null;
+
+  const jsonStart = notes.indexOf("{", markerIndex);
+  if (jsonStart === -1) return null;
+
+  const jsonEnd = notes.indexOf("\n\n", jsonStart);
+  const rawJson = notes.slice(jsonStart, jsonEnd === -1 ? undefined : jsonEnd).trim();
+  try {
+    const parsed = JSON.parse(rawJson) as InspectionFallbackPayload;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const fallbackInspectionFromExposure = (exposure: ExposureRow): InspectionRow | null => {
+  const payload = fallbackInspectionPayloadFromNotes(exposure.notes);
+  if (!payload?.inspection_type) return null;
+
+  return normalizeInspection({
+    id: exposure.id,
+    project_id: exposure.project_id,
+    parent_inspection_id: payload.parent_inspection_id ?? null,
+    seed_key: payload.seed_key ?? "",
+    inspection_type: payload.inspection_type,
+    authority: payload.authority ?? "",
+    location: payload.location ?? "",
+    responsible_party: payload.responsible_party ?? exposure.owner,
+    inspector: payload.inspector ?? "",
+    requested_date: payload.requested_date ?? null,
+    scheduled_date: payload.scheduled_date ?? exposure.due_date ?? null,
+    completed_date: payload.completed_date ?? exposure.resolved_at ?? null,
+    status: payload.status ?? (exposure.status === "recovered" ? "passed" : "planned"),
+    result: payload.result ?? (exposure.status === "recovered" ? "pass" : "pending"),
+    attempt_number: payload.attempt_number ?? 1,
+    required_reinspection: payload.required_reinspection ?? false,
+    cost_impact: payload.cost_impact ?? exposure.dollar_exposure,
+    schedule_impact_weeks: payload.schedule_impact_weeks ?? exposure.schedule_impact_weeks,
+    notes: payload.notes ?? exposure.description,
+    corrective_action: payload.corrective_action ?? exposure.release_condition,
+    risk_exposure_id: exposure.id,
+    created_by: payload.created_by ?? null,
+    created_at: exposure.opened_at,
+    updated_at: exposure.release_updated_at ?? exposure.opened_at,
+  });
+};
+
+const fallbackExposureStatusForInspection = (
+  inspection: Pick<InspectionFallbackPayload, "status" | "result">,
+): ExposureStatus => {
+  if (inspection.status === "passed" || inspection.result === "pass") return "recovered";
+  if (inspection.status === "cancelled" || inspection.result === "cancelled") return "accepted";
+  return "active";
+};
+
+const fallbackExposurePayloadForInspection = (
+  projectId: string,
+  inspection: InspectionFallbackPayload,
+) => {
+  const scheduleImpact =
+    inspection.schedule_impact_weeks == null
+      ? null
+      : Math.max(0, num(inspection.schedule_impact_weeks));
+  const costImpact = Math.max(0, num(inspection.cost_impact));
+  const status = fallbackExposureStatusForInspection(inspection);
+  const inspectionType = str(inspection.inspection_type, "Inspection");
+  const authority = str(inspection.authority);
+  const responsibleParty = str(inspection.responsible_party);
+  const correctiveAction = str(inspection.corrective_action);
+  const inspectionNotes = str(inspection.notes);
+  const payload: InspectionFallbackPayload = {
+    parent_inspection_id: inspection.parent_inspection_id ?? null,
+    seed_key: str(inspection.seed_key),
+    inspection_type: inspectionType,
+    authority,
+    location: str(inspection.location),
+    responsible_party: responsibleParty,
+    inspector: str(inspection.inspector),
+    requested_date: cleanOptionalDate(inspection.requested_date),
+    scheduled_date: cleanOptionalDate(inspection.scheduled_date),
+    completed_date: cleanOptionalDate(inspection.completed_date),
+    status: INSPECTION_STATUSES.includes(inspection.status as InspectionStatus)
+      ? inspection.status
+      : "planned",
+    result: INSPECTION_RESULTS.includes(inspection.result as InspectionResult)
+      ? inspection.result
+      : "pending",
+    attempt_number: Math.max(1, Math.trunc(num(inspection.attempt_number) || 1)),
+    required_reinspection: Boolean(inspection.required_reinspection ?? false),
+    cost_impact: costImpact,
+    schedule_impact_weeks: scheduleImpact,
+    notes: inspectionNotes,
+    corrective_action: correctiveAction,
+    created_by: inspection.created_by ?? null,
+  };
+  const humanNotes = [
+    "Inspection saved through the shared risk ledger because the dedicated inspection table is not available in this Supabase schema yet.",
+    `Status: ${payload.status}. Result: ${payload.result}. Attempt: ${payload.attempt_number}.`,
+    authority ? `Authority: ${authority}.` : "",
+    payload.inspector ? `Inspector: ${payload.inspector}.` : "",
+    payload.location ? `Location: ${payload.location}.` : "",
+    `Cost impact: ${costImpact}.`,
+    `Schedule impact: ${scheduleImpact ?? 0} week${scheduleImpact === 1 ? "" : "s"}.`,
+    correctiveAction ? `Corrective action: ${correctiveAction}` : "",
+    inspectionNotes ? `Inspection notes: ${inspectionNotes}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    project_id: projectId,
+    title: `Inspection: ${inspectionType}`,
+    description:
+      correctiveAction ||
+      inspectionNotes ||
+      `${inspectionType} is being tracked from the project inspections workspace.`,
+    category: scheduleImpact && scheduleImpact > 0 ? "schedule_compression" : "field_change",
+    dollar_exposure: costImpact,
+    probability: status === "active" ? 100 : 0,
+    schedule_impact_weeks: scheduleImpact && scheduleImpact > 0 ? scheduleImpact : null,
+    owner: responsibleParty || "PM",
+    response_path: "recover",
+    release_condition: `${inspectionType} passes and ${authority || "the inspection authority"} releases the affected work.`,
+    hold_class: status === "active" ? "E-Hold" : "None",
+    status,
+    due_date: payload.scheduled_date ?? payload.completed_date ?? payload.requested_date ?? null,
+    next_review_at: null,
+    notes: `${INSPECTION_FALLBACK_MARKER}\n${JSON.stringify(payload)}\n\n${humanNotes}`,
+  };
+};
+
 const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) => {
   const message = (error?.message ?? "").toLowerCase();
   const target = column.toLowerCase();
@@ -1300,11 +1457,28 @@ export const getProject = createServerFn({ method: "GET" })
             payment_events: paymentsByInvoice.get(invoice.id) ?? [],
           };
         });
-    const inspections: InspectionRow[] = inspectionsTableMissing
+    const tableInspections: InspectionRow[] = inspectionsTableMissing
       ? []
       : ((inspectionRes.data ?? []) as unknown[]).map((row) =>
           normalizeInspection(row as Record<string, unknown>),
         );
+    const fallbackInspections = exposures
+      .map(fallbackInspectionFromExposure)
+      .filter((inspection): inspection is InspectionRow => Boolean(inspection));
+    const tableInspectionIds = new Set(tableInspections.map((inspection) => inspection.id));
+    const tableInspectionRiskIds = new Set(
+      tableInspections
+        .map((inspection) => inspection.risk_exposure_id)
+        .filter((id): id is string => Boolean(id)),
+    );
+    const inspections: InspectionRow[] = [
+      ...tableInspections,
+      ...fallbackInspections.filter(
+        (inspection) =>
+          !tableInspectionIds.has(inspection.id) &&
+          !tableInspectionRiskIds.has(inspection.risk_exposure_id ?? ""),
+      ),
+    ];
     const decisions: DecisionRow[] = (dRes.data ?? []).map((d) =>
       normalizeDecision(d as Record<string, unknown>),
     );
@@ -1759,6 +1933,87 @@ const inspectionInput = z.object({
   risk_exposure_id: z.string().uuid().nullable().optional(),
 });
 
+type InspectionInput = z.infer<typeof inspectionInput>;
+
+async function createFallbackInspectionExposure(
+  supabase: unknown,
+  projectId: string,
+  userId: string | null | undefined,
+  input: InspectionInput,
+) {
+  const payload = fallbackExposurePayloadForInspection(projectId, {
+    ...input,
+    created_by: userId ?? null,
+  });
+  const { data: inserted, error } = await dynamicTable(supabase, "exposures")
+    .insert(payload)
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  return { ok: true, id: (inserted as { id?: string } | null)?.id ?? "", fallback: true };
+}
+
+async function updateFallbackInspectionExposure(
+  supabase: unknown,
+  id: string,
+  patch: Partial<InspectionInput>,
+) {
+  const { data: existing, error: loadError } = await dynamicTable(supabase, "exposures")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (loadError) throw new Error(loadError.message);
+  if (!existing) throw new Error("Inspection was not found or is not accessible.");
+
+  const exposure = normalizeExposure(existing as Record<string, unknown>);
+  const current = fallbackInspectionFromExposure(exposure);
+  if (!current) throw new Error("Inspection fallback record was not found.");
+
+  const payload = fallbackExposurePayloadForInspection(exposure.project_id, {
+    parent_inspection_id: current.parent_inspection_id,
+    seed_key: current.seed_key,
+    inspection_type: current.inspection_type,
+    authority: current.authority,
+    location: current.location,
+    responsible_party: current.responsible_party,
+    inspector: current.inspector,
+    requested_date: current.requested_date,
+    scheduled_date: current.scheduled_date,
+    completed_date: current.completed_date,
+    status: current.status,
+    result: current.result,
+    attempt_number: current.attempt_number,
+    required_reinspection: current.required_reinspection,
+    cost_impact: current.cost_impact,
+    schedule_impact_weeks: current.schedule_impact_weeks,
+    notes: current.notes,
+    corrective_action: current.corrective_action,
+    created_by: current.created_by,
+    ...patch,
+  });
+  const { error } = await dynamicTable(supabase, "exposures").update(payload).eq("id", id);
+  if (error) throw new Error(error.message);
+  return { ok: true, fallback: true };
+}
+
+async function deleteFallbackInspectionExposure(supabase: unknown, id: string) {
+  const { data: existing, error: loadError } = await dynamicTable(supabase, "exposures")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (loadError) throw new Error(loadError.message);
+  if (!existing) throw new Error("Inspection was not found or is not accessible.");
+
+  const exposure = normalizeExposure(existing as Record<string, unknown>);
+  if (!fallbackInspectionFromExposure(exposure)) {
+    throw new Error("Inspection fallback record was not found.");
+  }
+
+  const { error } = await dynamicTable(supabase, "exposures").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  return { ok: true, id, fallback: true };
+}
+
 export const createInspection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId: string } & z.input<typeof inspectionInput>) =>
@@ -1774,7 +2029,12 @@ export const createInspection = createServerFn({ method: "POST" })
       })
       .select("id")
       .single();
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (isProjectInspectionsSchemaError(error)) {
+        return createFallbackInspectionExposure(context.supabase, projectId, context.userId, rest);
+      }
+      throw new Error(error.message);
+    }
     return { ok: true, id: (inserted as { id?: string } | null)?.id ?? "" };
   });
 
@@ -1785,10 +2045,18 @@ export const updateInspection = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { id, ...patch } = data;
-    const { error } = await dynamicTable(context.supabase, "project_inspections")
+    const { data: updated, error } = await dynamicTable(context.supabase, "project_inspections")
       .update(patch)
-      .eq("id", id);
-    if (error) throw new Error(error.message);
+      .eq("id", id)
+      .select("id")
+      .maybeSingle();
+    if (error) {
+      if (isProjectInspectionsSchemaError(error)) {
+        return updateFallbackInspectionExposure(context.supabase, id, patch);
+      }
+      throw new Error(error.message);
+    }
+    if (!updated) return updateFallbackInspectionExposure(context.supabase, id, patch);
     return { ok: true };
   });
 
@@ -1796,11 +2064,19 @@ export const deleteInspection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
-    const { error } = await dynamicTable(context.supabase, "project_inspections")
+    const { data: deleted, error } = await dynamicTable(context.supabase, "project_inspections")
       .delete()
-      .eq("id", data.id);
-    if (error) throw new Error(error.message);
-    return { ok: true };
+      .eq("id", data.id)
+      .select("id")
+      .maybeSingle();
+    if (error) {
+      if (isProjectInspectionsSchemaError(error)) {
+        return deleteFallbackInspectionExposure(context.supabase, data.id);
+      }
+      throw new Error(error.message);
+    }
+    if (!deleted) return deleteFallbackInspectionExposure(context.supabase, data.id);
+    return { ok: true, id: data.id };
   });
 
 // ---------------- COST BUCKETS ----------------

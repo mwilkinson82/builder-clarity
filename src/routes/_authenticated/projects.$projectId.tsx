@@ -525,10 +525,13 @@ function ProjectPage() {
   const coDelete = useServerMutation<{ id: string }>(deleteCoFn);
   const inspectionCreate = useMutation({
     mutationFn: (input: InspectionDraft) => createInspectionFn({ data: { projectId, ...input } }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       invalidate();
+      const usedFallback = Boolean(result && "fallback" in result && result.fallback);
       toast.success("Inspection logged", {
-        description: "The inspection log and IOR posture are updated.",
+        description: usedFallback
+          ? "Saved through the shared risk ledger until the inspection table is available."
+          : "The inspection log and IOR posture are updated.",
       });
     },
     onError: (err) => {
@@ -540,9 +543,14 @@ function ProjectPage() {
   const inspectionUpdate = useMutation({
     mutationFn: (input: { id: string; patch: InspectionPatch }) =>
       updateInspectionFn({ data: { id: input.id, ...input.patch } }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       invalidate();
-      toast.success("Inspection updated");
+      const usedFallback = Boolean(result && "fallback" in result && result.fallback);
+      toast.success("Inspection updated", {
+        description: usedFallback
+          ? "Updated through the shared risk ledger until the inspection table is available."
+          : undefined,
+      });
     },
     onError: (err) => {
       toast.error("Inspection did not update", {
@@ -552,9 +560,12 @@ function ProjectPage() {
   });
   const inspectionDelete = useMutation({
     mutationFn: (input: { id: string }) => deleteInspectionFn({ data: input }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       invalidate();
-      toast.success("Inspection deleted");
+      const usedFallback = Boolean(result && "fallback" in result && result.fallback);
+      toast.success("Inspection deleted", {
+        description: usedFallback ? "Removed from the shared risk ledger fallback." : undefined,
+      });
     },
     onError: (err) => {
       toast.error("Inspection did not delete", {

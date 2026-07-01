@@ -1349,19 +1349,18 @@ async function syncPathBasedWbsSectionNamesForPathChange(
   newPath: string,
 ) {
   const sections = await getPersistedScheduleWbsSections(supabase, projectId);
-  const payload = sections
-    .map((section) => {
-      const nextName = replaceScheduleWbsPath(section.name, oldPath, newPath);
-      if (nextName === section.name) return null;
-      return {
-        id: section.id,
-        project_id: projectId,
-        name: nextName,
-        code: section.code,
-        sort_order: section.sort_order,
-      } satisfies ScheduleWbsSectionInsert;
-    })
-    .filter((section): section is ScheduleWbsSectionInsert => Boolean(section));
+  const payload: ScheduleWbsSectionInsert[] = [];
+  sections.forEach((section) => {
+    const nextName = replaceScheduleWbsPath(section.name, oldPath, newPath);
+    if (nextName === section.name) return;
+    payload.push({
+      id: section.id,
+      project_id: projectId,
+      name: nextName,
+      code: section.code,
+      sort_order: section.sort_order,
+    });
+  });
   if (payload.length === 0) return;
   const { error } = await supabase
     .from("schedule_wbs_sections")

@@ -423,6 +423,7 @@ await expectContains(
     /exposureCategoryFromChangeOrder/,
     /toast\.success\("CO sent to risk tally/,
     /toast\.success\("Inspection logged/,
+    /shared risk ledger until the inspection table is available/,
     /toast\.success\("Inspection sent to risk tally/,
     /Finish payment setup/,
     /Invoice email queued/,
@@ -482,6 +483,20 @@ await expectContains(
     /schedule_impact_weeks/,
   ],
   "inspections workspace tracks pass/fail attempts, reinspections, impacts, and risk handoff",
+);
+
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /INSPECTION_FALLBACK_MARKER/,
+    /fallbackInspectionFromExposure/,
+    /createFallbackInspectionExposure/,
+    /updateFallbackInspectionExposure/,
+    /deleteFallbackInspectionExposure/,
+    /isProjectInspectionsSchemaError\(error\)[\s\S]*createFallbackInspectionExposure/,
+    /const fallbackInspections = exposures[\s\S]*\.map\(fallbackInspectionFromExposure\)/,
+  ],
+  "inspection writes use a shared fallback when the project inspections table is missing",
 );
 
 await expectContains(
