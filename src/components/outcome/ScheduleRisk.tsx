@@ -4933,10 +4933,18 @@ function ActivityScheduleMatrix({
                   </div>
                 ))}
                 {dataDateX != null && (
-                  <div
-                    className="absolute inset-y-0 z-10 w-px bg-foreground/50"
-                    style={{ left: dataDateX }}
-                  />
+                  <>
+                    <div
+                      className="absolute inset-y-0 z-10 w-px bg-foreground/50"
+                      style={{ left: dataDateX }}
+                    />
+                    <div
+                      className="absolute top-1 z-20 -translate-x-1/2 whitespace-nowrap rounded-sm bg-foreground px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.1em] text-background"
+                      style={{ left: dataDateX }}
+                    >
+                      Data date
+                    </div>
+                  </>
                 )}
               </div>
             </div>
@@ -5630,9 +5638,9 @@ function formatTaskStatusBasisLabel(task: ConstructLineCpmTask) {
     case "actual":
       return "actual";
     case "remaining_duration":
-      return "rem";
+      return "remain";
     case "expected_finish":
-      return "expect";
+      return "forecast";
     case "needs_update":
       return "update";
     case "planned_dates":
