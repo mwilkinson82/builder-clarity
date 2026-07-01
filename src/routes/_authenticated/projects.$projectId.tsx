@@ -148,6 +148,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  Archive,
   Mail,
   Pencil,
   Plus,
