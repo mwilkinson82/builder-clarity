@@ -4571,7 +4571,7 @@ function ActivityScheduleMatrix({
     : isFitZoom
       ? "58px minmax(150px,1fr) 38px 42px 52px 56px 42px 46px 34px 38px"
       : "78px minmax(220px,1fr) 50px 54px 76px 76px 58px 62px 48px 54px";
-  const rowHeight = isPrintMode ? 31 : 72;
+  const baseRowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
   const headerHeight = isPrintMode ? 30 : 48;
   const timelineWidth = isPrintMode
@@ -4613,12 +4613,17 @@ function ActivityScheduleMatrix({
       if (row.kind === "parent" || row.kind === "group") {
         height += groupHeight;
       } else {
-        positions.set(row.task.activityKey, height + rowHeight / 2);
-        height += rowHeight;
+        const taskRowHeight = getActivityMatrixTaskRowHeight(
+          row.task,
+          isPrintMode,
+          delayFragmentsByActivity,
+        );
+        positions.set(row.task.activityKey, height + taskRowHeight / 2);
+        height += taskRowHeight;
       }
     }
     return { bodyHeight: height, rowPositions: positions };
-  }, [groupHeight, rowHeight, rows]);
+  }, [delayFragmentsByActivity, groupHeight, isPrintMode, rows]);
   const taskByKey = useMemo(
     () => new Map(model.tasks.map((task) => [task.activityKey, task])),
     [model.tasks],
@@ -4901,11 +4906,16 @@ function ActivityScheduleMatrix({
                 );
               }
 
+              const taskRowHeight = getActivityMatrixTaskRowHeight(
+                row.task,
+                isPrintMode,
+                delayFragmentsByActivity,
+              );
               return (
                 <ConstructLineTaskRow
                   key={row.task.activity.id}
                   task={row.task}
-                  rowHeight={rowHeight}
+                  rowHeight={Math.max(baseRowHeight, taskRowHeight)}
                   tableWidth={tableWidth}
                   tableColumns={tableColumns}
                   timelineWidth={timelineWidth}
@@ -5438,6 +5448,47 @@ function buildActivityMatrixRows(
     rows.push(...group.tasks.map((task) => ({ kind: "task" as const, task })));
   }
   return rows;
+}
+
+function getActivityMatrixTaskRowHeight(
+  task: ConstructLineCpmTask,
+  isPrintMode: boolean,
+  delayFragmentsByActivity: Map<string, ScheduleDelayFragmentRow[]>,
+) {
+  const name = task.activity.name.trim() || task.activity.activity_id || "Activity";
+  const estimatedNameLines = estimateActivityNameLines(name, isPrintMode);
+  const flagCount = countActivityMatrixFlags(
+    task,
+    getDelayFragmentsForActivity(task.activity, delayFragmentsByActivity).some(isOpenDelayFragment),
+  );
+  const estimatedFlagRows = flagCount === 0 ? 0 : Math.ceil(flagCount / (isPrintMode ? 3 : 4));
+
+  if (isPrintMode) {
+    return Math.min(58, Math.max(31, 22 + estimatedNameLines * 7 + estimatedFlagRows * 8));
+  }
+
+  return Math.min(108, Math.max(72, 46 + estimatedNameLines * 14 + estimatedFlagRows * 18));
+}
+
+function estimateActivityNameLines(name: string, isPrintMode: boolean) {
+  const charsPerLine = isPrintMode ? 28 : 36;
+  const maxLines = isPrintMode ? 4 : 3;
+  return Math.max(1, Math.min(maxLines, Math.ceil(name.length / charsPerLine)));
+}
+
+function countActivityMatrixFlags(task: ConstructLineCpmTask, hasOpenDelay: boolean) {
+  return [
+    task.isMilestone,
+    task.isCritical,
+    task.isNearCritical,
+    task.isLate,
+    task.isOutOfSequence,
+    task.isOpenStart,
+    task.isOpenFinish,
+    task.hasMissingDates,
+    task.slippageDays > 0,
+    hasOpenDelay,
+  ].filter(Boolean).length;
 }
 
 function filterConstructLineCpmModel(
