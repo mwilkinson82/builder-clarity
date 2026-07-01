@@ -1765,9 +1765,9 @@ export function CpmActivityPlanner({
   const isWbsMigrationRequired = wbsPersistence === "migration_required";
   const isWbsPathFallback = wbsPersistence === "path_fallback";
   const showWbsMigrationPending = () => {
-    toast.error("Saved WBS manager is unavailable", {
+    toast.error("Use activity WBS fields for now", {
       description:
-        "The grid still groups by each activity WBS field. Edit an activity WBS to adjust the visible schedule grouping.",
+        "The grid still groups by each activity WBS path. Edit an activity WBS to adjust the visible schedule structure.",
     });
   };
   const delaySummary = useMemo(() => buildDelayFragmentSummary(delayFragments), [delayFragments]);
@@ -2402,16 +2402,15 @@ export function CpmActivityPlanner({
 
         {isWbsMigrationRequired && (
           <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
-            Saved WBS management is unavailable on this project. The grid still groups from each
-            activity WBS field, so schedule sections remain visible while activity-level edits stay
-            available.
+            This project is using activity WBS paths for grouping. Schedule sections remain visible,
+            and activity-level WBS edits still control where each row appears.
           </div>
         )}
 
         {isWbsPathFallback && (
           <div className="mt-4 rounded-md border border-hairline bg-card px-4 py-3 text-sm text-muted-foreground">
-            WBS path mode is active. Parent and child areas save as readable paths such as Concrete
-            / Northwest corner, so the CPM grid can group location, room, area, trade, or
+            Activity-path WBS mode is active. Parent and child areas save as readable paths such as
+            Concrete / Northwest corner, so the CPM grid can group location, room, area, trade, or
             subcontractor sequences.
           </div>
         )}
@@ -3158,8 +3157,8 @@ function CpmGridToolbar({
         </Button>
         {templatePersistence === "migration_required" && (
           <span className="text-xs text-muted-foreground">
-            Browser template mode is active. Templates saved here stay in this browser and can be
-            reused on other projects opened here.
+            Private browser templates are active. Templates saved here stay in this browser and can
+            be reused on other projects opened here.
           </span>
         )}
       </CpmToolbarGroup>
@@ -3850,16 +3849,15 @@ function WbsManagerDialog({
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
           {isLocked && (
             <div className="rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
-              Saved WBS management is unavailable for this project. Existing activity paths still
-              display as WBS groups, and activity-level WBS edits can still adjust the schedule
-              structure.
+              This project is using activity WBS paths for grouping. Existing paths still display as
+              WBS groups, and activity-level WBS edits can still adjust the schedule structure.
             </div>
           )}
           {isPathFallback && !isLocked && (
             <div className="rounded-md border border-hairline bg-card px-4 py-3 text-sm text-muted-foreground">
-              WBS path mode is active. Parent and child areas save as schedule paths, so Concrete /
-              Northwest corner, campus zones, rooms, trades, or subcontractor sequences can be
-              grouped immediately.
+              Activity-path WBS mode is active. Parent and child areas save as schedule paths, so
+              Concrete / Northwest corner, campus zones, rooms, trades, or subcontractor sequences
+              can be grouped immediately.
             </div>
           )}
 

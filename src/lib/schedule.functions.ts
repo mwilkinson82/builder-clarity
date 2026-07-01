@@ -706,7 +706,7 @@ export const listSchedule = createServerFn({ method: "GET" })
 
 // ---------- CPM TEMPLATES ----------
 const templateLibraryUnavailableMessage =
-  "Shared CPM template storage is unavailable for this workspace. The live schedule still works; use browser template mode for reusable CPM templates.";
+  "Use browser templates for this workspace. The live schedule still works, and reusable CPM templates can be saved privately in this browser.";
 
 const scheduleActivityTemplatePayload = (activity: ScheduleActivityRow): Record<string, Json> => ({
   activity_id: activity.activity_id,
@@ -1418,7 +1418,9 @@ export const createScheduleWbsSection = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const mode = await getScheduleWbsPersistenceMode(context.supabase, data.projectId);
     if (mode === "migration_required") {
-      throw new Error("WBS setup is not enabled for this workspace yet.");
+      throw new Error(
+        "Use activity WBS fields for now. The grid still groups by each activity WBS path.",
+      );
     }
     if (mode === "path_fallback") {
       let sectionPath = data.name;

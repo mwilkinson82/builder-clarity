@@ -411,8 +411,8 @@ for (const requiredScheduleRiskText of [
   "Nest under",
   "Drop here to make top-level WBS",
   "Custom WBS / child area path",
-  "Saved WBS manager is unavailable",
-  "WBS path mode is active",
+  "Use activity WBS fields for now",
+  "Activity-path WBS mode is active",
   "Schedule update history",
   "Interim milestones",
   "Critical delayed decisions",
@@ -439,7 +439,7 @@ for (const requiredScheduleRiskText of [
   "saveBrowserTemplate",
   "templateSave",
   "templateImport",
-  "Browser template mode is active",
+  "Private browser templates are active",
   "Template saved in this browser",
   "Send to Risk Tally",
   "createActivityExposureFn",
@@ -612,8 +612,8 @@ assert.equal(
 );
 
 assert.equal(
-  /being enabled|hierarchy upgrade is applied|after setup is complete/i.test(
-    `${scheduleRiskSource}\n${scheduleRouteSource}`,
+  /being enabled|hierarchy upgrade is applied|after setup is complete|WBS setup is not enabled/i.test(
+    `${scheduleRiskSource}\n${scheduleRouteSource}\n${scheduleFunctionsSource}`,
   ),
   false,
   "CPM schedule UI must not expose setup or migration-state wording to users.",
