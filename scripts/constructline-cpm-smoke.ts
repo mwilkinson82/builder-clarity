@@ -179,6 +179,13 @@ assert.equal(statusedById.get("A")?.slippageDays, 3);
 assert.equal(statusedById.get("B")?.statusStartDate, "2026-01-14");
 assert.equal(statusedById.get("B")?.statusBasis, "planned_dates");
 assert.equal(statusedById.get("B")?.isCritical, true);
+assert.equal(statusedById.get("A")?.totalFloat, -3);
+assert.equal(statusedById.get("B")?.totalFloat, -3);
+assert.equal(statusedModel.cpmFinishDate, "2026-01-18");
+assert.equal(
+  statusedModel.recommendations.includes("Recover 2 activities with negative total float."),
+  true,
+);
 
 const staleStatusModel = buildConstructLineCpmModel(statusedActivities, {
   dataDate: "2026-01-20",

@@ -415,7 +415,18 @@ export function buildConstructLineCpmModel(
     }
   }
 
-  const projectFinishOffset = Math.max(0, ...tasks.map((task) => task.earlyFinish));
+  const currentProjectFinishOffset = Math.max(0, ...tasks.map((task) => task.earlyFinish));
+  const baselineProjectFinishOffsets = tasks
+    .map((task) => task.baselineFinishOffset ?? task.finishOffset)
+    .filter((value): value is number => typeof value === "number");
+  const requiredProjectFinishOffset =
+    baselineProjectFinishOffsets.length > 0
+      ? Math.max(0, ...baselineProjectFinishOffsets)
+      : currentProjectFinishOffset;
+  const backwardProjectFinishOffset = Math.min(
+    currentProjectFinishOffset,
+    requiredProjectFinishOffset,
+  );
   for (const task of [...ordered].reverse()) {
     const successorLateStarts = task.successorLinks
       .map((link) => {
@@ -427,9 +438,9 @@ export function buildConstructLineCpmModel(
     task.lateStart =
       successorLateStarts.length > 0
         ? Math.min(...successorLateStarts)
-        : projectFinishOffset - task.scheduleDurationDays + 1;
+        : backwardProjectFinishOffset - task.scheduleDurationDays + 1;
     task.lateFinish = task.lateStart + task.scheduleDurationDays - 1;
-    task.totalFloat = Math.max(0, task.lateStart - task.earlyStart);
+    task.totalFloat = task.lateStart - task.earlyStart;
     const successorEarlyStart = task.successorLinks
       .map((link) => {
         const successor = taskMap.get(link.successorKey);
@@ -530,6 +541,7 @@ export function buildConstructLineCpmModel(
   );
   const criticalCount = modelTasks.filter((task) => task.isCritical).length;
   const nearCriticalCount = modelTasks.filter((task) => task.isNearCritical).length;
+  const negativeFloatCount = modelTasks.filter((task) => task.totalFloat < 0).length;
   const openStartCount = modelTasks.filter((task) => task.isOpenStart).length;
   const openFinishCount = modelTasks.filter((task) => task.isOpenFinish).length;
   const criticalPathReliabilityIssues = buildCriticalPathReliabilityIssues({
@@ -600,6 +612,7 @@ export function buildConstructLineCpmModel(
       diagnostics,
       criticalPathReliable,
       criticalPathReliabilityNote,
+      negativeFloatCount,
       maxStack: maxStackBucket?.count ?? 0,
       maxStackLabel: maxStackBucket?.label ?? "No stacking",
     }),
@@ -1024,6 +1037,7 @@ function buildRecommendations({
   diagnostics,
   criticalPathReliable,
   criticalPathReliabilityNote,
+  negativeFloatCount,
   maxStack,
   maxStackLabel,
 }: {
@@ -1037,6 +1051,7 @@ function buildRecommendations({
   diagnostics: string[];
   criticalPathReliable: boolean;
   criticalPathReliabilityNote: string;
+  negativeFloatCount: number;
   maxStack: number;
   maxStackLabel: string;
 }) {
@@ -1053,6 +1068,8 @@ function buildRecommendations({
   if (lateCount > 0) items.push(`Review ${lateCount} incomplete activities beyond the data date.`);
   if (outOfSequenceCount > 0)
     items.push(`Resolve ${outOfSequenceCount} out-of-sequence progress conditions.`);
+  if (negativeFloatCount > 0)
+    items.push(`Recover ${negativeFloatCount} activities with negative total float.`);
   if (diagnostics.length > 0)
     items.push("Fix missing dependency references before relying on float.");
   if (maxStack >= 4) items.push(`Review activity stacking around ${maxStackLabel}.`);
