@@ -621,13 +621,13 @@ function ScheduleWorkspacePage() {
         updates={updates}
         project={project}
         latestDataDate={latestUpdate?.data_date ?? null}
-        onAddActivity={(activity) => activityCreate.mutate(activity)}
+        onAddActivity={(activity) => activityCreate.mutateAsync(activity)}
         onSeedActivities={(items) => activitySeed.mutate(items)}
         isSeedingActivities={activitySeed.isPending}
         onPatchActivity={async (id, patch, options) => {
           await activityUpdate.mutateAsync({ id, patch, silent: options?.silent });
         }}
-        isSavingActivity={activityUpdate.isPending}
+        isSavingActivity={activityCreate.isPending || activityUpdate.isPending}
         onDeleteActivity={(id) => activityDelete.mutate({ id })}
         onAddDelayFragment={async (fragment) => {
           await delayFragmentCreate.mutateAsync(fragment);

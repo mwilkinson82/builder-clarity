@@ -1893,7 +1893,7 @@ export function CpmActivityPlanner({
   updates?: ScheduleUpdateRow[];
   project: ProjectRow;
   latestDataDate: string | null;
-  onAddActivity: (activity: ActivityCreateInput) => void;
+  onAddActivity: (activity: ActivityCreateInput) => Promise<unknown> | unknown;
   onSeedActivities: (activities: ActivityCreateInput[]) => void;
   isSeedingActivities: boolean;
   onPatchActivity: (
@@ -1923,6 +1923,7 @@ export function CpmActivityPlanner({
   const createActivityExposureFn = useServerFn(createExposure);
   const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
   const [showDraft, setShowDraft] = useState(false);
+  const [draftSaveError, setDraftSaveError] = useState<string | null>(null);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [dayPx, setDayPx] =
     useState<(typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]>(CONSTRUCTLINE_FIT_DAY_PX);
@@ -2080,6 +2081,11 @@ export function CpmActivityPlanner({
     setReadinessWarningAcceptedFor(null);
   }, [dataDateDraft, updateReadiness.needsStatusCount]);
 
+  useEffect(() => {
+    if (!showDraft) return;
+    scrollActivityDraftIntoView(draftFormRef);
+  }, [draft.is_milestone, showDraft]);
+
   const templateQuery = useQuery({
     queryKey: ["schedule-cpm-templates", project.id],
     queryFn: () => listTemplatesFn({ data: { projectId: project.id } }),
@@ -2137,7 +2143,8 @@ export function CpmActivityPlanner({
     });
   }, [displayedCpmModel.tasks.length]);
 
-  const addActivity = () => {
+  const addActivity = async () => {
+    if (isSavingActivity) return;
     const validationError = validateActivityDraft(draft, sortedActivities);
     if (validationError) {
       toast.error("Activity is not ready to save", {
@@ -2159,28 +2166,36 @@ export function CpmActivityPlanner({
     const forecastFinish = draft.is_milestone
       ? milestoneDate
       : draft.forecast_finish_date || baselineFinish;
-    onAddActivity({
-      activity_id: draft.activity_id.trim() || undefined,
-      name,
-      division: draft.is_milestone ? "Milestones" : draft.division.trim() || "General",
-      start_date: baselineStart,
-      finish_date: baselineFinish,
-      baseline_start_date: baselineStart,
-      baseline_finish_date: baselineFinish,
-      forecast_start_date: forecastStart,
-      forecast_finish_date: forecastFinish,
-      actual_start_date: draft.actual_start_date || null,
-      actual_finish_date: draft.actual_finish_date || null,
-      remaining_duration_days: parseRemainingDuration(draft.remaining_duration_days),
-      percent_complete: parsePercent(draft.percent_complete),
-      predecessor_activity_ids: serializeActivityLinksToArray(draft.predecessor_activity_ids),
-      successor_activity_ids: serializeActivityLinksToArray(draft.successor_activity_ids),
-      notes: draft.notes.trim(),
-    });
-    setDraft(emptyActivityDraft());
-    setShowDraft(false);
+    setDraftSaveError(null);
+    try {
+      await Promise.resolve(
+        onAddActivity({
+          activity_id: draft.activity_id.trim() || undefined,
+          name,
+          division: draft.is_milestone ? "Milestones" : draft.division.trim() || "General",
+          start_date: baselineStart,
+          finish_date: baselineFinish,
+          baseline_start_date: baselineStart,
+          baseline_finish_date: baselineFinish,
+          forecast_start_date: forecastStart,
+          forecast_finish_date: forecastFinish,
+          actual_start_date: draft.actual_start_date || null,
+          actual_finish_date: draft.actual_finish_date || null,
+          remaining_duration_days: parseRemainingDuration(draft.remaining_duration_days),
+          percent_complete: parsePercent(draft.percent_complete),
+          predecessor_activity_ids: serializeActivityLinksToArray(draft.predecessor_activity_ids),
+          successor_activity_ids: serializeActivityLinksToArray(draft.successor_activity_ids),
+          notes: draft.notes.trim(),
+        }),
+      );
+      setDraft(emptyActivityDraft());
+      setShowDraft(false);
+    } catch (error) {
+      setDraftSaveError(error instanceof Error ? error.message : "The activity did not save.");
+    }
   };
   const openActivityDraft = () => {
+    setDraftSaveError(null);
     setDraft({
       ...emptyActivityDraft(),
       activity_id: getNextActivityId(sortedActivities),
@@ -2192,11 +2207,20 @@ export function CpmActivityPlanner({
   const toggleActivityDraft = () => {
     if (showDraft) {
       setShowDraft(false);
+      setDraftSaveError(null);
       return;
     }
     openActivityDraft();
   };
   const openMilestoneDraft = () => {
+    if (showDraft && draft.is_milestone) {
+      scrollActivityDraftIntoView(draftFormRef);
+      toast.info("Milestone form is already open", {
+        description: "Use the form under the CPM toolbar to save the milestone.",
+      });
+      return;
+    }
+    setDraftSaveError(null);
     const existingIds = new Set(sortedActivities.map((activity) => activity.activity_id));
     const milestoneDate =
       cpmModel.cpmFinishDate || project.forecast_completion_date || todayIsoDate();
@@ -2576,9 +2600,12 @@ export function CpmActivityPlanner({
     if (selectedActivityId === activity.id) setSelectedActivityId(null);
     onDeleteActivity(activity.id);
   };
+  const activityDraftMode = showDraft ? (draft.is_milestone ? "milestone" : "activity") : null;
   const activityDraftEditor = showDraft ? (
     <div
       ref={draftFormRef}
+      tabIndex={-1}
+      aria-label={draft.is_milestone ? "New milestone form" : "New activity form"}
       className="scroll-mt-28 rounded-md border border-hairline bg-card p-4 shadow-sm"
     >
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -2612,7 +2639,9 @@ export function CpmActivityPlanner({
             onClick={() => {
               setDraft(emptyActivityDraft());
               setShowDraft(false);
+              setDraftSaveError(null);
             }}
+            disabled={isSavingActivity}
           >
             Cancel
           </Button>
@@ -2700,13 +2729,24 @@ export function CpmActivityPlanner({
         <Button
           type="button"
           className="h-10 gap-2"
-          disabled={!draft.name.trim()}
-          onClick={addActivity}
+          disabled={!draft.name.trim() || isSavingActivity}
+          onClick={() => void addActivity()}
         >
           {draft.is_milestone ? <Diamond className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          {draft.is_milestone ? "Save milestone" : "Save activity"}
+          {isSavingActivity
+            ? draft.is_milestone
+              ? "Saving milestone..."
+              : "Saving activity..."
+            : draft.is_milestone
+              ? "Save milestone"
+              : "Save activity"}
         </Button>
       </div>
+      {draftSaveError && (
+        <div className="mt-3 rounded-md border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger">
+          {draftSaveError}
+        </div>
+      )}
     </div>
   ) : null;
 
@@ -2893,6 +2933,8 @@ export function CpmActivityPlanner({
               onPrint={() => typeof window !== "undefined" && window.print()}
               onToggleActivityDraft={toggleActivityDraft}
               isActivityDraftOpen={showDraft}
+              activityDraftMode={activityDraftMode}
+              onFocusActivityDraft={() => scrollActivityDraftIntoView(draftFormRef)}
               onAddMilestone={openMilestoneDraft}
               dataDateDraft={dataDateDraft}
               latestDataDate={latestDataDate}
@@ -3497,6 +3539,8 @@ function CpmGridToolbar({
   onPrint,
   onToggleActivityDraft,
   isActivityDraftOpen,
+  activityDraftMode,
+  onFocusActivityDraft,
   onAddMilestone,
   dataDateDraft,
   latestDataDate,
@@ -3533,6 +3577,8 @@ function CpmGridToolbar({
   onPrint: () => void;
   onToggleActivityDraft: () => void;
   isActivityDraftOpen: boolean;
+  activityDraftMode: "activity" | "milestone" | null;
+  onFocusActivityDraft: () => void;
   onAddMilestone: () => void;
   dataDateDraft: string;
   latestDataDate: string | null;
@@ -3632,23 +3678,49 @@ function CpmGridToolbar({
           </Button>
           <Button
             type="button"
+            variant={activityDraftMode === "activity" ? "default" : "outline"}
             className="h-9 gap-2 whitespace-nowrap"
             onClick={onToggleActivityDraft}
           >
             <Plus className="h-4 w-4" />
-            {isActivityDraftOpen ? "Close form" : "Add activity"}
+            {activityDraftMode === "activity"
+              ? "Activity form open"
+              : isActivityDraftOpen
+                ? "Close form"
+                : "Add activity"}
           </Button>
           <Button
             type="button"
-            variant="outline"
+            variant={activityDraftMode === "milestone" ? "default" : "outline"}
             className="h-9 gap-2 whitespace-nowrap"
             onClick={onAddMilestone}
           >
             <Diamond className="h-4 w-4" />
-            Add milestone
+            {activityDraftMode === "milestone" ? "Milestone form open" : "Add milestone"}
           </Button>
         </CpmToolbarGroup>
       </div>
+
+      {activityDraftMode && (
+        <div className="flex flex-col gap-2 rounded-md border border-accent/20 bg-accent/10 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 text-muted-foreground">
+            <span className="font-semibold text-foreground">
+              {activityDraftMode === "milestone"
+                ? "Milestone form is open."
+                : "Activity form is open."}
+            </span>{" "}
+            Finish the form below the toolbar, then save it into the CPM table.
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-8 w-fit shrink-0"
+            onClick={onFocusActivityDraft}
+          >
+            Jump to form
+          </Button>
+        </div>
+      )}
 
       <CpmToolbarGroup label="Templates">
         <Input
@@ -3815,7 +3887,10 @@ function scrollActivityDraftIntoView(ref: RefObject<HTMLDivElement | null>) {
   if (typeof window === "undefined") return;
   window.requestAnimationFrame(() => {
     window.requestAnimationFrame(() => {
-      ref.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      const element = ref.current;
+      if (!element) return;
+      element.scrollIntoView({ block: "start", behavior: "smooth" });
+      element.focus({ preventScroll: true });
     });
   });
 }
