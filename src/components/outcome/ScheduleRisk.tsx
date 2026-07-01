@@ -228,9 +228,9 @@ const CONSTRUCTLINE_RELATIONSHIP_TYPES: ConstructLineRelationshipType[] = ["FS",
 const SCHEDULE_GRID_VIEW_OPTIONS: Array<{ value: ScheduleGridView; label: string }> = [
   { value: "all", label: "All" },
   { value: "active", label: "Active" },
-  { value: "lookahead_1w", label: "1 wk lookahead" },
-  { value: "lookahead_2w", label: "2 wk lookahead" },
-  { value: "lookahead_6w", label: "6 wk lookahead" },
+  { value: "lookahead_1w", label: "1 week lookahead" },
+  { value: "lookahead_2w", label: "2 week lookahead" },
+  { value: "lookahead_6w", label: "6 week lookahead" },
   { value: "critical", label: "Critical" },
   { value: "issues", label: "Issues" },
   { value: "milestones", label: "Milestones" },
@@ -2317,7 +2317,7 @@ export function CpmActivityPlanner({
           </span>
           <span>
             <strong>Legend</strong>
-            Critical red · near critical gold · complete green · milestone diamond
+            Critical red · near critical gold · complete green · milestone diamond · delay extension
           </span>
         </div>
         <ActivityScheduleMatrix
@@ -2340,7 +2340,8 @@ export function CpmActivityPlanner({
           <span>Project finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
           <span>Data date {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}</span>
           <span>
-            Legend: critical red · near critical gold · complete green · milestone diamond
+            Legend: critical red · near critical gold · complete green · milestone diamond · delay
+            extension
           </span>
         </footer>
       </section>
@@ -5182,7 +5183,7 @@ function ConstructLineTaskRow({
             </div>
             {delayExtensionWidth > 0 && (
               <div
-                className="absolute top-1/2 h-4 -translate-y-1/2 rounded-r-full border border-danger/30 bg-danger/15"
+                className="constructline-delay-extension absolute top-1/2 h-4 -translate-y-1/2 rounded-r-full border border-danger/30 bg-danger/15"
                 style={{ left: delayExtensionLeft, width: delayExtensionWidth }}
                 title={`${delaySummary.openDays} delay days extend past the current activity bar`}
               />
@@ -5191,7 +5192,7 @@ function ConstructLineTaskRow({
         )}
         {hasOpenDelay && (
           <span
-            className="absolute top-1/2 z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-danger bg-danger shadow-sm ring-4 ring-danger/15"
+            className="constructline-delay-marker absolute top-1/2 z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-danger bg-danger shadow-sm ring-4 ring-danger/15"
             style={{ left: delayMarkerLeft }}
             title={`${delaySummary.openDays} open delay days on ${activity.activity_id || activity.name}`}
           />

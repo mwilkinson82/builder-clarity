@@ -406,13 +406,17 @@ for (const requiredScheduleRiskText of [
   "WBS setup is still being enabled",
   "Path-based WBS mode is active",
   "Schedule update history",
-  "1 wk lookahead",
-  "2 wk lookahead",
+  "1 week lookahead",
+  "2 week lookahead",
+  "6 week lookahead",
   "Save current CPM as template",
   "Use template",
   "Browser templates are available",
   "Send to Risk Tally",
   "delay days extend past the current activity bar",
+  "constructline-delay-extension",
+  "constructline-delay-marker",
+  "delay extension",
 ]) {
   assert.ok(
     scheduleRiskSource.includes(requiredScheduleRiskText),
@@ -524,6 +528,8 @@ assert.ok(
 for (const requiredPrintStyle of [
   ".constructline-cpm-print-footer",
   ".constructline-cpm-print-report-strip",
+  ".constructline-delay-extension",
+  ".constructline-delay-marker",
   "size: 17in 11in",
 ]) {
   assert.ok(

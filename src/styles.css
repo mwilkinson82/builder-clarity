@@ -441,6 +441,21 @@
     -webkit-print-color-adjust: exact;
   }
 
+  .constructline-cpm-matrix-print .constructline-delay-extension {
+    border-color: #d53c31 !important;
+    background: rgba(213, 60, 49, 0.2) !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .constructline-cpm-matrix-print .constructline-delay-marker {
+    border-color: #a8342a !important;
+    background: #d53c31 !important;
+    box-shadow: 0 0 0 3px rgba(213, 60, 49, 0.16) !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
   .constructline-print-header {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 0.92in;
