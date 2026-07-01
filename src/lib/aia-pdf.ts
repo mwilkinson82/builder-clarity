@@ -500,7 +500,7 @@ function drawContinuationHeader(
       size: 8,
     },
   );
-  rightText(ctx, `Page ${pageNumber}`, LANDSCAPE_W - M - 56, LANDSCAPE_H - M - 36, 56, 8);
+  text(ctx, `Page ${pageNumber}`, M, LANDSCAPE_H - M - 32, { size: 8, color: MUTED });
   ctx.y = LANDSCAPE_H - M - 48;
   ctx.page.drawRectangle({
     x: M,

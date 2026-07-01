@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -330,7 +331,7 @@ function makeLocalBillingApplication(
         from_status: "",
         to_status: input.status,
         amount: input.amount_billed,
-        notes: input.notes || "Pay application created locally.",
+        notes: input.notes || "Application created locally.",
       }),
     ],
   };
@@ -370,7 +371,7 @@ function normalizeStoredBillingApplication(
     id: normalizedId,
     project_id: projectId,
     application_number: normalizeBillingNumberLabel(
-      billingString(record.application_number, "Pay App"),
+      billingString(record.application_number, "Application"),
     ),
     invoice_number: normalizeBillingNumberLabel(billingString(record.invoice_number)),
     submitted_date: billingDate(record.submitted_date),
@@ -695,7 +696,7 @@ function ProjectPage() {
     onSuccess: () => {
       invalidate();
       toast.success("Billing lines generated", {
-        description: "The pay app now has SOV-level continuation detail.",
+        description: "The application now has SOV-level continuation detail.",
       });
     },
     onError: (err) => {
@@ -1210,7 +1211,7 @@ function ProjectPage() {
   const createLocalPayApp = (input: BillingDraft) => {
     const localPayApp = makeLocalBillingApplication(projectId, input);
     storeLocalBillingApplications((current) => [...current, localPayApp]);
-    toast.success("Pay app added locally", {
+    toast.success("Application created locally", {
       description: "Supabase billing is not live yet, so this browser is holding it for the demo.",
     });
   };
@@ -1220,8 +1221,8 @@ function ProjectPage() {
       { projectId, ...input },
       {
         onSuccess: () => {
-          toast.success("Pay app added", {
-            description: `${billingDocumentLabel(input.application_number, input.invoice_number, "Pay application")} is now in the billing ledger.`,
+          toast.success("Application created", {
+            description: `${billingDocumentLabel(input.application_number, input.invoice_number, "Application")} is now in the billing workspace.`,
           });
         },
         onError: (err) => {
@@ -1229,7 +1230,7 @@ function ProjectPage() {
             createLocalPayApp(input);
             return;
           }
-          toast.error("Pay app did not save", {
+          toast.error("Application did not save", {
             description: err instanceof Error ? err.message : "Try again.",
           });
         },
@@ -1268,7 +1269,7 @@ function ProjectPage() {
       { id, patch },
       {
         onError: (err) => {
-          toast.error("Pay app did not update", {
+          toast.error("Application did not update", {
             description: err instanceof Error ? err.message : "Try again.",
           });
         },
@@ -1285,7 +1286,7 @@ function ProjectPage() {
       { id },
       {
         onError: (err) => {
-          toast.error("Pay app did not delete", {
+          toast.error("Application did not delete", {
             description: err instanceof Error ? err.message : "Try again.",
           });
         },
@@ -1328,7 +1329,7 @@ function ProjectPage() {
     paymentRecord.mutate(input, {
       onSuccess: () => {
         toast.success("Payment recorded", {
-          description: "Invoice, payment ledger, and linked pay app were refreshed.",
+          description: "Invoice, payment ledger, and linked application were refreshed.",
         });
       },
       onError: (err) => {
@@ -2553,7 +2554,7 @@ function BillingWorkspace({
       : String(invoiceRecipients.length);
   const billingReadinessMessage =
     billingInvoices.length === 0
-      ? "Create an invoice from a pay app or direct billing item before sharing with the client."
+      ? "Create an invoice from an application or direct billing item before sharing with the client."
       : invoiceRecipients.length === 0
         ? "Turn Billing On for at least one client seat in Client Portal before emailing invoices."
         : onlinePayReadyInvoices.length === 0
@@ -2569,7 +2570,7 @@ function BillingWorkspace({
   const buildDraft = (): BillingDraft => {
     const nextNumber = String(billingApplications.length + 1);
     return {
-      application_number: `Pay App ${nextNumber}`,
+      application_number: `Application ${nextNumber}`,
       invoice_number: project.job_number
         ? `${project.job_number}-${nextNumber}`
         : `INV-${nextNumber}`,
@@ -2597,7 +2598,7 @@ function BillingWorkspace({
         (project.job_number ? `${project.job_number}-${sourceNumber}` : `INV-${sourceNumber}`),
     );
     const subtotal = app?.amount_billed ?? unbilledEarnedToDate;
-    const invoiceRetainage = app?.retainage ?? subtotal * 0.1;
+    const invoiceRetainage = app?.retainage ?? subtotal * (defaultRetainagePct / 100);
     const retainageReleased = app?.retainage_released_this_period ?? 0;
     const paidAmount = app?.paid_to_date ?? 0;
     const totalDue = Math.max(0, subtotal - invoiceRetainage + retainageReleased);
@@ -2650,7 +2651,7 @@ function BillingWorkspace({
       )
     : undefined;
   const invoiceBlockingMessage = selectedPayAppInvoice
-    ? `This pay app already has invoice ${billingDocumentLabel(selectedPayAppInvoice.invoice_number, selectedPayAppInvoice.title, "Invoice")}. Edit or void the existing invoice before creating another.`
+    ? `This application already has invoice ${billingDocumentLabel(selectedPayAppInvoice.invoice_number, selectedPayAppInvoice.title, "Invoice")}. Edit or void the existing invoice before creating another.`
     : duplicateInvoiceNumber
       ? `Invoice ${normalizeBillingNumberLabel(invoiceDraft.invoice_number)} already exists. Use a unique invoice number.`
       : "";
@@ -2686,8 +2687,8 @@ function BillingWorkspace({
     if (app) {
       const existingInvoice = getActiveInvoiceForPayApp(app.id);
       if (existingInvoice) {
-        toast.warning("Pay app already invoiced", {
-          description: `${billingDocumentLabel(app.application_number, app.invoice_number, "This pay app")} is linked to ${billingDocumentLabel(existingInvoice.invoice_number, existingInvoice.title, "Invoice")}.`,
+        toast.warning("Application already invoiced", {
+          description: `${billingDocumentLabel(app.application_number, app.invoice_number, "This application")} is linked to ${billingDocumentLabel(existingInvoice.invoice_number, existingInvoice.title, "Invoice")}.`,
         });
         setInvoiceOpen(false);
         return;
@@ -2705,7 +2706,7 @@ function BillingWorkspace({
     const existingInvoice = app ? getActiveInvoiceForPayApp(app.id) : undefined;
     if (app && existingInvoice) {
       setInvoiceError(
-        `${billingDocumentLabel(app.application_number, app.invoice_number, "This pay app")} already has invoice ${billingDocumentLabel(existingInvoice.invoice_number, existingInvoice.title, "Invoice")}.`,
+        `${billingDocumentLabel(app.application_number, app.invoice_number, "This application")} already has invoice ${billingDocumentLabel(existingInvoice.invoice_number, existingInvoice.title, "Invoice")}.`,
       );
       return;
     }
@@ -2753,30 +2754,38 @@ function BillingWorkspace({
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <WorkspaceHeader
               title="Billing"
-              subtitle="Pay applications, project cost tracking, WIP, invoices, retainage, open receivables, and pending change orders."
+              subtitle="Create pay applications from SOV progress, turn approved applications into client invoices, collect payment, and keep A/R aging visible."
               compact
             />
             <Dialog open={payAppOpen} onOpenChange={setPayAppOpen}>
               <DialogTrigger asChild>
                 <Button size="sm" onClick={openPayAppDialog} className="gap-1.5">
-                  <Plus className="h-3.5 w-3.5" /> Add pay app
+                  <Plus className="h-3.5 w-3.5" /> New pay application
                 </Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-3xl">
                 <DialogHeader>
-                  <DialogTitle className="font-serif text-2xl">Add pay application</DialogTitle>
+                  <DialogTitle className="font-serif text-2xl">New pay application</DialogTitle>
+                  <DialogDescription>
+                    Start the billing cycle, then enter SOV progress in Applications.
+                  </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-2">
+                  <div className="rounded-md border border-accent/25 bg-accent/5 px-3 py-2 text-sm text-muted-foreground">
+                    Create the application shell here. After it is saved, open Applications to enter
+                    percent complete by SOV line; Overwatch will calculate the current work,
+                    retainage, and application amount.
+                  </div>
                   <div className="grid gap-3 md:grid-cols-3">
                     <div className="space-y-1.5">
-                      <Label>Pay app</Label>
+                      <Label>Application #</Label>
                       <Input
                         value={draft.application_number}
                         onChange={(e) => setDraft({ ...draft, application_number: e.target.value })}
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Invoice #</Label>
+                      <Label>Planned invoice #</Label>
                       <Input
                         value={draft.invoice_number}
                         onChange={(e) => setDraft({ ...draft, invoice_number: e.target.value })}
@@ -2850,7 +2859,7 @@ function BillingWorkspace({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Amount billed</Label>
+                      <Label>Application amount</Label>
                       <MoneyInput
                         value={draft.amount_billed}
                         onValueChange={(amount_billed) =>
@@ -2865,7 +2874,7 @@ function BillingWorkspace({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Paid to date</Label>
+                      <Label>Payments received</Label>
                       <MoneyInput
                         value={draft.paid_to_date}
                         onValueChange={(paid_to_date) => setDraft({ ...draft, paid_to_date })}
@@ -2873,7 +2882,7 @@ function BillingWorkspace({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Retention %</Label>
+                      <Label>Retainage %</Label>
                       <div className="relative">
                         <Input
                           value={draftRetainagePct}
@@ -2911,7 +2920,7 @@ function BillingWorkspace({
                         {fmtUSD(draftOpenReceivable)}
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
-                        Billed less paid and retainage held.
+                        Application amount less payments received and retainage held.
                       </div>
                     </div>
                   </div>
@@ -2921,7 +2930,7 @@ function BillingWorkspace({
                     Cancel
                   </Button>
                   <Button onClick={savePayApplication} disabled={savingPayApp}>
-                    {savingPayApp ? "Saving..." : "Save pay app"}
+                    {savingPayApp ? "Saving..." : "Create application"}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -2940,27 +2949,44 @@ function BillingWorkspace({
             Remaining to bill is forecasted contract less billed to date. Open A/R is billed less
             paid and retainage.
           </p>
+          <div className="mt-5 grid gap-3 lg:grid-cols-3">
+            <BillingWorkflowStep
+              step="1"
+              title="Application"
+              body="Enter percent complete and stored materials by SOV line. This is the contractor's request for payment."
+            />
+            <BillingWorkflowStep
+              step="2"
+              title="Invoice"
+              body="Create the client-facing invoice from the application when the bill is ready to send."
+            />
+            <BillingWorkflowStep
+              step="3"
+              title="Payment and A/R"
+              body="Send, enable online pay when available, record deposits, and track aging until clear."
+            />
+          </div>
           <TabsList className="mt-5 h-auto w-full justify-start gap-1.5 overflow-x-auto rounded-lg border border-accent/25 bg-accent/5 p-1.5 shadow-card ring-1 ring-accent/10 sm:flex-wrap sm:overflow-visible">
             <TabsTrigger value="billing" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Billing
+              Overview
             </TabsTrigger>
             <TabsTrigger value="pay-app-detail" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Pay App Detail
+              Applications
             </TabsTrigger>
             <TabsTrigger value="project-costs" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Cost Ledger
             </TabsTrigger>
             <TabsTrigger value="wip-analysis" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              WIP Analysis
+              WIP
             </TabsTrigger>
             <TabsTrigger value="invoice-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Invoices & Payments
             </TabsTrigger>
             <TabsTrigger value="pending-cos" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Pending Change Orders
+              Pending COs
             </TabsTrigger>
             <TabsTrigger value="pay-app-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Pay App Ledger
+              A/R Ledger
             </TabsTrigger>
           </TabsList>
         </div>
@@ -3042,11 +3068,11 @@ function BillingWorkspace({
             <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  Invoice & payment ledger
+                  Invoices & payments
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Client-facing invoices, payment status, retainage, processor fees, and open
-                  receivables.
+                  Client-facing invoices created from applications or direct billing items. Send,
+                  enable online pay, and record deposits here.
                 </p>
               </div>
               <Dialog
@@ -3067,11 +3093,14 @@ function BillingWorkspace({
                 <DialogContent className="sm:max-w-3xl">
                   <DialogHeader>
                     <DialogTitle className="font-serif text-2xl">Create invoice</DialogTitle>
+                    <DialogDescription>
+                      Build the client-facing invoice from an application or a direct billing item.
+                    </DialogDescription>
                   </DialogHeader>
                   <div className="grid gap-4 py-2">
                     <div className="grid gap-3 md:grid-cols-3">
                       <div className="space-y-1.5">
-                        <Label>Source pay app</Label>
+                        <Label>Source application</Label>
                         <Select
                           value={invoiceDraft.billing_application_id ?? "none"}
                           onValueChange={(value) =>
@@ -3084,7 +3113,7 @@ function BillingWorkspace({
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="none">No linked pay app</SelectItem>
+                            <SelectItem value="none">No linked application</SelectItem>
                             {billingApplications.map((app) => {
                               const existingInvoice = getActiveInvoiceForPayApp(app.id);
                               return (
@@ -3310,7 +3339,7 @@ function BillingWorkspace({
             <div className="space-y-3">
               {billingInvoices.length === 0 ? (
                 <div className="rounded-md border border-hairline bg-surface px-3 py-8 text-center text-sm text-muted-foreground">
-                  No invoices logged yet. Create one from a pay app when it is ready for client
+                  No invoices logged yet. Create one from an application when it is ready for client
                   billing.
                 </div>
               ) : (
@@ -3396,11 +3425,12 @@ function BillingWorkspace({
             <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  Pay application source ledger
+                  A/R ledger
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Source pay applications used to prepare invoices. Use Invoices & Payments for
-                  client-facing invoices, payment links, receipts, and collection status.
+                  Accounting register for application balances, linked invoices, open receivables,
+                  and aging. Edit SOV progress in Applications; send or collect in Invoices &
+                  Payments.
                 </p>
               </div>
               <div className="text-sm tabular text-muted-foreground">
@@ -3411,7 +3441,8 @@ function BillingWorkspace({
             <div className="space-y-3">
               {billingApplications.length === 0 ? (
                 <div className="rounded-md border border-hairline bg-surface px-3 py-8 text-center text-sm text-muted-foreground">
-                  No pay applications logged yet. Add the first pay app above.
+                  No applications logged yet. Create the first billing cycle above, then enter
+                  progress in Applications.
                 </div>
               ) : (
                 billingApplications.map((app) => {
@@ -3433,6 +3464,20 @@ function BillingWorkspace({
         </TabsContent>
       </Tabs>
     </section>
+  );
+}
+
+function BillingWorkflowStep({ step, title, body }: { step: string; title: string; body: string }) {
+  return (
+    <div className="flex min-w-0 gap-3 rounded-md border border-hairline bg-surface px-3 py-3">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">
+        {step}
+      </div>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-foreground">{title}</div>
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{body}</p>
+      </div>
+    </div>
   );
 }
 
@@ -3551,6 +3596,74 @@ function payAppAgingStatus(app: BillingApplicationRow, openReceivable: number) {
   };
 }
 
+function invoiceAgingStatus(invoice: BillingInvoiceRow, openBalance: number) {
+  const issueDate = parseBillingDate(invoice.issue_date);
+  const dueDate = parseBillingDate(invoice.due_date);
+  const today = new Date();
+  const issueAge = issueDate ? Math.max(0, daysBetween(issueDate, today)) : null;
+
+  if (invoice.status === "void") {
+    return {
+      label: "Void",
+      detail: "Not collectible",
+      className: "border-hairline bg-card text-muted-foreground",
+    };
+  }
+
+  if (openBalance <= 0 || invoice.status === "paid") {
+    return {
+      label: "Clear",
+      detail: "No open balance",
+      className: "border-success/30 bg-success/10 text-success",
+    };
+  }
+
+  if (dueDate) {
+    const dueDelta = daysBetween(dueDate, today);
+    if (dueDelta > 0) {
+      return {
+        label:
+          dueDelta >= 90
+            ? "90+ days past due"
+            : `${dueDelta} ${dueDelta === 1 ? "day" : "days"} past due`,
+        detail:
+          issueAge === null
+            ? "Aged from due date"
+            : `Issued ${issueAge} ${issueAge === 1 ? "day" : "days"} ago`,
+        className:
+          dueDelta >= 60
+            ? "border-danger/30 bg-danger/10 text-danger"
+            : "border-warning/30 bg-warning/10 text-warning",
+      };
+    }
+    return {
+      label:
+        dueDelta === 0
+          ? "Due today"
+          : `Due in ${Math.abs(dueDelta)} ${Math.abs(dueDelta) === 1 ? "day" : "days"}`,
+      detail:
+        issueAge === null
+          ? "Not past due"
+          : `Issued ${issueAge} ${issueAge === 1 ? "day" : "days"} ago`,
+      className: "border-hairline bg-card text-foreground",
+    };
+  }
+
+  if (issueAge !== null) {
+    return {
+      label: `Issued ${issueAge} ${issueAge === 1 ? "day" : "days"} ago`,
+      detail: "No due date set",
+      className: "border-warning/30 bg-warning/10 text-warning",
+    };
+  }
+
+  return {
+    label: "No aging dates",
+    detail: "Add issue and due dates",
+    className: "border-hairline bg-card text-muted-foreground",
+  };
+}
+
 function LedgerDetail({
   label,
   value,
@@ -3594,7 +3707,7 @@ function BillingApplicationRowEditor({
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-3">
           <div className="space-y-1.5">
-            <Label>Pay app</Label>
+            <Label>Application</Label>
             <EditableText
               value={appLabel}
               onCommit={(application_number) =>
@@ -3652,7 +3765,7 @@ function BillingApplicationRowEditor({
           ) : (
             <Button size="sm" variant="outline" className="h-9 gap-1.5" onClick={onCreateInvoice}>
               <ReceiptText className="h-3.5 w-3.5" />
-              Invoice
+              Create invoice
             </Button>
           )}
           <Button size="icon" variant="ghost" className="h-9 w-9" onClick={onDelete}>
@@ -3689,7 +3802,7 @@ function BillingApplicationRowEditor({
           />
         </div>
         <div className="space-y-1.5">
-          <Label>Change orders</Label>
+          <Label>Approved COs</Label>
           <MoneyInput
             value={app.change_order_amount}
             onValueChange={(change_order_amount) => onPatch({ change_order_amount })}
@@ -3698,7 +3811,7 @@ function BillingApplicationRowEditor({
           />
         </div>
         <div className="space-y-1.5">
-          <Label>Billed</Label>
+          <Label>Application amount</Label>
           <MoneyInput
             value={app.amount_billed}
             onValueChange={(amount_billed) => onPatch({ amount_billed })}
@@ -3707,7 +3820,7 @@ function BillingApplicationRowEditor({
           />
         </div>
         <div className="space-y-1.5">
-          <Label>Paid</Label>
+          <Label>Payments received</Label>
           <MoneyInput
             value={app.paid_to_date}
             onValueChange={(paid_to_date) => onPatch({ paid_to_date })}
@@ -3716,7 +3829,7 @@ function BillingApplicationRowEditor({
           />
         </div>
         <div className="space-y-1.5">
-          <Label>Retainage</Label>
+          <Label>Retainage held</Label>
           <MoneyInput
             value={app.retainage}
             onValueChange={(retainage) => onPatch({ retainage })}
@@ -3785,6 +3898,7 @@ function BillingInvoiceRowEditor({
   enablingPayment?: boolean;
 }) {
   const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
+  const aging = invoiceAgingStatus(invoice, openBalance);
   const invoiceLabel = billingDocumentLabel(invoice.invoice_number, invoice.title, "Invoice");
   const invoiceTitle = normalizeBillingNumberLabel(invoice.title);
   const sourceLabel = linkedPayApp
@@ -4025,6 +4139,9 @@ function BillingInvoiceRowEditor({
             <DialogContent className="sm:max-w-xl">
               <DialogHeader>
                 <DialogTitle className="font-serif text-2xl">Send invoice</DialogTitle>
+                <DialogDescription>
+                  Confirm the client billing recipients before queuing the invoice email.
+                </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-2">
                 <div className="rounded-md border border-hairline bg-surface p-4">
@@ -4116,12 +4233,15 @@ function BillingInvoiceRowEditor({
           <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
             <DialogTrigger asChild>
               <Button size="sm" variant="outline" className="h-8" onClick={openPaymentDialog}>
-                Payment
+                Record payment
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-2xl">
               <DialogHeader>
                 <DialogTitle className="font-serif text-2xl">Record payment</DialogTitle>
+                <DialogDescription>
+                  Enter received funds, fees, and reconciliation details for this invoice.
+                </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-2">
                 <div className="grid gap-3 md:grid-cols-3">
@@ -4235,6 +4355,18 @@ function BillingInvoiceRowEditor({
         </div>
         <LedgerDetail label="Paid" value={fmtUSD(invoice.paid_amount)} />
         <LedgerDetail label="Open" value={fmtUSD(openBalance)} />
+        <LedgerDetail
+          label="A/R aging"
+          value={
+            <span>
+              {aging.label}
+              <span className="mt-0.5 block text-[11px] font-normal text-current/75">
+                {aging.detail}
+              </span>
+            </span>
+          }
+          className={aging.className}
+        />
         <div className="space-y-1.5">
           <Label>Status</Label>
           <Select

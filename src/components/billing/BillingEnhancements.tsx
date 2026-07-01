@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -283,7 +284,7 @@ export function BillingLineItemsPanel({
     const message =
       earlyLines.length > 0
         ? `${earlyLines.length} line(s) are below 95% complete. Release all remaining retainage anyway?`
-        : "Release all remaining retainage for this pay application?";
+        : "Release all remaining retainage for this application?";
     if (!window.confirm(message)) return;
     selectedLines.forEach((line) =>
       onUpdateLine(line.id, {
@@ -311,7 +312,7 @@ export function BillingLineItemsPanel({
       downloadPdfBytes(bytes, aiaBillingFilename(project, selectedPayApp));
     } catch (error) {
       window.alert(
-        error instanceof Error ? error.message : "AIA pay app package could not be generated.",
+        error instanceof Error ? error.message : "AIA application package could not be generated.",
       );
     } finally {
       setPdfBusy(false);
@@ -323,17 +324,17 @@ export function BillingLineItemsPanel({
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Pay application line detail
+            Applications: progress billing
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Continuation sheet detail by scheduled value, previous work, this period, stored
-            materials, and balance to finish.
+            Enter percent complete or stored materials by SOV line. Overwatch calculates current
+            work, retainage, totals, and the AIA continuation sheet.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Select value={selectedPayAppId} onValueChange={setActivePayAppId}>
             <SelectTrigger className="w-full sm:w-[250px]">
-              <SelectValue placeholder="Select pay app" />
+              <SelectValue placeholder="Select application" />
             </SelectTrigger>
             <SelectContent>
               {payApps.map((app) => (
@@ -351,7 +352,7 @@ export function BillingLineItemsPanel({
             disabled={!selectedPayApp || selectedLines.length > 0}
             onClick={() => selectedPayApp && onGenerateLines(selectedPayApp.id)}
           >
-            <Wand2 className="h-3.5 w-3.5" /> Generate from SOV
+            <Wand2 className="h-3.5 w-3.5" /> Generate application lines
           </Button>
           <Button
             type="button"
@@ -361,7 +362,7 @@ export function BillingLineItemsPanel({
             disabled={pdfBusy || selectedLines.length === 0}
             onClick={downloadAiaPdf}
           >
-            <Download className="h-3.5 w-3.5" /> Download pay app package
+            <Download className="h-3.5 w-3.5" /> Download AIA package
           </Button>
           <Button
             type="button"
@@ -379,29 +380,30 @@ export function BillingLineItemsPanel({
       <div className="mt-4 space-y-3">
         {selectedLines.length === 0 ? (
           <div className="rounded-md border border-hairline bg-surface py-9 text-center text-sm text-muted-foreground">
-            Generate line detail from the SOV to start billing by cost code.
+            Generate application lines from the SOV to enter percent complete and stored materials
+            by cost code.
           </div>
         ) : (
           <>
             <div className="rounded-md border border-hairline bg-surface p-4">
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Pay app totals
+                Application totals
               </div>
               <div
                 className={`mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 ${
                   showRetainageAmounts ? "xl:grid-cols-7" : "xl:grid-cols-6"
                 }`}
               >
-                <BillingDetail label="Scheduled" value={fmtUSD(totals.scheduled)} />
+                <BillingDetail label="Original SOV" value={fmtUSD(totals.scheduled)} />
                 <BillingDetail
                   label="Change orders"
                   value={fmtUSD(totals.co)}
                   tone={totals.co > 0 ? "warning" : undefined}
                 />
-                <BillingDetail label="Previous" value={fmtUSD(totals.previous)} />
-                <BillingDetail label="This period" value={fmtUSD(totals.thisPeriod)} />
-                <BillingDetail label="Total" value={fmtUSD(totals.total)} />
-                <BillingDetail label="Balance" value={fmtUSD(totals.balance)} />
+                <BillingDetail label="Previous certified" value={fmtUSD(totals.previous)} />
+                <BillingDetail label="Current work" value={fmtUSD(totals.thisPeriod)} />
+                <BillingDetail label="Total complete/stored" value={fmtUSD(totals.total)} />
+                <BillingDetail label="Balance to finish" value={fmtUSD(totals.balance)} />
                 {showRetainageAmounts ? (
                   <BillingDetail label="Retainage" value={fmtUSD(totals.retainage)} />
                 ) : null}
@@ -411,23 +413,24 @@ export function BillingLineItemsPanel({
               <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                 <div>
                   <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Retention rate
+                    Retainage / retention rate
                   </div>
                   <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                    Enter the retainage percentage for this pay app. Withheld retainage is
-                    calculated from completed work and stored materials.
+                    Enter the retainage percentage for this application. Withheld retainage is
+                    calculated from completed work and stored materials. Use 0% when the job does
+                    not hold retainage.
                   </p>
                   {hasMixedRetainagePct ? (
                     <p className="mt-1 text-xs text-warning">
-                      This pay app has mixed line rates. Apply a rate to make every line match, or
-                      edit individual lines below.
+                      This application has mixed line rates. Apply a rate to make every line match,
+                      or edit individual lines below.
                     </p>
                   ) : null}
                 </div>
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[270px] sm:flex-row sm:items-end">
                   <div className="space-y-1.5 sm:w-28">
                     <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                      Retention %
+                      Retainage %
                     </Label>
                     <div className="relative">
                       <Input
@@ -483,23 +486,57 @@ function BillingLineItemEditor({
   const [stored, setStored] = useState(centsToDollars(line.materials_stored_this_period_cents));
   const [retainagePct, setRetainagePct] = useState(formatPercentInput(line.retainage_pct));
   const [released, setReleased] = useState(centsToDollars(line.retainage_released_cents));
+  const [targetCompletePct, setTargetCompletePct] = useState(
+    formatPercentInput(line.billing_percent_complete),
+  );
+  const [entryMode, setEntryMode] = useState<"percent" | "dollars">("percent");
   useEffect(() => {
     setWork(centsToDollars(line.work_completed_this_period_cents));
     setStored(centsToDollars(line.materials_stored_this_period_cents));
     setRetainagePct(formatPercentInput(line.retainage_pct));
     setReleased(centsToDollars(line.retainage_released_cents));
+    setTargetCompletePct(formatPercentInput(line.billing_percent_complete));
+    setEntryMode("percent");
   }, [
     line.id,
     line.work_completed_this_period_cents,
     line.materials_stored_this_period_cents,
     line.retainage_pct,
     line.retainage_released_cents,
+    line.billing_percent_complete,
   ]);
   const previous = centsToDollars(
     line.work_completed_previous_cents + line.materials_stored_previous_cents,
   );
-  const retainageHeld = centsToDollars(line.retainage_held_cents - line.retainage_released_cents);
-  const overbilled = line.balance_to_finish_cents < 0;
+  const contractValue = centsToDollars(line.scheduled_value_cents + line.change_order_value_cents);
+  const draftCompletedStored = previous + work + stored;
+  const draftBalance = contractValue - draftCompletedStored;
+  const draftCompletePct =
+    contractValue > 0 ? clampPercent((draftCompletedStored / contractValue) * 100) : 0;
+  const draftRetainageHeld = Math.max(
+    0,
+    draftCompletedStored * (parsePercentInput(retainagePct) / 100) - released,
+  );
+  const overbilled = draftBalance < -0.005;
+  const workForPercent = (pctValue: number, storedValue = stored) =>
+    Math.max(0, contractValue * (clampPercent(pctValue) / 100) - previous - storedValue);
+  const updateCompletePct = (value: string) => {
+    setEntryMode("percent");
+    setTargetCompletePct(value);
+    setWork(workForPercent(parsePercentInput(value)));
+  };
+  const updateStored = (value: number) => {
+    setStored(value);
+    if (entryMode === "percent") {
+      setWork(workForPercent(parsePercentInput(targetCompletePct), value));
+    }
+  };
+  const updateWork = (value: number) => {
+    setEntryMode("dollars");
+    setWork(value);
+    const nextPct = contractValue > 0 ? ((previous + value + stored) / contractValue) * 100 : 0;
+    setTargetCompletePct(formatPercentInput(clampPercent(nextPct)));
+  };
 
   return (
     <div
@@ -513,44 +550,55 @@ function BillingLineItemEditor({
           <div className="mt-1 font-medium text-foreground">{line.description}</div>
         </div>
         <div className="grid gap-2 sm:grid-cols-3 lg:w-full xl:max-w-[420px]">
+          <BillingDetail label="Total complete/stored" value={fmtUSD(draftCompletedStored)} />
+          <BillingDetail label="Complete to date" value={fmtPct(draftCompletePct)} />
           <BillingDetail
-            label="Total"
-            value={fmtUSD(centsToDollars(line.total_completed_and_stored_cents))}
-          />
-          <BillingDetail label="Complete" value={fmtPct(line.billing_percent_complete)} />
-          <BillingDetail
-            label="Balance"
-            value={fmtUSD(centsToDollars(line.balance_to_finish_cents))}
+            label="Balance to finish"
+            value={fmtUSD(draftBalance)}
             tone={overbilled ? "danger" : undefined}
           />
         </div>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-        <BillingDetail
-          label="Scheduled"
-          value={fmtUSD(centsToDollars(line.scheduled_value_cents))}
-        />
-        <BillingDetail
-          label="Change orders"
-          value={fmtUSD(centsToDollars(line.change_order_value_cents))}
-          tone={line.change_order_value_cents > 0 ? "warning" : undefined}
-        />
+        <BillingDetail label="Contract value" value={fmtUSD(contractValue)} />
         <BillingDetail label="Previous" value={fmtUSD(previous)} />
+        <div className="space-y-1.5 rounded-md border border-accent/25 bg-accent/5 px-3 py-2">
+          <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            Complete to date %
+          </Label>
+          <div className="relative">
+            <Input
+              value={targetCompletePct}
+              inputMode="decimal"
+              className="h-9 pr-7 text-right tabular"
+              onChange={(event) => updateCompletePct(event.target.value)}
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+              %
+            </span>
+          </div>
+          <div className="text-right text-[11px] text-muted-foreground">
+            Draft {fmtPct(draftCompletePct)}
+          </div>
+        </div>
         <div className="space-y-1.5">
           <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-            This period
+            Current work
           </Label>
-          <MoneyInput value={work} onValueChange={setWork} align="right" />
+          <MoneyInput value={work} onValueChange={updateWork} align="right" />
+          <div className="text-right text-[11px] text-muted-foreground">
+            {entryMode === "percent" ? "Calculated from %" : "Manual override"}
+          </div>
         </div>
         <div className="space-y-1.5">
           <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
             Stored
           </Label>
-          <MoneyInput value={stored} onValueChange={setStored} align="right" />
+          <MoneyInput value={stored} onValueChange={updateStored} align="right" />
         </div>
         <div className="space-y-1.5">
           <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-            Retention %
+            Retainage %
           </Label>
           <div className="relative">
             <Input
@@ -573,8 +621,8 @@ function BillingLineItemEditor({
       </div>
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <BillingDetail
-          label="Retainage held"
-          value={fmtUSD(retainageHeld)}
+          label="Draft retainage held"
+          value={fmtUSD(draftRetainageHeld)}
           className="sm:w-[180px]"
         />
         <Button
@@ -734,6 +782,9 @@ export function ProjectCostTrackingPanel({
             <DialogContent className="sm:max-w-3xl">
               <DialogHeader>
                 <DialogTitle className="font-serif text-2xl">Add cost actual</DialogTitle>
+                <DialogDescription>
+                  Record cost backup against the same cost codes used by the SOV and WIP.
+                </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-2">
                 <div className="grid gap-3 md:grid-cols-3">
@@ -1045,7 +1096,7 @@ export function WipAnalysisPanel({
         <BillingMetric
           label="Billed to date"
           value={fmtUSD(wip.total_billed)}
-          sub="Pay apps completed/stored"
+          sub="Applications completed/stored"
         />
         <BillingMetric
           label="Earned vs billed"
@@ -1062,10 +1113,10 @@ export function WipAnalysisPanel({
 
       <div className="mt-4 rounded-md border border-hairline bg-surface p-4 text-sm text-muted-foreground">
         {projectedLoss
-          ? `Projected cost is ${fmtUSD(projectedCost)}, creating a projected loss of ${fmtUSD(Math.abs(wip.estimated_gross_profit))}. Review cost-to-date and FTC before the next pay application.`
+          ? `Projected cost is ${fmtUSD(projectedCost)}, creating a projected loss of ${fmtUSD(Math.abs(wip.estimated_gross_profit))}. Review cost-to-date and FTC before the next application.`
           : projectedProfit
-            ? `Projected cost is ${fmtUSD(projectedCost)}, leaving projected gross profit of ${fmtUSD(wip.estimated_gross_profit)}. ${earnedAheadOfBillings ? "Earned work is ahead of billings, so the next pay app can improve cash position." : earnedBehindBillings ? "Billings are ahead of earned production; watch field progress before submitting the next pay app." : "Earned revenue and billings are currently aligned."}`
-            : "Projected cost is aligned with contract value. Review cost-to-date and FTC before submitting the next pay application."}
+            ? `Projected cost is ${fmtUSD(projectedCost)}, leaving projected gross profit of ${fmtUSD(wip.estimated_gross_profit)}. ${earnedAheadOfBillings ? "Earned work is ahead of billings, so the next application can improve cash position." : earnedBehindBillings ? "Billings are ahead of earned production; watch field progress before submitting the next application." : "Earned revenue and billings are currently aligned."}`
+            : "Projected cost is aligned with contract value. Review cost-to-date and FTC before submitting the next application."}
       </div>
 
       <div className="mt-4 space-y-3">

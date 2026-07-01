@@ -254,7 +254,9 @@ export async function generateInvoicePdf({
   });
 
   const headerX = 360;
-  drawText(ctx, "Project", headerX, PAGE_H - M - 34, { font: sansBold, size: 8, color: MUTED });
+  const headerTop = PAGE_H - M - 30;
+  drawText(ctx, "Project", headerX, headerTop, { font: sansBold, size: 8, color: MUTED });
+  ctx.y = headerTop - 32;
   drawWrapped(ctx, project.name || "-", headerX, PAGE_W - M - headerX, {
     font: sansBold,
     size: 11,
@@ -294,7 +296,7 @@ export async function generateInvoicePdf({
     drawAmountRow(ctx, "Less retainage", fmtUSD(invoice.retainage));
   }
   drawAmountRow(ctx, "Total due", fmtUSD(invoice.total_due), true);
-  drawAmountRow(ctx, "Paid to date", fmtUSD(invoice.paid_amount));
+  drawAmountRow(ctx, "Payments received", fmtUSD(invoice.paid_amount));
   drawAmountRow(ctx, "Open balance", fmtUSD(openBalance), true);
   ctx.y -= 12;
 
