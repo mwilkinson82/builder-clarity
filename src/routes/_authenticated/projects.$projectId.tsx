@@ -134,6 +134,7 @@ import {
   type ExposureCategory,
   type Rollup,
 } from "@/lib/ior";
+import { cn } from "@/lib/utils";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
 import { generateInvoicePdf } from "@/lib/invoice-pdf";
 import { toast } from "sonner";
@@ -206,6 +207,27 @@ const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
 const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
 const BILLING_WORKSPACE_TAB_TRIGGER_CLASS =
   "whitespace-nowrap rounded-md border border-accent/35 bg-accent/10 px-3 py-2 text-sm font-semibold text-foreground shadow-sm transition hover:border-accent/60 hover:bg-accent/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-accent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-md";
+const PROJECT_NAV_RAIL_CLASS =
+  "h-auto w-full justify-start gap-1.5 overflow-x-auto rounded-lg border border-accent/25 bg-accent/[0.07] p-1.5 shadow-[0_18px_42px_rgb(27_122_110_/_0.16),0_4px_12px_rgb(31_28_23_/_0.10)] ring-1 ring-accent/15 backdrop-blur-sm lg:-translate-y-1 lg:flex-col lg:items-stretch lg:overflow-visible";
+
+function projectNavItemClass({ compact, active }: { compact: boolean; active?: boolean }) {
+  return cn(
+    "group relative min-h-[46px] min-w-[148px] overflow-hidden rounded-md border px-3 py-3 text-left transition duration-200 focus-visible:ring-2 focus-visible:ring-ring lg:w-full",
+    active
+      ? "border-accent/75 bg-accent text-accent-foreground shadow-[0_12px_26px_rgb(27_122_110_/_0.30)] ring-1 ring-accent/35"
+      : "border-transparent bg-card/45 text-muted-foreground hover:border-accent/35 hover:bg-card/85 hover:text-foreground hover:shadow-sm",
+    compact ? "lg:min-w-0 lg:justify-center lg:px-2 lg:py-3.5" : "justify-start",
+    compact && active ? "lg:scale-[1.04]" : "",
+  );
+}
+
+function projectNavIconClass({ compact, active }: { compact: boolean; active?: boolean }) {
+  return cn(
+    "h-4 w-4 shrink-0 transition",
+    compact ? "lg:mr-0" : "mr-2",
+    active ? "text-accent-foreground drop-shadow-sm" : "text-current group-hover:text-accent",
+  );
+}
 
 type InvoiceCheckoutPayload = {
   ok?: boolean;
@@ -536,7 +558,8 @@ function ProjectPage() {
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["portfolio-billing"] });
       toast.success("Project archived", {
-        description: "It's hidden from the portfolio. Ask an admin to restore it from the database.",
+        description:
+          "It's hidden from the portfolio. Ask an admin to restore it from the database.",
       });
       navigate({ to: "/" });
     },
@@ -558,8 +581,6 @@ function ProjectPage() {
         description: err instanceof Error ? err.message : "Try again.",
       }),
   });
-
-
 
   const expCreate = useServerMutation<Record<string, unknown>>(createExposureFn as never);
   const expUpdate = useServerMutation<Record<string, unknown>>(updateExposureFn as never);
@@ -1618,7 +1639,11 @@ function ProjectPage() {
                 </AlertDialog>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1.5 text-danger hover:text-danger">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-danger hover:text-danger"
+                    >
                       <Trash2 className="h-3.5 w-3.5" /> Delete
                     </Button>
                   </AlertDialogTrigger>
@@ -1706,17 +1731,19 @@ function ProjectPage() {
         >
           <aside className="min-w-0 lg:sticky lg:top-6">
             <TooltipProvider delayDuration={120}>
-              <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-lg border border-hairline bg-card p-1.5 shadow-card ring-1 ring-foreground/5 lg:flex-col lg:items-stretch lg:overflow-visible">
+              <TabsList className={PROJECT_NAV_RAIL_CLASS}>
                 <ProjectNavTooltip enabled={compactProjectNav} label="CRM" detail="Relationships">
                   <a
                     href="/?tab=crm"
                     aria-label="CRM: Relationships"
-                    className={`inline-flex min-w-[148px] items-center justify-start rounded-md border border-transparent px-3 py-3 text-left text-muted-foreground transition hover:border-hairline hover:bg-secondary/70 hover:text-foreground lg:w-full ${
-                      compactProjectNav ? "lg:min-w-0 lg:justify-center lg:px-2" : ""
-                    }`}
+                    title="CRM: Relationships"
+                    className={cn(
+                      "inline-flex items-center",
+                      projectNavItemClass({ compact: compactProjectNav }),
+                    )}
                   >
                     <BriefcaseBusiness
-                      className={`h-4 w-4 shrink-0 ${compactProjectNav ? "lg:mr-0" : "mr-2"}`}
+                      className={projectNavIconClass({ compact: compactProjectNav })}
                     />
                     <span className={`min-w-0 ${compactProjectNav ? "lg:sr-only" : ""}`}>
                       <span className="block text-sm font-medium leading-tight">CRM</span>
@@ -1728,6 +1755,7 @@ function ProjectPage() {
                 </ProjectNavTooltip>
                 {projectNavItems.map((item) => {
                   const Icon = item.icon;
+                  const isActive = activeProjectTab === item.value;
                   return (
                     <ProjectNavTooltip
                       key={item.value}
@@ -1738,18 +1766,33 @@ function ProjectPage() {
                       <TabsTrigger
                         value={item.value}
                         aria-label={`${item.label}: ${item.detail}`}
-                        className={`min-w-[148px] justify-start rounded-md border border-transparent px-3 py-3 text-left transition hover:border-hairline hover:bg-secondary/70 data-[state=active]:border-foreground data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-sm lg:w-full ${
-                          compactProjectNav ? "lg:min-w-0 lg:justify-center lg:px-2" : ""
-                        }`}
+                        title={`${item.label}: ${item.detail}`}
+                        className={projectNavItemClass({
+                          compact: compactProjectNav,
+                          active: isActive,
+                        })}
                       >
+                        {isActive && (
+                          <span
+                            aria-hidden="true"
+                            className="absolute inset-y-2 left-1 w-1 rounded-full bg-accent-foreground/90 shadow-[0_0_14px_rgb(255_255_255_/_0.75)]"
+                          />
+                        )}
                         <Icon
-                          className={`h-4 w-4 shrink-0 ${compactProjectNav ? "lg:mr-0" : "mr-2"}`}
+                          className={projectNavIconClass({
+                            compact: compactProjectNav,
+                            active: isActive,
+                          })}
                         />
                         <span className={`min-w-0 ${compactProjectNav ? "lg:sr-only" : ""}`}>
                           <span className="block text-sm font-medium leading-tight">
                             {item.label}
                           </span>
-                          <span className="mt-0.5 block truncate text-[11px] font-normal opacity-70">
+                          <span
+                            className={`mt-0.5 block truncate text-[11px] font-normal ${
+                              isActive ? "opacity-85" : "opacity-70"
+                            }`}
+                          >
                             {item.detail}
                           </span>
                         </span>
