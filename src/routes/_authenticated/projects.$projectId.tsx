@@ -2774,7 +2774,9 @@ function BillingWorkspace({
                   <div className="rounded-md border border-accent/25 bg-accent/5 px-3 py-2 text-sm text-muted-foreground">
                     Create the application shell here. After it is saved, open Applications to enter
                     percent complete by SOV line; Overwatch will calculate the current work,
-                    retainage, and application amount.
+                    retainage, and application amount. Approved change orders only become billable
+                    when they are allocated to an SOV cost code and pulled into the application
+                    lines.
                   </div>
                   <div className="grid gap-3 md:grid-cols-3">
                     <div className="space-y-1.5">
@@ -2849,7 +2851,7 @@ function BillingWorkspace({
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Change orders</Label>
+                      <Label>Approved COs included</Label>
                       <MoneyInput
                         value={draft.change_order_amount}
                         onValueChange={(change_order_amount) =>
@@ -2953,7 +2955,7 @@ function BillingWorkspace({
             <BillingWorkflowStep
               step="1"
               title="Application"
-              body="Enter percent complete and stored materials by SOV line. This is the contractor's request for payment."
+              body="Enter percent complete and stored materials by SOV line. Approved COs allocated to cost codes roll into the line contract value."
             />
             <BillingWorkflowStep
               step="2"
@@ -2977,7 +2979,7 @@ function BillingWorkspace({
               Cost Ledger
             </TabsTrigger>
             <TabsTrigger value="wip-analysis" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              WIP
+              WIP Review
             </TabsTrigger>
             <TabsTrigger value="invoice-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
               Invoices & Payments
@@ -3376,11 +3378,36 @@ function BillingWorkspace({
 
         <TabsContent value="pending-cos" className="mt-0">
           <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-              Pending change orders in billing
+            <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+                  Pending change orders: not billable yet
+                </div>
+                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                  Pending COs are forecast exposure only. They do not enter an application for
+                  payment until they are approved and allocated to an SOV cost code.
+                </p>
+              </div>
+              <div className="text-sm tabular text-muted-foreground">
+                Raw {fmtUSD(rollup.pendingCOContract)} · likely {fmtUSD(weightedPending)}
+              </div>
             </div>
-            <div className="mt-1 text-sm tabular text-muted-foreground">
-              Raw {fmtUSD(rollup.pendingCOContract)} · likely {fmtUSD(weightedPending)}
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              <BillingWorkflowStep
+                step="1"
+                title="Pending"
+                body="Forecasted in risk/contract exposure, but excluded from the application."
+              />
+              <BillingWorkflowStep
+                step="2"
+                title="Approved + allocated"
+                body="Assign the approved CO value to the correct SOV cost code."
+              />
+              <BillingWorkflowStep
+                step="3"
+                title="Application"
+                body="The approved CO value appears in Applications as part of the line contract value."
+              />
             </div>
             {pendingCOs.length === 0 ? (
               <p className="mt-4 text-sm text-muted-foreground">No pending change orders.</p>

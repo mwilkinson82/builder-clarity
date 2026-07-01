@@ -352,7 +352,7 @@ export function BillingLineItemsPanel({
             disabled={!selectedPayApp || selectedLines.length > 0}
             onClick={() => selectedPayApp && onGenerateLines(selectedPayApp.id)}
           >
-            <Wand2 className="h-3.5 w-3.5" /> Generate application lines
+            <Wand2 className="h-3.5 w-3.5" /> Pull SOV + approved COs
           </Button>
           <Button
             type="button"
@@ -380,8 +380,8 @@ export function BillingLineItemsPanel({
       <div className="mt-4 space-y-3">
         {selectedLines.length === 0 ? (
           <div className="rounded-md border border-hairline bg-surface py-9 text-center text-sm text-muted-foreground">
-            Generate application lines from the SOV to enter percent complete and stored materials
-            by cost code.
+            Pull lines from the SOV to enter percent complete and stored materials by cost code.
+            Approved change orders allocated to a cost code are added to the matching line.
           </div>
         ) : (
           <>
@@ -396,8 +396,9 @@ export function BillingLineItemsPanel({
               >
                 <BillingDetail label="Original SOV" value={fmtUSD(totals.scheduled)} />
                 <BillingDetail
-                  label="Change orders"
+                  label="Approved COs included"
                   value={fmtUSD(totals.co)}
+                  sub="Added to line contract values"
                   tone={totals.co > 0 ? "warning" : undefined}
                 />
                 <BillingDetail label="Previous certified" value={fmtUSD(totals.previous)} />
@@ -409,6 +410,7 @@ export function BillingLineItemsPanel({
                 ) : null}
               </div>
             </div>
+            <ApplicationChangeOrderBridge selectedLines={selectedLines} />
             <div className="rounded-md border border-hairline bg-surface p-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                 <div>
@@ -470,6 +472,76 @@ export function BillingLineItemsPanel({
         )}
       </div>
     </section>
+  );
+}
+
+function ApplicationChangeOrderBridge({ selectedLines }: { selectedLines: BillingLineItemRow[] }) {
+  const originalSov = selectedLines.reduce(
+    (sum, line) => sum + centsToDollars(line.scheduled_value_cents),
+    0,
+  );
+  const approvedCoTotal = selectedLines.reduce(
+    (sum, line) => sum + centsToDollars(line.change_order_value_cents),
+    0,
+  );
+  const coLines = selectedLines.filter((line) => line.change_order_value_cents > 0);
+
+  return (
+    <div className="rounded-md border border-accent/25 bg-accent/5 p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Change orders in this application
+          </div>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Approved change orders become billable here only after they are allocated to an SOV cost
+            code. Each application line uses{" "}
+            <span className="font-medium text-foreground">Original SOV + approved COs</span> as the
+            contract value. Pending or unallocated COs stay out of the application.
+          </p>
+        </div>
+        <div className="grid min-w-0 gap-2 sm:grid-cols-3 lg:min-w-[480px]">
+          <BillingDetail label="Original SOV" value={fmtUSD(originalSov)} />
+          <BillingDetail
+            label="Approved COs"
+            value={fmtUSD(approvedCoTotal)}
+            tone={approvedCoTotal > 0 ? "warning" : undefined}
+          />
+          <BillingDetail label="Revised contract" value={fmtUSD(originalSov + approvedCoTotal)} />
+        </div>
+      </div>
+
+      {coLines.length === 0 ? (
+        <div className="mt-3 rounded-md border border-hairline bg-card px-3 py-3 text-sm text-muted-foreground">
+          No approved and allocated change-order value is included in this application yet. Approve
+          the CO, allocate it to the correct cost code, then pull the next application from the SOV
+          so it becomes billable.
+        </div>
+      ) : (
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          {coLines.map((line) => {
+            const original = centsToDollars(line.scheduled_value_cents);
+            const approvedCo = centsToDollars(line.change_order_value_cents);
+            return (
+              <div key={line.id} className="rounded-md border border-hairline bg-card p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  {line.cost_code || "No code"}
+                </div>
+                <div className="mt-1 text-sm font-medium text-foreground">{line.description}</div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <BillingDetail label="Original SOV" value={fmtUSD(original)} />
+                  <BillingDetail label="Approved COs" value={fmtUSD(approvedCo)} tone="warning" />
+                  <BillingDetail
+                    label="Billable line value"
+                    value={fmtUSD(original + approvedCo)}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -687,6 +759,16 @@ export function ProjectCostTrackingPanel({
     .reduce((sum, actual) => sum + actual.amount, 0);
   const totalBudget = buckets.reduce((sum, bucket) => sum + bucket.original_budget, 0);
   const totalActual = buckets.reduce((sum, bucket) => sum + bucket.actual_to_date, 0);
+  const totalFtc = buckets.reduce((sum, bucket) => sum + bucket.ftc, 0);
+  const projectedCost = totalActual + totalFtc;
+  const budgetVariance = totalBudget - projectedCost;
+  const costBackupTotal = activeActuals.reduce((sum, actual) => sum + actual.amount, 0);
+  const unmatchedActualCount = activeActuals.filter((actual) => !actual.cost_bucket_id).length;
+  const backupByBucket = activeActuals.reduce((map, actual) => {
+    if (!actual.cost_bucket_id) return map;
+    map.set(actual.cost_bucket_id, (map.get(actual.cost_bucket_id) ?? 0) + actual.amount);
+    return map;
+  }, new Map<string, number>());
 
   const chooseBucket = (bucketId: string) => {
     const bucket = buckets.find((item) => item.id === bucketId);
@@ -741,14 +823,15 @@ export function ProjectCostTrackingPanel({
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Cost ledger / project costs
+            Cost ledger: job-cost backup
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             <span className="font-medium text-foreground">
-              Subcontractors, suppliers, and direct costs by cost code.
+              This is where vendor bills, subcontract commitments, labor, material, and paid costs
+              are tracked.
             </span>{" "}
-            The SOV sets the billable schedule of values; this ledger records the cost backup
-            against those same codes.
+            The SOV says what the owner can be billed. The Cost Ledger says what the job is costing
+            you. WIP compares the two.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -912,111 +995,220 @@ export function ProjectCostTrackingPanel({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <BillingMetric label="Committed" value={fmtUSD(totalCommitted)} />
-        <BillingMetric label="Paid actuals" value={fmtUSD(totalPaid)} />
-        <BillingMetric label="Budget remaining" value={fmtUSD(totalBudget - totalActual)} />
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+        <BillingMetric
+          label="Open commitments"
+          value={fmtUSD(totalCommitted)}
+          sub="Cost rows not marked paid"
+        />
+        <BillingMetric label="Paid costs" value={fmtUSD(totalPaid)} sub="Paid cost rows" />
+        <BillingMetric
+          label="Cost to date"
+          value={fmtUSD(totalActual)}
+          sub="Bucket actuals used by WIP"
+        />
+        <BillingMetric label="FTC" value={fmtUSD(totalFtc)} sub="Forecast to complete" />
+        <BillingMetric
+          label="Projected cost"
+          value={fmtUSD(projectedCost)}
+          sub="Cost to date + FTC"
+        />
+        <BillingMetric
+          label="Budget variance"
+          value={fmtUSD(budgetVariance)}
+          sub="Positive means under projected cost"
+          tone={budgetVariance < 0 ? "danger" : "success"}
+        />
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-md border border-hairline bg-surface p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Cost ledger rows
-          </div>
-          {costActuals.length === 0 ? (
-            <div className="mt-3 rounded-md border border-hairline bg-card py-8 text-center text-sm text-muted-foreground">
-              {totalActual > 0
-                ? "No cost ledger rows are attached yet. The actual totals shown here are imported or manual SOV cost values; add/import cost rows to audit the backup."
-                : "No cost ledger rows recorded yet."}
-            </div>
-          ) : (
-            <div className="mt-3 space-y-3">
-              {costActuals.map((actual) => (
-                <div
-                  key={actual.id}
-                  className={`rounded-md border border-hairline bg-card p-4 ${
-                    actual.status === "void" ? "opacity-50" : ""
-                  }`}
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                        {actual.cost_date} · {actual.cost_code || "No code"} · {actual.status}
-                      </div>
-                      <div className="mt-1 font-medium text-foreground">{actual.description}</div>
-                      <div className="mt-1 text-xs capitalize text-muted-foreground">
-                        {actual.category}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-3 sm:justify-end">
-                      <div className="text-right text-sm tabular font-medium">
-                        {fmtUSD(actual.amount)}
-                      </div>
-                      {actual.status !== "void" && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
-                          onClick={() => {
-                            if (
-                              !window.confirm(
-                                "Void this cost actual? The linked bucket actuals will update.",
-                              )
-                            ) {
-                              return;
-                            }
-                            onVoidCostActual(actual.id, "Voided from cost tracking.");
-                          }}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <BillingDetail label="Vendor" value={actual.vendor || "-"} />
-                    <BillingDetail label="Reference" value={actual.reference_number || "-"} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        <CostFlowStep
+          step="1"
+          title="Match the cost code"
+          body="Every cost row should point to the same cost code used in the SOV/application."
+        />
+        <CostFlowStep
+          step="2"
+          title="Record committed or paid cost"
+          body="Use committed for subcontract/vendor obligations and paid when money has gone out."
+        />
+        <CostFlowStep
+          step="3"
+          title="WIP uses the forecast"
+          body="WIP compares contract value against cost to date plus forecast to complete."
+        />
+      </div>
 
-        <div className="rounded-md border border-hairline bg-surface p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Cost bucket variance
+      <div className="mt-4 rounded-md border border-hairline bg-surface p-4">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Cost code health
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              This is the job-cost view by SOV cost code. It shows whether each code has cost backup
+              and whether the current cost forecast is above or below the contract value.
+            </p>
           </div>
-          <div className="mt-3 space-y-3">
-            {buckets.map((bucket) => {
-              const forecast = bucket.actual_to_date + bucket.ftc;
-              const variance = bucket.original_budget - forecast;
-              const spentPct =
-                bucket.original_budget > 0
-                  ? (bucket.actual_to_date / bucket.original_budget) * 100
-                  : 0;
-              const tone = variance < 0 ? "danger" : spentPct >= 80 ? "warning" : "success";
-              return (
-                <div key={bucket.id} className="rounded-md border border-hairline bg-card p-4">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    {bucket.cost_code || "No code"}
-                  </div>
-                  <div className="mt-1 font-medium text-foreground">{bucket.bucket}</div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <BillingDetail label="Budget" value={fmtUSD(bucket.original_budget)} />
-                    <BillingDetail label="Actual" value={fmtUSD(bucket.actual_to_date)} />
-                    <BillingDetail label="FTC" value={fmtUSD(bucket.ftc)} />
-                    <BillingDetail label="Variance" value={fmtUSD(variance)} tone={tone} />
-                    <BillingDetail label="% spent" value={fmtPct(spentPct)} tone={tone} />
-                  </div>
-                </div>
-              );
-            })}
+          <div className="text-xs tabular text-muted-foreground">
+            Cost backup rows {fmtUSD(costBackupTotal)}
+            {unmatchedActualCount > 0 ? ` · ${unmatchedActualCount} unmatched` : ""}
           </div>
         </div>
+        <div className="mt-4 grid gap-3">
+          {buckets.map((bucket) => {
+            const forecast = bucket.actual_to_date + bucket.ftc;
+            const variance = bucket.original_budget - forecast;
+            const spentPct =
+              bucket.original_budget > 0
+                ? (bucket.actual_to_date / bucket.original_budget) * 100
+                : 0;
+            const backupTotal = backupByBucket.get(bucket.id) ?? 0;
+            const tone = variance < 0 ? "danger" : spentPct >= 80 ? "warning" : "success";
+            return (
+              <div key={bucket.id} className="rounded-md border border-hairline bg-card p-4">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      {bucket.cost_code || "No code"}
+                    </div>
+                    <div className="mt-1 font-medium text-foreground">{bucket.bucket}</div>
+                  </div>
+                  <div
+                    className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${
+                      variance < 0
+                        ? "border-danger/30 bg-danger/10 text-danger"
+                        : "border-success/30 bg-success/10 text-success"
+                    }`}
+                  >
+                    {variance < 0
+                      ? `Projected over by ${fmtUSD(Math.abs(variance))}`
+                      : `Projected under by ${fmtUSD(variance)}`}
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
+                  <BillingDetail
+                    label="Contract value"
+                    value={fmtUSD(bucket.original_budget)}
+                    sub="Owner-facing SOV value"
+                  />
+                  <BillingDetail
+                    label="Cost to date"
+                    value={fmtUSD(bucket.actual_to_date)}
+                    sub="Actual cost carried in bucket"
+                  />
+                  <BillingDetail
+                    label="FTC"
+                    value={fmtUSD(bucket.ftc)}
+                    sub="Forecast to complete"
+                  />
+                  <BillingDetail
+                    label="Projected cost"
+                    value={fmtUSD(forecast)}
+                    sub="Cost to date + FTC"
+                  />
+                  <BillingDetail
+                    label="Projected variance"
+                    value={fmtUSD(variance)}
+                    tone={tone}
+                    sub="Contract less projected cost"
+                  />
+                  <BillingDetail
+                    label="Ledger backup"
+                    value={fmtUSD(backupTotal)}
+                    sub="Committed/paid rows attached"
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-md border border-hairline bg-surface p-4">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Cost transaction backup
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          These are the individual vendor, subcontractor, labor, material, and direct-cost rows that
+          support the cost-code totals above.
+        </p>
+        {costActuals.length === 0 ? (
+          <div className="mt-3 rounded-md border border-hairline bg-card py-8 text-center text-sm text-muted-foreground">
+            {totalActual > 0
+              ? "No cost ledger rows are attached yet. The bucket actuals above still feed WIP, but there is no transaction-level backup to audit."
+              : "No cost ledger rows recorded yet."}
+          </div>
+        ) : (
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {costActuals.map((actual) => (
+              <div
+                key={actual.id}
+                className={`rounded-md border border-hairline bg-card p-4 ${
+                  actual.status === "void" ? "opacity-50" : ""
+                }`}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      {actual.cost_date} · {actual.cost_code || "No code"} · {actual.status}
+                    </div>
+                    <div className="mt-1 font-medium text-foreground">{actual.description}</div>
+                    <div className="mt-1 text-xs capitalize text-muted-foreground">
+                      {actual.category}
+                      {actual.vendor ? ` · ${actual.vendor}` : ""}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 sm:justify-end">
+                    <div className="text-right text-sm tabular font-medium">
+                      {fmtUSD(actual.amount)}
+                    </div>
+                    {actual.status !== "void" && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-danger"
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              "Void this cost actual? The linked bucket actuals will update.",
+                            )
+                          ) {
+                            return;
+                          }
+                          onVoidCostActual(actual.id, "Voided from cost tracking.");
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <BillingDetail label="Vendor" value={actual.vendor || "-"} />
+                  <BillingDetail label="Reference" value={actual.reference_number || "-"} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </section>
+  );
+}
+
+function CostFlowStep({ step, title, body }: { step: string; title: string; body: string }) {
+  return (
+    <div className="flex min-w-0 gap-3 rounded-md border border-hairline bg-surface px-3 py-3">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-accent-foreground">
+        {step}
+      </div>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-foreground">{title}</div>
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{body}</p>
+      </div>
+    </div>
   );
 }
 
@@ -1042,24 +1234,24 @@ export function WipAnalysisPanel({
       </section>
     );
   }
-  const earnedBehindBillings = wip.total_over_under > 1;
-  const earnedAheadOfBillings = wip.total_over_under < -1;
+  const overbilled = wip.total_over_under > 1;
+  const underbilled = wip.total_over_under < -1;
   const projectedCost = wip.total_cost + wip.total_cost_to_complete;
   const projectedLoss = wip.estimated_gross_profit < -1;
   const projectedProfit = wip.estimated_gross_profit > 1;
   const projectedGpTone = projectedLoss ? "danger" : projectedProfit ? "success" : undefined;
+  const billingPositionTone = overbilled ? "danger" : underbilled ? "success" : undefined;
 
   return (
     <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            WIP analysis (Work in Progress)
+            WIP review (Work in Progress)
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Work in Progress compares earned revenue, cost-to-date, and forecast-to-complete by SOV
-            cost code. The red/green signal below is projected margin. Earned vs billed is a
-            cash-timing check, not the profit/loss result.
+            WIP answers two questions: have we billed ahead of or behind earned field progress, and
+            will each cost code make money after actual cost plus forecast to complete?
           </p>
         </div>
         <div className="flex flex-col gap-2 md:items-end">
@@ -1077,12 +1269,43 @@ export function WipAnalysisPanel({
           <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-success" />
-              Green = projected profit
+              Underbilled / projected profit
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-danger" />
-              Red = projected loss
+              Overbilled / projected loss
             </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Revenue timing
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Earned to date equals contract value multiplied by earned percent complete. Billing
+            position equals billed to date minus earned to date.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <BillingDetail label="Formula" value="Contract x earned %" />
+            <BillingDetail label="Underbilled" value="Earned work not billed" tone="success" />
+            <BillingDetail label="Overbilled" value="Billed ahead of work" tone="danger" />
+          </div>
+        </div>
+        <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Profit forecast
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Projected GP equals contract value minus cost to date and forecast to complete. That is
+            separate from overbilling or underbilling.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <BillingDetail label="Formula" value="Contract - projected cost" />
+            <BillingDetail label="Projected profit" value="Green" tone="success" />
+            <BillingDetail label="Projected loss" value="Red" tone="danger" />
           </div>
         </div>
       </div>
@@ -1099,9 +1322,10 @@ export function WipAnalysisPanel({
           sub="Applications completed/stored"
         />
         <BillingMetric
-          label="Earned vs billed"
+          label="Billing position"
           value={billingTimingLabel(wip.total_over_under)}
-          sub="Cash timing check"
+          sub="Billed minus earned"
+          tone={billingPositionTone}
         />
         <BillingMetric
           label="Projected GP"
@@ -1115,7 +1339,7 @@ export function WipAnalysisPanel({
         {projectedLoss
           ? `Projected cost is ${fmtUSD(projectedCost)}, creating a projected loss of ${fmtUSD(Math.abs(wip.estimated_gross_profit))}. Review cost-to-date and FTC before the next application.`
           : projectedProfit
-            ? `Projected cost is ${fmtUSD(projectedCost)}, leaving projected gross profit of ${fmtUSD(wip.estimated_gross_profit)}. ${earnedAheadOfBillings ? "Earned work is ahead of billings, so the next application can improve cash position." : earnedBehindBillings ? "Billings are ahead of earned production; watch field progress before submitting the next application." : "Earned revenue and billings are currently aligned."}`
+            ? `Projected cost is ${fmtUSD(projectedCost)}, leaving projected gross profit of ${fmtUSD(wip.estimated_gross_profit)}. ${underbilled ? "Earned work is ahead of billings, so the next application can improve cash position." : overbilled ? "Billings are ahead of earned production; watch field progress before submitting the next application." : "Earned revenue and billings are currently aligned."}`
             : "Projected cost is aligned with contract value. Review cost-to-date and FTC before submitting the next application."}
       </div>
 
@@ -1146,9 +1370,15 @@ export function WipAnalysisPanel({
 }
 
 function billingTimingLabel(value: number) {
-  if (value > 1) return `Billed ${fmtUSD(value)} ahead`;
-  if (value < -1) return `Earned ${fmtUSD(Math.abs(value))} unbilled`;
+  if (value > 1) return `Overbilled ${fmtUSD(value)}`;
+  if (value < -1) return `Underbilled ${fmtUSD(Math.abs(value))}`;
   return "Aligned";
+}
+
+function billingTimingTone(value: number) {
+  if (value > 1) return "danger" as const;
+  if (value < -1) return "success" as const;
+  return undefined;
 }
 
 function projectedMarginLabel(value: number) {
@@ -1180,6 +1410,7 @@ function WipBucketRow({
       : "bg-card";
   const projectedCost = bucket.cost_to_date + bucket.cost_to_complete;
   const projectedGpTone = projectedLoss ? "danger" : projectedProfit ? "success" : undefined;
+  const billingTone = billingTimingTone(bucket.over_under_billing);
   return (
     <div className={`rounded-md border border-hairline p-4 ${projectedRowClass}`}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -1190,10 +1421,21 @@ function WipBucketRow({
           <div className="mt-1 font-medium text-foreground">{bucket.bucket}</div>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div
+            className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${
+              billingTone === "danger"
+                ? "border-danger/30 bg-danger/10 text-danger"
+                : billingTone === "success"
+                  ? "border-success/30 bg-success/10 text-success"
+                  : "border-hairline bg-card text-muted-foreground"
+            }`}
+          >
+            {billingTimingLabel(bucket.over_under_billing)}
+          </div>
           {editable ? (
             <div className="flex items-center gap-1.5">
               <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                Earned %
+                Earned complete %
               </Label>
               <Input
                 value={value}
@@ -1217,29 +1459,54 @@ function WipBucketRow({
           )}
         </div>
       </div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-        <BillingDetail label="Contract" value={fmtUSD(bucket.contract_value)} />
-        <BillingDetail label="Earned to date" value={fmtUSD(bucket.earned_revenue)} />
-        <BillingDetail label="Billed to date" value={fmtUSD(bucket.billed_to_date)} />
-        <BillingDetail
-          label="Earned vs billed"
-          value={billingTimingLabel(bucket.over_under_billing)}
-        />
-        <BillingDetail label="Cost to date" value={fmtUSD(bucket.cost_to_date)} />
-        <BillingDetail label="FTC" value={fmtUSD(bucket.cost_to_complete)} />
-        <BillingDetail label="Projected cost" value={fmtUSD(projectedCost)} />
-        <BillingDetail
-          label="Projected GP"
-          tone={projectedGpTone}
-          value={
-            <>
-              {projectedMarginLabel(bucket.estimated_gross_profit)}
-              <span className="ml-1 text-[11px] text-muted-foreground">
-                {fmtPct(bucket.gross_profit_pct)}
-              </span>
-            </>
-          }
-        />
+      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        <div className="rounded-md border border-hairline bg-card/80 p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Revenue timing
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <BillingDetail label="Contract value" value={fmtUSD(bucket.contract_value)} />
+            <BillingDetail
+              label="Earned to date"
+              value={fmtUSD(bucket.earned_revenue)}
+              sub={`${fmtPct(earnedPct)} of contract`}
+            />
+            <BillingDetail label="Billed to date" value={fmtUSD(bucket.billed_to_date)} />
+            <BillingDetail
+              label="Billing position"
+              value={billingTimingLabel(bucket.over_under_billing)}
+              tone={billingTone}
+              sub="Billed minus earned"
+            />
+          </div>
+        </div>
+        <div className="rounded-md border border-hairline bg-card/80 p-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Profit forecast
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <BillingDetail label="Cost to date" value={fmtUSD(bucket.cost_to_date)} />
+            <BillingDetail label="FTC" value={fmtUSD(bucket.cost_to_complete)} />
+            <BillingDetail
+              label="Projected cost"
+              value={fmtUSD(projectedCost)}
+              sub="Cost to date + FTC"
+            />
+            <BillingDetail
+              label="Projected GP"
+              tone={projectedGpTone}
+              value={
+                <>
+                  {projectedMarginLabel(bucket.estimated_gross_profit)}
+                  <span className="ml-1 text-[11px] text-muted-foreground">
+                    {fmtPct(bucket.gross_profit_pct)}
+                  </span>
+                </>
+              }
+              sub="Contract less projected cost"
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1248,12 +1515,14 @@ function WipBucketRow({
 function BillingDetail({
   label,
   value,
+  sub,
   tone,
   className = "",
   valueClassName = "",
 }: {
   label: string;
   value: ReactNode;
+  sub?: ReactNode;
   tone?: "success" | "warning" | "danger";
   className?: string;
   valueClassName?: string;
@@ -1274,6 +1543,9 @@ function BillingDetail({
       <div className={`mt-1 text-sm font-medium tabular ${toneClass} ${valueClassName}`}>
         {value}
       </div>
+      {sub ? (
+        <div className="mt-1 text-[11px] leading-snug text-muted-foreground">{sub}</div>
+      ) : null}
     </div>
   );
 }
