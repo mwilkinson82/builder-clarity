@@ -2242,6 +2242,9 @@ export function CpmActivityPlanner({
   const isCriticalPathReport = scheduleView === "critical";
   const printReportLabel = isCriticalPathReport ? "Critical Path Report" : scheduleReportTitle;
   const contractorName = project.organization_name || "Overwatch";
+  const criticalBasisLabel = displayedCpmModel.criticalPathReliable
+    ? "Critical basis valid"
+    : "Critical basis provisional";
   const saveDataDate = () => {
     if (!dataDateDraft || dataDateUpdate.isPending || !isDataDateDirty) return;
     dataDateUpdate.mutate(dataDateDraft);
@@ -2308,25 +2311,29 @@ export function CpmActivityPlanner({
               <span>{scheduleViewSummary}</span>
             </div>
           </div>
-          <div className="constructline-cpm-print-status">
+          <div
+            className={cn(
+              "constructline-cpm-print-status",
+              isCriticalPathReport && "constructline-cpm-print-status-critical",
+            )}
+          >
             <span>{isCriticalPathReport ? "Critical path report" : "Report type"}</span>
             <strong>{printReportLabel}</strong>
             <em>
-              {displayedCpmModel.criticalPathReliable ? "Critical basis valid" : "Provisional"} ·
-              Finish {shortDate(displayedCpmModel.cpmFinishDate)}
+              {criticalBasisLabel} · Finish {shortDate(displayedCpmModel.cpmFinishDate)}
             </em>
           </div>
         </div>
         <div className="constructline-cpm-print-report-strip">
-          <span>
+          <span className="constructline-cpm-print-report-strip-company">
             <strong>Company</strong>
             {contractorName}
           </span>
-          <span>
+          <span className="constructline-cpm-print-report-strip-report">
             <strong>Report</strong>
             {printReportLabel}
           </span>
-          <span>
+          <span className="constructline-cpm-print-report-strip-basis">
             <strong>Critical basis</strong>
             {displayedCpmModel.criticalPathReliable ? "Valid" : "Provisional"}
           </span>
@@ -2358,7 +2365,10 @@ export function CpmActivityPlanner({
         />
         <footer className="constructline-cpm-print-footer">
           <span className="constructline-cpm-print-footer-primary">Company: {contractorName}</span>
-          <span className="constructline-cpm-print-footer-report">Report: {printReportLabel}</span>
+          <span className="constructline-cpm-print-footer-report">
+            {printReportLabel} · {criticalBasisLabel} · Finish{" "}
+            {shortDate(displayedCpmModel.cpmFinishDate)}
+          </span>
           <span>Critical path finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
           <span>Project finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
           <span>Data date {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}</span>

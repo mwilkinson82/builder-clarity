@@ -274,6 +274,12 @@
     text-align: right;
   }
 
+  .constructline-cpm-print-status-critical {
+    border-color: #d53c31;
+    border-left-width: 0.055in;
+    background: #fff3ef;
+  }
+
   .constructline-cpm-print-status span {
     display: block;
     color: #6f6a60;
@@ -289,6 +295,10 @@
     color: #221f1b;
     font-size: 12.5px;
     line-height: 1.05;
+  }
+
+  .constructline-cpm-print-status-critical strong {
+    color: #d53c31;
   }
 
   .constructline-cpm-print-status em {
@@ -326,6 +336,25 @@
     border-right: 0;
   }
 
+  .constructline-cpm-print-report-strip-company,
+  .constructline-cpm-print-report-strip-report,
+  .constructline-cpm-print-report-strip-basis {
+    background: white;
+  }
+
+  .constructline-cpm-print-report-strip-report {
+    background: #221f1b !important;
+    color: white !important;
+  }
+
+  .constructline-cpm-print-report-strip-report strong {
+    color: #f3dfca !important;
+  }
+
+  .constructline-cpm-print-report-strip-basis {
+    border-left: 0.035in solid #d53c31;
+  }
+
   .constructline-cpm-print-report-strip strong {
     display: block;
     margin-bottom: 0.012in;
@@ -359,7 +388,8 @@
   .constructline-cpm-print-footer-report {
     border: 1px solid #221f1b;
     padding: 0.015in 0.045in;
-    background: #fbf8f2;
+    background: #221f1b;
+    color: white;
   }
 
   .constructline-cpm-matrix-print {
