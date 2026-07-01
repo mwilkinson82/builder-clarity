@@ -26,11 +26,13 @@ This checklist covers the CPM schedule workspace requirements for WBS hierarchy,
 | Delay impacts show on the Gantt side | CPM smoke asserts delay extension finish dates, Gantt extension/marker classes, and delay extension copy. |
 | Print identifies company, report type, critical path, finish, data date, and legend | CPM smoke asserts Critical Path Report, company/report footer labels, critical path finish, print report strip, and 11 x 17 landscape print CSS. |
 | Product UI does not expose Lovable/Supabase migration wording | CPM smoke rejects user-facing `Lovable still needs`, `schedule_delay_fragments migration`, setup-state, and backend template setup wording. |
+| Matrix, modal, WBS manager, and print layout have repeatable overflow/text-fit guards | `npm run test:cpm:layout` asserts the full-width route, fit-mode timeline sizing, shared table/Gantt scroll surface, shared table columns, modal `overflow-x-hidden`, WBS manager responsive sizing, text truncation guards, and 11 x 17 print overflow rules. |
 
 ## Commands Run
 
 ```bash
 npm run test:cpm
+npm run test:cpm:layout
 ./node_modules/.bin/eslint src/components/outcome/ScheduleRisk.tsx 'src/routes/_authenticated/projects.$projectId.schedule.tsx' src/lib/schedule.functions.ts scripts/constructline-cpm-smoke.ts
 ./node_modules/.bin/tsc --noEmit
 npm run smoke:phase0
@@ -42,6 +44,7 @@ git ls-remote origin refs/heads/main
 Results:
 
 - `npm run test:cpm`: passed.
+- `npm run test:cpm:layout`: passed.
 - Scoped ESLint: passed.
 - TypeScript: passed.
 - `npm run smoke:phase0`: `99 passed, 0 failed, 1 warning`.
