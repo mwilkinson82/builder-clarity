@@ -1203,17 +1203,17 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       movement_weeks: movementWeeks,
       notes: data.notes,
     };
-    const extendedUpdatePayload: ScheduleUpdateInsert = {
+    const extendedUpdatePayload = {
       ...baseUpdatePayload,
       data_date: dataDate,
       schedule_money_exposure: data.schedule_money_exposure,
       schedule_money_recovery: data.schedule_money_recovery,
       money_notes: data.money_notes,
-    };
+    } as ScheduleUpdateInsert;
 
     let { data: update, error: insertError } = await context.supabase
       .from("schedule_updates")
-      .insert(extendedUpdatePayload)
+      .insert(extendedUpdatePayload as any)
       .select("*")
       .single();
     if (
@@ -1462,16 +1462,16 @@ async function ensureScheduleWbsSection(
   }
   if (lastError) throw new Error(lastError.message);
 
-  const payload: ScheduleWbsSectionInsert = {
+  const payload = {
     project_id: projectId,
     parent_id: parentId,
     name: sectionName,
     code: "",
     sort_order: ((last as { sort_order?: number } | null)?.sort_order ?? 0) + 10,
-  };
+  } as ScheduleWbsSectionInsert;
   let { data: inserted, error: insertError } = await supabase
     .from("schedule_wbs_sections")
-    .insert(payload)
+    .insert(payload as any)
     .select("id")
     .single();
   if (
@@ -1624,12 +1624,12 @@ async function syncPathBasedWbsSectionNamesForPathChange(
       name: nextName,
       code: section.code,
       sort_order: section.sort_order,
-    });
+    } as any);
   });
   if (payload.length === 0) return;
   const { error } = await supabase
     .from("schedule_wbs_sections")
-    .upsert(payload, { onConflict: "id" });
+    .upsert(payload as any, { onConflict: "id" });
   if (error) throw new Error(error.message);
 }
 
@@ -1874,13 +1874,13 @@ export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
     if (lastSiblingError) throw new Error(lastSiblingError.message);
 
     const sortOrder = ((lastSibling as { sort_order?: number } | null)?.sort_order ?? 0) + 10;
-    const updatePayload: ScheduleWbsSectionUpdate = {
+    const updatePayload = {
       parent_id: nextParentId,
       sort_order: sortOrder,
-    };
+    } as ScheduleWbsSectionUpdate;
     const { error: updateError } = await context.supabase
       .from("schedule_wbs_sections")
-      .update(updatePayload)
+      .update(updatePayload as any)
       .eq("id", section.id)
       .eq("project_id", section.project_id);
     if (updateError) throw new Error(updateError.message);
@@ -1912,7 +1912,7 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const parentId = data.parentId ?? null;
-    const reorderRpc = await context.supabase.rpc("reorder_schedule_wbs_sections", {
+    const reorderRpc = await (context.supabase.rpc as any)("reorder_schedule_wbs_sections", {
       p_project_id: data.projectId,
       p_parent_id: parentId,
       p_ordered_ids: data.orderedIds,
@@ -1965,18 +1965,18 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
     if (changedRows.length === 0) return { ok: true, changed: 0 };
 
     const payload = changedRows.map((row) => {
-      const item: ScheduleWbsSectionInsert = {
+      const item = {
         id: row.id,
         project_id: data.projectId,
         name: row.name,
         sort_order: row.sort_order,
-      };
-      if (canPersistParentId) item.parent_id = parentId;
+      } as ScheduleWbsSectionInsert;
+      if (canPersistParentId) (item as any).parent_id = parentId;
       return item;
     });
     const { error } = await context.supabase
       .from("schedule_wbs_sections")
-      .upsert(payload, { onConflict: "id" });
+      .upsert(payload as any, { onConflict: "id" });
     if (error) throw new Error(error.message);
     return { ok: true, changed: changedRows.length, method: "batch" };
   });
@@ -2105,7 +2105,7 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
     };
     let { data: createdRow, error } = await context.supabase
       .from("schedule_activities")
-      .insert(insertPayload)
+      .insert(insertPayload as any)
       .select("*")
       .single();
     if (
@@ -2194,7 +2194,7 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       );
       const { error: wbsLinkError } = await context.supabase
         .from("schedule_activities")
-        .update({ wbs_section_id: wbsSectionId })
+        .update({ wbs_section_id: wbsSectionId } as any)
         .eq("id", data.id);
       if (wbsLinkError && !isMissingRestColumn(wbsLinkError, "wbs_section_id")) {
         throw new Error(wbsLinkError.message);

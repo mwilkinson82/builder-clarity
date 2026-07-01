@@ -904,12 +904,7 @@ export type Database = {
           linked_exposure_id: string | null
           notes: string
           owner: string
-          owner_email: string
-          owner_user_id: string | null
           project_id: string
-          reminder_at: string | null
-          reminder_channel: string
-          reminder_enabled: boolean
           status: Database["public"]["Enums"]["decision_status"]
           updated_at: string
         }
@@ -923,12 +918,7 @@ export type Database = {
           linked_exposure_id?: string | null
           notes?: string
           owner?: string
-          owner_email?: string
-          owner_user_id?: string | null
           project_id: string
-          reminder_at?: string | null
-          reminder_channel?: string
-          reminder_enabled?: boolean
           status?: Database["public"]["Enums"]["decision_status"]
           updated_at?: string
         }
@@ -942,12 +932,7 @@ export type Database = {
           linked_exposure_id?: string | null
           notes?: string
           owner?: string
-          owner_email?: string
-          owner_user_id?: string | null
           project_id?: string
-          reminder_at?: string | null
-          reminder_channel?: string
-          reminder_enabled?: boolean
           status?: Database["public"]["Enums"]["decision_status"]
           updated_at?: string
         }
@@ -2164,7 +2149,6 @@ export type Database = {
           start_date: string | null
           successor_activity_ids: string[]
           updated_at: string
-          wbs_section_id: string | null
         }
         Insert: {
           activity_id?: string
@@ -2181,7 +2165,6 @@ export type Database = {
           start_date?: string | null
           successor_activity_ids?: string[]
           updated_at?: string
-          wbs_section_id?: string | null
         }
         Update: {
           activity_id?: string
@@ -2198,7 +2181,6 @@ export type Database = {
           start_date?: string | null
           successor_activity_ids?: string[]
           updated_at?: string
-          wbs_section_id?: string | null
         }
         Relationships: [
           {
@@ -2206,13 +2188,6 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "schedule_activities_wbs_section_id_fkey"
-            columns: ["wbs_section_id"]
-            isOneToOne: false
-            referencedRelation: "schedule_wbs_sections"
             referencedColumns: ["id"]
           },
         ]
@@ -2486,16 +2461,11 @@ export type Database = {
           baseline_completion_date: string | null
           created_at: string
           created_by: string | null
-          data_date: string | null
           forecast_completion_date: string
           id: string
-          money_notes: string
           movement_weeks: number
           notes: string
           project_id: string
-          schedule_money_exposure: number
-          schedule_money_net: number
-          schedule_money_recovery: number
           update_date: string
           update_number: number
           updated_at: string
@@ -2505,16 +2475,11 @@ export type Database = {
           baseline_completion_date?: string | null
           created_at?: string
           created_by?: string | null
-          data_date?: string | null
           forecast_completion_date: string
           id?: string
-          money_notes?: string
           movement_weeks?: number
           notes?: string
           project_id: string
-          schedule_money_exposure?: number
-          schedule_money_net?: number
-          schedule_money_recovery?: number
           update_date?: string
           update_number: number
           updated_at?: string
@@ -2524,16 +2489,11 @@ export type Database = {
           baseline_completion_date?: string | null
           created_at?: string
           created_by?: string | null
-          data_date?: string | null
           forecast_completion_date?: string
           id?: string
-          money_notes?: string
           movement_weeks?: number
           notes?: string
           project_id?: string
-          schedule_money_exposure?: number
-          schedule_money_net?: number
-          schedule_money_recovery?: number
           update_date?: string
           update_number?: number
           updated_at?: string
@@ -2551,31 +2511,25 @@ export type Database = {
       }
       schedule_wbs_sections: {
         Row: {
-          code: string
           created_at: string
           id: string
           name: string
-          parent_id: string | null
           project_id: string
           sort_order: number
           updated_at: string
         }
         Insert: {
-          code?: string
           created_at?: string
           id?: string
           name: string
-          parent_id?: string | null
           project_id: string
           sort_order?: number
           updated_at?: string
         }
         Update: {
-          code?: string
           created_at?: string
           id?: string
           name?: string
-          parent_id?: string | null
           project_id?: string
           sort_order?: number
           updated_at?: string
@@ -2586,13 +2540,6 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "schedule_wbs_sections_parent_id_fkey"
-            columns: ["parent_id"]
-            isOneToOne: false
-            referencedRelation: "schedule_wbs_sections"
             referencedColumns: ["id"]
           },
         ]
@@ -2729,14 +2676,6 @@ export type Database = {
           p_user_agent?: string
         }
         Returns: string
-      }
-      reorder_schedule_wbs_sections: {
-        Args: {
-          p_ordered_ids: string[]
-          p_parent_id?: string | null
-          p_project_id: string
-        }
-        Returns: number
       }
       storage_estimate_id: { Args: { p_name: string }; Returns: string }
       storage_project_id: { Args: { p_name: string }; Returns: string }
