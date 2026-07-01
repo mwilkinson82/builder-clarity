@@ -1765,9 +1765,9 @@ export function CpmActivityPlanner({
   const isWbsMigrationRequired = wbsPersistence === "migration_required";
   const isWbsPathFallback = wbsPersistence === "path_fallback";
   const showWbsMigrationPending = () => {
-    toast.error("WBS setup is still being enabled", {
+    toast.error("Saved WBS manager is unavailable", {
       description:
-        "Activity paths still display now; saved WBS management will unlock once setup is complete.",
+        "The grid still groups by each activity WBS field. Edit an activity WBS to adjust the visible schedule grouping.",
     });
   };
   const delaySummary = useMemo(() => buildDelayFragmentSummary(delayFragments), [delayFragments]);
@@ -2392,16 +2392,17 @@ export function CpmActivityPlanner({
 
         {isWbsMigrationRequired && (
           <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
-            Saved WBS management is still being enabled for this project. Sections are visible from
-            activity divisions now; WBS add, rename, and drag reorder will save once setup is
-            complete.
+            Saved WBS management is unavailable on this project. The grid still groups from each
+            activity WBS field, so schedule sections remain visible while activity-level edits stay
+            available.
           </div>
         )}
 
         {isWbsPathFallback && (
           <div className="mt-4 rounded-md border border-hairline bg-card px-4 py-3 text-sm text-muted-foreground">
-            Path-based WBS mode is active. Parent / child areas save as WBS paths now and will keep
-            working after the database hierarchy upgrade is applied.
+            WBS path mode is active. Parent and child areas save as readable paths such as Concrete
+            / Northwest corner, so the CPM grid can group location, room, area, trade, or
+            subcontractor sequences.
           </div>
         )}
 
@@ -3147,8 +3148,8 @@ function CpmGridToolbar({
         </Button>
         {templatePersistence === "migration_required" && (
           <span className="text-xs text-muted-foreground">
-            Shared template library is being enabled. Browser templates are available on this device
-            for beta testing.
+            Device template mode is active. Templates saved here are available in this browser for
+            other projects.
           </span>
         )}
       </CpmToolbarGroup>
@@ -3839,15 +3840,16 @@ function WbsManagerDialog({
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
           {isLocked && (
             <div className="rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
-              Saved WBS management is still being enabled. Existing activity paths can still display
-              as WBS groups, but add, nest, rename, and reorder actions are disabled until setup is
-              complete.
+              Saved WBS management is unavailable for this project. Existing activity paths still
+              display as WBS groups, and activity-level WBS edits can still adjust the schedule
+              structure.
             </div>
           )}
           {isPathFallback && !isLocked && (
             <div className="rounded-md border border-hairline bg-card px-4 py-3 text-sm text-muted-foreground">
-              Path-based WBS mode is active. Parent / child areas save as schedule paths now and
-              will continue working after the hierarchy upgrade is applied.
+              WBS path mode is active. Parent and child areas save as schedule paths, so Concrete /
+              Northwest corner, campus zones, rooms, trades, or subcontractor sequences can be
+              grouped immediately.
             </div>
           )}
 
@@ -3980,7 +3982,7 @@ function WbsManagerDialog({
             {isSavingOrder
               ? "Order is applied in the grid; background save is confirming it now."
               : isLocked
-                ? "WBS controls unlock automatically after setup is complete."
+                ? "This project is grouped by the WBS field on each activity."
                 : "Drag rows to reorder. Drop onto a parent to build child areas such as Concrete / Northwest corner."}
           </div>
           <Button type="button" onClick={() => onOpenChange(false)} disabled={isSaving}>
@@ -6534,8 +6536,8 @@ function ActivityDelayFragmentPanel({
 
       {persistence === "migration_required" ? (
         <div className="mt-3 rounded border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
-          Delay impact logging is not enabled for this workspace yet. Use Notes / Constraint for the
-          delay narrative on this activity. Activity details and CPM logic still save normally.
+          Use Notes / Constraint for the delay narrative on this activity. Activity details and CPM
+          logic still save normally.
         </div>
       ) : (
         <>

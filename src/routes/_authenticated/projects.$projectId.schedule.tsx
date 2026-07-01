@@ -72,7 +72,7 @@ function formatDelayFragmentError(error: unknown) {
     lowerMessage.includes("could not find the table") ||
     lowerMessage.includes("does not exist")
   ) {
-    return "Delay impact logging is not enabled for this workspace yet. Use Notes / Constraint for the delay narrative; CPM activity details still save normally.";
+    return "Use Notes / Constraint for the delay narrative on this activity. CPM activity details still save normally.";
   }
   return message || "Refresh and try again.";
 }

@@ -408,8 +408,8 @@ for (const requiredScheduleRiskText of [
   "Nest under",
   "Drop here to make top-level WBS",
   "Custom WBS / child area path",
-  "WBS setup is still being enabled",
-  "Path-based WBS mode is active",
+  "Saved WBS manager is unavailable",
+  "WBS path mode is active",
   "Schedule update history",
   "Interim milestones",
   "Critical delayed decisions",
@@ -428,7 +428,7 @@ for (const requiredScheduleRiskText of [
   "saveBrowserTemplate",
   "templateSave",
   "templateImport",
-  "Browser templates are available",
+  "Device template mode is active",
   "Send to Risk Tally",
   "createActivityExposureFn",
   "activityRiskCreate",
@@ -467,7 +467,7 @@ for (const requiredScheduleRouteText of [
   "Critical delayed decisions",
   "Procurement risks",
   "Trade performance risks",
-  "Delay impact logging is not enabled",
+  "Use Notes / Constraint for the delay narrative",
   'workspaceMode="full"',
 ]) {
   assert.ok(
@@ -570,6 +570,14 @@ assert.equal(
   ),
   false,
   "CPM schedule UI must not expose Lovable migration wording to users.",
+);
+
+assert.equal(
+  /being enabled|hierarchy upgrade is applied|after setup is complete/i.test(
+    `${scheduleRiskSource}\n${scheduleRouteSource}`,
+  ),
+  false,
+  "CPM schedule UI must not expose setup or migration-state wording to users.",
 );
 
 console.log("ConstructLine CPM smoke checks passed.");
