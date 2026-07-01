@@ -22,6 +22,11 @@ export interface ConstructLineCpmTask {
   activityKey: string;
   dependencyKey: string;
   durationDays: number;
+  remainingDurationDays: number;
+  baselineStartDate: string;
+  baselineFinishDate: string;
+  statusStartDate: string;
+  statusFinishDate: string;
   visualStartDate: string;
   visualFinishDate: string;
   earlyStart: number;
@@ -44,6 +49,8 @@ export interface ConstructLineCpmTask {
   isOpenStart: boolean;
   isOpenFinish: boolean;
   hasMissingDates: boolean;
+  isStatused: boolean;
+  slippageDays: number;
 }
 
 export interface ConstructLineStackBucket {
@@ -106,8 +113,14 @@ interface WorkingTask {
   activityKey: string;
   dependencyKey: string;
   durationDays: number;
+  remainingDurationDays: number;
+  scheduleDurationDays: number;
   startOffset: number | null;
   finishOffset: number | null;
+  baselineStartOffset: number | null;
+  baselineFinishOffset: number | null;
+  statusStartOffset: number | null;
+  statusFinishOffset: number | null;
   earlyStart: number;
   earlyFinish: number;
   lateStart: number;
@@ -239,7 +252,16 @@ export function buildConstructLineCpmModel(
   const nearCriticalFloat = options.nearCriticalFloat ?? 5;
   const dataDateMs = parseDateMs(options.dataDate);
   const sorted = [...activities].sort(sortActivities);
-  const dateValues = sorted.flatMap((activity) => [activity.start_date, activity.finish_date]);
+  const dateValues = sorted.flatMap((activity) => [
+    activity.start_date,
+    activity.finish_date,
+    activity.baseline_start_date,
+    activity.baseline_finish_date,
+    activity.forecast_start_date,
+    activity.forecast_finish_date,
+    activity.actual_start_date,
+    activity.actual_finish_date,
+  ]);
   const parsedDates = dateValues
     .map((value) => parseDateMs(value))
     .filter((value): value is number => value != null);
@@ -248,6 +270,7 @@ export function buildConstructLineCpmModel(
   const projectFinishMs = parsedDates.length > 0 ? Math.max(...parsedDates) : projectStartMs;
   const projectStartDate = isoDateFromMs(projectStartMs);
   const projectFinishDate = isoDateFromMs(projectFinishMs);
+  const dataDateOffset = dataDateMs == null ? null : getDayOffset(projectStartMs, options.dataDate);
   const diagnostics: string[] = [];
 
   const keyLookup = new Map<string, string>();
@@ -255,15 +278,37 @@ export function buildConstructLineCpmModel(
     const activityKey = activity.id;
     const dependencyKey = activity.activity_id?.trim() || `A-${String(index + 1).padStart(3, "0")}`;
     const isMilestone = isConstructLineMilestoneActivity(activity);
+    const baselineStartDate = getActivityBaselineStartDate(activity);
+    const baselineFinishDate = getActivityBaselineFinishDate(activity);
+    const statusStartDate = getActivityStatusStartDate(activity);
+    const statusFinishDate = getActivityStatusFinishDate(activity, dataDateMs);
+    const durationDays = isMilestone
+      ? 1
+      : (getDateSpanDays(baselineStartDate, baselineFinishDate) ?? getDurationDays(activity));
+    const remainingDurationDays = getActivityRemainingDurationDays({
+      activity,
+      isMilestone,
+      dataDateMs,
+      statusStartDate,
+      statusFinishDate,
+      plannedDurationDays: durationDays,
+    });
     keyLookup.set(normalizeDependencyKey(activity.id), activityKey);
     keyLookup.set(normalizeDependencyKey(dependencyKey), activityKey);
     return {
       activity,
       activityKey,
       dependencyKey,
-      durationDays: isMilestone ? 1 : getDurationDays(activity),
-      startOffset: getDayOffset(projectStartMs, activity.start_date),
-      finishOffset: getDayOffset(projectStartMs, activity.finish_date),
+      durationDays,
+      remainingDurationDays,
+      scheduleDurationDays:
+        activity.percent_complete >= 100 ? Math.max(1, durationDays) : remainingDurationDays,
+      startOffset: getDayOffset(projectStartMs, statusStartDate),
+      finishOffset: getDayOffset(projectStartMs, statusFinishDate),
+      baselineStartOffset: getDayOffset(projectStartMs, baselineStartDate),
+      baselineFinishOffset: getDayOffset(projectStartMs, baselineFinishDate),
+      statusStartOffset: getDayOffset(projectStartMs, statusStartDate),
+      statusFinishOffset: getDayOffset(projectStartMs, statusFinishDate),
       earlyStart: 0,
       earlyFinish: 0,
       lateStart: 0,
@@ -353,9 +398,14 @@ export function buildConstructLineCpmModel(
         return getRelationshipDrivenEarlyStart(predecessor, task, link);
       }),
     );
-    const constrainedStart = Math.max(logicStart, task.startOffset ?? 0);
+    const statusStart = getStatusedConstraintStart(task, dataDateOffset);
+    const constrainedStart = Math.max(logicStart, statusStart);
     task.earlyStart = constrainedStart;
-    task.earlyFinish = constrainedStart + task.durationDays - 1;
+    if (task.activity.percent_complete >= 100 && task.statusFinishOffset != null) {
+      task.earlyFinish = Math.max(constrainedStart, task.statusFinishOffset);
+    } else {
+      task.earlyFinish = constrainedStart + task.scheduleDurationDays - 1;
+    }
   }
 
   const projectFinishOffset = Math.max(0, ...tasks.map((task) => task.earlyFinish));
@@ -370,8 +420,8 @@ export function buildConstructLineCpmModel(
     task.lateStart =
       successorLateStarts.length > 0
         ? Math.min(...successorLateStarts)
-        : projectFinishOffset - task.durationDays + 1;
-    task.lateFinish = task.lateStart + task.durationDays - 1;
+        : projectFinishOffset - task.scheduleDurationDays + 1;
+    task.lateFinish = task.lateStart + task.scheduleDurationDays - 1;
     task.totalFloat = Math.max(0, task.lateStart - task.earlyStart);
     const successorEarlyStart = task.successorLinks
       .map((link) => {
@@ -387,13 +437,18 @@ export function buildConstructLineCpmModel(
   }
 
   const modelTasks: ConstructLineCpmTask[] = tasks.map((task) => {
-    const visualStartOffset = task.startOffset ?? task.earlyStart;
-    const visualFinishOffset = task.finishOffset ?? task.earlyFinish;
+    const visualStartOffset =
+      task.activity.actual_start_date != null
+        ? (task.statusStartOffset ?? task.earlyStart)
+        : Math.max(task.statusStartOffset ?? 0, task.earlyStart);
+    const visualFinishOffset = Math.max(task.statusFinishOffset ?? 0, task.earlyFinish);
+    const baselineStartOffset = task.baselineStartOffset ?? task.startOffset ?? task.earlyStart;
+    const baselineFinishOffset = task.baselineFinishOffset ?? task.finishOffset ?? task.earlyFinish;
     const isLate =
       dataDateMs != null &&
       task.activity.percent_complete < 100 &&
-      parseDateMs(task.activity.finish_date) != null &&
-      parseDateMs(task.activity.finish_date)! < dataDateMs;
+      parseDateMs(getActivityStatusFinishDate(task.activity, dataDateMs)) != null &&
+      parseDateMs(getActivityStatusFinishDate(task.activity, dataDateMs))! < dataDateMs;
     const isOutOfSequence =
       task.activity.percent_complete > 0 &&
       task.predecessorLinks.some(
@@ -405,6 +460,11 @@ export function buildConstructLineCpmModel(
       activityKey: task.activityKey,
       dependencyKey: task.dependencyKey,
       durationDays: task.durationDays,
+      remainingDurationDays: task.remainingDurationDays,
+      baselineStartDate: isoDateFromMs(projectStartMs + baselineStartOffset * DAY_MS),
+      baselineFinishDate: isoDateFromMs(projectStartMs + baselineFinishOffset * DAY_MS),
+      statusStartDate: isoDateFromMs(projectStartMs + visualStartOffset * DAY_MS),
+      statusFinishDate: isoDateFromMs(projectStartMs + visualFinishOffset * DAY_MS),
       visualStartDate: isoDateFromMs(projectStartMs + visualStartOffset * DAY_MS),
       visualFinishDate: isoDateFromMs(projectStartMs + visualFinishOffset * DAY_MS),
       earlyStart: task.earlyStart,
@@ -426,7 +486,11 @@ export function buildConstructLineCpmModel(
       isOutOfSequence,
       isOpenStart: task.predecessorKeys.length === 0,
       isOpenFinish: task.successorKeys.length === 0,
-      hasMissingDates: !task.activity.start_date || !task.activity.finish_date,
+      hasMissingDates:
+        !getActivityBaselineStartDate(task.activity) ||
+        !getActivityBaselineFinishDate(task.activity),
+      isStatused: hasStatusedActivityFields(task.activity),
+      slippageDays: Math.max(0, visualFinishOffset - baselineFinishOffset),
     };
   });
 
@@ -586,9 +650,9 @@ function getRelationshipDrivenEarlyStart(
     case "SS":
       return predecessor.earlyStart + lag;
     case "FF":
-      return predecessor.earlyFinish + lag - successor.durationDays + 1;
+      return predecessor.earlyFinish + lag - successor.scheduleDurationDays + 1;
     case "SF":
-      return predecessor.earlyStart + lag - successor.durationDays + 1;
+      return predecessor.earlyStart + lag - successor.scheduleDurationDays + 1;
     case "FS":
     default:
       return predecessor.earlyFinish + 1 + lag;
@@ -605,12 +669,12 @@ function getRelationshipDrivenLateStart(
     case "SS":
       return successor.lateStart - lag;
     case "FF":
-      return successor.lateFinish - lag - predecessor.durationDays + 1;
+      return successor.lateFinish - lag - predecessor.scheduleDurationDays + 1;
     case "SF":
       return successor.lateFinish - lag;
     case "FS":
     default:
-      return successor.lateStart - lag - predecessor.durationDays;
+      return successor.lateStart - lag - predecessor.scheduleDurationDays;
   }
 }
 
@@ -673,6 +737,105 @@ function parseLagDays(value: string | undefined) {
 function clampLagDays(value: number) {
   if (!Number.isFinite(value)) return 0;
   return Math.max(-999, Math.min(999, Math.round(value)));
+}
+
+function getActivityBaselineStartDate(activity: ScheduleActivityRow) {
+  return activity.baseline_start_date ?? activity.start_date;
+}
+
+function getActivityBaselineFinishDate(activity: ScheduleActivityRow) {
+  return activity.baseline_finish_date ?? activity.finish_date;
+}
+
+function getActivityStatusStartDate(activity: ScheduleActivityRow) {
+  return (
+    activity.actual_start_date ??
+    activity.forecast_start_date ??
+    activity.start_date ??
+    activity.baseline_start_date ??
+    activity.baseline_finish_date ??
+    activity.finish_date
+  );
+}
+
+function getActivityStatusFinishDate(activity: ScheduleActivityRow, dataDateMs?: number | null) {
+  if (activity.actual_finish_date) return activity.actual_finish_date;
+  if (
+    dataDateMs != null &&
+    activity.percent_complete < 100 &&
+    activity.remaining_duration_days != null
+  ) {
+    return isoDateFromMs(dataDateMs + Math.max(0, activity.remaining_duration_days - 1) * DAY_MS);
+  }
+  return (
+    activity.forecast_finish_date ??
+    activity.finish_date ??
+    activity.baseline_finish_date ??
+    activity.forecast_start_date ??
+    activity.actual_start_date ??
+    activity.start_date ??
+    activity.baseline_start_date
+  );
+}
+
+function getActivityRemainingDurationDays({
+  activity,
+  isMilestone,
+  dataDateMs,
+  statusStartDate,
+  statusFinishDate,
+  plannedDurationDays,
+}: {
+  activity: ScheduleActivityRow;
+  isMilestone: boolean;
+  dataDateMs: number | null;
+  statusStartDate: string | null;
+  statusFinishDate: string | null;
+  plannedDurationDays: number;
+}) {
+  if (activity.percent_complete >= 100) return 0;
+  if (activity.remaining_duration_days != null) {
+    return Math.max(isMilestone ? 1 : 1, Math.round(activity.remaining_duration_days));
+  }
+  const statusFinishMs = parseDateMs(statusFinishDate);
+  const statusStartMs = parseDateMs(statusStartDate);
+  const statusAnchorMs =
+    dataDateMs != null && activity.percent_complete > 0
+      ? dataDateMs
+      : dataDateMs != null && activity.percent_complete === 0
+        ? Math.max(dataDateMs, statusStartMs ?? dataDateMs)
+        : statusStartMs;
+  if (statusAnchorMs != null && statusFinishMs != null && statusFinishMs >= statusAnchorMs) {
+    return Math.max(1, Math.round((statusFinishMs - statusAnchorMs) / DAY_MS) + 1);
+  }
+  return Math.max(1, plannedDurationDays);
+}
+
+function getStatusedConstraintStart(task: WorkingTask, dataDateOffset: number | null) {
+  if (task.activity.percent_complete >= 100) return task.statusStartOffset ?? task.startOffset ?? 0;
+  const statusStartOffset = task.statusStartOffset ?? task.startOffset ?? 0;
+  if (dataDateOffset == null) return statusStartOffset;
+  if (task.activity.percent_complete > 0) return Math.max(dataDateOffset, statusStartOffset);
+  return Math.max(dataDateOffset, statusStartOffset);
+}
+
+function hasStatusedActivityFields(activity: ScheduleActivityRow) {
+  return Boolean(
+    activity.baseline_start_date ||
+    activity.baseline_finish_date ||
+    activity.forecast_start_date ||
+    activity.forecast_finish_date ||
+    activity.actual_start_date ||
+    activity.actual_finish_date ||
+    activity.remaining_duration_days != null,
+  );
+}
+
+function getDateSpanDays(startDate?: string | null, finishDate?: string | null) {
+  const start = parseDateMs(startDate);
+  const finish = parseDateMs(finishDate);
+  if (start == null || finish == null) return null;
+  return Math.max(1, Math.round((finish - start) / DAY_MS) + 1);
 }
 
 function parseDateMs(value?: string | null) {

@@ -21,6 +21,24 @@ import {
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const readProjectFile = (filePath: string) => readFileSync(resolve(rootDir, filePath), "utf8");
+const withScheduleActivityStatus = <
+  T extends {
+    start_date: string | null;
+    finish_date: string | null;
+    percent_complete: number;
+  },
+>(
+  activity: T,
+) => ({
+  ...activity,
+  baseline_start_date: activity.start_date,
+  baseline_finish_date: activity.finish_date,
+  forecast_start_date: activity.start_date,
+  forecast_finish_date: activity.finish_date,
+  actual_start_date: activity.percent_complete > 0 ? activity.start_date : null,
+  actual_finish_date: activity.percent_complete >= 100 ? activity.finish_date : null,
+  remaining_duration_days: activity.percent_complete >= 100 ? 0 : null,
+});
 
 const parsed = parseConstructLineDependencyToken("A-010 FF +2d");
 assert.deepEqual(parsed, {
@@ -91,10 +109,10 @@ const activities = [
     notes: "ConstructLine milestone",
     sort_order: 40,
   },
-];
+].map(withScheduleActivityStatus);
 
 const model = buildConstructLineCpmModel(activities, {
-  dataDate: "2026-01-04",
+  dataDate: "2026-01-01",
   nearCriticalFloat: 5,
 });
 const byId = new Map(model.tasks.map((task) => [task.dependencyKey, task]));
@@ -109,6 +127,56 @@ assert.equal(byId.get("MS-001")?.isMilestone, true);
 assert.equal(byId.get("MS-001")?.totalFloat, 0);
 assert.equal(byId.get("C")?.isNearCritical, true);
 assert.equal(byId.get("C")?.isCritical, false);
+
+const statusedActivities = [
+  withScheduleActivityStatus({
+    id: "status-a",
+    project_id: "project",
+    activity_id: "A",
+    name: "Started activity",
+    division: "01 - General",
+    start_date: "2026-01-01",
+    finish_date: "2026-01-10",
+    percent_complete: 50,
+    predecessor_activity_ids: [],
+    successor_activity_ids: ["B|FS|0"],
+    notes: "",
+    sort_order: 10,
+  }),
+  withScheduleActivityStatus({
+    id: "status-b",
+    project_id: "project",
+    activity_id: "B",
+    name: "Follow-on activity",
+    division: "02 - Finish",
+    start_date: "2026-01-11",
+    finish_date: "2026-01-15",
+    percent_complete: 0,
+    predecessor_activity_ids: ["A|FS|0"],
+    successor_activity_ids: [],
+    notes: "",
+    sort_order: 20,
+  }),
+].map((activity) =>
+  activity.activity_id === "A"
+    ? {
+        ...activity,
+        actual_start_date: "2026-01-01",
+        forecast_finish_date: "2026-01-13",
+        remaining_duration_days: 5,
+      }
+    : activity,
+);
+const statusedModel = buildConstructLineCpmModel(statusedActivities, {
+  dataDate: "2026-01-09",
+});
+const statusedById = new Map(statusedModel.tasks.map((task) => [task.dependencyKey, task]));
+assert.equal(statusedById.get("A")?.remainingDurationDays, 5);
+assert.equal(statusedById.get("A")?.statusStartDate, "2026-01-01");
+assert.equal(statusedById.get("A")?.statusFinishDate, "2026-01-13");
+assert.equal(statusedById.get("A")?.slippageDays, 3);
+assert.equal(statusedById.get("B")?.statusStartDate, "2026-01-14");
+assert.equal(statusedById.get("B")?.isCritical, true);
 
 const reciprocalPatches = buildReciprocalActivityLogicPatches(
   {

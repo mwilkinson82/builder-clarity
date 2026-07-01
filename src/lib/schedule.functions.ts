@@ -77,6 +77,13 @@ export interface ScheduleActivityRow {
   wbs_section_id: string | null;
   start_date: string | null;
   finish_date: string | null;
+  baseline_start_date: string | null;
+  baseline_finish_date: string | null;
+  forecast_start_date: string | null;
+  forecast_finish_date: string | null;
+  actual_start_date: string | null;
+  actual_finish_date: string | null;
+  remaining_duration_days: number | null;
   percent_complete: number;
   predecessor_activity_ids: string[];
   successor_activity_ids: string[];
@@ -296,6 +303,20 @@ const normalizeScheduleActivity = (r: Record<string, unknown>): ScheduleActivity
   wbs_section_id: (r.wbs_section_id as string | null) ?? null,
   start_date: (r.start_date as string | null) ?? null,
   finish_date: (r.finish_date as string | null) ?? null,
+  baseline_start_date:
+    (r.baseline_start_date as string | null) ?? (r.start_date as string | null) ?? null,
+  baseline_finish_date:
+    (r.baseline_finish_date as string | null) ?? (r.finish_date as string | null) ?? null,
+  forecast_start_date:
+    (r.forecast_start_date as string | null) ?? (r.start_date as string | null) ?? null,
+  forecast_finish_date:
+    (r.forecast_finish_date as string | null) ?? (r.finish_date as string | null) ?? null,
+  actual_start_date: (r.actual_start_date as string | null) ?? null,
+  actual_finish_date: (r.actual_finish_date as string | null) ?? null,
+  remaining_duration_days:
+    r.remaining_duration_days == null
+      ? null
+      : Math.max(0, Math.round(num(r.remaining_duration_days))),
   percent_complete: num(r.percent_complete),
   predecessor_activity_ids: Array.isArray(r.predecessor_activity_ids)
     ? r.predecessor_activity_ids.map(String)
@@ -714,6 +735,13 @@ const scheduleActivityTemplatePayload = (activity: ScheduleActivityRow): Record<
   division: activity.division,
   start_date: activity.start_date,
   finish_date: activity.finish_date,
+  baseline_start_date: activity.baseline_start_date,
+  baseline_finish_date: activity.baseline_finish_date,
+  forecast_start_date: activity.forecast_start_date,
+  forecast_finish_date: activity.forecast_finish_date,
+  actual_start_date: activity.actual_start_date,
+  actual_finish_date: activity.actual_finish_date,
+  remaining_duration_days: activity.remaining_duration_days,
   percent_complete: activity.percent_complete,
   predecessor_activity_ids: activity.predecessor_activity_ids,
   successor_activity_ids: activity.successor_activity_ids,
@@ -743,6 +771,16 @@ const readTemplateActivities = (value: unknown): ScheduleActivityInsert[] => {
       division: str(row.division, "General"),
       start_date: (row.start_date as string | null) ?? null,
       finish_date: (row.finish_date as string | null) ?? null,
+      baseline_start_date: (row.baseline_start_date as string | null) ?? null,
+      baseline_finish_date: (row.baseline_finish_date as string | null) ?? null,
+      forecast_start_date: (row.forecast_start_date as string | null) ?? null,
+      forecast_finish_date: (row.forecast_finish_date as string | null) ?? null,
+      actual_start_date: (row.actual_start_date as string | null) ?? null,
+      actual_finish_date: (row.actual_finish_date as string | null) ?? null,
+      remaining_duration_days:
+        row.remaining_duration_days == null
+          ? null
+          : Math.max(0, Math.round(num(row.remaining_duration_days))),
       percent_complete: num(row.percent_complete),
       predecessor_activity_ids: Array.isArray(row.predecessor_activity_ids)
         ? row.predecessor_activity_ids.map(String)
@@ -1138,12 +1176,51 @@ const activityPatch = z.object({
   wbs_section_id: z.string().uuid().nullable().optional(),
   start_date: z.string().nullable().optional(),
   finish_date: z.string().nullable().optional(),
+  baseline_start_date: z.string().nullable().optional(),
+  baseline_finish_date: z.string().nullable().optional(),
+  forecast_start_date: z.string().nullable().optional(),
+  forecast_finish_date: z.string().nullable().optional(),
+  actual_start_date: z.string().nullable().optional(),
+  actual_finish_date: z.string().nullable().optional(),
+  remaining_duration_days: z.number().int().min(0).max(5000).nullable().optional(),
   percent_complete: z.number().min(0).max(100).optional(),
   predecessor_activity_ids: z.array(z.string().max(50)).optional(),
   successor_activity_ids: z.array(z.string().max(50)).optional(),
   notes: z.string().max(4000).optional(),
   sort_order: z.number().int().optional(),
 });
+
+const SCHEDULE_ACTIVITY_STATUS_COLUMNS = [
+  "baseline_start_date",
+  "baseline_finish_date",
+  "forecast_start_date",
+  "forecast_finish_date",
+  "actual_start_date",
+  "actual_finish_date",
+  "remaining_duration_days",
+] as const;
+
+function isMissingScheduleActivityStatusColumn(error: DynamicSupabaseError) {
+  return SCHEDULE_ACTIVITY_STATUS_COLUMNS.some((column) => isMissingRestColumn(error, column));
+}
+
+function stripScheduleActivityStatusColumns<T extends Record<string, unknown>>(payload: T) {
+  const next = { ...payload };
+  for (const column of SCHEDULE_ACTIVITY_STATUS_COLUMNS) delete next[column];
+  return next;
+}
+
+function stripScheduleActivityMissingColumns<T extends Record<string, unknown>>(
+  payload: T,
+  error: DynamicSupabaseError,
+) {
+  let next = { ...payload };
+  if (isMissingRestColumn(error, "wbs_section_id")) delete next.wbs_section_id;
+  if (isMissingScheduleActivityStatusColumn(error)) {
+    next = stripScheduleActivityStatusColumns(next);
+  }
+  return next;
+}
 
 async function ensureScheduleWbsSection(
   supabase: ScheduleSupabaseClient,
@@ -1834,18 +1911,23 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
       activity_id: activityId,
       sort_order: sortOrder,
     };
+    const insertPayload = {
+      ...basePayload,
+      wbs_section_id: wbsSectionId,
+    };
     let { data: createdRow, error } = await context.supabase
       .from("schedule_activities")
-      .insert({
-        ...basePayload,
-        wbs_section_id: wbsSectionId,
-      })
+      .insert(insertPayload)
       .select("*")
       .single();
-    if (error && isMissingRestColumn(error, "wbs_section_id")) {
+    if (
+      error &&
+      (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error))
+    ) {
+      const fallbackPayload = stripScheduleActivityMissingColumns(insertPayload, error);
       ({ data: createdRow, error } = await context.supabase
         .from("schedule_activities")
-        .insert(basePayload)
+        .insert(fallbackPayload as ScheduleActivityInsert)
         .select("*")
         .single());
     }
@@ -1883,10 +1965,22 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       beforeRow as unknown as Record<string, unknown>,
     );
 
-    const { error } = await context.supabase
+    let { error } = await context.supabase
       .from("schedule_activities")
       .update(data.patch as ScheduleActivityUpdate)
       .eq("id", data.id);
+    if (error && isMissingScheduleActivityStatusColumn(error)) {
+      const fallbackPatch = stripScheduleActivityStatusColumns(
+        data.patch as Record<string, unknown>,
+      );
+      if (Object.keys(fallbackPatch).length === 0) {
+        throw new Error("Schedule status fields need the database update before they can save.");
+      }
+      ({ error } = await context.supabase
+        .from("schedule_activities")
+        .update(fallbackPatch as ScheduleActivityUpdate)
+        .eq("id", data.id));
+    }
     if (error) throw new Error(error.message);
 
     const shouldSyncLogic =

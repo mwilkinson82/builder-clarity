@@ -1929,16 +1929,23 @@ export type Database = {
       }
       schedule_activities: {
         Row: {
+          actual_finish_date: string | null
+          actual_start_date: string | null
           activity_id: string
+          baseline_finish_date: string | null
+          baseline_start_date: string | null
           created_at: string
           division: string
           finish_date: string | null
+          forecast_finish_date: string | null
+          forecast_start_date: string | null
           id: string
           name: string
           notes: string
           percent_complete: number
           predecessor_activity_ids: string[]
           project_id: string
+          remaining_duration_days: number | null
           sort_order: number
           start_date: string | null
           successor_activity_ids: string[]
@@ -1946,16 +1953,23 @@ export type Database = {
           wbs_section_id: string | null
         }
         Insert: {
+          actual_finish_date?: string | null
+          actual_start_date?: string | null
           activity_id?: string
+          baseline_finish_date?: string | null
+          baseline_start_date?: string | null
           created_at?: string
           division?: string
           finish_date?: string | null
+          forecast_finish_date?: string | null
+          forecast_start_date?: string | null
           id?: string
           name: string
           notes?: string
           percent_complete?: number
           predecessor_activity_ids?: string[]
           project_id: string
+          remaining_duration_days?: number | null
           sort_order?: number
           start_date?: string | null
           successor_activity_ids?: string[]
@@ -1963,16 +1977,23 @@ export type Database = {
           wbs_section_id?: string | null
         }
         Update: {
+          actual_finish_date?: string | null
+          actual_start_date?: string | null
           activity_id?: string
+          baseline_finish_date?: string | null
+          baseline_start_date?: string | null
           created_at?: string
           division?: string
           finish_date?: string | null
+          forecast_finish_date?: string | null
+          forecast_start_date?: string | null
           id?: string
           name?: string
           notes?: string
           percent_complete?: number
           predecessor_activity_ids?: string[]
           project_id?: string
+          remaining_duration_days?: number | null
           sort_order?: number
           start_date?: string | null
           successor_activity_ids?: string[]

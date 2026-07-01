@@ -89,6 +89,10 @@ for (const requiredModalLayoutText of [
   "Predecessors - work before this activity",
   "Successors - work after this activity",
   "Dependency readout",
+  "Status update",
+  "Baseline start",
+  "Remaining duration",
+  "Expected finish",
   "ActivityDelayFragmentPanel",
   "sm:w-[min(calc(100vw-2rem),72rem)] sm:max-w-[72rem]",
   "overflow-y-auto px-4 py-4 sm:px-6",
@@ -151,6 +155,21 @@ for (const requiredPrintLayoutText of [
     stylesSource,
     requiredPrintLayoutText,
     `Print styles missing layout contract: ${requiredPrintLayoutText}`,
+  );
+}
+
+for (const requiredStatusedCpmText of [
+  "task.statusStartDate",
+  "task.statusFinishDate",
+  "task.slippageDays > 0",
+  "remaining_duration_days",
+  "updateDraftRemainingDuration",
+  "updateDraftForecastFinishDate",
+]) {
+  assertIncludes(
+    scheduleRiskSource,
+    requiredStatusedCpmText,
+    `CPM statused update workflow missing source contract: ${requiredStatusedCpmText}`,
   );
 }
 

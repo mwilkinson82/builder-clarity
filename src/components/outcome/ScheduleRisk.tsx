@@ -271,6 +271,13 @@ export type ActivityCreateInput = { name: string } & Partial<
     | "division"
     | "start_date"
     | "finish_date"
+    | "baseline_start_date"
+    | "baseline_finish_date"
+    | "forecast_start_date"
+    | "forecast_finish_date"
+    | "actual_start_date"
+    | "actual_finish_date"
+    | "remaining_duration_days"
     | "percent_complete"
     | "predecessor_activity_ids"
     | "successor_activity_ids"
@@ -1047,9 +1054,16 @@ function buildActivityRiskDescription(
 ) {
   const pieces = [
     `CPM activity ${activity.activity_id || "without ID"}: ${activity.name}.`,
-    activity.start_date || activity.finish_date
-      ? `Current dates: ${shortDate(activity.start_date)} to ${shortDate(activity.finish_date)}.`
-      : "Current dates are not fully set.",
+    getActivityBaselineStart(activity) || getActivityBaselineFinish(activity)
+      ? `Baseline dates: ${shortDate(getActivityBaselineStart(activity))} to ${shortDate(
+          getActivityBaselineFinish(activity),
+        )}.`
+      : "Baseline dates are not fully set.",
+    getActivityForecastStart(activity) || getActivityForecastFinish(activity)
+      ? `Forecast dates: ${shortDate(getActivityForecastStart(activity))} to ${shortDate(
+          getActivityForecastFinish(activity),
+        )}.`
+      : "Forecast dates are not fully set.",
     `${activity.percent_complete}% complete.`,
   ];
   if (delaySummary.openDays > 0) {
@@ -1100,7 +1114,9 @@ function buildDelayExtensionFinishDates(
 ) {
   const byActivity = groupDelayFragmentsByActivity(delayFragments);
   return activities.flatMap((activity) => {
-    const baseMs = parseDateMs(activity.finish_date ?? activity.start_date);
+    const baseMs = parseDateMs(
+      getActivityForecastFinish(activity) ?? getActivityForecastStart(activity),
+    );
     if (baseMs == null) return [];
     const delaySummary = buildDelayFragmentSummary(
       getDelayFragmentsForActivity(activity, byActivity),
@@ -1624,6 +1640,13 @@ type ActivityDraft = {
   division: string;
   start_date: string;
   finish_date: string;
+  baseline_start_date: string;
+  baseline_finish_date: string;
+  forecast_start_date: string;
+  forecast_finish_date: string;
+  actual_start_date: string;
+  actual_finish_date: string;
+  remaining_duration_days: string;
   percent_complete: string;
   predecessor_activity_ids: string;
   successor_activity_ids: string;
@@ -1637,6 +1660,13 @@ const emptyActivityDraft = (): ActivityDraft => ({
   division: "General",
   start_date: "",
   finish_date: "",
+  baseline_start_date: "",
+  baseline_finish_date: "",
+  forecast_start_date: "",
+  forecast_finish_date: "",
+  actual_start_date: "",
+  actual_finish_date: "",
+  remaining_duration_days: "",
   percent_complete: "0",
   predecessor_activity_ids: "",
   successor_activity_ids: "",
@@ -1650,6 +1680,14 @@ const activityDraftFromRow = (activity: ScheduleActivityRow): ActivityDraft => (
   division: activity.division || "General",
   start_date: activity.start_date ?? "",
   finish_date: activity.finish_date ?? "",
+  baseline_start_date: activity.baseline_start_date ?? activity.start_date ?? "",
+  baseline_finish_date: activity.baseline_finish_date ?? activity.finish_date ?? "",
+  forecast_start_date: activity.forecast_start_date ?? activity.start_date ?? "",
+  forecast_finish_date: activity.forecast_finish_date ?? activity.finish_date ?? "",
+  actual_start_date: activity.actual_start_date ?? "",
+  actual_finish_date: activity.actual_finish_date ?? "",
+  remaining_duration_days:
+    activity.remaining_duration_days == null ? "" : String(activity.remaining_duration_days),
   percent_complete: String(activity.percent_complete),
   predecessor_activity_ids: formatActivityIds(activity.predecessor_activity_ids),
   successor_activity_ids: formatActivityIds(activity.successor_activity_ids),
@@ -1810,7 +1848,16 @@ export function CpmActivityPlanner({
         project.baseline_completion_date,
         project.forecast_completion_date,
         effectiveDataDate,
-        ...activities.flatMap((activity) => [activity.start_date, activity.finish_date]),
+        ...activities.flatMap((activity) => [
+          activity.start_date,
+          activity.finish_date,
+          activity.baseline_start_date,
+          activity.baseline_finish_date,
+          activity.forecast_start_date,
+          activity.forecast_finish_date,
+          activity.actual_start_date,
+          activity.actual_finish_date,
+        ]),
         ...delayExtensionFinishDates,
       ]),
     [
@@ -1901,12 +1948,31 @@ export function CpmActivityPlanner({
     }
     const name = draft.name.trim();
     const milestoneDate = getMilestoneDraftDate(draft);
+    const baselineStart = draft.is_milestone
+      ? milestoneDate
+      : draft.baseline_start_date || draft.start_date || null;
+    const baselineFinish = draft.is_milestone
+      ? milestoneDate
+      : draft.baseline_finish_date || draft.finish_date || null;
+    const forecastStart = draft.is_milestone
+      ? milestoneDate
+      : draft.forecast_start_date || baselineStart;
+    const forecastFinish = draft.is_milestone
+      ? milestoneDate
+      : draft.forecast_finish_date || baselineFinish;
     onAddActivity({
       activity_id: draft.activity_id.trim() || undefined,
       name,
       division: draft.is_milestone ? "Milestones" : draft.division.trim() || "General",
-      start_date: draft.is_milestone ? milestoneDate : draft.start_date || null,
-      finish_date: draft.is_milestone ? milestoneDate : draft.finish_date || null,
+      start_date: baselineStart,
+      finish_date: baselineFinish,
+      baseline_start_date: baselineStart,
+      baseline_finish_date: baselineFinish,
+      forecast_start_date: forecastStart,
+      forecast_finish_date: forecastFinish,
+      actual_start_date: draft.actual_start_date || null,
+      actual_finish_date: draft.actual_finish_date || null,
+      remaining_duration_days: parseRemainingDuration(draft.remaining_duration_days),
       percent_complete: parsePercent(draft.percent_complete),
       predecessor_activity_ids: serializeActivityLinksToArray(draft.predecessor_activity_ids),
       successor_activity_ids: serializeActivityLinksToArray(draft.successor_activity_ids),
@@ -2200,7 +2266,7 @@ export function CpmActivityPlanner({
           response_path: "recover",
           hold_class: "E-Hold",
           status: "active",
-          due_date: activity.finish_date,
+          due_date: activity.forecast_finish_date ?? activity.finish_date,
           next_review_at: effectiveDataDate ?? todayIsoDate(),
           release_condition: `Activity recovered or absorbed: ${activity.activity_id || activity.name}`,
           notes:
@@ -2231,7 +2297,13 @@ export function CpmActivityPlanner({
       activity.predecessor_activity_ids.length > 0 || activity.successor_activity_ids.length > 0,
   ).length;
   const activitiesWithDates = sortedActivities.filter(
-    (activity) => activity.start_date || activity.finish_date,
+    (activity) =>
+      activity.start_date ||
+      activity.finish_date ||
+      activity.baseline_start_date ||
+      activity.baseline_finish_date ||
+      activity.forecast_start_date ||
+      activity.forecast_finish_date,
   ).length;
   const printedLogicTieCount = displayedCpmModel.tasks.reduce(
     (total, task) => total + task.predecessorKeys.length,
@@ -2477,19 +2549,19 @@ export function CpmActivityPlanner({
                   listId="new-activity-wbs-divisions"
                 />
               </LabeledField>
-              <LabeledField label="Start">
+              <LabeledField label="Baseline start">
                 <Input
                   type="date"
-                  value={draft.start_date}
-                  onChange={(e) => setDraft(updateDraftStartDate(draft, e.target.value))}
+                  value={draft.baseline_start_date}
+                  onChange={(e) => setDraft(updateDraftBaselineStartDate(draft, e.target.value))}
                   className="h-10"
                 />
               </LabeledField>
-              <LabeledField label="Finish">
+              <LabeledField label="Baseline finish">
                 <Input
                   type="date"
-                  value={draft.finish_date}
-                  onChange={(e) => setDraft(updateDraftFinishDate(draft, e.target.value))}
+                  value={draft.baseline_finish_date}
+                  onChange={(e) => setDraft(updateDraftBaselineFinishDate(draft, e.target.value))}
                   className="h-10"
                 />
               </LabeledField>
@@ -2786,6 +2858,7 @@ export function CpmActivityPlanner({
         <ActivityDetailDialog
           activity={selectedActivity}
           activities={sortedActivities}
+          dataDate={effectiveDataDate}
           isSaving={isSavingActivity}
           onClose={() => setSelectedActivityId(null)}
           onSave={(patch) => onPatchActivity(selectedActivity.id, patch)}
@@ -4375,6 +4448,7 @@ function ConstructLinePrintTaskRow({
     task.isMilestone ? "Milestone" : null,
     task.isCritical ? "Critical" : task.isNearCritical ? "Near critical" : null,
     task.isLate ? "Late" : null,
+    task.slippageDays > 0 ? `+${task.slippageDays}d slip` : null,
     task.isOpenStart ? "Open start" : null,
     task.isOpenFinish ? "Open finish" : null,
   ].filter(Boolean);
@@ -4389,8 +4463,7 @@ function ConstructLinePrintTaskRow({
         ))}
       </span>
       <span className="constructline-print-dates">
-        {shortPrintDate(task.activity.start_date ?? task.visualStartDate)}-
-        {shortPrintDate(task.activity.finish_date ?? task.visualFinishDate)}
+        {shortPrintDate(task.statusStartDate)}-{shortPrintDate(task.statusFinishDate)}
       </span>
       <span>{percent}%</span>
       <span>{task.totalFloat}</span>
@@ -5133,6 +5206,9 @@ function ConstructLineTaskRow({
             {task.isOpenStart && <ScheduleFlag tone="warning">open start</ScheduleFlag>}
             {task.isOpenFinish && <ScheduleFlag tone="warning">open finish</ScheduleFlag>}
             {task.hasMissingDates && <ScheduleFlag tone="warning">missing dates</ScheduleFlag>}
+            {task.slippageDays > 0 && (
+              <ScheduleFlag tone="danger">+{task.slippageDays}d slip</ScheduleFlag>
+            )}
             {hasOpenDelay && (
               <ScheduleFlag tone="danger">{delaySummary.openDays}d delay</ScheduleFlag>
             )}
@@ -5142,10 +5218,10 @@ function ConstructLineTaskRow({
           {task.isMilestone ? "M" : task.durationDays}
         </div>
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
-          {shortPrintDate(activity.start_date ?? task.visualStartDate)}
+          {shortPrintDate(task.statusStartDate)}
         </div>
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
-          {shortPrintDate(activity.finish_date ?? task.visualFinishDate)}
+          {shortPrintDate(task.statusFinishDate)}
         </div>
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 font-semibold tabular text-foreground">
           {percent}%
@@ -5755,7 +5831,8 @@ function ActivityRegisterRow({
       </div>
       <div className="text-xs text-muted-foreground">
         <div className="font-semibold tabular text-foreground">
-          {shortDate(activity.start_date)} → {shortDate(activity.finish_date)}
+          {shortDate(getActivityForecastStart(activity))} →{" "}
+          {shortDate(getActivityForecastFinish(activity))}
         </div>
         <div className="mt-0.5 tabular">
           {duration == null ? "No duration" : `${duration} day${duration === 1 ? "" : "s"}`}
@@ -5983,8 +6060,9 @@ function ActivityDependencyPicker({
                           </span>
                         </div>
                         <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                          {activity.division || "General"} · {shortDate(activity.start_date)} to{" "}
-                          {shortDate(activity.finish_date)}
+                          {activity.division || "General"} ·{" "}
+                          {shortDate(getActivityForecastStart(activity))} to{" "}
+                          {shortDate(getActivityForecastFinish(activity))}
                         </div>
                       </div>
                     </CommandItem>
@@ -6016,7 +6094,9 @@ function ActivityDependencyPicker({
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
                     {activity
-                      ? `${activity.division || "General"} · ${shortDate(activity.start_date)} to ${shortDate(activity.finish_date)}`
+                      ? `${activity.division || "General"} · ${shortDate(
+                          getActivityForecastStart(activity),
+                        )} to ${shortDate(getActivityForecastFinish(activity))}`
                       : "This saved activity ID is not currently in the schedule list."}
                   </div>
                 </div>
@@ -6102,8 +6182,8 @@ function ActivityGanttRow({
   dataDatePosition: number | null;
   onOpen: () => void;
 }) {
-  const start = timelinePosition(activity.start_date, bounds);
-  const finish = timelinePosition(activity.finish_date, bounds);
+  const start = timelinePosition(getActivityForecastStart(activity), bounds);
+  const finish = timelinePosition(getActivityForecastFinish(activity), bounds);
   const left = Math.min(start ?? finish ?? 0, finish ?? start ?? 0);
   const width =
     start == null && finish == null
@@ -6111,7 +6191,7 @@ function ActivityGanttRow({
       : Math.max(1.5, Math.abs((finish ?? start ?? 0) - (start ?? finish ?? 0)));
   const percent = Math.max(0, Math.min(100, activity.percent_complete));
   const dataDateMs = parseDateMs(new Date().toISOString().slice(0, 10));
-  const finishMs = parseDateMs(activity.finish_date);
+  const finishMs = parseDateMs(getActivityForecastFinish(activity));
   const isLate = percent < 100 && finishMs != null && dataDateMs != null && finishMs < dataDateMs;
   return (
     <button
@@ -6158,6 +6238,7 @@ function ActivityGanttRow({
 function ActivityDetailDialog({
   activity,
   activities,
+  dataDate,
   divisionOptions,
   delayFragments,
   delayFragmentPersistence,
@@ -6174,6 +6255,7 @@ function ActivityDetailDialog({
 }: {
   activity: ScheduleActivityRow;
   activities: ScheduleActivityRow[];
+  dataDate: string | null;
   divisionOptions: string[];
   delayFragments: ScheduleDelayFragmentRow[];
   delayFragmentPersistence: "ready" | "migration_required";
@@ -6191,7 +6273,18 @@ function ActivityDetailDialog({
   const [draft, setDraft] = useState<ActivityDraft>(() => activityDraftFromRow(activity));
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const duration = getActivityDurationDays(activity);
+  const plannedDuration = getDateDurationDays(
+    activity.baseline_start_date ?? activity.start_date,
+    activity.baseline_finish_date ?? activity.finish_date,
+  );
+  const remainingDuration =
+    activity.percent_complete >= 100
+      ? 0
+      : (activity.remaining_duration_days ??
+        getDateDurationDays(
+          dataDate ?? activity.forecast_start_date ?? activity.start_date,
+          activity.forecast_finish_date ?? activity.finish_date,
+        ));
   const isMilestone = isConstructLineMilestoneActivity(activity);
   const saving = isSaving || isSubmitting;
   const currentActivityBlockedIds = useMemo(
@@ -6217,6 +6310,18 @@ function ActivityDetailDialog({
     }
     const name = draft.name.trim();
     const milestoneDate = getMilestoneDraftDate(draft);
+    const baselineStart = draft.is_milestone
+      ? milestoneDate
+      : draft.baseline_start_date || draft.start_date || null;
+    const baselineFinish = draft.is_milestone
+      ? milestoneDate
+      : draft.baseline_finish_date || draft.finish_date || null;
+    const forecastStart = draft.is_milestone
+      ? milestoneDate
+      : draft.forecast_start_date || baselineStart;
+    const forecastFinish = draft.is_milestone
+      ? milestoneDate
+      : draft.forecast_finish_date || baselineFinish;
     setSaveError(null);
     setIsSubmitting(true);
     try {
@@ -6224,8 +6329,15 @@ function ActivityDetailDialog({
         activity_id: draft.activity_id.trim(),
         name,
         division: draft.is_milestone ? "Milestones" : draft.division.trim() || "General",
-        start_date: draft.is_milestone ? milestoneDate : draft.start_date || null,
-        finish_date: draft.is_milestone ? milestoneDate : draft.finish_date || null,
+        start_date: baselineStart,
+        finish_date: baselineFinish,
+        baseline_start_date: baselineStart,
+        baseline_finish_date: baselineFinish,
+        forecast_start_date: forecastStart,
+        forecast_finish_date: forecastFinish,
+        actual_start_date: draft.actual_start_date || null,
+        actual_finish_date: draft.actual_finish_date || null,
+        remaining_duration_days: parseRemainingDuration(draft.remaining_duration_days),
         percent_complete: parsePercent(draft.percent_complete),
         predecessor_activity_ids: serializeActivityLinksToArray(draft.predecessor_activity_ids),
         successor_activity_ids: serializeActivityLinksToArray(draft.successor_activity_ids),
@@ -6250,7 +6362,7 @@ function ActivityDetailDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6">
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <ScheduleWorkbenchStat
               label="Activity ID"
               value={activity.activity_id || "No ID"}
@@ -6258,14 +6370,26 @@ function ActivityDetailDialog({
             />
             <ScheduleWorkbenchStat
               label="Planned duration"
-              value={isMilestone ? "Milestone" : duration == null ? "No dates" : String(duration)}
+              value={
+                isMilestone
+                  ? "Milestone"
+                  : plannedDuration == null
+                    ? "No dates"
+                    : String(plannedDuration)
+              }
               sub={
                 isMilestone
                   ? "schedule point"
-                  : duration == null
+                  : plannedDuration == null
                     ? "start / finish needed"
-                    : "current start to finish"
+                    : "baseline start to finish"
               }
+            />
+            <ScheduleWorkbenchStat
+              label="Remaining"
+              value={remainingDuration == null ? "Set" : String(remainingDuration)}
+              sub={dataDate ? `as of ${shortDate(dataDate)}` : "set data date"}
+              tone={remainingDuration === 0 ? "success" : "default"}
             />
             <ScheduleWorkbenchStat
               label="Progress"
@@ -6295,8 +6419,8 @@ function ActivityDetailDialog({
                   Activity setup
                 </div>
                 <div className="mt-1 text-sm text-muted-foreground">
-                  Edit the row identity, parent / child WBS path, current schedule dates, progress,
-                  and milestone status.
+                  Edit the row identity, parent / child WBS path, baseline dates, status update,
+                  progress, and milestone status.
                 </div>
               </div>
               <Button
@@ -6334,19 +6458,19 @@ function ActivityDetailDialog({
                   listId={`activity-${activity.id}-wbs-divisions`}
                 />
               </LabeledField>
-              <LabeledField label="Current start">
+              <LabeledField label="Baseline start">
                 <Input
                   type="date"
-                  value={draft.start_date}
-                  onChange={(e) => setDraft(updateDraftStartDate(draft, e.target.value))}
+                  value={draft.baseline_start_date}
+                  onChange={(e) => setDraft(updateDraftBaselineStartDate(draft, e.target.value))}
                   className="h-10 min-w-0"
                 />
               </LabeledField>
-              <LabeledField label="Current finish">
+              <LabeledField label="Baseline finish">
                 <Input
                   type="date"
-                  value={draft.finish_date}
-                  onChange={(e) => setDraft(updateDraftFinishDate(draft, e.target.value))}
+                  value={draft.baseline_finish_date}
+                  onChange={(e) => setDraft(updateDraftBaselineFinishDate(draft, e.target.value))}
                   className="h-10 min-w-0"
                 />
               </LabeledField>
@@ -6360,6 +6484,71 @@ function ActivityDetailDialog({
                   className="h-10 min-w-0 tabular"
                 />
               </LabeledField>
+            </div>
+
+            <div className="mt-4 rounded-md border border-hairline bg-card p-3">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Status update
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    Enter actuals, remaining duration, and expected finish for the current data
+                    date.
+                  </div>
+                </div>
+                <div className="text-xs font-semibold text-muted-foreground">
+                  Data date {dataDate ? shortDate(dataDate) : "not set"}
+                </div>
+              </div>
+              <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[145px_145px_150px_145px_145px]">
+                <LabeledField label="Actual start">
+                  <Input
+                    type="date"
+                    value={draft.actual_start_date}
+                    onChange={(e) => setDraft({ ...draft, actual_start_date: e.target.value })}
+                    className="h-10 min-w-0"
+                  />
+                </LabeledField>
+                <LabeledField label="Actual finish">
+                  <Input
+                    type="date"
+                    value={draft.actual_finish_date}
+                    onChange={(e) => setDraft({ ...draft, actual_finish_date: e.target.value })}
+                    className="h-10 min-w-0"
+                  />
+                </LabeledField>
+                <LabeledField label="Remaining duration">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={draft.remaining_duration_days}
+                    onChange={(e) =>
+                      setDraft(updateDraftRemainingDuration(draft, e.target.value, dataDate))
+                    }
+                    placeholder="days"
+                    className="h-10 min-w-0 tabular"
+                  />
+                </LabeledField>
+                <LabeledField label="Forecast start">
+                  <Input
+                    type="date"
+                    value={draft.forecast_start_date}
+                    onChange={(e) => setDraft({ ...draft, forecast_start_date: e.target.value })}
+                    className="h-10 min-w-0"
+                  />
+                </LabeledField>
+                <LabeledField label="Expected finish">
+                  <Input
+                    type="date"
+                    value={draft.forecast_finish_date}
+                    onChange={(e) =>
+                      setDraft(updateDraftForecastFinishDate(draft, e.target.value, dataDate))
+                    }
+                    className="h-10 min-w-0"
+                  />
+                </LabeledField>
+              </div>
             </div>
 
             <div className="mt-5 grid min-w-0 gap-3">
@@ -6794,6 +6983,13 @@ function buildActivityRowsFromMilestones(
         division: "Milestones",
         start_date: finishDate,
         finish_date: finishDate,
+        baseline_start_date: finishDate,
+        baseline_finish_date: finishDate,
+        forecast_start_date: finishDate,
+        forecast_finish_date: finishDate,
+        actual_start_date: milestone.status === "complete" ? finishDate : null,
+        actual_finish_date: milestone.status === "complete" ? finishDate : null,
+        remaining_duration_days: milestone.status === "complete" ? 0 : null,
         percent_complete: milestone.status === "complete" ? 100 : 0,
         predecessor_activity_ids: [],
         successor_activity_ids: [],
@@ -6809,6 +7005,13 @@ function scheduleActivityToTemplateCreateInput(activity: ScheduleActivityRow): A
     division: activity.division,
     start_date: activity.start_date,
     finish_date: activity.finish_date,
+    baseline_start_date: activity.baseline_start_date,
+    baseline_finish_date: activity.baseline_finish_date,
+    forecast_start_date: activity.forecast_start_date,
+    forecast_finish_date: activity.forecast_finish_date,
+    actual_start_date: activity.actual_start_date,
+    actual_finish_date: activity.actual_finish_date,
+    remaining_duration_days: activity.remaining_duration_days,
     percent_complete: 0,
     predecessor_activity_ids: activity.predecessor_activity_ids,
     successor_activity_ids: activity.successor_activity_ids,
@@ -6917,12 +7120,29 @@ function validateActivityDraft(
   );
   if (duplicate) return `${activityId} is already used by ${duplicate.name}.`;
 
-  const milestoneDate = getMilestoneDraftDate(draft);
+  const milestoneDate = getMilestoneDraftDate(draft) ?? "";
   if (draft.is_milestone && !milestoneDate) return "Milestones need a schedule date.";
-  const start = parseDateMs(draft.start_date);
-  const finish = parseDateMs(draft.finish_date);
+  const start = parseDateMs(draft.baseline_start_date || draft.start_date);
+  const finish = parseDateMs(draft.baseline_finish_date || draft.finish_date);
   if (start != null && finish != null && finish < start) {
-    return "Finish date cannot be earlier than start date.";
+    return "Baseline finish cannot be earlier than baseline start.";
+  }
+  const forecastStart = parseDateMs(draft.forecast_start_date);
+  const forecastFinish = parseDateMs(draft.forecast_finish_date);
+  if (forecastStart != null && forecastFinish != null && forecastFinish < forecastStart) {
+    return "Expected finish cannot be earlier than forecast start.";
+  }
+  const actualStart = parseDateMs(draft.actual_start_date);
+  const actualFinish = parseDateMs(draft.actual_finish_date);
+  if (actualStart != null && actualFinish != null && actualFinish < actualStart) {
+    return "Actual finish cannot be earlier than actual start.";
+  }
+  const remainingDuration = parseRemainingDuration(draft.remaining_duration_days);
+  if (
+    draft.remaining_duration_days.trim() &&
+    (remainingDuration == null || remainingDuration < 0)
+  ) {
+    return "Remaining duration must be a whole number of days.";
   }
   return null;
 }
@@ -6937,6 +7157,13 @@ function parseDelayDays(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.min(365, Math.round(parsed)));
+}
+
+function parseRemainingDuration(value: string | number | null | undefined) {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.min(5000, Math.round(parsed)));
 }
 
 function todayIsoDate() {
@@ -6994,7 +7221,15 @@ function serializeActivityLinksToArray(value: string) {
 }
 
 function getMilestoneDraftDate(draft: ActivityDraft) {
-  return draft.finish_date || draft.start_date || null;
+  return (
+    draft.forecast_finish_date ||
+    draft.baseline_finish_date ||
+    draft.finish_date ||
+    draft.forecast_start_date ||
+    draft.baseline_start_date ||
+    draft.start_date ||
+    null
+  );
 }
 
 function toggleMilestoneDraft(draft: ActivityDraft, isMilestone: boolean): ActivityDraft {
@@ -7006,13 +7241,17 @@ function toggleMilestoneDraft(draft: ActivityDraft, isMilestone: boolean): Activ
     };
   }
 
-  const milestoneDate = draft.finish_date || draft.start_date;
+  const milestoneDate = getMilestoneDraftDate(draft) ?? "";
   return {
     ...draft,
     is_milestone: true,
     division: "Milestones",
     start_date: milestoneDate,
     finish_date: milestoneDate,
+    baseline_start_date: milestoneDate,
+    baseline_finish_date: milestoneDate,
+    forecast_start_date: milestoneDate,
+    forecast_finish_date: milestoneDate,
   };
 }
 
@@ -7024,6 +7263,93 @@ function updateDraftStartDate(draft: ActivityDraft, value: string): ActivityDraf
 function updateDraftFinishDate(draft: ActivityDraft, value: string): ActivityDraft {
   if (!draft.is_milestone) return { ...draft, finish_date: value };
   return { ...draft, start_date: value, finish_date: value };
+}
+
+function updateDraftBaselineStartDate(draft: ActivityDraft, value: string): ActivityDraft {
+  if (!draft.is_milestone) {
+    return {
+      ...draft,
+      start_date: value,
+      baseline_start_date: value,
+      forecast_start_date: draft.forecast_start_date || value,
+    };
+  }
+  return {
+    ...draft,
+    start_date: value,
+    finish_date: value,
+    baseline_start_date: value,
+    baseline_finish_date: value,
+    forecast_start_date: value,
+    forecast_finish_date: value,
+  };
+}
+
+function updateDraftBaselineFinishDate(draft: ActivityDraft, value: string): ActivityDraft {
+  if (!draft.is_milestone) {
+    return {
+      ...draft,
+      finish_date: value,
+      baseline_finish_date: value,
+      forecast_finish_date: draft.forecast_finish_date || value,
+    };
+  }
+  return {
+    ...draft,
+    start_date: value,
+    finish_date: value,
+    baseline_start_date: value,
+    baseline_finish_date: value,
+    forecast_start_date: value,
+    forecast_finish_date: value,
+  };
+}
+
+function getDraftStatusAnchorDate(draft: ActivityDraft, dataDate?: string | null) {
+  return (
+    dataDate ||
+    draft.forecast_start_date ||
+    draft.actual_start_date ||
+    draft.baseline_start_date ||
+    draft.start_date ||
+    null
+  );
+}
+
+function updateDraftRemainingDuration(
+  draft: ActivityDraft,
+  value: string,
+  dataDate?: string | null,
+): ActivityDraft {
+  const remainingDuration = parseRemainingDuration(value);
+  const anchorMs = parseDateMs(getDraftStatusAnchorDate(draft, dataDate));
+  if (remainingDuration == null || anchorMs == null) {
+    return { ...draft, remaining_duration_days: value };
+  }
+  const finishOffsetDays = Math.max(0, remainingDuration - 1);
+  return {
+    ...draft,
+    remaining_duration_days: String(remainingDuration),
+    forecast_finish_date: isoDateFromMs(anchorMs + finishOffsetDays * DAY_MS),
+  };
+}
+
+function updateDraftForecastFinishDate(
+  draft: ActivityDraft,
+  value: string,
+  dataDate?: string | null,
+): ActivityDraft {
+  const anchorMs = parseDateMs(getDraftStatusAnchorDate(draft, dataDate));
+  const finishMs = parseDateMs(value);
+  if (anchorMs == null || finishMs == null || finishMs < anchorMs) {
+    return { ...draft, forecast_finish_date: value };
+  }
+  const remainingDuration = Math.max(1, Math.round((finishMs - anchorMs) / DAY_MS) + 1);
+  return {
+    ...draft,
+    forecast_finish_date: value,
+    remaining_duration_days: String(remainingDuration),
+  };
 }
 
 function ScheduleStat({
@@ -7069,8 +7395,41 @@ function isoDateFromMs(ms: number) {
 }
 
 function getActivityDurationDays(activity: ScheduleActivityRow) {
-  const start = parseDateMs(activity.start_date);
-  const finish = parseDateMs(activity.finish_date);
+  return getDateDurationDays(
+    getActivityBaselineStart(activity),
+    getActivityBaselineFinish(activity),
+  );
+}
+
+function getActivityBaselineStart(activity: ScheduleActivityRow) {
+  return activity.baseline_start_date ?? activity.start_date;
+}
+
+function getActivityBaselineFinish(activity: ScheduleActivityRow) {
+  return activity.baseline_finish_date ?? activity.finish_date;
+}
+
+function getActivityForecastStart(activity: ScheduleActivityRow) {
+  return (
+    activity.actual_start_date ??
+    activity.forecast_start_date ??
+    activity.start_date ??
+    activity.baseline_start_date
+  );
+}
+
+function getActivityForecastFinish(activity: ScheduleActivityRow) {
+  return (
+    activity.actual_finish_date ??
+    activity.forecast_finish_date ??
+    activity.finish_date ??
+    activity.baseline_finish_date
+  );
+}
+
+function getDateDurationDays(startDate?: string | null, finishDate?: string | null) {
+  const start = parseDateMs(startDate);
+  const finish = parseDateMs(finishDate);
   if (start == null || finish == null) return null;
   return Math.max(1, Math.round((finish - start) / DAY_MS) + 1);
 }

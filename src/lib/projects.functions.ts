@@ -3731,6 +3731,19 @@ const isScheduleActivitiesSchemaError = (error: DynamicSupabaseError | null) => 
   return message.includes("schedule_activities") || message.includes("schema cache");
 };
 
+const SCHEDULE_ACTIVITY_STATUS_COLUMNS = [
+  "baseline_start_date",
+  "baseline_finish_date",
+  "forecast_start_date",
+  "forecast_finish_date",
+  "actual_start_date",
+  "actual_finish_date",
+  "remaining_duration_days",
+] as const;
+
+const isScheduleActivityStatusColumnError = (error: DynamicSupabaseError | null) =>
+  SCHEDULE_ACTIVITY_STATUS_COLUMNS.some((column) => isMissingRestColumn(error, column));
+
 const isProjectInspectionsSchemaError = (error: DynamicSupabaseError | null) => {
   const message = (error?.message ?? "").toLowerCase();
   return (
@@ -3874,15 +3887,35 @@ const seedHarborDemoCpmActivities = async (
     return { insertedCount: 0, refreshedPlaceholders: onlyGeneratedMilestonePlaceholders };
   }
 
-  const { error: insertError } = await dynamicTable(supabase, "schedule_activities").insert(
+  const buildInsertRows = (includeStatusFields: boolean) =>
     rowsToInsert.map((activity) => ({
       project_id: projectId,
       ...activity,
+      ...(includeStatusFields
+        ? {
+            baseline_start_date: activity.start_date,
+            baseline_finish_date: activity.finish_date,
+            forecast_start_date: activity.start_date,
+            forecast_finish_date: activity.finish_date,
+            actual_start_date: activity.percent_complete > 0 ? activity.start_date : null,
+            actual_finish_date: activity.percent_complete >= 100 ? activity.finish_date : null,
+            remaining_duration_days: activity.percent_complete >= 100 ? 0 : null,
+          }
+        : {}),
       sort_order:
         HARBOR_DEMO_CPM_ACTIVITIES.findIndex((demo) => demo.activity_id === activity.activity_id) +
         1,
-    })),
+    }));
+
+  let { error: insertError } = await dynamicTable(supabase, "schedule_activities").insert(
+    buildInsertRows(true),
   );
+
+  if (insertError && isScheduleActivityStatusColumnError(insertError)) {
+    ({ error: insertError } = await dynamicTable(supabase, "schedule_activities").insert(
+      buildInsertRows(false),
+    ));
+  }
 
   if (insertError) {
     if (isScheduleActivitiesSchemaError(insertError)) {
