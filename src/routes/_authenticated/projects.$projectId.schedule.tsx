@@ -5,8 +5,10 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   AlertTriangle,
   ArrowLeft,
+  CalendarDays,
   ClipboardList,
   Diamond,
+  GitBranch,
   History,
   PackageSearch,
   Printer,
@@ -60,6 +62,13 @@ type WbsReorderPersistInput = WbsReorderInput & {
 type WbsParentMoveInput = {
   id: string;
   parentId: string | null;
+};
+type ScheduleWorkspaceShellSummary = {
+  activityCount: number;
+  logicTieCount: number;
+  latestDataDate: string | null;
+  activeMilestoneCount: number;
+  openRiskCount: number;
 };
 const WBS_ORDER_SAVE_DEBOUNCE_MS = 75;
 
@@ -203,6 +212,21 @@ function ScheduleWorkspacePage() {
       ? "migration_required"
       : "ready";
   const latestUpdate = updates[0] ?? null;
+  const shellSummary = useMemo<ScheduleWorkspaceShellSummary>(
+    () => ({
+      activityCount: activities.length,
+      logicTieCount: activities.reduce(
+        (sum, activity) =>
+          sum + activity.predecessor_activity_ids.length + activity.successor_activity_ids.length,
+        0,
+      ),
+      latestDataDate: latestUpdate?.data_date ?? null,
+      activeMilestoneCount: milestones.filter((milestone) => milestone.status !== "complete")
+        .length,
+      openRiskCount: risks.filter((risk) => risk.status === "active").length,
+    }),
+    [activities, latestUpdate?.data_date, milestones, risks],
+  );
 
   const refreshSchedule = async () => {
     await qc.invalidateQueries({ queryKey: ["schedule", projectId] });
@@ -580,7 +604,7 @@ function ScheduleWorkspacePage() {
   }
 
   return (
-    <ScheduleWorkspaceShell project={project}>
+    <ScheduleWorkspaceShell project={project} summary={shellSummary}>
       <CpmActivityPlanner
         workspaceMode="full"
         activities={activities}
@@ -641,51 +665,58 @@ function ScheduleWorkspacePage() {
 
 function ScheduleWorkspaceShell({
   project,
+  summary,
   children,
 }: {
   project?: ProjectRow;
+  summary?: ScheduleWorkspaceShellSummary;
   children: ReactNode;
 }) {
   return (
     <div className="constructline-schedule-page min-h-screen overflow-x-clip bg-background text-foreground print:bg-white">
       <header className="sticky top-0 z-30 border-b border-hairline bg-background/95 backdrop-blur print:static">
-        <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-3 px-4 py-4 lg:px-8 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-            <Button asChild variant="ghost" className="w-fit gap-2 print:hidden">
-              <a href={project ? `/projects/${project.id}` : "/"}>
-                <ArrowLeft className="h-4 w-4" />
-                Back to IOR
-              </a>
-            </Button>
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                {project?.organization_name || "Company"}
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                {project?.job_number && <span>Job # {project.job_number}</span>}
-                {project?.client && <span>{project.client}</span>}
-                {project?.project_manager && <span>PM {project.project_manager}</span>}
+        <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-3 px-4 py-4 lg:px-8">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+              <Button asChild variant="ghost" className="w-fit gap-2 print:hidden">
+                <a href={project ? `/projects/${project.id}` : "/"}>
+                  <ArrowLeft className="h-4 w-4" />
+                  Back to IOR
+                </a>
+              </Button>
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  {project?.organization_name || "Company"}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                  {project?.job_number && <span>Job # {project.job_number}</span>}
+                  {project?.client && <span>{project.client}</span>}
+                  {project?.project_manager && <span>PM {project.project_manager}</span>}
+                </div>
               </div>
             </div>
+            <div className="flex flex-wrap gap-2 print:hidden">
+              <WorkspaceNavLink href="#cpm-grid" tone="primary">
+                CPM table + Gantt
+              </WorkspaceNavLink>
+              <WorkspaceNavLink href="#schedule-update-history">Updates</WorkspaceNavLink>
+              <WorkspaceNavLink href="#interim-milestones">Milestones</WorkspaceNavLink>
+              <WorkspaceNavLink href="#critical-delayed-decisions">Decisions</WorkspaceNavLink>
+              <WorkspaceNavLink href="#procurement-risks">Procurement</WorkspaceNavLink>
+              <WorkspaceNavLink href="#trade-performance-risks">Trades</WorkspaceNavLink>
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                title="Print optimized for Tabloid / 11 x 17 landscape"
+                onClick={() => typeof window !== "undefined" && window.print()}
+              >
+                <Printer className="h-4 w-4" />
+                Print 11x17
+              </Button>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-2 print:hidden">
-            <WorkspaceNavLink href="#cpm-grid">CPM grid</WorkspaceNavLink>
-            <WorkspaceNavLink href="#schedule-update-history">Updates</WorkspaceNavLink>
-            <WorkspaceNavLink href="#interim-milestones">Milestones</WorkspaceNavLink>
-            <WorkspaceNavLink href="#critical-delayed-decisions">Decisions</WorkspaceNavLink>
-            <WorkspaceNavLink href="#procurement-risks">Procurement</WorkspaceNavLink>
-            <WorkspaceNavLink href="#trade-performance-risks">Trades</WorkspaceNavLink>
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2"
-              title="Print optimized for Tabloid / 11 x 17 landscape"
-              onClick={() => typeof window !== "undefined" && window.print()}
-            >
-              <Printer className="h-4 w-4" />
-              Print 11x17
-            </Button>
-          </div>
+          {summary && <ScheduleWorkspaceHeaderStats summary={summary} />}
         </div>
       </header>
       <main className="mx-auto w-full max-w-[1840px] px-4 py-5 lg:px-8">{children}</main>
@@ -693,11 +724,77 @@ function ScheduleWorkspaceShell({
   );
 }
 
-function WorkspaceNavLink({ href, children }: { href: string; children: ReactNode }) {
+function ScheduleWorkspaceHeaderStats({ summary }: { summary: ScheduleWorkspaceShellSummary }) {
+  return (
+    <div className="constructline-workspace-status grid gap-2 print:hidden sm:grid-cols-2 lg:grid-cols-5">
+      <ScheduleWorkspaceHeaderStat
+        icon={ClipboardList}
+        label="Activities"
+        value={String(summary.activityCount)}
+      />
+      <ScheduleWorkspaceHeaderStat
+        icon={GitBranch}
+        label="Logic ties"
+        value={String(summary.logicTieCount)}
+      />
+      <ScheduleWorkspaceHeaderStat
+        icon={CalendarDays}
+        label="Data date"
+        value={summary.latestDataDate ? formatDate(summary.latestDataDate) : "Not set"}
+      />
+      <ScheduleWorkspaceHeaderStat
+        icon={Diamond}
+        label="Milestones"
+        value={String(summary.activeMilestoneCount)}
+      />
+      <ScheduleWorkspaceHeaderStat
+        icon={AlertTriangle}
+        label="Open risks"
+        value={String(summary.openRiskCount)}
+      />
+    </div>
+  );
+}
+
+function ScheduleWorkspaceHeaderStat({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-md border border-hairline bg-card/80 px-3 py-2 shadow-sm">
+      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0">
+        <div className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          {label}
+        </div>
+        <div className="truncate text-sm font-semibold tabular text-foreground">{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceNavLink({
+  href,
+  tone = "default",
+  children,
+}: {
+  href: string;
+  tone?: "default" | "primary";
+  children: ReactNode;
+}) {
   return (
     <a
       href={href}
-      className="inline-flex h-10 items-center rounded-md border border-hairline bg-card px-3 text-sm font-semibold text-foreground shadow-sm transition hover:bg-muted"
+      className={`inline-flex h-10 items-center rounded-md border px-3 text-sm font-semibold shadow-sm transition ${
+        tone === "primary"
+          ? "border-foreground bg-foreground text-background hover:bg-foreground/90"
+          : "border-hairline bg-card text-foreground hover:bg-muted"
+      }`}
     >
       {children}
     </a>

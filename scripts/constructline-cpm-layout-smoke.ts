@@ -24,7 +24,9 @@ function assertMatches(source: string, pattern: RegExp, message: string) {
 for (const requiredRouteLayoutText of [
   "constructline-schedule-page min-h-screen overflow-x-clip",
   "max-w-[1840px]",
-  '<WorkspaceNavLink href="#cpm-grid">CPM grid</WorkspaceNavLink>',
+  'href="#cpm-grid" tone="primary"',
+  "CPM table + Gantt",
+  "constructline-workspace-status",
   '<WorkspaceNavLink href="#schedule-update-history">Updates</WorkspaceNavLink>',
   '<WorkspaceNavLink href="#interim-milestones">Milestones</WorkspaceNavLink>',
   '<WorkspaceNavLink href="#critical-delayed-decisions">Decisions</WorkspaceNavLink>',
