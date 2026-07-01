@@ -3143,6 +3143,19 @@ function ScheduleUpdateReadinessPanel({
         />
       </div>
 
+      <div className="mt-3 grid gap-2 rounded border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground lg:grid-cols-4">
+        {[
+          "1. Set the data date",
+          "2. Show active rows",
+          "3. Update actuals, remaining duration, and expected finish",
+          "4. Save the CPM update snapshot",
+        ].map((step) => (
+          <div key={step} className="min-w-0 font-semibold text-foreground">
+            {step}
+          </div>
+        ))}
+      </div>
+
       {summary.missingRemainingCount > 0 || summary.missingExpectedFinishCount > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
           {summary.missingRemainingCount > 0 && (

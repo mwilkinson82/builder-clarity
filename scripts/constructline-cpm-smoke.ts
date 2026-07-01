@@ -493,6 +493,8 @@ for (const requiredScheduleRiskText of [
   "Showing 10 of",
   "Data-date update readiness",
   "buildScheduleUpdateReadiness",
+  "Set the data date",
+  "Save the CPM update snapshot",
   "Remaining duration missing",
   "Expected finish missing",
   "Show active rows",
