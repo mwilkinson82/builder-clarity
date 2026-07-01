@@ -972,16 +972,16 @@ function buildScheduleUpdateReadiness(
     let severity: ScheduleUpdateReadinessItem["severity"] = "warning";
     let sort = 80;
 
-    if (!activity.forecast_finish_date && !activity.finish_date && !activity.baseline_finish_date) {
+    if (shouldFlagMissingExpectedFinish(activity)) {
       reasons.push("Expected finish missing");
       severity = "danger";
       sort = Math.min(sort, 10);
     }
-    if (activity.remaining_duration_days == null && !activity.actual_finish_date) {
+    if (shouldFlagMissingRemainingDuration(activity)) {
       reasons.push("Remaining duration missing");
       sort = Math.min(sort, 16);
     }
-    if (percent > 0 && !activity.actual_start_date) {
+    if (shouldFlagMissingActualStart(activity)) {
       reasons.push("Actual start missing");
       sort = Math.min(sort, 22);
     }
@@ -5069,6 +5069,9 @@ function ConstructLineTaskRow({
 }) {
   const activity = task.activity;
   const percent = Math.max(0, Math.min(100, activity.percent_complete));
+  const needsRemainingDuration = shouldFlagMissingRemainingDuration(activity);
+  const needsExpectedFinish = shouldFlagMissingExpectedFinish(activity);
+  const needsActualStart = shouldFlagMissingActualStart(activity);
   const startOffset = offsetFromTimelineStart(task.visualStartDate, timelineStartDate);
   const finishOffset = offsetFromTimelineStart(task.visualFinishDate, timelineStartDate);
   const barLeft = startOffset * dayPx;
@@ -5164,6 +5167,9 @@ function ConstructLineTaskRow({
             {task.isOpenStart && <ScheduleFlag tone="warning">open start</ScheduleFlag>}
             {task.isOpenFinish && <ScheduleFlag tone="warning">open finish</ScheduleFlag>}
             {task.hasMissingDates && <ScheduleFlag tone="warning">missing dates</ScheduleFlag>}
+            {needsRemainingDuration && <ScheduleFlag tone="warning">needs remaining</ScheduleFlag>}
+            {needsExpectedFinish && <ScheduleFlag tone="danger">needs finish</ScheduleFlag>}
+            {needsActualStart && <ScheduleFlag tone="warning">needs actual start</ScheduleFlag>}
             {task.slippageDays > 0 && (
               <ScheduleFlag tone="danger">+{task.slippageDays}d slip</ScheduleFlag>
             )}
@@ -5486,9 +5492,36 @@ function countActivityMatrixFlags(task: ConstructLineCpmTask, hasOpenDelay: bool
     task.isOpenStart,
     task.isOpenFinish,
     task.hasMissingDates,
+    shouldFlagMissingRemainingDuration(task.activity),
+    shouldFlagMissingExpectedFinish(task.activity),
+    shouldFlagMissingActualStart(task.activity),
     task.slippageDays > 0,
     hasOpenDelay,
   ].filter(Boolean).length;
+}
+
+function shouldFlagMissingRemainingDuration(activity: ScheduleActivityRow) {
+  return (
+    activity.percent_complete < 100 &&
+    activity.remaining_duration_days == null &&
+    !activity.actual_finish_date
+  );
+}
+
+function shouldFlagMissingExpectedFinish(activity: ScheduleActivityRow) {
+  return (
+    activity.percent_complete < 100 &&
+    !activity.actual_finish_date &&
+    !activity.forecast_finish_date &&
+    !activity.finish_date &&
+    !activity.baseline_finish_date
+  );
+}
+
+function shouldFlagMissingActualStart(activity: ScheduleActivityRow) {
+  return (
+    activity.percent_complete > 0 && activity.percent_complete < 100 && !activity.actual_start_date
+  );
 }
 
 function filterConstructLineCpmModel(
