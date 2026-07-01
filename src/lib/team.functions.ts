@@ -403,7 +403,7 @@ const activityHeartbeatInput = z.object({
 
 export const recordUserActivity = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator(activityHeartbeatInput)
+  .inputValidator((data: unknown) => activityHeartbeatInput.parse(data))
   .handler(async ({ data, context }) => {
     const organizationId = await ensureCurrentOrganization(context);
     const profileRes = await context.supabase
