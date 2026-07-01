@@ -69,11 +69,15 @@ import {
   updateScheduleRisk,
   deleteScheduleRisk,
   createScheduleUpdate,
+  importScheduleCpmTemplate,
+  listScheduleCpmTemplates,
+  saveCurrentScheduleAsCpmTemplate,
   type MilestoneStatus,
   type ScheduleRiskKind,
   type ScheduleRiskStatus,
   type MilestoneRow,
   type ScheduleActivityRow,
+  type ScheduleCpmTemplateRow,
   type ScheduleDelayFragmentRow,
   type ScheduleWbsSectionRow,
   type ScheduleRiskRow,
@@ -125,6 +129,7 @@ import {
 const EMPTY_MILESTONES: MilestoneRow[] = [];
 const EMPTY_ACTIVITIES: ScheduleActivityRow[] = [];
 const EMPTY_DELAY_FRAGMENTS: ScheduleDelayFragmentRow[] = [];
+const EMPTY_CPM_TEMPLATES: ScheduleCpmTemplateRow[] = [];
 const EMPTY_SCHEDULE_RISKS: ScheduleRiskRow[] = [];
 const EMPTY_SCHEDULE_UPDATES: ScheduleUpdateRow[] = [];
 const EMPTY_MILESTONE_UPDATES: ScheduleMilestoneUpdateRow[] = [];
@@ -198,9 +203,16 @@ const CONSTRUCTLINE_ZOOM_LEVELS = [
 const CONSTRUCTLINE_FIT_DAY_PX = CONSTRUCTLINE_ZOOM_LEVELS[0].dayPx;
 const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
-const CONSTRUCTLINE_LOOKAHEAD_DAYS = 42;
 type ScheduleActivityOrder = "start" | "wbs";
-type ScheduleGridView = "all" | "active" | "lookahead" | "critical" | "issues" | "milestones";
+type ScheduleGridView =
+  | "all"
+  | "active"
+  | "lookahead_1w"
+  | "lookahead_2w"
+  | "lookahead_6w"
+  | "critical"
+  | "issues"
+  | "milestones";
 type ActivityPatchOptions = { silent?: boolean };
 type ActivityMatrixRow =
   | { kind: "parent"; division: string; tasks: ConstructLineCpmTask[] }
@@ -214,11 +226,18 @@ const CONSTRUCTLINE_RELATIONSHIP_TYPES: ConstructLineRelationshipType[] = ["FS",
 const SCHEDULE_GRID_VIEW_OPTIONS: Array<{ value: ScheduleGridView; label: string }> = [
   { value: "all", label: "All" },
   { value: "active", label: "Active" },
-  { value: "lookahead", label: "6 wk lookahead" },
+  { value: "lookahead_1w", label: "1 wk lookahead" },
+  { value: "lookahead_2w", label: "2 wk lookahead" },
+  { value: "lookahead_6w", label: "6 wk lookahead" },
   { value: "critical", label: "Critical" },
   { value: "issues", label: "Issues" },
   { value: "milestones", label: "Milestones" },
 ];
+const SCHEDULE_LOOKAHEAD_DAYS: Partial<Record<ScheduleGridView, number>> = {
+  lookahead_1w: 7,
+  lookahead_2w: 14,
+  lookahead_6w: 42,
+};
 const CONSTRUCTLINE_RELATIONSHIP_LABELS: Record<ConstructLineRelationshipType, string> = {
   FS: "Finish to start",
   SS: "Start to start",
@@ -1014,6 +1033,28 @@ function buildDelayFragmentSummary(fragments: ScheduleDelayFragmentRow[]): Delay
   };
 }
 
+function buildActivityRiskDescription(
+  activity: ScheduleActivityRow,
+  delaySummary: DelayFragmentSummary,
+) {
+  const pieces = [
+    `CPM activity ${activity.activity_id || "without ID"}: ${activity.name}.`,
+    activity.start_date || activity.finish_date
+      ? `Current dates: ${shortDate(activity.start_date)} to ${shortDate(activity.finish_date)}.`
+      : "Current dates are not fully set.",
+    `${activity.percent_complete}% complete.`,
+  ];
+  if (delaySummary.openDays > 0) {
+    pieces.push(
+      `Open delay impact: ${delaySummary.openDays} days across ${delaySummary.openCount} fragment${
+        delaySummary.openCount === 1 ? "" : "s"
+      }.`,
+    );
+  }
+  if (activity.notes) pieces.push(`Activity notes: ${activity.notes}`);
+  return pieces.join(" ");
+}
+
 function isOpenDelayFragment(fragment: ScheduleDelayFragmentRow) {
   return fragment.status === "active" || fragment.status === "accepted";
 }
@@ -1652,6 +1693,10 @@ export function CpmActivityPlanner({
   const isFullWorkspace = workspaceMode === "full";
   const qc = useQueryClient();
   const createUpdateFn = useServerFn(createScheduleUpdate);
+  const listTemplatesFn = useServerFn(listScheduleCpmTemplates);
+  const saveTemplateFn = useServerFn(saveCurrentScheduleAsCpmTemplate);
+  const importTemplateFn = useServerFn(importScheduleCpmTemplate);
+  const createActivityExposureFn = useServerFn(createExposure);
   const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
   const [showDraft, setShowDraft] = useState(false);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
@@ -1661,6 +1706,8 @@ export function CpmActivityPlanner({
   const [activityOrder, setActivityOrder] = useState<ScheduleActivityOrder>("start");
   const [scheduleView, setScheduleView] = useState<ScheduleGridView>("all");
   const [dataDateDraft, setDataDateDraft] = useState(() => latestDataDate ?? todayIsoDate());
+  const [templateName, setTemplateName] = useState(() => `${project.name} CPM`);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [isWbsManagerOpen, setIsWbsManagerOpen] = useState(false);
   const [isFocusOpen, setIsFocusOpen] = useState(false);
   const didScrollToGridRef = useRef(false);
@@ -1748,6 +1795,18 @@ export function CpmActivityPlanner({
   useEffect(() => {
     setDataDateDraft(latestDataDate ?? todayIsoDate());
   }, [latestDataDate]);
+
+  const templateQuery = useQuery({
+    queryKey: ["schedule-cpm-templates", project.id],
+    queryFn: () => listTemplatesFn({ data: { projectId: project.id } }),
+    staleTime: 30_000,
+  });
+  const cpmTemplates = templateQuery.data?.templates ?? EMPTY_CPM_TEMPLATES;
+  const templatePersistence = templateQuery.data?.persistence ?? "ready";
+
+  useEffect(() => {
+    if (!selectedTemplateId && cpmTemplates[0]?.id) setSelectedTemplateId(cpmTemplates[0].id);
+  }, [cpmTemplates, selectedTemplateId]);
 
   useEffect(() => {
     if (selectedActivityId && !selectedActivity) setSelectedActivityId(null);
@@ -1954,6 +2013,89 @@ export function CpmActivityPlanner({
     },
     onError: (error) => {
       toast.error("Data date did not save", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+  const templateSave = useMutation({
+    mutationFn: () =>
+      saveTemplateFn({
+        data: {
+          projectId: project.id,
+          name: templateName.trim() || `${project.name} CPM`,
+          description: `Saved from ${project.name} on ${shortDate(todayIsoDate())}.`,
+        },
+      }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["schedule-cpm-templates", project.id] });
+      toast.success("CPM template saved", {
+        description: "This schedule can now be used on another project.",
+      });
+    },
+    onError: (error) => {
+      toast.error("CPM template did not save", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+  const templateImport = useMutation({
+    mutationFn: (templateId: string) =>
+      importTemplateFn({ data: { projectId: project.id, templateId } }),
+    onSuccess: async (result) => {
+      await qc.invalidateQueries({ queryKey: ["schedule", project.id] });
+      toast.success("CPM template applied", {
+        description: `${result.inserted} activities added${
+          result.skipped ? `, ${result.skipped} duplicate IDs skipped` : ""
+        }.`,
+      });
+    },
+    onError: (error) => {
+      toast.error("CPM template did not apply", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+  const activityRiskCreate = useMutation({
+    mutationFn: async (activity: ScheduleActivityRow) => {
+      const linkedDelaySummary = buildDelayFragmentSummary(
+        getDelayFragmentsForActivity(activity, groupDelayFragmentsByActivity(delayFragments)),
+      );
+      const scheduleImpactWeeks =
+        linkedDelaySummary.openDays > 0
+          ? Math.max(1, Math.ceil(linkedDelaySummary.openDays / 7))
+          : null;
+      return createActivityExposureFn({
+        data: {
+          projectId: project.id,
+          title: `${activity.activity_id ? `${activity.activity_id} - ` : ""}${activity.name}`,
+          description: buildActivityRiskDescription(activity, linkedDelaySummary),
+          category: "schedule_compression",
+          dollar_exposure: 0,
+          probability: 100,
+          schedule_impact_weeks: scheduleImpactWeeks,
+          owner: project.project_manager || "",
+          response_path: "recover",
+          hold_class: "E-Hold",
+          status: "active",
+          due_date: activity.finish_date,
+          next_review_at: effectiveDataDate ?? todayIsoDate(),
+          release_condition: `Activity recovered or absorbed: ${activity.activity_id || activity.name}`,
+          notes:
+            "Created from the CPM activity detail. Price the exposure and set the response path in Risk Tally.",
+        },
+      });
+    },
+    onSuccess: async (_result, activity) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["project", project.id] }),
+        qc.invalidateQueries({ queryKey: ["projects"] }),
+      ]);
+      toast.success("Activity sent to Risk Tally", {
+        description: `${activity.activity_id || activity.name} is ready to price as a schedule risk.`,
+      });
+    },
+    onError: (error) => {
+      toast.error("Activity did not send to Risk Tally", {
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
     },
@@ -2292,6 +2434,19 @@ export function CpmActivityPlanner({
               isSavingDataDate={dataDateUpdate.isPending}
               onDataDateChange={setDataDateDraft}
               onSaveDataDate={saveDataDate}
+              templateName={templateName}
+              onTemplateNameChange={setTemplateName}
+              templates={cpmTemplates}
+              selectedTemplateId={selectedTemplateId}
+              onSelectedTemplateChange={setSelectedTemplateId}
+              templatePersistence={templatePersistence}
+              isTemplateLoading={templateQuery.isLoading}
+              isSavingTemplate={templateSave.isPending}
+              isApplyingTemplate={templateImport.isPending}
+              onSaveTemplate={() => templateSave.mutate()}
+              onApplyTemplate={() => {
+                if (selectedTemplateId) templateImport.mutate(selectedTemplateId);
+              }}
             />
           }
           viewSummary={scheduleViewSummary}
@@ -2502,6 +2657,8 @@ export function CpmActivityPlanner({
           onAddDelayFragment={onAddDelayFragment}
           onPatchDelayFragment={onPatchDelayFragment}
           onDeleteDelayFragment={onDeleteDelayFragment}
+          isSendingToRiskTally={activityRiskCreate.isPending}
+          onSendToRiskTally={(activity) => activityRiskCreate.mutateAsync(activity)}
         />
       )}
 
@@ -2669,6 +2826,17 @@ function CpmGridToolbar({
   isSavingDataDate,
   onDataDateChange,
   onSaveDataDate,
+  templateName,
+  onTemplateNameChange,
+  templates,
+  selectedTemplateId,
+  onSelectedTemplateChange,
+  templatePersistence,
+  isTemplateLoading,
+  isSavingTemplate,
+  isApplyingTemplate,
+  onSaveTemplate,
+  onApplyTemplate,
 }: {
   scheduleView: ScheduleGridView;
   onScheduleViewChange: (value: ScheduleGridView) => void;
@@ -2692,6 +2860,17 @@ function CpmGridToolbar({
   isSavingDataDate: boolean;
   onDataDateChange: (value: string) => void;
   onSaveDataDate: () => void;
+  templateName: string;
+  onTemplateNameChange: (value: string) => void;
+  templates: ScheduleCpmTemplateRow[];
+  selectedTemplateId: string;
+  onSelectedTemplateChange: (value: string) => void;
+  templatePersistence: "ready" | "migration_required";
+  isTemplateLoading: boolean;
+  isSavingTemplate: boolean;
+  isApplyingTemplate: boolean;
+  onSaveTemplate: () => void;
+  onApplyTemplate: () => void;
 }) {
   return (
     <div className="flex w-full min-w-0 flex-col gap-3">
@@ -2787,6 +2966,71 @@ function CpmGridToolbar({
           </Button>
         </CpmToolbarGroup>
       </div>
+
+      <CpmToolbarGroup label="Templates">
+        <Input
+          value={templateName}
+          onChange={(event) => onTemplateNameChange(event.target.value)}
+          className="h-9 w-[min(100%,280px)] min-w-[220px] bg-card"
+          placeholder="Template name"
+          disabled={isSavingTemplate || templatePersistence === "migration_required"}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 gap-2 whitespace-nowrap"
+          disabled={
+            !templateName.trim() || isSavingTemplate || templatePersistence === "migration_required"
+          }
+          onClick={onSaveTemplate}
+        >
+          <ClipboardList className="h-4 w-4" />
+          {isSavingTemplate ? "Saving..." : "Save current CPM as template"}
+        </Button>
+        <Select
+          value={selectedTemplateId}
+          onValueChange={onSelectedTemplateChange}
+          disabled={
+            isTemplateLoading ||
+            templates.length === 0 ||
+            isApplyingTemplate ||
+            templatePersistence === "migration_required"
+          }
+        >
+          <SelectTrigger className="h-9 w-[min(100%,260px)] min-w-[220px] bg-card">
+            <SelectValue
+              placeholder={isTemplateLoading ? "Loading templates" : "Choose template"}
+            />
+          </SelectTrigger>
+          <SelectContent>
+            {templates.map((template) => (
+              <SelectItem key={template.id} value={template.id}>
+                {template.name} · {template.activity_count} activities
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-9 gap-2 whitespace-nowrap"
+          disabled={
+            !selectedTemplateId ||
+            isApplyingTemplate ||
+            templates.length === 0 ||
+            templatePersistence === "migration_required"
+          }
+          onClick={onApplyTemplate}
+        >
+          <Plus className="h-4 w-4" />
+          {isApplyingTemplate ? "Applying..." : "Use template"}
+        </Button>
+        {templatePersistence === "migration_required" && (
+          <span className="text-xs text-muted-foreground">
+            Template library is being enabled for this workspace.
+          </span>
+        )}
+      </CpmToolbarGroup>
     </div>
   );
 }
@@ -4660,6 +4904,12 @@ function ConstructLineTaskRow({
     timelineWidth - 10,
     Math.max(10, barLeft + Math.min(barWidth, Math.max(12, delaySummary.openDays * dayPx))),
   );
+  const delayExtensionLeft = barLeft + barWidth;
+  const delayExtensionAvailableWidth = Math.max(0, timelineWidth - delayExtensionLeft);
+  const delayExtensionWidth =
+    hasOpenDelay && !task.isMilestone && delayExtensionAvailableWidth > 0
+      ? Math.max(6, Math.min(delayExtensionAvailableWidth, delaySummary.openDays * dayPx))
+      : 0;
   const barClass = task.isCritical
     ? "bg-danger"
     : task.isNearCritical
@@ -4784,19 +5034,31 @@ function ConstructLineTaskRow({
             style={{ left: barLeft }}
           />
         ) : (
-          <div
-            className={cn(
-              "absolute top-1/2 h-4 -translate-y-1/2 rounded-full border",
-              task.isCritical
-                ? "border-danger/40 bg-danger/20"
-                : task.isNearCritical
-                  ? "border-warning/40 bg-warning/20"
-                  : "border-accent/30 bg-accent/15",
+          <>
+            <div
+              className={cn(
+                "absolute top-1/2 h-4 -translate-y-1/2 rounded-full border",
+                task.isCritical
+                  ? "border-danger/40 bg-danger/20"
+                  : task.isNearCritical
+                    ? "border-warning/40 bg-warning/20"
+                    : "border-accent/30 bg-accent/15",
+              )}
+              style={{ left: barLeft, width: barWidth }}
+            >
+              <div
+                className={cn("h-full rounded-full", barClass)}
+                style={{ width: `${percent}%` }}
+              />
+            </div>
+            {delayExtensionWidth > 0 && (
+              <div
+                className="absolute top-1/2 h-4 -translate-y-1/2 rounded-r-full border border-danger/30 bg-danger/15"
+                style={{ left: delayExtensionLeft, width: delayExtensionWidth }}
+                title={`${delaySummary.openDays} delay days extend past the current activity bar`}
+              />
             )}
-            style={{ left: barLeft, width: barWidth }}
-          >
-            <div className={cn("h-full rounded-full", barClass)} style={{ width: `${percent}%` }} />
-          </div>
+          </>
         )}
         {hasOpenDelay && (
           <span
@@ -4979,11 +5241,10 @@ function taskMatchesScheduleGridView(
   const hasStartedButIncomplete = percent > 0 && isIncomplete;
 
   if (view === "active") return isActive || hasStartedButIncomplete;
-  if (view === "lookahead") {
+  const lookaheadDays = SCHEDULE_LOOKAHEAD_DAYS[view];
+  if (lookaheadDays) {
     const referenceMs = parseDateMs(referenceDate) ?? parseDateMs(todayIsoDate()) ?? Date.now();
-    const finishDate = isoDateFromMs(
-      referenceMs + CONSTRUCTLINE_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000,
-    );
+    const finishDate = isoDateFromMs(referenceMs + lookaheadDays * 24 * 60 * 60 * 1000);
     return isIncomplete && taskIntersectsDateWindow(task, referenceDate, finishDate);
   }
   if (view === "critical") return task.isCritical || task.isNearCritical;
@@ -5030,8 +5291,12 @@ function describeScheduleGridView(
       : `${visibleCount} of ${totalCount} activities shown`;
   if (view === "all") return `All activities · ${countText}`;
   if (view === "active") return `Active as of ${shortDate(referenceDate)} · ${countText}`;
-  if (view === "lookahead")
-    return `6-week lookahead from ${shortDate(referenceDate)} · ${countText}`;
+  const lookaheadDays = SCHEDULE_LOOKAHEAD_DAYS[view];
+  if (lookaheadDays) {
+    const lookaheadLabel =
+      lookaheadDays % 7 === 0 ? `${lookaheadDays / 7}-week` : `${lookaheadDays}-day`;
+    return `${lookaheadLabel} lookahead from ${shortDate(referenceDate)} · ${countText}`;
+  }
   if (view === "critical") return `Critical and near-critical path · ${countText}`;
   if (view === "issues") return `Schedule issues · ${countText}`;
   if (view === "milestones") return `Milestones only · ${countText}`;
@@ -5040,7 +5305,9 @@ function describeScheduleGridView(
 
 function getScheduleReportTitle(view: ScheduleGridView) {
   if (view === "critical") return "Critical Path Report";
-  if (view === "lookahead") return "6-Week Lookahead Report";
+  if (view === "lookahead_1w") return "1-Week Lookahead Report";
+  if (view === "lookahead_2w") return "2-Week Lookahead Report";
+  if (view === "lookahead_6w") return "6-Week Lookahead Report";
   if (view === "issues") return "Schedule Issues Report";
   if (view === "milestones") return "Milestone Report";
   if (view === "active") return "Active Schedule Report";
@@ -5721,6 +5988,8 @@ function ActivityDetailDialog({
   onAddDelayFragment,
   onPatchDelayFragment,
   onDeleteDelayFragment,
+  isSendingToRiskTally,
+  onSendToRiskTally,
 }: {
   activity: ScheduleActivityRow;
   activities: ScheduleActivityRow[];
@@ -5735,6 +6004,8 @@ function ActivityDetailDialog({
   onAddDelayFragment: (fragment: DelayFragmentCreateInput) => Promise<void>;
   onPatchDelayFragment: (id: string, patch: DelayFragmentPatchInput) => Promise<void>;
   onDeleteDelayFragment: (id: string) => Promise<void>;
+  isSendingToRiskTally: boolean;
+  onSendToRiskTally: (activity: ScheduleActivityRow) => Promise<unknown>;
 }) {
   const [draft, setDraft] = useState<ActivityDraft>(() => activityDraftFromRow(activity));
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -6004,6 +6275,16 @@ function ActivityDetailDialog({
             Delete activity
           </Button>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-2"
+              onClick={() => void onSendToRiskTally(activity)}
+              disabled={saving || isSendingToRiskTally}
+            >
+              <AlertTriangle className="h-4 w-4" />
+              {isSendingToRiskTally ? "Sending..." : "Send to Risk Tally"}
+            </Button>
             <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
               Close
             </Button>

@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import type { Database, TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
+import type { Database, Json, TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
 import {
   computeScheduleVarianceWeeks,
   type ExposureCategory,
@@ -31,6 +31,25 @@ type ScheduleActivityUpdate = TablesUpdate<"schedule_activities">;
 type ScheduleWbsSectionInsert = TablesInsert<"schedule_wbs_sections">;
 type ScheduleWbsSectionUpdate = TablesUpdate<"schedule_wbs_sections">;
 type DynamicSupabaseError = { code?: string; message?: string } | null;
+type DynamicSupabaseResult<T = Record<string, unknown>[]> = {
+  data: T | null;
+  error: DynamicSupabaseError;
+};
+type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
+  select(columns?: string): DynamicSupabaseQuery;
+  insert(values: unknown): DynamicSupabaseQuery;
+  update(values: unknown): DynamicSupabaseQuery;
+  upsert(values: unknown, options?: { onConflict?: string }): DynamicSupabaseQuery;
+  eq(column: string, value: unknown): DynamicSupabaseQuery;
+  order(
+    column: string,
+    options?: { ascending?: boolean; nullsFirst?: boolean },
+  ): DynamicSupabaseQuery;
+  limit(count: number): DynamicSupabaseQuery;
+  single(): Promise<DynamicSupabaseResult<Record<string, unknown>>>;
+  maybeSingle(): Promise<DynamicSupabaseResult<Record<string, unknown>>>;
+};
+type DynamicSupabaseClient = { from(relation: string): DynamicSupabaseQuery };
 
 type ScheduleWbsParentFilterQuery<TQuery> = {
   eq: (column: string, value: string) => TQuery;
@@ -87,6 +106,16 @@ export interface ScheduleDelayFragmentRow {
   owner: string;
   identified_on: string;
   resolved_on: string | null;
+}
+
+export interface ScheduleCpmTemplateRow {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string;
+  activity_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ScheduleRiskRow {
@@ -162,6 +191,8 @@ const RISK_EXPOSURE_CATEGORY: Record<ScheduleRiskKind, ExposureCategory> = {
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
+const dynamicTable = (supabase: unknown, relation: string) =>
+  (supabase as DynamicSupabaseClient).from(relation);
 const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) => {
   const message = (error?.message ?? "").toLowerCase();
   const target = column.toLowerCase();
@@ -169,6 +200,18 @@ const isMissingRestColumn = (error: { code?: string; message?: string } | null, 
     (error?.code === "PGRST204" && message.includes(`'${target}' column`)) ||
     message.includes(`column ${target} does not exist`) ||
     message.includes(`.${target} does not exist`)
+  );
+};
+const isMissingRestRelation = (
+  error: { code?: string; message?: string } | null,
+  relation: string,
+) => {
+  const message = error?.message ?? "";
+  return (
+    error?.code === "PGRST205" &&
+    (message.includes(`'public.${relation}'`) ||
+      message.includes(`'${relation}'`) ||
+      message.includes("schema cache"))
   );
 };
 const isMissingRpcError = (error: DynamicSupabaseError, fnName: string) => {
@@ -284,6 +327,16 @@ const normalizeScheduleDelayFragment = (r: Record<string, unknown>): ScheduleDel
   owner: str(r.owner),
   identified_on: str(r.identified_on, new Date().toISOString().slice(0, 10)),
   resolved_on: (r.resolved_on as string | null) ?? null,
+});
+
+const normalizeScheduleCpmTemplate = (r: Record<string, unknown>): ScheduleCpmTemplateRow => ({
+  id: r.id as string,
+  project_id: r.project_id as string,
+  name: str(r.name, "CPM template"),
+  description: str(r.description),
+  activity_count: num(r.activity_count),
+  created_at: str(r.created_at),
+  updated_at: str(r.updated_at),
 });
 
 const scheduleWbsSectionFromActivityDivision = (
@@ -618,6 +671,209 @@ export const listSchedule = createServerFn({ method: "GET" })
         ? []
         : (muRes.data ?? []).map((r) => normalizeMilestoneUpdate(r as Record<string, unknown>)),
     };
+  });
+
+// ---------- CPM TEMPLATES ----------
+const templateLibraryUnavailableMessage =
+  "CPM template library is not enabled for this workspace yet. The live schedule still works; enable the template table before saving reusable CPM templates.";
+
+const scheduleActivityTemplatePayload = (activity: ScheduleActivityRow): Record<string, Json> => ({
+  activity_id: activity.activity_id,
+  name: activity.name,
+  division: activity.division,
+  start_date: activity.start_date,
+  finish_date: activity.finish_date,
+  percent_complete: activity.percent_complete,
+  predecessor_activity_ids: activity.predecessor_activity_ids,
+  successor_activity_ids: activity.successor_activity_ids,
+  notes: activity.notes,
+  sort_order: activity.sort_order,
+});
+
+const scheduleWbsTemplatePayload = (section: ScheduleWbsSectionRow): Record<string, Json> => ({
+  name: section.name,
+  code: section.code,
+  parent_id: section.parent_id,
+  sort_order: section.sort_order,
+});
+
+const readTemplateActivities = (value: unknown): ScheduleActivityInsert[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((item, index) => {
+    const row = (item ?? {}) as Record<string, unknown>;
+    return {
+      project_id: "",
+      activity_id: str(row.activity_id, `T-${String(index + 1).padStart(3, "0")}`),
+      name: str(row.name, "Template activity"),
+      division: str(row.division, "General"),
+      start_date: (row.start_date as string | null) ?? null,
+      finish_date: (row.finish_date as string | null) ?? null,
+      percent_complete: num(row.percent_complete),
+      predecessor_activity_ids: Array.isArray(row.predecessor_activity_ids)
+        ? row.predecessor_activity_ids.map(String)
+        : [],
+      successor_activity_ids: Array.isArray(row.successor_activity_ids)
+        ? row.successor_activity_ids.map(String)
+        : [],
+      notes: str(row.notes),
+      sort_order: num(row.sort_order) || (index + 1) * 10,
+    };
+  });
+};
+
+const readTemplateWbsSections = (
+  value: unknown,
+): Array<
+  Pick<ScheduleWbsSectionRow, "name" | "code" | "sort_order"> & { parent_id: string | null }
+> => {
+  if (!Array.isArray(value)) return [];
+  return value.map((item, index) => {
+    const row = (item ?? {}) as Record<string, unknown>;
+    return {
+      name: str(row.name, "General"),
+      code: str(row.code),
+      parent_id: (row.parent_id as string | null) ?? null,
+      sort_order: num(row.sort_order) || (index + 1) * 10,
+    };
+  });
+};
+
+export const listScheduleCpmTemplates = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId?: string } | undefined) =>
+    z.object({ projectId: z.string().uuid().optional() }).parse(input ?? {}),
+  )
+  .handler(async ({ context }) => {
+    const { data, error } = await dynamicTable(context.supabase, "schedule_cpm_templates")
+      .select("id,project_id,name,description,activity_count,created_at,updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(50);
+    if (isMissingRestRelation(error, "schedule_cpm_templates")) {
+      return { templates: [], persistence: "migration_required" as const };
+    }
+    if (error) throw new Error(error.message ?? "CPM template library did not load.");
+    return {
+      templates: ((data ?? []) as Record<string, unknown>[]).map(normalizeScheduleCpmTemplate),
+      persistence: "ready" as const,
+    };
+  });
+
+export const saveCurrentScheduleAsCpmTemplate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string; name: string; description?: string }) =>
+    z
+      .object({
+        projectId: z.string().uuid(),
+        name: z.string().min(1).max(160),
+        description: z.string().max(500).optional(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const [activitiesRes, wbsRes] = await Promise.all([
+      context.supabase
+        .from("schedule_activities")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("sort_order")
+        .order("activity_id"),
+      context.supabase
+        .from("schedule_wbs_sections")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("sort_order")
+        .order("name"),
+    ]);
+    if (activitiesRes.error) throw new Error(activitiesRes.error.message);
+    if (wbsRes.error && !isMissingRestRelation(wbsRes.error, "schedule_wbs_sections")) {
+      throw new Error(wbsRes.error.message);
+    }
+    const activities = ((activitiesRes.data ?? []) as unknown as Record<string, unknown>[])
+      .map(normalizeScheduleActivity)
+      .map(scheduleActivityTemplatePayload);
+    const wbsSections = ((wbsRes.data ?? []) as unknown as Record<string, unknown>[])
+      .map(normalizeScheduleWbsSection)
+      .map(scheduleWbsTemplatePayload);
+    const { data: inserted, error } = await dynamicTable(context.supabase, "schedule_cpm_templates")
+      .insert({
+        project_id: data.projectId,
+        name: data.name.trim(),
+        description: data.description?.trim() ?? "",
+        activities,
+        wbs_sections: wbsSections,
+        activity_count: activities.length,
+      })
+      .select("id")
+      .single();
+    if (isMissingRestRelation(error, "schedule_cpm_templates")) {
+      throw new Error(templateLibraryUnavailableMessage);
+    }
+    if (error) throw new Error(error.message ?? "CPM template did not save.");
+    return { ok: true, id: str(inserted?.id) };
+  });
+
+export const importScheduleCpmTemplate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string; templateId: string }) =>
+    z.object({ projectId: z.string().uuid(), templateId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const templateRes = await dynamicTable(context.supabase, "schedule_cpm_templates")
+      .select("*")
+      .eq("id", data.templateId)
+      .maybeSingle();
+    if (isMissingRestRelation(templateRes.error, "schedule_cpm_templates")) {
+      throw new Error(templateLibraryUnavailableMessage);
+    }
+    if (templateRes.error)
+      throw new Error(templateRes.error.message ?? "CPM template did not load.");
+    if (!templateRes.data) throw new Error("CPM template was not found.");
+
+    const template = templateRes.data as Record<string, unknown>;
+    const activities = readTemplateActivities(template.activities);
+    const wbsSections = readTemplateWbsSections(template.wbs_sections);
+    if (activities.length === 0) throw new Error("This CPM template has no activities to import.");
+
+    for (const section of wbsSections) {
+      await ensureScheduleWbsPath(context.supabase, data.projectId, section.name);
+    }
+
+    const existingRes = await context.supabase
+      .from("schedule_activities")
+      .select("activity_id,sort_order")
+      .eq("project_id", data.projectId);
+    if (existingRes.error) throw new Error(existingRes.error.message);
+    const existingRows = (existingRes.data ?? []) as unknown as Array<Record<string, unknown>>;
+    const existingIds = new Set(existingRows.map((row) => str(row.activity_id)).filter(Boolean));
+    const maxSortOrder = Math.max(0, ...existingRows.map((row) => num(row.sort_order)));
+    const rows = activities
+      .filter((activity) => !existingIds.has(str(activity.activity_id)))
+      .map((activity, index) => ({
+        ...activity,
+        project_id: data.projectId,
+        percent_complete: 0,
+        sort_order: maxSortOrder + (index + 1) * 10,
+      }));
+    if (rows.length === 0) return { ok: true, inserted: 0, skipped: activities.length };
+
+    const rowsWithWbs = [];
+    for (const row of rows) {
+      rowsWithWbs.push({
+        ...row,
+        wbs_section_id: await ensureScheduleWbsPath(
+          context.supabase,
+          data.projectId,
+          str(row.division, "General"),
+        ),
+      });
+    }
+
+    let { error } = await context.supabase.from("schedule_activities").insert(rowsWithWbs);
+    if (error && isMissingRestColumn(error, "wbs_section_id")) {
+      ({ error } = await context.supabase.from("schedule_activities").insert(rows));
+    }
+    if (error) throw new Error(error.message);
+    return { ok: true, inserted: rows.length, skipped: activities.length - rows.length };
   });
 
 // ---------- SCHEDULE UPDATES ----------
@@ -1143,17 +1399,19 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
       throw new Error(reorderRpc.error.message ?? "WBS order did not save.");
     }
 
+    let canPersistParentId = true;
     let siblingQuery = context.supabase
       .from("schedule_wbs_sections")
-      .select("id,parent_id,sort_order")
+      .select("id,parent_id,sort_order,name")
       .eq("project_id", data.projectId)
       .in("id", data.orderedIds);
     siblingQuery = scheduleWbsParentFilter(siblingQuery, parentId);
     let { data: siblingRows, error: siblingError } = await siblingQuery;
     if (siblingError && isMissingRestColumn(siblingError, "parent_id")) {
+      canPersistParentId = false;
       const fallback = await context.supabase
         .from("schedule_wbs_sections")
-        .select("id")
+        .select("id,sort_order,name")
         .eq("project_id", data.projectId)
         .in("id", data.orderedIds);
       siblingRows = fallback.data as typeof siblingRows;
@@ -1164,31 +1422,36 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
       throw new Error("WBS order can only be saved for sections under the same parent.");
     }
 
+    const persistedRows = (siblingRows ?? []) as unknown as Array<Record<string, unknown>>;
+    const rowsById = new Map(persistedRows.map((row) => [row.id as string, row]));
     const currentOrder = new Map(
-      ((siblingRows ?? []) as unknown as Array<Record<string, unknown>>).map((row) => [
-        row.id as string,
-        num(row.sort_order),
-      ]),
+      persistedRows.map((row) => [row.id as string, num(row.sort_order)]),
     );
     const changedRows = data.orderedIds
-      .map((id, index) => ({ id, sort_order: (index + 1) * 10 }))
+      .map((id, index) => {
+        const row = rowsById.get(id);
+        return {
+          id,
+          name: str(row?.name, "WBS Section"),
+          sort_order: (index + 1) * 10,
+        };
+      })
       .filter((row) => currentOrder.get(row.id) !== row.sort_order);
     if (changedRows.length === 0) return { ok: true, changed: 0 };
 
-    const updates = await Promise.all(
-      changedRows.map((row) => {
-        const patch: ScheduleWbsSectionUpdate = {
-          parent_id: parentId,
-          sort_order: row.sort_order,
-        };
-        return context.supabase
-          .from("schedule_wbs_sections")
-          .update(patch)
-          .eq("id", row.id)
-          .eq("project_id", data.projectId);
-      }),
-    );
-    const error = updates.find((result) => result.error)?.error;
+    const payload = changedRows.map((row) => {
+      const item: ScheduleWbsSectionInsert = {
+        id: row.id,
+        project_id: data.projectId,
+        name: row.name,
+        sort_order: row.sort_order,
+      };
+      if (canPersistParentId) item.parent_id = parentId;
+      return item;
+    });
+    const { error } = await context.supabase
+      .from("schedule_wbs_sections")
+      .upsert(payload, { onConflict: "id" });
     if (error) throw new Error(error.message);
     return { ok: true, changed: changedRows.length, method: "batch" };
   });

@@ -339,6 +339,9 @@ const scheduleRouteSource = readProjectFile(
   "src/routes/_authenticated/projects.$projectId.schedule.tsx",
 );
 const scheduleFunctionsSource = readProjectFile("src/lib/schedule.functions.ts");
+const templateMigrationSource = readProjectFile(
+  "supabase/migrations/20260701012000_schedule_cpm_templates.sql",
+);
 const stylesSource = readProjectFile("src/styles.css");
 
 for (const requiredScheduleRiskText of [
@@ -356,6 +359,12 @@ for (const requiredScheduleRiskText of [
   "WBS / area manager",
   "Custom WBS / child area path",
   "Schedule update history",
+  "1 wk lookahead",
+  "2 wk lookahead",
+  "Save current CPM as template",
+  "Use template",
+  "Send to Risk Tally",
+  "delay days extend past the current activity bar",
 ]) {
   assert.ok(
     scheduleRiskSource.includes(requiredScheduleRiskText),
@@ -387,12 +396,32 @@ for (const requiredScheduleRouteText of [
 for (const requiredScheduleFunctionText of [
   "const uniqueActivityDivisions = Array.from(",
   "await ensureScheduleWbsPath(context.supabase, data.projectId, division);",
-  '.from("schedule_wbs_sections").upsert(',
+  '.select("id,parent_id,sort_order,name")',
+  "name: row.name",
+  '.from("schedule_wbs_sections")',
+  '.upsert(payload, { onConflict: "id" })',
   '{ onConflict: "id" }',
+  "listScheduleCpmTemplates",
+  "saveCurrentScheduleAsCpmTemplate",
+  "importScheduleCpmTemplate",
+  "schedule_cpm_templates",
 ]) {
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),
     `Schedule functions are missing required WBS persistence contract: ${requiredScheduleFunctionText}`,
+  );
+}
+
+for (const requiredTemplateMigrationText of [
+  "CREATE TABLE IF NOT EXISTS public.schedule_cpm_templates",
+  "activities jsonb NOT NULL DEFAULT '[]'::jsonb",
+  "wbs_sections jsonb NOT NULL DEFAULT '[]'::jsonb",
+  "public.can_read_project(project_id)",
+  "public.can_manage_project(project_id)",
+]) {
+  assert.ok(
+    templateMigrationSource.includes(requiredTemplateMigrationText),
+    `Template migration is missing required CPM template contract: ${requiredTemplateMigrationText}`,
   );
 }
 
