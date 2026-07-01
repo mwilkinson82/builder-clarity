@@ -169,8 +169,14 @@ await expectFile("src/routes/_authenticated/team.tsx", "company workspace route"
 await expectFile("src/routes/_authenticated/estimates.tsx", "estimates route");
 await expectFile("src/routes/_authenticated/estimate-masters.tsx", "estimate master sheets route");
 await expectFile("src/routes/_authenticated/estimates.$estimateId.tsx", "estimate workspace route");
+await expectFile(
+  "src/routes/_authenticated/estimates.$estimateId.plan-room.tsx",
+  "estimate plan room route",
+);
 await expectFile("src/routes/_authenticated/cost-library.tsx", "cost library route");
 await expectFile("src/components/estimates/EstimateWorkspace.tsx", "estimate workspace component");
+await expectFile("src/components/estimates/PlanRoomWorkspace.tsx", "plan room workspace component");
+await expectFile("src/lib/plan-room.functions.ts", "plan room server functions");
 await expectFile("src/components/pipeline/PipelineWorkspace.tsx", "CRM pipeline workspace");
 await expectFile("src/components/pipeline/OpportunityDetail.tsx", "CRM opportunity detail modal");
 await expectFile("src/lib/estimate-import.ts", "estimating import parser");
@@ -1056,6 +1062,8 @@ await expectContains(
 await expectContains(
   "src/components/estimates/EstimateWorkspace.tsx",
   [
+    /Plan Room/,
+    /\/estimates\/\$estimateId\/plan-room/,
     /Import Master Sheet/,
     /Download Import Format/,
     /Excel example \+ instructions/,
@@ -1092,6 +1100,56 @@ await expectContains(
   "estimate workspace UI can bulk import master sheets, move/delete estimates, and keeps the worksheet grid readable",
 );
 
+await expectContains(
+  "src/routes/_authenticated/estimates.$estimateId.plan-room.tsx",
+  [
+    /createFileRoute\("\/_authenticated\/estimates\/\$estimateId\/plan-room"\)/,
+    /getEstimate/,
+    /getPlanRoom/,
+    /PlanRoomWorkspace/,
+  ],
+  "estimate plan room route loads the estimate, takeoff data, and workspace",
+);
+
+await expectContains(
+  "src/components/estimates/PlanRoomWorkspace.tsx",
+  [
+    /Upload Plans/,
+    /Set Scale/,
+    /Linear/,
+    /Area/,
+    /Count/,
+    /Takeoff Worksheet/,
+    /Estimate Sync/,
+    /supabase\.storage[\s\S]*\.from\(planRoomBucket\)[\s\S]*\.upload/,
+    /pdfjs-dist\/build\/pdf\.worker\.min\.mjs\?url/,
+    /calculateQuantity/,
+    /createTakeoffMeasurement/,
+    /syncTakeoffToEstimateLine/,
+    /Send Total Qty to Estimate/,
+    /HARBOR RESIDENCE/,
+  ],
+  "plan room workspace supports upload, scale, takeoff tools, source markup, and estimate sync",
+);
+
+await expectContains(
+  "src/lib/plan-room.functions.ts",
+  [
+    /estimate_plan_sets/,
+    /estimate_plan_sheets/,
+    /estimate_takeoff_measurements/,
+    /ensureHarborPlanRoomDemo/,
+    /Harbor Residence - Permit Set/,
+    /createPlanSet/,
+    /createTakeoffMeasurement/,
+    /updatePlanSheet/,
+    /syncTakeoffQuantityToLine/,
+    /recalculateEstimateTotalsInternal/,
+    /calculateEstimateTotals/,
+  ],
+  "plan room server functions seed Harbor sample drawings and sync takeoff quantities into estimates",
+);
+
 const sql = await readAllMigrationSql();
 
 expectSql(
@@ -1106,6 +1164,25 @@ expectSql(
     /NOTIFY pgrst, 'reload schema'/i,
   ],
   "estimate folders migration exists for won, not-won, active, and archived bid cleanup",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.estimate_plan_sets/i,
+    /create table if not exists public\.estimate_plan_sheets/i,
+    /create table if not exists public\.estimate_takeoff_measurements/i,
+    /estimate_line_item_id uuid references public\.estimate_line_items\(id\) on delete set null/i,
+    /grant select, insert, update, delete on public\.estimate_plan_sets to authenticated/i,
+    /grant select, insert, update, delete on public\.estimate_takeoff_measurements to authenticated/i,
+    /alter table public\.estimate_plan_sets enable row level security/i,
+    /alter table public\.estimate_takeoff_measurements enable row level security/i,
+    /insert into storage\.buckets[\s\S]*'plan-room'/i,
+    /create policy plan_room_storage_team_insert/i,
+    /public\.storage_estimate_id\(name\)/i,
+    /NOTIFY pgrst, 'reload schema'/i,
+  ],
+  "plan room migration exists with takeoff tables, estimate-row links, storage bucket, grants, RLS, and schema reload",
 );
 
 expectSql(

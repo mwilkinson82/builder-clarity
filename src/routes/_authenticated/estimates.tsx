@@ -192,7 +192,7 @@ function EstimatesPage() {
       toast.error(error instanceof Error ? error.message : "Estimate did not delete"),
   });
 
-  if (/^\/estimates\/[^/]+\/?$/.test(location.pathname)) {
+  if (/^\/estimates\/[^/]+(?:\/.*)?$/.test(location.pathname)) {
     return <Outlet />;
   }
 
