@@ -993,8 +993,8 @@ export function PlanRoomWorkspace({
   return (
     <div
       className={cn(
-        "min-h-screen bg-background",
-        isCockpitMode && "fixed inset-0 z-50 overflow-hidden",
+        "bg-background",
+        isCockpitMode ? "fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden" : "min-h-screen",
       )}
       data-testid="plan-room-workspace"
     >
@@ -1065,10 +1065,12 @@ export function PlanRoomWorkspace({
 
       <main
         className={cn(
-          "relative mx-auto grid max-w-[1800px] gap-5 px-5 py-6 xl:grid-cols-[220px_minmax(0,1fr)_300px] 2xl:grid-cols-[280px_minmax(0,1fr)_390px] lg:px-8",
-          isCockpitMode &&
-            "h-[calc(100vh-102px)] max-w-none grid-cols-1 overflow-hidden px-3 py-3 xl:grid-cols-1",
+          "relative grid min-h-0",
+          isCockpitMode
+            ? "flex-1 grid-cols-1 overflow-hidden px-3 py-3"
+            : "mx-auto max-w-[1800px] gap-5 px-5 py-6 lg:px-8 xl:grid-cols-[220px_minmax(0,1fr)_300px] 2xl:grid-cols-[280px_minmax(0,1fr)_390px]",
         )}
+        data-testid="plan-room-main"
       >
         {isCockpitMode && (
           <div
@@ -1407,7 +1409,7 @@ export function PlanRoomWorkspace({
         <section
           className={cn(
             "min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card",
-            isCockpitMode && "flex min-h-0 flex-col xl:col-span-1",
+            isCockpitMode && "flex h-full min-h-0 w-full flex-col",
           )}
           data-testid="plan-cockpit-drawing-stage"
         >
