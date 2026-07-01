@@ -4833,6 +4833,10 @@ function ActivityScheduleMatrix({
               <span className="h-2.5 w-2.5 rotate-45 rounded-[1px] border border-foreground/45 bg-card" />
               Milestone
             </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="constructline-baseline-legend-swatch h-1.5 w-8 rounded-full bg-foreground/35" />
+              Baseline
+            </span>
             {activeDelayFragmentCount > 0 && (
               <span className="inline-flex items-center gap-1">
                 <span className="constructline-delay-legend-swatch h-3 w-8 rounded-full border border-danger/40" />
@@ -5320,8 +5324,13 @@ function ConstructLineTaskRow({
   const needsActualStart = shouldFlagMissingActualStart(activity);
   const startOffset = offsetFromTimelineStart(task.visualStartDate, timelineStartDate);
   const finishOffset = offsetFromTimelineStart(task.visualFinishDate, timelineStartDate);
+  const baselineStartOffset = offsetFromTimelineStart(task.baselineStartDate, timelineStartDate);
+  const baselineFinishOffset = offsetFromTimelineStart(task.baselineFinishDate, timelineStartDate);
   const barLeft = startOffset * dayPx;
   const barWidth = Math.max(8, (finishOffset - startOffset + 1) * dayPx);
+  const baselineLeft = baselineStartOffset * dayPx;
+  const baselineWidth = Math.max(8, (baselineFinishOffset - baselineStartOffset + 1) * dayPx);
+  const baselineTop = Math.max(4, rowHeight / 2 - (isPrintMode ? 9 : 19));
   const logicCount = task.predecessorKeys.length + task.successorKeys.length;
   const delaySummary = buildDelayFragmentSummary(delayFragments);
   const hasOpenDelay = delaySummary.openCount > 0;
@@ -5525,15 +5534,29 @@ function ConstructLineTaskRow({
           />
         )}
         {task.isMilestone ? (
-          <div
-            className={cn(
-              "absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] border-2 shadow-sm",
-              milestoneClass,
-            )}
-            style={{ left: barLeft }}
-          />
+          <>
+            <div
+              className="constructline-baseline-diamond absolute h-3 w-3 -translate-x-1/2 rotate-45 rounded-[1px] border border-foreground/35 bg-card"
+              style={{ left: baselineLeft, top: baselineTop }}
+              title={`Baseline milestone ${shortDate(task.baselineFinishDate)}`}
+              aria-label={`Baseline milestone ${shortDate(task.baselineFinishDate)}`}
+            />
+            <div
+              className={cn(
+                "absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] border-2 shadow-sm",
+                milestoneClass,
+              )}
+              style={{ left: barLeft }}
+            />
+          </>
         ) : (
           <>
+            <div
+              className="constructline-baseline-bar absolute h-1.5 rounded-full bg-foreground/35"
+              style={{ left: baselineLeft, top: baselineTop, width: baselineWidth }}
+              title={`Baseline ${shortDate(task.baselineStartDate)} to ${shortDate(task.baselineFinishDate)}`}
+              aria-label={`Baseline ${shortDate(task.baselineStartDate)} to ${shortDate(task.baselineFinishDate)}`}
+            />
             <div
               className={cn(
                 "absolute top-1/2 h-4 -translate-y-1/2 rounded-full border",
