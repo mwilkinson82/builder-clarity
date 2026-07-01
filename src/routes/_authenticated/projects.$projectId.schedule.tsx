@@ -511,6 +511,7 @@ function ScheduleWorkspacePage() {
   return (
     <ScheduleWorkspaceShell project={project}>
       <CpmActivityPlanner
+        workspaceMode="full"
         activities={activities}
         wbsSections={wbsSections}
         wbsPersistence={wbsPersistence}

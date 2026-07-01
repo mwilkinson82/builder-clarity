@@ -1593,6 +1593,7 @@ const activityDraftFromRow = (activity: ScheduleActivityRow): ActivityDraft => (
 });
 
 export function CpmActivityPlanner({
+  workspaceMode = "full",
   activities,
   wbsSections,
   wbsPersistence = "ready",
@@ -1618,6 +1619,7 @@ export function CpmActivityPlanner({
   isSavingWbs,
   isSavingWbsOrder = false,
 }: {
+  workspaceMode?: "embedded" | "full";
   activities: ScheduleActivityRow[];
   wbsSections: ScheduleWbsSectionRow[];
   wbsPersistence?: "ready" | "migration_required";
@@ -1647,6 +1649,7 @@ export function CpmActivityPlanner({
   isSavingWbs: boolean;
   isSavingWbsOrder?: boolean;
 }) {
+  const isFullWorkspace = workspaceMode === "full";
   const qc = useQueryClient();
   const createUpdateFn = useServerFn(createScheduleUpdate);
   const [draft, setDraft] = useState<ActivityDraft>(() => emptyActivityDraft());
@@ -2076,7 +2079,6 @@ export function CpmActivityPlanner({
           </span>
         </div>
         <ActivityScheduleMatrix
-          matrixId="cpm-grid"
           model={displayedCpmModel}
           delayFragments={delayFragments}
           dayPx={CONSTRUCTLINE_FIT_DAY_PX}
@@ -2100,16 +2102,24 @@ export function CpmActivityPlanner({
           </span>
         </footer>
       </section>
-      <div className="constructline-screen-workbench rounded-lg border border-hairline bg-surface p-5">
+      <div
+        className={cn(
+          "constructline-screen-workbench rounded-lg border border-hairline bg-surface",
+          isFullWorkspace ? "p-4 lg:p-5" : "p-5",
+        )}
+      >
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              ConstructLine beta
+              {isFullWorkspace ? "Schedule operations bench" : "ConstructLine beta"}
             </div>
-            <h4 className="mt-1 font-serif text-2xl text-foreground">CPM schedule workbench</h4>
+            <h4 className="mt-1 font-serif text-2xl text-foreground">
+              {isFullWorkspace ? "Construction schedule workspace" : "CPM schedule workbench"}
+            </h4>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              Build the working job schedule with activity IDs, divisions, start/finish dates,
-              progress, predecessor/successor logic, float, critical path, and activity stacking.
+              {isFullWorkspace
+                ? "Work the CPM grid first, then use the panels below for schedule intelligence, updates, milestones, delayed decisions, procurement, and trade performance risks."
+                : "Build the working job schedule with activity IDs, divisions, start/finish dates, progress, predecessor/successor logic, float, critical path, and activity stacking."}
             </p>
           </div>
         </div>
@@ -2255,6 +2265,7 @@ export function CpmActivityPlanner({
         )}
 
         <ActivityScheduleMatrix
+          matrixId="cpm-grid"
           model={displayedCpmModel}
           delayFragments={delayFragments}
           toolbar={

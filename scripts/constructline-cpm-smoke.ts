@@ -349,6 +349,8 @@ for (const requiredScheduleRiskText of [
   "Schedule snapshot",
   "View filters",
   "Schedule actions",
+  "Schedule operations bench",
+  "Construction schedule workspace",
   "Concrete / Northwest corner",
   "WBS / areas",
   "WBS / area manager",
@@ -374,6 +376,7 @@ for (const requiredScheduleRouteText of [
   "Procurement risks",
   "Trade performance risks",
   "Delay impact logging is not enabled",
+  'workspaceMode="full"',
 ]) {
   assert.ok(
     scheduleRouteSource.includes(requiredScheduleRouteText),
@@ -395,6 +398,13 @@ assert.equal(
   scheduleFunctionsSource.includes(".filter((section) => section.parent_id == null)"),
   false,
   "Derived WBS seeding must persist child sections, not only top-level sections.",
+);
+
+const printMatrixIndex = scheduleRiskSource.indexOf("isPrintMode");
+const screenGridAnchorIndex = scheduleRiskSource.indexOf('matrixId="cpm-grid"');
+assert.ok(
+  screenGridAnchorIndex > printMatrixIndex,
+  "The visible screen CPM matrix must own the cpm-grid anchor, not the print-only matrix.",
 );
 
 for (const requiredPrintStyle of [
