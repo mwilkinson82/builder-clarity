@@ -61,6 +61,7 @@ type WbsParentMoveInput = {
   id: string;
   parentId: string | null;
 };
+const WBS_ORDER_SAVE_DEBOUNCE_MS = 250;
 
 function formatDelayFragmentError(error: unknown) {
   const message = error instanceof Error ? error.message : "";
@@ -463,8 +464,8 @@ function ScheduleWorkspacePage() {
       setIsWbsOrderSaveQueued(true);
       toast.success("WBS order applied", {
         id: toastId,
-        description: "The grid moved immediately. Final order saves after you stop moving rows.",
-        duration: 1800,
+        description: "The grid moved immediately. Saving the final order now.",
+        duration: 1200,
       });
 
       wbsOrderSaveTimerRef.current = setTimeout(() => {
@@ -475,7 +476,7 @@ function ScheduleWorkspacePage() {
           return;
         }
         wbsReorder.mutate({ ...queuedOrder, saveVersion });
-      }, 650);
+      }, WBS_ORDER_SAVE_DEBOUNCE_MS);
     },
     [projectId, qc, wbsReorder],
   );
