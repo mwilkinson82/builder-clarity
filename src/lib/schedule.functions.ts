@@ -1400,6 +1400,10 @@ function stripScheduleActivityStatusColumns<T extends Record<string, unknown>>(p
   return next;
 }
 
+function includesScheduleActivityStatusColumn(payload: Record<string, unknown>) {
+  return SCHEDULE_ACTIVITY_STATUS_COLUMNS.some((column) => column in payload);
+}
+
 function stripScheduleActivityMissingColumns<T extends Record<string, unknown>>(
   payload: T,
   error: DynamicSupabaseError,
@@ -2167,10 +2171,18 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       .from("schedule_activities")
       .update(data.patch as ScheduleActivityUpdate)
       .eq("id", data.id);
+    const requestedStatusUpdate = includesScheduleActivityStatusColumn(
+      data.patch as Record<string, unknown>,
+    );
     if (
       error &&
       (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error))
     ) {
+      if (requestedStatusUpdate && isMissingScheduleActivityStatusColumn(error)) {
+        throw new Error(
+          "The schedule database needs the latest activity-status update before actual start, expected finish, and remaining duration can save.",
+        );
+      }
       const fallbackPatch = stripScheduleActivityMissingColumns(
         data.patch as Record<string, unknown>,
         error,

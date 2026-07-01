@@ -7729,7 +7729,9 @@ function ActivityDetailDialog({
                   min={0}
                   max={100}
                   value={draft.percent_complete}
-                  onChange={(e) => setDraft({ ...draft, percent_complete: e.target.value })}
+                  onChange={(e) =>
+                    setDraft(updateDraftPercentComplete(draft, e.target.value, dataDate))
+                  }
                   className="h-10 min-w-0 tabular"
                 />
               </LabeledField>
@@ -7756,7 +7758,9 @@ function ActivityDetailDialog({
                   <Input
                     type="date"
                     value={draft.actual_start_date}
-                    onChange={(e) => setDraft({ ...draft, actual_start_date: e.target.value })}
+                    onChange={(e) =>
+                      setDraft(updateDraftActualStartDate(draft, e.target.value, dataDate))
+                    }
                     className="h-10 min-w-0"
                   />
                 </LabeledField>
@@ -7784,7 +7788,9 @@ function ActivityDetailDialog({
                   <Input
                     type="date"
                     value={draft.forecast_start_date}
-                    onChange={(e) => setDraft({ ...draft, forecast_start_date: e.target.value })}
+                    onChange={(e) =>
+                      setDraft(updateDraftForecastStartDate(draft, e.target.value, dataDate))
+                    }
                     className="h-10 min-w-0"
                   />
                 </LabeledField>
@@ -8750,6 +8756,56 @@ function updateDraftBaselineFinishDate(draft: ActivityDraft, value: string): Act
     forecast_start_date: value,
     forecast_finish_date: value,
   };
+}
+
+function updateDraftActualStartDate(
+  draft: ActivityDraft,
+  value: string,
+  dataDate?: string | null,
+): ActivityDraft {
+  const next = { ...draft, actual_start_date: value };
+  if (next.forecast_finish_date)
+    return updateDraftForecastFinishDate(next, next.forecast_finish_date, dataDate);
+  if (next.remaining_duration_days.trim()) {
+    return updateDraftRemainingDuration(next, next.remaining_duration_days, dataDate);
+  }
+  return next;
+}
+
+function updateDraftForecastStartDate(
+  draft: ActivityDraft,
+  value: string,
+  dataDate?: string | null,
+): ActivityDraft {
+  const next = { ...draft, forecast_start_date: value };
+  if (next.remaining_duration_days.trim()) {
+    return updateDraftRemainingDuration(next, next.remaining_duration_days, dataDate);
+  }
+  if (next.forecast_finish_date)
+    return updateDraftForecastFinishDate(next, next.forecast_finish_date, dataDate);
+  return next;
+}
+
+function updateDraftPercentComplete(
+  draft: ActivityDraft,
+  value: string,
+  dataDate?: string | null,
+): ActivityDraft {
+  const next = { ...draft, percent_complete: value };
+  const percentComplete = parsePercent(value);
+  if (percentComplete >= 100) {
+    return {
+      ...next,
+      remaining_duration_days: "0",
+      actual_finish_date: next.actual_finish_date || next.forecast_finish_date || next.finish_date,
+    };
+  }
+  if (next.forecast_finish_date)
+    return updateDraftForecastFinishDate(next, next.forecast_finish_date, dataDate);
+  if (next.remaining_duration_days.trim()) {
+    return updateDraftRemainingDuration(next, next.remaining_duration_days, dataDate);
+  }
+  return next;
 }
 
 function getDraftStatusAnchorDate(draft: ActivityDraft, dataDate?: string | null) {

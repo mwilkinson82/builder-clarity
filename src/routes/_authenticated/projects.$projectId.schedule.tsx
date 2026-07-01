@@ -91,6 +91,13 @@ function formatActivityMutationError(error: unknown) {
   const message = error instanceof Error ? error.message : "";
   const lowerMessage = message.toLowerCase();
   if (
+    lowerMessage.includes("activity-status") ||
+    lowerMessage.includes("actual start") ||
+    lowerMessage.includes("remaining duration")
+  ) {
+    return "The schedule database needs the latest activity-status fields before actual start, expected finish, and remaining duration can save. Refresh after the publish finishes.";
+  }
+  if (
     lowerMessage.includes("wbs_section_id") ||
     lowerMessage.includes("schema cache") ||
     lowerMessage.includes("schedule_activities")

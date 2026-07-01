@@ -658,6 +658,12 @@ for (const requiredScheduleRiskText of [
   "Save again after activity changes",
   "hasSameDateReadinessWarning",
   "Update rule:",
+  "updateDraftActualStartDate",
+  "updateDraftForecastStartDate",
+  "updateDraftPercentComplete",
+  "setDraft(updateDraftActualStartDate(draft, e.target.value, dataDate))",
+  "setDraft(updateDraftForecastStartDate(draft, e.target.value, dataDate))",
+  "setDraft(updateDraftPercentComplete(draft, e.target.value, dataDate))",
   "from the later current start for unstarted future work",
   "Math.max(dataDateMs, currentStartMs)",
   "percentComplete > 0 || draft.actual_start_date",
@@ -891,6 +897,7 @@ for (const requiredScheduleRouteText of [
   "updates={updates}",
   "activityUpdates={activityUpdates}",
   "activity snapshots",
+  "The schedule database needs the latest activity-status fields before actual start, expected finish, and remaining duration can save.",
 ]) {
   assert.ok(
     scheduleRouteSource.includes(requiredScheduleRouteText),
@@ -932,6 +939,9 @@ for (const requiredScheduleFunctionText of [
   "const { error: wbsLinkError } = await context.supabase",
   "update({ wbs_section_id: wbsSectionId } as any)",
   "stripScheduleActivityMissingColumns(",
+  "includesScheduleActivityStatusColumn",
+  "requestedStatusUpdate && isMissingScheduleActivityStatusColumn(error)",
+  "The schedule database needs the latest activity-status update before actual start, expected finish, and remaining duration can save.",
 ]) {
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),
