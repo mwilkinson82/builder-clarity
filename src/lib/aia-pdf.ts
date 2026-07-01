@@ -105,6 +105,19 @@ function rightText(
   text(ctx, label, x + width - font.widthOfTextAtSize(label, size), y, { size, font });
 }
 
+function centerText(
+  ctx: PdfCtx,
+  value: string,
+  x: number,
+  y: number,
+  width: number,
+  size = 7,
+  font: PDFFont = ctx.sans,
+) {
+  const label = clean(value);
+  text(ctx, label, x + (width - font.widthOfTextAtSize(label, size)) / 2, y, { size, font });
+}
+
 function drawRule(ctx: PdfCtx, x1: number, x2: number, y: number, thickness = 0.5) {
   ctx.page.drawLine({
     start: { x: x1, y },
@@ -412,8 +425,29 @@ const CONTINUATION_COLUMNS = [
   { key: "retainage", label: "Retainage", x: 672, width: 90, align: "right" },
 ] as const;
 
+const PCT_COLUMN = CONTINUATION_COLUMNS.find((column) => column.key === "pct")!;
+const PCT_TEXT_X = PCT_COLUMN.x + 4;
+const PCT_TEXT_WIDTH = PCT_COLUMN.width - 8;
+
 function getContinuationColumns(showRetainage: boolean) {
   return CONTINUATION_COLUMNS.filter((column) => showRetainage || column.key !== "retainage");
+}
+
+function drawContinuationColumnHeader(ctx: PdfCtx, column: (typeof CONTINUATION_COLUMNS)[number]) {
+  const label = column.label.toUpperCase();
+  const x = column.x + 4;
+  const width = column.width - 8;
+  if (column.key === "pct") {
+    centerText(ctx, label, x, ctx.y - 9, width, 5.5, ctx.sansBold);
+    return;
+  }
+
+  drawWrappedText(ctx, label, x, ctx.y - 9, width, {
+    font: ctx.sansBold,
+    size: 5.5,
+    lineHeight: 6.5,
+    maxLines: 2,
+  });
 }
 
 function drawContinuationHeader(
@@ -458,12 +492,7 @@ function drawContinuationHeader(
     borderWidth: 0.5,
   });
   getContinuationColumns(showRetainage).forEach((column) =>
-    drawWrappedText(ctx, column.label.toUpperCase(), column.x + 4, ctx.y - 9, column.width - 8, {
-      font: ctx.sansBold,
-      size: 5.5,
-      lineHeight: 6.5,
-      maxLines: 2,
-    }),
+    drawContinuationColumnHeader(ctx, column),
   );
   ctx.y -= 31;
 }
@@ -493,7 +522,13 @@ function drawContinuationRow(
   rightText(ctx, money(line.work_completed_this_period_cents), 374, y + 4, 56);
   rightText(ctx, money(line.materials_stored_this_period_cents), 440, y + 4, 56);
   rightText(ctx, money(line.total_completed_and_stored_cents), 506, y + 4, 64);
-  rightText(ctx, `${line.billing_percent_complete.toFixed(1)}%`, 580, y + 4, 24);
+  centerText(
+    ctx,
+    `${line.billing_percent_complete.toFixed(1)}%`,
+    PCT_TEXT_X,
+    y + 4,
+    PCT_TEXT_WIDTH,
+  );
   rightText(ctx, money(line.balance_to_finish_cents), 614, y + 4, 52);
   if (showRetainage) {
     rightText(

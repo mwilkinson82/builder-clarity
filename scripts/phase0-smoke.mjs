@@ -518,6 +518,8 @@ await expectContains(
     /hasRetainage/,
     /Total earned to date/,
     /getContinuationColumns/,
+    /drawContinuationColumnHeader/,
+    /PCT_TEXT_X/,
     /aia-pay-application-package\.pdf/,
   ],
   "pay app PDF generator creates a cover sheet and continuation sheet package",
