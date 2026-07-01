@@ -405,6 +405,9 @@ for (const requiredScheduleFunctionText of [
   "saveCurrentScheduleAsCpmTemplate",
   "importScheduleCpmTemplate",
   "schedule_cpm_templates",
+  "path: str(row.path, name)",
+  "scheduleWbsTemplatePayload(section, wbsPathMap.get(section.id) ?? section.name)",
+  "section.path || section.name",
 ]) {
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),

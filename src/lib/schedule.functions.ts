@@ -690,8 +690,12 @@ const scheduleActivityTemplatePayload = (activity: ScheduleActivityRow): Record<
   sort_order: activity.sort_order,
 });
 
-const scheduleWbsTemplatePayload = (section: ScheduleWbsSectionRow): Record<string, Json> => ({
+const scheduleWbsTemplatePayload = (
+  section: ScheduleWbsSectionRow,
+  path: string,
+): Record<string, Json> => ({
   name: section.name,
+  path,
   code: section.code,
   parent_id: section.parent_id,
   sort_order: section.sort_order,
@@ -724,13 +728,18 @@ const readTemplateActivities = (value: unknown): ScheduleActivityInsert[] => {
 const readTemplateWbsSections = (
   value: unknown,
 ): Array<
-  Pick<ScheduleWbsSectionRow, "name" | "code" | "sort_order"> & { parent_id: string | null }
+  Pick<ScheduleWbsSectionRow, "name" | "code" | "sort_order"> & {
+    parent_id: string | null;
+    path: string;
+  }
 > => {
   if (!Array.isArray(value)) return [];
   return value.map((item, index) => {
     const row = (item ?? {}) as Record<string, unknown>;
+    const name = str(row.name, "General");
     return {
-      name: str(row.name, "General"),
+      name,
+      path: str(row.path, name),
       code: str(row.code),
       parent_id: (row.parent_id as string | null) ?? null,
       sort_order: num(row.sort_order) || (index + 1) * 10,
@@ -791,9 +800,13 @@ export const saveCurrentScheduleAsCpmTemplate = createServerFn({ method: "POST" 
     const activities = ((activitiesRes.data ?? []) as unknown as Record<string, unknown>[])
       .map(normalizeScheduleActivity)
       .map(scheduleActivityTemplatePayload);
-    const wbsSections = ((wbsRes.data ?? []) as unknown as Record<string, unknown>[])
-      .map(normalizeScheduleWbsSection)
-      .map(scheduleWbsTemplatePayload);
+    const persistedWbsSections = ((wbsRes.data ?? []) as unknown as Record<string, unknown>[]).map(
+      normalizeScheduleWbsSection,
+    );
+    const wbsPathMap = buildWbsSectionPathMap(persistedWbsSections);
+    const wbsSections = persistedWbsSections.map((section) =>
+      scheduleWbsTemplatePayload(section, wbsPathMap.get(section.id) ?? section.name),
+    );
     const { data: inserted, error } = await dynamicTable(context.supabase, "schedule_cpm_templates")
       .insert({
         project_id: data.projectId,
@@ -835,7 +848,7 @@ export const importScheduleCpmTemplate = createServerFn({ method: "POST" })
     if (activities.length === 0) throw new Error("This CPM template has no activities to import.");
 
     for (const section of wbsSections) {
-      await ensureScheduleWbsPath(context.supabase, data.projectId, section.name);
+      await ensureScheduleWbsPath(context.supabase, data.projectId, section.path || section.name);
     }
 
     const existingRes = await context.supabase
