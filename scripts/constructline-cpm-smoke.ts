@@ -174,9 +174,17 @@ const statusedById = new Map(statusedModel.tasks.map((task) => [task.dependencyK
 assert.equal(statusedById.get("A")?.remainingDurationDays, 5);
 assert.equal(statusedById.get("A")?.statusStartDate, "2026-01-01");
 assert.equal(statusedById.get("A")?.statusFinishDate, "2026-01-13");
+assert.equal(statusedById.get("A")?.statusBasis, "remaining_duration");
 assert.equal(statusedById.get("A")?.slippageDays, 3);
 assert.equal(statusedById.get("B")?.statusStartDate, "2026-01-14");
+assert.equal(statusedById.get("B")?.statusBasis, "planned_dates");
 assert.equal(statusedById.get("B")?.isCritical, true);
+
+const staleStatusModel = buildConstructLineCpmModel(statusedActivities, {
+  dataDate: "2026-01-20",
+});
+const staleStatusById = new Map(staleStatusModel.tasks.map((task) => [task.dependencyKey, task]));
+assert.equal(staleStatusById.get("B")?.statusBasis, "needs_update");
 
 const reciprocalPatches = buildReciprocalActivityLogicPatches(
   {
@@ -503,6 +511,11 @@ for (const requiredScheduleRiskText of [
   "shouldFlagMissingRemainingDuration",
   "shouldFlagMissingExpectedFinish",
   "shouldFlagMissingActualStart",
+  "formatTaskStatusBasisLabel",
+  "formatTaskStatusBasisTitle",
+  "getTaskStatusBasisClass",
+  "Current schedule is based on entered remaining duration from the data date.",
+  "This incomplete activity is past its expected finish.",
   "Show active rows",
   "status fields present",
   "CPM update has status gaps",

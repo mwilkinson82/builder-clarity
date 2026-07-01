@@ -5181,8 +5181,19 @@ function ConstructLineTaskRow({
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
           {task.isMilestone ? "M" : task.durationDays}
         </div>
-        <div className="flex items-center justify-end border-l border-hairline/50 px-2 font-semibold tabular text-foreground">
-          {task.remainingDurationDays}
+        <div
+          className="flex min-w-0 flex-col items-end justify-center border-l border-hairline/50 px-2 tabular"
+          title={formatTaskStatusBasisTitle(task)}
+        >
+          <span className="font-semibold text-foreground">{task.remainingDurationDays}</span>
+          <span
+            className={cn(
+              "mt-0.5 max-w-full truncate text-[9px] font-semibold uppercase tracking-[0.08em]",
+              getTaskStatusBasisClass(task),
+            )}
+          >
+            {formatTaskStatusBasisLabel(task)}
+          </span>
         </div>
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
           {shortPrintDate(task.statusStartDate)}
@@ -5328,6 +5339,54 @@ function getTaskFinishVarianceDays(task: ConstructLineCpmTask) {
   const expectedFinishMs = parseDateMs(task.statusFinishDate);
   if (baselineFinishMs == null || expectedFinishMs == null) return null;
   return Math.round((expectedFinishMs - baselineFinishMs) / DAY_MS);
+}
+
+function formatTaskStatusBasisLabel(task: ConstructLineCpmTask) {
+  switch (task.statusBasis) {
+    case "actual":
+      return "actual";
+    case "remaining_duration":
+      return "rem";
+    case "expected_finish":
+      return "expect";
+    case "needs_update":
+      return "update";
+    case "planned_dates":
+    default:
+      return "plan";
+  }
+}
+
+function formatTaskStatusBasisTitle(task: ConstructLineCpmTask) {
+  switch (task.statusBasis) {
+    case "actual":
+      return "Current schedule is based on actual finish or completed status.";
+    case "remaining_duration":
+      return "Current schedule is based on entered remaining duration from the data date.";
+    case "expected_finish":
+      return "Current schedule is based on the expected finish forecast.";
+    case "needs_update":
+      return "This incomplete activity is past its expected finish. Enter remaining duration or expected finish.";
+    case "planned_dates":
+    default:
+      return "Current schedule is still carrying the planned baseline dates.";
+  }
+}
+
+function getTaskStatusBasisClass(task: ConstructLineCpmTask) {
+  switch (task.statusBasis) {
+    case "actual":
+      return "text-success";
+    case "remaining_duration":
+      return "text-foreground";
+    case "expected_finish":
+      return "text-accent";
+    case "needs_update":
+      return "text-danger";
+    case "planned_dates":
+    default:
+      return "text-muted-foreground";
+  }
 }
 
 function formatFinishVarianceDays(days: number | null) {

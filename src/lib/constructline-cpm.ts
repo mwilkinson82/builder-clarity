@@ -17,6 +17,9 @@ export interface ConstructLineLogicTie {
   lagDays: number;
 }
 
+export type ConstructLineStatusBasis =
+  "actual" | "remaining_duration" | "expected_finish" | "planned_dates" | "needs_update";
+
 export interface ConstructLineCpmTask {
   activity: ScheduleActivityRow;
   activityKey: string;
@@ -27,6 +30,7 @@ export interface ConstructLineCpmTask {
   baselineFinishDate: string;
   statusStartDate: string;
   statusFinishDate: string;
+  statusBasis: ConstructLineStatusBasis;
   visualStartDate: string;
   visualFinishDate: string;
   earlyStart: number;
@@ -121,6 +125,7 @@ interface WorkingTask {
   baselineFinishOffset: number | null;
   statusStartOffset: number | null;
   statusFinishOffset: number | null;
+  statusBasis: ConstructLineStatusBasis;
   earlyStart: number;
   earlyFinish: number;
   lateStart: number;
@@ -282,6 +287,7 @@ export function buildConstructLineCpmModel(
     const baselineFinishDate = getActivityBaselineFinishDate(activity);
     const statusStartDate = getActivityStatusStartDate(activity);
     const statusFinishDate = getActivityStatusFinishDate(activity, dataDateMs);
+    const statusBasis = getActivityStatusBasis(activity, dataDateMs, statusFinishDate);
     const durationDays = isMilestone
       ? 1
       : (getDateSpanDays(baselineStartDate, baselineFinishDate) ?? getDurationDays(activity));
@@ -309,6 +315,7 @@ export function buildConstructLineCpmModel(
       baselineFinishOffset: getDayOffset(projectStartMs, baselineFinishDate),
       statusStartOffset: getDayOffset(projectStartMs, statusStartDate),
       statusFinishOffset: getDayOffset(projectStartMs, statusFinishDate),
+      statusBasis,
       earlyStart: 0,
       earlyFinish: 0,
       lateStart: 0,
@@ -465,6 +472,7 @@ export function buildConstructLineCpmModel(
       baselineFinishDate: isoDateFromMs(projectStartMs + baselineFinishOffset * DAY_MS),
       statusStartDate: isoDateFromMs(projectStartMs + visualStartOffset * DAY_MS),
       statusFinishDate: isoDateFromMs(projectStartMs + visualFinishOffset * DAY_MS),
+      statusBasis: task.statusBasis,
       visualStartDate: isoDateFromMs(projectStartMs + visualStartOffset * DAY_MS),
       visualFinishDate: isoDateFromMs(projectStartMs + visualFinishOffset * DAY_MS),
       earlyStart: task.earlyStart,
@@ -776,6 +784,30 @@ function getActivityStatusFinishDate(activity: ScheduleActivityRow, dataDateMs?:
     activity.start_date ??
     activity.baseline_start_date
   );
+}
+
+function getActivityStatusBasis(
+  activity: ScheduleActivityRow,
+  dataDateMs: number | null,
+  statusFinishDate: string | null,
+): ConstructLineStatusBasis {
+  if (activity.actual_finish_date || activity.percent_complete >= 100) return "actual";
+  if (activity.remaining_duration_days != null) return "remaining_duration";
+
+  const statusFinishMs = parseDateMs(statusFinishDate);
+  if (dataDateMs != null && statusFinishMs != null && statusFinishMs < dataDateMs) {
+    return "needs_update";
+  }
+
+  const baselineFinishDate = activity.baseline_finish_date ?? activity.finish_date;
+  if (
+    activity.forecast_finish_date &&
+    (activity.percent_complete > 0 || activity.forecast_finish_date !== baselineFinishDate)
+  ) {
+    return "expected_finish";
+  }
+
+  return "planned_dates";
 }
 
 function getActivityRemainingDurationDays({
