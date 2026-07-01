@@ -2136,55 +2136,273 @@ export type Database = {
       schedule_activities: {
         Row: {
           activity_id: string
+          actual_finish_date: string | null
+          actual_start_date: string | null
+          baseline_finish_date: string | null
+          baseline_start_date: string | null
           created_at: string
           division: string
           finish_date: string | null
+          forecast_finish_date: string | null
+          forecast_start_date: string | null
           id: string
           name: string
           notes: string
           percent_complete: number
           predecessor_activity_ids: string[]
           project_id: string
+          remaining_duration_days: number | null
           sort_order: number
           start_date: string | null
           successor_activity_ids: string[]
           updated_at: string
+          wbs_section_id: string | null
         }
         Insert: {
           activity_id?: string
+          actual_finish_date?: string | null
+          actual_start_date?: string | null
+          baseline_finish_date?: string | null
+          baseline_start_date?: string | null
           created_at?: string
           division?: string
           finish_date?: string | null
+          forecast_finish_date?: string | null
+          forecast_start_date?: string | null
           id?: string
           name: string
           notes?: string
           percent_complete?: number
           predecessor_activity_ids?: string[]
           project_id: string
+          remaining_duration_days?: number | null
           sort_order?: number
           start_date?: string | null
           successor_activity_ids?: string[]
           updated_at?: string
+          wbs_section_id?: string | null
         }
         Update: {
           activity_id?: string
+          actual_finish_date?: string | null
+          actual_start_date?: string | null
+          baseline_finish_date?: string | null
+          baseline_start_date?: string | null
           created_at?: string
           division?: string
           finish_date?: string | null
+          forecast_finish_date?: string | null
+          forecast_start_date?: string | null
           id?: string
           name?: string
           notes?: string
           percent_complete?: number
           predecessor_activity_ids?: string[]
           project_id?: string
+          remaining_duration_days?: number | null
           sort_order?: number
           start_date?: string | null
           successor_activity_ids?: string[]
           updated_at?: string
+          wbs_section_id?: string | null
         }
         Relationships: [
           {
             foreignKeyName: "schedule_activities_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_activities_wbs_section_id_fkey"
+            columns: ["wbs_section_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_wbs_sections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      schedule_activity_updates: {
+        Row: {
+          activity_id: string
+          actual_finish_date: string | null
+          actual_start_date: string | null
+          baseline_finish_date: string | null
+          baseline_start_date: string | null
+          created_at: string
+          current_finish_date: string | null
+          current_start_date: string | null
+          data_date: string
+          division: string
+          free_float_days: number
+          id: string
+          is_critical: boolean
+          is_late: boolean
+          is_milestone: boolean
+          is_near_critical: boolean
+          is_open_finish: boolean
+          is_open_start: boolean
+          is_out_of_sequence: boolean
+          name: string
+          notes: string
+          percent_complete: number
+          planned_duration_days: number
+          predecessor_activity_ids: string[]
+          project_id: string
+          remaining_duration_days: number
+          schedule_activity_id: string | null
+          schedule_update_id: string
+          slippage_days: number
+          status_basis: string
+          successor_activity_ids: string[]
+          total_float_days: number
+          update_number: number
+          updated_at: string
+          wbs_section_id: string | null
+        }
+        Insert: {
+          activity_id?: string
+          actual_finish_date?: string | null
+          actual_start_date?: string | null
+          baseline_finish_date?: string | null
+          baseline_start_date?: string | null
+          created_at?: string
+          current_finish_date?: string | null
+          current_start_date?: string | null
+          data_date: string
+          division?: string
+          free_float_days?: number
+          id?: string
+          is_critical?: boolean
+          is_late?: boolean
+          is_milestone?: boolean
+          is_near_critical?: boolean
+          is_open_finish?: boolean
+          is_open_start?: boolean
+          is_out_of_sequence?: boolean
+          name?: string
+          notes?: string
+          percent_complete?: number
+          planned_duration_days?: number
+          predecessor_activity_ids?: string[]
+          project_id: string
+          remaining_duration_days?: number
+          schedule_activity_id?: string | null
+          schedule_update_id: string
+          slippage_days?: number
+          status_basis?: string
+          successor_activity_ids?: string[]
+          total_float_days?: number
+          update_number: number
+          updated_at?: string
+          wbs_section_id?: string | null
+        }
+        Update: {
+          activity_id?: string
+          actual_finish_date?: string | null
+          actual_start_date?: string | null
+          baseline_finish_date?: string | null
+          baseline_start_date?: string | null
+          created_at?: string
+          current_finish_date?: string | null
+          current_start_date?: string | null
+          data_date?: string
+          division?: string
+          free_float_days?: number
+          id?: string
+          is_critical?: boolean
+          is_late?: boolean
+          is_milestone?: boolean
+          is_near_critical?: boolean
+          is_open_finish?: boolean
+          is_open_start?: boolean
+          is_out_of_sequence?: boolean
+          name?: string
+          notes?: string
+          percent_complete?: number
+          planned_duration_days?: number
+          predecessor_activity_ids?: string[]
+          project_id?: string
+          remaining_duration_days?: number
+          schedule_activity_id?: string | null
+          schedule_update_id?: string
+          slippage_days?: number
+          status_basis?: string
+          successor_activity_ids?: string[]
+          total_float_days?: number
+          update_number?: number
+          updated_at?: string
+          wbs_section_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_activity_updates_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_activity_updates_schedule_activity_id_fkey"
+            columns: ["schedule_activity_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_activities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_activity_updates_schedule_update_id_fkey"
+            columns: ["schedule_update_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_updates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedule_activity_updates_wbs_section_id_fkey"
+            columns: ["wbs_section_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_wbs_sections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      schedule_cpm_templates: {
+        Row: {
+          activities: Json
+          activity_count: number
+          created_at: string
+          description: string
+          id: string
+          name: string
+          project_id: string
+          updated_at: string
+          wbs_sections: Json
+        }
+        Insert: {
+          activities?: Json
+          activity_count?: number
+          created_at?: string
+          description?: string
+          id?: string
+          name: string
+          project_id: string
+          updated_at?: string
+          wbs_sections?: Json
+        }
+        Update: {
+          activities?: Json
+          activity_count?: number
+          created_at?: string
+          description?: string
+          id?: string
+          name?: string
+          project_id?: string
+          updated_at?: string
+          wbs_sections?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedule_cpm_templates_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -2511,30 +2729,43 @@ export type Database = {
       }
       schedule_wbs_sections: {
         Row: {
+          code: string
           created_at: string
           id: string
           name: string
+          parent_id: string | null
           project_id: string
           sort_order: number
           updated_at: string
         }
         Insert: {
+          code?: string
           created_at?: string
           id?: string
           name: string
+          parent_id?: string | null
           project_id: string
           sort_order?: number
           updated_at?: string
         }
         Update: {
+          code?: string
           created_at?: string
           id?: string
           name?: string
+          parent_id?: string | null
           project_id?: string
           sort_order?: number
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "schedule_wbs_sections_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_wbs_sections"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "schedule_wbs_sections_project_id_fkey"
             columns: ["project_id"]
@@ -2678,6 +2909,14 @@ export type Database = {
           p_user_agent?: string
         }
         Returns: string
+      }
+      reorder_schedule_wbs_sections: {
+        Args: {
+          p_ordered_ids: string[]
+          p_parent_id: string
+          p_project_id: string
+        }
+        Returns: number
       }
       storage_estimate_id: { Args: { p_name: string }; Returns: string }
       storage_project_id: { Args: { p_name: string }; Returns: string }
