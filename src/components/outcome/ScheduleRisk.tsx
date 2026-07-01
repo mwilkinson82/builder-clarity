@@ -6301,6 +6301,7 @@ function ActivityDetailDialog({
     linkedDelaySummary.openDays > 0 &&
     delayAdjustedDraft?.forecast_finish_date === draft.forecast_finish_date &&
     delayAdjustedDraft.remaining_duration_days === draft.remaining_duration_days;
+  const updateImpact = useMemo(() => buildActivityUpdateImpact(draft, dataDate), [draft, dataDate]);
   const isMilestone = isConstructLineMilestoneActivity(activity);
   const saving = isSaving || isSubmitting;
   const currentActivityBlockedIds = useMemo(
@@ -6565,6 +6566,39 @@ function ActivityDetailDialog({
                   />
                 </LabeledField>
               </div>
+              <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <ActivityUpdateImpactTile
+                  label="Baseline finish"
+                  value={updateImpact.baselineFinish}
+                  sub="original planned finish"
+                />
+                <ActivityUpdateImpactTile
+                  label="Expected finish"
+                  value={updateImpact.expectedFinish}
+                  sub="current forecast finish"
+                  tone={updateImpact.finishTone}
+                />
+                <ActivityUpdateImpactTile
+                  label="Remaining basis"
+                  value={updateImpact.remainingValue}
+                  sub={updateImpact.remainingBasis}
+                />
+                <ActivityUpdateImpactTile
+                  label="Schedule slip"
+                  value={updateImpact.slipValue}
+                  sub={updateImpact.slipBasis}
+                  tone={updateImpact.slipTone}
+                />
+              </div>
+              {!dataDate && (
+                <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    Set the CPM data date before updating remaining duration so expected finish
+                    dates are anchored to the right schedule snapshot.
+                  </span>
+                </div>
+              )}
               {linkedDelaySummary.openDays > 0 && (
                 <div className="mt-3 flex flex-col gap-3 rounded-md border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger md:flex-row md:items-center md:justify-between">
                   <div className="min-w-0">
@@ -7427,6 +7461,80 @@ function applyOpenDelayToDraftForecast(
       ? targetFinishMs
       : Math.max(currentForecastFinishMs, targetFinishMs);
   return updateDraftForecastFinishDate(draft, isoDateFromMs(currentOrTargetFinishMs), dataDate);
+}
+
+function buildActivityUpdateImpact(draft: ActivityDraft, dataDate?: string | null) {
+  const baselineFinish = draft.baseline_finish_date || draft.finish_date || null;
+  const expectedFinish = draft.forecast_finish_date || baselineFinish;
+  const baselineFinishMs = parseDateMs(baselineFinish);
+  const expectedFinishMs = parseDateMs(expectedFinish);
+  const slipDays =
+    baselineFinishMs == null || expectedFinishMs == null
+      ? null
+      : Math.round((expectedFinishMs - baselineFinishMs) / DAY_MS);
+  const percentComplete = parsePercent(draft.percent_complete);
+  const remainingDuration = parseRemainingDuration(draft.remaining_duration_days);
+  const statusAnchor = getDraftStatusAnchorDate(draft, dataDate);
+  const isComplete = percentComplete >= 100 || Boolean(draft.actual_finish_date);
+  const finishTone = slipDays == null || slipDays <= 0 ? "default" : "danger";
+  const slipTone =
+    slipDays == null || slipDays === 0 ? "default" : slipDays > 0 ? "danger" : "success";
+  return {
+    baselineFinish: baselineFinish ? shortDate(baselineFinish) : "Set baseline",
+    expectedFinish: expectedFinish ? shortDate(expectedFinish) : "Set forecast",
+    finishTone,
+    remainingValue: isComplete
+      ? "Complete"
+      : remainingDuration == null
+        ? "Set"
+        : String(remainingDuration),
+    remainingBasis: isComplete
+      ? "actual finish controls"
+      : statusAnchor
+        ? `from ${shortDate(statusAnchor)}`
+        : "set data date",
+    slipValue:
+      slipDays == null
+        ? "Set dates"
+        : slipDays === 0
+          ? "0d"
+          : slipDays > 0
+            ? `+${slipDays}d`
+            : `${slipDays}d`,
+    slipBasis:
+      slipDays == null
+        ? "baseline + expected finish"
+        : slipDays === 0
+          ? "on baseline"
+          : slipDays > 0
+            ? "late against baseline"
+            : "early against baseline",
+    slipTone,
+  } as const;
+}
+
+function ActivityUpdateImpactTile({
+  label,
+  value,
+  sub,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  tone?: "default" | "danger" | "success";
+}) {
+  const toneClass =
+    tone === "danger" ? "text-danger" : tone === "success" ? "text-success" : "text-foreground";
+  return (
+    <div className="min-w-0 rounded-md border border-hairline bg-surface px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={cn("mt-1 truncate text-base font-semibold tabular", toneClass)}>{value}</div>
+      <div className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</div>
+    </div>
+  );
 }
 
 function ScheduleStat({
