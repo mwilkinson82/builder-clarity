@@ -100,9 +100,12 @@ type NewItem = {
   unit: string;
   material_cost_cents: number;
   labor_cost_cents: number;
+  crew_size: number | null;
+  productivity_per_hour: number | null;
 };
 
 type LibraryView = "system" | "my";
+type CostFocus = "all" | "material" | "labor" | "installed";
 
 const blankItem: NewItem = {
   csi_division: "",
@@ -112,9 +115,60 @@ const blankItem: NewItem = {
   unit: "EA",
   material_cost_cents: 0,
   labor_cost_cents: 0,
+  crew_size: null,
+  productivity_per_hour: null,
 };
 
 const EMPTY_COST_ITEMS: CostLibraryItemRow[] = [];
+
+const costFocusOptions: Array<{ value: CostFocus; label: string; description: string }> = [
+  { value: "all", label: "All Costs", description: "Material, labor, and installed costs." },
+  { value: "material", label: "Material", description: "Rows with material pricing." },
+  { value: "labor", label: "Labor", description: "Rows with labor pricing and crew data." },
+  { value: "installed", label: "Installed", description: "Rows with both material and labor." },
+];
+
+const getCostProfile = (
+  item: Pick<CostLibraryItemRow, "material_cost_cents" | "labor_cost_cents">,
+) => {
+  const hasMaterial = item.material_cost_cents > 0;
+  const hasLabor = item.labor_cost_cents > 0;
+  if (hasMaterial && hasLabor) return "installed" as const;
+  if (hasLabor) return "labor" as const;
+  if (hasMaterial) return "material" as const;
+  return "empty" as const;
+};
+
+const profileLabel = (profile: ReturnType<typeof getCostProfile>) => {
+  if (profile === "installed") return "Installed";
+  if (profile === "labor") return "Labor";
+  if (profile === "material") return "Material";
+  return "No cost";
+};
+
+const matchesCostFocus = (item: CostLibraryItemRow, focus: CostFocus) => {
+  const profile = getCostProfile(item);
+  if (focus === "all") return true;
+  if (focus === "installed") return profile === "installed";
+  if (focus === "labor") return item.labor_cost_cents > 0;
+  return item.material_cost_cents > 0;
+};
+
+const formatCrew = (
+  item: Pick<CostLibraryItemRow, "crew_size" | "productivity_per_hour" | "unit">,
+) => {
+  const crew = item.crew_size
+    ? Number(item.crew_size).toLocaleString("en-US", { maximumFractionDigits: 1 })
+    : "";
+  const production = item.productivity_per_hour
+    ? `${Number(item.productivity_per_hour).toLocaleString("en-US", {
+        maximumFractionDigits: 2,
+      })} ${item.unit}/hr`
+    : "";
+  if (crew && production) return `${crew} crew · ${production}`;
+  if (crew) return `${crew} crew`;
+  return production || "-";
+};
 
 function CostLibraryPage() {
   const qc = useQueryClient();
@@ -134,6 +188,7 @@ function CostLibraryPage() {
   const [importSource, setImportSource] = useState("");
   const [draft, setDraft] = useState<NewItem>(blankItem);
   const [activeView, setActiveView] = useState<LibraryView>("system");
+  const [costFocus, setCostFocus] = useState<CostFocus>("all");
 
   const libraryQuery = useQuery({
     queryKey: ["cost-library", division, category],
@@ -215,6 +270,8 @@ function CostLibraryPage() {
             unit: row.unit,
             material_cost_cents: row.material_cost_cents,
             labor_cost_cents: row.labor_cost_cents,
+            crew_size: row.crew_size,
+            productivity_per_hour: row.productivity_per_hour,
             synonyms: [],
             keywords: row.keywords,
           })),
@@ -261,12 +318,26 @@ function CostLibraryPage() {
   const allItems = libraryQuery.data?.items ?? EMPTY_COST_ITEMS;
   const systemCount = allItems.filter((item) => item.source === "system").length;
   const myCount = allItems.length - systemCount;
+  const sourceItems = useMemo(
+    () =>
+      allItems.filter((item) =>
+        activeView === "system" ? item.source === "system" : item.source !== "system",
+      ),
+    [activeView, allItems],
+  );
+  const costCounts = useMemo(
+    () => ({
+      all: sourceItems.length,
+      material: sourceItems.filter((item) => item.material_cost_cents > 0).length,
+      labor: sourceItems.filter((item) => item.labor_cost_cents > 0).length,
+      installed: sourceItems.filter((item) => getCostProfile(item) === "installed").length,
+    }),
+    [sourceItems],
+  );
 
   const visibleItems = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const sourceFiltered = allItems.filter((item) =>
-      activeView === "system" ? item.source === "system" : item.source !== "system",
-    );
+    const sourceFiltered = sourceItems.filter((item) => matchesCostFocus(item, costFocus));
     const searched = sourceFiltered.filter((item) => {
       if (!q) return true;
       return [
@@ -276,6 +347,7 @@ function CostLibraryPage() {
         item.csi_division,
         item.unit,
         item.source,
+        profileLabel(getCostProfile(item)),
       ]
         .join(" ")
         .toLowerCase()
@@ -285,16 +357,16 @@ function CostLibraryPage() {
     return [...searched].sort(
       (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
     );
-  }, [activeView, allItems, search]);
+  }, [activeView, costFocus, search, sourceItems]);
 
   const activeEmptyMessage =
     activeView === "system"
-      ? "No Overwatch system costs found."
-      : "No personal costs yet. Add a custom item, import your spreadsheet, or add a system cost to My Cost Library.";
+      ? "No Overwatch system costs found for this view."
+      : "No personal costs found for this view. Add a custom cost, import your spreadsheet, or copy Overwatch pricing into My Cost Library.";
   const activeViewDescription =
     activeView === "system"
-      ? "Read-only Overwatch starter pricing. Add a row to My Cost Library before editing it."
-      : "Your editable costs. Custom, imported, and copied Overwatch costs live here and are available inside master sheets and estimates.";
+      ? "Read-only Overwatch starter pricing. Use the labor view for crew-based labor items, then copy useful rows into My Cost Library before editing them."
+      : "Your editable material and labor price book. These saved costs are searchable inside master sheets and project estimates.";
 
   const resetImport = () => {
     setImportRows([]);
@@ -393,8 +465,9 @@ function CostLibraryPage() {
                 Build your estimating price book
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                Start from Overwatch pricing, import your spreadsheet, or add costs by hand. Master
-                sheets and project estimates search the saved costs in this library.
+                Start from Overwatch material and labor pricing, import your spreadsheet, or add
+                costs by hand. Master sheets and project estimates search the saved costs in this
+                library.
               </p>
             </div>
             <Tabs
@@ -408,7 +481,37 @@ function CostLibraryPage() {
               </TabsList>
             </Tabs>
           </div>
-          <p className="mt-3 text-xs text-muted-foreground">{activeViewDescription}</p>
+          <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+            <div className="grid gap-2 sm:grid-cols-4">
+              {costFocusOptions.map((option) => {
+                const active = costFocus === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setCostFocus(option.value)}
+                    className={`rounded-md border px-3 py-2 text-left transition ${
+                      active
+                        ? "border-foreground bg-foreground text-background"
+                        : "border-hairline bg-surface hover:bg-muted"
+                    }`}
+                  >
+                    <span className="block text-sm font-medium">
+                      {option.label} ({costCounts[option.value]})
+                    </span>
+                    <span
+                      className={`mt-0.5 block text-xs ${
+                        active ? "text-background/75" : "text-muted-foreground"
+                      }`}
+                    >
+                      {option.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground lg:max-w-sm">{activeViewDescription}</p>
+          </div>
         </section>
 
         <div className="grid gap-3 rounded-lg border border-hairline bg-card p-4 shadow-card lg:grid-cols-[1fr_180px_220px]">
@@ -450,16 +553,18 @@ function CostLibraryPage() {
         </div>
 
         <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
-          <Table className="min-w-[1150px]">
+          <Table className="min-w-[1360px]">
             <TableHeader>
               <TableRow className="bg-surface [&>th]:whitespace-nowrap">
                 <TableHead className="w-[110px]">Source</TableHead>
+                <TableHead className="w-[110px]">Type</TableHead>
                 <TableHead className="w-[120px]">CSI</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead className="w-[110px]">Category</TableHead>
                 <TableHead className="w-[80px]">Unit</TableHead>
                 <TableHead className="w-[130px] text-right">Material</TableHead>
                 <TableHead className="w-[130px] text-right">Labor</TableHead>
+                <TableHead className="w-[170px]">Crew / Production</TableHead>
                 <TableHead className="w-[104px]" />
               </TableRow>
             </TableHeader>
@@ -467,7 +572,7 @@ function CostLibraryPage() {
               {libraryQuery.isLoading ? (
                 <TableRow>
                   <TableCell
-                    colSpan={8}
+                    colSpan={10}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     Loading...
@@ -475,7 +580,7 @@ function CostLibraryPage() {
                 </TableRow>
               ) : libraryQuery.isError ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-10 text-center text-sm text-danger">
+                  <TableCell colSpan={10} className="py-10 text-center text-sm text-danger">
                     {libraryQuery.error instanceof Error
                       ? libraryQuery.error.message
                       : "Cost library did not load"}
@@ -484,7 +589,7 @@ function CostLibraryPage() {
               ) : visibleItems.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={8}
+                    colSpan={10}
                     className="py-10 text-center text-sm text-muted-foreground"
                   >
                     {activeEmptyMessage}
@@ -563,6 +668,35 @@ function CostLibraryPage() {
                 }
               />
             </Field>
+            <Field label="Crew Size">
+              <Input
+                type="number"
+                min={0}
+                step="0.1"
+                value={draft.crew_size ?? ""}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    crew_size: event.target.value === "" ? null : Number(event.target.value),
+                  })
+                }
+              />
+            </Field>
+            <Field label="Production / Hour">
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={draft.productivity_per_hour ?? ""}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    productivity_per_hour:
+                      event.target.value === "" ? null : Number(event.target.value),
+                  })
+                }
+              />
+            </Field>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setNewOpen(false)}>
@@ -617,6 +751,7 @@ function CostLibraryRow({
   const editable = item.source !== "system";
   const sourceLabel =
     item.source === "system" ? "Overwatch" : item.source === "imported" ? "Imported" : "Custom";
+  const profile = getCostProfile(item);
   const [draft, setDraft] = useState<NewItem>({
     csi_division: item.csi_division,
     csi_code: item.csi_code,
@@ -625,6 +760,8 @@ function CostLibraryRow({
     unit: item.unit,
     material_cost_cents: item.material_cost_cents,
     labor_cost_cents: item.labor_cost_cents,
+    crew_size: item.crew_size,
+    productivity_per_hour: item.productivity_per_hour,
   });
   useEffect(() => {
     setDraft({
@@ -635,6 +772,8 @@ function CostLibraryRow({
       unit: item.unit,
       material_cost_cents: item.material_cost_cents,
       labor_cost_cents: item.labor_cost_cents,
+      crew_size: item.crew_size,
+      productivity_per_hour: item.productivity_per_hour,
     });
   }, [item]);
 
@@ -644,6 +783,11 @@ function CostLibraryRow({
         <Badge variant="outline" className="gap-1 capitalize">
           {item.source === "system" && <Lock className="h-3 w-3" />}
           {sourceLabel}
+        </Badge>
+      </TableCell>
+      <TableCell>
+        <Badge variant={profile === "labor" ? "default" : "outline"} className="capitalize">
+          {profileLabel(profile)}
         </Badge>
       </TableCell>
       <TableCell>
@@ -719,6 +863,43 @@ function CostLibraryRow({
           />
         ) : (
           <span className="tabular">{fmtUSD(item.labor_cost_cents / 100)}</span>
+        )}
+      </TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {editable ? (
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              type="number"
+              min={0}
+              step="0.1"
+              value={draft.crew_size ?? ""}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  crew_size: event.target.value === "" ? null : Number(event.target.value),
+                })
+              }
+              className="h-8"
+              aria-label="Crew size"
+            />
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={draft.productivity_per_hour ?? ""}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  productivity_per_hour:
+                    event.target.value === "" ? null : Number(event.target.value),
+                })
+              }
+              className="h-8"
+              aria-label="Production per hour"
+            />
+          </div>
+        ) : (
+          formatCrew(item)
         )}
       </TableCell>
       <TableCell>
@@ -806,7 +987,8 @@ function CostImportDialog({
           <DialogTitle>Import My Costs</DialogTitle>
           <DialogDescription>
             Bring in your own price list from pasted rows, CSV, or Excel. Use Download Import Format
-            for the column guide; imported rows save to My Cost Library.
+            for the column guide; imported rows save to My Cost Library. Labor rows can include Crew
+            Size and Production / Hour.
           </DialogDescription>
         </DialogHeader>
 
@@ -825,7 +1007,7 @@ function CostImportDialog({
                 value={pasteText}
                 onChange={(event) => onPasteTextChange(event.target.value)}
                 placeholder={
-                  "CSI Division\tCSI Code\tDescription\tCategory\tUnit\tMaterial $/Unit\tLabor $/Unit\n06\t06 10 00\tCustom framing crew rate\tframing\tHR\t0\t82.50\n09\t09 91 00\tInterior paint - owner standard\tpaint\tSF\t0.58\t1.35"
+                  "CSI Division\tCSI Code\tDescription\tCategory\tUnit\tMaterial $/Unit\tLabor $/Unit\tCrew Size\tProduction / Hour\n06\t06 10 00\tCustom framing crew rate\tframing\tHR\t0\t82.50\t3\t1\n09\t09 91 00\tInterior paint - owner standard\tpaint\tSF\t0.58\t1.35\t2\t600"
                 }
                 className="font-mono text-xs"
               />
@@ -888,7 +1070,7 @@ function CostImportDialog({
             </div>
 
             <div className="max-h-[420px] overflow-auto rounded-lg border border-hairline">
-              <Table className="min-w-[980px]">
+              <Table className="min-w-[1120px]">
                 <TableHeader>
                   <TableRow className="bg-surface">
                     <TableHead className="w-[70px]">Row</TableHead>
@@ -898,6 +1080,7 @@ function CostImportDialog({
                     <TableHead className="w-[80px]">Unit</TableHead>
                     <TableHead className="w-[120px] text-right">Material</TableHead>
                     <TableHead className="w-[120px] text-right">Labor</TableHead>
+                    <TableHead className="w-[150px]">Crew / Production</TableHead>
                     <TableHead className="w-[190px]">Status</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -916,6 +1099,13 @@ function CostImportDialog({
                       </TableCell>
                       <TableCell className="text-right tabular">
                         {fmtUSD(row.labor_cost_cents / 100)}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {formatCrew({
+                          crew_size: row.crew_size,
+                          productivity_per_hour: row.productivity_per_hour,
+                          unit: row.unit,
+                        })}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {row.issues.length === 0

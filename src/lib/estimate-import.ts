@@ -19,6 +19,8 @@ export interface CostLibraryImportRow {
   unit: string;
   material_cost_cents: number;
   labor_cost_cents: number;
+  crew_size: number | null;
+  productivity_per_hour: number | null;
   keywords: string[];
 }
 
@@ -65,6 +67,16 @@ const HEADER_ALIASES = {
     "materials",
   ],
   labor: ["labor", "labour", "labor cost", "labor unit cost", "labor $/unit", "lab", "lab cost"],
+  crewSize: ["crew size", "crew", "crew count", "workers", "people", "headcount"],
+  productivity: [
+    "productivity",
+    "production",
+    "production per hour",
+    "productivity per hour",
+    "units per hour",
+    "units/hr",
+    "uph",
+  ],
   unitCost: ["unit cost", "rate", "price", "price/unit", "$/unit", "cost", "unit price"],
   scopeGroup: ["group", "scope group", "phase", "bucket", "division name", "section"],
   notes: ["notes", "note", "comments", "comment"],
@@ -162,6 +174,8 @@ const buildHeaderMap = (headers: readonly string[]) => ({
   quantity: findColumn(headers, HEADER_ALIASES.quantity),
   material: findColumn(headers, HEADER_ALIASES.material),
   labor: findColumn(headers, HEADER_ALIASES.labor),
+  crewSize: findColumn(headers, HEADER_ALIASES.crewSize),
+  productivity: findColumn(headers, HEADER_ALIASES.productivity),
   unitCost: findColumn(headers, HEADER_ALIASES.unitCost, [
     ...HEADER_ALIASES.material,
     ...HEADER_ALIASES.labor,
@@ -196,6 +210,8 @@ export function parseCostLibraryRows(matrix: ImportMatrix, hasHeader: boolean) {
       const unitCost = toCents(getCell(row, map.unitCost));
       const material = toCents(getCell(row, map.material, rowHasHeader ? -1 : 5)) || unitCost;
       const labor = toCents(getCell(row, map.labor, rowHasHeader ? -1 : 6));
+      const crewSize = parseNumber(getCell(row, map.crewSize, rowHasHeader ? -1 : 7));
+      const productivity = parseNumber(getCell(row, map.productivity, rowHasHeader ? -1 : 8));
       const category = getCell(row, map.category, rowHasHeader ? -1 : 3);
       const issues: ImportIssue[] = [];
 
@@ -219,6 +235,8 @@ export function parseCostLibraryRows(matrix: ImportMatrix, hasHeader: boolean) {
         unit,
         material_cost_cents: material,
         labor_cost_cents: labor,
+        crew_size: crewSize == null ? null : Math.max(0, crewSize),
+        productivity_per_hour: productivity == null ? null : Math.max(0, productivity),
         keywords: keywordsFrom(description, category, csiCode),
       };
     })
@@ -299,9 +317,11 @@ export const costLibraryTemplateCsv = [
     "Unit",
     "Material $/Unit",
     "Labor $/Unit",
+    "Crew Size",
+    "Production / Hour",
   ],
-  ["06", "06 10 00", "Custom framing crew rate", "framing", "HR", "0", "82.50"],
-  ["09", "09 91 00", "Interior paint - owner standard", "paint", "SF", "0.58", "1.35"],
+  ["06", "06 10 00", "Custom framing crew rate", "framing", "HR", "0", "82.50", "3", "1"],
+  ["09", "09 91 00", "Interior paint - owner standard", "paint", "SF", "0.58", "1.35", "2", "600"],
 ]
   .map((row) => row.join(","))
   .join("\n");

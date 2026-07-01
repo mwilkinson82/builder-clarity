@@ -136,6 +136,7 @@ type GridCellProps = {
   "data-col-index": number;
   onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
 };
+type CostApplyMode = "row" | "material" | "labor";
 
 interface EstimateWorkspaceProps {
   estimate: EstimateRow;
@@ -152,6 +153,18 @@ const pctToNumber = (basisPoints: number) => Number((basisPoints / 100).toFixed(
 const numberToPct = (value: number) => Math.round(value * 100);
 const dollarsToCents = (value: number) => Math.round(value * 100);
 const centsToDollars = (value: number) => Math.round(value) / 100;
+
+const costProfileLabel = (item: CostLibraryItemRow) => {
+  const hasMaterial = item.display_material_cost_cents > 0;
+  const hasLabor = item.display_labor_cost_cents > 0;
+  if (hasMaterial && hasLabor) return "Installed";
+  if (hasLabor) return "Labor";
+  if (hasMaterial) return "Material";
+  return "No cost";
+};
+
+const shouldReplacePlaceholderDescription = (value: string) =>
+  !value.trim() || /^new estimate item$/i.test(value.trim());
 
 const safeFileName = (value: string, ext: string) =>
   `${
@@ -966,15 +979,31 @@ function EstimateLineRow({
     "data-col-index": colIndex,
     onKeyDown: handleGridKeyDown(colIndex),
   });
-  const selectLibraryItem = (item: CostLibraryItemRow) => {
-    const patch = {
-      description: item.description,
+  const selectLibraryItem = (item: CostLibraryItemRow, mode: CostApplyMode) => {
+    const sharedPatch = {
       unit: item.unit,
-      material_unit_cost_cents: item.material_cost_cents,
-      labor_unit_cost_cents: item.labor_cost_cents,
       csi_division: item.csi_division,
       library_item_id: item.id,
+      ...(mode === "row" || shouldReplacePlaceholderDescription(draft.description)
+        ? { description: item.description }
+        : {}),
     };
+    const patch =
+      mode === "material"
+        ? {
+            ...sharedPatch,
+            material_unit_cost_cents: item.material_cost_cents,
+          }
+        : mode === "labor"
+          ? {
+              ...sharedPatch,
+              labor_unit_cost_cents: item.labor_cost_cents,
+            }
+          : {
+              ...sharedPatch,
+              material_unit_cost_cents: item.material_cost_cents,
+              labor_unit_cost_cents: item.labor_cost_cents,
+            };
     setDraft((current) => ({ ...current, ...patch }));
     onUpdate(patch);
   };
@@ -1104,7 +1133,7 @@ function CostLibraryAutocomplete({
   regionMultiplier: number;
   onChange: (value: string) => void;
   onBlur: () => void;
-  onSelect: (item: CostLibraryItemRow) => void;
+  onSelect: (item: CostLibraryItemRow, mode: CostApplyMode) => void;
   gridCell?: GridCellProps;
 }) {
   const search = useServerFn(searchCostLibrary);
@@ -1147,21 +1176,28 @@ function CostLibraryAutocomplete({
       {open && items.length > 0 && (
         <div className="absolute left-0 top-9 z-40 w-[520px] overflow-hidden rounded-md border border-hairline bg-popover shadow-elevated">
           <div className="flex items-center gap-2 border-b border-hairline px-3 py-2 text-xs text-muted-foreground">
-            <Library className="h-3.5 w-3.5" /> {debounced}
+            <Library className="h-3.5 w-3.5" /> Cost Library matches for {debounced}
           </div>
           <div className="max-h-72 overflow-y-auto p-1">
             {items.map((item) => (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                className="grid w-full grid-cols-[1fr_48px_88px_88px] gap-2 rounded-sm px-2 py-2 text-left text-xs hover:bg-surface"
+                className="grid w-full grid-cols-[1fr_52px_86px_86px_210px] gap-2 rounded-sm px-2 py-2 text-left text-xs hover:bg-surface"
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  onSelect(item);
-                  setOpen(false);
-                }}
               >
-                <span className="min-w-0 truncate text-sm text-foreground">{item.description}</span>
+                <button
+                  type="button"
+                  className="min-w-0 text-left"
+                  onClick={() => {
+                    onSelect(item, "row");
+                    setOpen(false);
+                  }}
+                >
+                  <span className="block truncate text-sm text-foreground">{item.description}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {costProfileLabel(item)} · {item.csi_code || item.csi_division}
+                  </span>
+                </button>
                 <span className="text-muted-foreground">{item.unit}</span>
                 <span className="text-right tabular">
                   {fmtUSD(item.display_material_cost_cents / 100)}
@@ -1169,7 +1205,47 @@ function CostLibraryAutocomplete({
                 <span className="text-right tabular">
                   {fmtUSD(item.display_labor_cost_cents / 100)}
                 </span>
-              </button>
+                <span className="flex justify-end gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => {
+                      onSelect(item, "row");
+                      setOpen(false);
+                    }}
+                  >
+                    Use row
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[11px]"
+                    disabled={item.display_material_cost_cents <= 0}
+                    onClick={() => {
+                      onSelect(item, "material");
+                      setOpen(false);
+                    }}
+                  >
+                    Mat only
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-[11px]"
+                    disabled={item.display_labor_cost_cents <= 0}
+                    onClick={() => {
+                      onSelect(item, "labor");
+                      setOpen(false);
+                    }}
+                  >
+                    Labor only
+                  </Button>
+                </span>
+              </div>
             ))}
           </div>
         </div>
