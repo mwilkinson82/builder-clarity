@@ -1258,10 +1258,7 @@ export const importScheduleCpmTemplate = createServerFn({ method: "POST" })
       });
     }
 
-    let { error } = await context.supabase.from("schedule_activities").insert(rowsWithWbs);
-    if (error && isMissingRestColumn(error, "wbs_section_id")) {
-      ({ error } = await context.supabase.from("schedule_activities").insert(rows));
-    }
+    const error = await insertScheduleActivityRowsWithSchemaFallback(context.supabase, rowsWithWbs);
     if (error) throw new Error(error.message);
     return { ok: true, inserted: rows.length, skipped: activities.length - rows.length };
   });
@@ -1341,7 +1338,7 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
 
     let { data: update, error: insertError } = await context.supabase
       .from("schedule_updates")
-      .insert(extendedUpdatePayload as any)
+      .insert(extendedUpdatePayload)
       .select("*")
       .single();
     if (
@@ -1532,6 +1529,35 @@ function stripScheduleActivityMissingColumns<T extends Record<string, unknown>>(
   return next;
 }
 
+async function insertScheduleActivityRowsWithSchemaFallback(
+  supabase: ScheduleSupabaseClient,
+  rows: Array<Record<string, unknown>>,
+) {
+  let payloadRows = rows.map((row) => ({ ...row }));
+  let { error } = await dynamicTable(supabase, "schedule_activities").insert(payloadRows);
+  let attempts = 0;
+
+  while (
+    error &&
+    attempts < 2 &&
+    (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error))
+  ) {
+    const shouldWriteStatusFallback = isMissingScheduleActivityStatusColumn(error);
+    payloadRows = payloadRows.map((row, index) => {
+      const originalRow = rows[index] ?? row;
+      const fallbackRow = stripScheduleActivityMissingColumns(row, error);
+      if (shouldWriteStatusFallback) {
+        fallbackRow.notes = writeScheduleActivityStatusFallback(fallbackRow.notes, originalRow);
+      }
+      return fallbackRow;
+    });
+    ({ error } = await dynamicTable(supabase, "schedule_activities").insert(payloadRows));
+    attempts += 1;
+  }
+
+  return error;
+}
+
 async function ensureScheduleWbsSection(
   supabase: ScheduleSupabaseClient,
   projectId: string,
@@ -1593,7 +1619,7 @@ async function ensureScheduleWbsSection(
   } as ScheduleWbsSectionInsert;
   let { data: inserted, error: insertError } = await supabase
     .from("schedule_wbs_sections")
-    .insert(payload as any)
+    .insert(payload)
     .select("id")
     .single();
   if (
@@ -1746,12 +1772,12 @@ async function syncPathBasedWbsSectionNamesForPathChange(
       name: nextName,
       code: section.code,
       sort_order: section.sort_order,
-    } as any);
+    });
   });
   if (payload.length === 0) return;
   const { error } = await supabase
     .from("schedule_wbs_sections")
-    .upsert(payload as any, { onConflict: "id" });
+    .upsert(payload, { onConflict: "id" });
   if (error) throw new Error(error.message);
 }
 
@@ -2002,7 +2028,7 @@ export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
     } as ScheduleWbsSectionUpdate;
     const { error: updateError } = await context.supabase
       .from("schedule_wbs_sections")
-      .update(updatePayload as any)
+      .update(updatePayload)
       .eq("id", section.id)
       .eq("project_id", section.project_id);
     if (updateError) throw new Error(updateError.message);
@@ -2034,7 +2060,11 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const parentId = data.parentId ?? null;
-    const reorderRpc = await (context.supabase.rpc as any)("reorder_schedule_wbs_sections", {
+    const callRpc = context.supabase.rpc as unknown as (
+      fnName: string,
+      args: Record<string, unknown>,
+    ) => Promise<DynamicSupabaseResult<number>>;
+    const reorderRpc = await callRpc("reorder_schedule_wbs_sections", {
       p_project_id: data.projectId,
       p_parent_id: parentId,
       p_ordered_ids: data.orderedIds,
@@ -2087,18 +2117,18 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
     if (changedRows.length === 0) return { ok: true, changed: 0 };
 
     const payload = changedRows.map((row) => {
-      const item = {
+      const item: ScheduleWbsSectionInsert = {
         id: row.id,
         project_id: data.projectId,
         name: row.name,
         sort_order: row.sort_order,
-      } as ScheduleWbsSectionInsert;
-      if (canPersistParentId) (item as any).parent_id = parentId;
+        ...(canPersistParentId ? { parent_id: parentId } : {}),
+      };
       return item;
     });
     const { error } = await context.supabase
       .from("schedule_wbs_sections")
-      .upsert(payload as any, { onConflict: "id" });
+      .upsert(payload, { onConflict: "id" });
     if (error) throw new Error(error.message);
     return { ok: true, changed: changedRows.length, method: "batch" };
   });
@@ -2226,7 +2256,7 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
     };
     let { data: createdRow, error } = await context.supabase
       .from("schedule_activities")
-      .insert(basePayload as any)
+      .insert(basePayload)
       .select("*")
       .single();
     if (
@@ -2253,7 +2283,7 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
     if (wbsSectionId) {
       const { error: wbsLinkError } = await context.supabase
         .from("schedule_activities")
-        .update({ wbs_section_id: wbsSectionId } as any)
+        .update({ wbs_section_id: wbsSectionId })
         .eq("id", createdActivity.id);
       if (wbsLinkError && !isMissingRestColumn(wbsLinkError, "wbs_section_id")) {
         throw new Error(wbsLinkError.message);
@@ -2346,7 +2376,7 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       );
       const { error: wbsLinkError } = await context.supabase
         .from("schedule_activities")
-        .update({ wbs_section_id: wbsSectionId } as any)
+        .update({ wbs_section_id: wbsSectionId })
         .eq("id", data.id);
       if (wbsLinkError && !isMissingRestColumn(wbsLinkError, "wbs_section_id")) {
         throw new Error(wbsLinkError.message);
