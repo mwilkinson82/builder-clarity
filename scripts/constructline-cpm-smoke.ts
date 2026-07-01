@@ -513,7 +513,6 @@ for (const requiredScheduleRiskText of [
   "Rem dur",
   "Current start",
   "Exp finish",
-  "Current dates",
   "CONSTRUCTLINE_FIT_DAY_PX",
   "CpmDataDateControl",
   "Save update",
@@ -554,6 +553,29 @@ for (const requiredScheduleRiskText of [
   assert.ok(
     scheduleRiskSource.includes(requiredScheduleRiskText),
     `ScheduleRisk is missing required CPM workspace text: ${requiredScheduleRiskText}`,
+  );
+}
+
+for (const removedScheduleRiskText of [
+  "function ConstructLinePrintReport",
+  "constructline-print-summary",
+  "constructline-print-kpis",
+]) {
+  assert.ok(
+    !scheduleRiskSource.includes(removedScheduleRiskText),
+    `ScheduleRisk still contains removed legacy print surface: ${removedScheduleRiskText}`,
+  );
+}
+
+for (const removedStyleText of [
+  "constructline-print-report",
+  "constructline-print-summary",
+  "constructline-print-kpis",
+  "constructline-print-grid",
+]) {
+  assert.ok(
+    !stylesSource.includes(removedStyleText),
+    `Styles still contain removed legacy print selector: ${removedStyleText}`,
   );
 }
 
