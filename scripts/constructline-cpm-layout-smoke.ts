@@ -170,6 +170,10 @@ for (const requiredStatusedCpmText of [
   "updateDraftRemainingDuration",
   "updateDraftForecastFinishDate",
   "applyOpenDelayToDraftForecast",
+  "carriedDelayDays",
+  "uncarriedDelayDays",
+  "getDelayPeriodLabel",
+  "carried inside the current expected finish",
 ]) {
   assertIncludes(
     scheduleRiskSource,

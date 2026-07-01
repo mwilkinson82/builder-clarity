@@ -1122,7 +1122,12 @@ function buildDelayExtensionFinishDates(
       getDelayFragmentsForActivity(activity, byActivity),
     );
     if (delaySummary.openDays <= 0) return [];
-    return [isoDateFromMs(baseMs + delaySummary.openDays * DAY_MS)];
+    const baselineMs = parseDateMs(getActivityBaselineFinish(activity));
+    const delayDaysAlreadyCarried =
+      baselineMs == null ? 0 : Math.max(0, Math.round((baseMs - baselineMs) / DAY_MS));
+    const uncarriedDelayDays = Math.max(0, delaySummary.openDays - delayDaysAlreadyCarried);
+    if (uncarriedDelayDays <= 0) return [];
+    return [isoDateFromMs(baseMs + uncarriedDelayDays * DAY_MS)];
   });
 }
 
@@ -5137,26 +5142,37 @@ function ConstructLineTaskRow({
   const logicCount = task.predecessorKeys.length + task.successorKeys.length;
   const delaySummary = buildDelayFragmentSummary(delayFragments);
   const hasOpenDelay = delaySummary.openCount > 0;
+  const carriedDelayDays =
+    hasOpenDelay && !task.isMilestone
+      ? Math.max(0, Math.min(delaySummary.openDays, task.slippageDays))
+      : 0;
+  const uncarriedDelayDays =
+    hasOpenDelay && !task.isMilestone ? Math.max(0, delaySummary.openDays - carriedDelayDays) : 0;
   const delayMarkerLeft = Math.min(
     timelineWidth - 10,
     Math.max(10, barLeft + Math.min(barWidth, Math.max(12, delaySummary.openDays * dayPx))),
   );
+  const embeddedDelayWidth =
+    carriedDelayDays > 0 ? Math.max(6, Math.min(barWidth, carriedDelayDays * dayPx)) : 0;
+  const embeddedDelayLeft = Math.max(barLeft, barLeft + barWidth - embeddedDelayWidth);
+  const embeddedDelayLabel = getDelayPeriodLabel(carriedDelayDays, embeddedDelayWidth, isPrintMode);
   const delayExtensionLeft = barLeft + barWidth;
   const delayExtensionAvailableWidth = Math.max(0, timelineWidth - delayExtensionLeft);
   const delayExtensionWidth =
-    hasOpenDelay && !task.isMilestone && delayExtensionAvailableWidth > 0
-      ? Math.max(6, Math.min(delayExtensionAvailableWidth, delaySummary.openDays * dayPx))
+    uncarriedDelayDays > 0 && delayExtensionAvailableWidth > 0
+      ? Math.max(6, Math.min(delayExtensionAvailableWidth, uncarriedDelayDays * dayPx))
       : 0;
-  const delayExtensionLabel =
-    delayExtensionWidth >= (isPrintMode ? 42 : 76)
-      ? `${delaySummary.openDays}d delay`
-      : delayExtensionWidth >= (isPrintMode ? 24 : 48)
-        ? "delay"
-        : null;
+  const delayExtensionLabel = getDelayPeriodLabel(
+    uncarriedDelayDays,
+    delayExtensionWidth,
+    isPrintMode,
+  );
   const visualDelayMarkerLeft =
     delayExtensionWidth > 0
       ? Math.min(timelineWidth - 8, Math.max(8, delayExtensionLeft))
-      : delayMarkerLeft;
+      : embeddedDelayWidth > 0
+        ? Math.min(timelineWidth - 8, Math.max(8, embeddedDelayLeft))
+        : delayMarkerLeft;
   const barClass = task.isCritical
     ? "bg-danger"
     : task.isNearCritical
@@ -5303,12 +5319,24 @@ function ConstructLineTaskRow({
                 style={{ width: `${percent}%` }}
               />
             </div>
+            {embeddedDelayWidth > 0 && (
+              <div
+                className="constructline-delay-extension absolute top-1/2 flex h-4 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border border-danger/45 text-[9px] font-bold uppercase tracking-[0.08em] text-danger"
+                style={{ left: embeddedDelayLeft, width: embeddedDelayWidth }}
+                title={`${carriedDelayDays} delay days are carried inside the current expected finish`}
+                aria-label={`${carriedDelayDays} day delay period carried in forecast`}
+              >
+                {embeddedDelayLabel && (
+                  <span className="constructline-delay-label">{embeddedDelayLabel}</span>
+                )}
+              </div>
+            )}
             {delayExtensionWidth > 0 && (
               <div
                 className="constructline-delay-extension absolute top-1/2 flex h-4 -translate-y-1/2 items-center justify-center overflow-hidden rounded-r-full border border-danger/40 text-[9px] font-bold uppercase tracking-[0.08em] text-danger"
                 style={{ left: delayExtensionLeft, width: delayExtensionWidth }}
-                title={`${delaySummary.openDays} delay days extend past the current activity bar`}
-                aria-label={`${delaySummary.openDays} day delay period`}
+                title={`${uncarriedDelayDays} delay days are not yet carried into the current expected finish`}
+                aria-label={`${uncarriedDelayDays} day delay period not yet carried in forecast`}
               >
                 {delayExtensionLabel && (
                   <span className="constructline-delay-label">{delayExtensionLabel}</span>
@@ -5327,6 +5355,13 @@ function ConstructLineTaskRow({
       </button>
     </div>
   );
+}
+
+function getDelayPeriodLabel(days: number, width: number, isPrintMode: boolean) {
+  if (days <= 0 || width <= 0) return null;
+  if (width >= (isPrintMode ? 42 : 76)) return `${days}d delay`;
+  if (width >= (isPrintMode ? 24 : 48)) return "delay";
+  return null;
 }
 
 function ScheduleFlag({ children, tone }: { children: ReactNode; tone: "danger" | "warning" }) {
