@@ -99,6 +99,8 @@ import {
   createBillingInvoice,
   updateBillingInvoice,
   deleteBillingInvoice,
+  archiveProject,
+  deleteProject,
   recordInvoicePayment,
   type ProjectRow,
   type ReviewRow,
