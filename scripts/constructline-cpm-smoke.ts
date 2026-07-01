@@ -485,6 +485,9 @@ for (const requiredScheduleRiskText of [
   "Use activity WBS fields for now",
   "Activity-path WBS mode is active",
   "Schedule update history",
+  "Activity snapshots will appear on the next saved CPM update.",
+  "buildActivityUpdateSnapshotSummaries",
+  "Drivers:",
   "Interim milestones",
   "Critical delayed decisions",
   "Procurement risks",
@@ -580,6 +583,8 @@ for (const requiredScheduleRouteText of [
   "Use Notes / Constraint for the delay narrative",
   'workspaceMode="full"',
   "updates={updates}",
+  "activityUpdates={activityUpdates}",
+  "activity snapshots",
 ]) {
   assert.ok(
     scheduleRouteSource.includes(requiredScheduleRouteText),
@@ -609,6 +614,8 @@ for (const requiredScheduleFunctionText of [
   "wbsNestedColumnsMissing",
   "snapshotScheduleActivityUpdates",
   "schedule_activity_updates",
+  "normalizeScheduleActivityUpdate",
+  "activityUpdates",
   "total_float_days",
   "is_out_of_sequence",
   "is_open_finish",

@@ -84,6 +84,7 @@ import {
   type ScheduleRiskRow,
   type ScheduleUpdateRow,
   type ScheduleMilestoneUpdateRow,
+  type ScheduleActivityUpdateRow,
 } from "@/lib/schedule.functions";
 import { createExposure, updateProjectFinancials, type ProjectRow } from "@/lib/projects.functions";
 import { fmtUSD } from "@/lib/format";
@@ -134,6 +135,7 @@ const EMPTY_CPM_TEMPLATES: ScheduleCpmTemplateRow[] = [];
 const EMPTY_SCHEDULE_RISKS: ScheduleRiskRow[] = [];
 const EMPTY_SCHEDULE_UPDATES: ScheduleUpdateRow[] = [];
 const EMPTY_MILESTONE_UPDATES: ScheduleMilestoneUpdateRow[] = [];
+const EMPTY_ACTIVITY_UPDATES: ScheduleActivityUpdateRow[] = [];
 const BROWSER_CPM_TEMPLATE_STORAGE_KEY = "constructline:cpm-templates:v1";
 
 const STATUS_LABEL: Record<MilestoneStatus, string> = {
@@ -481,6 +483,7 @@ export function ScheduleRisk({
   const risks = data?.risks ?? EMPTY_SCHEDULE_RISKS;
   const updates = data?.updates ?? EMPTY_SCHEDULE_UPDATES;
   const milestoneUpdates = data?.milestoneUpdates ?? EMPTY_MILESTONE_UPDATES;
+  const activityUpdates = data?.activityUpdates ?? EMPTY_ACTIVITY_UPDATES;
   const visibleMilestones = filterMilestones(milestones, milestoneView);
   const activeMilestoneCount = milestones.filter((m) => m.status !== "complete").length;
   const completedMilestoneCount = milestones.filter((m) => m.status === "complete").length;
@@ -748,7 +751,11 @@ export function ScheduleRisk({
         onMilestoneViewChange={setMilestoneView}
       />
 
-      <ScheduleUpdateLedger updates={updates} milestoneUpdates={milestoneUpdates} />
+      <ScheduleUpdateLedger
+        updates={updates}
+        milestoneUpdates={milestoneUpdates}
+        activityUpdates={activityUpdates}
+      />
 
       {/* Interim milestones */}
       <section className="rounded-lg border border-hairline bg-card p-6">
@@ -7782,9 +7789,11 @@ function SchedulePlanRow({
 function ScheduleUpdateLedger({
   updates,
   milestoneUpdates,
+  activityUpdates,
 }: {
   updates: ScheduleUpdateRow[];
   milestoneUpdates: ScheduleMilestoneUpdateRow[];
+  activityUpdates: ScheduleActivityUpdateRow[];
 }) {
   if (updates.length === 0) {
     return (
@@ -7801,13 +7810,14 @@ function ScheduleUpdateLedger({
     acc[update.update_number] = (acc[update.update_number] ?? 0) + 1;
     return acc;
   }, {});
+  const activitySnapshotByUpdate = buildActivityUpdateSnapshotSummaries(activityUpdates);
   return (
     <section className="rounded-lg border border-hairline bg-card p-6">
       <div className="mb-4">
         <h3 className="font-serif text-2xl text-foreground">Schedule update history</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Each saved update records a data date, current completion date, variance against baseline,
-          movement from the prior update, and schedule-dollar movement.
+          Each saved update records the data date, current completion forecast, activity status,
+          float, critical path signals, milestone movement, and schedule-dollar movement.
         </p>
       </div>
       <div className="overflow-hidden rounded-md border border-hairline">
@@ -7821,46 +7831,129 @@ function ScheduleUpdateLedger({
           <div>Net $</div>
           <div>Notes</div>
         </div>
-        {updates.map((update) => (
-          <div
-            key={update.id}
-            className="grid grid-cols-[64px_100px_120px_140px_100px_100px_110px_minmax(180px,1fr)] items-start border-t border-hairline px-3 py-3 text-sm"
-          >
-            <div className="font-medium tabular text-foreground">#{update.update_number}</div>
-            <div className="text-muted-foreground">{shortDate(update.data_date)}</div>
-            <div className="tabular text-muted-foreground">
-              {shortDate(update.baseline_completion_date)}
-            </div>
-            <div className="font-medium text-foreground">
-              {shortDate(update.forecast_completion_date)}
-            </div>
-            <div className={`tabular ${varianceTone(update.variance_weeks)}`}>
-              {varianceLabel(update.variance_weeks)}
-            </div>
-            <div className={`tabular ${varianceTone(update.movement_weeks)}`}>
-              {varianceLabel(update.movement_weeks)}
-            </div>
-            <div className={`font-semibold tabular ${moneyTone(update.schedule_money_net)}`}>
-              {fmtUSD(update.schedule_money_net)}
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">
-                {milestoneCountByUpdate[update.update_number] ?? 0} milestone snapshots
+        {updates.map((update) => {
+          const activitySummary = activitySnapshotByUpdate[update.update_number];
+          return (
+            <div
+              key={update.id}
+              className="grid grid-cols-[64px_100px_120px_140px_100px_100px_110px_minmax(180px,1fr)] items-start border-t border-hairline px-3 py-3 text-sm"
+            >
+              <div className="font-medium tabular text-foreground">#{update.update_number}</div>
+              <div className="text-muted-foreground">{shortDate(update.data_date)}</div>
+              <div className="tabular text-muted-foreground">
+                {shortDate(update.baseline_completion_date)}
               </div>
-              {update.notes && (
-                <div className="mt-1 max-w-2xl text-xs text-muted-foreground">{update.notes}</div>
-              )}
-              {update.money_notes && (
-                <div className="mt-1 max-w-2xl text-xs text-muted-foreground">
-                  {update.money_notes}
+              <div className="font-medium text-foreground">
+                {shortDate(update.forecast_completion_date)}
+              </div>
+              <div className={`tabular ${varianceTone(update.variance_weeks)}`}>
+                {varianceLabel(update.variance_weeks)}
+              </div>
+              <div className={`tabular ${varianceTone(update.movement_weeks)}`}>
+                {varianceLabel(update.movement_weeks)}
+              </div>
+              <div className={`font-semibold tabular ${moneyTone(update.schedule_money_net)}`}>
+                {fmtUSD(update.schedule_money_net)}
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">
+                  {activitySummary
+                    ? `${activitySummary.activityCount} activity snapshots · ${activitySummary.criticalCount} critical · ${activitySummary.lateCount + activitySummary.outOfSequenceCount} late/out-of-sequence`
+                    : "Activity snapshots will appear on the next saved CPM update."}
                 </div>
-              )}
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {milestoneCountByUpdate[update.update_number] ?? 0} milestone snapshots
+                  {activitySummary?.openEndCount
+                    ? ` · ${activitySummary.openEndCount} open-ended activities`
+                    : ""}
+                </div>
+                {activitySummary && activitySummary.driverLabels.length > 0 && (
+                  <div className="mt-1 max-w-2xl text-xs text-muted-foreground">
+                    Drivers: {activitySummary.driverLabels.join("; ")}
+                  </div>
+                )}
+                {update.notes && (
+                  <div className="mt-1 max-w-2xl text-xs text-muted-foreground">{update.notes}</div>
+                )}
+                {update.money_notes && (
+                  <div className="mt-1 max-w-2xl text-xs text-muted-foreground">
+                    {update.money_notes}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
+}
+
+type ActivityUpdateSnapshotSummary = {
+  activityCount: number;
+  criticalCount: number;
+  lateCount: number;
+  outOfSequenceCount: number;
+  openEndCount: number;
+  driverLabels: string[];
+};
+
+function buildActivityUpdateSnapshotSummaries(activityUpdates: ScheduleActivityUpdateRow[]) {
+  const grouped = activityUpdates.reduce<Record<number, ScheduleActivityUpdateRow[]>>(
+    (acc, update) => {
+      acc[update.update_number] = acc[update.update_number] ?? [];
+      acc[update.update_number].push(update);
+      return acc;
+    },
+    {},
+  );
+  return Object.fromEntries(
+    Object.entries(grouped).map(([updateNumber, rows]) => [
+      Number(updateNumber),
+      summarizeActivityUpdateSnapshots(rows),
+    ]),
+  ) as Record<number, ActivityUpdateSnapshotSummary>;
+}
+
+function summarizeActivityUpdateSnapshots(
+  rows: ScheduleActivityUpdateRow[],
+): ActivityUpdateSnapshotSummary {
+  return {
+    activityCount: rows.length,
+    criticalCount: rows.filter((row) => row.is_critical).length,
+    lateCount: rows.filter((row) => row.is_late).length,
+    outOfSequenceCount: rows.filter((row) => row.is_out_of_sequence).length,
+    openEndCount: rows.filter((row) => row.is_open_start || row.is_open_finish).length,
+    driverLabels: rows
+      .map((row) => ({ row, score: scoreActivityUpdateDriver(row) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map((item) => formatActivityUpdateDriver(item.row)),
+  };
+}
+
+function scoreActivityUpdateDriver(row: ScheduleActivityUpdateRow) {
+  return (
+    (row.is_critical ? 1000 : 0) +
+    (row.is_late ? 600 : 0) +
+    (row.is_out_of_sequence ? 500 : 0) +
+    (row.is_open_start || row.is_open_finish ? 250 : 0) +
+    Math.max(0, row.slippage_days) * 10 +
+    Math.max(0, 10 - row.total_float_days)
+  );
+}
+
+function formatActivityUpdateDriver(row: ScheduleActivityUpdateRow) {
+  const tags = [
+    row.is_critical ? "critical" : null,
+    row.is_late ? "late" : null,
+    row.is_out_of_sequence ? "out-of-seq" : null,
+    row.is_open_start || row.is_open_finish ? "open end" : null,
+    row.slippage_days > 0 ? `${row.slippage_days}d slip` : null,
+    `TF ${row.total_float_days}d`,
+  ].filter(Boolean);
+  return `${row.activity_id || row.name} ${tags.join(" · ")}`;
 }
 
 function DateField({

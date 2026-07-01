@@ -34,6 +34,7 @@ import {
   updateScheduleActivity,
   type MilestoneRow,
   type ScheduleActivityRow,
+  type ScheduleActivityUpdateRow,
   type ScheduleDelayFragmentRow,
   type ScheduleRiskRow,
   type ScheduleUpdateRow,
@@ -192,6 +193,10 @@ function ScheduleWorkspacePage() {
   const updates = useMemo(
     () => (scheduleQuery.data?.updates ?? []) as ScheduleUpdateRow[],
     [scheduleQuery.data?.updates],
+  );
+  const activityUpdates = useMemo(
+    () => (scheduleQuery.data?.activityUpdates ?? []) as ScheduleActivityUpdateRow[],
+    [scheduleQuery.data?.activityUpdates],
   );
   const risks = useMemo(
     () => (scheduleQuery.data?.risks ?? []) as ScheduleRiskRow[],
@@ -658,6 +663,7 @@ function ScheduleWorkspacePage() {
         milestones={milestones}
         risks={risks}
         updates={updates}
+        activityUpdates={activityUpdates}
         project={project}
       />
     </ScheduleWorkspaceShell>
@@ -806,11 +812,13 @@ function ScheduleWorkspaceOperations({
   milestones,
   risks,
   updates,
+  activityUpdates,
   project,
 }: {
   milestones: MilestoneRow[];
   risks: ScheduleRiskRow[];
   updates: ScheduleUpdateRow[];
+  activityUpdates: ScheduleActivityUpdateRow[];
   project: ProjectRow;
 }) {
   const activeMilestones = milestones
@@ -825,6 +833,13 @@ function ScheduleWorkspaceOperations({
   const procurementRisks = risks.filter((risk) => risk.kind === "procurement").slice(0, 4);
   const tradeRisks = risks.filter((risk) => risk.kind === "trade_performance").slice(0, 4);
   const latestUpdate = updates[0] ?? null;
+  const activitySnapshotCountByUpdate = activityUpdates.reduce<Record<number, number>>(
+    (acc, snapshot) => {
+      acc[snapshot.update_number] = (acc[snapshot.update_number] ?? 0) + 1;
+      return acc;
+    },
+    {},
+  );
 
   return (
     <section className="constructline-screen-ops mb-4 mt-5 scroll-mt-28 rounded-lg border border-hairline bg-surface p-5">
@@ -869,7 +884,7 @@ function ScheduleWorkspaceOperations({
                   title={`Update #${update.update_number} · ${formatDate(update.data_date)}`}
                   meta={`${formatVariance(update.variance_weeks)} vs baseline · finish ${formatDate(
                     update.forecast_completion_date,
-                  )}`}
+                  )} · ${activitySnapshotCountByUpdate[update.update_number] ?? 0} activity snapshots`}
                 />
               ))
           )}

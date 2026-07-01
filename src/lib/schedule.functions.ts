@@ -180,6 +180,41 @@ export interface ScheduleMilestoneUpdateRow {
   notes: string;
 }
 
+export interface ScheduleActivityUpdateRow {
+  id: string;
+  project_id: string;
+  schedule_update_id: string;
+  schedule_activity_id: string | null;
+  update_number: number;
+  data_date: string;
+  activity_id: string;
+  name: string;
+  division: string;
+  wbs_section_id: string | null;
+  baseline_start_date: string | null;
+  baseline_finish_date: string | null;
+  current_start_date: string | null;
+  current_finish_date: string | null;
+  actual_start_date: string | null;
+  actual_finish_date: string | null;
+  planned_duration_days: number;
+  remaining_duration_days: number;
+  percent_complete: number;
+  total_float_days: number;
+  free_float_days: number;
+  slippage_days: number;
+  is_critical: boolean;
+  is_near_critical: boolean;
+  is_late: boolean;
+  is_out_of_sequence: boolean;
+  is_open_start: boolean;
+  is_open_finish: boolean;
+  is_milestone: boolean;
+  predecessor_activity_ids: string[];
+  successor_activity_ids: string[];
+  notes: string;
+}
+
 const MILESTONE_STATUSES = ["on_track", "at_risk", "delayed", "complete"] as const;
 const RISK_KINDS = ["procurement", "trade_performance", "critical_decision"] as const;
 const RISK_STATUSES = ["active", "inactive", "completed"] as const;
@@ -294,6 +329,47 @@ const normalizeMilestoneUpdate = (r: Record<string, unknown>): ScheduleMilestone
   forecast_date: (r.forecast_date as string | null) ?? null,
   variance_weeks: num(r.variance_weeks),
   status: str(r.status, "on_track") as MilestoneStatus,
+  notes: str(r.notes),
+});
+
+const normalizeScheduleActivityUpdate = (
+  r: Record<string, unknown>,
+): ScheduleActivityUpdateRow => ({
+  id: r.id as string,
+  project_id: r.project_id as string,
+  schedule_update_id: r.schedule_update_id as string,
+  schedule_activity_id: (r.schedule_activity_id as string | null) ?? null,
+  update_number: num(r.update_number),
+  data_date: str(r.data_date),
+  activity_id: str(r.activity_id),
+  name: str(r.name),
+  division: str(r.division, "General"),
+  wbs_section_id: (r.wbs_section_id as string | null) ?? null,
+  baseline_start_date: (r.baseline_start_date as string | null) ?? null,
+  baseline_finish_date: (r.baseline_finish_date as string | null) ?? null,
+  current_start_date: (r.current_start_date as string | null) ?? null,
+  current_finish_date: (r.current_finish_date as string | null) ?? null,
+  actual_start_date: (r.actual_start_date as string | null) ?? null,
+  actual_finish_date: (r.actual_finish_date as string | null) ?? null,
+  planned_duration_days: Math.max(0, Math.round(num(r.planned_duration_days))),
+  remaining_duration_days: Math.max(0, Math.round(num(r.remaining_duration_days))),
+  percent_complete: num(r.percent_complete),
+  total_float_days: Math.round(num(r.total_float_days)),
+  free_float_days: Math.round(num(r.free_float_days)),
+  slippage_days: Math.round(num(r.slippage_days)),
+  is_critical: Boolean(r.is_critical),
+  is_near_critical: Boolean(r.is_near_critical),
+  is_late: Boolean(r.is_late),
+  is_out_of_sequence: Boolean(r.is_out_of_sequence),
+  is_open_start: Boolean(r.is_open_start),
+  is_open_finish: Boolean(r.is_open_finish),
+  is_milestone: Boolean(r.is_milestone),
+  predecessor_activity_ids: Array.isArray(r.predecessor_activity_ids)
+    ? r.predecessor_activity_ids.map(String)
+    : [],
+  successor_activity_ids: Array.isArray(r.successor_activity_ids)
+    ? r.successor_activity_ids.map(String)
+    : [],
   notes: str(r.notes),
 });
 
@@ -580,7 +656,7 @@ export const listSchedule = createServerFn({ method: "GET" })
         .order("identified_on", { ascending: false })
         .order("created_at", { ascending: false }),
     ]);
-    const [uRes, muRes] = await Promise.all([
+    const [uRes, muRes, auRes] = await Promise.all([
       context.supabase
         .from("schedule_updates")
         .select("*")
@@ -591,6 +667,11 @@ export const listSchedule = createServerFn({ method: "GET" })
         .select("*")
         .eq("project_id", data.projectId)
         .order("update_number", { ascending: false }),
+      dynamicTable(context.supabase, "schedule_activity_updates")
+        .select("*")
+        .eq("project_id", data.projectId)
+        .order("update_number", { ascending: false })
+        .order("activity_id"),
     ]);
     if (mRes.error) throw new Error(mRes.error.message);
     if (rRes.error) throw new Error(rRes.error.message);
@@ -606,6 +687,10 @@ export const listSchedule = createServerFn({ method: "GET" })
       muRes.error &&
       (muRes.error.message.includes("schedule_milestone_updates") ||
         muRes.error.message.includes("schema cache"));
+    const activityUpdatesMissing =
+      auRes.error &&
+      (isMissingRestRelation(auRes.error, "schedule_activity_updates") ||
+        auRes.error.message?.includes("schema cache"));
     const wbsSectionsMissing =
       wRes.error &&
       (wRes.error.message.includes("schedule_wbs_sections") ||
@@ -624,6 +709,7 @@ export const listSchedule = createServerFn({ method: "GET" })
     if (dRes.error && !delayFragmentsMissing) throw new Error(dRes.error.message);
     if (uRes.error && !updatesMissing) throw new Error(uRes.error.message);
     if (muRes.error && !milestoneUpdatesMissing) throw new Error(muRes.error.message);
+    if (auRes.error && !activityUpdatesMissing) throw new Error(auRes.error.message);
 
     let activityRows = activitiesMissing
       ? []
@@ -725,6 +811,11 @@ export const listSchedule = createServerFn({ method: "GET" })
       milestoneUpdates: milestoneUpdatesMissing
         ? []
         : (muRes.data ?? []).map((r) => normalizeMilestoneUpdate(r as Record<string, unknown>)),
+      activityUpdates: activityUpdatesMissing
+        ? []
+        : (auRes.data ?? []).map((r) =>
+            normalizeScheduleActivityUpdate(r as Record<string, unknown>),
+          ),
     };
   });
 
