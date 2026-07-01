@@ -2620,12 +2620,14 @@ export type Database = {
         Args: { p_org_id: string }
         Returns: boolean
       }
+      can_manage_estimate: { Args: { p_estimate_id: string }; Returns: boolean }
       can_manage_org: { Args: { p_org_id: string }; Returns: boolean }
       can_manage_project: { Args: { p_project_id: string }; Returns: boolean }
       can_read_client_project: {
         Args: { p_project_id: string }
         Returns: boolean
       }
+      can_read_estimate: { Args: { p_estimate_id: string }; Returns: boolean }
       can_read_project: { Args: { p_project_id: string }; Returns: boolean }
       can_view_client_billing: {
         Args: { p_project_id: string }
