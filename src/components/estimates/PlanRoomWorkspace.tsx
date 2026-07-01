@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type {
   ChangeEvent,
   KeyboardEvent as ReactKeyboardEvent,
@@ -13,6 +14,7 @@ import {
   ArrowLeft,
   Check,
   ClipboardList,
+  ExternalLink,
   FileUp,
   Hand,
   Image as ImageIcon,
@@ -75,6 +77,8 @@ import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions
 
 type ToolMode = "select" | "calibrate" | TakeoffToolType;
 type RevisionOverlayMode = "compare" | "ghost";
+type CockpitPanel = "drawings" | "tools" | null;
+type MiniMapDock = "bottom-left" | "bottom-right" | "top-left" | "top-right";
 type Point = PlanRoomPoint;
 type ViewSize = PlanRoomViewSize;
 type ZoomWindowDraft = { start: Point; end: Point };
@@ -90,6 +94,13 @@ type RenderQualityStatus = {
   label: string;
   details: string;
   capped?: boolean;
+};
+type DraftCommandStatus = {
+  title: string;
+  value: string;
+  detail: string;
+  ready: boolean;
+  actionLabel: string;
 };
 type GeometryEditDraft = {
   measurementId: string;
@@ -121,6 +132,7 @@ const PDF_STANDARD_RENDER_MAX_EDGE = 8192;
 const PDF_STANDARD_RENDER_MAX_PIXELS = 24_000_000;
 const PDF_HIGH_DETAIL_RENDER_MAX_EDGE = 12_288;
 const PDF_HIGH_DETAIL_RENDER_MAX_PIXELS = 72_000_000;
+const PDF_INSPECTION_RENDER_MULTIPLIER = 2;
 const EMPTY_VIEWPORT_FRAME: ViewportFrame = { x: 0, y: 0, width: 1, height: 1 };
 
 type PdfViewportLike = { width: number; height: number };
@@ -196,10 +208,12 @@ const pdfRenderPlanFor = (
   viewport: PdfViewportLike,
   cssScale: number,
   zoom: number,
+  detailMultiplier = 1,
 ): PdfRenderPlan => {
   const pagePixels = Math.max(1, viewport.width * viewport.height);
   const longEdge = Math.max(1, viewport.width, viewport.height);
-  const desiredScale = cssScale * Math.max(1, zoom) * devicePixelRatioForPdf();
+  const desiredScale =
+    cssScale * Math.max(1, zoom) * devicePixelRatioForPdf() * Math.max(1, detailMultiplier);
   const limits = pdfRenderLimits();
   const maxPixelScale = Math.sqrt(limits.maxPixels / pagePixels);
   const maxEdgeScale = limits.maxEdge / longEdge;
@@ -213,8 +227,19 @@ const pdfRenderPlanFor = (
   };
 };
 
-const pdfRenderScaleFor = (viewport: PdfViewportLike, cssScale: number, zoom: number) =>
-  pdfRenderPlanFor(viewport, cssScale, zoom).renderScale;
+const pdfRenderScaleFor = (
+  viewport: PdfViewportLike,
+  cssScale: number,
+  zoom: number,
+  detailMultiplier = 1,
+) => pdfRenderPlanFor(viewport, cssScale, zoom, detailMultiplier).renderScale;
+
+const configurePdfWorker = (pdfjs: unknown) => {
+  const workerSrc = String(pdfWorkerUrl || "");
+  if (!workerSrc) throw new Error("PDF worker is not available.");
+  (pdfjs as { GlobalWorkerOptions: { workerSrc: string } }).GlobalWorkerOptions.workerSrc =
+    workerSrc;
+};
 
 const isPdfRenderCancelled = (error: unknown) =>
   error instanceof Error && error.name === "RenderingCancelledException";
@@ -280,6 +305,87 @@ function geometryFromPoints(points: Point[], size: ViewSize) {
   };
 }
 
+function draftCommandFor({
+  tool,
+  points,
+  sheet,
+  viewSize,
+  unit,
+}: {
+  tool: ToolMode;
+  points: Point[];
+  sheet: PlanSheetRow | null;
+  viewSize: ViewSize;
+  unit: string;
+}): DraftCommandStatus | null {
+  if (tool === "select") return null;
+
+  if (tool === "calibrate") {
+    const spanPx = distancePx(points, viewSize);
+    return {
+      title: "Scale calibration",
+      value:
+        points.length === 2
+          ? `${Math.round(spanPx).toLocaleString()} px`
+          : `${points.length}/2 points`,
+      detail:
+        points.length === 2
+          ? "Type the real field distance, then save the sheet scale."
+          : "Click both ends of a known dimension on the drawing.",
+      ready: points.length === 2 && spanPx > 0,
+      actionLabel: "Save Scale",
+    };
+  }
+
+  if (tool === "count") {
+    return {
+      title: "Count takeoff",
+      value: formatQty(points.length, unit || "EA"),
+      detail:
+        points.length > 0
+          ? "Keep clicking matching items, then finish this grouped count."
+          : "Click each matching item on the plan. One saved takeoff will hold the total count.",
+      ready: points.length > 0,
+      actionLabel: "Finish Count",
+    };
+  }
+
+  const hasScale = Boolean(sheet?.scale_feet_per_pixel);
+  const quantity = sheet ? calculateQuantity(tool, points, sheet, viewSize) : 0;
+  const value =
+    hasScale && quantity > 0
+      ? formatQty(quantity, unit)
+      : tool === "linear"
+        ? `${points.length}/2+ points`
+        : `${points.length}/3+ points`;
+
+  if (tool === "linear") {
+    return {
+      title: "Linear takeoff",
+      value,
+      detail: !hasScale
+        ? "Set the sheet scale before linear quantities can calculate."
+        : points.length >= 2
+          ? "Click additional turns for a run, or finish this linear takeoff."
+          : "Click the start point, then the next point on the run.",
+      ready: hasScale && points.length >= 2 && quantity > 0,
+      actionLabel: "Finish Linear",
+    };
+  }
+
+  return {
+    title: "Area takeoff",
+    value,
+    detail: !hasScale
+      ? "Set the sheet scale before area quantities can calculate."
+      : points.length >= 3
+        ? "Keep clicking corners, then finish to close and save the area."
+        : "Click at least three corners around the area.",
+    ready: hasScale && points.length >= 3 && quantity > 0,
+    actionLabel: "Finish Area",
+  };
+}
+
 function unitFor(tool: TakeoffToolType, selectedLine?: EstimateLineItemRow) {
   if (selectedLine?.unit) return selectedLine.unit;
   if (tool === "linear") return "LF";
@@ -295,13 +401,39 @@ function toolLabel(tool: ToolMode) {
   return "Count";
 }
 
+function CockpitFloatingPanelHeader({
+  title,
+  closeTestId,
+  onClose,
+}: {
+  title: string;
+  closeTestId: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {title}
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="h-7 gap-1.5 px-2 text-xs"
+        onClick={onClose}
+        data-testid={closeTestId}
+      >
+        <Minimize2 className="h-3.5 w-3.5" />
+        Hide
+      </Button>
+    </div>
+  );
+}
+
 async function getPdfPageCount(file: File) {
   if (file.type !== "application/pdf") return 1;
   const pdfjs = await import("pdfjs-dist");
-  const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
-  (
-    pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }
-  ).GlobalWorkerOptions.workerSrc = workerUrl;
+  configurePdfWorker(pdfjs);
   const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
   return Math.max(1, pdf.numPages);
 }
@@ -336,6 +468,7 @@ export function PlanRoomWorkspace({
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const [uploading, setUploading] = useState(false);
   const [isCockpitMode, setIsCockpitMode] = useState(false);
+  const [cockpitPanel, setCockpitPanel] = useState<CockpitPanel>(null);
   const [overlaySheetId, setOverlaySheetId] = useState("");
   const [overlayOpacity, setOverlayOpacity] = useState(65);
   const [overlayMode, setOverlayMode] = useState<RevisionOverlayMode>("compare");
@@ -392,6 +525,20 @@ export function PlanRoomWorkspace({
   const selectedMeasurementNotes = selectedMeasurement?.notes ?? "";
   const activeDraftPointCount =
     tool === "calibrate" ? calibrationPoints.length : pendingPoints.length;
+  const activeDraftPoints = tool === "calibrate" ? calibrationPoints : pendingPoints;
+  const draftUnit =
+    tool === "linear" || tool === "area" || tool === "count" ? unitFor(tool, selectedLine) : "";
+  const draftCommand = useMemo(
+    () =>
+      draftCommandFor({
+        tool,
+        points: activeDraftPoints,
+        sheet: currentSheet,
+        viewSize,
+        unit: draftUnit,
+      }),
+    [activeDraftPoints, currentSheet, draftUnit, tool, viewSize],
+  );
 
   useEffect(() => {
     if (!selectedSheetId && sheets[0]) setSelectedSheetId(sheets[0].id);
@@ -593,12 +740,7 @@ export function PlanRoomWorkspace({
     }
 
     if (tool === "linear" || tool === "count") {
-      const next = tool === "count" ? [point] : [...pendingPoints, point].slice(-2);
-      if (tool === "count" || next.length === 2) {
-        createMeasurementMutation.mutate({ measurementTool: tool, points: next });
-      } else {
-        setPendingPoints(next);
-      }
+      setPendingPoints((current) => [...current, point]);
       return;
     }
 
@@ -662,6 +804,30 @@ export function PlanRoomWorkspace({
     });
   };
 
+  const finishDraft = () => {
+    if (tool === "calibrate") {
+      saveScale();
+      return;
+    }
+    if (tool === "linear") {
+      if (pendingPoints.length < 2) {
+        toast.warning("Click at least two points before finishing a linear takeoff.");
+        return;
+      }
+      createMeasurementMutation.mutate({ measurementTool: "linear", points: pendingPoints });
+      return;
+    }
+    if (tool === "count") {
+      if (pendingPoints.length < 1) {
+        toast.warning("Click at least one item before finishing a count.");
+        return;
+      }
+      createMeasurementMutation.mutate({ measurementTool: "count", points: pendingPoints });
+      return;
+    }
+    finishArea();
+  };
+
   const saveSelectedMeasurement = () => {
     if (!selectedMeasurement) return;
     const label = selectedMeasurementDraft.label.trim();
@@ -720,6 +886,8 @@ export function PlanRoomWorkspace({
     (measurement) => measurement.estimate_line_item_id,
   ).length;
   const backendReady = schemaReady !== false;
+  const toggleCockpitPanel = (panel: Exclude<CockpitPanel, null>) =>
+    setCockpitPanel((current) => (current === panel ? null : panel));
 
   return (
     <div
@@ -759,8 +927,12 @@ export function PlanRoomWorkspace({
                 size="sm"
                 variant="outline"
                 className="gap-1.5"
-                onClick={() => setIsCockpitMode((current) => !current)}
+                onClick={() => {
+                  setIsCockpitMode((current) => !current);
+                  setCockpitPanel(null);
+                }}
                 title={isCockpitMode ? "Exit command center" : "Open command center"}
+                data-testid="plan-command-center-toggle"
               >
                 {isCockpitMode ? (
                   <Minimize2 className="h-3.5 w-3.5" />
@@ -792,11 +964,41 @@ export function PlanRoomWorkspace({
 
       <main
         className={cn(
-          "mx-auto grid max-w-[1800px] gap-5 px-5 py-6 xl:grid-cols-[220px_minmax(0,1fr)_300px] 2xl:grid-cols-[280px_minmax(0,1fr)_390px] lg:px-8",
+          "relative mx-auto grid max-w-[1800px] gap-5 px-5 py-6 xl:grid-cols-[220px_minmax(0,1fr)_300px] 2xl:grid-cols-[280px_minmax(0,1fr)_390px] lg:px-8",
           isCockpitMode &&
-            "h-[calc(100vh-110px)] max-w-none overflow-hidden py-4 xl:grid-cols-[260px_minmax(0,1fr)_340px] 2xl:grid-cols-[300px_minmax(0,1fr)_380px]",
+            "h-[calc(100vh-102px)] max-w-none grid-cols-1 overflow-hidden px-3 py-3 xl:grid-cols-1",
         )}
       >
+        {isCockpitMode && (
+          <div
+            className="absolute left-1/2 top-3 z-40 flex -translate-x-1/2 items-center gap-2 rounded-md border border-hairline bg-card/95 p-1 shadow-lg backdrop-blur"
+            data-testid="plan-cockpit-panel-dock"
+          >
+            <Button
+              type="button"
+              size="sm"
+              variant={cockpitPanel === "drawings" ? "default" : "outline"}
+              className="gap-1.5"
+              onClick={() => toggleCockpitPanel("drawings")}
+              data-testid="plan-cockpit-drawings-toggle"
+            >
+              <Layers className="h-3.5 w-3.5" />
+              Drawings
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={cockpitPanel === "tools" ? "default" : "outline"}
+              className="gap-1.5"
+              onClick={() => toggleCockpitPanel("tools")}
+              data-testid="plan-cockpit-tools-toggle"
+            >
+              <Target className="h-3.5 w-3.5" />
+              Tools
+            </Button>
+          </div>
+        )}
+
         {!backendReady && (
           <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 xl:col-span-3">
             <p className="font-medium">Plan Room backend is still coming online</p>
@@ -807,7 +1009,23 @@ export function PlanRoomWorkspace({
           </section>
         )}
 
-        <aside className={cn("min-w-0 space-y-4", isCockpitMode && "min-h-0 overflow-y-auto")}>
+        <aside
+          className={cn(
+            "min-w-0 space-y-4",
+            isCockpitMode &&
+              (cockpitPanel === "drawings"
+                ? "absolute left-3 top-16 z-40 max-h-[calc(100%-5rem)] w-[min(360px,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
+                : "hidden"),
+          )}
+          data-testid="plan-cockpit-drawings-panel"
+        >
+          {isCockpitMode && (
+            <CockpitFloatingPanelHeader
+              title="Drawing Controls"
+              closeTestId="plan-cockpit-drawings-close"
+              onClose={() => setCockpitPanel(null)}
+            />
+          )}
           <section className="rounded-lg border border-hairline bg-card shadow-card">
             <div className="border-b border-hairline bg-surface px-4 py-3">
               <h2 className="font-serif text-xl">Drawing Sets</h2>
@@ -1006,8 +1224,9 @@ export function PlanRoomWorkspace({
         <section
           className={cn(
             "min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card",
-            isCockpitMode && "flex min-h-0 flex-col",
+            isCockpitMode && "flex min-h-0 flex-col xl:col-span-1",
           )}
+          data-testid="plan-cockpit-drawing-stage"
         >
           <div className="flex flex-col gap-3 border-b border-hairline bg-surface px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
@@ -1051,9 +1270,20 @@ export function PlanRoomWorkspace({
                   </Button>
                 );
               })}
-              {tool === "area" && (
-                <Button size="sm" className="gap-1.5" onClick={finishArea} disabled={!backendReady}>
-                  <Check className="h-3.5 w-3.5" /> Finish Area
+              {draftCommand && (
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={finishDraft}
+                  disabled={
+                    !backendReady ||
+                    !draftCommand.ready ||
+                    createMeasurementMutation.isPending ||
+                    updateSheetMutation.isPending
+                  }
+                  data-testid="takeoff-finish-draft"
+                >
+                  <Check className="h-3.5 w-3.5" /> {draftCommand.actionLabel}
                 </Button>
               )}
               {activeDraftPointCount > 0 && (
@@ -1091,6 +1321,15 @@ export function PlanRoomWorkspace({
             measurements={sheetMeasurements}
             pendingPoints={pendingPoints}
             calibrationPoints={calibrationPoints}
+            draftCommand={draftCommand}
+            draftUnit={draftUnit}
+            draftActionDisabled={
+              !backendReady ||
+              !draftCommand?.ready ||
+              createMeasurementMutation.isPending ||
+              updateSheetMutation.isPending
+            }
+            onFinishDraft={finishDraft}
             tool={tool}
             viewSize={viewSize}
             onViewSizeChange={setViewSize}
@@ -1106,7 +1345,23 @@ export function PlanRoomWorkspace({
           />
         </section>
 
-        <aside className={cn("min-w-0 space-y-4", isCockpitMode && "min-h-0 overflow-y-auto")}>
+        <aside
+          className={cn(
+            "min-w-0 space-y-4",
+            isCockpitMode &&
+              (cockpitPanel === "tools"
+                ? "absolute right-3 top-16 z-40 max-h-[calc(100%-5rem)] w-[min(390px,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
+                : "hidden"),
+          )}
+          data-testid="plan-cockpit-tools-panel"
+        >
+          {isCockpitMode && (
+            <CockpitFloatingPanelHeader
+              title="Takeoff Tools"
+              closeTestId="plan-cockpit-tools-close"
+              onClose={() => setCockpitPanel(null)}
+            />
+          )}
           <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1512,6 +1767,10 @@ function PlanCanvas({
   measurements,
   pendingPoints,
   calibrationPoints,
+  draftCommand,
+  draftUnit,
+  draftActionDisabled,
+  onFinishDraft,
   tool,
   viewSize,
   onViewSizeChange,
@@ -1531,6 +1790,10 @@ function PlanCanvas({
   measurements: TakeoffMeasurementRow[];
   pendingPoints: Point[];
   calibrationPoints: Point[];
+  draftCommand: DraftCommandStatus | null;
+  draftUnit: string;
+  draftActionDisabled: boolean;
+  onFinishDraft: () => void;
   tool: ToolMode;
   viewSize: ViewSize;
   onViewSizeChange: (size: ViewSize) => void;
@@ -1551,6 +1814,8 @@ function PlanCanvas({
   const [isPanning, setIsPanning] = useState(false);
   const [isZoomWindowMode, setIsZoomWindowMode] = useState(false);
   const [zoomWindowDraft, setZoomWindowDraft] = useState<ZoomWindowDraft | null>(null);
+  const [miniMapDock, setMiniMapDock] = useState<MiniMapDock>("bottom-left");
+  const [isMiniMapCollapsed, setIsMiniMapCollapsed] = useState(false);
   const [viewportFrame, setViewportFrame] = useState<ViewportFrame>(EMPTY_VIEWPORT_FRAME);
   const [renderQuality, setRenderQuality] = useState<RenderQualityStatus | null>(null);
   const [geometryEditDraft, setGeometryEditDraft] = useState<GeometryEditDraft | null>(null);
@@ -1605,15 +1870,17 @@ function PlanCanvas({
       if (!signedUrl || planSet?.file_mime_type !== "application/pdf" || !canvasRef.current) return;
       try {
         const pdfjs = await import("pdfjs-dist");
-        const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
-        (
-          pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }
-        ).GlobalWorkerOptions.workerSrc = workerUrl;
+        configurePdfWorker(pdfjs);
         const pdf = await pdfjs.getDocument(await pdfDocumentSourceFor(signedUrl)).promise;
         const page = await pdf.getPage(sheet?.page_number ?? 1);
         const viewport = page.getViewport({ scale: 1 });
         const cssScale = pdfCssScaleFor(viewport);
-        const renderPlan = pdfRenderPlanFor(viewport, cssScale, zoom);
+        const renderPlan = pdfRenderPlanFor(
+          viewport,
+          cssScale,
+          zoom,
+          PDF_INSPECTION_RENDER_MULTIPLIER,
+        );
         const renderScale = renderPlan.renderScale;
         const cssViewport = page.getViewport({ scale: cssScale });
         const renderViewport = page.getViewport({ scale: renderScale });
@@ -1624,9 +1891,10 @@ function PlanCanvas({
         canvas.dataset.pdfRenderScale = renderScale.toFixed(3);
         canvas.dataset.pdfRenderWidth = String(canvas.width);
         canvas.dataset.pdfRenderHeight = String(canvas.height);
+        canvas.dataset.pdfDetailMode = "inspection";
         setRenderQuality({
-          label: renderPlan.capped ? "Max detail" : "HD detail",
-          details: `${canvas.width.toLocaleString()} x ${canvas.height.toLocaleString()} PDF render at ${renderScale.toFixed(
+          label: renderPlan.capped ? "Max PDF detail" : "Sharp PDF",
+          details: `${canvas.width.toLocaleString()} x ${canvas.height.toLocaleString()} PDF inspection render at ${renderScale.toFixed(
             2,
           )}x. Device limit: ${renderPlan.maxEdge.toLocaleString()}px edge / ${(
             renderPlan.maxPixels / 1_000_000
@@ -1835,6 +2103,11 @@ function PlanCanvas({
       setGeometryPreview(null);
       return;
     }
+    if (event.key === "Enter" && draftCommand?.ready && !draftActionDisabled) {
+      event.preventDefault();
+      onFinishDraft();
+      return;
+    }
 
     const panDistance = event.shiftKey ? 260 : 90;
     if (event.key === "ArrowLeft") {
@@ -2014,6 +2287,8 @@ function PlanCanvas({
   const viewBox = `0 0 ${viewSize.width} ${viewSize.height}`;
   const zoomPercent = `${Math.round(zoom * 100)}%`;
   const zoomSliderValue = Math.round(zoom * 100);
+  const canOpenOriginalPdf =
+    Boolean(signedUrl) && planSet?.file_mime_type === "application/pdf" && !planSet?.sample_key;
 
   return (
     <div
@@ -2033,6 +2308,15 @@ function PlanCanvas({
               data-testid="plan-render-quality"
             >
               {renderQuality.label}
+            </Badge>
+          )}
+          {planSet?.file_mime_type === "application/pdf" && !planSet?.sample_key && (
+            <Badge
+              variant="outline"
+              title="Uploaded PDFs render at a higher backing resolution so plan notes stay readable while you zoom."
+              data-testid="plan-pdf-inspection-mode"
+            >
+              Inspection render
             </Badge>
           )}
           {hasRevisionOverlay && (
@@ -2059,6 +2343,22 @@ function PlanCanvas({
             <ZoomIn className="h-3.5 w-3.5" />
             Zoom Area
           </Button>
+          {canOpenOriginalPdf && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              title="Open the untouched source PDF in a new tab"
+              asChild
+              data-testid="plan-open-original-pdf"
+            >
+              <a href={signedUrl} target="_blank" rel="noreferrer">
+                <ExternalLink className="h-3.5 w-3.5" />
+                Open PDF
+              </a>
+            </Button>
+          )}
           <Button
             type="button"
             size="icon"
@@ -2135,6 +2435,13 @@ function PlanCanvas({
           </div>
         </div>
       </div>
+
+      <TakeoffDraftHud
+        draftCommand={draftCommand}
+        activePointCount={tool === "calibrate" ? calibrationPoints.length : pendingPoints.length}
+        disabled={draftActionDisabled}
+        onFinishDraft={onFinishDraft}
+      />
 
       <div
         ref={scrollRef}
@@ -2262,6 +2569,10 @@ function PlanCanvas({
                 color="#1b7a6e"
                 dashed
                 closed={tool === "area"}
+                scaleFeetPerPixel={sheet?.scale_feet_per_pixel ?? 0}
+                unit={draftUnit}
+                tool={tool}
+                command={draftCommand}
               />
               <DraftShape
                 points={calibrationPoints}
@@ -2269,6 +2580,10 @@ function PlanCanvas({
                 color="#111827"
                 dashed
                 closed={false}
+                scaleFeetPerPixel={0}
+                unit="px"
+                tool={tool === "calibrate" ? "calibrate" : "select"}
+                command={tool === "calibrate" ? draftCommand : null}
               />
               <ZoomWindowShape draft={zoomWindowDraft} viewSize={viewSize} />
             </svg>
@@ -2279,6 +2594,10 @@ function PlanCanvas({
           measurements={measurements}
           viewportFrame={viewportFrame}
           onJump={jumpViewport}
+          dock={miniMapDock}
+          onDockChange={setMiniMapDock}
+          collapsed={isMiniMapCollapsed}
+          onCollapsedChange={setIsMiniMapCollapsed}
         />
       </div>
     </div>
@@ -2290,13 +2609,33 @@ function PlanMiniMap({
   measurements,
   viewportFrame,
   onJump,
+  dock,
+  onDockChange,
+  collapsed,
+  onCollapsedChange,
 }: {
   viewSize: ViewSize;
   measurements: TakeoffMeasurementRow[];
   viewportFrame: ViewportFrame;
   onJump: (point: Point) => void;
+  dock: MiniMapDock;
+  onDockChange: (dock: MiniMapDock) => void;
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
 }) {
   const mapRef = useRef<HTMLDivElement | null>(null);
+  const dockClass = {
+    "bottom-left": "bottom-3 left-3",
+    "bottom-right": "bottom-3 right-3",
+    "top-left": "left-3 top-3",
+    "top-right": "right-3 top-3",
+  }[dock];
+  const nextDock = {
+    "bottom-left": "bottom-right",
+    "bottom-right": "top-right",
+    "top-right": "top-left",
+    "top-left": "bottom-left",
+  }[dock] as MiniMapDock;
   const jumpFromEvent = (event: ReactPointerEvent<HTMLDivElement>) => {
     const rect = mapRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
@@ -2307,62 +2646,171 @@ function PlanMiniMap({
     onJump(point);
   };
 
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className={cn(
+          "absolute z-20 hidden items-center gap-2 rounded-md border border-hairline bg-card/95 px-3 py-2 text-xs font-medium text-card-foreground shadow-lg backdrop-blur sm:flex",
+          dockClass,
+        )}
+        onClick={() => onCollapsedChange(false)}
+        data-testid="plan-minimap-collapsed"
+        title="Show sheet map"
+      >
+        <MapIcon className="h-3.5 w-3.5" />
+        Sheet Map
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          {measurements.length}
+        </Badge>
+      </button>
+    );
+  }
+
   return (
     <div
       ref={mapRef}
-      className="absolute bottom-3 left-3 z-20 hidden w-52 overflow-hidden rounded-md border border-hairline bg-card/95 text-card-foreground shadow-lg backdrop-blur sm:block"
+      className={cn(
+        "absolute z-20 hidden w-52 overflow-hidden rounded-md border border-hairline bg-card/95 text-card-foreground shadow-lg backdrop-blur sm:block",
+        dockClass,
+      )}
       data-testid="plan-minimap"
-      role="button"
-      tabIndex={0}
-      title="Sheet map"
-      onPointerDown={jumpFromEvent}
-      onPointerMove={(event) => {
-        if (event.buttons === 1) jumpFromEvent(event);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onJump({ x: 0.5, y: 0.5 });
-        }
-      }}
+      title="Sheet map. Use Move to dock it in another corner or Hide to collapse it."
     >
       <div className="flex items-center justify-between gap-2 border-b border-hairline bg-surface px-2 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
           <MapIcon className="h-3 w-3" />
           Sheet Map
         </div>
-        <span className="text-[10px] tabular-nums text-muted-foreground">
-          {measurements.length} marks
-        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          <span className="text-[10px] tabular-nums text-muted-foreground">
+            {measurements.length} marks
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-6 px-1.5 text-[10px]"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onDockChange(nextDock);
+            }}
+            data-testid="plan-minimap-move"
+            title="Move sheet map"
+          >
+            Move
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onCollapsedChange(true);
+            }}
+            data-testid="plan-minimap-collapse"
+            title="Hide sheet map"
+          >
+            <Minimize2 className="h-3 w-3" />
+          </Button>
+        </div>
       </div>
-      <svg
-        viewBox={`0 0 ${viewSize.width} ${viewSize.height}`}
-        className="block aspect-[4/3] w-full bg-[#fffefa]"
-        preserveAspectRatio="xMidYMid meet"
+      <div
+        role="button"
+        tabIndex={0}
+        onPointerDown={jumpFromEvent}
+        onPointerMove={(event) => {
+          if (event.buttons === 1) jumpFromEvent(event);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onJump({ x: 0.5, y: 0.5 });
+          }
+        }}
+        title="Click or drag to jump around the sheet"
       >
-        <rect
-          x="0"
-          y="0"
-          width={viewSize.width}
-          height={viewSize.height}
-          fill="#fffefa"
-          stroke="#ded6c8"
-          strokeWidth="8"
-        />
-        {measurements.slice(0, 60).map((measurement) => (
-          <MiniMapMeasurement key={measurement.id} measurement={measurement} viewSize={viewSize} />
-        ))}
-        <rect
-          x={viewportFrame.x * viewSize.width}
-          y={viewportFrame.y * viewSize.height}
-          width={Math.max(18, viewportFrame.width * viewSize.width)}
-          height={Math.max(18, viewportFrame.height * viewSize.height)}
-          fill="#1b7a6e18"
-          stroke="#1b7a6e"
-          strokeWidth="10"
-          data-testid="plan-minimap-frame"
-        />
-      </svg>
+        <svg
+          viewBox={`0 0 ${viewSize.width} ${viewSize.height}`}
+          className="block aspect-[4/3] w-full bg-[#fffefa]"
+          preserveAspectRatio="xMidYMid meet"
+        >
+          <rect
+            x="0"
+            y="0"
+            width={viewSize.width}
+            height={viewSize.height}
+            fill="#fffefa"
+            stroke="#ded6c8"
+            strokeWidth="8"
+          />
+          {measurements.slice(0, 60).map((measurement) => (
+            <MiniMapMeasurement
+              key={measurement.id}
+              measurement={measurement}
+              viewSize={viewSize}
+            />
+          ))}
+          <rect
+            x={viewportFrame.x * viewSize.width}
+            y={viewportFrame.y * viewSize.height}
+            width={Math.max(18, viewportFrame.width * viewSize.width)}
+            height={Math.max(18, viewportFrame.height * viewSize.height)}
+            fill="#1b7a6e18"
+            stroke="#1b7a6e"
+            strokeWidth="10"
+            data-testid="plan-minimap-frame"
+          />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function TakeoffDraftHud({
+  draftCommand,
+  activePointCount,
+  disabled,
+  onFinishDraft,
+}: {
+  draftCommand: DraftCommandStatus | null;
+  activePointCount: number;
+  disabled: boolean;
+  onFinishDraft: () => void;
+}) {
+  if (!draftCommand) return null;
+
+  return (
+    <div
+      className="mb-3 grid gap-3 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm md:grid-cols-[minmax(0,1fr)_auto]"
+      data-testid="takeoff-draft-hud"
+    >
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm font-medium">{draftCommand.title}</p>
+          <Badge variant={draftCommand.ready ? "secondary" : "outline"}>
+            {activePointCount} point{activePointCount === 1 ? "" : "s"}
+          </Badge>
+          <Badge variant="outline" data-testid="takeoff-draft-live-quantity">
+            {draftCommand.value}
+          </Badge>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">{draftCommand.detail}</p>
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        className="gap-1.5 self-center"
+        onClick={onFinishDraft}
+        disabled={!draftCommand.ready || disabled}
+        data-testid="takeoff-draft-hud-finish"
+      >
+        <Check className="h-3.5 w-3.5" />
+        {draftCommand.actionLabel}
+      </Button>
     </div>
   );
 }
@@ -2500,16 +2948,18 @@ function PlanSheetOverlayLayer({
       if (!signedUrl || planSet.file_mime_type !== "application/pdf" || !canvasRef.current) return;
       try {
         const pdfjs = await import("pdfjs-dist");
-        const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
-        (
-          pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }
-        ).GlobalWorkerOptions.workerSrc = workerUrl;
+        configurePdfWorker(pdfjs);
         const pdf = await pdfjs.getDocument(await pdfDocumentSourceFor(signedUrl)).promise;
         const page = await pdf.getPage(sheet.page_number || 1);
         const viewport = page.getViewport({ scale: 1 });
         const scale = Math.min(viewSize.width / viewport.width, viewSize.height / viewport.height);
         const cssScale = Math.max(0.1, scale);
-        const renderScale = pdfRenderScaleFor(viewport, cssScale, zoom);
+        const renderScale = pdfRenderScaleFor(
+          viewport,
+          cssScale,
+          zoom,
+          PDF_INSPECTION_RENDER_MULTIPLIER,
+        );
         const scaled = page.getViewport({ scale: renderScale });
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
@@ -2518,6 +2968,7 @@ function PlanSheetOverlayLayer({
         canvas.dataset.pdfRenderScale = renderScale.toFixed(3);
         canvas.dataset.pdfRenderWidth = String(canvas.width);
         canvas.dataset.pdfRenderHeight = String(canvas.height);
+        canvas.dataset.pdfDetailMode = "inspection";
         renderTask = page.render({
           canvas,
           canvasContext: canvas.getContext("2d")!,
@@ -2869,12 +3320,20 @@ function DraftShape({
   color,
   dashed,
   closed,
+  scaleFeetPerPixel,
+  unit,
+  tool,
+  command,
 }: {
   points: Point[];
   viewSize: ViewSize;
   color: string;
   dashed?: boolean;
   closed?: boolean;
+  scaleFeetPerPixel: number;
+  unit: string;
+  tool: ToolMode;
+  command: DraftCommandStatus | null;
 }) {
   if (points.length === 0) return null;
   const scaled = points.map((point) => ({
@@ -2882,8 +3341,31 @@ function DraftShape({
     y: point.y * viewSize.height,
   }));
   const pointText = scaled.map((point) => `${point.x},${point.y}`).join(" ");
+
+  if (tool === "count") {
+    return (
+      <g data-testid="takeoff-draft-points" pointerEvents="none">
+        {scaled.map((point, index) => (
+          <g key={`${point.x}-${point.y}-${index}`}>
+            <circle cx={point.x} cy={point.y} r="12" fill="white" stroke={color} strokeWidth="3" />
+            <circle cx={point.x} cy={point.y} r="7" fill={color} />
+            <DraftPointLabel x={point.x + 10} y={point.y - 10} text={`${index + 1}`} />
+          </g>
+        ))}
+        {command && (
+          <DraftCommandLabel
+            x={scaled[0].x + 18}
+            y={scaled[0].y - 22}
+            color={color}
+            text={command.value}
+          />
+        )}
+      </g>
+    );
+  }
+
   return (
-    <g>
+    <g data-testid="takeoff-draft-points" pointerEvents="none">
       {closed && scaled.length >= 3 ? (
         <polygon
           points={pointText}
@@ -2903,8 +3385,96 @@ function DraftShape({
         />
       )}
       {scaled.map((point, index) => (
-        <circle key={index} cx={point.x} cy={point.y} r="5" fill={color} />
+        <g key={index}>
+          <circle cx={point.x} cy={point.y} r="5" fill={color} />
+          <DraftPointLabel x={point.x + 8} y={point.y - 8} text={`${index + 1}`} />
+        </g>
       ))}
+      {tool === "linear" &&
+        scaleFeetPerPixel > 0 &&
+        scaled.slice(1).map((point, index) => {
+          const previous = scaled[index];
+          const length = Math.hypot(point.x - previous.x, point.y - previous.y) * scaleFeetPerPixel;
+          return (
+            <DraftSegmentLabel
+              key={`${point.x}-${point.y}-${index}`}
+              x={(point.x + previous.x) / 2}
+              y={(point.y + previous.y) / 2}
+              text={formatQty(length, unit)}
+            />
+          );
+        })}
+      {tool === "calibrate" && scaled.length === 2 && (
+        <DraftSegmentLabel
+          x={(scaled[0].x + scaled[1].x) / 2}
+          y={(scaled[0].y + scaled[1].y) / 2}
+          text={`${Math.round(distancePx(points, viewSize)).toLocaleString()} px`}
+        />
+      )}
+      {command && (
+        <DraftCommandLabel
+          x={scaled[0].x + 14}
+          y={scaled[0].y - 24}
+          color={color}
+          text={command.value}
+        />
+      )}
+    </g>
+  );
+}
+
+function DraftPointLabel({ x, y, text }: { x: number; y: number; text: string }) {
+  return (
+    <g data-testid="takeoff-draft-point-label">
+      <circle cx={x} cy={y - 3} r="8" fill="white" stroke="#28231d" strokeWidth="1" />
+      <text x={x} y={y + 1} textAnchor="middle" fill="#28231d" fontSize="9" fontWeight="700">
+        {text}
+      </text>
+    </g>
+  );
+}
+
+function DraftSegmentLabel({ x, y, text }: { x: number; y: number; text: string }) {
+  const width = Math.max(58, text.length * 6.5);
+  return (
+    <g data-testid="takeoff-draft-segment-label">
+      <rect x={x - width / 2} y={y - 24} width={width} height="20" rx="4" fill="white" />
+      <rect
+        x={x - width / 2}
+        y={y - 24}
+        width={width}
+        height="20"
+        rx="4"
+        fill="#28231d10"
+        stroke="#28231d"
+        strokeWidth="0.75"
+      />
+      <text x={x} y={y - 10} textAnchor="middle" fill="#28231d" fontSize="10" fontWeight="700">
+        {text}
+      </text>
+    </g>
+  );
+}
+
+function DraftCommandLabel({
+  x,
+  y,
+  color,
+  text,
+}: {
+  x: number;
+  y: number;
+  color: string;
+  text: string;
+}) {
+  const width = Math.max(80, text.length * 7);
+  return (
+    <g data-testid="takeoff-draft-command-label">
+      <rect x={x} y={y - 20} width={width} height="24" rx="4" fill="white" />
+      <rect x={x} y={y - 20} width={width} height="24" rx="4" fill={`${color}18`} stroke={color} />
+      <text x={x + 8} y={y - 4} fill="#28231d" fontSize="11" fontWeight="700">
+        {text}
+      </text>
     </g>
   );
 }
