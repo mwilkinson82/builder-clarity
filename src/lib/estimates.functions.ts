@@ -423,13 +423,21 @@ async function ensureCostLibrarySeeded(context: { supabase: unknown }, organizat
     context.supabase,
     "cost_library_items",
   )
-    .select("id")
+    .select("external_id,source")
     .eq("organization_id", organizationId)
-    .limit(1);
+    .limit(5000);
   if (existingError) throw new Error(existingError.message);
-  if ((existing as unknown[] | null)?.length) return;
 
-  const rows = ESTIMATE_SEED_LIBRARY_ITEMS.map((item) => ({
+  const existingSystemIds = new Set(
+    ((existing ?? []) as Record<string, unknown>[])
+      .filter((row) => str(row.source) === "system")
+      .map((row) => str(row.external_id))
+      .filter(Boolean),
+  );
+
+  const rows = ESTIMATE_SEED_LIBRARY_ITEMS.filter(
+    (item) => item.external_id && !existingSystemIds.has(item.external_id),
+  ).map((item) => ({
     organization_id: organizationId,
     external_id: item.external_id,
     csi_division: item.csi_division,
@@ -1613,6 +1621,9 @@ const scoreLibraryItem = (item: CostLibraryItemRow, query: string) => {
     item.description,
     item.category,
     item.csi_code,
+    item.material_cost_cents > 0 ? "material" : "",
+    item.labor_cost_cents > 0 ? "labor crew production productivity" : "",
+    item.material_cost_cents > 0 && item.labor_cost_cents > 0 ? "installed assembly" : "",
     ...item.synonyms.map(String),
     ...item.keywords.map(String),
   ]

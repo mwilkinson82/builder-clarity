@@ -953,6 +953,12 @@ await expectContains(
     /Download Import Format/,
     /Overwatch Library/,
     /My Cost Library/,
+    /All Costs/,
+    /Material/,
+    /Labor/,
+    /Installed/,
+    /Crew \/ Production/,
+    /Production \/ Hour/,
     /Build your estimating price book/,
     /Add to My Cost Library/,
     /parseCostLibraryRows/,
@@ -970,6 +976,19 @@ await expectContains(
     /aria-label="Add to My Cost Library"/,
   ],
   "cost library UI can copy system rows and bulk import custom contractor pricing",
+);
+
+await expectContains(
+  "src/components/estimates/EstimateWorkspace.tsx",
+  [
+    /Cost Library matches/,
+    /Use row/,
+    /Mat only/,
+    /Labor only/,
+    /CostApplyMode/,
+    /shouldReplacePlaceholderDescription/,
+  ],
+  "estimate workspace can apply full, material-only, and labor-only library costs",
 );
 
 await expectContains(

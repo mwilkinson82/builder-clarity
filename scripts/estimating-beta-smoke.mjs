@@ -58,6 +58,9 @@ assert.equal(
   templateCosts.every((row) => row.valid),
   true,
 );
+assert.equal(templateCosts[0].labor_cost_cents, 8250);
+assert.equal(templateCosts[0].crew_size, 3);
+assert.equal(templateCosts[1].productivity_per_hour, 600);
 
 const contractorEstimatePaste =
   parseTabPaste(`Cost Code\tCSI Division\tDescription\tGroup\tUnit\tQty\tMaterial $/Unit\tLabor $/Unit\tNotes
@@ -171,6 +174,11 @@ assert.ok(ESTIMATE_SEED_LIBRARY_ITEMS.length >= 500);
 assert.ok(new Set(externalIds).size >= 450);
 assert.ok(ESTIMATE_SEED_LIBRARY_ITEMS.filter((item) => item.material_cost_cents > 0).length >= 390);
 assert.ok(ESTIMATE_SEED_LIBRARY_ITEMS.filter((item) => item.labor_cost_cents > 0).length >= 100);
+assert.ok(
+  ESTIMATE_SEED_LIBRARY_ITEMS.filter(
+    (item) => item.labor_cost_cents > 0 && item.material_cost_cents === 0,
+  ).length >= 100,
+);
 assert.ok(ESTIMATE_SEED_LIBRARY_ITEMS.reduce((sum, item) => sum + item.synonyms.length, 0) >= 2400);
 assert.ok(new Set(ESTIMATE_SEED_LIBRARY_ITEMS.map((item) => item.csi_division)).size >= 15);
 assert.ok(ESTIMATE_REGIONS.length >= 70);
