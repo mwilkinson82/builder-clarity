@@ -237,6 +237,7 @@ type ScheduleUpdateReadinessItem = {
 };
 type ScheduleUpdateReadinessSummary = {
   openTaskCount: number;
+  updateWindowCount: number;
   readyTaskCount: number;
   needsStatusCount: number;
   missingRemainingCount: number;
@@ -989,12 +990,12 @@ function buildScheduleUpdateReadiness(
 ): ScheduleUpdateReadinessSummary {
   const openTasks = model.tasks.filter((task) => task.activity.percent_complete < 100);
   const referenceDate = dataDate || todayIsoDate();
+  const updateWindowTasks = openTasks.filter((task) =>
+    taskIsInDataDateUpdateWindow(task, referenceDate),
+  );
 
-  const items = openTasks.flatMap((task) => {
+  const items = updateWindowTasks.flatMap((task) => {
     const activity = task.activity;
-    const isInUpdateWindow = taskIsInDataDateUpdateWindow(task, referenceDate);
-    if (!isInUpdateWindow) return [];
-
     const reasons: string[] = [];
     let severity: ScheduleUpdateReadinessItem["severity"] = "warning";
     let sort = 80;
@@ -1041,7 +1042,8 @@ function buildScheduleUpdateReadiness(
 
   return {
     openTaskCount: openTasks.length,
-    readyTaskCount: Math.max(0, openTasks.length - sortedItems.length),
+    updateWindowCount: updateWindowTasks.length,
+    readyTaskCount: Math.max(0, updateWindowTasks.length - sortedItems.length),
     needsStatusCount: sortedItems.length,
     missingRemainingCount,
     missingExpectedFinishCount,
@@ -3261,9 +3263,9 @@ function ScheduleUpdateReadinessPanel({
 
       <div className="mt-3 grid gap-2 md:grid-cols-4">
         <ActivityUpdateImpactTile
-          label="Open rows"
-          value={String(summary.openTaskCount)}
-          sub="not complete"
+          label="Update window"
+          value={String(summary.updateWindowCount)}
+          sub={`${summary.openTaskCount} open total`}
         />
         <ActivityUpdateImpactTile
           label="Ready"

@@ -625,6 +625,9 @@ for (const requiredScheduleRiskText of [
   "Showing 10 of",
   "Data-date update readiness",
   "buildScheduleUpdateReadiness",
+  "updateWindowCount",
+  "Update window",
+  "open total",
   "Set the data date",
   "Save the CPM update snapshot",
   "Remaining duration missing",
@@ -766,6 +769,17 @@ assert.match(
   scheduleRiskSource,
   /setScheduleView\("update_queue"\);[\s\S]{0,500}toast\.warning\("CPM update has status gaps"/,
   "Data-date status-gap warning should switch directly to the Needs update queue.",
+);
+
+assert.match(
+  scheduleRiskSource,
+  /const updateWindowTasks = openTasks\.filter\(\(task\) =>[\s\S]{0,180}taskIsInDataDateUpdateWindow\(task, referenceDate\)/,
+  "CPM update readiness should filter rows through the data-date update window.",
+);
+assert.match(
+  scheduleRiskSource,
+  /readyTaskCount: Math\.max\(0, updateWindowTasks\.length - sortedItems\.length\)/,
+  "CPM update readiness should calculate ready rows from the same data-date update window as status-gap rows.",
 );
 
 for (const removedScheduleRiskText of [
