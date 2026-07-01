@@ -4695,10 +4695,10 @@ function ActivityScheduleMatrix({
   const fitDayPx = Math.max(0.85, fitTimelineTargetWidth / Math.max(1, model.totalTimelineDays));
   const activeDayPx = isPrintMode ? printDayPx : isFitZoom ? fitDayPx : dayPx;
   const tableColumns = isPrintMode
-    ? "48px minmax(140px,1fr) 30px 32px 42px 42px 34px 34px 28px 32px"
+    ? "44px minmax(116px,1fr) 26px 30px 36px 36px 42px 30px 30px 24px 26px"
     : isFitZoom
-      ? "58px minmax(150px,1fr) 38px 42px 52px 56px 42px 46px 34px 38px"
-      : "78px minmax(220px,1fr) 50px 54px 76px 76px 58px 62px 48px 54px";
+      ? "58px minmax(140px,1fr) 36px 42px 50px 52px 56px 42px 44px 34px 38px"
+      : "78px minmax(210px,1fr) 50px 54px 74px 76px 78px 58px 62px 48px 54px";
   const baseRowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
   const headerHeight = isPrintMode ? 30 : 48;
@@ -4889,10 +4889,13 @@ function ActivityScheduleMatrix({
                 <div className="flex items-center px-3">ID</div>
                 <div className="flex min-w-0 items-center px-3">Activity</div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Planned
+                  Base dur
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Remaining
+                  Rem dur
+                </div>
+                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
+                  Base finish
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
                   Current start
@@ -4901,7 +4904,7 @@ function ActivityScheduleMatrix({
                   Expected finish
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Variance
+                  Slip
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
                   % done
@@ -5428,7 +5431,10 @@ function ConstructLineTaskRow({
             )}
           </div>
         </div>
-        <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
+        <div
+          className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground"
+          title="Original planned duration from baseline start to baseline finish."
+        >
           {task.isMilestone ? "M" : task.durationDays}
         </div>
         <div
@@ -5444,6 +5450,12 @@ function ConstructLineTaskRow({
           >
             {formatTaskStatusBasisLabel(task)}
           </span>
+        </div>
+        <div
+          className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground"
+          title="Original planned baseline finish."
+        >
+          {shortPrintDate(task.baselineFinishDate)}
         </div>
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
           {shortPrintDate(task.statusStartDate)}
@@ -5779,15 +5791,15 @@ function getActivityMatrixTaskRowHeight(
   const estimatedFlagRows = flagCount === 0 ? 0 : Math.ceil(flagCount / (isPrintMode ? 3 : 4));
 
   if (isPrintMode) {
-    return Math.min(58, Math.max(31, 22 + estimatedNameLines * 7 + estimatedFlagRows * 8));
+    return Math.min(66, Math.max(31, 22 + estimatedNameLines * 7 + estimatedFlagRows * 8));
   }
 
   return Math.min(108, Math.max(72, 46 + estimatedNameLines * 14 + estimatedFlagRows * 18));
 }
 
 function estimateActivityNameLines(name: string, isPrintMode: boolean) {
-  const charsPerLine = isPrintMode ? 28 : 36;
-  const maxLines = isPrintMode ? 4 : 3;
+  const charsPerLine = isPrintMode ? 24 : 32;
+  const maxLines = isPrintMode ? 5 : 3;
   return Math.max(1, Math.min(maxLines, Math.ceil(name.length / charsPerLine)));
 }
 
