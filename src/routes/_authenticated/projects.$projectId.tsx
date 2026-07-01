@@ -528,6 +528,39 @@ function ProjectPage() {
     },
   });
 
+  const archiveProjectFn = useServerFn(archiveProject);
+  const deleteProjectFn = useServerFn(deleteProject);
+  const archiveMutation = useMutation({
+    mutationFn: () => archiveProjectFn({ data: { projectId } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["portfolio-billing"] });
+      toast.success("Project archived", {
+        description: "It's hidden from the portfolio. Ask an admin to restore it from the database.",
+      });
+      navigate({ to: "/" });
+    },
+    onError: (err) =>
+      toast.error("Archive failed", {
+        description: err instanceof Error ? err.message : "Try again.",
+      }),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteProjectFn({ data: { projectId } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["portfolio-billing"] });
+      toast.success("Project deleted");
+      navigate({ to: "/" });
+    },
+    onError: (err) =>
+      toast.error("Delete failed", {
+        description: err instanceof Error ? err.message : "Try again.",
+      }),
+  });
+
+
+
   const expCreate = useServerMutation<Record<string, unknown>>(createExposureFn as never);
   const expUpdate = useServerMutation<Record<string, unknown>>(updateExposureFn as never);
   const expDelete = useServerMutation<{ id: string }>(deleteExposureFn);
