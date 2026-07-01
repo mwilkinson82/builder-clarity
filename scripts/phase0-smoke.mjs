@@ -1305,6 +1305,19 @@ expectSql(
 expectSql(
   sql,
   [
+    /create or replace function public\.can_read_estimate\(p_estimate_id uuid\)/i,
+    /create or replace function public\.can_manage_estimate\(p_estimate_id uuid\)/i,
+    /public\.can_manage_estimate\(estimate_id\)/i,
+    /created_by is null or created_by = \(select auth\.uid\(\)\)/i,
+    /create policy plan_room_storage_team_insert[\s\S]*public\.can_manage_estimate\(public\.storage_estimate_id\(name\)\)/i,
+    /regexp_split_to_array\(coalesce\(p_name, ''\), '\/'\)/i,
+  ],
+  "plan room RLS allows authorized estimate uploads without weakening bucket scope",
+);
+
+expectSql(
+  sql,
+  [
     /alter table public\.projects[\s\S]*job_number/i,
     /alter table public\.projects[\s\S]*project_manager/i,
     /tg_projects_calculate_schedule_variance/i,
