@@ -95,14 +95,14 @@ function formatActivityMutationError(error: unknown) {
     lowerMessage.includes("actual start") ||
     lowerMessage.includes("remaining duration")
   ) {
-    return "The schedule database needs the latest activity-status fields before actual start, expected finish, and remaining duration can save. Refresh after the publish finishes.";
+    return "The activity status did not save. Refresh the schedule and try again.";
   }
   if (
     lowerMessage.includes("wbs_section_id") ||
     lowerMessage.includes("schema cache") ||
     lowerMessage.includes("schedule_activities")
   ) {
-    return "The schedule database is still catching up to the WBS structure. Try saving again after refresh; the CPM row can save without the WBS link.";
+    return "The row could not attach to that WBS area yet. Refresh the schedule and save it again.";
   }
   return message || "Refresh and try again.";
 }

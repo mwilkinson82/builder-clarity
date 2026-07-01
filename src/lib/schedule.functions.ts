@@ -240,6 +240,22 @@ const RISK_EXPOSURE_CATEGORY: Record<ScheduleRiskKind, ExposureCategory> = {
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
+const SCHEDULE_ACTIVITY_STATUS_COLUMNS = [
+  "baseline_start_date",
+  "baseline_finish_date",
+  "forecast_start_date",
+  "forecast_finish_date",
+  "actual_start_date",
+  "actual_finish_date",
+  "remaining_duration_days",
+] as const;
+type ScheduleActivityStatusColumn = (typeof SCHEDULE_ACTIVITY_STATUS_COLUMNS)[number];
+type ScheduleActivityStatusFallback = Partial<
+  Record<ScheduleActivityStatusColumn, string | number | null>
+>;
+const SCHEDULE_ACTIVITY_STATUS_NOTE_RE =
+  /\n{0,2}<!-- constructline:activity-status-v1 ([\s\S]*?) -->/;
+const SCHEDULE_ACTIVITY_NOTES_MAX_LENGTH = 4000;
 const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
 const isMissingRestColumn = (error: { code?: string; message?: string } | null, column: string) => {
@@ -276,6 +292,104 @@ const isMissingRpcError = (error: DynamicSupabaseError, fnName: string) => {
     message.includes("does not exist")
   );
 };
+
+function normalizeScheduleActivityStatusFallbackValue(
+  column: ScheduleActivityStatusColumn,
+  value: unknown,
+) {
+  if (value == null || value === "") return null;
+  if (column === "remaining_duration_days") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : undefined;
+  }
+  return typeof value === "string" ? value : undefined;
+}
+
+function normalizeScheduleActivityStatusFallback(value: unknown): ScheduleActivityStatusFallback {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const input = value as Record<string, unknown>;
+  return SCHEDULE_ACTIVITY_STATUS_COLUMNS.reduce<ScheduleActivityStatusFallback>(
+    (fallback, column) => {
+      if (!(column in input)) return fallback;
+      const normalized = normalizeScheduleActivityStatusFallbackValue(column, input[column]);
+      if (normalized !== undefined) fallback[column] = normalized;
+      return fallback;
+    },
+    {},
+  );
+}
+
+function readScheduleActivityStatusFallback(notesValue: unknown): {
+  notes: string;
+  status: ScheduleActivityStatusFallback;
+} {
+  const notes = str(notesValue);
+  const match = notes.match(SCHEDULE_ACTIVITY_STATUS_NOTE_RE);
+  if (!match) return { notes, status: {} };
+
+  let status: ScheduleActivityStatusFallback = {};
+  try {
+    status = normalizeScheduleActivityStatusFallback(JSON.parse(match[1] ?? "{}"));
+  } catch {
+    status = {};
+  }
+
+  return {
+    notes: notes.replace(SCHEDULE_ACTIVITY_STATUS_NOTE_RE, "").trimEnd(),
+    status,
+  };
+}
+
+function buildScheduleActivityStatusFallbackPatch(payload: Record<string, unknown>) {
+  return SCHEDULE_ACTIVITY_STATUS_COLUMNS.reduce<ScheduleActivityStatusFallback>(
+    (fallback, column) => {
+      if (!(column in payload)) return fallback;
+      const normalized = normalizeScheduleActivityStatusFallbackValue(column, payload[column]);
+      if (normalized !== undefined) fallback[column] = normalized;
+      return fallback;
+    },
+    {},
+  );
+}
+
+function writeScheduleActivityStatusFallback(
+  notesValue: unknown,
+  payload: Record<string, unknown>,
+) {
+  const { notes, status: currentStatus } = readScheduleActivityStatusFallback(notesValue);
+  const nextStatus = {
+    ...currentStatus,
+    ...buildScheduleActivityStatusFallbackPatch(payload),
+  };
+  const marker = `<!-- constructline:activity-status-v1 ${JSON.stringify(nextStatus)} -->`;
+  if (Object.keys(nextStatus).length === 0) return notes;
+
+  const trimmedNotes = notes.trimEnd();
+  const combined = trimmedNotes ? `${trimmedNotes}\n\n${marker}` : marker;
+  if (combined.length <= SCHEDULE_ACTIVITY_NOTES_MAX_LENGTH) return combined;
+
+  const maxNotesLength = Math.max(0, SCHEDULE_ACTIVITY_NOTES_MAX_LENGTH - marker.length - 2);
+  const clippedNotes = trimmedNotes.slice(0, maxNotesLength).trimEnd();
+  return clippedNotes ? `${clippedNotes}\n\n${marker}` : marker;
+}
+
+function getScheduleActivityStatusFallbackDate(
+  row: Record<string, unknown>,
+  fallback: ScheduleActivityStatusFallback,
+  column: Exclude<ScheduleActivityStatusColumn, "remaining_duration_days">,
+) {
+  const value = row[column] ?? fallback[column] ?? null;
+  return typeof value === "string" ? value : null;
+}
+
+function getScheduleActivityStatusFallbackDuration(
+  row: Record<string, unknown>,
+  fallback: ScheduleActivityStatusFallback,
+) {
+  const value = row.remaining_duration_days ?? fallback.remaining_duration_days ?? null;
+  if (value == null || value === "") return null;
+  return Math.max(0, Math.round(num(value)));
+}
 
 const normalizeScheduleRisk = (r: Record<string, unknown>): ScheduleRiskRow => ({
   id: r.id as string,
@@ -391,39 +505,51 @@ const normalizeScheduleActivityUpdate = (
   notes: str(r.notes),
 });
 
-const normalizeScheduleActivity = (r: Record<string, unknown>): ScheduleActivityRow => ({
-  id: r.id as string,
-  project_id: r.project_id as string,
-  activity_id: str(r.activity_id),
-  name: str(r.name),
-  division: str(r.division, "General"),
-  wbs_section_id: (r.wbs_section_id as string | null) ?? null,
-  start_date: (r.start_date as string | null) ?? null,
-  finish_date: (r.finish_date as string | null) ?? null,
-  baseline_start_date:
-    (r.baseline_start_date as string | null) ?? (r.start_date as string | null) ?? null,
-  baseline_finish_date:
-    (r.baseline_finish_date as string | null) ?? (r.finish_date as string | null) ?? null,
-  forecast_start_date:
-    (r.forecast_start_date as string | null) ?? (r.start_date as string | null) ?? null,
-  forecast_finish_date:
-    (r.forecast_finish_date as string | null) ?? (r.finish_date as string | null) ?? null,
-  actual_start_date: (r.actual_start_date as string | null) ?? null,
-  actual_finish_date: (r.actual_finish_date as string | null) ?? null,
-  remaining_duration_days:
-    r.remaining_duration_days == null
-      ? null
-      : Math.max(0, Math.round(num(r.remaining_duration_days))),
-  percent_complete: num(r.percent_complete),
-  predecessor_activity_ids: Array.isArray(r.predecessor_activity_ids)
-    ? r.predecessor_activity_ids.map(String)
-    : [],
-  successor_activity_ids: Array.isArray(r.successor_activity_ids)
-    ? r.successor_activity_ids.map(String)
-    : [],
-  notes: str(r.notes),
-  sort_order: num(r.sort_order),
-});
+const normalizeScheduleActivity = (r: Record<string, unknown>): ScheduleActivityRow => {
+  const fallback = readScheduleActivityStatusFallback(r.notes);
+  const startDate = (r.start_date as string | null) ?? null;
+  const finishDate = (r.finish_date as string | null) ?? null;
+  return {
+    id: r.id as string,
+    project_id: r.project_id as string,
+    activity_id: str(r.activity_id),
+    name: str(r.name),
+    division: str(r.division, "General"),
+    wbs_section_id: (r.wbs_section_id as string | null) ?? null,
+    start_date: startDate,
+    finish_date: finishDate,
+    baseline_start_date:
+      getScheduleActivityStatusFallbackDate(r, fallback.status, "baseline_start_date") ?? startDate,
+    baseline_finish_date:
+      getScheduleActivityStatusFallbackDate(r, fallback.status, "baseline_finish_date") ??
+      finishDate,
+    forecast_start_date:
+      getScheduleActivityStatusFallbackDate(r, fallback.status, "forecast_start_date") ?? startDate,
+    forecast_finish_date:
+      getScheduleActivityStatusFallbackDate(r, fallback.status, "forecast_finish_date") ??
+      finishDate,
+    actual_start_date: getScheduleActivityStatusFallbackDate(
+      r,
+      fallback.status,
+      "actual_start_date",
+    ),
+    actual_finish_date: getScheduleActivityStatusFallbackDate(
+      r,
+      fallback.status,
+      "actual_finish_date",
+    ),
+    remaining_duration_days: getScheduleActivityStatusFallbackDuration(r, fallback.status),
+    percent_complete: num(r.percent_complete),
+    predecessor_activity_ids: Array.isArray(r.predecessor_activity_ids)
+      ? r.predecessor_activity_ids.map(String)
+      : [],
+    successor_activity_ids: Array.isArray(r.successor_activity_ids)
+      ? r.successor_activity_ids.map(String)
+      : [],
+    notes: fallback.notes,
+    sort_order: num(r.sort_order),
+  };
+};
 
 const normalizeScheduleWbsSection = (r: Record<string, unknown>): ScheduleWbsSectionRow => ({
   id: r.id as string,
@@ -1380,16 +1506,6 @@ const activityPatch = z.object({
   sort_order: z.number().int().optional(),
 });
 
-const SCHEDULE_ACTIVITY_STATUS_COLUMNS = [
-  "baseline_start_date",
-  "baseline_finish_date",
-  "forecast_start_date",
-  "forecast_finish_date",
-  "actual_start_date",
-  "actual_finish_date",
-  "remaining_duration_days",
-] as const;
-
 function isMissingScheduleActivityStatusColumn(error: DynamicSupabaseError) {
   return SCHEDULE_ACTIVITY_STATUS_COLUMNS.some((column) => isMissingRestColumn(error, column));
 }
@@ -2118,6 +2234,12 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
       (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error))
     ) {
       const fallbackPayload = stripScheduleActivityMissingColumns(basePayload, error);
+      if (isMissingScheduleActivityStatusColumn(error)) {
+        fallbackPayload.notes = writeScheduleActivityStatusFallback(
+          fallbackPayload.notes,
+          basePayload as Record<string, unknown>,
+        );
+      }
       ({ data: createdRow, error } = await context.supabase
         .from("schedule_activities")
         .insert(fallbackPayload as ScheduleActivityInsert)
@@ -2166,6 +2288,7 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
     const beforeActivity = normalizeScheduleActivity(
       beforeRow as unknown as Record<string, unknown>,
     );
+    const beforeNotes = str((beforeRow as unknown as Record<string, unknown>).notes);
 
     let { error } = await context.supabase
       .from("schedule_activities")
@@ -2178,17 +2301,20 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
       error &&
       (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error))
     ) {
-      if (requestedStatusUpdate && isMissingScheduleActivityStatusColumn(error)) {
-        throw new Error(
-          "The schedule database needs the latest activity-status update before actual start, expected finish, and remaining duration can save.",
-        );
-      }
       const fallbackPatch = stripScheduleActivityMissingColumns(
         data.patch as Record<string, unknown>,
         error,
       );
+      if (requestedStatusUpdate && isMissingScheduleActivityStatusColumn(error)) {
+        fallbackPatch.notes = writeScheduleActivityStatusFallback(
+          "notes" in data.patch ? data.patch.notes : beforeNotes,
+          data.patch as Record<string, unknown>,
+        );
+      }
       if (Object.keys(fallbackPatch).length === 0) {
-        throw new Error("Schedule fields need the database update before they can save.");
+        throw new Error(
+          "That schedule field could not save yet. Refresh the schedule and try again.",
+        );
       }
       ({ error } = await context.supabase
         .from("schedule_activities")

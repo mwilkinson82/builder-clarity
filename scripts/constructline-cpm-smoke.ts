@@ -973,7 +973,7 @@ for (const requiredScheduleRouteText of [
   "updates={updates}",
   "activityUpdates={activityUpdates}",
   "activity snapshots",
-  "The schedule database needs the latest activity-status fields before actual start, expected finish, and remaining duration can save.",
+  "The activity status did not save. Refresh the schedule and try again.",
 ]) {
   assert.ok(
     scheduleRouteSource.includes(requiredScheduleRouteText),
@@ -1017,7 +1017,11 @@ for (const requiredScheduleFunctionText of [
   "stripScheduleActivityMissingColumns(",
   "includesScheduleActivityStatusColumn",
   "requestedStatusUpdate && isMissingScheduleActivityStatusColumn(error)",
-  "The schedule database needs the latest activity-status update before actual start, expected finish, and remaining duration can save.",
+  "constructline:activity-status-v1",
+  "readScheduleActivityStatusFallback",
+  "writeScheduleActivityStatusFallback",
+  "fallbackPatch.notes = writeScheduleActivityStatusFallback",
+  "fallback.notes",
 ]) {
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),
@@ -1149,7 +1153,7 @@ assert.equal(
 );
 
 assert.equal(
-  /being enabled|hierarchy upgrade is applied|after setup is complete|WBS setup is not enabled/i.test(
+  /being enabled|hierarchy upgrade is applied|after setup is complete|WBS setup is not enabled|schedule database needs/i.test(
     `${scheduleRiskSource}\n${scheduleRouteSource}\n${scheduleFunctionsSource}`,
   ),
   false,

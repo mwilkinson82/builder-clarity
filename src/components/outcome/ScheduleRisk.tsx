@@ -7086,8 +7086,8 @@ function formatActivityDraftSaveError(error: unknown, isMilestone: boolean) {
     lowerMessage.includes("schedule_activities")
   ) {
     return isMilestone
-      ? "The milestone could not attach to the WBS link yet. Refresh and save again; the row can still be saved as a Milestones activity."
-      : "The activity could not attach to the WBS link yet. Refresh and save again; the row can still be saved with its WBS path.";
+      ? "The milestone could not attach to that WBS area yet. Refresh and save again, or save it under the Milestones WBS path."
+      : "The activity could not attach to that WBS area yet. Refresh and save again, or save it with its typed WBS path.";
   }
   return message || (isMilestone ? "The milestone did not save." : "The activity did not save.");
 }
