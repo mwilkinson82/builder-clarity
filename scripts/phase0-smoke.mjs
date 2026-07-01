@@ -251,8 +251,15 @@ await expectContains(
     /data-testid="portfolio-project-ledger"/,
     /PROJECT_LEDGER_GRID_CLASS/,
     /href=\{projectHref\}/,
+    /Portfolio Control Room/,
+    /Company-wide IOR posture/,
+    /Pipeline intake/,
+    /CRM before project control/,
+    /Project worklist/,
+    /max-w-\[1760px\]/,
+    /companyInitials\(headerCompanyName\)/,
   ],
-  "portfolio route supports member project creation, responsive project ledger navigation, and company-scoped header identity",
+  "portfolio route supports member project creation, responsive ledger navigation, company-scoped identity, and command-center first viewport",
 );
 
 await expectNotContains(

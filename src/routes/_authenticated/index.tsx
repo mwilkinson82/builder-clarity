@@ -76,6 +76,17 @@ function formatUsageValue(used: number, limit: number) {
   return `${formatNumber(used)} / ${limit > 0 ? formatNumber(limit) : "No cap"}`;
 }
 
+function companyInitials(name: string) {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join("") || "OW"
+  );
+}
+
 export const Route = createFileRoute("/_authenticated/")({
   ssr: false,
   head: () => ({
@@ -179,6 +190,7 @@ function PortfolioPage() {
   const [failedOrganizationLogos, setFailedOrganizationLogos] = useState<Set<string>>(
     () => new Set(),
   );
+  const [failedCompanyLogoUrl, setFailedCompanyLogoUrl] = useState<string | null>(null);
   const [portfolioTab, setPortfolioTab] = useState<"projects" | "pipeline">(() => {
     if (typeof window === "undefined") return "projects";
     const tab = new URLSearchParams(window.location.search).get("tab");
@@ -198,6 +210,16 @@ function PortfolioPage() {
   const headerCompanyName =
     companyFilter !== "all" ? companyFilter : companyContext?.name || companyNames[0] || "Company";
   const headerTitle = portfolioTab === "pipeline" ? "CRM" : "Portfolio";
+  const headerLogoUrl =
+    companyContext?.logo_url &&
+    failedCompanyLogoUrl !== companyContext.logo_url &&
+    companyFilter === "all"
+      ? companyContext.logo_url
+      : "";
+  const currentViewLabel =
+    portfolioTab === "projects"
+      ? "Live project IOR control"
+      : "Sales CRM, relationships, and bid pursuits";
   const managerNames = useMemo(
     () =>
       Array.from(new Set(projects.map((p) => p.project_manager.trim()).filter(Boolean))).sort(
@@ -335,51 +357,70 @@ function PortfolioPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-6 py-6 lg:flex-row lg:items-center lg:justify-between lg:px-10">
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-              {headerCompanyName}
+      <header className="relative border-b border-hairline bg-surface-elevated/95 shadow-[0_10px_30px_rgb(31_28_23_/_0.05)]">
+        <div className="absolute inset-0 grid-bg opacity-25" />
+        <div className="relative mx-auto flex max-w-[1760px] flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              {headerLogoUrl ? (
+                <img
+                  src={headerLogoUrl}
+                  alt={`${headerCompanyName} logo`}
+                  className="h-9 w-9 shrink-0 rounded-sm border border-hairline bg-card object-contain p-1"
+                  onError={() => setFailedCompanyLogoUrl(headerLogoUrl)}
+                />
+              ) : (
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border border-hairline bg-card text-xs font-semibold text-muted-foreground">
+                  {companyInitials(headerCompanyName)}
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  {headerCompanyName}
+                </div>
+                <h1 className="truncate font-serif text-3xl leading-none text-foreground">
+                  {headerTitle}
+                </h1>
+              </div>
             </div>
-            <h1 className="mt-1 font-serif text-3xl text-foreground">{headerTitle}</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button asChild size="sm" variant="outline" className="gap-1.5">
-              <a href="/?tab=crm">
-                <BriefcaseBusiness className="h-3.5 w-3.5" /> CRM
-              </a>
-            </Button>
-            <Button asChild size="sm" variant="outline" className="gap-1.5">
-              <Link to="/estimates">
-                <ClipboardList className="h-3.5 w-3.5" /> Estimates
-              </Link>
-            </Button>
-            <Button asChild size="sm" variant="outline" className="gap-1.5">
-              <Link to="/billing">
-                <ReceiptText className="h-3.5 w-3.5" /> Billing
-              </Link>
-            </Button>
-            <Button asChild size="sm" variant="outline" className="gap-1.5">
-              <Link to="/cost-library">
-                <FileText className="h-3.5 w-3.5" /> Cost Library
-              </Link>
-            </Button>
-            <Button asChild size="sm" variant="outline" className="gap-1.5">
-              <Link to="/team">
-                <Users className="h-3.5 w-3.5" /> Company
-              </Link>
-            </Button>
-            <NewProjectButton />
-            <Button variant="ghost" size="sm" onClick={signOut} className="gap-1.5">
-              <LogOut className="h-3.5 w-3.5" /> Sign out
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
+                <a href="/?tab=crm">
+                  <BriefcaseBusiness className="h-3.5 w-3.5" /> CRM
+                </a>
+              </Button>
+              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
+                <Link to="/estimates">
+                  <ClipboardList className="h-3.5 w-3.5" /> Estimates
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
+                <Link to="/billing">
+                  <ReceiptText className="h-3.5 w-3.5" /> Billing
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
+                <Link to="/cost-library">
+                  <FileText className="h-3.5 w-3.5" /> Cost Library
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
+                <Link to="/team">
+                  <Users className="h-3.5 w-3.5" /> Company
+                </Link>
+              </Button>
+              <NewProjectButton />
+              <Button variant="ghost" size="sm" onClick={signOut} className="gap-1.5">
+                <LogOut className="h-3.5 w-3.5" /> Sign out
+              </Button>
+            </div>
           </div>
         </div>
       </header>
 
       <main
-        className={`mx-auto px-6 py-10 lg:px-10 ${
-          portfolioTab === "pipeline" ? "max-w-[1900px]" : "max-w-[1400px]"
+        className={`mx-auto px-4 py-6 sm:px-6 lg:px-8 ${
+          portfolioTab === "pipeline" ? "max-w-[1900px]" : "max-w-[1760px]"
         }`}
       >
         {seedError && (
@@ -394,16 +435,19 @@ function PortfolioPage() {
             }}
           />
         )}
-        <Tabs value={portfolioTab} onValueChange={setPortfolioTabWithUrl} className="space-y-6">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <TabsList>
+        <Tabs value={portfolioTab} onValueChange={setPortfolioTabWithUrl} className="space-y-5">
+          <div className="flex flex-col gap-3 rounded-lg border border-hairline bg-card/80 p-3 shadow-card sm:flex-row sm:items-center sm:justify-between">
+            <TabsList className="h-auto w-full justify-start rounded-md border border-accent/20 bg-accent/5 p-1 sm:w-auto">
               <TabsTrigger value="projects">Projects</TabsTrigger>
               <TabsTrigger value="pipeline">CRM</TabsTrigger>
             </TabsList>
-            <div className="text-xs text-muted-foreground">
-              {portfolioTab === "projects"
-                ? "Live project IOR control"
-                : "Sales CRM, relationships, and bid pursuits"}
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>{currentViewLabel}</span>
+              {portfolioTab === "projects" && projects.length > 0 && (
+                <span className="rounded-sm border border-hairline bg-surface px-2 py-1 font-medium tabular text-foreground">
+                  {visibleProjects.length} of {projects.length} projects
+                </span>
+              )}
             </div>
           </div>
           <TabsContent value="projects" className="mt-0">
@@ -420,15 +464,25 @@ function PortfolioPage() {
               <EmptyState />
             ) : (
               <div className="space-y-6">
-                <PortfolioDashboard totals={portfolioTotals} />
-                <PortfolioCrmDashboard
-                  opportunities={crmOpportunities}
-                  snapshot={crmSnapshot}
-                  isLoading={crmOpportunitiesLoading || crmSnapshotLoading}
-                  onOpenCrm={() => setPortfolioTabWithUrl("pipeline")}
-                />
-                <div className="space-y-3 rounded-lg border border-hairline bg-card p-4 shadow-card">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,0.65fr)]">
+                  <PortfolioDashboard totals={portfolioTotals} />
+                  <PortfolioCrmDashboard
+                    opportunities={crmOpportunities}
+                    snapshot={crmSnapshot}
+                    isLoading={crmOpportunitiesLoading || crmSnapshotLoading}
+                    onOpenCrm={() => setPortfolioTabWithUrl("pipeline")}
+                  />
+                </div>
+                <div className="space-y-3 rounded-lg border border-hairline bg-surface-elevated/80 p-3 shadow-card">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+                    <div className="min-w-0 xl:w-[260px]">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        Project worklist
+                      </div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        Search, sort, and open the next job that needs attention.
+                      </div>
+                    </div>
                     <div className="relative flex-1">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                       <Input
@@ -468,7 +522,7 @@ function PortfolioPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.1fr_repeat(5,minmax(0,1fr))_auto]">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.1fr_repeat(4,minmax(0,1fr))_auto]">
                     <Select value={companyFilter} onValueChange={setCompanyFilter}>
                       <SelectTrigger>
                         <SelectValue placeholder="Company" />
@@ -1087,114 +1141,102 @@ function buildPortfolioCrmTotals(
 }
 
 function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
+  const reviewDebt = totals.staleReviewProjects + totals.neverReviewedProjects;
   return (
-    <section className="rounded-lg border border-hairline bg-card p-5 shadow-card md:p-6">
-      <div className="grid gap-5 xl:grid-cols-[minmax(260px,0.9fr)_minmax(520px,1.35fr)] xl:items-stretch">
-        <div className="flex min-h-[132px] flex-col justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              <BriefcaseBusiness className="h-3.5 w-3.5" />
-              Portfolio Dashboard
-            </div>
-            <h2 className="mt-2 font-serif text-4xl leading-none text-foreground">
-              Company-wide IOR posture.
-            </h2>
+    <section className="rounded-lg border border-hairline bg-card p-4 shadow-card md:p-5">
+      <div className="grid gap-4 xl:grid-cols-[minmax(260px,0.78fr)_minmax(520px,1.22fr)] xl:items-start">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <BriefcaseBusiness className="h-3.5 w-3.5" />
+            Portfolio Control Room
           </div>
-          <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
-            Rollup of active jobs, margin at risk, current indicated profit, and schedule pressure.
+          <h2 className="mt-2 font-serif text-3xl leading-none text-foreground lg:text-4xl">
+            Company-wide IOR posture
+          </h2>
+          <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
+            The operating truth across active jobs: margin, holds, schedule pressure, and field
+            follow-through in one view.
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-          <PortfolioSignal
-            icon={<Activity className="h-3.5 w-3.5" />}
-            label="Open projects"
-            value={String(totals.projectCount)}
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <PortfolioMetric
+            label="Indicated GP"
+            value={fmtUSD(totals.indicatedGP)}
+            sub={fmtPct(totals.indicatedPct)}
+            tone="accent"
           />
-          <PortfolioSignal
-            icon={<CalendarClock className="h-3.5 w-3.5" />}
-            label="Delayed"
-            value={String(totals.slippedProjects)}
-            tone={totals.slippedProjects > 0 ? "warning" : "success"}
-          />
-          <PortfolioSignal
-            icon={<AlertTriangle className="h-3.5 w-3.5" />}
-            label="At risk"
-            value={String(totals.atRiskProjects)}
-            tone={totals.atRiskProjects > 0 ? "danger" : "success"}
-          />
-          <PortfolioSignal
-            icon={<AlertTriangle className="h-3.5 w-3.5" />}
-            label="Stale IOR"
-            value={String(totals.staleReviewProjects + totals.neverReviewedProjects)}
-            tone={
-              totals.staleReviewProjects + totals.neverReviewedProjects > 0 ? "warning" : "success"
-            }
-          />
-          <PortfolioSignal
-            icon={<FileText className="h-3.5 w-3.5" />}
-            label="No daily"
-            value={String(totals.projectsWithoutDailyReports)}
-            tone={totals.projectsWithoutDailyReports > 0 ? "warning" : "success"}
-          />
-          <PortfolioSignal
-            icon={<ClipboardList className="h-3.5 w-3.5" />}
-            label="Overdue"
-            value={String(totals.overdueDecisionCount)}
-            tone={totals.overdueDecisionCount > 0 ? "danger" : "success"}
-          />
+          <PortfolioMetric label="GP at risk" value={fmtUSD(totals.gpAtRisk)} tone="danger" />
+          <PortfolioMetric label="E-Holds" value={fmtUSD(totals.exposureHolds)} tone="danger" />
+          <PortfolioMetric label="C-Holds" value={fmtUSD(totals.contingencyHold)} tone="warning" />
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <PortfolioMetric label="Original GP" value={fmtUSD(totals.originalGP)} />
-        <PortfolioMetric label="GP at risk" value={fmtUSD(totals.gpAtRisk)} tone="danger" />
-        <PortfolioMetric
-          label="Indicated GP"
-          value={fmtUSD(totals.indicatedGP)}
-          sub={fmtPct(totals.indicatedPct)}
-          tone="accent"
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+        <PortfolioSignal
+          icon={<Activity className="h-3.5 w-3.5" />}
+          label="Open projects"
+          value={String(totals.projectCount)}
         />
-        <PortfolioMetric label="E-Holds" value={fmtUSD(totals.exposureHolds)} tone="danger" />
-        <PortfolioMetric label="C-Holds" value={fmtUSD(totals.contingencyHold)} tone="warning" />
-        <PortfolioMetric label="Active projects" value={String(totals.projectCount)} />
-        <PortfolioMetric
-          label="Delayed jobs"
+        <PortfolioSignal
+          icon={<CalendarClock className="h-3.5 w-3.5" />}
+          label="Delayed"
           value={String(totals.slippedProjects)}
-          tone={totals.slippedProjects > 0 ? "warning" : undefined}
+          tone={totals.slippedProjects > 0 ? "warning" : "success"}
         />
-        <PortfolioMetric
-          label="Daily logs"
-          value={String(totals.dailyReportCount)}
-          sub={`${totals.clientVisibleDailyReportCount} client-visible`}
+        <PortfolioSignal
+          icon={<AlertTriangle className="h-3.5 w-3.5" />}
+          label="At risk"
+          value={String(totals.atRiskProjects)}
+          tone={totals.atRiskProjects > 0 ? "danger" : "success"}
+        />
+        <PortfolioSignal
+          icon={<AlertTriangle className="h-3.5 w-3.5" />}
+          label="IOR debt"
+          value={String(reviewDebt)}
+          tone={reviewDebt > 0 ? "warning" : "success"}
+        />
+        <PortfolioSignal
+          icon={<FileText className="h-3.5 w-3.5" />}
+          label="No daily"
+          value={String(totals.projectsWithoutDailyReports)}
+          tone={totals.projectsWithoutDailyReports > 0 ? "warning" : "success"}
+        />
+        <PortfolioSignal
+          icon={<ClipboardList className="h-3.5 w-3.5" />}
+          label="Overdue"
+          value={String(totals.overdueDecisionCount)}
+          tone={totals.overdueDecisionCount > 0 ? "danger" : "success"}
         />
       </div>
 
-      <div className="mt-4 grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-md border border-danger/20 bg-danger/5 p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-danger">
-            Top portfolio exposures
+      <div className="mt-3 grid gap-3 lg:grid-cols-[1.12fr_0.88fr]">
+        <div className="rounded-md border border-danger/20 bg-danger/5 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-danger">
+              Largest exposure pressure
+            </div>
+            <div className="text-sm font-medium tabular text-danger">{fmtUSD(totals.gpAtRisk)}</div>
           </div>
-          <div className="mt-3 divide-y divide-danger/15">
+          <div className="mt-2 divide-y divide-danger/15">
             {totals.topExposures.length === 0 ? (
-              <div className="py-3 text-sm text-muted-foreground">
+              <div className="py-2 text-sm text-muted-foreground">
                 No live exposure is currently pulling down gross profit.
               </div>
             ) : (
-              totals.topExposures.map((exposure, index) => (
+              totals.topExposures.slice(0, 3).map((exposure, index) => (
                 <a
                   key={`${exposure.projectId}-${exposure.title}`}
                   href={`/projects/${exposure.projectId}`}
-                  className="grid gap-2 py-3 hover:text-danger sm:grid-cols-[28px_1fr_auto]"
+                  className="grid gap-2 py-2.5 transition hover:text-danger sm:grid-cols-[28px_1fr_auto]"
                 >
                   <div className="text-xs font-semibold tabular text-danger">
                     {String(index + 1).padStart(2, "0")}
                   </div>
-                  <div>
-                    <div className="font-medium text-foreground">{exposure.title}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-foreground">{exposure.title}</div>
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
                       {exposure.projectName} · {exposure.jobNumber}
                       {exposure.owner ? ` · ${exposure.owner}` : ""}
-                      {exposure.holdClass ? ` · ${exposure.holdClass}` : ""}
                     </div>
                   </div>
                   <div className="text-right font-medium tabular text-danger">
@@ -1205,43 +1247,40 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
             )}
           </div>
         </div>
-        <div className="rounded-md border border-hairline bg-surface p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            PM accountability
-          </div>
-          <div className="mt-2 flex items-end justify-between gap-4">
-            <div className="text-sm text-muted-foreground">
-              {totals.activeDecisionCount} open to-dos across the filtered portfolio.
+        <div className="rounded-md border border-hairline bg-surface p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Action debt
             </div>
             <div
-              className={`whitespace-nowrap text-2xl font-medium tabular ${
+              className={`text-sm font-medium tabular ${
                 totals.overdueDecisionCount > 0 ? "text-danger" : "text-success"
               }`}
             >
               {totals.overdueDecisionCount} overdue
             </div>
           </div>
-          <div className="mt-3 divide-y divide-hairline">
+          <div className="mt-2 divide-y divide-hairline">
             {totals.overdueProjects.length === 0 ? (
-              <div className="py-3 text-sm text-muted-foreground">
+              <div className="py-2 text-sm text-muted-foreground">
                 No overdue project to-dos in the current view.
               </div>
             ) : (
-              totals.overdueProjects.map((project) => (
+              totals.overdueProjects.slice(0, 3).map((project) => (
                 <a
                   key={project.id}
                   href={`/projects/${project.id}`}
-                  className="grid gap-2 py-3 hover:text-danger sm:grid-cols-[1fr_auto]"
+                  className="grid gap-2 py-2.5 transition hover:text-danger sm:grid-cols-[1fr_auto]"
                 >
-                  <div>
-                    <div className="font-medium text-foreground">{project.name}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-foreground">{project.name}</div>
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
                       {project.project_manager || "Unassigned"} ·{" "}
                       {project.job_number || `ID ${project.id.slice(0, 8).toUpperCase()}`}
                     </div>
                   </div>
                   <div className="text-right text-sm font-medium tabular text-danger">
-                    {project.overdue_decision_count} overdue
+                    {project.overdue_decision_count}
                   </div>
                 </a>
               ))
@@ -1266,27 +1305,29 @@ function PortfolioCrmDashboard({
 }) {
   const totals = buildPortfolioCrmTotals(opportunities, snapshot);
   return (
-    <section className="rounded-lg border border-hairline bg-card p-5 shadow-card md:p-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            <KanbanSquare className="h-3.5 w-3.5" />
-            CRM Dashboard
+    <section className="rounded-lg border border-hairline bg-card p-4 shadow-card md:p-5">
+      <div className="flex flex-col gap-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <KanbanSquare className="h-3.5 w-3.5" />
+              Pipeline intake
+            </div>
+            <h2 className="mt-2 font-serif text-2xl leading-tight text-foreground">
+              CRM before project control
+            </h2>
           </div>
-          <h2 className="mt-2 font-serif text-3xl leading-tight text-foreground">
-            Opportunities before they become IORs.
-          </h2>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-            Active pursuits, relationships, and follow-ups that feed the future project portfolio.
-          </p>
+          <Button type="button" size="sm" onClick={onOpenCrm} className="shrink-0 gap-1.5">
+            <KanbanSquare className="h-3.5 w-3.5" />
+            Open CRM
+          </Button>
         </div>
-        <Button type="button" onClick={onOpenCrm} className="w-full gap-1.5 sm:w-auto">
-          <KanbanSquare className="h-3.5 w-3.5" />
-          View opportunities
-        </Button>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Pursuits, relationships, and follow-ups that become estimates, then managed IOR projects.
+        </p>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
         <PortfolioSignal
           icon={<BriefcaseBusiness className="h-3.5 w-3.5" />}
           label="Open opps"
@@ -1304,50 +1345,34 @@ function PortfolioCrmDashboard({
           value={isLoading ? "..." : String(totals.openActionCount)}
           tone={totals.overdueActionCount > 0 ? "danger" : "success"}
         />
-        <PortfolioSignal
-          icon={<CalendarClock className="h-3.5 w-3.5" />}
-          label="Due this week"
-          value={isLoading ? "..." : String(totals.dueThisWeekCount)}
-          tone={totals.dueThisWeekCount > 0 ? "warning" : "success"}
-        />
-        <PortfolioSignal
-          icon={<Users className="h-3.5 w-3.5" />}
-          label="Accounts"
-          value={isLoading ? "..." : String(totals.accountCount)}
-        />
-        <PortfolioSignal
-          icon={<Users className="h-3.5 w-3.5" />}
-          label="Contacts"
-          value={isLoading ? "..." : String(totals.contactCount)}
-        />
       </div>
 
-      <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_0.9fr]">
-        <div className="rounded-md border border-hairline bg-surface p-4">
+      <div className="mt-3 grid gap-3 2xl:grid-cols-1">
+        <div className="rounded-md border border-hairline bg-surface p-3">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              Top open opportunities
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Top opportunities
             </div>
             <div className="text-sm font-medium tabular text-foreground">
               {fmtUSD(totals.activePipelineValue)}
             </div>
           </div>
-          <div className="mt-3 divide-y divide-hairline">
+          <div className="mt-2 divide-y divide-hairline">
             {totals.topOpportunities.length === 0 ? (
-              <div className="py-3 text-sm text-muted-foreground">
+              <div className="py-2 text-sm text-muted-foreground">
                 No open CRM opportunities in the current company workspace.
               </div>
             ) : (
-              totals.topOpportunities.map((opportunity) => (
+              totals.topOpportunities.slice(0, 3).map((opportunity) => (
                 <button
                   type="button"
                   key={opportunity.id}
                   onClick={onOpenCrm}
-                  className="grid w-full gap-2 py-3 text-left hover:text-accent sm:grid-cols-[1fr_auto]"
+                  className="grid w-full gap-2 py-2.5 text-left transition hover:text-accent sm:grid-cols-[1fr_auto]"
                 >
                   <div className="min-w-0">
                     <div className="truncate font-medium text-foreground">{opportunity.name}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
                       {opportunity.account_name || opportunity.client || "No account"} ·{" "}
                       {crmStageLabel(opportunity.stage)} · {opportunity.probability}%
                     </div>
@@ -1361,7 +1386,7 @@ function PortfolioCrmDashboard({
           </div>
         </div>
 
-        <div className="rounded-md border border-hairline bg-surface p-4">
+        <div className="rounded-md border border-hairline bg-surface p-3">
           <div className="flex items-center justify-between gap-3">
             <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
               Next CRM actions
@@ -1374,20 +1399,20 @@ function PortfolioCrmDashboard({
               {totals.overdueActionCount} overdue
             </div>
           </div>
-          <div className="mt-3 divide-y divide-hairline">
+          <div className="mt-2 divide-y divide-hairline">
             {totals.nextActions.length === 0 ? (
-              <div className="py-3 text-sm text-muted-foreground">No open CRM actions.</div>
+              <div className="py-2 text-sm text-muted-foreground">No open CRM actions.</div>
             ) : (
-              totals.nextActions.map((action) => (
+              totals.nextActions.slice(0, 3).map((action) => (
                 <button
                   type="button"
                   key={action.id}
                   onClick={onOpenCrm}
-                  className="grid w-full gap-2 py-3 text-left hover:text-accent sm:grid-cols-[1fr_auto]"
+                  className="grid w-full gap-2 py-2.5 text-left transition hover:text-accent sm:grid-cols-[1fr_auto]"
                 >
                   <div className="min-w-0">
-                    <div className="font-medium text-foreground">{action.title}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
+                    <div className="truncate font-medium text-foreground">{action.title}</div>
+                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
                       {action.opportunity_name || action.account_name || action.contact_name}
                     </div>
                   </div>
@@ -1431,12 +1456,12 @@ function PortfolioMetric({
           ? "text-warning"
           : "text-foreground";
   return (
-    <div className="flex min-h-[104px] min-w-0 flex-col items-center justify-center rounded-md border border-hairline bg-surface p-3 text-center">
-      <div className="min-h-[28px] text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.14em] text-muted-foreground">
+    <div className="flex min-h-[78px] min-w-0 flex-col justify-between rounded-md border border-hairline bg-surface px-3 py-2.5">
+      <div className="text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
-      <div className="mt-3 min-w-0">
-        <div className={`truncate text-xl font-medium leading-none tabular ${toneClass}`}>
+      <div className="mt-2 min-w-0">
+        <div className={`truncate text-lg font-semibold leading-none tabular ${toneClass}`}>
           {value}
         </div>
         <div className="mt-1 min-h-4 text-xs leading-4 tabular text-muted-foreground">
@@ -1468,13 +1493,13 @@ function PortfolioSignal({
           : "border-hairline bg-surface text-foreground";
   return (
     <div
-      className={`flex min-h-[88px] min-w-0 flex-col items-center justify-center rounded-md border p-3 text-center ${toneClass}`}
+      className={`flex min-h-[70px] min-w-0 flex-col justify-between rounded-md border px-3 py-2.5 ${toneClass}`}
     >
-      <div className="flex min-h-[28px] items-start justify-center gap-1.5 text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.12em]">
+      <div className="flex items-start gap-1.5 text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.12em]">
         <span className="mt-0.5 shrink-0">{icon}</span>
         <span>{label}</span>
       </div>
-      <div className="mt-3 max-w-full truncate text-3xl font-medium leading-none tabular">
+      <div className="mt-2 max-w-full truncate text-2xl font-semibold leading-none tabular">
         {value}
       </div>
     </div>
