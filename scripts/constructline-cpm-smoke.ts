@@ -449,12 +449,12 @@ for (const requiredScheduleRiskText of [
 }
 
 for (const requiredScheduleRouteText of [
-  "WBS order applied",
   "queueWbsReorder",
   "wbsOrderSaveTimerRef",
   "applyOptimisticWbsOrderChange",
-  "WBS_ORDER_SAVE_DEBOUNCE_MS = 250",
-  "Saving the final order now.",
+  "WBS_ORDER_SAVE_DEBOUNCE_MS = 125",
+  "Saving WBS order",
+  "Confirming the final order.",
   "Child WBS added",
   "WBS title applied",
   "WBS nested",
