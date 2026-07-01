@@ -105,6 +105,7 @@ import {
   type ConstructLineCpmTask,
   type ConstructLineDependencyToken,
   type ConstructLineRelationshipType,
+  type ConstructLineStatusBasis,
 } from "@/lib/constructline-cpm";
 import {
   buildWbsDivisionOrder,
@@ -8027,6 +8028,9 @@ function ScheduleUpdateLedger({
                   {activitySummary?.openEndCount
                     ? ` · ${activitySummary.openEndCount} open-ended activities`
                     : ""}
+                  {activitySummary?.needsUpdateBasisCount
+                    ? ` · ${activitySummary.needsUpdateBasisCount} need update basis`
+                    : ""}
                 </div>
                 {activitySummary && activitySummary.driverLabels.length > 0 && (
                   <div className="mt-1 max-w-2xl text-xs text-muted-foreground">
@@ -8059,19 +8063,20 @@ function ScheduleUpdateLedger({
               </div>
               {isSnapshotExpanded && activitySnapshotRows.length > 0 && (
                 <div className="col-span-8 mt-3 overflow-hidden rounded-md border border-hairline bg-card">
-                  <div className="grid grid-cols-[74px_minmax(180px,1.2fr)_90px_90px_70px_64px_minmax(180px,1fr)] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  <div className="grid grid-cols-[74px_minmax(180px,1.2fr)_90px_90px_60px_86px_64px_minmax(180px,1fr)] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                     <div>ID</div>
                     <div>Activity</div>
                     <div>Current start</div>
                     <div>Expected finish</div>
                     <div>Rem</div>
+                    <div>Basis</div>
                     <div>TF</div>
                     <div>Status</div>
                   </div>
                   {activitySnapshotRows.slice(0, 10).map((snapshot) => (
                     <div
                       key={snapshot.id}
-                      className="grid grid-cols-[74px_minmax(180px,1.2fr)_90px_90px_70px_64px_minmax(180px,1fr)] items-start border-t border-hairline px-3 py-2 text-xs"
+                      className="grid grid-cols-[74px_minmax(180px,1.2fr)_90px_90px_60px_86px_64px_minmax(180px,1fr)] items-start border-t border-hairline px-3 py-2 text-xs"
                     >
                       <div className="font-semibold tabular text-foreground">
                         {snapshot.activity_id || "No ID"}
@@ -8092,6 +8097,15 @@ function ScheduleUpdateLedger({
                       </div>
                       <div className="tabular text-muted-foreground">
                         {snapshot.remaining_duration_days}d
+                      </div>
+                      <div
+                        className={cn(
+                          "font-semibold uppercase tracking-[0.06em]",
+                          getActivityUpdateStatusBasisClass(snapshot.status_basis),
+                        )}
+                        title={formatActivityUpdateStatusBasisTitle(snapshot.status_basis)}
+                      >
+                        {formatActivityUpdateStatusBasisLabel(snapshot.status_basis)}
                       </div>
                       <div
                         className={cn(
@@ -8128,6 +8142,7 @@ type ActivityUpdateSnapshotSummary = {
   lateCount: number;
   outOfSequenceCount: number;
   openEndCount: number;
+  needsUpdateBasisCount: number;
   driverLabels: string[];
 };
 
@@ -8172,6 +8187,7 @@ function summarizeActivityUpdateSnapshots(
     lateCount: rows.filter((row) => row.is_late).length,
     outOfSequenceCount: rows.filter((row) => row.is_out_of_sequence).length,
     openEndCount: rows.filter((row) => row.is_open_start || row.is_open_finish).length,
+    needsUpdateBasisCount: rows.filter((row) => row.status_basis === "needs_update").length,
     driverLabels: rows
       .map((row) => ({ row, score: scoreActivityUpdateDriver(row) }))
       .filter((item) => item.score > 0)
@@ -8186,6 +8202,7 @@ function scoreActivityUpdateDriver(row: ScheduleActivityUpdateRow) {
     (row.is_critical ? 1000 : 0) +
     (row.is_late ? 600 : 0) +
     (row.is_out_of_sequence ? 500 : 0) +
+    (row.status_basis === "needs_update" ? 400 : 0) +
     (row.is_open_start || row.is_open_finish ? 250 : 0) +
     Math.max(0, row.slippage_days) * 10 +
     Math.max(0, 10 - row.total_float_days)
@@ -8197,6 +8214,7 @@ function formatActivityUpdateDriver(row: ScheduleActivityUpdateRow) {
     row.is_critical ? "critical" : null,
     row.is_late ? "late" : null,
     row.is_out_of_sequence ? "out-of-seq" : null,
+    row.status_basis === "needs_update" ? "needs update basis" : null,
     row.is_open_start || row.is_open_finish ? "open end" : null,
     row.slippage_days > 0 ? `${row.slippage_days}d slip` : null,
     `TF ${row.total_float_days}d`,
@@ -8210,11 +8228,60 @@ function formatActivityUpdateSnapshotStatus(row: ScheduleActivityUpdateRow) {
     row.is_near_critical ? "near critical" : null,
     row.is_late ? "late" : null,
     row.is_out_of_sequence ? "out-of-seq" : null,
+    row.status_basis === "needs_update" ? "needs update basis" : null,
     row.is_open_start ? "open start" : null,
     row.is_open_finish ? "open finish" : null,
     row.is_milestone ? "milestone" : null,
   ].filter(Boolean);
   return tags.length > 0 ? tags.join(" · ") : `${row.percent_complete}% complete`;
+}
+
+function formatActivityUpdateStatusBasisLabel(value: ConstructLineStatusBasis) {
+  switch (value) {
+    case "actual":
+      return "actual";
+    case "remaining_duration":
+      return "remaining";
+    case "expected_finish":
+      return "expected";
+    case "needs_update":
+      return "needs update";
+    case "planned_dates":
+    default:
+      return "planned";
+  }
+}
+
+function formatActivityUpdateStatusBasisTitle(value: ConstructLineStatusBasis) {
+  switch (value) {
+    case "actual":
+      return "Snapshot row was driven by actual finish or completed status.";
+    case "remaining_duration":
+      return "Snapshot row was driven by remaining duration counted from the data date.";
+    case "expected_finish":
+      return "Snapshot row was driven by the expected finish forecast.";
+    case "needs_update":
+      return "Snapshot row was incomplete and past its expected finish when saved.";
+    case "planned_dates":
+    default:
+      return "Snapshot row was still carrying planned baseline dates.";
+  }
+}
+
+function getActivityUpdateStatusBasisClass(value: ConstructLineStatusBasis) {
+  switch (value) {
+    case "actual":
+      return "text-success";
+    case "remaining_duration":
+      return "text-foreground";
+    case "expected_finish":
+      return "text-accent";
+    case "needs_update":
+      return "text-danger";
+    case "planned_dates":
+    default:
+      return "text-muted-foreground";
+  }
 }
 
 function DateField({

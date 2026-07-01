@@ -466,6 +466,9 @@ const nestedWbsRepairMigrationSource = readProjectFile(
 const activityUpdateSnapshotsMigrationSource = readProjectFile(
   "supabase/migrations/20260701162000_schedule_activity_update_snapshots.sql",
 );
+const activityUpdateStatusBasisMigrationSource = readProjectFile(
+  "supabase/migrations/20260701183000_schedule_activity_update_status_basis.sql",
+);
 const stylesSource = readProjectFile("src/styles.css");
 
 for (const requiredScheduleRiskText of [
@@ -498,6 +501,10 @@ for (const requiredScheduleRiskText of [
   "groupActivityUpdateSnapshots",
   "View activity snapshot",
   "formatActivityUpdateSnapshotStatus",
+  "formatActivityUpdateStatusBasisLabel",
+  "formatActivityUpdateStatusBasisTitle",
+  "getActivityUpdateStatusBasisClass",
+  "needs update basis",
   "Showing 10 of",
   "Data-date update readiness",
   "buildScheduleUpdateReadiness",
@@ -547,6 +554,7 @@ for (const requiredScheduleRiskText of [
   'useState<ScheduleGridView>("all")',
   "Planned",
   "Remaining",
+  "Basis",
   "Current start",
   "Expected finish",
   "Variance",
@@ -689,6 +697,8 @@ for (const requiredScheduleFunctionText of [
   "schedule_activity_updates",
   "normalizeScheduleActivityUpdate",
   "activityUpdates",
+  "status_basis",
+  "normalizeActivityUpdateStatusBasis",
   "total_float_days",
   "is_out_of_sequence",
   "is_open_finish",
@@ -711,6 +721,22 @@ for (const requiredActivityUpdateSnapshotMigrationText of [
   assert.ok(
     activityUpdateSnapshotsMigrationSource.includes(requiredActivityUpdateSnapshotMigrationText),
     `Activity update snapshot migration is missing required contract: ${requiredActivityUpdateSnapshotMigrationText}`,
+  );
+}
+
+for (const requiredActivityUpdateStatusBasisMigrationText of [
+  "ADD COLUMN IF NOT EXISTS status_basis",
+  "schedule_activity_updates_status_basis_check",
+  "'remaining_duration'",
+  "'expected_finish'",
+  "'needs_update'",
+  "schedule_activity_updates_status_basis_idx",
+]) {
+  assert.ok(
+    activityUpdateStatusBasisMigrationSource.includes(
+      requiredActivityUpdateStatusBasisMigrationText,
+    ),
+    `Activity update status-basis migration is missing required contract: ${requiredActivityUpdateStatusBasisMigrationText}`,
   );
 }
 

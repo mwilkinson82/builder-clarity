@@ -16,6 +16,7 @@ import {
 import {
   buildConstructLineCpmModel,
   buildReciprocalActivityLogicPatches,
+  type ConstructLineStatusBasis,
 } from "@/lib/constructline-cpm";
 
 export type MilestoneStatus = "on_track" | "at_risk" | "delayed" | "complete";
@@ -199,6 +200,7 @@ export interface ScheduleActivityUpdateRow {
   actual_finish_date: string | null;
   planned_duration_days: number;
   remaining_duration_days: number;
+  status_basis: ConstructLineStatusBasis;
   percent_complete: number;
   total_float_days: number;
   free_float_days: number;
@@ -332,6 +334,19 @@ const normalizeMilestoneUpdate = (r: Record<string, unknown>): ScheduleMilestone
   notes: str(r.notes),
 });
 
+const ACTIVITY_UPDATE_STATUS_BASIS = new Set<ConstructLineStatusBasis>([
+  "actual",
+  "remaining_duration",
+  "expected_finish",
+  "planned_dates",
+  "needs_update",
+]);
+
+function normalizeActivityUpdateStatusBasis(value: unknown): ConstructLineStatusBasis {
+  const normalized = str(value, "planned_dates") as ConstructLineStatusBasis;
+  return ACTIVITY_UPDATE_STATUS_BASIS.has(normalized) ? normalized : "planned_dates";
+}
+
 const normalizeScheduleActivityUpdate = (
   r: Record<string, unknown>,
 ): ScheduleActivityUpdateRow => ({
@@ -353,6 +368,7 @@ const normalizeScheduleActivityUpdate = (
   actual_finish_date: (r.actual_finish_date as string | null) ?? null,
   planned_duration_days: Math.max(0, Math.round(num(r.planned_duration_days))),
   remaining_duration_days: Math.max(0, Math.round(num(r.remaining_duration_days))),
+  status_basis: normalizeActivityUpdateStatusBasis(r.status_basis),
   percent_complete: num(r.percent_complete),
   total_float_days: Math.round(num(r.total_float_days)),
   free_float_days: Math.round(num(r.free_float_days)),
@@ -947,6 +963,7 @@ async function snapshotScheduleActivityUpdates(
     actual_finish_date: task.activity.actual_finish_date,
     planned_duration_days: Math.max(0, Math.round(task.durationDays)),
     remaining_duration_days: Math.max(0, Math.round(task.remainingDurationDays)),
+    status_basis: task.statusBasis,
     percent_complete: task.activity.percent_complete,
     total_float_days: Math.round(task.totalFloat),
     free_float_days: Math.round(task.freeFloat),
@@ -963,9 +980,15 @@ async function snapshotScheduleActivityUpdates(
     notes: task.activity.notes,
   }));
 
-  const { error: snapshotError } = await dynamicTable(supabase, "schedule_activity_updates").insert(
+  let { error: snapshotError } = await dynamicTable(supabase, "schedule_activity_updates").insert(
     snapshots,
   );
+  if (snapshotError && isMissingRestColumn(snapshotError, "status_basis")) {
+    const legacySnapshots = snapshots.map(({ status_basis, ...snapshot }) => snapshot);
+    ({ error: snapshotError } = await dynamicTable(supabase, "schedule_activity_updates").insert(
+      legacySnapshots,
+    ));
+  }
   if (!snapshotError) return "saved" as const;
   if (isMissingRestRelation(snapshotError, "schedule_activity_updates")) {
     return "migration_required" as const;
