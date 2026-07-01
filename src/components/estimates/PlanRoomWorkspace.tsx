@@ -80,6 +80,7 @@ type ToolMode = "select" | "calibrate" | TakeoffToolType;
 type RevisionOverlayMode = "compare" | "ghost";
 type CockpitPanel = "drawings" | "tools" | null;
 type MiniMapDock = "bottom-left" | "bottom-right" | "top-left" | "top-right";
+type MiniMapPosition = { x: number; y: number };
 type SheetFilterMode = "all" | "current" | "needs-scale" | "has-takeoff";
 type TakeoffFilterMode = "all" | "sheet" | "unlinked" | "linked";
 type Point = PlanRoomPoint;
@@ -2082,6 +2083,7 @@ function PlanCanvas({
   const [isZoomWindowMode, setIsZoomWindowMode] = useState(false);
   const [zoomWindowDraft, setZoomWindowDraft] = useState<ZoomWindowDraft | null>(null);
   const [miniMapDock, setMiniMapDock] = useState<MiniMapDock>("bottom-left");
+  const [miniMapPosition, setMiniMapPosition] = useState<MiniMapPosition | null>(null);
   const [isMiniMapCollapsed, setIsMiniMapCollapsed] = useState(false);
   const [viewportFrame, setViewportFrame] = useState<ViewportFrame>(EMPTY_VIEWPORT_FRAME);
   const [renderQuality, setRenderQuality] = useState<RenderQualityStatus | null>(null);
@@ -2879,7 +2881,12 @@ function PlanCanvas({
           viewportFrame={viewportFrame}
           onJump={jumpViewport}
           dock={miniMapDock}
-          onDockChange={setMiniMapDock}
+          onDockChange={(dock) => {
+            setMiniMapDock(dock);
+            setMiniMapPosition(null);
+          }}
+          position={miniMapPosition}
+          onPositionChange={setMiniMapPosition}
           collapsed={isMiniMapCollapsed}
           onCollapsedChange={setIsMiniMapCollapsed}
         />
@@ -2895,6 +2902,8 @@ function PlanMiniMap({
   onJump,
   dock,
   onDockChange,
+  position,
+  onPositionChange,
   collapsed,
   onCollapsedChange,
 }: {
@@ -2904,10 +2913,18 @@ function PlanMiniMap({
   onJump: (point: Point) => void;
   dock: MiniMapDock;
   onDockChange: (dock: MiniMapDock) => void;
+  position: MiniMapPosition | null;
+  onPositionChange: (position: MiniMapPosition | null) => void;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
 }) {
   const mapRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    offsetX: number;
+    offsetY: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const dockClass = {
     "bottom-left": "bottom-3 left-3",
     "bottom-right": "bottom-3 right-3",
@@ -2929,6 +2946,55 @@ function PlanMiniMap({
     };
     onJump(point);
   };
+  const positionStyle = position
+    ? {
+        left: `${position.x}px`,
+        top: `${position.y}px`,
+      }
+    : undefined;
+  const beginDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("button")) return;
+    const panel = mapRef.current;
+    const parent = panel?.offsetParent as HTMLElement | null;
+    if (!panel || !parent) return;
+    const panelRect = panel.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    dragRef.current = {
+      offsetX: event.clientX - panelRect.left,
+      offsetY: event.clientY - panelRect.top,
+      width: panelRect.width,
+      height: panelRect.height,
+    };
+    onPositionChange({
+      x: Math.max(
+        0,
+        Math.min(parentRect.width - panelRect.width, panelRect.left - parentRect.left),
+      ),
+      y: Math.max(
+        0,
+        Math.min(parentRect.height - panelRect.height, panelRect.top - parentRect.top),
+      ),
+    });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+  const dragMap = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    const parent = mapRef.current?.offsetParent as HTMLElement | null;
+    if (!parent) return;
+    const parentRect = parent.getBoundingClientRect();
+    const maxX = Math.max(0, parentRect.width - dragRef.current.width);
+    const maxY = Math.max(0, parentRect.height - dragRef.current.height);
+    onPositionChange({
+      x: Math.max(0, Math.min(maxX, event.clientX - parentRect.left - dragRef.current.offsetX)),
+      y: Math.max(0, Math.min(maxY, event.clientY - parentRect.top - dragRef.current.offsetY)),
+    });
+  };
+  const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
 
   if (collapsed) {
     return (
@@ -2936,8 +3002,9 @@ function PlanMiniMap({
         type="button"
         className={cn(
           "absolute z-20 hidden items-center gap-2 rounded-md border border-hairline bg-card/95 px-3 py-2 text-xs font-medium text-card-foreground shadow-lg backdrop-blur sm:flex",
-          dockClass,
+          position ? "" : dockClass,
         )}
+        style={positionStyle}
         onClick={() => onCollapsedChange(false)}
         data-testid="plan-minimap-collapsed"
         title="Show sheet map"
@@ -2956,12 +3023,21 @@ function PlanMiniMap({
       ref={mapRef}
       className={cn(
         "absolute z-20 hidden w-52 overflow-hidden rounded-md border border-hairline bg-card/95 text-card-foreground shadow-lg backdrop-blur sm:block",
-        dockClass,
+        position ? "" : dockClass,
       )}
+      style={positionStyle}
       data-testid="plan-minimap"
-      title="Sheet map. Use Move to dock it in another corner or Hide to collapse it."
+      title="Sheet map. Drag the header to move it, dock it in a corner, or hide it."
     >
-      <div className="flex items-center justify-between gap-2 border-b border-hairline bg-surface px-2 py-1.5">
+      <div
+        className="flex cursor-move touch-none items-center justify-between gap-2 border-b border-hairline bg-surface px-2 py-1.5"
+        onPointerDown={beginDrag}
+        onPointerMove={dragMap}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        data-testid="plan-minimap-drag-handle"
+        title="Drag to move sheet map"
+      >
         <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
           <MapIcon className="h-3 w-3" />
           Sheet Map
@@ -2980,10 +3056,10 @@ function PlanMiniMap({
               event.stopPropagation();
               onDockChange(nextDock);
             }}
-            data-testid="plan-minimap-move"
-            title="Move sheet map"
+            data-testid="plan-minimap-dock"
+            title="Dock sheet map in another corner"
           >
-            Move
+            Dock
           </Button>
           <Button
             type="button"
