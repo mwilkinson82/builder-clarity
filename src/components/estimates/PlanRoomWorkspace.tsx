@@ -8,6 +8,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
+  ReactNode,
   WheelEvent as ReactWheelEvent,
 } from "react";
 import {
@@ -78,7 +79,7 @@ import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions
 
 type ToolMode = "select" | "calibrate" | TakeoffToolType;
 type RevisionOverlayMode = "compare" | "ghost";
-type CockpitPanel = "drawings" | "tools" | null;
+type CockpitPanelKey = "drawings" | "tools";
 type MiniMapDock = "bottom-left" | "bottom-right" | "top-left" | "top-right";
 type MiniMapPosition = { x: number; y: number };
 type SheetFilterMode = "all" | "current" | "needs-scale" | "has-takeoff";
@@ -484,7 +485,10 @@ export function PlanRoomWorkspace({
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const [uploading, setUploading] = useState(false);
   const [isCockpitMode, setIsCockpitMode] = useState(false);
-  const [cockpitPanel, setCockpitPanel] = useState<CockpitPanel>(null);
+  const [cockpitPanels, setCockpitPanels] = useState<Record<CockpitPanelKey, boolean>>({
+    drawings: false,
+    tools: false,
+  });
   const [overlaySheetId, setOverlaySheetId] = useState("");
   const [overlayOpacity, setOverlayOpacity] = useState(65);
   const [overlayMode, setOverlayMode] = useState<RevisionOverlayMode>("compare");
@@ -1045,8 +1049,82 @@ export function PlanRoomWorkspace({
     (measurement) => measurement.estimate_line_item_id,
   ).length;
   const backendReady = schemaReady !== false;
-  const toggleCockpitPanel = (panel: Exclude<CockpitPanel, null>) =>
-    setCockpitPanel((current) => (current === panel ? null : panel));
+  const currentSheetTitle = currentSheet
+    ? `${currentSheet.sheet_number} ${currentSheet.sheet_name}`.trim()
+    : "No sheet selected";
+  const toggleCockpitPanel = (panel: CockpitPanelKey) =>
+    setCockpitPanels((current) => ({ ...current, [panel]: !current[panel] }));
+  const hideCockpitPanels = () => setCockpitPanels({ drawings: false, tools: false });
+  const takeoffToolButtons = (
+    <>
+      {[
+        { value: "select", icon: MousePointer2 },
+        { value: "calibrate", icon: Ruler },
+        { value: "linear", icon: PencilRuler },
+        { value: "area", icon: Square },
+        { value: "count", icon: Plus },
+      ].map((item) => {
+        const Icon = item.icon;
+        return (
+          <Button
+            key={item.value}
+            type="button"
+            size="sm"
+            variant={tool === item.value ? "default" : "outline"}
+            className="gap-1.5"
+            data-testid={`takeoff-tool-${item.value}`}
+            disabled={!backendReady}
+            onClick={() => {
+              setTool(item.value as ToolMode);
+              setPendingPoints([]);
+              if (item.value !== "calibrate") setCalibrationPoints([]);
+            }}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            {toolLabel(item.value as ToolMode)}
+          </Button>
+        );
+      })}
+      {draftCommand && (
+        <Button
+          size="sm"
+          className="gap-1.5"
+          onClick={finishDraft}
+          disabled={
+            !backendReady ||
+            !draftCommand.ready ||
+            createMeasurementMutation.isPending ||
+            updateSheetMutation.isPending
+          }
+          data-testid="takeoff-finish-draft"
+        >
+          <Check className="h-3.5 w-3.5" /> {draftCommand.actionLabel}
+        </Button>
+      )}
+      {activeDraftPointCount > 0 && (
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={undoDraftPoint}
+            data-testid="takeoff-undo-point"
+          >
+            <Undo2 className="h-3.5 w-3.5" /> Undo Point
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={clearDraftPoints}
+            data-testid="takeoff-clear-points"
+          >
+            <XCircle className="h-3.5 w-3.5" /> Clear Points
+          </Button>
+        </>
+      )}
+    </>
+  );
 
   return (
     <div
@@ -1056,49 +1134,92 @@ export function PlanRoomWorkspace({
       )}
       data-testid="plan-room-workspace"
     >
-      <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-5 py-4 lg:px-8">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-            <div className="flex min-w-0 flex-1 items-start gap-3">
-              <Button asChild variant="ghost" size="icon" title="Back to estimate">
+      <header className="shrink-0 border-b border-hairline bg-surface-elevated">
+        {isCockpitMode ? (
+          <div
+            className="flex h-12 items-center justify-between gap-2 px-3 lg:px-4"
+            data-testid="plan-cockpit-header"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                title="Back to estimate"
+              >
                 <Link to="/estimates/$estimateId" params={{ estimateId: estimate.id }}>
                   <ArrowLeft className="h-4 w-4" />
                 </Link>
               </Button>
               <div className="min-w-0">
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                <p className="truncate text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                   {companyName}
                 </p>
-                <h1 className="mt-1 font-serif text-3xl text-foreground">Plan Room</h1>
-                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  {estimate.name}. Measure the plans once, link the takeoff to an estimate row, and
-                  Overwatch updates the worksheet quantity.
-                </p>
+                <div className="flex min-w-0 items-baseline gap-2">
+                  <h1 className="shrink-0 font-serif text-xl leading-none text-foreground">
+                    Plan Room
+                  </h1>
+                  <p className="truncate text-xs text-muted-foreground">{currentSheetTitle}</p>
+                </div>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-              <Badge variant="outline">{planSets.length} drawing sets</Badge>
-              <Badge variant="outline">{sheets.length} sheets</Badge>
-              <Badge variant={linkedCount === measurements.length ? "secondary" : "outline"}>
-                {linkedCount}/{measurements.length} linked
-              </Badge>
+            <div className="flex min-w-0 items-center justify-end gap-1.5">
+              <div className="hidden items-center gap-1.5 md:flex">
+                <Badge variant="outline">{planSets.length} sets</Badge>
+                <Badge variant="outline">{sheets.length} sheets</Badge>
+                <Badge variant={linkedCount === measurements.length ? "secondary" : "outline"}>
+                  {linkedCount}/{measurements.length} linked
+                </Badge>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant={cockpitPanels.drawings ? "default" : "outline"}
+                className="h-8 gap-1.5 px-2"
+                onClick={() => toggleCockpitPanel("drawings")}
+                data-testid="plan-cockpit-drawings-toggle"
+              >
+                <Layers className="h-3.5 w-3.5" />
+                Drawings
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={cockpitPanels.tools ? "default" : "outline"}
+                className="h-8 gap-1.5 px-2"
+                onClick={() => toggleCockpitPanel("tools")}
+                data-testid="plan-cockpit-tools-toggle"
+              >
+                <Target className="h-3.5 w-3.5" />
+                Tools
+              </Button>
+              {(cockpitPanels.drawings || cockpitPanels.tools) && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  className="h-8 w-8"
+                  title="Hide command center panels"
+                  onClick={hideCockpitPanels}
+                  data-testid="plan-cockpit-hide-panels"
+                >
+                  <Minimize2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"
-                className="gap-1.5"
+                className="h-8 gap-1.5 px-2"
                 onClick={() => {
-                  setIsCockpitMode((current) => !current);
-                  setCockpitPanel(null);
+                  setIsCockpitMode(false);
+                  hideCockpitPanels();
                 }}
-                title={isCockpitMode ? "Exit command center" : "Open command center"}
+                title="Exit command center"
                 data-testid="plan-command-center-toggle"
               >
-                {isCockpitMode ? (
-                  <Minimize2 className="h-3.5 w-3.5" />
-                ) : (
-                  <Maximize2 className="h-3.5 w-3.5" />
-                )}
-                {isCockpitMode ? "Exit" : "Command Center"}
+                <Minimize2 className="h-3.5 w-3.5" />
+                Exit
               </Button>
               <input
                 ref={fileInputRef}
@@ -1109,57 +1230,86 @@ export function PlanRoomWorkspace({
               />
               <Button
                 size="sm"
-                className="gap-1.5"
+                className="h-8 gap-1.5 px-2"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!backendReady || uploading || createSetMutation.isPending}
               >
                 <FileUp className="h-3.5 w-3.5" />
-                Upload Plans
+                Upload
               </Button>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-5 py-4 lg:px-8">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                <Button asChild variant="ghost" size="icon" title="Back to estimate">
+                  <Link to="/estimates/$estimateId" params={{ estimateId: estimate.id }}>
+                    <ArrowLeft className="h-4 w-4" />
+                  </Link>
+                </Button>
+                <div className="min-w-0">
+                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                    {companyName}
+                  </p>
+                  <h1 className="mt-1 font-serif text-3xl text-foreground">Plan Room</h1>
+                  <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                    {estimate.name}. Measure the plans once, link the takeoff to an estimate row,
+                    and Overwatch updates the worksheet quantity.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                <Badge variant="outline">{planSets.length} drawing sets</Badge>
+                <Badge variant="outline">{sheets.length} sheets</Badge>
+                <Badge variant={linkedCount === measurements.length ? "secondary" : "outline"}>
+                  {linkedCount}/{measurements.length} linked
+                </Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => {
+                    setIsCockpitMode(true);
+                    hideCockpitPanels();
+                  }}
+                  title="Open command center"
+                  data-testid="plan-command-center-toggle"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                  Command Center
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  accept="application/pdf,image/png,image/jpeg,image/webp"
+                  onChange={onFileChange}
+                />
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!backendReady || uploading || createSetMutation.isPending}
+                >
+                  <FileUp className="h-3.5 w-3.5" />
+                  Upload Plans
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </header>
 
       <main
         className={cn(
           "relative grid min-h-0",
           isCockpitMode
-            ? "flex-1 grid-cols-1 overflow-hidden px-3 py-3"
+            ? "flex-1 grid-cols-1 overflow-hidden p-2"
             : "mx-auto max-w-[1800px] gap-5 px-5 py-6 lg:px-8 xl:grid-cols-[220px_minmax(0,1fr)_300px] 2xl:grid-cols-[280px_minmax(0,1fr)_390px]",
         )}
         data-testid="plan-room-main"
       >
-        {isCockpitMode && (
-          <div
-            className="absolute left-1/2 top-3 z-40 flex -translate-x-1/2 items-center gap-2 rounded-md border border-hairline bg-card/95 p-1 shadow-lg backdrop-blur"
-            data-testid="plan-cockpit-panel-dock"
-          >
-            <Button
-              type="button"
-              size="sm"
-              variant={cockpitPanel === "drawings" ? "default" : "outline"}
-              className="gap-1.5"
-              onClick={() => toggleCockpitPanel("drawings")}
-              data-testid="plan-cockpit-drawings-toggle"
-            >
-              <Layers className="h-3.5 w-3.5" />
-              Drawings
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={cockpitPanel === "tools" ? "default" : "outline"}
-              className="gap-1.5"
-              onClick={() => toggleCockpitPanel("tools")}
-              data-testid="plan-cockpit-tools-toggle"
-            >
-              <Target className="h-3.5 w-3.5" />
-              Tools
-            </Button>
-          </div>
-        )}
-
         {!backendReady && (
           <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 xl:col-span-3">
             <p className="font-medium">Plan Room backend is still coming online</p>
@@ -1174,8 +1324,8 @@ export function PlanRoomWorkspace({
           className={cn(
             "min-w-0 space-y-4",
             isCockpitMode &&
-              (cockpitPanel === "drawings"
-                ? "absolute left-3 top-16 z-40 max-h-[calc(100%-5rem)] w-[min(360px,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
+              (cockpitPanels.drawings
+                ? "absolute left-2 top-2 z-40 max-h-[calc(100%-1rem)] w-[min(360px,calc(100vw-1rem))] overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
                 : "hidden"),
           )}
           data-testid="plan-cockpit-drawings-panel"
@@ -1184,7 +1334,12 @@ export function PlanRoomWorkspace({
             <CockpitFloatingPanelHeader
               title="Drawing Controls"
               closeTestId="plan-cockpit-drawings-close"
-              onClose={() => setCockpitPanel(null)}
+              onClose={() =>
+                setCockpitPanels((current) => ({
+                  ...current,
+                  drawings: false,
+                }))
+              }
             />
           )}
           <section className="rounded-lg border border-hairline bg-card shadow-card">
@@ -1471,88 +1626,19 @@ export function PlanRoomWorkspace({
           )}
           data-testid="plan-cockpit-drawing-stage"
         >
-          <div className="flex flex-col gap-3 border-b border-hairline bg-surface px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
-              <h2 className="font-serif text-2xl leading-tight">
-                {currentSheet
-                  ? `${currentSheet.sheet_number} ${currentSheet.sheet_name}`.trim()
-                  : "No sheet selected"}
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                {currentSheet?.scale_feet_per_pixel
-                  ? `Scale set: ${currentSheet.scale_label || `${currentSheet.scale_feet_per_pixel.toFixed(4)} ft/px`}`
-                  : "Set scale before linear or area takeoff."}
-              </p>
+          {!isCockpitMode && (
+            <div className="flex flex-col gap-3 border-b border-hairline bg-surface px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <h2 className="font-serif text-2xl leading-tight">{currentSheetTitle}</h2>
+                <p className="text-xs text-muted-foreground">
+                  {currentSheet?.scale_feet_per_pixel
+                    ? `Scale set: ${currentSheet.scale_label || `${currentSheet.scale_feet_per_pixel.toFixed(4)} ft/px`}`
+                    : "Set scale before linear or area takeoff."}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">{takeoffToolButtons}</div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {[
-                { value: "select", icon: MousePointer2 },
-                { value: "calibrate", icon: Ruler },
-                { value: "linear", icon: PencilRuler },
-                { value: "area", icon: Square },
-                { value: "count", icon: Plus },
-              ].map((item) => {
-                const Icon = item.icon;
-                return (
-                  <Button
-                    key={item.value}
-                    type="button"
-                    size="sm"
-                    variant={tool === item.value ? "default" : "outline"}
-                    className="gap-1.5"
-                    data-testid={`takeoff-tool-${item.value}`}
-                    disabled={!backendReady}
-                    onClick={() => {
-                      setTool(item.value as ToolMode);
-                      setPendingPoints([]);
-                      if (item.value !== "calibrate") setCalibrationPoints([]);
-                    }}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {toolLabel(item.value as ToolMode)}
-                  </Button>
-                );
-              })}
-              {draftCommand && (
-                <Button
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={finishDraft}
-                  disabled={
-                    !backendReady ||
-                    !draftCommand.ready ||
-                    createMeasurementMutation.isPending ||
-                    updateSheetMutation.isPending
-                  }
-                  data-testid="takeoff-finish-draft"
-                >
-                  <Check className="h-3.5 w-3.5" /> {draftCommand.actionLabel}
-                </Button>
-              )}
-              {activeDraftPointCount > 0 && (
-                <>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5"
-                    onClick={undoDraftPoint}
-                    data-testid="takeoff-undo-point"
-                  >
-                    <Undo2 className="h-3.5 w-3.5" /> Undo Point
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5"
-                    onClick={clearDraftPoints}
-                    data-testid="takeoff-clear-points"
-                  >
-                    <XCircle className="h-3.5 w-3.5" /> Clear Points
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
+          )}
 
           <PlanCanvas
             planSet={currentPlanSet}
@@ -1585,6 +1671,13 @@ export function PlanRoomWorkspace({
             }}
             onMeasurementGeometryChange={saveMeasurementGeometry}
             isGeometrySaving={updateMeasurementMutation.isPending}
+            toolControls={
+              isCockpitMode ? (
+                <div className="flex max-w-[min(760px,calc(100vw-2rem))] flex-wrap items-center justify-end gap-1.5">
+                  {takeoffToolButtons}
+                </div>
+              ) : null
+            }
           />
         </section>
 
@@ -1592,8 +1685,8 @@ export function PlanRoomWorkspace({
           className={cn(
             "min-w-0 space-y-4",
             isCockpitMode &&
-              (cockpitPanel === "tools"
-                ? "absolute right-3 top-16 z-40 max-h-[calc(100%-5rem)] w-[min(390px,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
+              (cockpitPanels.tools
+                ? "absolute right-2 top-2 z-40 max-h-[calc(100%-1rem)] w-[min(390px,calc(100vw-1rem))] overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
                 : "hidden"),
           )}
           data-testid="plan-cockpit-tools-panel"
@@ -1602,7 +1695,12 @@ export function PlanRoomWorkspace({
             <CockpitFloatingPanelHeader
               title="Takeoff Tools"
               closeTestId="plan-cockpit-tools-close"
-              onClose={() => setCockpitPanel(null)}
+              onClose={() =>
+                setCockpitPanels((current) => ({
+                  ...current,
+                  tools: false,
+                }))
+              }
             />
           )}
           <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
@@ -2176,6 +2274,7 @@ function PlanCanvas({
   onMeasurementSelect,
   onMeasurementGeometryChange,
   isGeometrySaving,
+  toolControls,
 }: {
   planSet: PlanSetRow | null;
   sheet: PlanSheetRow | null;
@@ -2199,6 +2298,7 @@ function PlanCanvas({
   onMeasurementSelect: (measurementId: string) => void;
   onMeasurementGeometryChange: (measurementId: string, points: Point[]) => Promise<void>;
   isGeometrySaving: boolean;
+  toolControls?: ReactNode;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -2703,159 +2803,202 @@ function PlanCanvas({
   const zoomSliderValue = Math.round(zoom * 100);
   const canOpenOriginalPdf =
     Boolean(signedUrl) && planSet?.file_mime_type === "application/pdf" && !planSet?.sample_key;
+  const renderPlanControlBar = (className: string, testId: string) => (
+    <div className={className} data-testid={testId}>
+      <div className="flex min-w-0 items-center gap-2">
+        <Badge variant={tool === "select" ? "secondary" : "outline"} className="gap-1.5">
+          {tool === "select" ? <Hand className="h-3 w-3" /> : <Target className="h-3 w-3" />}
+          {toolLabel(tool)}
+        </Badge>
+        <Badge variant="outline">{zoomPercent}</Badge>
+        {renderQuality && (
+          <Badge
+            variant={renderQuality.capped ? "secondary" : "outline"}
+            title={renderQuality.details}
+            data-testid="plan-render-quality"
+          >
+            {renderQuality.label}
+          </Badge>
+        )}
+        {planSet?.file_mime_type === "application/pdf" && !planSet?.sample_key && (
+          <Badge
+            variant="outline"
+            title="Uploaded PDFs render at a higher backing resolution so plan notes stay readable while you zoom."
+            data-testid="plan-pdf-inspection-mode"
+          >
+            Inspection render
+          </Badge>
+        )}
+        {hasRevisionOverlay && (
+          <Badge variant="secondary" data-testid="plan-revision-overlay-active">
+            Revision overlay
+          </Badge>
+        )}
+        <span className="hidden truncate text-xs text-muted-foreground lg:inline">
+          {Math.round(viewSize.width)} x {Math.round(viewSize.height)}
+        </span>
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+        <Button
+          type="button"
+          size="sm"
+          variant={isZoomWindowMode ? "default" : "outline"}
+          title="Zoom to area"
+          onClick={() => {
+            setIsZoomWindowMode((current) => !current);
+            setZoomWindowDraft(null);
+          }}
+          data-testid="plan-zoom-window"
+        >
+          <ZoomIn className="h-3.5 w-3.5" />
+          Zoom Area
+        </Button>
+        {canOpenOriginalPdf && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            title="Open the untouched source PDF in a new tab"
+            asChild
+            data-testid="plan-open-original-pdf"
+          >
+            <a href={signedUrl} target="_blank" rel="noreferrer">
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open PDF
+            </a>
+          </Button>
+        )}
+        <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          className="h-8 w-8"
+          title="Zoom out"
+          onClick={() => zoomBy(-PLAN_ZOOM_STEP)}
+          disabled={zoom <= MIN_PLAN_ZOOM}
+          data-testid="plan-zoom-out"
+        >
+          <ZoomOut className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          title="Fit sheet"
+          onClick={fitToStage}
+          data-testid="plan-fit-sheet"
+        >
+          Fit
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          title="Fit width"
+          onClick={fitToWidth}
+          data-testid="plan-fit-width"
+        >
+          Width
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          title="Fit height"
+          onClick={fitToHeight}
+          data-testid="plan-fit-height"
+        >
+          Height
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          title="Actual size"
+          onClick={setActualSize}
+          data-testid="plan-actual-size"
+        >
+          100%
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          className="h-8 w-8"
+          title="Zoom in"
+          onClick={() => zoomBy(PLAN_ZOOM_STEP)}
+          disabled={zoom >= MAX_PLAN_ZOOM}
+          data-testid="plan-zoom-in"
+        >
+          <ZoomIn className="h-3.5 w-3.5" />
+        </Button>
+        <div className="flex w-36 items-center px-2" data-testid="plan-zoom-slider">
+          <Slider
+            min={ZOOM_SLIDER_MIN}
+            max={ZOOM_SLIDER_MAX}
+            step={5}
+            value={[zoomSliderValue]}
+            onValueChange={(value) => setClampedZoom((value[0] ?? 100) / 100)}
+            aria-label="Plan zoom percentage"
+          />
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div
-      className={cn("flex flex-col bg-background", isCockpitMode ? "min-h-0 flex-1 p-3" : "p-4")}
+      className={cn(
+        "relative flex flex-col bg-background",
+        isCockpitMode ? "min-h-0 flex-1 p-0" : "p-4",
+      )}
     >
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Badge variant={tool === "select" ? "secondary" : "outline"} className="gap-1.5">
-            {tool === "select" ? <Hand className="h-3 w-3" /> : <Target className="h-3 w-3" />}
-            {toolLabel(tool)}
-          </Badge>
-          <Badge variant="outline">{zoomPercent}</Badge>
-          {renderQuality && (
-            <Badge
-              variant={renderQuality.capped ? "secondary" : "outline"}
-              title={renderQuality.details}
-              data-testid="plan-render-quality"
-            >
-              {renderQuality.label}
-            </Badge>
-          )}
-          {planSet?.file_mime_type === "application/pdf" && !planSet?.sample_key && (
-            <Badge
-              variant="outline"
-              title="Uploaded PDFs render at a higher backing resolution so plan notes stay readable while you zoom."
-              data-testid="plan-pdf-inspection-mode"
-            >
-              Inspection render
-            </Badge>
-          )}
-          {hasRevisionOverlay && (
-            <Badge variant="secondary" data-testid="plan-revision-overlay-active">
-              Revision overlay
-            </Badge>
-          )}
-          <span className="truncate text-xs text-muted-foreground">
-            {Math.round(viewSize.width)} x {Math.round(viewSize.height)}
-          </span>
-        </div>
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-          <Button
-            type="button"
-            size="sm"
-            variant={isZoomWindowMode ? "default" : "outline"}
-            title="Zoom to area"
-            onClick={() => {
-              setIsZoomWindowMode((current) => !current);
-              setZoomWindowDraft(null);
-            }}
-            data-testid="plan-zoom-window"
-          >
-            <ZoomIn className="h-3.5 w-3.5" />
-            Zoom Area
-          </Button>
-          {canOpenOriginalPdf && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              title="Open the untouched source PDF in a new tab"
-              asChild
-              data-testid="plan-open-original-pdf"
-            >
-              <a href={signedUrl} target="_blank" rel="noreferrer">
-                <ExternalLink className="h-3.5 w-3.5" />
-                Open PDF
-              </a>
-            </Button>
-          )}
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            className="h-8 w-8"
-            title="Zoom out"
-            onClick={() => zoomBy(-PLAN_ZOOM_STEP)}
-            disabled={zoom <= MIN_PLAN_ZOOM}
-            data-testid="plan-zoom-out"
-          >
-            <ZoomOut className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            title="Fit sheet"
-            onClick={fitToStage}
-            data-testid="plan-fit-sheet"
-          >
-            Fit
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            title="Fit width"
-            onClick={fitToWidth}
-            data-testid="plan-fit-width"
-          >
-            Width
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            title="Fit height"
-            onClick={fitToHeight}
-            data-testid="plan-fit-height"
-          >
-            Height
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            title="Actual size"
-            onClick={setActualSize}
-            data-testid="plan-actual-size"
-          >
-            100%
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            className="h-8 w-8"
-            title="Zoom in"
-            onClick={() => zoomBy(PLAN_ZOOM_STEP)}
-            disabled={zoom >= MAX_PLAN_ZOOM}
-            data-testid="plan-zoom-in"
-          >
-            <ZoomIn className="h-3.5 w-3.5" />
-          </Button>
-          <div className="flex w-36 items-center px-2" data-testid="plan-zoom-slider">
-            <Slider
-              min={ZOOM_SLIDER_MIN}
-              max={ZOOM_SLIDER_MAX}
-              step={5}
-              value={[zoomSliderValue]}
-              onValueChange={(value) => setClampedZoom((value[0] ?? 100) / 100)}
-              aria-label="Plan zoom percentage"
-            />
-          </div>
-        </div>
-      </div>
+      {!isCockpitMode &&
+        renderPlanControlBar(
+          "mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2",
+          "plan-canvas-controls",
+        )}
 
-      <TakeoffDraftHud
-        draftCommand={draftCommand}
-        activePointCount={tool === "calibrate" ? calibrationPoints.length : pendingPoints.length}
-        disabled={draftActionDisabled}
-        onFinishDraft={onFinishDraft}
-      />
+      {!isCockpitMode && (
+        <TakeoffDraftHud
+          draftCommand={draftCommand}
+          activePointCount={tool === "calibrate" ? calibrationPoints.length : pendingPoints.length}
+          disabled={draftActionDisabled}
+          onFinishDraft={onFinishDraft}
+        />
+      )}
+
+      {isCockpitMode && (
+        <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-wrap items-start justify-between gap-2">
+          {renderPlanControlBar(
+            "pointer-events-auto flex max-w-[min(760px,calc(100vw-2rem))] flex-wrap items-center justify-between gap-2 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur",
+            "plan-cockpit-floating-controls",
+          )}
+          {toolControls && (
+            <div
+              className="pointer-events-auto rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
+              data-testid="plan-cockpit-floating-takeoff-tools"
+            >
+              {toolControls}
+            </div>
+          )}
+        </div>
+      )}
+
+      {isCockpitMode && draftCommand && (
+        <div className="pointer-events-none absolute bottom-4 left-4 z-30 w-[min(560px,calc(100vw-2rem))]">
+          <TakeoffDraftHud
+            draftCommand={draftCommand}
+            activePointCount={
+              tool === "calibrate" ? calibrationPoints.length : pendingPoints.length
+            }
+            disabled={draftActionDisabled}
+            onFinishDraft={onFinishDraft}
+            className="pointer-events-auto"
+          />
+        </div>
+      )}
 
       <div
         ref={scrollRef}
@@ -3263,17 +3406,22 @@ function TakeoffDraftHud({
   activePointCount,
   disabled,
   onFinishDraft,
+  className,
 }: {
   draftCommand: DraftCommandStatus | null;
   activePointCount: number;
   disabled: boolean;
   onFinishDraft: () => void;
+  className?: string;
 }) {
   if (!draftCommand) return null;
 
   return (
     <div
-      className="mb-3 grid gap-3 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm md:grid-cols-[minmax(0,1fr)_auto]"
+      className={cn(
+        "grid gap-3 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm md:grid-cols-[minmax(0,1fr)_auto]",
+        className ?? "mb-3",
+      )}
       data-testid="takeoff-draft-hud"
     >
       <div className="min-w-0">
