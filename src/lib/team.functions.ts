@@ -145,19 +145,6 @@ export interface TeamClientProjectAccess {
   created_at: string;
 }
 
-export interface TeamActivitySession {
-  id: string;
-  user_id: string;
-  email: string;
-  full_name: string;
-  route_path: string;
-  page_title: string;
-  user_agent: string;
-  login_at: string;
-  last_seen_at: string;
-  is_current_user: boolean;
-}
-
 const str = (v: unknown, d = "") => (typeof v === "string" ? v : d);
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const bool = (v: unknown) => (typeof v === "boolean" ? v : Boolean(v));
@@ -552,52 +539,6 @@ function normalizeTeamClientProjectAccess(
   };
 }
 
-function normalizeTeamActivitySession(
-  row: Record<string, unknown>,
-  currentUserId: string,
-): TeamActivitySession {
-  const userId = row.user_id as string;
-  return {
-    id: row.id as string,
-    user_id: userId,
-    email: str(row.email),
-    full_name: str(row.full_name),
-    route_path: str(row.route_path, "/"),
-    page_title: str(row.page_title),
-    user_agent: str(row.user_agent),
-    login_at: str(row.login_at),
-    last_seen_at: str(row.last_seen_at),
-    is_current_user: userId === currentUserId,
-  };
-}
-
-async function loadActiveActivitySessions(
-  context: TeamServerContext,
-  organizationId: string,
-): Promise<TeamActivitySession[]> {
-  const cutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-  const { data, error } = await dynamicTable(context.supabase, "user_activity_presence")
-    .select("id,user_id,email,full_name,route_path,page_title,user_agent,login_at,last_seen_at")
-    .eq("organization_id", organizationId)
-    .gte("last_seen_at", cutoff)
-    .order("last_seen_at", { ascending: false });
-
-  if (error) {
-    if (isMissingRestRelation(error, "user_activity_presence")) return [];
-    throw new Error(error.message);
-  }
-
-  const latestByUserId = new Map<string, TeamActivitySession>();
-  for (const row of (data ?? []) as Record<string, unknown>[]) {
-    const userId = row.user_id as string;
-    if (!latestByUserId.has(userId)) {
-      latestByUserId.set(userId, normalizeTeamActivitySession(row, context.userId));
-    }
-  }
-
-  return Array.from(latestByUserId.values());
-}
-
 async function assertNotLastOrgOwner(
   context: TeamServerContext,
   membership: { id: string; organization_id: string; role: string; status: string },
@@ -680,34 +621,32 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
     }));
     const projectIds = projects.map((p) => p.id);
 
-    const [projectMembersRes, dailyReportUsage, contactsRes, clientAccessRes, activeSessions] =
-      await Promise.all([
-        projectIds.length === 0
-          ? { data: [], error: null }
-          : context.supabase
-              .from("project_memberships")
-              .select("*")
-              .in("project_id", projectIds)
-              .order("created_at", { ascending: true }),
-        loadDailyReportUsage(context, projectIds),
-        context.supabase
-          .from("client_contacts")
-          .select("id,name,email,company,title,phone,status")
-          .eq("organization_id", organizationId)
-          .neq("status", "inactive")
-          .order("created_at", { ascending: false }),
-        projectIds.length === 0
-          ? { data: [], error: null }
-          : context.supabase
-              .from("project_client_access")
-              .select(
-                "id,project_id,contact_id,email,status,can_view_change_orders,can_view_daily_reports,can_view_billing,accepted_at,last_sent_at,created_at",
-              )
-              .in("project_id", projectIds)
-              .neq("status", "revoked")
-              .order("created_at", { ascending: false }),
-        loadActiveActivitySessions(context, organizationId),
-      ]);
+    const [projectMembersRes, dailyReportUsage, contactsRes, clientAccessRes] = await Promise.all([
+      projectIds.length === 0
+        ? { data: [], error: null }
+        : context.supabase
+            .from("project_memberships")
+            .select("*")
+            .in("project_id", projectIds)
+            .order("created_at", { ascending: true }),
+      loadDailyReportUsage(context, projectIds),
+      context.supabase
+        .from("client_contacts")
+        .select("id,name,email,company,title,phone,status")
+        .eq("organization_id", organizationId)
+        .neq("status", "inactive")
+        .order("created_at", { ascending: false }),
+      projectIds.length === 0
+        ? { data: [], error: null }
+        : context.supabase
+            .from("project_client_access")
+            .select(
+              "id,project_id,contact_id,email,status,can_view_change_orders,can_view_daily_reports,can_view_billing,accepted_at,last_sent_at,created_at",
+            )
+            .in("project_id", projectIds)
+            .neq("status", "revoked")
+            .order("created_at", { ascending: false }),
+    ]);
     if (projectMembersRes.error) throw new Error(projectMembersRes.error.message);
     if (contactsRes.error) throw new Error(contactsRes.error.message);
     if (clientAccessRes.error) throw new Error(clientAccessRes.error.message);
@@ -815,7 +754,6 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       projectMembers,
       clientContacts,
       clientProjectAccess,
-      activeSessions,
       currentUserRole: currentMember?.role ?? null,
       canManageTeam,
       usage: {

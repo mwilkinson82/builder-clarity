@@ -166,6 +166,7 @@ await expectFile("src/routes/_authenticated/index.tsx", "portfolio route");
 await expectFile("src/routes/_authenticated/projects.$projectId.tsx", "project route");
 await expectFile("src/routes/_authenticated/client.projects.$projectId.tsx", "client portal route");
 await expectFile("src/routes/_authenticated/team.tsx", "company workspace route");
+await expectFile("src/routes/_authenticated/admin.tsx", "Marshall-only admin route");
 await expectFile("src/routes/_authenticated/estimates.tsx", "estimates route");
 await expectFile("src/routes/_authenticated/estimate-masters.tsx", "estimate master sheets route");
 await expectFile("src/routes/_authenticated/estimates.$estimateId.tsx", "estimate workspace route");
@@ -188,6 +189,8 @@ await expectFile(
   "IOR report email template",
 );
 await expectFile("src/lib/stripe.server.ts", "Stripe server helper");
+await expectFile("src/lib/admin-access.ts", "admin access helper");
+await expectFile("src/lib/admin.functions.ts", "admin server functions");
 await expectFile(
   "src/routes/api/stripe/connect/account-link.ts",
   "Stripe Connect onboarding route",
@@ -205,6 +208,7 @@ await expectContains(
     /fullPath:\s*'\/auth'/,
     /fullPath:\s*'\/auth\/callback'/,
     /fullPath:\s*'\/api\/auth\/magic-link'/,
+    /fullPath:\s*'\/admin'/,
     /fullPath:\s*'\/team'/,
     /fullPath:\s*'\/projects\/\$projectId'/,
     /fullPath:\s*'\/client\/projects\/\$projectId'/,
@@ -213,7 +217,7 @@ await expectContains(
     /fullPath:\s*'\/api\/stripe\/checkout\/subscription'/,
     /fullPath:\s*'\/api\/stripe\/webhook'/,
   ],
-  "generated route tree includes auth, app-owned magic links, company workspace, project, client portal, and Stripe API routes",
+  "generated route tree includes auth, app-owned magic links, admin, company workspace, project, client portal, and Stripe API routes",
 );
 
 await expectContains(
@@ -342,6 +346,38 @@ await expectContains(
     /includes\(HARBOR_DEMO_NAME\.toLowerCase\(\)\)/,
   ],
   "Harbor Residence demo seeds Marshall Wilkinson as PM and self-detects a full CPM activity plan with predecessor and successor logic",
+);
+
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /listProjects/,
+    /ensure_current_user_account/,
+    /context\.supabase[\s\S]*\.from\("projects"\)[\s\S]*\.select\("\*"\)/,
+    /\.is\("archived_at", null\)/,
+  ],
+  "portfolio project list uses the authenticated Supabase client so project RLS controls visibility",
+);
+
+await expectContains(
+  "supabase/migrations/20260623161515_6bcf2ee5-6878-4010-a528-371bff10cc5f.sql",
+  [
+    /app_super_admins/,
+    /public\.is_super_admin\(\)/,
+    /CREATE OR REPLACE FUNCTION public\.can_read_project/,
+    /p\.owner_id=auth\.uid\(\)/,
+    /m\.role IN \('owner','admin','executive'\)/,
+    /project_memberships pm/,
+    /pm\.status='active'/,
+    /Super admins can read all projects/,
+  ],
+  "project visibility lets Marshall super-admin see all projects while normal users stay owner/org-exec/project-member scoped",
+);
+
+await expectContains(
+  "supabase/migrations/20260621213000_team_membership_foundation.sql",
+  [/CREATE POLICY projects_team_select/, /USING \(public\.can_read_project\(id\)\)/],
+  "projects table SELECT policy delegates to can_read_project",
 );
 
 await expectContains(
@@ -609,15 +645,12 @@ await expectContains(
   "src/routes/_authenticated/team.tsx",
   [
     /data-testid="company-command-center"/,
-    /data-testid="company-live-activity"/,
     /data-testid="company-users-access"/,
     /data-testid="client-access-priority-panel"/,
     /data-testid="project-asset-access-assignments"/,
     /data-testid="company-profile-record"/,
-    /CompanyActivityPanel/,
-    /Active now/,
-    /relativeActivityTime/,
-    /refetchInterval:\s*30_000/,
+    /isOverwatchAdminEmail/,
+    /<Link to="\/admin">/,
     /PlanReadinessPanel/,
     /Plan and payment readiness/,
     /Commercial setup/,
@@ -640,6 +673,25 @@ await expectContains(
     /Storage and attachments/,
   ],
   "company workspace prioritizes access, team seats, client portal access, plan readiness, and profile controls",
+);
+
+await expectNotContains(
+  "src/routes/_authenticated/team.tsx",
+  [/data-testid="company-live-activity"/, /CompanyActivityPanel/, /TeamActivitySession/],
+  "company workspace does not expose the live activity roster",
+);
+
+await expectContains(
+  "src/routes/_authenticated/admin.tsx",
+  [
+    /createFileRoute\("\/_authenticated\/admin"\)/,
+    /isOverwatchAdminEmail/,
+    /getOverwatchAdminWorkspace/,
+    /data-testid="overwatch-admin-live-activity"/,
+    /refetchInterval:\s*30_000/,
+    /Active users/,
+  ],
+  "Marshall-only admin page shows live site activity",
 );
 
 await expectContains(
@@ -683,13 +735,30 @@ await expectContains(
     /stripe_connect_account_id/,
     /payment_processor_ready/,
     /missingCommercialOrganizationColumn/,
-    /TeamActivitySession/,
     /recordUserActivity/,
-    /loadActiveActivitySessions/,
     /user_activity_presence/,
     /schema_missing/,
   ],
-  "company workspace server functions expose billing readiness and live activity with schema-cache fallback",
+  "company workspace server functions expose billing readiness and keep heartbeat recording with schema-cache fallback",
+);
+
+await expectContains(
+  "src/lib/admin-access.ts",
+  [/wilkinson\.marshall@gmail\.com/, /isOverwatchAdminEmail/],
+  "admin access helper restricts admin affordances to Marshall's email",
+);
+
+await expectContains(
+  "src/lib/admin.functions.ts",
+  [
+    /requireOverwatchAdmin/,
+    /isOverwatchAdminEmail/,
+    /supabaseAdmin/,
+    /user_activity_presence/,
+    /schemaReady/,
+    /activeWindowSeconds/,
+  ],
+  "admin server function gates service-role activity reads behind Marshall-only authorization",
 );
 
 await expectContains(
@@ -1315,12 +1384,12 @@ expectSql(
     /user_activity_presence_session_unique/i,
     /grant select, insert, update, delete on public\.user_activity_presence to authenticated/i,
     /alter table public\.user_activity_presence enable row level security/i,
-    /user_activity_presence_select_company/i,
-    /public\.can_manage_org\(organization_id\)/i,
+    /user_activity_presence_select_self_or_super_admin/i,
+    /public\.is_super_admin\(\)/i,
     /public\.is_org_member\(organization_id\)/i,
     /NOTIFY pgrst, 'reload schema'/i,
   ],
-  "user activity presence table exists with heartbeat uniqueness, grants, and company-scoped RLS",
+  "user activity presence table exists with heartbeat uniqueness, grants, and admin-scoped roster reads",
 );
 
 expectSql(
