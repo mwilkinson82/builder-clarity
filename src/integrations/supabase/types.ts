@@ -1178,6 +1178,227 @@ export type Database = {
           },
         ]
       }
+      estimate_plan_sets: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string
+          estimate_id: string
+          file_mime_type: string
+          file_path: string
+          file_size_bytes: number
+          id: string
+          name: string
+          organization_id: string
+          page_count: number
+          sample_key: string
+          source_file_name: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          estimate_id: string
+          file_mime_type?: string
+          file_path?: string
+          file_size_bytes?: number
+          id?: string
+          name: string
+          organization_id: string
+          page_count?: number
+          sample_key?: string
+          source_file_name?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          estimate_id?: string
+          file_mime_type?: string
+          file_path?: string
+          file_size_bytes?: number
+          id?: string
+          name?: string
+          organization_id?: string
+          page_count?: number
+          sample_key?: string
+          source_file_name?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_plan_sets_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_plan_sets_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_plan_sheets: {
+        Row: {
+          created_at: string
+          discipline: string
+          estimate_id: string
+          height_px: number
+          id: string
+          page_number: number
+          plan_set_id: string
+          scale_feet_per_pixel: number
+          scale_label: string
+          sheet_name: string
+          sheet_number: string
+          sort_order: number
+          updated_at: string
+          width_px: number
+        }
+        Insert: {
+          created_at?: string
+          discipline?: string
+          estimate_id: string
+          height_px?: number
+          id?: string
+          page_number?: number
+          plan_set_id: string
+          scale_feet_per_pixel?: number
+          scale_label?: string
+          sheet_name?: string
+          sheet_number?: string
+          sort_order?: number
+          updated_at?: string
+          width_px?: number
+        }
+        Update: {
+          created_at?: string
+          discipline?: string
+          estimate_id?: string
+          height_px?: number
+          id?: string
+          page_number?: number
+          plan_set_id?: string
+          scale_feet_per_pixel?: number
+          scale_label?: string
+          sheet_name?: string
+          sheet_number?: string
+          sort_order?: number
+          updated_at?: string
+          width_px?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_plan_sheets_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_plan_sheets_plan_set_id_fkey"
+            columns: ["plan_set_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_sets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      estimate_takeoff_measurements: {
+        Row: {
+          color: string
+          created_at: string
+          created_by: string | null
+          estimate_id: string
+          estimate_line_item_id: string | null
+          geometry: Json
+          id: string
+          label: string
+          library_item_id: string | null
+          notes: string
+          plan_sheet_id: string
+          quantity: number
+          tool_type: string
+          unit: string
+          updated_at: string
+          waste_pct: number
+        }
+        Insert: {
+          color?: string
+          created_at?: string
+          created_by?: string | null
+          estimate_id: string
+          estimate_line_item_id?: string | null
+          geometry?: Json
+          id?: string
+          label: string
+          library_item_id?: string | null
+          notes?: string
+          plan_sheet_id: string
+          quantity?: number
+          tool_type: string
+          unit: string
+          updated_at?: string
+          waste_pct?: number
+        }
+        Update: {
+          color?: string
+          created_at?: string
+          created_by?: string | null
+          estimate_id?: string
+          estimate_line_item_id?: string | null
+          geometry?: Json
+          id?: string
+          label?: string
+          library_item_id?: string | null
+          notes?: string
+          plan_sheet_id?: string
+          quantity?: number
+          tool_type?: string
+          unit?: string
+          updated_at?: string
+          waste_pct?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "estimate_takeoff_measurements_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_measurements_estimate_line_item_id_fkey"
+            columns: ["estimate_line_item_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_line_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_measurements_library_item_id_fkey"
+            columns: ["library_item_id"]
+            isOneToOne: false
+            referencedRelation: "cost_library_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "estimate_takeoff_measurements_plan_sheet_id_fkey"
+            columns: ["plan_sheet_id"]
+            isOneToOne: false
+            referencedRelation: "estimate_plan_sheets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       estimates: {
         Row: {
           bond_pct: number
@@ -2456,6 +2677,7 @@ export type Database = {
         }
         Returns: string
       }
+      storage_estimate_id: { Args: { p_name: string }; Returns: string }
       storage_project_id: { Args: { p_name: string }; Returns: string }
       sync_billing_application_from_lines: {
         Args: { p_billing_application_id: string }
