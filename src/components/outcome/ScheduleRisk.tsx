@@ -4576,11 +4576,11 @@ function ActivityScheduleMatrix({
   const fitDayPx = Math.max(0.85, fitTimelineTargetWidth / Math.max(1, model.totalTimelineDays));
   const activeDayPx = isPrintMode ? printDayPx : isFitZoom ? fitDayPx : dayPx;
   const tableColumns = isPrintMode
-    ? "62px minmax(170px,1fr) 42px 58px 58px 48px 40px 42px"
+    ? "62px minmax(180px,1fr) 44px 56px 56px 48px 40px 42px"
     : isFitZoom
-      ? "64px minmax(180px,1fr) 44px 64px 64px 58px 44px 48px"
+      ? "64px minmax(190px,1fr) 48px 62px 62px 58px 44px 48px"
       : "82px minmax(260px,1fr) 64px 86px 86px 74px 56px 64px";
-  const rowHeight = isPrintMode ? 22 : 64;
+  const rowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
   const headerHeight = isPrintMode ? 30 : 48;
   const timelineWidth = isPrintMode
@@ -4759,7 +4759,7 @@ function ActivityScheduleMatrix({
                 <div className="flex items-center px-3">ID</div>
                 <div className="flex min-w-0 items-center px-3">Activity</div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
-                  Dur
+                  Plan dur
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
                   Start
@@ -5121,7 +5121,9 @@ function ConstructLineTaskRow({
           {activity.activity_id || "No ID"}
         </div>
         <div className="flex min-w-0 flex-col justify-center px-3">
-          <div className="truncate text-sm font-semibold text-foreground">{activity.name}</div>
+          <div className="constructline-task-name text-sm font-semibold leading-snug text-foreground">
+            {activity.name}
+          </div>
           <div className="mt-0.5 flex flex-wrap gap-1">
             {task.isMilestone && <ScheduleFlag tone="warning">milestone</ScheduleFlag>}
             {task.isCritical && <ScheduleFlag tone="danger">critical</ScheduleFlag>}
@@ -6242,7 +6244,8 @@ function ActivityDetailDialog({
         <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
           <DialogTitle className="font-serif text-2xl">CPM activity detail</DialogTitle>
           <DialogDescription>
-            Review the full activity, dependency logic, dates, percent complete, and field notes.
+            Review the full activity, dependency logic, planned dates, percent complete, and field
+            notes.
           </DialogDescription>
         </DialogHeader>
 
@@ -6254,20 +6257,20 @@ function ActivityDetailDialog({
               sub={activity.division || "General"}
             />
             <ScheduleWorkbenchStat
-              label="Duration"
+              label="Planned duration"
               value={isMilestone ? "Milestone" : duration == null ? "No dates" : String(duration)}
               sub={
                 isMilestone
                   ? "schedule point"
                   : duration == null
                     ? "start / finish needed"
-                    : "calendar days"
+                    : "current start to finish"
               }
             />
             <ScheduleWorkbenchStat
               label="Progress"
               value={`${activity.percent_complete}%`}
-              sub={activity.percent_complete >= 100 ? "complete" : "remaining"}
+              sub={activity.percent_complete >= 100 ? "complete" : "percent complete"}
               tone={activity.percent_complete >= 100 ? "success" : "default"}
             />
             <ScheduleWorkbenchStat
@@ -6292,8 +6295,8 @@ function ActivityDetailDialog({
                   Activity setup
                 </div>
                 <div className="mt-1 text-sm text-muted-foreground">
-                  Edit the row identity, parent / child WBS path, dates, progress, and milestone
-                  status.
+                  Edit the row identity, parent / child WBS path, current schedule dates, progress,
+                  and milestone status.
                 </div>
               </div>
               <Button
@@ -6331,7 +6334,7 @@ function ActivityDetailDialog({
                   listId={`activity-${activity.id}-wbs-divisions`}
                 />
               </LabeledField>
-              <LabeledField label="Start">
+              <LabeledField label="Current start">
                 <Input
                   type="date"
                   value={draft.start_date}
@@ -6339,7 +6342,7 @@ function ActivityDetailDialog({
                   className="h-10 min-w-0"
                 />
               </LabeledField>
-              <LabeledField label="Finish">
+              <LabeledField label="Current finish">
                 <Input
                   type="date"
                   value={draft.finish_date}

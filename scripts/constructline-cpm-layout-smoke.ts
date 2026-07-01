@@ -85,6 +85,7 @@ for (const requiredModalLayoutText of [
   "sm:w-[min(calc(100vw-2rem),80rem)] sm:max-w-[80rem]",
   "overflow-y-auto overflow-x-hidden",
   "xl:grid-cols-[130px_minmax(0,1.4fr)_minmax(0,1fr)_145px_145px_105px]",
+  "constructline-task-name",
   "Predecessors - work before this activity",
   "Successors - work after this activity",
   "Dependency readout",
@@ -108,8 +109,19 @@ assert.ok(
 
 const truncateGuardCount = (scheduleRiskSource.match(/truncate/g) ?? []).length;
 assert.ok(
-  truncateGuardCount >= 20,
-  `Expected truncation guards for schedule table and WBS text; found ${truncateGuardCount}.`,
+  truncateGuardCount >= 19,
+  `Expected truncation guards for compact schedule and WBS text; found ${truncateGuardCount}.`,
+);
+
+assertIncludes(
+  stylesSource,
+  ".constructline-task-name",
+  "CPM activity names must have a wrapping style hook for long printed activity labels.",
+);
+assertIncludes(
+  stylesSource,
+  "overflow-wrap: anywhere;",
+  "CPM activity names must wrap instead of truncating in the schedule grid.",
 );
 
 // Print contract: 11x17 landscape should carry report identity, fit text in report cells, and keep
