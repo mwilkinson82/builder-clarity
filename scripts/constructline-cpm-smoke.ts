@@ -342,6 +342,9 @@ const scheduleFunctionsSource = readProjectFile("src/lib/schedule.functions.ts")
 const templateMigrationSource = readProjectFile(
   "supabase/migrations/20260701012000_schedule_cpm_templates.sql",
 );
+const nestedWbsRepairMigrationSource = readProjectFile(
+  "supabase/migrations/20260701020148_repair_nested_schedule_wbs_sections.sql",
+);
 const stylesSource = readProjectFile("src/styles.css");
 
 for (const requiredScheduleRiskText of [
@@ -358,6 +361,8 @@ for (const requiredScheduleRiskText of [
   "WBS / areas",
   "WBS / area manager",
   "Custom WBS / child area path",
+  "Nested WBS setup is pending",
+  "Nested WBS controls unlock automatically",
   "Schedule update history",
   "1 wk lookahead",
   "2 wk lookahead",
@@ -408,6 +413,8 @@ for (const requiredScheduleFunctionText of [
   "path: str(row.path, name)",
   "scheduleWbsTemplatePayload(section, wbsPathMap.get(section.id) ?? section.name)",
   "section.path || section.name",
+  '.select("parent_id")',
+  "wbsNestedColumnsMissing",
 ]) {
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),
@@ -425,6 +432,21 @@ for (const requiredTemplateMigrationText of [
   assert.ok(
     templateMigrationSource.includes(requiredTemplateMigrationText),
     `Template migration is missing required CPM template contract: ${requiredTemplateMigrationText}`,
+  );
+}
+
+for (const requiredNestedWbsRepairText of [
+  "ADD COLUMN IF NOT EXISTS parent_id",
+  "ADD COLUMN IF NOT EXISTS wbs_section_id",
+  "CREATE OR REPLACE FUNCTION public.reorder_schedule_wbs_sections",
+  "GRANT EXECUTE ON FUNCTION public.reorder_schedule_wbs_sections",
+  "CREATE TABLE IF NOT EXISTS public.schedule_cpm_templates",
+  "GRANT SELECT, INSERT, UPDATE, DELETE ON public.schedule_cpm_templates TO authenticated",
+  "CREATE POLICY schedule_cpm_templates_team_insert",
+]) {
+  assert.ok(
+    nestedWbsRepairMigrationSource.includes(requiredNestedWbsRepairText),
+    `Nested WBS repair migration is missing required contract: ${requiredNestedWbsRepairText}`,
   );
 }
 

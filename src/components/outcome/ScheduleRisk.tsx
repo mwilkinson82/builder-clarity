@@ -1738,6 +1738,12 @@ export function CpmActivityPlanner({
     [wbsDivisionRows],
   );
   const isWbsMigrationRequired = wbsPersistence === "migration_required";
+  const showWbsMigrationPending = () => {
+    toast.error("Nested WBS setup is pending", {
+      description:
+        "The nested WBS database upgrade needs to finish before WBS add, nest, rename, and reorder can save.",
+    });
+  };
   const delaySummary = useMemo(() => buildDelayFragmentSummary(delayFragments), [delayFragments]);
   const baseCpmModel = useMemo(
     () =>
@@ -1899,6 +1905,10 @@ export function CpmActivityPlanner({
     setShowDraft(true);
   };
   const addWbsDivision = (divisionName: string, parentId: string | null = null) => {
+    if (isWbsMigrationRequired) {
+      showWbsMigrationPending();
+      return;
+    }
     const division = cleanWbsDivisionInput(divisionName);
     if (!division) return;
     const parentRow = parentId ? wbsDivisionRows.find((row) => row.id === parentId) : null;
@@ -1915,6 +1925,10 @@ export function CpmActivityPlanner({
     void onAddWbsSection(division, parentId);
   };
   const renameWbsDivision = async (fromDivision: string, toDivision: string) => {
+    if (isWbsMigrationRequired) {
+      showWbsMigrationPending();
+      return;
+    }
     const nextDivision = cleanWbsDivisionInput(toDivision);
     if (!nextDivision || nextDivision === fromDivision) return;
     const row = wbsDivisionRows.find((item) => item.division === fromDivision);
@@ -1936,6 +1950,10 @@ export function CpmActivityPlanner({
     await onRenameWbsSection(row.id, nextDivision);
   };
   const moveWbsDivisionParent = async (division: string, parentId: string | null) => {
+    if (isWbsMigrationRequired) {
+      showWbsMigrationPending();
+      return;
+    }
     const row = wbsDivisionRows.find((item) => item.division === division);
     if (!row?.id || (row.parentId ?? null) === parentId) return;
     const parentRow = parentId ? wbsDivisionRows.find((item) => item.id === parentId) : null;
@@ -1957,6 +1975,10 @@ export function CpmActivityPlanner({
     await onMoveWbsSectionParent(row.id, parentId);
   };
   const moveWbsDivision = (division: string, direction: -1 | 1) => {
+    if (isWbsMigrationRequired) {
+      showWbsMigrationPending();
+      return;
+    }
     const orderedRows = moveWbsDivisionInOrder(wbsDivisionRows, division, direction);
     const orderedIds = orderedRows.map((row) => row.id).filter((id): id is string => Boolean(id));
     if (orderedIds.length > 0) {
@@ -1968,6 +1990,10 @@ export function CpmActivityPlanner({
     setActivityOrder("wbs");
   };
   const reorderWbsDivisions = (orderedDivisions: string[]) => {
+    if (isWbsMigrationRequired) {
+      showWbsMigrationPending();
+      return;
+    }
     const orderedRows = orderedDivisions
       .map((division) => wbsDivisionRows.find((row) => row.division === division))
       .filter((row): row is WbsDivisionRow => Boolean(row?.id));
@@ -2673,6 +2699,7 @@ export function CpmActivityPlanner({
         onMoveDivision={moveWbsDivision}
         onReorderDivisions={reorderWbsDivisions}
         isSavingOrder={isSavingWbsOrder}
+        isPersistenceReady={!isWbsMigrationRequired}
       />
     </>
   );
@@ -3229,11 +3256,13 @@ function WbsManagerDialog({
   onMoveDivisionParent,
   onMoveDivision,
   onReorderDivisions,
+  isPersistenceReady,
 }: {
   open: boolean;
   divisions: WbsDivisionRow[];
   isSaving: boolean;
   isSavingOrder: boolean;
+  isPersistenceReady: boolean;
   onOpenChange: (open: boolean) => void;
   onAddDivision: (division: string, parentId?: string | null) => void;
   onRenameDivision: (fromDivision: string, toDivision: string) => Promise<void>;
@@ -3251,6 +3280,7 @@ function WbsManagerDialog({
   const [dropParentTargetId, setDropParentTargetId] = useState<string | null>(null);
   const newDivisionInputRef = useRef<HTMLInputElement | null>(null);
   const wasOpenRef = useRef(false);
+  const isLocked = !isPersistenceReady;
   const selectedParentRow =
     newDivisionParentId === "root"
       ? null
@@ -3280,19 +3310,21 @@ function WbsManagerDialog({
   }, [divisions, open]);
 
   const addDivision = () => {
+    if (isLocked) return;
     const division = cleanWbsDivisionInput(newDivision);
     if (!division) return;
     onAddDivision(division, newDivisionParentId === "root" ? null : newDivisionParentId);
     setNewDivision("");
   };
   const startChildDivision = (row: WbsDivisionRow) => {
-    if (!row.id) return;
+    if (!row.id || isLocked) return;
     setNewDivisionParentId(row.id);
     setNewDivision("");
     window.requestAnimationFrame(() => newDivisionInputRef.current?.focus());
   };
 
   const renameDivision = async (division: string) => {
+    if (isLocked) return;
     const nextDivision = cleanWbsDivisionInput(draftNames[division]);
     if (!nextDivision || nextDivision === division) return;
     setSavingDivision(division);
@@ -3303,6 +3335,7 @@ function WbsManagerDialog({
     }
   };
   const moveDivisionParent = async (division: string, parentId: string | null) => {
+    if (isLocked) return;
     setMovingParentDivision(division);
     try {
       await onMoveDivisionParent(division, parentId);
@@ -3311,7 +3344,7 @@ function WbsManagerDialog({
     }
   };
   const reorderDivision = (targetDivision: string) => {
-    if (!draggingDivision || draggingDivision === targetDivision) return;
+    if (isLocked || !draggingDivision || draggingDivision === targetDivision) return;
     const draggingRow = divisions.find((row) => row.division === draggingDivision);
     const targetRow = divisions.find((row) => row.division === targetDivision);
     if (!draggingRow?.id || !targetRow?.id || !isSameWbsParent(draggingRow, targetRow)) return;
@@ -3365,7 +3398,7 @@ function WbsManagerDialog({
         )}
         style={{ marginLeft: `${Math.min(depth, 4) * 18}px` }}
         onDragOver={(event) => {
-          if (!canDropIntoParent(parentId) || isSaving) return;
+          if (!canDropIntoParent(parentId) || isSaving || isLocked) return;
           event.preventDefault();
           event.stopPropagation();
           event.dataTransfer.dropEffect = "move";
@@ -3410,7 +3443,7 @@ function WbsManagerDialog({
           isActive && "border-foreground/50 bg-card shadow-sm",
         )}
         onDragOver={(event) => {
-          if (isSaving || !canDropIntoParent(row.id)) return;
+          if (isSaving || isLocked || !canDropIntoParent(row.id)) return;
           event.preventDefault();
           event.stopPropagation();
           event.dataTransfer.dropEffect = "move";
@@ -3497,6 +3530,7 @@ function WbsManagerDialog({
                 !draggingDivision ||
                 draggingDivision === row.division ||
                 isSaving ||
+                isLocked ||
                 !canPersistRow
               )
                 return;
@@ -3543,11 +3577,11 @@ function WbsManagerDialog({
           >
             <button
               type="button"
-              draggable={!isSaving && canPersistRow}
+              draggable={!isSaving && !isLocked && canPersistRow}
               className="flex h-9 w-9 cursor-grab items-center justify-center rounded border border-hairline bg-surface text-muted-foreground transition hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50 xl:self-center"
               aria-label={`Drag ${row.division} to reorder WBS`}
               title="Drag onto another row to reorder. Use the Nest target to make it a child area."
-              disabled={isSaving || !canPersistRow}
+              disabled={isSaving || isLocked || !canPersistRow}
               onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("text/plain", row.division);
@@ -3575,7 +3609,7 @@ function WbsManagerDialog({
                   }))
                 }
                 className="h-9 min-w-0"
-                disabled={isRowSaving}
+                disabled={isRowSaving || isLocked}
               />
               <div className="mt-1 text-[11px] leading-4 text-muted-foreground">
                 {row.parentPath ? `Path: ${row.division}` : "Top-level schedule WBS"}
@@ -3584,7 +3618,7 @@ function WbsManagerDialog({
             <LabeledField label="Parent WBS">
               <Select
                 value={row.parentId ?? "root"}
-                disabled={!canPersistRow || isRowSaving}
+                disabled={!canPersistRow || isRowSaving || isLocked}
                 onValueChange={(value) => {
                   void moveDivisionParent(row.division, value === "root" ? null : value);
                 }}
@@ -3628,7 +3662,7 @@ function WbsManagerDialog({
                   type="button"
                   variant="outline"
                   className="h-9 whitespace-nowrap"
-                  disabled={!canPersistRow || isSaving}
+                  disabled={!canPersistRow || isSaving || isLocked}
                   onClick={() => startChildDivision(row)}
                 >
                   <Plus className="mr-1 h-3.5 w-3.5" />
@@ -3638,7 +3672,7 @@ function WbsManagerDialog({
                   type="button"
                   variant={selectedParentRow?.id === row.id ? "default" : "outline"}
                   className="h-9 whitespace-nowrap"
-                  disabled={!canPersistRow || isSaving}
+                  disabled={!canPersistRow || isSaving || isLocked}
                   onClick={() => setNewDivisionParentId(row.id ?? "root")}
                 >
                   Use as parent
@@ -3647,7 +3681,9 @@ function WbsManagerDialog({
                   type="button"
                   variant="outline"
                   className="h-9 whitespace-nowrap"
-                  disabled={!canPersistRow || !cleanDraftName || !hasNameChange || isRowSaving}
+                  disabled={
+                    !canPersistRow || !cleanDraftName || !hasNameChange || isRowSaving || isLocked
+                  }
                   onClick={() => renameDivision(row.division)}
                 >
                   {savingDivision === row.division ? "Saving..." : "Save title"}
@@ -3657,7 +3693,7 @@ function WbsManagerDialog({
                   variant="outline"
                   size="icon"
                   className="h-9 w-9"
-                  disabled={!canMoveUp || isSaving}
+                  disabled={!canMoveUp || isSaving || isLocked}
                   onClick={() => onMoveDivision(row.division, -1)}
                   aria-label={`Move ${row.division} up`}
                 >
@@ -3668,7 +3704,7 @@ function WbsManagerDialog({
                   variant="outline"
                   size="icon"
                   className="h-9 w-9"
-                  disabled={!canMoveDown || isSaving}
+                  disabled={!canMoveDown || isSaving || isLocked}
                   onClick={() => onMoveDivision(row.division, 1)}
                   aria-label={`Move ${row.division} down`}
                 >
@@ -3700,6 +3736,14 @@ function WbsManagerDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
+          {isLocked && (
+            <div className="rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
+              Nested WBS saving is waiting on the database migration. Existing activity paths can
+              still display as WBS groups, but add, nest, rename, and reorder actions are disabled
+              until the schedule WBS parent column is live.
+            </div>
+          )}
+
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(240px,0.55fr)]">
             <div className="rounded-md border border-hairline bg-card px-4 py-3">
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -3752,13 +3796,13 @@ function WbsManagerDialog({
                     }}
                     placeholder={selectedParentRow ? "Northwest corner" : "Concrete"}
                     className="h-10 min-w-0"
-                    disabled={isSaving}
+                    disabled={isSaving || isLocked}
                   />
                 </LabeledField>
                 <Button
                   type="button"
                   className="h-10 gap-2"
-                  disabled={!newDivision.trim() || isSaving}
+                  disabled={!newDivision.trim() || isSaving || isLocked}
                   onClick={addDivision}
                 >
                   <Plus className="h-4 w-4" />
@@ -3769,7 +3813,7 @@ function WbsManagerDialog({
                 <Select
                   value={newDivisionParentId}
                   onValueChange={setNewDivisionParentId}
-                  disabled={isSaving}
+                  disabled={isSaving || isLocked}
                 >
                   <SelectTrigger className="h-10 min-w-0 bg-card">
                     <SelectValue />
@@ -3800,7 +3844,7 @@ function WbsManagerDialog({
                   variant="outline"
                   className="h-9 whitespace-nowrap"
                   onClick={() => setNewDivisionParentId("root")}
-                  disabled={isSaving}
+                  disabled={isSaving || isLocked}
                 >
                   Add at top level
                 </Button>
@@ -3828,7 +3872,9 @@ function WbsManagerDialog({
           <div className="text-xs text-muted-foreground">
             {isSavingOrder
               ? "Order is applied in the grid; background save is confirming it now."
-              : "Drag rows to reorder. Drop onto a parent to build child areas such as Concrete / Northwest corner."}
+              : isLocked
+                ? "Nested WBS controls unlock automatically after the schedule WBS migration is applied."
+                : "Drag rows to reorder. Drop onto a parent to build child areas such as Concrete / Northwest corner."}
           </div>
           <Button type="button" onClick={() => onOpenChange(false)} disabled={isSaving}>
             Done

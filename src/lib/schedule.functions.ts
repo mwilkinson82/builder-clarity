@@ -504,7 +504,7 @@ export const listSchedule = createServerFn({ method: "GET" })
     z.object({ projectId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const [mRes, rRes, aRes, wRes, dRes] = await Promise.all([
+    const [mRes, rRes, aRes, wRes, wNestedRes, dRes] = await Promise.all([
       context.supabase
         .from("schedule_milestones")
         .select("*")
@@ -527,6 +527,11 @@ export const listSchedule = createServerFn({ method: "GET" })
         .eq("project_id", data.projectId)
         .order("sort_order")
         .order("name"),
+      context.supabase
+        .from("schedule_wbs_sections")
+        .select("parent_id")
+        .eq("project_id", data.projectId)
+        .limit(1),
       context.supabase
         .from("schedule_delay_fragments")
         .select("*")
@@ -564,12 +569,17 @@ export const listSchedule = createServerFn({ method: "GET" })
       wRes.error &&
       (wRes.error.message.includes("schedule_wbs_sections") ||
         wRes.error.message.includes("schema cache"));
+    const wbsNestedColumnsMissing =
+      !wbsSectionsMissing && wNestedRes.error && isMissingRestColumn(wNestedRes.error, "parent_id");
     const delayFragmentsMissing =
       dRes.error &&
       (dRes.error.message.includes("schedule_delay_fragments") ||
         dRes.error.message.includes("schema cache"));
     if (aRes.error && !activitiesMissing) throw new Error(aRes.error.message);
     if (wRes.error && !wbsSectionsMissing) throw new Error(wRes.error.message);
+    if (wNestedRes.error && !wbsSectionsMissing && !wbsNestedColumnsMissing) {
+      throw new Error(wNestedRes.error.message);
+    }
     if (dRes.error && !delayFragmentsMissing) throw new Error(dRes.error.message);
     if (uRes.error && !updatesMissing) throw new Error(uRes.error.message);
     if (muRes.error && !milestoneUpdatesMissing) throw new Error(muRes.error.message);
@@ -656,7 +666,8 @@ export const listSchedule = createServerFn({ method: "GET" })
       milestones: (mRes.data ?? []) as unknown as MilestoneRow[],
       activities: activitiesMissing ? [] : activityRows.map((r) => normalizeScheduleActivity(r)),
       wbsSections: wbsSectionRows,
-      wbsPersistence: wbsSectionsMissing ? "migration_required" : "ready",
+      wbsPersistence:
+        wbsSectionsMissing || wbsNestedColumnsMissing ? "migration_required" : "ready",
       delayFragments: delayFragmentsMissing
         ? []
         : (dRes.data ?? []).map((r) =>
