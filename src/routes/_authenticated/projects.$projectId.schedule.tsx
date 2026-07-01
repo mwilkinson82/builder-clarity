@@ -639,7 +639,7 @@ function ScheduleWorkspaceShell({
   children: ReactNode;
 }) {
   return (
-    <div className="constructline-schedule-page min-h-screen overflow-x-hidden bg-background text-foreground print:bg-white">
+    <div className="constructline-schedule-page min-h-screen overflow-x-clip bg-background text-foreground print:bg-white">
       <header className="sticky top-0 z-30 border-b border-hairline bg-background/95 backdrop-blur print:static">
         <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-3 px-4 py-4 lg:px-8 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
@@ -719,7 +719,7 @@ function ScheduleWorkspaceOperations({
   const latestUpdate = updates[0] ?? null;
 
   return (
-    <section className="constructline-screen-ops mb-4 mt-5 rounded-lg border border-hairline bg-surface p-5">
+    <section className="constructline-screen-ops mb-4 mt-5 scroll-mt-28 rounded-lg border border-hairline bg-surface p-5">
       <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
@@ -883,7 +883,7 @@ function ScheduleOpsCard({
   return (
     <div
       id={id}
-      className={`min-w-0 rounded-lg border border-hairline bg-card p-4 shadow-sm ${className ?? ""}`}
+      className={`min-w-0 scroll-mt-28 rounded-lg border border-hairline bg-card p-4 shadow-sm ${className ?? ""}`}
     >
       <div className="flex min-w-0 items-start gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-hairline bg-surface text-muted-foreground">

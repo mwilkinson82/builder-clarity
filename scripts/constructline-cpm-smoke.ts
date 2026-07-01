@@ -433,6 +433,8 @@ for (const requiredScheduleRouteText of [
   "applyOptimisticWbsPathChange",
   'await qc.cancelQueries({ queryKey: ["schedule", projectId] });',
   "Schedule operations",
+  "overflow-x-clip",
+  "scroll-mt-28",
   "Critical delayed decisions",
   "Procurement risks",
   "Trade performance risks",
