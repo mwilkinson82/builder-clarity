@@ -260,13 +260,7 @@ export async function parsePdf(file: File): Promise<ParsedSheet> {
 // ---------------- Column mapping ----------------
 
 export type FieldKey =
-  | "cost_code"
-  | "bucket"
-  | "original_budget"
-  | "actual_to_date"
-  | "ftc"
-  | "sort_order"
-  | "ignore";
+  "cost_code" | "bucket" | "original_budget" | "actual_to_date" | "ftc" | "sort_order" | "ignore";
 
 export interface ColumnMap {
   [columnIndex: number]: FieldKey;
@@ -275,6 +269,7 @@ export interface ColumnMap {
 const HEADER_HINTS: Record<Exclude<FieldKey, "ignore">, RegExp[]> = {
   cost_code: [
     /cost\s*code/i,
+    /csi\s*code/i,
     /costcode/i,
     /job\s*cost/i,
     /phase\s*code/i,
@@ -327,6 +322,32 @@ const HEADER_HINTS: Record<Exclude<FieldKey, "ignore">, RegExp[]> = {
   sort_order: [/^order$/i, /sort/i, /^no\.?$/i],
 };
 
+const findHeaderIndex = (headerRow: string[], patterns: RegExp[], ncols: number) => {
+  for (let i = 0; i < ncols; i++) {
+    const cell = (headerRow[i] ?? "").trim();
+    if (patterns.some((re) => re.test(cell))) return i;
+  }
+  return -1;
+};
+
+const isDivisionColumnHeader = (value: string) =>
+  /^(?:csi\s*)?(?:div|division)(?:\s*(?:#|no\.?|number|code))?$/i.test(value.trim());
+
+const rowHasDivisionLabel = (value: string) =>
+  /\b(?:csi\s*)?(?:div|division)\.?\s*\d{1,2}\b/i.test(value);
+
+const DESCRIPTION_BUCKET_HEADERS = [
+  /description/i,
+  /^title$/i,
+  /^item$/i,
+  /^name$/i,
+  /scope/i,
+  /bucket/i,
+  /category/i,
+  /trade/i,
+  /section/i,
+];
+
 export function guessColumnMap(matrix: Matrix, hasHeader: boolean): ColumnMap {
   const out: ColumnMap = {};
   if (matrix.length === 0) return out;
@@ -340,13 +361,7 @@ export function guessColumnMap(matrix: Matrix, hasHeader: boolean): ColumnMap {
   };
 
   if (hasHeader) {
-    const findHeader = (patterns: RegExp[]) => {
-      for (let i = 0; i < ncols; i++) {
-        const cell = (headerRow[i] ?? "").trim();
-        if (patterns.some((re) => re.test(cell))) return i;
-      }
-      return -1;
-    };
+    const findHeader = (patterns: RegExp[]) => findHeaderIndex(headerRow, patterns, ncols);
 
     // BuilderTrend/estimate exports commonly contain cost-code line items with
     // "Builder Cost" as the construction-cost basis and "Client Price" as the
@@ -359,6 +374,16 @@ export function guessColumnMap(matrix: Matrix, hasHeader: boolean): ColumnMap {
       tryAssign(estimateCostCode, "cost_code");
       if (estimateTitle >= 0) tryAssign(estimateTitle, "bucket");
       tryAssign(estimateBudget, "original_budget");
+    }
+
+    // CSI exports often put a division column before the actual description.
+    // Treat the description/title as the SOV bucket so "DIV 09 Furnishings"
+    // becomes section context, not the thing we bill against.
+    const descriptionBucket = findHeader(DESCRIPTION_BUCKET_HEADERS);
+    const descriptionBudget = findHeader(HEADER_HINTS.original_budget);
+    if (descriptionBucket >= 0 && descriptionBudget >= 0) {
+      tryAssign(descriptionBucket, "bucket");
+      tryAssign(descriptionBudget, "original_budget");
     }
 
     for (let i = 0; i < ncols; i++) {
@@ -423,6 +448,20 @@ const splitCostCodeLabel = (value: string): { code: string; label: string } | nu
   return { code: match[1].trim(), label: match[2].trim() };
 };
 
+const isCsiDivisionHeaderRow = (
+  rowText: string,
+  bucket: string,
+  budgetRaw: string,
+  budgetParsed: number | null,
+) => {
+  const text = `${rowText} ${bucket}`.replace(/\s+/g, " ").trim();
+  const hasDivisionLabel = rowHasDivisionLabel(text);
+  if (!hasDivisionLabel) return false;
+
+  const hasChildLineCount = /\b\d+\s+lines?\b/i.test(text);
+  return hasChildLineCount || budgetRaw === "" || budgetParsed == null || budgetParsed <= 0;
+};
+
 export function missingRequiredMappings(map: ColumnMap): string[] {
   const fields = Object.values(map);
   const missing: string[] = [];
@@ -454,6 +493,21 @@ export interface AmountColumnChoice {
   note: string;
 }
 
+export interface ColumnMappingSuggestion {
+  columnIndex: number;
+  label: string;
+  field: FieldKey;
+  confidence: "high" | "medium" | "low";
+  reasons: string[];
+  samples: string[];
+}
+
+export interface SkippedRowSummary {
+  reason: string;
+  count: number;
+  examples: string[];
+}
+
 export interface SovIntakeAnalysis {
   profile: string;
   confidence: "high" | "medium" | "low";
@@ -463,6 +517,8 @@ export interface SovIntakeAnalysis {
   totalBudget: number;
   selectedBudgetColumn: number | null;
   amountChoices: AmountColumnChoice[];
+  columnSuggestions: ColumnMappingSuggestion[];
+  skippedRowReasons: SkippedRowSummary[];
   warnings: string[];
 }
 
@@ -472,17 +528,37 @@ export function applyMapping(
   map: ColumnMap,
 ): BucketImportRow[] {
   const rows = hasHeader ? matrix.slice(1) : matrix;
+  const headerRow = hasHeader ? (matrix[0] ?? []) : [];
+  const ncols = Math.max(0, ...matrix.map((r) => r.length));
+  const fieldIndex = (field: Exclude<FieldKey, "ignore">): number | null => {
+    const idx = Object.entries(map).find(([, f]) => f === field)?.[0];
+    return idx == null ? null : Number(idx);
+  };
+  const costCodeIndex = fieldIndex("cost_code");
+  const bucketIndex = fieldIndex("bucket");
+  const costCodeHeader = costCodeIndex == null ? "" : (headerRow[costCodeIndex] ?? "");
+  const bucketHeader = bucketIndex == null ? "" : (headerRow[bucketIndex] ?? "");
+  const costCodeIsDivisionOnly = hasHeader && isDivisionColumnHeader(costCodeHeader);
+  const bucketIsDivisionOnly = hasHeader && isDivisionColumnHeader(bucketHeader);
+  const descriptionFallbackIndex = hasHeader
+    ? findHeaderIndex(headerRow, DESCRIPTION_BUCKET_HEADERS, ncols)
+    : -1;
   const out: BucketImportRow[] = [];
   let auto = 1;
   for (const r of rows) {
     const get = (field: Exclude<FieldKey, "ignore">): string => {
-      const idx = Object.entries(map).find(([, f]) => f === field)?.[0];
-      return idx == null ? "" : (r[Number(idx)] ?? "");
+      const idx = fieldIndex(field);
+      return idx == null ? "" : (r[idx] ?? "");
     };
-    const costCodeRaw = get("cost_code").trim();
+    const costCodeRaw = costCodeIsDivisionOnly ? "" : get("cost_code").trim();
     const codeParts = splitCostCodeLabel(costCodeRaw);
     const costCode = codeParts?.code ?? costCodeRaw;
-    const bucketRaw = get("bucket").trim();
+    const bucketRaw =
+      bucketIsDivisionOnly &&
+      descriptionFallbackIndex >= 0 &&
+      descriptionFallbackIndex !== bucketIndex
+        ? (r[descriptionFallbackIndex] ?? "").trim()
+        : get("bucket").trim();
     const bucket = codeParts?.label || bucketRaw;
     const budgetRaw = get("original_budget").trim();
     const actualRaw = get("actual_to_date").trim();
@@ -500,9 +576,13 @@ export function applyMapping(
     auto += 1;
     let valid = true;
     let reason: string | undefined;
+    const rowText = r.join(" ");
     if (!bucket) {
       valid = false;
       reason = "Missing bucket name";
+    } else if (isCsiDivisionHeaderRow(rowText, bucket, budgetRaw, budgetParsed)) {
+      valid = false;
+      reason = "CSI division header";
     } else if (/^(grand\s*)?total\b|^subtotal\b|^summary\b/i.test(bucket)) {
       valid = false;
       reason = "Total or summary row";
@@ -576,6 +656,154 @@ function consolidateBucketRows(rows: BucketImportRow[]): BucketImportRow[] {
   return consolidated;
 }
 
+const sampleColumnValues = (
+  matrix: Matrix,
+  hasHeader: boolean,
+  columnIndex: number,
+  limit = 4,
+): string[] => {
+  const samples: string[] = [];
+  const seen = new Set<string>();
+  for (const row of matrix.slice(hasHeader ? 1 : 0)) {
+    const value = (row[columnIndex] ?? "").replace(/\s+/g, " ").trim();
+    if (!value || seen.has(value.toLowerCase())) continue;
+    samples.push(value);
+    seen.add(value.toLowerCase());
+    if (samples.length >= limit) break;
+  }
+  return samples;
+};
+
+const countNumericSamples = (matrix: Matrix, hasHeader: boolean, columnIndex: number) => {
+  let numeric = 0;
+  let total = 0;
+  for (const row of matrix.slice(hasHeader ? 1 : 0)) {
+    const parsed = parseNumber(row[columnIndex] ?? "");
+    if (parsed == null) continue;
+    numeric += 1;
+    total += parsed;
+  }
+  return { numeric, total };
+};
+
+export function explainColumnMapping(
+  matrix: Matrix,
+  hasHeader: boolean,
+  map: ColumnMap,
+): ColumnMappingSuggestion[] {
+  if (matrix.length === 0) return [];
+  const ncols = Math.max(...matrix.map((row) => row.length));
+  const header = hasHeader ? (matrix[0] ?? []) : [];
+  const suggestions: ColumnMappingSuggestion[] = [];
+
+  for (let columnIndex = 0; columnIndex < ncols; columnIndex++) {
+    const label =
+      hasHeader && (header[columnIndex] ?? "").trim()
+        ? (header[columnIndex] ?? "").trim()
+        : `Column ${columnIndex + 1}`;
+    const field = map[columnIndex] ?? "ignore";
+    const samples = sampleColumnValues(matrix, hasHeader, columnIndex);
+    const sampleText = samples.join(" ");
+    const headerMatches =
+      field !== "ignore" && HEADER_HINTS[field]?.some((pattern) => pattern.test(label));
+    const numericStats = countNumericSamples(matrix, hasHeader, columnIndex);
+    const reasons: string[] = [];
+    let score = 0;
+
+    if (headerMatches) {
+      reasons.push(`Header matches ${field.replace(/_/g, " ")} language.`);
+      score += 2;
+    }
+
+    if (field === "cost_code") {
+      const codeLikeSamples = samples.filter(
+        (sample) => /^[A-Za-z]?\d[\w.-]*$/.test(sample) || splitCostCodeLabel(sample),
+      ).length;
+      if (codeLikeSamples > 0) {
+        reasons.push("Samples look like SOV or cost-code line numbers.");
+        score += 1;
+      }
+      if (rowHasDivisionLabel(sampleText)) {
+        reasons.push("DIV/Division section rows will be treated as headers, not billable lines.");
+        score += 1;
+      }
+    }
+
+    if (field === "bucket") {
+      const textSamples = samples.filter(
+        (sample) => /[A-Za-z]/.test(sample) && parseNumber(sample) == null,
+      ).length;
+      if (textSamples > 0) {
+        reasons.push("Samples read like SOV descriptions or bucket names.");
+        score += 1;
+      }
+      if (/title|description|scope|trade|category/i.test(label)) {
+        reasons.push("Header points to the description users will bill against.");
+        score += 1;
+      }
+    }
+
+    if (field === "original_budget" || field === "actual_to_date" || field === "ftc") {
+      if (numericStats.numeric > 0) {
+        reasons.push(
+          `${numericStats.numeric} numeric value${
+            numericStats.numeric === 1 ? "" : "s"
+          } found; sample total ${numericStats.total.toLocaleString()}.`,
+        );
+        score += 1;
+      }
+      if (field === "original_budget" && /builder\s*cost|budget|scheduled\s*value/i.test(label)) {
+        reasons.push("Header looks like the SOV budget basis.");
+        score += 1;
+      }
+    }
+
+    if (field === "ignore") {
+      if (rowHasDivisionLabel(sampleText) || isDivisionColumnHeader(label)) {
+        reasons.push("Looks like CSI division context, not a billable SOV line item.");
+        score += 2;
+      } else if (
+        numericStats.numeric > 0 &&
+        /qty|quantity|unit|rate|%|margin|markup/i.test(label)
+      ) {
+        reasons.push("Looks like quantity, unit, percent, or markup support data.");
+        score += 1;
+      } else {
+        reasons.push("Ignored unless you manually map it below.");
+      }
+    }
+
+    if (reasons.length === 0) {
+      reasons.push("Mapped from surrounding column context; confirm before importing.");
+    }
+
+    suggestions.push({
+      columnIndex,
+      label,
+      field,
+      confidence: score >= 3 ? "high" : score >= 2 ? "medium" : "low",
+      reasons,
+      samples,
+    });
+  }
+
+  return suggestions;
+}
+
+const summarizeSkippedRows = (rows: BucketImportRow[]): SkippedRowSummary[] => {
+  const byReason = new Map<string, SkippedRowSummary>();
+  for (const row of rows) {
+    if (row.valid) continue;
+    const reason = row.reason ?? "Skipped row";
+    const current = byReason.get(reason) ?? { reason, count: 0, examples: [] };
+    current.count += 1;
+    const example = [row.cost_code, row.bucket].filter(Boolean).join(" / ");
+    if (example && current.examples.length < 3) current.examples.push(example);
+    byReason.set(reason, current);
+  }
+  return Array.from(byReason.values()).sort((a, b) => b.count - a.count);
+};
+
 export function analyzeSovIntake(
   matrix: Matrix,
   hasHeader: boolean,
@@ -593,6 +821,7 @@ export function analyzeSovIntake(
   const amountChoices = detectAmountColumns(matrix, hasHeader, selectedBudgetColumn);
   const warnings: string[] = [];
   const mergedRows = validRows.filter((row) => row.reason?.startsWith("Merged ")).length;
+  const skippedDivisionHeaders = rows.filter((row) => row.reason === "CSI division header").length;
 
   let profile = "Generic spreadsheet";
   let confidence: SovIntakeAnalysis["confidence"] = "medium";
@@ -632,6 +861,13 @@ export function analyzeSovIntake(
   if (mergedRows > 0) {
     warnings.push(`${mergedRows} cost-code buckets were built by merging repeated estimate lines.`);
   }
+  if (skippedDivisionHeaders > 0) {
+    warnings.push(
+      `${skippedDivisionHeaders} CSI division header row${
+        skippedDivisionHeaders === 1 ? "" : "s"
+      } skipped. Only billable SOV line items will import.`,
+    );
+  }
   if (validRows.length === 0) {
     warnings.push("No importable rows were found. Check the column mapping before importing.");
   }
@@ -645,6 +881,8 @@ export function analyzeSovIntake(
     totalBudget: validRows.reduce((sum, row) => sum + row.original_budget, 0),
     selectedBudgetColumn,
     amountChoices,
+    columnSuggestions: explainColumnMapping(matrix, hasHeader, map),
+    skippedRowReasons: summarizeSkippedRows(rows),
     warnings,
   };
 }

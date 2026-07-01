@@ -9,6 +9,7 @@ import {
   parseCostLibraryRows,
   parseEstimateLineRows,
 } from "../src/lib/estimate-import.ts";
+import { analyzeSovIntake, applyMapping, guessColumnMap } from "../src/lib/sov-import.ts";
 import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "../src/lib/estimate-seed-data.ts";
 
 const parseDelimited = (text, delimiter) =>
@@ -108,6 +109,52 @@ assert.equal(
 );
 assert.equal(excelEstimateRows[0].unit, "MO");
 assert.equal(excelEstimateRows[1].quantity, 18500);
+
+const csiDivisionSovPaste = parseTabPaste(`Code\tTitle\tBuilder Cost
+DIV 09 Finishes\t1 line\t
+09\tSack and Patch\t12500
+DIV 10 Specialties\t1 line\t
+10\tSaw Cutting: Door Opening\t8500
+DIV 11 MEP\t1 line\t
+11\tSaw Cutting: Plumbing Opening\t9200`);
+const csiDivisionSovMap = guessColumnMap(csiDivisionSovPaste, true);
+assert.equal(csiDivisionSovMap[0], "cost_code");
+assert.equal(csiDivisionSovMap[1], "bucket");
+assert.notEqual(csiDivisionSovMap[0], "bucket");
+const csiDivisionSovRows = applyMapping(csiDivisionSovPaste, true, csiDivisionSovMap);
+const csiDivisionValidRows = csiDivisionSovRows.filter((row) => row.valid);
+assert.equal(csiDivisionValidRows.length, 3);
+assert.deepEqual(
+  csiDivisionValidRows.map((row) => row.bucket),
+  ["Sack and Patch", "Saw Cutting: Door Opening", "Saw Cutting: Plumbing Opening"],
+);
+assert.deepEqual(
+  csiDivisionValidRows.map((row) => row.cost_code),
+  ["09", "10", "11"],
+);
+assert.equal(csiDivisionSovRows.filter((row) => row.reason === "CSI division header").length, 3);
+const csiDivisionSovAnalysis = analyzeSovIntake(csiDivisionSovPaste, true, csiDivisionSovMap);
+assert.ok(
+  csiDivisionSovAnalysis.warnings.some((warning) =>
+    /3 CSI division header rows skipped/.test(warning),
+  ),
+);
+assert.equal(csiDivisionSovAnalysis.skippedRowReasons[0]?.reason, "CSI division header");
+assert.equal(csiDivisionSovAnalysis.skippedRowReasons[0]?.count, 3);
+assert.equal(
+  csiDivisionSovAnalysis.columnSuggestions.find((suggestion) => suggestion.label === "Code")?.field,
+  "cost_code",
+);
+assert.ok(
+  csiDivisionSovAnalysis.columnSuggestions
+    .find((suggestion) => suggestion.label === "Code")
+    ?.reasons.some((reason) => /DIV\/Division section rows/.test(reason)),
+);
+assert.equal(
+  csiDivisionSovAnalysis.columnSuggestions.find((suggestion) => suggestion.label === "Title")
+    ?.field,
+  "bucket",
+);
 
 const templateEstimateRows = parseEstimateLineRows(
   parseDelimited(estimateLineTemplateCsv, ","),

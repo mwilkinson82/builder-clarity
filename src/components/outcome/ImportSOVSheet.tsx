@@ -28,7 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Upload, Check, AlertTriangle, FileSpreadsheet } from "lucide-react";
+import { Upload, Check, AlertTriangle, FileSpreadsheet, Sparkles } from "lucide-react";
 import {
   parseCsv,
   parseXlsx,
@@ -199,7 +199,9 @@ export function ImportSOVSheet({
   const missingMappings = parsed ? missingRequiredMappings(map) : [];
   const intake = parsed ? analyzeSovIntake(parsed.matrix, hasHeader, map) : null;
   const compatibleProfiles = parsed
-    ? mappingProfiles.filter((profile) => !profile.source_type || profile.source_type === parsed.source)
+    ? mappingProfiles.filter(
+        (profile) => !profile.source_type || profile.source_type === parsed.source,
+      )
     : mappingProfiles;
 
   const setBudgetColumn = (columnIndex: number) => {
@@ -763,6 +765,71 @@ function IntakeReview({
               No obvious import issues found.
             </div>
           )}
+          {analysis.skippedRowReasons.length > 0 && (
+            <div className="space-y-1.5">
+              {analysis.skippedRowReasons.slice(0, 3).map((summary) => (
+                <div
+                  key={summary.reason}
+                  className="rounded-md border border-hairline bg-muted/30 px-2.5 py-2 text-xs"
+                >
+                  <div className="font-medium">
+                    {summary.count} {summary.reason.toLowerCase()}
+                    {summary.count === 1 ? "" : "s"} skipped
+                  </div>
+                  {summary.examples.length > 0 && (
+                    <div className="mt-1 text-muted-foreground">
+                      Examples: {summary.examples.join("; ")}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="border-t border-hairline p-3">
+        <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          <Sparkles className="h-3.5 w-3.5 text-accent" />
+          Contextual mapping assistant
+        </div>
+        <div className="grid gap-2 md:grid-cols-2">
+          {analysis.columnSuggestions.map((suggestion) => (
+            <div
+              key={suggestion.columnIndex}
+              className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-medium">{suggestion.label}</div>
+                  <div className="mt-0.5 text-muted-foreground">
+                    Mapped as {FIELD_LABELS[suggestion.field]}
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em] ${
+                    suggestion.confidence === "high"
+                      ? "border-success/30 bg-success/10 text-success"
+                      : suggestion.confidence === "medium"
+                        ? "border-warning/30 bg-warning/10 text-warning"
+                        : "border-danger/30 bg-danger/10 text-danger"
+                  }`}
+                >
+                  {suggestion.confidence}
+                </span>
+              </div>
+              <div className="mt-2 space-y-1 text-muted-foreground">
+                {suggestion.reasons.slice(0, 2).map((reason) => (
+                  <div key={reason}>{reason}</div>
+                ))}
+              </div>
+              {suggestion.samples.length > 0 && (
+                <div className="mt-2 truncate rounded border border-hairline bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
+                  {suggestion.samples.join(" | ")}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       </div>
     </div>
