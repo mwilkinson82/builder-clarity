@@ -3980,7 +3980,7 @@ function WbsManagerDialog({
         <DialogFooter className="flex-col gap-2 border-t border-hairline px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="text-xs text-muted-foreground">
             {isSavingOrder
-              ? "Order applied in the grid; final save is confirming now."
+              ? "Order already changed in the grid; final save is confirming in the background."
               : isLocked
                 ? "This project is grouped by the WBS field on each activity."
                 : "Drag rows to reorder. Drop onto a parent to build child areas such as Concrete / Northwest corner."}

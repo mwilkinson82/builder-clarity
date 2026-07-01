@@ -442,7 +442,7 @@ for (const requiredScheduleRiskText of [
   "constructline-delay-extension",
   "constructline-delay-marker",
   "delay extension",
-  "Order applied in the grid; final save is confirming now.",
+  "Order already changed in the grid; final save is confirming in the background.",
 ]) {
   assert.ok(
     scheduleRiskSource.includes(requiredScheduleRiskText),
@@ -456,7 +456,8 @@ for (const requiredScheduleRouteText of [
   "applyOptimisticWbsOrderChange",
   "WBS_ORDER_SAVE_DEBOUNCE_MS = 75",
   "WBS order applied",
-  "Saving the final order.",
+  "Final save is confirming in the background.",
+  'void qc.cancelQueries({ queryKey: ["schedule", projectId] });',
   "Child WBS added",
   "WBS title applied",
   "WBS nested",

@@ -443,7 +443,7 @@ function ScheduleWorkspacePage() {
   });
 
   const queueWbsReorder = useCallback(
-    async (payload: WbsReorderInput) => {
+    (payload: WbsReorderInput) => {
       const toastId = wbsOrderToastRef.current ?? "wbs-order-save";
       wbsOrderToastRef.current = toastId;
       if (wbsOrderSaveTimerRef.current) {
@@ -452,7 +452,6 @@ function ScheduleWorkspacePage() {
 
       const saveVersion = wbsOrderVersionRef.current + 1;
       wbsOrderVersionRef.current = saveVersion;
-      await qc.cancelQueries({ queryKey: ["schedule", projectId] });
       const previous = qc.getQueryData<ScheduleQueryCache>(["schedule", projectId]);
       if (!wbsOrderRollbackRef.current) {
         wbsOrderRollbackRef.current = previous;
@@ -460,11 +459,12 @@ function ScheduleWorkspacePage() {
       qc.setQueryData<ScheduleQueryCache>(["schedule", projectId], (current) =>
         applyOptimisticWbsOrderChange(current, payload.orderedIds),
       );
+      void qc.cancelQueries({ queryKey: ["schedule", projectId] });
       wbsQueuedOrderRef.current = payload;
       setIsWbsOrderSaveQueued(true);
       toast.loading("WBS order applied", {
         id: toastId,
-        description: "The grid moved immediately. Saving the final order.",
+        description: "The grid moved now. Final save is confirming in the background.",
       });
 
       wbsOrderSaveTimerRef.current = setTimeout(() => {
