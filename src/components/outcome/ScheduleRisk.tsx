@@ -4567,10 +4567,10 @@ function ActivityScheduleMatrix({
   const fitDayPx = Math.max(0.85, fitTimelineTargetWidth / Math.max(1, model.totalTimelineDays));
   const activeDayPx = isPrintMode ? printDayPx : isFitZoom ? fitDayPx : dayPx;
   const tableColumns = isPrintMode
-    ? "52px minmax(152px,1fr) 34px 34px 48px 48px 38px 32px 34px"
+    ? "48px minmax(140px,1fr) 30px 32px 42px 42px 34px 34px 28px 32px"
     : isFitZoom
-      ? "60px minmax(165px,1fr) 42px 42px 56px 56px 50px 38px 42px"
-      : "78px minmax(240px,1fr) 54px 54px 78px 78px 64px 50px 56px";
+      ? "58px minmax(150px,1fr) 38px 42px 52px 56px 42px 46px 34px 38px"
+      : "78px minmax(220px,1fr) 50px 54px 76px 76px 58px 62px 48px 54px";
   const rowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
   const headerHeight = isPrintMode ? 30 : 48;
@@ -4676,7 +4676,8 @@ function ActivityScheduleMatrix({
             </div>
             <div className="mt-1 max-w-2xl text-xs text-muted-foreground">
               Planned duration stays tied to baseline dates. Remaining duration, current start, and
-              expected finish are the active update values used by the CPM calculation.
+              expected finish are the active update values; variance compares expected finish
+              against baseline.
             </div>
             {viewSummary && (
               <div className="mt-1 text-xs font-semibold text-foreground">{viewSummary}</div>
@@ -4764,6 +4765,9 @@ function ActivityScheduleMatrix({
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
                   Expected finish
+                </div>
+                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
+                  Variance
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
                   % done
@@ -5093,6 +5097,14 @@ function ConstructLineTaskRow({
       : embeddedDelayWidth > 0
         ? Math.min(timelineWidth - 8, Math.max(8, embeddedDelayLeft))
         : delayMarkerLeft;
+  const finishVarianceDays = getTaskFinishVarianceDays(task);
+  const finishVarianceLabel = formatFinishVarianceDays(finishVarianceDays);
+  const finishVarianceClass =
+    finishVarianceDays == null || finishVarianceDays === 0
+      ? "text-muted-foreground"
+      : finishVarianceDays > 0
+        ? "text-danger"
+        : "text-success";
   const barClass = task.isCritical
     ? "bg-danger"
     : task.isNearCritical
@@ -5161,6 +5173,14 @@ function ConstructLineTaskRow({
         </div>
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
           {shortPrintDate(task.statusFinishDate)}
+        </div>
+        <div
+          className={cn(
+            "flex items-center justify-end border-l border-hairline/50 px-2 font-semibold tabular",
+            finishVarianceClass,
+          )}
+        >
+          {finishVarianceLabel}
         </div>
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 font-semibold tabular text-foreground">
           {percent}%
@@ -5285,6 +5305,19 @@ function getDelayPeriodLabel(days: number, width: number, isPrintMode: boolean) 
   if (width >= (isPrintMode ? 42 : 76)) return `${days}d delay`;
   if (width >= (isPrintMode ? 24 : 48)) return "delay";
   return null;
+}
+
+function getTaskFinishVarianceDays(task: ConstructLineCpmTask) {
+  const baselineFinishMs = parseDateMs(task.baselineFinishDate);
+  const expectedFinishMs = parseDateMs(task.statusFinishDate);
+  if (baselineFinishMs == null || expectedFinishMs == null) return null;
+  return Math.round((expectedFinishMs - baselineFinishMs) / DAY_MS);
+}
+
+function formatFinishVarianceDays(days: number | null) {
+  if (days == null) return "-";
+  if (days === 0) return "0d";
+  return days > 0 ? `+${days}d` : `${days}d`;
 }
 
 function ScheduleFlag({ children, tone }: { children: ReactNode; tone: "danger" | "warning" }) {
