@@ -221,32 +221,32 @@ const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
 const CONSTRUCTLINE_MIN_DAY_PX = 1.1;
 const CONSTRUCTLINE_MAX_DAY_PX = 28;
-const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v4";
+const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v5";
 const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
-  { id: "id", label: "ID", compactLabel: "ID", min: 44, default: 48, max: 88, align: "left" },
+  { id: "id", label: "ID", compactLabel: "ID", min: 42, default: 46, max: 76, align: "left" },
   {
     id: "activity",
-    label: "Activity",
-    compactLabel: "Activity",
-    min: 124,
-    default: 160,
-    max: 360,
+    label: "Activity description",
+    compactLabel: "Activity description",
+    min: 112,
+    default: 136,
+    max: 320,
     align: "left",
   },
-  { id: "dur", label: "Duration", compactLabel: "Dur", min: 36, default: 40, max: 72 },
-  { id: "plan", label: "Planned dates", compactLabel: "Plan", min: 58, default: 64, max: 104 },
+  { id: "dur", label: "Duration", compactLabel: "Dur", min: 34, default: 38, max: 68 },
+  { id: "plan", label: "Planned dates", compactLabel: "Planned", min: 54, default: 58, max: 98 },
   {
     id: "current",
-    label: "Current dates",
-    compactLabel: "Now",
-    min: 62,
-    default: 68,
-    max: 120,
+    label: "Actual / current dates",
+    compactLabel: "Actual",
+    min: 58,
+    default: 62,
+    max: 110,
   },
-  { id: "slip", label: "Slip", compactLabel: "Slip", min: 32, default: 36, max: 64 },
-  { id: "done", label: "Done percent", compactLabel: "%", min: 34, default: 38, max: 62 },
-  { id: "tf", label: "TF", compactLabel: "TF", min: 28, default: 32, max: 56 },
-  { id: "logic", label: "Logic", compactLabel: "Logic", min: 30, default: 34, max: 60 },
+  { id: "slip", label: "Schedule variance", compactLabel: "Slip", min: 32, default: 34, max: 60 },
+  { id: "done", label: "Percent complete", compactLabel: "%", min: 32, default: 34, max: 58 },
+  { id: "tf", label: "Total float", compactLabel: "Float", min: 32, default: 36, max: 62 },
+  { id: "logic", label: "Logic ties", compactLabel: "Logic", min: 30, default: 32, max: 58 },
 ] as const;
 const CONSTRUCTLINE_TABLE_PRINT_COLUMNS =
   "42px minmax(130px,1fr) 34px 48px 54px 34px 30px 24px 26px";
@@ -1971,6 +1971,7 @@ export function CpmActivityPlanner({
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [dayPx, setDayPx] = useState<number>(CONSTRUCTLINE_FIT_DAY_PX);
   const [showLogicLines, setShowLogicLines] = useState(true);
+  const [showBaselineBars, setShowBaselineBars] = useState(true);
   const [activityOrder, setActivityOrder] = useState<ScheduleActivityOrder>("start");
   const [scheduleView, setScheduleView] = useState<ScheduleGridView>("all");
   const [dataDateDraft, setDataDateDraft] = useState(() => latestDataDate ?? todayIsoDate());
@@ -2905,6 +2906,7 @@ export function CpmActivityPlanner({
           emptyTitle="No activities match this schedule view."
           emptyDescription="Switch back to All activities or choose a broader view."
           showLogicLines={showLogicLines}
+          showBaselineBars={showBaselineBars}
           isPrintMode
           onOpenActivity={() => undefined}
           onDeleteActivity={() => undefined}
@@ -2976,6 +2978,8 @@ export function CpmActivityPlanner({
               onZoomChange={setDayPx}
               showLogicLines={showLogicLines}
               onToggleLogicLines={() => setShowLogicLines((visible) => !visible)}
+              showBaselineBars={showBaselineBars}
+              onToggleBaselineBars={() => setShowBaselineBars((visible) => !visible)}
               onManageWbs={() => setIsWbsManagerOpen(true)}
               onExpand={() => setIsFocusOpen(true)}
               onSeedActivities={() => onSeedActivities(milestoneSeedRows)}
@@ -3022,6 +3026,7 @@ export function CpmActivityPlanner({
           onDayPxChange={setDayPx}
           dataDate={effectiveDataDate}
           showLogicLines={showLogicLines}
+          showBaselineBars={showBaselineBars}
           onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
           onDeleteActivity={(id) => {
             const activity = sortedActivities.find((item) => item.id === id);
@@ -3124,24 +3129,24 @@ export function CpmActivityPlanner({
       </div>
 
       {isFocusOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-background p-3 text-foreground print:hidden sm:p-5">
-          <div className="mb-3 flex flex-col gap-3 rounded-md border border-hairline bg-card px-4 py-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div className="fixed inset-0 z-50 flex flex-col bg-background p-2 text-foreground print:hidden sm:p-3">
+          <div className="mb-2 flex shrink-0 flex-col gap-2 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 ConstructLine CPM grid
               </div>
-              <div className="mt-1 font-serif text-2xl text-foreground">
+              <div className="mt-0.5 font-serif text-lg text-foreground">
                 {project.name} schedule
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               <CpmDataDateControl
                 value={dataDateDraft}
                 savedValue={latestDataDate}
                 isSaving={dataDateUpdate.isPending}
                 onChange={setDataDateDraft}
                 onSave={saveDataDate}
-                className="min-w-[300px]"
+                className="min-w-[260px]"
                 readinessWarningCount={updateReadiness.needsStatusCount}
                 isReadinessWarningArmed={isReadinessSaveWarningArmed}
               />
@@ -3166,6 +3171,16 @@ export function CpmActivityPlanner({
               >
                 <GitBranch className="h-4 w-4" />
                 Logic lines
+              </Button>
+              <Button
+                type="button"
+                variant={showBaselineBars ? "default" : "outline"}
+                className="gap-2"
+                aria-pressed={showBaselineBars}
+                onClick={() => setShowBaselineBars((visible) => !visible)}
+              >
+                <Layers className="h-4 w-4" />
+                Baseline
               </Button>
               <Button
                 type="button"
@@ -3246,6 +3261,7 @@ export function CpmActivityPlanner({
                 : "Switch back to All activities or choose a broader view."
             }
             showLogicLines={showLogicLines}
+            showBaselineBars={showBaselineBars}
             isFocusMode
             onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
             onDeleteActivity={(id) => {
@@ -3627,6 +3643,8 @@ function CpmGridToolbar({
   onZoomChange,
   showLogicLines,
   onToggleLogicLines,
+  showBaselineBars,
+  onToggleBaselineBars,
   onManageWbs,
   onExpand,
   onSeedActivities,
@@ -3665,6 +3683,8 @@ function CpmGridToolbar({
   onZoomChange: (dayPx: number) => void;
   showLogicLines: boolean;
   onToggleLogicLines: () => void;
+  showBaselineBars: boolean;
+  onToggleBaselineBars: () => void;
   onManageWbs: () => void;
   onExpand: () => void;
   onSeedActivities: () => void;
@@ -3742,6 +3762,16 @@ function CpmGridToolbar({
           >
             <GitBranch className="h-4 w-4" />
             Logic lines
+          </Button>
+          <Button
+            type="button"
+            variant={showBaselineBars ? "default" : "outline"}
+            className="h-9 gap-2 whitespace-nowrap"
+            aria-pressed={showBaselineBars}
+            onClick={onToggleBaselineBars}
+          >
+            <Layers className="h-4 w-4" />
+            Baseline
           </Button>
           <Button
             type="button"
@@ -4870,7 +4900,7 @@ function clampNumber(value: number, min: number, max: number) {
 function buildDefaultTableColumnWidths(isFocusMode: boolean): ConstructLineTableColumnWidths {
   return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((widths, column) => {
     widths[column.id] =
-      column.id === "activity" && isFocusMode ? Math.min(column.max, 190) : column.default;
+      column.id === "activity" && isFocusMode ? Math.min(column.max, 150) : column.default;
     return widths;
   }, {} as ConstructLineTableColumnWidths);
 }
@@ -4881,17 +4911,27 @@ function buildTableColumnWidthsForPreset(
   const widths = buildDefaultTableColumnWidths(false);
   if (preset === "gantt") {
     widths.id = 46;
-    widths.activity = 136;
-    widths.dur = 38;
-    widths.plan = 60;
-    widths.current = 64;
+    widths.activity = 118;
+    widths.dur = 36;
+    widths.plan = 54;
+    widths.current = 58;
     widths.slip = 34;
-    widths.done = 36;
-    widths.tf = 30;
-    widths.logic = 32;
+    widths.done = 32;
+    widths.tf = 34;
+    widths.logic = 30;
+  } else if (preset === "balanced") {
+    widths.id = 50;
+    widths.activity = 168;
+    widths.dur = 42;
+    widths.plan = 66;
+    widths.current = 72;
+    widths.slip = 40;
+    widths.done = 40;
+    widths.tf = 38;
+    widths.logic = 36;
   } else if (preset === "detail") {
     widths.id = 58;
-    widths.activity = 240;
+    widths.activity = 220;
     widths.dur = 50;
     widths.plan = 84;
     widths.current = 96;
@@ -4960,29 +5000,36 @@ function writeTableColumnWidths(
 
 function MatrixHeaderCell({
   children,
-  align = "right",
+  align = "center",
+  title,
   onResizeStart,
 }: {
   children: ReactNode;
-  align?: "left" | "right";
+  align?: "left" | "center" | "right";
+  title?: string;
   onResizeStart?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
 }) {
   return (
     <div
       className={cn(
-        "relative flex min-w-0 items-center border-l border-hairline/70 px-2 pr-3 leading-[1.05]",
-        align === "left" ? "justify-start text-left first:border-l-0" : "justify-end text-right",
+        "relative flex min-w-0 items-center border-l border-hairline/70 px-1.5 pr-3 leading-none",
+        align === "left"
+          ? "justify-start text-left first:border-l-0"
+          : align === "right"
+            ? "justify-end text-right"
+            : "justify-center text-center",
       )}
+      title={title}
     >
-      <span className="min-w-0 whitespace-normal break-words">{children}</span>
+      <span className="min-w-0 truncate">{children}</span>
       {onResizeStart && (
         <button
           type="button"
           aria-label="Resize column"
-          className="group absolute inset-y-0 right-0 z-10 flex w-3 translate-x-1 cursor-col-resize items-center justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
+          className="group absolute inset-y-0 right-0 z-10 flex w-4 translate-x-1 cursor-col-resize items-center justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
           onPointerDown={onResizeStart}
         >
-          <span className="h-5 w-1 rounded-full bg-foreground/20 transition-colors group-hover:bg-foreground/60" />
+          <span className="h-7 w-1 rounded-full bg-foreground/25 transition-colors group-hover:bg-foreground/70" />
         </button>
       )}
     </div>
@@ -5002,6 +5049,7 @@ function ActivityScheduleMatrix({
   dayPx,
   dataDate,
   showLogicLines = false,
+  showBaselineBars = true,
   isFocusMode = false,
   isPrintMode = false,
   onDayPxChange,
@@ -5020,6 +5068,7 @@ function ActivityScheduleMatrix({
   dayPx: number;
   dataDate: string | null;
   showLogicLines?: boolean;
+  showBaselineBars?: boolean;
   isFocusMode?: boolean;
   isPrintMode?: boolean;
   onDayPxChange?: (dayPx: number) => void;
@@ -5040,6 +5089,7 @@ function ActivityScheduleMatrix({
   const tableWidth = isPrintMode
     ? CONSTRUCTLINE_PRINT_TABLE_WIDTH
     : getTableColumnWidth(columnWidths);
+  const activityColumnWidth = isPrintMode ? 130 : columnWidths.activity;
   const fitTimelineTargetWidth =
     matrixViewportWidth > 0
       ? Math.max(isFocusMode ? 520 : 480, measuredMatrixWidth - tableWidth - 1)
@@ -5059,7 +5109,6 @@ function ActivityScheduleMatrix({
   const tableColumns = isPrintMode
     ? CONSTRUCTLINE_TABLE_PRINT_COLUMNS
     : buildTableColumnTemplate(columnWidths);
-  const compactHeaders = isFitZoom || isPrintMode;
   const baseRowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
   const headerHeight = isPrintMode ? 30 : 54;
@@ -5171,15 +5220,12 @@ function ActivityScheduleMatrix({
   const applyGridLayoutPreset = useCallback(
     (preset: ConstructLineGridLayoutPreset) => {
       if (isPrintMode) return;
-      const presetWidths =
-        preset === "balanced"
-          ? buildDefaultTableColumnWidths(isFocusMode)
-          : buildTableColumnWidthsForPreset(preset);
+      const presetWidths = buildTableColumnWidthsForPreset(preset);
       setColumnWidths(presetWidths);
       if (onDayPxChange) onDayPxChange(CONSTRUCTLINE_FIT_DAY_PX);
       writeTableColumnWidths(layoutStorageKey, presetWidths);
     },
-    [isFocusMode, isPrintMode, layoutStorageKey, onDayPxChange],
+    [isPrintMode, layoutStorageKey, onDayPxChange],
   );
   const monthBands = buildConstructLineMonthBands(
     model.timelineStartDate,
@@ -5207,13 +5253,14 @@ function ActivityScheduleMatrix({
           row.task,
           isPrintMode,
           delayFragmentsByActivity,
+          activityColumnWidth,
         );
         positions.set(row.task.activityKey, height + taskRowHeight / 2);
         height += taskRowHeight;
       }
     }
     return { bodyHeight: height, rowPositions: positions };
-  }, [delayFragmentsByActivity, groupHeight, isPrintMode, rows]);
+  }, [activityColumnWidth, delayFragmentsByActivity, groupHeight, isPrintMode, rows]);
   const taskByKey = useMemo(
     () => new Map(model.tasks.map((task) => [task.activityKey, task])),
     [model.tasks],
@@ -5258,106 +5305,105 @@ function ActivityScheduleMatrix({
         isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : isPrintMode ? "mt-0" : "mt-2",
       )}
     >
-      <div className="constructline-cpm-matrix-head flex flex-col gap-3 border-b border-hairline bg-card px-3 py-3">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+      <div className="constructline-cpm-matrix-head flex flex-col gap-2 border-b border-hairline bg-card px-3 py-2">
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
           <div className="constructline-cpm-matrix-title">
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               <GitBranch className="h-3.5 w-3.5" />
               ConstructLine CPM grid
             </div>
-            <div className="mt-1 font-serif text-xl text-foreground">Activity table + Gantt</div>
-            <div className="mt-1 text-sm text-muted-foreground">
+            <div className="mt-0.5 font-serif text-lg text-foreground">Activity table + Gantt</div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
               {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
             </div>
-            {isFocusMode && (
-              <div className="mt-1 max-w-2xl text-xs text-muted-foreground">
-                Planned duration stays tied to baseline dates. Remaining duration, current start,
-                and expected finish are the active update values; variance compares expected finish
-                against baseline.
-              </div>
-            )}
             {viewSummary && (
               <div className="mt-1 text-xs font-semibold text-foreground">{viewSummary}</div>
             )}
-            <CpmNetworkBasisStrip model={model} dataDate={dataDate} />
           </div>
-          <div className="constructline-cpm-matrix-legend flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-muted-foreground xl:justify-end">
-            <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-5 rounded-full bg-danger" />
-              Critical
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-5 rounded-full bg-warning" />
-              Near critical
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-5 rounded-full bg-success" />
-              Complete
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-2.5 w-2.5 rotate-45 rounded-[1px] border border-foreground/45 bg-card" />
-              Milestone
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="constructline-baseline-legend-swatch h-1.5 w-8 rounded-full bg-foreground/35" />
-              Baseline
-            </span>
-            {activeDelayFragmentCount > 0 && (
+          <div className="flex min-w-0 flex-1 flex-col gap-2 xl:items-end">
+            <div className="constructline-cpm-matrix-legend flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-muted-foreground xl:justify-end">
               <span className="inline-flex items-center gap-1">
-                <span className="constructline-delay-legend-swatch h-3 w-8 rounded-full border border-danger/40" />
-                Delay period
+                <span className="h-2 w-5 rounded-full bg-danger" />
+                Critical
               </span>
-            )}
-            <span className="font-semibold tabular text-foreground">
-              {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
-            </span>
-            {showLogicLines && (
-              <span className="inline-flex items-center gap-1 font-semibold text-foreground">
-                <GitBranch className="h-3.5 w-3.5" />
-                {logicLines.length} ties shown
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2 w-5 rounded-full bg-warning" />
+                Near critical
               </span>
-            )}
-            {!isPrintMode && (
-              <div className="flex flex-wrap gap-1.5">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-[11px]"
-                  onClick={() => applyGridLayoutPreset("gantt")}
-                >
-                  Gantt first
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-[11px]"
-                  onClick={() => applyGridLayoutPreset("balanced")}
-                >
-                  Balanced
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-[11px]"
-                  onClick={() => applyGridLayoutPreset("detail")}
-                >
-                  Details
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1.5 px-2 text-[11px]"
-                  onClick={resetGridLayout}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Reset grid
-                </Button>
-              </div>
-            )}
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2 w-5 rounded-full bg-success" />
+                Complete
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2.5 w-2.5 rotate-45 rounded-[1px] border border-foreground/45 bg-card" />
+                Milestone
+              </span>
+              {showBaselineBars && (
+                <span className="inline-flex items-center gap-1">
+                  <span className="constructline-baseline-legend-swatch h-1.5 w-8 rounded-full bg-foreground/35" />
+                  Baseline
+                </span>
+              )}
+              {activeDelayFragmentCount > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <span className="constructline-delay-legend-swatch h-3 w-8 rounded-full border border-danger/40" />
+                  Delay period
+                </span>
+              )}
+              <span className="font-semibold tabular text-foreground">
+                {totalActivities} {totalActivities === 1 ? "activity" : "activities"}
+              </span>
+              {showLogicLines && (
+                <span className="inline-flex items-center gap-1 font-semibold text-foreground">
+                  <GitBranch className="h-3.5 w-3.5" />
+                  {logicLines.length} ties shown
+                </span>
+              )}
+              {!isPrintMode && (
+                <div className="flex flex-wrap gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => applyGridLayoutPreset("gantt")}
+                  >
+                    Gantt first
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => applyGridLayoutPreset("balanced")}
+                  >
+                    Balanced
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => applyGridLayoutPreset("detail")}
+                  >
+                    Details
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 px-2 text-[11px]"
+                    onClick={resetGridLayout}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Reset grid
+                  </Button>
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap justify-start gap-1.5 xl:justify-end">
+              <CpmNetworkBasisStrip model={model} dataDate={dataDate} />
+            </div>
           </div>
         </div>
         {toolbar && <div className="constructline-cpm-matrix-toolbar print:hidden">{toolbar}</div>}
@@ -5392,8 +5438,8 @@ function ActivityScheduleMatrix({
           >
             <div
               className={cn(
-                "z-20 flex border-b border-hairline bg-card text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground shadow-sm",
-                isFocusMode ? "sticky top-0" : "relative",
+                "flex border-b border-hairline bg-card text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground shadow-sm",
+                isFocusMode ? "sticky top-0 z-30" : "relative z-0",
               )}
               style={{ height: headerHeight }}
             >
@@ -5404,12 +5450,13 @@ function ActivityScheduleMatrix({
                 {CONSTRUCTLINE_TABLE_COLUMN_SPECS.map((column) => (
                   <MatrixHeaderCell
                     key={column.id}
-                    align={"align" in column && column.align === "left" ? "left" : "right"}
+                    align={"align" in column && column.align === "left" ? "left" : "center"}
+                    title={column.label}
                     onResizeStart={
                       isPrintMode ? undefined : (event) => startColumnResize(column.id, event)
                     }
                   >
-                    {compactHeaders ? column.compactLabel : column.label}
+                    {column.compactLabel}
                   </MatrixHeaderCell>
                 ))}
               </div>
@@ -5422,16 +5469,6 @@ function ActivityScheduleMatrix({
                 title="Drag left or right to compress or expand the Gantt timeline."
                 onPointerDown={startTimelineScaleDrag}
               >
-                {!isPrintMode && (
-                  <button
-                    type="button"
-                    aria-label="Resize activity table and Gantt split"
-                    className="group absolute inset-y-0 left-0 z-30 flex w-5 -translate-x-1/2 cursor-col-resize items-center justify-center border-x border-foreground/15 bg-card/95 shadow-sm hover:bg-surface focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
-                    onPointerDown={(event) => startColumnResize("activity", event)}
-                  >
-                    <span className="h-7 w-1 rounded-full bg-foreground/25 transition-colors group-hover:bg-foreground/70" />
-                  </button>
-                )}
                 {monthBands.map((band) => (
                   <div
                     key={`${band.label}-${band.x}`}
@@ -5460,6 +5497,19 @@ function ActivityScheduleMatrix({
                 )}
               </div>
             </div>
+
+            {!isPrintMode && (
+              <button
+                type="button"
+                aria-label="Resize activity table and Gantt split"
+                title="Drag to give more space to the Gantt or activity table"
+                className="group absolute z-40 flex w-4 -translate-x-1/2 cursor-col-resize items-start justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
+                style={{ left: tableWidth, top: headerHeight, height: bodyHeight }}
+                onPointerDown={(event) => startColumnResize("activity", event)}
+              >
+                <span className="mt-2 h-[calc(100%-16px)] w-1 rounded-full bg-foreground/20 transition-colors group-hover:bg-foreground/65" />
+              </button>
+            )}
 
             {rows.map((row) => {
               if (row.kind === "parent") {
@@ -5565,6 +5615,7 @@ function ActivityScheduleMatrix({
                 row.task,
                 isPrintMode,
                 delayFragmentsByActivity,
+                activityColumnWidth,
               );
               return (
                 <ConstructLineTaskRow
@@ -5577,6 +5628,7 @@ function ActivityScheduleMatrix({
                   timelineStartDate={model.timelineStartDate}
                   dayPx={activeDayPx}
                   isPrintMode={isPrintMode}
+                  showBaselineBars={showBaselineBars}
                   monthBands={monthBands}
                   dataDateX={dataDateX}
                   delayFragments={getDelayFragmentsForActivity(
@@ -5621,7 +5673,7 @@ function CpmNetworkBasisStrip({
   const negativeFloatCount = model.tasks.filter((task) => task.totalFloat < 0).length;
   const basisTone = model.criticalPathReliable ? "success" : "warning";
   return (
-    <div className="constructline-cpm-basis-strip mt-3 flex flex-wrap gap-2 text-[11px]">
+    <div className="constructline-cpm-basis-strip flex flex-wrap gap-1.5 text-[11px]">
       <CpmBasisPill
         label="CPM basis"
         value={model.criticalPathReliable ? "Reliable" : "Provisional"}
@@ -5818,6 +5870,7 @@ function ConstructLineTaskRow({
   timelineStartDate,
   dayPx,
   isPrintMode,
+  showBaselineBars,
   monthBands,
   dataDateX,
   onOpen,
@@ -5832,6 +5885,7 @@ function ConstructLineTaskRow({
   timelineStartDate: string;
   dayPx: number;
   isPrintMode: boolean;
+  showBaselineBars: boolean;
   monthBands: ReturnType<typeof buildConstructLineMonthBands>;
   dataDateX: number | null;
   onOpen: () => void;
@@ -5926,10 +5980,10 @@ function ConstructLineTaskRow({
           }
         }}
       >
-        <div className="flex min-w-0 items-center px-3 font-semibold leading-tight tabular text-foreground">
+        <div className="flex min-w-0 items-center justify-center px-2 text-center font-semibold leading-tight tabular text-foreground">
           {activity.activity_id || "No ID"}
         </div>
-        <div className="flex min-w-0 flex-col justify-center px-3">
+        <div className="flex min-w-0 flex-col justify-center px-3 text-left">
           <div className="constructline-task-name break-words text-sm font-semibold leading-snug text-foreground">
             {activity.name}
           </div>
@@ -5960,7 +6014,7 @@ function ConstructLineTaskRow({
           </div>
         </div>
         <div
-          className="flex min-w-0 flex-col items-end justify-center overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground"
+          className="flex min-w-0 flex-col items-center justify-center overflow-hidden border-l border-hairline/50 px-1.5 text-center text-[11px] tabular text-muted-foreground"
           title="Original planned duration and remaining duration for the current update."
         >
           <span className="font-semibold text-foreground">
@@ -5971,14 +6025,14 @@ function ConstructLineTaskRow({
           </span>
         </div>
         <div
-          className="flex min-w-0 flex-col items-end justify-center overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground"
+          className="flex min-w-0 flex-col items-center justify-center overflow-hidden border-l border-hairline/50 px-1.5 text-center text-[11px] tabular text-muted-foreground"
           title="Original planned baseline start and baseline finish."
         >
           <span className="truncate">{shortPrintDate(task.baselineStartDate)}</span>
           <span className="mt-0.5 truncate">{shortPrintDate(task.baselineFinishDate)}</span>
         </div>
         <div
-          className="flex min-w-0 flex-col items-end justify-center overflow-hidden border-l border-hairline/50 px-2 text-[11px] tabular text-muted-foreground"
+          className="flex min-w-0 flex-col items-center justify-center overflow-hidden border-l border-hairline/50 px-1.5 text-center text-[11px] tabular text-muted-foreground"
           title={`Current start and expected finish. ${formatTaskStatusBasisTitle(task)}`}
         >
           <span className="truncate">{shortPrintDate(task.statusStartDate)}</span>
@@ -5994,18 +6048,18 @@ function ConstructLineTaskRow({
         </div>
         <div
           className={cn(
-            "flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] font-semibold tabular",
+            "flex min-w-0 items-center justify-center overflow-hidden border-l border-hairline/50 px-1.5 text-center text-[11px] font-semibold tabular",
             finishVarianceClass,
           )}
         >
           <span className="truncate">{finishVarianceLabel}</span>
         </div>
-        <div className="flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] font-semibold tabular text-foreground">
+        <div className="flex min-w-0 items-center justify-center overflow-hidden border-l border-hairline/50 px-1.5 text-center text-[11px] font-semibold tabular text-foreground">
           <span className="truncate">{percent}%</span>
         </div>
         <div
           className={cn(
-            "flex min-w-0 items-center justify-end overflow-hidden border-l border-hairline/50 px-2 text-[11px] font-semibold tabular",
+            "flex min-w-0 items-center justify-center overflow-hidden border-l border-hairline/50 px-1.5 text-center text-[11px] font-semibold tabular",
             task.isCritical
               ? "text-danger"
               : task.isNearCritical
@@ -6015,7 +6069,7 @@ function ConstructLineTaskRow({
         >
           <span className="truncate">{task.totalFloat}</span>
         </div>
-        <div className="flex items-center justify-end gap-1 border-l border-hairline/50 px-1.5 tabular text-muted-foreground">
+        <div className="flex items-center justify-center gap-1 border-l border-hairline/50 px-1.5 text-center tabular text-muted-foreground">
           <span>{logicCount}</span>
           {!isPrintMode && (
             <Button
@@ -6056,12 +6110,14 @@ function ConstructLineTaskRow({
         )}
         {task.isMilestone ? (
           <>
-            <div
-              className="constructline-baseline-diamond absolute h-3 w-3 -translate-x-1/2 rotate-45 rounded-[1px] border border-foreground/35 bg-card"
-              style={{ left: baselineLeft, top: baselineTop }}
-              title={`Baseline milestone ${shortDate(task.baselineFinishDate)}`}
-              aria-label={`Baseline milestone ${shortDate(task.baselineFinishDate)}`}
-            />
+            {showBaselineBars && (
+              <div
+                className="constructline-baseline-diamond absolute h-3 w-3 -translate-x-1/2 rotate-45 rounded-[1px] border border-foreground/35 bg-card"
+                style={{ left: baselineLeft, top: baselineTop }}
+                title={`Baseline milestone ${shortDate(task.baselineFinishDate)}`}
+                aria-label={`Baseline milestone ${shortDate(task.baselineFinishDate)}`}
+              />
+            )}
             <div
               className={cn(
                 "absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] border-2 shadow-sm",
@@ -6072,12 +6128,14 @@ function ConstructLineTaskRow({
           </>
         ) : (
           <>
-            <div
-              className="constructline-baseline-bar absolute h-1.5 rounded-full bg-foreground/35"
-              style={{ left: baselineLeft, top: baselineTop, width: baselineWidth }}
-              title={`Baseline ${shortDate(task.baselineStartDate)} to ${shortDate(task.baselineFinishDate)}`}
-              aria-label={`Baseline ${shortDate(task.baselineStartDate)} to ${shortDate(task.baselineFinishDate)}`}
-            />
+            {showBaselineBars && (
+              <div
+                className="constructline-baseline-bar absolute h-1.5 rounded-full bg-foreground/35"
+                style={{ left: baselineLeft, top: baselineTop, width: baselineWidth }}
+                title={`Baseline ${shortDate(task.baselineStartDate)} to ${shortDate(task.baselineFinishDate)}`}
+                aria-label={`Baseline ${shortDate(task.baselineStartDate)} to ${shortDate(task.baselineFinishDate)}`}
+              />
+            )}
             <div
               className={cn(
                 "absolute top-1/2 h-4 -translate-y-1/2 rounded-full border",
@@ -6324,25 +6382,31 @@ function getActivityMatrixTaskRowHeight(
   task: ConstructLineCpmTask,
   isPrintMode: boolean,
   delayFragmentsByActivity: Map<string, ScheduleDelayFragmentRow[]>,
+  activityColumnWidth: number,
 ) {
   const name = task.activity.name.trim() || task.activity.activity_id || "Activity";
-  const estimatedNameLines = estimateActivityNameLines(name, isPrintMode);
+  const estimatedNameLines = estimateActivityNameLines(name, isPrintMode, activityColumnWidth);
   const flagCount = countActivityMatrixFlags(
     task,
     getDelayFragmentsForActivity(task.activity, delayFragmentsByActivity).some(isOpenDelayFragment),
   );
-  const estimatedFlagRows = flagCount === 0 ? 0 : Math.ceil(flagCount / (isPrintMode ? 3 : 4));
+  const flagsPerRow = Math.max(1, Math.floor(activityColumnWidth / (isPrintMode ? 42 : 76)));
+  const estimatedFlagRows = flagCount === 0 ? 0 : Math.ceil(flagCount / flagsPerRow);
 
   if (isPrintMode) {
-    return Math.min(66, Math.max(31, 22 + estimatedNameLines * 7 + estimatedFlagRows * 8));
+    return Math.min(84, Math.max(31, 22 + estimatedNameLines * 7 + estimatedFlagRows * 8));
   }
 
-  return Math.min(108, Math.max(72, 46 + estimatedNameLines * 14 + estimatedFlagRows * 18));
+  return Math.min(220, Math.max(72, 44 + estimatedNameLines * 16 + estimatedFlagRows * 21));
 }
 
-function estimateActivityNameLines(name: string, isPrintMode: boolean) {
-  const charsPerLine = isPrintMode ? 24 : 32;
-  const maxLines = isPrintMode ? 5 : 3;
+function estimateActivityNameLines(
+  name: string,
+  isPrintMode: boolean,
+  activityColumnWidth: number,
+) {
+  const charsPerLine = Math.max(isPrintMode ? 18 : 16, Math.floor(activityColumnWidth / 7));
+  const maxLines = isPrintMode ? 6 : 5;
   return Math.max(1, Math.min(maxLines, Math.ceil(name.length / charsPerLine)));
 }
 
