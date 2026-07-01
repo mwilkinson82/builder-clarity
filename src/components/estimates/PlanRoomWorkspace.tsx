@@ -494,8 +494,11 @@ export function PlanRoomWorkspace({
   const [takeoffSearch, setTakeoffSearch] = useState("");
   const [takeoffFilter, setTakeoffFilter] = useState<TakeoffFilterMode>("all");
   const [selectedMeasurementDraft, setSelectedMeasurementDraft] = useState({
+    color: TAKEOFF_COLORS[0],
     label: "",
     notes: "",
+    quantity: "",
+    unit: "",
   });
 
   const currentSheet = useMemo(
@@ -629,14 +632,28 @@ export function PlanRoomWorkspace({
 
   useEffect(() => {
     if (!selectedMeasurementId) {
-      setSelectedMeasurementDraft({ label: "", notes: "" });
+      setSelectedMeasurementDraft({
+        color: TAKEOFF_COLORS[0],
+        label: "",
+        notes: "",
+        quantity: "",
+        unit: "",
+      });
       return;
     }
     setSelectedMeasurementDraft({
+      color: selectedMeasurement?.color || TAKEOFF_COLORS[0],
       label: selectedMeasurementLabel,
       notes: selectedMeasurementNotes,
+      quantity: selectedMeasurement ? String(Number(selectedMeasurement.quantity.toFixed(3))) : "",
+      unit: selectedMeasurement?.unit ?? "",
     });
-  }, [selectedMeasurementId, selectedMeasurementLabel, selectedMeasurementNotes]);
+  }, [
+    selectedMeasurement,
+    selectedMeasurementId,
+    selectedMeasurementLabel,
+    selectedMeasurementNotes,
+  ]);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["plan-room", estimate.id] });
@@ -896,13 +913,53 @@ export function PlanRoomWorkspace({
       toast.warning("Give this takeoff a label before saving.");
       return;
     }
+    const quantity = Number(selectedMeasurementDraft.quantity);
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      toast.warning("Enter a valid measured quantity.");
+      return;
+    }
+    const unit = selectedMeasurementDraft.unit.trim().toUpperCase();
+    if (!unit) {
+      toast.warning("Enter a unit for this takeoff.");
+      return;
+    }
     updateMeasurementMutation.mutate({
       id: selectedMeasurement.id,
       patch: {
+        color: selectedMeasurementDraft.color,
         label,
         notes: selectedMeasurementDraft.notes.trim(),
+        quantity,
+        unit,
       },
     });
+  };
+
+  const recalculateSelectedMeasurement = () => {
+    if (!selectedMeasurement || !selectedMeasurementSheet) return;
+    const points = geometryPoints(selectedMeasurement.geometry);
+    if (points.length === 0) {
+      toast.warning("This takeoff does not have drawing geometry to recalculate.");
+      return;
+    }
+    const quantity = calculateQuantity(
+      selectedMeasurement.tool_type,
+      points,
+      selectedMeasurementSheet,
+      viewSize,
+    );
+    if (quantity <= 0) {
+      toast.warning(
+        selectedMeasurement.tool_type === "count"
+          ? "Place at least one count marker before recalculating."
+          : "Set the sheet scale before recalculating this takeoff.",
+      );
+      return;
+    }
+    setSelectedMeasurementDraft((draft) => ({
+      ...draft,
+      quantity: String(Number(quantity.toFixed(3))),
+    }));
   };
 
   const saveMeasurementGeometry = async (measurementId: string, points: Point[]) => {
@@ -1693,6 +1750,76 @@ export function PlanRoomWorkspace({
                     }
                   />
                 </div>
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_92px]">
+                  <div className="space-y-1.5">
+                    <Label>Measured quantity</Label>
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={selectedMeasurementDraft.quantity}
+                        onChange={(event) =>
+                          setSelectedMeasurementDraft((draft) => ({
+                            ...draft,
+                            quantity: event.target.value,
+                          }))
+                        }
+                        data-testid="selected-takeoff-quantity-input"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={recalculateSelectedMeasurement}
+                        data-testid="selected-takeoff-recalculate"
+                      >
+                        Recalc
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Override only when field judgment beats the markup. Recalc returns to drawing
+                      geometry.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Unit</Label>
+                    <Input
+                      value={selectedMeasurementDraft.unit}
+                      onChange={(event) =>
+                        setSelectedMeasurementDraft((draft) => ({
+                          ...draft,
+                          unit: event.target.value,
+                        }))
+                      }
+                      data-testid="selected-takeoff-unit-input"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Markup color</Label>
+                  <div className="flex flex-wrap gap-2" data-testid="selected-takeoff-color-picker">
+                    {TAKEOFF_COLORS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        title={color}
+                        onClick={() =>
+                          setSelectedMeasurementDraft((draft) => ({
+                            ...draft,
+                            color,
+                          }))
+                        }
+                        className={`h-8 w-8 rounded border ${
+                          selectedMeasurementDraft.color === color
+                            ? "border-foreground"
+                            : "border-hairline"
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
+                </div>
                 <div className="space-y-1.5">
                   <Label>Notes</Label>
                   <Textarea
@@ -1739,6 +1866,7 @@ export function PlanRoomWorkspace({
                       className="gap-1.5"
                       onClick={saveSelectedMeasurement}
                       disabled={updateMeasurementMutation.isPending}
+                      data-testid="selected-takeoff-save-details"
                     >
                       <Save className="h-3.5 w-3.5" /> Save Details
                     </Button>
