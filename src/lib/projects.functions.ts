@@ -1726,7 +1726,46 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
     };
   });
 
+const projectIdInput = z.object({ projectId: z.string().uuid() });
+
+export const archiveProject = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => projectIdInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("projects")
+      .update({ archived_at: new Date().toISOString() } as never)
+      .eq("id", data.projectId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const unarchiveProject = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => projectIdInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("projects")
+      .update({ archived_at: null } as never)
+      .eq("id", data.projectId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteProject = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => projectIdInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("projects")
+      .delete()
+      .eq("id", data.projectId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 // ---------------- EXPOSURES ----------------
+
 
 const EXPOSURE_CATEGORIES = [
   "owner_decision",
