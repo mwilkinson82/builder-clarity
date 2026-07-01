@@ -2347,7 +2347,8 @@ export function CpmActivityPlanner({
           </span>
           <span>
             <strong>Legend</strong>
-            Critical red · near critical gold · complete green · milestone diamond · delay extension
+            Critical red · near critical gold · complete green · milestone diamond · hatched delay
+            period
           </span>
         </div>
         <ActivityScheduleMatrix
@@ -2373,8 +2374,8 @@ export function CpmActivityPlanner({
           <span>Project finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
           <span>Data date {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}</span>
           <span>
-            Legend: critical red · near critical gold · complete green · milestone diamond · delay
-            extension
+            Legend: critical red · near critical gold · complete green · milestone diamond · hatched
+            delay period
           </span>
         </footer>
       </section>
@@ -4705,8 +4706,8 @@ function ActivityScheduleMatrix({
             </span>
             {activeDelayFragmentCount > 0 && (
               <span className="inline-flex items-center gap-1">
-                <span className="h-2.5 w-2.5 rounded-full bg-danger ring-2 ring-danger/15" />
-                Delay
+                <span className="constructline-delay-legend-swatch h-3 w-8 rounded-full border border-danger/40" />
+                Delay period
               </span>
             )}
             <span className="font-semibold tabular text-foreground">
@@ -5073,6 +5074,16 @@ function ConstructLineTaskRow({
     hasOpenDelay && !task.isMilestone && delayExtensionAvailableWidth > 0
       ? Math.max(6, Math.min(delayExtensionAvailableWidth, delaySummary.openDays * dayPx))
       : 0;
+  const delayExtensionLabel =
+    delayExtensionWidth >= (isPrintMode ? 42 : 76)
+      ? `${delaySummary.openDays}d delay`
+      : delayExtensionWidth >= (isPrintMode ? 24 : 48)
+        ? "delay"
+        : null;
+  const visualDelayMarkerLeft =
+    delayExtensionWidth > 0
+      ? Math.min(timelineWidth - 8, Math.max(8, delayExtensionLeft))
+      : delayMarkerLeft;
   const barClass = task.isCritical
     ? "bg-danger"
     : task.isNearCritical
@@ -5216,17 +5227,22 @@ function ConstructLineTaskRow({
             </div>
             {delayExtensionWidth > 0 && (
               <div
-                className="constructline-delay-extension absolute top-1/2 h-4 -translate-y-1/2 rounded-r-full border border-danger/30 bg-danger/15"
+                className="constructline-delay-extension absolute top-1/2 flex h-4 -translate-y-1/2 items-center justify-center overflow-hidden rounded-r-full border border-danger/40 text-[9px] font-bold uppercase tracking-[0.08em] text-danger"
                 style={{ left: delayExtensionLeft, width: delayExtensionWidth }}
                 title={`${delaySummary.openDays} delay days extend past the current activity bar`}
-              />
+                aria-label={`${delaySummary.openDays} day delay period`}
+              >
+                {delayExtensionLabel && (
+                  <span className="constructline-delay-label">{delayExtensionLabel}</span>
+                )}
+              </div>
             )}
           </>
         )}
         {hasOpenDelay && (
           <span
             className="constructline-delay-marker absolute top-1/2 z-20 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-danger bg-danger shadow-sm ring-4 ring-danger/15"
-            style={{ left: delayMarkerLeft }}
+            style={{ left: visualDelayMarkerLeft }}
             title={`${delaySummary.openDays} open delay days on ${activity.activity_id || activity.name}`}
           />
         )}

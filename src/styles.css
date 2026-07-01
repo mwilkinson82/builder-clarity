@@ -162,6 +162,32 @@
   display: none;
 }
 
+.constructline-delay-extension,
+.constructline-delay-legend-swatch {
+  background-color: rgba(213, 60, 49, 0.08);
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(213, 60, 49, 0.34) 0,
+    rgba(213, 60, 49, 0.34) 3px,
+    rgba(213, 60, 49, 0.1) 3px,
+    rgba(213, 60, 49, 0.1) 7px
+  );
+  box-shadow: inset 0 0 0 1px rgba(213, 60, 49, 0.08);
+}
+
+.constructline-delay-label {
+  position: relative;
+  z-index: 1;
+  max-width: 100%;
+  overflow: hidden;
+  padding-inline: 5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 999px;
+  background: rgba(251, 250, 247, 0.82);
+  line-height: 1.3;
+}
+
 @media print {
   @page {
     size: 17in 11in;
@@ -473,7 +499,22 @@
 
   .constructline-cpm-matrix-print .constructline-delay-extension {
     border-color: #d53c31 !important;
-    background: rgba(213, 60, 49, 0.2) !important;
+    background-color: rgba(213, 60, 49, 0.09) !important;
+    background-image: repeating-linear-gradient(
+      135deg,
+      rgba(213, 60, 49, 0.5) 0,
+      rgba(213, 60, 49, 0.5) 2px,
+      rgba(213, 60, 49, 0.12) 2px,
+      rgba(213, 60, 49, 0.12) 5px
+    ) !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .constructline-cpm-matrix-print .constructline-delay-label {
+    background: rgba(255, 255, 255, 0.86) !important;
+    color: #a8342a !important;
+    font-size: 6px !important;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }

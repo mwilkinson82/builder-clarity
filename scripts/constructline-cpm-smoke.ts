@@ -452,7 +452,10 @@ for (const requiredScheduleRiskText of [
   "delayExtensionFinishDates",
   "constructline-delay-extension",
   "constructline-delay-marker",
-  "delay extension",
+  "constructline-delay-label",
+  "constructline-delay-legend-swatch",
+  "hatched delay",
+  "delay period",
   'matrixId="cpm-grid"',
   "isFocusOpen",
   "WBS order",
@@ -599,6 +602,9 @@ for (const requiredPrintStyle of [
   ".constructline-cpm-print-footer-report",
   ".constructline-delay-extension",
   ".constructline-delay-marker",
+  ".constructline-delay-label",
+  ".constructline-delay-legend-swatch",
+  "repeating-linear-gradient",
   "size: 17in 11in",
 ]) {
   assert.ok(
