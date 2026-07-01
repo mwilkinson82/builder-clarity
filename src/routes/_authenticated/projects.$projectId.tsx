@@ -1587,7 +1587,68 @@ function ProjectPage() {
                   onSave={(patch) => finUpdate.mutate({ projectId, patch })}
                   pending={finUpdate.isPending}
                 />
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1.5">
+                      <Archive className="h-3.5 w-3.5" /> Archive
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Archive this project?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        “{project.name}” will be hidden from the portfolio. Its data — SOV,
+                        exposures, change orders, billing, and reports — stays in the database and
+                        can be restored later. No records are deleted.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        disabled={archiveMutation.isPending}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          archiveMutation.mutate();
+                        }}
+                      >
+                        {archiveMutation.isPending ? "Archiving…" : "Archive project"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1.5 text-danger hover:text-danger">
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete this project permanently?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This permanently deletes “{project.name}” and every related record —
+                        SOV/cost buckets, exposures, change orders, decisions, schedule, daily
+                        reports, billing applications, invoices, and payments. This cannot be
+                        undone. Prefer <strong>Archive</strong> if you might need it back.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        disabled={deleteMutation.isPending}
+                        className="bg-danger text-destructive-foreground hover:bg-danger/90"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          deleteMutation.mutate();
+                        }}
+                      >
+                        {deleteMutation.isPending ? "Deleting…" : "Delete forever"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
+
               <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm md:grid-cols-5">
                 <div>
                   <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
