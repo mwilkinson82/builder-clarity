@@ -53,7 +53,7 @@ for (const requiredMatrixLayoutText of [
   "const matrixScrollRef = useRef<HTMLDivElement | null>(null);",
   "const [matrixViewportWidth, setMatrixViewportWidth] = useState(0);",
   "const [columnWidths, setColumnWidths] = useState<ConstructLineTableColumnWidths>",
-  'const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v5"',
+  'const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v7"',
   "CONSTRUCTLINE_TABLE_COLUMN_SPECS",
   'type ConstructLineGridLayoutPreset = "gantt" | "balanced" | "detail"',
   "buildTableColumnWidthsForPreset",
@@ -71,9 +71,9 @@ for (const requiredMatrixLayoutText of [
   "startColumnResize",
   "Resize column",
   "group-hover:bg-foreground/70",
-  "Resize activity table and Gantt split",
+  "Resize logic column and Gantt split",
   "group-hover:bg-foreground/65",
-  "Drag to give more space to the Gantt or activity table",
+  "Drag to resize the Logic column at the Gantt edge",
   "Drag left or right to compress or expand the Gantt timeline.",
   "cursor-grab select-none active:cursor-grabbing",
   "startTimelineScaleDrag",
@@ -86,8 +86,8 @@ for (const requiredMatrixLayoutText of [
   "Math.max(fitTimelineTargetWidth, Math.ceil(model.totalTimelineDays * activeDayPx))",
   "constructline-cpm-matrix-scroll",
   "constructline-cpm-matrix-editor",
-  "bg-card text-[9px] font-semibold uppercase tracking-[0.08em]",
-  'isFocusMode ? "sticky top-0 z-30" : "relative z-0"',
+  "bg-card text-[9px] font-semibold uppercase tracking-normal",
+  'isFocusMode ? "sticky top-0 z-20" : "relative z-0"',
   "overflow-auto overscroll-contain print:max-h-none print:overflow-visible",
   "max-h-[clamp(520px,calc(100vh-260px),900px)]",
   'style={{ width: tableWidth + timelineWidth, minWidth: "100%" }}',
@@ -125,6 +125,16 @@ assertMatches(
   scheduleRiskSource,
   /style=\{\{ width: tableWidth, gridTemplateColumns: tableColumns \}\}/,
   "CPM table header must use the same width and columns contract as activity rows.",
+);
+assertMatches(
+  scheduleRiskSource,
+  /id: "activity",[\s\S]*?label: "Activity description",[\s\S]*?align: "left",/,
+  "Only the Activity Description column should opt into left-aligned CPM table text.",
+);
+assert.equal(
+  scheduleRiskSource.match(/align: "left"/g)?.length ?? 0,
+  1,
+  "Only one CPM table column should be left aligned; all technical columns should stay centered.",
 );
 assertMatches(
   scheduleRiskSource,

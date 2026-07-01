@@ -221,35 +221,35 @@ const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
 const CONSTRUCTLINE_MIN_DAY_PX = 1.1;
 const CONSTRUCTLINE_MAX_DAY_PX = 28;
-const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v5";
+const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v7";
 const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
-  { id: "id", label: "ID", compactLabel: "ID", min: 42, default: 46, max: 76, align: "left" },
+  { id: "id", label: "ID", compactLabel: "ID", min: 40, default: 44, max: 72 },
   {
     id: "activity",
     label: "Activity description",
     compactLabel: "Activity description",
-    min: 112,
-    default: 136,
-    max: 320,
+    min: 100,
+    default: 124,
+    max: 280,
     align: "left",
   },
-  { id: "dur", label: "Duration", compactLabel: "Dur", min: 34, default: 38, max: 68 },
-  { id: "plan", label: "Planned dates", compactLabel: "Planned", min: 54, default: 58, max: 98 },
+  { id: "dur", label: "Duration", compactLabel: "Dur", min: 36, default: 40, max: 70 },
+  { id: "plan", label: "Planned dates", compactLabel: "Planned", min: 58, default: 62, max: 98 },
   {
     id: "current",
     label: "Actual / current dates",
     compactLabel: "Actual",
-    min: 58,
-    default: 62,
+    min: 62,
+    default: 68,
     max: 110,
   },
-  { id: "slip", label: "Schedule variance", compactLabel: "Slip", min: 32, default: 34, max: 60 },
-  { id: "done", label: "Percent complete", compactLabel: "%", min: 32, default: 34, max: 58 },
-  { id: "tf", label: "Total float", compactLabel: "Float", min: 32, default: 36, max: 62 },
-  { id: "logic", label: "Logic ties", compactLabel: "Logic", min: 30, default: 32, max: 58 },
+  { id: "slip", label: "Schedule variance", compactLabel: "Slip", min: 34, default: 38, max: 62 },
+  { id: "done", label: "Percent complete", compactLabel: "%", min: 34, default: 36, max: 58 },
+  { id: "tf", label: "Total float", compactLabel: "Float", min: 36, default: 40, max: 66 },
+  { id: "logic", label: "Logic ties", compactLabel: "Logic", min: 46, default: 52, max: 84 },
 ] as const;
 const CONSTRUCTLINE_TABLE_PRINT_COLUMNS =
-  "42px minmax(130px,1fr) 34px 48px 54px 34px 30px 24px 26px";
+  "40px minmax(120px,1fr) 34px 50px 56px 34px 30px 30px 32px";
 const ACTIVITY_UPDATE_SNAPSHOT_COLUMNS =
   "64px minmax(170px,1.15fr) 54px 82px 82px 78px 58px 54px 82px 58px minmax(170px,1fr)";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -4900,7 +4900,7 @@ function clampNumber(value: number, min: number, max: number) {
 function buildDefaultTableColumnWidths(isFocusMode: boolean): ConstructLineTableColumnWidths {
   return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((widths, column) => {
     widths[column.id] =
-      column.id === "activity" && isFocusMode ? Math.min(column.max, 150) : column.default;
+      column.id === "activity" && isFocusMode ? Math.min(column.max, 132) : column.default;
     return widths;
   }, {} as ConstructLineTableColumnWidths);
 }
@@ -4910,35 +4910,35 @@ function buildTableColumnWidthsForPreset(
 ): ConstructLineTableColumnWidths {
   const widths = buildDefaultTableColumnWidths(false);
   if (preset === "gantt") {
-    widths.id = 46;
-    widths.activity = 118;
-    widths.dur = 36;
-    widths.plan = 54;
-    widths.current = 58;
-    widths.slip = 34;
-    widths.done = 32;
-    widths.tf = 34;
-    widths.logic = 30;
-  } else if (preset === "balanced") {
-    widths.id = 50;
-    widths.activity = 168;
-    widths.dur = 42;
-    widths.plan = 66;
-    widths.current = 72;
-    widths.slip = 40;
-    widths.done = 40;
+    widths.id = 42;
+    widths.activity = 104;
+    widths.dur = 38;
+    widths.plan = 58;
+    widths.current = 62;
+    widths.slip = 36;
+    widths.done = 34;
     widths.tf = 38;
-    widths.logic = 36;
-  } else if (preset === "detail") {
-    widths.id = 58;
-    widths.activity = 220;
-    widths.dur = 50;
-    widths.plan = 84;
-    widths.current = 96;
-    widths.slip = 48;
-    widths.done = 52;
+    widths.logic = 48;
+  } else if (preset === "balanced") {
+    widths.id = 46;
+    widths.activity = 132;
+    widths.dur = 42;
+    widths.plan = 64;
+    widths.current = 70;
+    widths.slip = 40;
+    widths.done = 38;
     widths.tf = 42;
-    widths.logic = 46;
+    widths.logic = 52;
+  } else if (preset === "detail") {
+    widths.id = 52;
+    widths.activity = 190;
+    widths.dur = 48;
+    widths.plan = 82;
+    widths.current = 92;
+    widths.slip = 48;
+    widths.done = 48;
+    widths.tf = 48;
+    widths.logic = 58;
   }
   return widths;
 }
@@ -5012,7 +5012,7 @@ function MatrixHeaderCell({
   return (
     <div
       className={cn(
-        "relative flex min-w-0 items-center border-l border-hairline/70 px-1.5 pr-3 leading-none",
+        "relative flex min-w-0 select-none items-center border-l border-hairline/70 px-1.5 pr-3 leading-tight",
         align === "left"
           ? "justify-start text-left first:border-l-0"
           : align === "right"
@@ -5021,7 +5021,7 @@ function MatrixHeaderCell({
       )}
       title={title}
     >
-      <span className="min-w-0 truncate">{children}</span>
+      <span className="min-w-0 whitespace-normal break-words">{children}</span>
       {onResizeStart && (
         <button
           type="button"
@@ -5111,7 +5111,7 @@ function ActivityScheduleMatrix({
     : buildTableColumnTemplate(columnWidths);
   const baseRowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
-  const headerHeight = isPrintMode ? 30 : 54;
+  const headerHeight = isPrintMode ? 30 : 44;
   const timelineWidth = isPrintMode
     ? CONSTRUCTLINE_PRINT_TIMELINE_WIDTH
     : isFitZoom
@@ -5305,9 +5305,19 @@ function ActivityScheduleMatrix({
         isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : isPrintMode ? "mt-0" : "mt-2",
       )}
     >
-      <div className="constructline-cpm-matrix-head flex flex-col gap-2 border-b border-hairline bg-card px-3 py-2">
-        <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
-          <div className="constructline-cpm-matrix-title">
+      <div
+        className={cn(
+          "constructline-cpm-matrix-head flex flex-col border-b border-hairline bg-card",
+          isFocusMode ? "gap-1 px-2 py-1.5" : "gap-2 px-3 py-2",
+        )}
+      >
+        <div
+          className={cn(
+            "flex flex-col xl:flex-row xl:justify-between",
+            isFocusMode ? "gap-1 xl:items-center" : "gap-2 xl:items-start",
+          )}
+        >
+          <div className={cn("constructline-cpm-matrix-title", isFocusMode && "sr-only")}>
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               <GitBranch className="h-3.5 w-3.5" />
               ConstructLine CPM grid
@@ -5320,8 +5330,18 @@ function ActivityScheduleMatrix({
               <div className="mt-1 text-xs font-semibold text-foreground">{viewSummary}</div>
             )}
           </div>
-          <div className="flex min-w-0 flex-1 flex-col gap-2 xl:items-end">
-            <div className="constructline-cpm-matrix-legend flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-muted-foreground xl:justify-end">
+          <div
+            className={cn(
+              "flex min-w-0 flex-1 flex-col xl:items-end",
+              isFocusMode ? "gap-1" : "gap-2",
+            )}
+          >
+            <div
+              className={cn(
+                "constructline-cpm-matrix-legend flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground xl:justify-end",
+                isFocusMode ? "text-[11px]" : "text-[12px]",
+              )}
+            >
               <span className="inline-flex items-center gap-1">
                 <span className="h-2 w-5 rounded-full bg-danger" />
                 Critical
@@ -5401,7 +5421,7 @@ function ActivityScheduleMatrix({
                 </div>
               )}
             </div>
-            <div className="flex flex-wrap justify-start gap-1.5 xl:justify-end">
+            <div className="flex flex-wrap justify-start gap-1 xl:justify-end">
               <CpmNetworkBasisStrip model={model} dataDate={dataDate} />
             </div>
           </div>
@@ -5438,8 +5458,8 @@ function ActivityScheduleMatrix({
           >
             <div
               className={cn(
-                "flex border-b border-hairline bg-card text-[9px] font-semibold uppercase tracking-[0.08em] text-muted-foreground shadow-sm",
-                isFocusMode ? "sticky top-0 z-30" : "relative z-0",
+                "flex border-b border-hairline bg-card text-[9px] font-semibold uppercase tracking-normal text-muted-foreground shadow-sm",
+                isFocusMode ? "sticky top-0 z-20" : "relative z-0",
               )}
               style={{ height: headerHeight }}
             >
@@ -5501,11 +5521,11 @@ function ActivityScheduleMatrix({
             {!isPrintMode && (
               <button
                 type="button"
-                aria-label="Resize activity table and Gantt split"
-                title="Drag to give more space to the Gantt or activity table"
-                className="group absolute z-40 flex w-4 -translate-x-1/2 cursor-col-resize items-start justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
+                aria-label="Resize logic column and Gantt split"
+                title="Drag to resize the Logic column at the Gantt edge"
+                className="group absolute z-30 flex w-4 -translate-x-1/2 cursor-col-resize items-start justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
                 style={{ left: tableWidth, top: headerHeight, height: bodyHeight }}
-                onPointerDown={(event) => startColumnResize("activity", event)}
+                onPointerDown={(event) => startColumnResize("logic", event)}
               >
                 <span className="mt-2 h-[calc(100%-16px)] w-1 rounded-full bg-foreground/20 transition-colors group-hover:bg-foreground/65" />
               </button>
@@ -5756,13 +5776,13 @@ function CpmBasisPill({
   return (
     <span
       className={cn(
-        "inline-flex min-h-8 items-center gap-1.5 rounded border px-2 py-1 font-semibold",
+        "inline-flex min-h-6 items-center gap-1.5 rounded border px-1.5 py-0.5 text-[10px] font-semibold",
         toneClass,
       )}
       title={title}
     >
       {icon}
-      <span className="uppercase tracking-[0.1em]">{label}</span>
+      <span className="uppercase tracking-normal">{label}</span>
       <span className="tabular text-foreground">{value}</span>
     </span>
   );
