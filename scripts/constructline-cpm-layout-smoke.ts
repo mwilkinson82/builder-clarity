@@ -27,7 +27,9 @@ for (const requiredRouteLayoutText of [
   '<WorkspaceNavLink href="#cpm-grid">CPM grid</WorkspaceNavLink>',
   '<WorkspaceNavLink href="#schedule-update-history">Updates</WorkspaceNavLink>',
   '<WorkspaceNavLink href="#interim-milestones">Milestones</WorkspaceNavLink>',
-  '<WorkspaceNavLink href="#critical-delayed-decisions">Risks</WorkspaceNavLink>',
+  '<WorkspaceNavLink href="#critical-delayed-decisions">Decisions</WorkspaceNavLink>',
+  '<WorkspaceNavLink href="#procurement-risks">Procurement</WorkspaceNavLink>',
+  '<WorkspaceNavLink href="#trade-performance-risks">Trades</WorkspaceNavLink>',
   "Print 11x17",
   "ScheduleWorkspaceOperations",
 ]) {
