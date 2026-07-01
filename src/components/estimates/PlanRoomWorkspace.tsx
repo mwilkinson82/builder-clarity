@@ -2,14 +2,22 @@ import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, MouseEvent as ReactMouseEvent } from "react";
+import type {
+  ChangeEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  WheelEvent as ReactWheelEvent,
+} from "react";
 import {
   ArrowLeft,
   Check,
   ClipboardList,
   FileUp,
+  Hand,
   Image as ImageIcon,
   Link2,
+  Maximize2,
+  Minimize2,
   MousePointer2,
   PencilRuler,
   Plus,
@@ -18,6 +26,8 @@ import {
   Square,
   Target,
   Trash2,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +44,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtUSD } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import {
   createPlanSet,
   createTakeoffMeasurement,
@@ -72,6 +83,9 @@ interface PlanRoomWorkspaceProps {
 
 const DEFAULT_VIEW_SIZE: ViewSize = { width: 960, height: 620 };
 const TAKEOFF_COLORS = ["#1b7a6e", "#b35035", "#946a21", "#375d8a", "#5d5f6f"];
+const MIN_PLAN_ZOOM = 0.25;
+const MAX_PLAN_ZOOM = 4;
+const PLAN_ZOOM_STEP = 0.25;
 
 const formatQty = (value: number, unit: string) =>
   `${new Intl.NumberFormat(undefined, {
@@ -172,6 +186,7 @@ export function PlanRoomWorkspace({
   const [calibrationFeet, setCalibrationFeet] = useState("25");
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [isCockpitMode, setIsCockpitMode] = useState(false);
 
   const currentSheet = useMemo(
     () => sheets.find((sheet) => sheet.id === selectedSheetId) ?? sheets[0] ?? null,
@@ -418,7 +433,13 @@ export function PlanRoomWorkspace({
   const backendReady = schemaReady !== false;
 
   return (
-    <div className="min-h-screen bg-background" data-testid="plan-room-workspace">
+    <div
+      className={cn(
+        "min-h-screen bg-background",
+        isCockpitMode && "fixed inset-0 z-50 overflow-hidden",
+      )}
+      data-testid="plan-room-workspace"
+    >
       <header className="border-b border-hairline bg-surface-elevated">
         <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-5 py-4 lg:px-8">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
@@ -445,6 +466,20 @@ export function PlanRoomWorkspace({
               <Badge variant={linkedCount === measurements.length ? "secondary" : "outline"}>
                 {linkedCount}/{measurements.length} linked
               </Badge>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => setIsCockpitMode((current) => !current)}
+                title={isCockpitMode ? "Exit command center" : "Open command center"}
+              >
+                {isCockpitMode ? (
+                  <Minimize2 className="h-3.5 w-3.5" />
+                ) : (
+                  <Maximize2 className="h-3.5 w-3.5" />
+                )}
+                {isCockpitMode ? "Exit" : "Command Center"}
+              </Button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -466,7 +501,13 @@ export function PlanRoomWorkspace({
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-[1800px] gap-5 px-5 py-6 xl:grid-cols-[220px_minmax(0,1fr)_300px] 2xl:grid-cols-[280px_minmax(0,1fr)_390px] lg:px-8">
+      <main
+        className={cn(
+          "mx-auto grid max-w-[1800px] gap-5 px-5 py-6 xl:grid-cols-[220px_minmax(0,1fr)_300px] 2xl:grid-cols-[280px_minmax(0,1fr)_390px] lg:px-8",
+          isCockpitMode &&
+            "h-[calc(100vh-110px)] max-w-none overflow-hidden py-4 xl:grid-cols-[260px_minmax(0,1fr)_340px] 2xl:grid-cols-[300px_minmax(0,1fr)_380px]",
+        )}
+      >
         {!backendReady && (
           <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 xl:col-span-3">
             <p className="font-medium">Plan Room backend is still coming online</p>
@@ -477,7 +518,7 @@ export function PlanRoomWorkspace({
           </section>
         )}
 
-        <aside className="min-w-0 space-y-4">
+        <aside className={cn("min-w-0 space-y-4", isCockpitMode && "min-h-0 overflow-y-auto")}>
           <section className="rounded-lg border border-hairline bg-card shadow-card">
             <div className="border-b border-hairline bg-surface px-4 py-3">
               <h2 className="font-serif text-xl">Drawing Sets</h2>
@@ -576,7 +617,12 @@ export function PlanRoomWorkspace({
           </section>
         </aside>
 
-        <section className="min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
+        <section
+          className={cn(
+            "min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card",
+            isCockpitMode && "flex min-h-0 flex-col",
+          )}
+        >
           <div className="flex flex-col gap-3 border-b border-hairline bg-surface px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <h2 className="font-serif text-2xl leading-tight">
@@ -637,10 +683,11 @@ export function PlanRoomWorkspace({
             viewSize={viewSize}
             onViewSizeChange={setViewSize}
             onPoint={onCanvasPoint}
+            isCockpitMode={isCockpitMode}
           />
         </section>
 
-        <aside className="min-w-0 space-y-4">
+        <aside className={cn("min-w-0 space-y-4", isCockpitMode && "min-h-0 overflow-y-auto")}>
           <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -860,6 +907,7 @@ function PlanCanvas({
   viewSize,
   onViewSizeChange,
   onPoint,
+  isCockpitMode,
 }: {
   planSet: PlanSetRow | null;
   sheet: PlanSheetRow | null;
@@ -870,12 +918,17 @@ function PlanCanvas({
   viewSize: ViewSize;
   onViewSizeChange: (size: ViewSize) => void;
   onPoint: (point: Point) => void;
+  isCockpitMode: boolean;
 }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const [signedUrl, setSignedUrl] = useState("");
   const [renderError, setRenderError] = useState("");
+  const [zoom, setZoom] = useState(1);
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef({ x: 0, y: 0, left: 0, top: 0, dragged: false });
 
   useEffect(() => {
     let active = true;
@@ -932,6 +985,81 @@ function PlanCanvas({
     };
   }, [onViewSizeChange, planSet?.file_mime_type, sheet?.page_number, signedUrl]);
 
+  useEffect(() => {
+    setZoom(1);
+    requestAnimationFrame(() => {
+      if (!scrollRef.current) return;
+      scrollRef.current.scrollLeft = 0;
+      scrollRef.current.scrollTop = 0;
+    });
+  }, [sheet?.id]);
+
+  const setClampedZoom = (nextZoom: number) => {
+    setZoom(Math.min(MAX_PLAN_ZOOM, Math.max(MIN_PLAN_ZOOM, nextZoom)));
+  };
+
+  const zoomBy = (delta: number) => {
+    setClampedZoom(Number((zoom + delta).toFixed(2)));
+  };
+
+  const fitToStage = () => {
+    const stage = scrollRef.current;
+    if (!stage || viewSize.width <= 0 || viewSize.height <= 0) {
+      setClampedZoom(1);
+      return;
+    }
+    const fitZoom = Math.min(
+      (stage.clientWidth - 32) / viewSize.width,
+      (stage.clientHeight - 32) / viewSize.height,
+    );
+    setClampedZoom(Number(Math.min(1, fitZoom).toFixed(2)));
+    stage.scrollLeft = 0;
+    stage.scrollTop = 0;
+  };
+
+  const setActualSize = () => {
+    setClampedZoom(1);
+    requestAnimationFrame(() => {
+      if (!scrollRef.current) return;
+      scrollRef.current.scrollLeft = 0;
+      scrollRef.current.scrollTop = 0;
+    });
+  };
+
+  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!event.metaKey && !event.ctrlKey) return;
+    event.preventDefault();
+    zoomBy(event.deltaY > 0 ? -PLAN_ZOOM_STEP : PLAN_ZOOM_STEP);
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (tool !== "select" || !scrollRef.current) return;
+    panStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      left: scrollRef.current.scrollLeft,
+      top: scrollRef.current.scrollTop,
+      dragged: false,
+    };
+    setIsPanning(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (!isPanning || !scrollRef.current) return;
+    const dx = event.clientX - panStartRef.current.x;
+    const dy = event.clientY - panStartRef.current.y;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) panStartRef.current.dragged = true;
+    scrollRef.current.scrollLeft = panStartRef.current.left - dx;
+    scrollRef.current.scrollTop = panStartRef.current.top - dy;
+  };
+
+  const handlePointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (!isPanning) return;
+    setIsPanning(false);
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
   const pointFromEvent = (event: ReactMouseEvent<SVGSVGElement>): Point | null => {
     const svg = svgRef.current;
     if (!svg) return null;
@@ -944,102 +1072,176 @@ function PlanCanvas({
   };
 
   const handleClick = (event: ReactMouseEvent<SVGSVGElement>) => {
+    if (panStartRef.current.dragged) {
+      panStartRef.current.dragged = false;
+      return;
+    }
     const point = pointFromEvent(event);
     if (point) onPoint(point);
   };
 
   const viewBox = `0 0 ${viewSize.width} ${viewSize.height}`;
+  const zoomPercent = `${Math.round(zoom * 100)}%`;
 
   return (
-    <div className="bg-background p-4">
-      <div className="relative mx-auto max-w-full overflow-auto rounded-md border border-hairline bg-white shadow-inner">
-        <div
-          className="relative mx-auto"
-          style={{
-            width: `${viewSize.width}px`,
-            maxWidth: "100%",
-            aspectRatio: `${viewSize.width} / ${viewSize.height}`,
-          }}
-        >
-          {planSet?.sample_key === "harbor-residence" || !planSet?.file_path ? (
-            <SamplePlanBackground sheet={sheet} viewSize={viewSize} />
-          ) : planSet.file_mime_type === "application/pdf" ? (
-            <canvas ref={canvasRef} className="absolute inset-0 h-full w-full bg-white" />
-          ) : signedUrl ? (
-            <img
-              ref={imageRef}
-              src={signedUrl}
-              alt={sheet?.sheet_name || "Plan sheet"}
-              className="absolute inset-0 h-full w-full object-contain"
-              onLoad={() => {
-                const img = imageRef.current;
-                if (!img) return;
-                const ratio = img.naturalWidth / Math.max(1, img.naturalHeight);
-                const width = 960;
-                onViewSizeChange({ width, height: Math.round(width / ratio) });
-              }}
-            />
-          ) : (
-            <div className="absolute inset-0 flex items-center justify-center bg-surface text-sm text-muted-foreground">
-              Loading drawing...
-            </div>
-          )}
-
-          {renderError && (
-            <div className="absolute inset-x-8 top-8 z-10 rounded-md border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
-              {renderError}
-            </div>
-          )}
-
-          <svg
-            ref={svgRef}
-            viewBox={viewBox}
-            className={`absolute inset-0 h-full w-full ${
-              tool === "select" ? "cursor-default" : "cursor-crosshair"
-            }`}
-            data-testid="plan-canvas"
-            onClick={handleClick}
+    <div
+      className={cn("flex flex-col bg-background", isCockpitMode ? "min-h-0 flex-1 p-3" : "p-4")}
+    >
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Badge variant={tool === "select" ? "secondary" : "outline"} className="gap-1.5">
+            {tool === "select" ? <Hand className="h-3 w-3" /> : <Target className="h-3 w-3" />}
+            {toolLabel(tool)}
+          </Badge>
+          <Badge variant="outline">{zoomPercent}</Badge>
+          <span className="truncate text-xs text-muted-foreground">
+            {Math.round(viewSize.width)} x {Math.round(viewSize.height)}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="h-8 w-8"
+            title="Zoom out"
+            onClick={() => zoomBy(-PLAN_ZOOM_STEP)}
+            disabled={zoom <= MIN_PLAN_ZOOM}
+            data-testid="plan-zoom-out"
           >
-            <rect x="0" y="0" width={viewSize.width} height={viewSize.height} fill="transparent" />
-            {measurements.map((measurement) => (
-              <MeasurementShape
-                key={measurement.id}
-                measurement={measurement}
-                viewSize={viewSize}
-              />
-            ))}
-            <DraftShape
-              points={pendingPoints}
-              viewSize={viewSize}
-              color="#1b7a6e"
-              dashed
-              closed={tool === "area"}
-            />
-            <DraftShape
-              points={calibrationPoints}
-              viewSize={viewSize}
-              color="#111827"
-              dashed
-              closed={false}
-            />
-          </svg>
+            <ZoomOut className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            title="Fit sheet"
+            onClick={fitToStage}
+            data-testid="plan-fit-sheet"
+          >
+            Fit
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            title="Actual size"
+            onClick={setActualSize}
+            data-testid="plan-actual-size"
+          >
+            100%
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            className="h-8 w-8"
+            title="Zoom in"
+            onClick={() => zoomBy(PLAN_ZOOM_STEP)}
+            disabled={zoom >= MAX_PLAN_ZOOM}
+            data-testid="plan-zoom-in"
+          >
+            <ZoomIn className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </div>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>
-          {tool === "calibrate"
-            ? "Set Scale: click two points on a known distance."
-            : tool === "area"
-              ? "Area: click each corner, then Finish Area."
-              : tool === "linear"
-                ? "Linear: click start and end."
-                : tool === "count"
-                  ? "Count: click each item."
-                  : "Select a tool to start measuring."}
-        </span>
-        <span>
-          View {Math.round(viewSize.width)} x {Math.round(viewSize.height)}
-        </span>
+
+      <div
+        ref={scrollRef}
+        className={cn(
+          "relative min-h-0 overflow-auto rounded-md border border-hairline bg-[#f7f4ef] shadow-inner",
+          isCockpitMode ? "flex-1" : "h-[min(72vh,760px)]",
+        )}
+        onWheel={handleWheel}
+        data-testid="plan-viewport"
+      >
+        <div className="inline-flex min-h-full min-w-full items-start justify-center p-4">
+          <div
+            className="relative shrink-0 overflow-hidden rounded-sm bg-white shadow-sm"
+            style={{
+              width: `${Math.max(1, viewSize.width * zoom)}px`,
+              height: `${Math.max(1, viewSize.height * zoom)}px`,
+            }}
+          >
+            {planSet?.sample_key === "harbor-residence" || !planSet?.file_path ? (
+              <SamplePlanBackground sheet={sheet} viewSize={viewSize} />
+            ) : planSet.file_mime_type === "application/pdf" ? (
+              <canvas ref={canvasRef} className="absolute inset-0 h-full w-full bg-white" />
+            ) : signedUrl ? (
+              <img
+                ref={imageRef}
+                src={signedUrl}
+                alt={sheet?.sheet_name || "Plan sheet"}
+                className="absolute inset-0 h-full w-full object-contain"
+                onLoad={() => {
+                  const img = imageRef.current;
+                  if (!img) return;
+                  const ratio = img.naturalWidth / Math.max(1, img.naturalHeight);
+                  const width = Math.min(1600, Math.max(960, img.naturalWidth));
+                  onViewSizeChange({ width, height: Math.round(width / ratio) });
+                }}
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center bg-surface text-sm text-muted-foreground">
+                Loading drawing...
+              </div>
+            )}
+
+            {renderError && (
+              <div className="absolute inset-x-8 top-8 z-10 rounded-md border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
+                {renderError}
+              </div>
+            )}
+
+            <svg
+              ref={svgRef}
+              viewBox={viewBox}
+              className={cn(
+                "absolute inset-0 h-full w-full",
+                tool === "select"
+                  ? isPanning
+                    ? "cursor-grabbing"
+                    : "cursor-grab"
+                  : "cursor-crosshair",
+              )}
+              data-testid="plan-canvas"
+              onClick={handleClick}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+            >
+              <rect
+                x="0"
+                y="0"
+                width={viewSize.width}
+                height={viewSize.height}
+                fill="transparent"
+              />
+              {measurements.map((measurement) => (
+                <MeasurementShape
+                  key={measurement.id}
+                  measurement={measurement}
+                  viewSize={viewSize}
+                />
+              ))}
+              <DraftShape
+                points={pendingPoints}
+                viewSize={viewSize}
+                color="#1b7a6e"
+                dashed
+                closed={tool === "area"}
+              />
+              <DraftShape
+                points={calibrationPoints}
+                viewSize={viewSize}
+                color="#111827"
+                dashed
+                closed={false}
+              />
+            </svg>
+          </div>
+        </div>
       </div>
     </div>
   );

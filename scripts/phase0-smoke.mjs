@@ -1232,6 +1232,11 @@ await expectContains(
     /Linear/,
     /Area/,
     /Count/,
+    /Command Center/,
+    /plan-viewport/,
+    /plan-zoom-in/,
+    /plan-fit-sheet/,
+    /cursor-grab/,
     /Takeoff Worksheet/,
     /Estimate Sync/,
     /supabase\.storage[\s\S]*\.from\(planRoomBucket\)[\s\S]*\.upload/,
@@ -1244,7 +1249,7 @@ await expectContains(
     /schemaReady/,
     /Plan Room backend is still coming online/,
   ],
-  "plan room workspace supports upload, scale, takeoff tools, source markup, and estimate sync",
+  "plan room workspace supports upload, zoom, scale, takeoff tools, source markup, and estimate sync",
 );
 
 await expectContains(
