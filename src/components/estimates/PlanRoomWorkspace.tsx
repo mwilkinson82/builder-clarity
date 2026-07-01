@@ -15,6 +15,7 @@ import {
   FileUp,
   Hand,
   Image as ImageIcon,
+  Layers,
   Link2,
   Maximize2,
   Minimize2,
@@ -44,6 +45,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtUSD } from "@/lib/format";
@@ -70,6 +72,7 @@ import {
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 
 type ToolMode = "select" | "calibrate" | TakeoffToolType;
+type RevisionOverlayMode = "compare" | "ghost";
 type Point = PlanRoomPoint;
 type ViewSize = PlanRoomViewSize;
 
@@ -90,6 +93,18 @@ const QUICK_CALIBRATION_FEET = [10, 20, 25, 50, 100];
 const MIN_PLAN_ZOOM = 0.25;
 const MAX_PLAN_ZOOM = 4;
 const PLAN_ZOOM_STEP = 0.25;
+
+const planSetStatusLabel = (status: PlanSetRow["status"]) => {
+  if (status === "superseded") return "Superseded";
+  if (status === "archive") return "Archived";
+  return "Current";
+};
+
+const sheetDisplayName = (sheet: PlanSheetRow, planSet?: PlanSetRow | null) => {
+  const sheetName =
+    `${sheet.sheet_number || `Page ${sheet.page_number}`} ${sheet.sheet_name}`.trim();
+  return planSet ? `${sheetName} - ${planSet.name}` : sheetName;
+};
 
 const formatQty = (value: number, unit: string) =>
   `${new Intl.NumberFormat(undefined, {
@@ -191,6 +206,9 @@ export function PlanRoomWorkspace({
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const [uploading, setUploading] = useState(false);
   const [isCockpitMode, setIsCockpitMode] = useState(false);
+  const [overlaySheetId, setOverlaySheetId] = useState("");
+  const [overlayOpacity, setOverlayOpacity] = useState(65);
+  const [overlayMode, setOverlayMode] = useState<RevisionOverlayMode>("compare");
   const [selectedMeasurementId, setSelectedMeasurementId] = useState("");
   const [selectedMeasurementDraft, setSelectedMeasurementDraft] = useState({
     label: "",
@@ -204,6 +222,30 @@ export function PlanRoomWorkspace({
   const currentPlanSet = currentSheet
     ? (planSets.find((planSet) => planSet.id === currentSheet.plan_set_id) ?? null)
     : null;
+  const overlaySheet = overlaySheetId
+    ? (sheets.find((sheet) => sheet.id === overlaySheetId) ?? null)
+    : null;
+  const overlayPlanSet = overlaySheet
+    ? (planSets.find((planSet) => planSet.id === overlaySheet.plan_set_id) ?? null)
+    : null;
+  const revisionSheetOptions = useMemo(
+    () =>
+      sheets
+        .filter((sheet) => sheet.id !== currentSheet?.id)
+        .map((sheet) => ({
+          sheet,
+          planSet: planSets.find((planSet) => planSet.id === sheet.plan_set_id) ?? null,
+        }))
+        .sort((a, b) => {
+          const sameA = a.sheet.sheet_number === currentSheet?.sheet_number ? 0 : 1;
+          const sameB = b.sheet.sheet_number === currentSheet?.sheet_number ? 0 : 1;
+          if (sameA !== sameB) return sameA - sameB;
+          return sheetDisplayName(a.sheet, a.planSet).localeCompare(
+            sheetDisplayName(b.sheet, b.planSet),
+          );
+        }),
+    [currentSheet?.id, currentSheet?.sheet_number, planSets, sheets],
+  );
   const selectedLine = lineItems.find((line) => line.id === selectedLineId);
   const sheetMeasurements = measurements.filter(
     (measurement) => measurement.plan_sheet_id === currentSheet?.id,
@@ -224,6 +266,16 @@ export function PlanRoomWorkspace({
   useEffect(() => {
     if (!selectedSheetId && sheets[0]) setSelectedSheetId(sheets[0].id);
   }, [selectedSheetId, sheets]);
+
+  useEffect(() => {
+    if (!overlaySheetId) return;
+    if (
+      overlaySheetId === currentSheet?.id ||
+      !sheets.some((sheet) => sheet.id === overlaySheetId)
+    ) {
+      setOverlaySheetId("");
+    }
+  }, [currentSheet?.id, overlaySheetId, sheets]);
 
   useEffect(() => {
     if (selectedLine && !measurementLabel.trim()) {
@@ -617,10 +669,20 @@ export function PlanRoomWorkspace({
                 planSets.map((planSet) => (
                   <div key={planSet.id} className="rounded-md border border-hairline bg-background">
                     <div className="border-b border-hairline px-3 py-2">
-                      <p className="truncate text-sm font-medium">{planSet.name}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {planSet.page_count} pages
-                      </p>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{planSet.name}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {planSet.page_count} pages
+                          </p>
+                        </div>
+                        <Badge
+                          variant={planSet.status === "current" ? "secondary" : "outline"}
+                          className="shrink-0"
+                        >
+                          {planSetStatusLabel(planSet.status)}
+                        </Badge>
+                      </div>
                     </div>
                     <div className="p-1.5">
                       {sheets
@@ -658,6 +720,90 @@ export function PlanRoomWorkspace({
                   </div>
                 ))
               )}
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Layers className="h-4 w-4" /> Revision Overlay
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Compare another sheet over the current drawing before you trust or update quantities.
+            </p>
+            <div className="mt-3 space-y-3">
+              <Select
+                value={overlaySheetId || "none"}
+                onValueChange={(value) => setOverlaySheetId(value === "none" ? "" : value)}
+              >
+                <SelectTrigger data-testid="plan-revision-overlay-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No overlay</SelectItem>
+                  {revisionSheetOptions.map(({ sheet, planSet }) => (
+                    <SelectItem key={sheet.id} value={sheet.id}>
+                      {sheetDisplayName(sheet, planSet).slice(0, 90)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {overlaySheet && overlayPlanSet ? (
+                <div className="rounded-md border border-hairline bg-surface p-3 text-xs">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-foreground">
+                        {sheetDisplayName(overlaySheet, overlayPlanSet)}
+                      </p>
+                      <p className="mt-1 text-muted-foreground">
+                        Showing at {overlayOpacity}% opacity.
+                      </p>
+                    </div>
+                    <Badge variant="outline">{planSetStatusLabel(overlayPlanSet.status)}</Badge>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-3 text-xs text-muted-foreground">
+                  Upload a revision set, then choose the matching sheet here to compare changes.
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2" data-testid="plan-revision-mode-controls">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={overlayMode === "compare" ? "default" : "outline"}
+                  onClick={() => setOverlayMode("compare")}
+                  disabled={!overlaySheet}
+                >
+                  Compare
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={overlayMode === "ghost" ? "default" : "outline"}
+                  onClick={() => setOverlayMode("ghost")}
+                  disabled={!overlaySheet}
+                >
+                  Ghost
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-xs">Overlay opacity</Label>
+                  <span className="text-xs text-muted-foreground">{overlayOpacity}%</span>
+                </div>
+                <Slider
+                  min={20}
+                  max={90}
+                  step={5}
+                  value={[overlayOpacity]}
+                  onValueChange={(value) => setOverlayOpacity(value[0] ?? 65)}
+                  disabled={!overlaySheet}
+                  data-testid="plan-revision-opacity"
+                />
+              </div>
             </div>
           </section>
 
@@ -783,6 +929,10 @@ export function PlanRoomWorkspace({
           <PlanCanvas
             planSet={currentPlanSet}
             sheet={currentSheet}
+            overlayPlanSet={overlayPlanSet}
+            overlaySheet={overlaySheet}
+            overlayOpacity={overlayOpacity}
+            overlayMode={overlayMode}
             measurements={sheetMeasurements}
             pendingPoints={pendingPoints}
             calibrationPoints={calibrationPoints}
@@ -1194,6 +1344,10 @@ export function PlanRoomWorkspace({
 function PlanCanvas({
   planSet,
   sheet,
+  overlayPlanSet,
+  overlaySheet,
+  overlayOpacity,
+  overlayMode,
   measurements,
   pendingPoints,
   calibrationPoints,
@@ -1207,6 +1361,10 @@ function PlanCanvas({
 }: {
   planSet: PlanSetRow | null;
   sheet: PlanSheetRow | null;
+  overlayPlanSet: PlanSetRow | null;
+  overlaySheet: PlanSheetRow | null;
+  overlayOpacity: number;
+  overlayMode: RevisionOverlayMode;
   measurements: TakeoffMeasurementRow[];
   pendingPoints: Point[];
   calibrationPoints: Point[];
@@ -1227,6 +1385,8 @@ function PlanCanvas({
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef({ x: 0, y: 0, left: 0, top: 0, dragged: false });
+  const hasRevisionOverlay = Boolean(overlayPlanSet && overlaySheet);
+  const overlayBlendMode = overlayMode === "compare" ? "multiply" : "normal";
 
   useEffect(() => {
     let active = true;
@@ -1392,6 +1552,11 @@ function PlanCanvas({
             {toolLabel(tool)}
           </Badge>
           <Badge variant="outline">{zoomPercent}</Badge>
+          {hasRevisionOverlay && (
+            <Badge variant="secondary" data-testid="plan-revision-overlay-active">
+              Revision overlay
+            </Badge>
+          )}
           <span className="truncate text-xs text-muted-foreground">
             {Math.round(viewSize.width)} x {Math.round(viewSize.height)}
           </span>
@@ -1485,6 +1650,23 @@ function PlanCanvas({
               </div>
             )}
 
+            {overlayPlanSet && overlaySheet && (
+              <div
+                className="pointer-events-none absolute inset-0"
+                data-testid="plan-revision-overlay-layer"
+                style={{
+                  opacity: Math.min(0.9, Math.max(0.2, overlayOpacity / 100)),
+                  mixBlendMode: overlayBlendMode,
+                }}
+              >
+                <PlanSheetOverlayLayer
+                  planSet={overlayPlanSet}
+                  sheet={overlaySheet}
+                  viewSize={viewSize}
+                />
+              </div>
+            )}
+
             {renderError && (
               <div className="absolute inset-x-8 top-8 z-10 rounded-md border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
                 {renderError}
@@ -1547,59 +1729,169 @@ function PlanCanvas({
   );
 }
 
-function SamplePlanBackground({
+function PlanSheetOverlayLayer({
+  planSet,
   sheet,
   viewSize,
 }: {
-  sheet: PlanSheetRow | null;
+  planSet: PlanSetRow;
+  sheet: PlanSheetRow;
   viewSize: ViewSize;
 }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const [signedUrl, setSignedUrl] = useState("");
+  const [renderError, setRenderError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setSignedUrl("");
+    setRenderError("");
+    if (!planSet.file_path) return;
+    supabase.storage
+      .from(planRoomBucket)
+      .createSignedUrl(planSet.file_path, 60 * 30)
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) setRenderError(error.message);
+        else setSignedUrl(data?.signedUrl ?? "");
+      });
+    return () => {
+      active = false;
+    };
+  }, [planSet.file_path]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const renderPdf = async () => {
+      if (!signedUrl || planSet.file_mime_type !== "application/pdf" || !canvasRef.current) return;
+      try {
+        const pdfjs = await import("pdfjs-dist");
+        const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+        (
+          pdfjs as unknown as { GlobalWorkerOptions: { workerSrc: string } }
+        ).GlobalWorkerOptions.workerSrc = workerUrl;
+        const pdf = await pdfjs.getDocument({ url: signedUrl }).promise;
+        const page = await pdf.getPage(sheet.page_number || 1);
+        const viewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(viewSize.width / viewport.width, viewSize.height / viewport.height);
+        const scaled = page.getViewport({ scale: Math.max(0.1, scale) });
+        const canvas = canvasRef.current;
+        if (!canvas || cancelled) return;
+        canvas.width = Math.round(scaled.width);
+        canvas.height = Math.round(scaled.height);
+        await page.render({
+          canvas,
+          canvasContext: canvas.getContext("2d")!,
+          viewport: scaled,
+        }).promise;
+      } catch (error) {
+        if (!cancelled) {
+          setRenderError(
+            error instanceof Error ? error.message : "Revision overlay did not render.",
+          );
+        }
+      }
+    };
+    renderPdf();
+    return () => {
+      cancelled = true;
+    };
+  }, [planSet.file_mime_type, sheet.page_number, signedUrl, viewSize.height, viewSize.width]);
+
+  if (planSet.sample_key === "harbor-residence" || !planSet.file_path) {
+    return <SamplePlanBackground sheet={sheet} viewSize={viewSize} overlay />;
+  }
+
+  if (planSet.file_mime_type === "application/pdf") {
+    return (
+      <>
+        <canvas ref={canvasRef} className="absolute inset-0 h-full w-full bg-white" />
+        {renderError && (
+          <div className="absolute inset-x-8 top-8 rounded-md border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
+            {renderError}
+          </div>
+        )}
+      </>
+    );
+  }
+
+  if (signedUrl) {
+    return (
+      <img
+        ref={imageRef}
+        src={signedUrl}
+        alt={`${sheet.sheet_name || "Revision sheet"} overlay`}
+        className="absolute inset-0 h-full w-full object-contain"
+      />
+    );
+  }
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-surface text-sm text-muted-foreground">
+      Loading revision overlay...
+    </div>
+  );
+}
+
+function SamplePlanBackground({
+  sheet,
+  viewSize,
+  overlay = false,
+}: {
+  sheet: PlanSheetRow | null;
+  viewSize: ViewSize;
+  overlay?: boolean;
+}) {
   const title = `${sheet?.sheet_number || "A1.1"} ${sheet?.sheet_name || "Sample Plan"}`.trim();
+  const patternId = overlay ? "plan-grid-overlay" : "plan-grid";
+  const offset = overlay ? 18 : 0;
+  const lineColor = overlay ? "#b35035" : "#28231d";
   return (
     <svg
       viewBox={`0 0 ${viewSize.width} ${viewSize.height}`}
-      className="absolute inset-0 h-full w-full bg-white"
+      className={cn("absolute inset-0 h-full w-full", overlay ? "bg-transparent" : "bg-white")}
     >
       <defs>
-        <pattern id="plan-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+        <pattern id={patternId} width="32" height="32" patternUnits="userSpaceOnUse">
           <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#e8e2d7" strokeWidth="1" />
         </pattern>
       </defs>
-      <rect width={viewSize.width} height={viewSize.height} fill="#fffefa" />
-      <rect width={viewSize.width} height={viewSize.height} fill="url(#plan-grid)" />
+      {!overlay && <rect width={viewSize.width} height={viewSize.height} fill="#fffefa" />}
+      <rect width={viewSize.width} height={viewSize.height} fill={`url(#${patternId})`} />
       <rect
-        x={viewSize.width * 0.14}
-        y={viewSize.height * 0.18}
+        x={viewSize.width * 0.14 + offset}
+        y={viewSize.height * 0.18 + offset * 0.4}
         width={viewSize.width * 0.7}
         height={viewSize.height * 0.58}
         fill="none"
-        stroke="#28231d"
+        stroke={lineColor}
         strokeWidth="3"
       />
       <rect
-        x={viewSize.width * 0.2}
-        y={viewSize.height * 0.3}
+        x={viewSize.width * 0.2 + offset}
+        y={viewSize.height * 0.3 + offset * 0.4}
         width={viewSize.width * 0.56}
         height={viewSize.height * 0.34}
         fill="none"
-        stroke="#28231d"
+        stroke={lineColor}
         strokeWidth="2"
       />
       <line
-        x1={viewSize.width * 0.48}
-        y1={viewSize.height * 0.18}
-        x2={viewSize.width * 0.48}
-        y2={viewSize.height * 0.76}
-        stroke="#928779"
+        x1={viewSize.width * 0.48 + offset}
+        y1={viewSize.height * 0.18 + offset * 0.4}
+        x2={viewSize.width * 0.48 + offset}
+        y2={viewSize.height * 0.76 + offset * 0.4}
+        stroke={overlay ? "#b35035" : "#928779"}
         strokeDasharray="8 8"
         strokeWidth="1.5"
       />
       <line
-        x1={viewSize.width * 0.14}
-        y1={viewSize.height * 0.47}
-        x2={viewSize.width * 0.84}
-        y2={viewSize.height * 0.47}
-        stroke="#928779"
+        x1={viewSize.width * 0.14 + offset}
+        y1={viewSize.height * 0.47 + offset * 0.4}
+        x2={viewSize.width * 0.84 + offset}
+        y2={viewSize.height * 0.47 + offset * 0.4}
+        stroke={overlay ? "#b35035" : "#928779"}
         strokeDasharray="8 8"
         strokeWidth="1.5"
       />
