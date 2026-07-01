@@ -919,6 +919,11 @@ function buildScheduleQualityQueue(model: ConstructLineCpmModel): ScheduleQualit
       severity = "danger";
       sort = Math.min(sort, 34);
     }
+    if (taskNeedsStatusUpdateBasis(task)) {
+      reasons.push("Needs update basis");
+      severity = task.statusBasis === "needs_update" ? "danger" : severity;
+      sort = Math.min(sort, task.statusBasis === "needs_update" ? 32 : 36);
+    }
     if (
       task.predecessorKeys.length === 0 &&
       task.successorKeys.length === 0 &&
@@ -1042,6 +1047,9 @@ function buildScheduleQualityGuidance(task: ConstructLineCpmTask, reasons: strin
   }
   if (reasons.includes("Late against data date")) {
     return "Update progress, add a delay impact, or revise the recovery path.";
+  }
+  if (reasons.includes("Needs update basis")) {
+    return "Enter remaining duration, expected finish, and actual start before saving the data-date snapshot.";
   }
   if (reasons.includes("No logic ties")) {
     return task.totalFloat <= 0
@@ -5177,6 +5185,9 @@ function ConstructLineTaskRow({
             {task.isOpenStart && <ScheduleFlag tone="warning">open start</ScheduleFlag>}
             {task.isOpenFinish && <ScheduleFlag tone="warning">open finish</ScheduleFlag>}
             {task.hasMissingDates && <ScheduleFlag tone="warning">missing dates</ScheduleFlag>}
+            {task.statusBasis === "needs_update" && (
+              <ScheduleFlag tone="danger">needs update</ScheduleFlag>
+            )}
             {needsRemainingDuration && <ScheduleFlag tone="warning">needs remaining</ScheduleFlag>}
             {needsExpectedFinish && <ScheduleFlag tone="danger">needs finish</ScheduleFlag>}
             {needsActualStart && <ScheduleFlag tone="warning">needs actual start</ScheduleFlag>}
@@ -5561,6 +5572,7 @@ function countActivityMatrixFlags(task: ConstructLineCpmTask, hasOpenDelay: bool
     task.isOpenStart,
     task.isOpenFinish,
     task.hasMissingDates,
+    task.statusBasis === "needs_update",
     shouldFlagMissingRemainingDuration(task.activity),
     shouldFlagMissingExpectedFinish(task.activity),
     shouldFlagMissingActualStart(task.activity),
@@ -5590,6 +5602,15 @@ function shouldFlagMissingExpectedFinish(activity: ScheduleActivityRow) {
 function shouldFlagMissingActualStart(activity: ScheduleActivityRow) {
   return (
     activity.percent_complete > 0 && activity.percent_complete < 100 && !activity.actual_start_date
+  );
+}
+
+function taskNeedsStatusUpdateBasis(task: ConstructLineCpmTask) {
+  return (
+    task.statusBasis === "needs_update" ||
+    shouldFlagMissingRemainingDuration(task.activity) ||
+    shouldFlagMissingExpectedFinish(task.activity) ||
+    shouldFlagMissingActualStart(task.activity)
   );
 }
 
@@ -5643,6 +5664,7 @@ function taskMatchesScheduleGridView(
       task.isOpenStart ||
       task.isOpenFinish ||
       task.hasMissingDates ||
+      taskNeedsStatusUpdateBasis(task) ||
       getDelayFragmentsForActivity(task.activity, delayFragmentsByActivity).some(
         isOpenDelayFragment,
       )
