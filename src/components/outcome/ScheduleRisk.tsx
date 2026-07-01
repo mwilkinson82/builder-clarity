@@ -205,6 +205,7 @@ const CONSTRUCTLINE_ZOOM_LEVELS = [
 const CONSTRUCTLINE_FIT_DAY_PX = CONSTRUCTLINE_ZOOM_LEVELS[0].dayPx;
 const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
+const DAY_MS = 24 * 60 * 60 * 1000;
 type ScheduleActivityOrder = "start" | "wbs";
 type ScheduleGridView =
   | "all"
@@ -1093,6 +1094,22 @@ function getDelayFragmentsForActivity(
   return Array.from(unique.values());
 }
 
+function buildDelayExtensionFinishDates(
+  activities: ScheduleActivityRow[],
+  delayFragments: ScheduleDelayFragmentRow[],
+) {
+  const byActivity = groupDelayFragmentsByActivity(delayFragments);
+  return activities.flatMap((activity) => {
+    const baseMs = parseDateMs(activity.finish_date ?? activity.start_date);
+    if (baseMs == null) return [];
+    const delaySummary = buildDelayFragmentSummary(
+      getDelayFragmentsForActivity(activity, byActivity),
+    );
+    if (delaySummary.openDays <= 0) return [];
+    return [isoDateFromMs(baseMs + delaySummary.openDays * DAY_MS)];
+  });
+}
+
 function buildCpmMilestoneForecasts(
   model: ConstructLineCpmModel,
   milestones: MilestoneRow[],
@@ -1783,6 +1800,10 @@ export function CpmActivityPlanner({
       ),
     [cpmModel.tasks.length, displayedCpmModel.tasks.length, gridViewReferenceDate, scheduleView],
   );
+  const delayExtensionFinishDates = useMemo(
+    () => buildDelayExtensionFinishDates(sortedActivities, delayFragments),
+    [delayFragments, sortedActivities],
+  );
   const bounds = useMemo(
     () =>
       getTimelineBounds([
@@ -1790,9 +1811,11 @@ export function CpmActivityPlanner({
         project.forecast_completion_date,
         effectiveDataDate,
         ...activities.flatMap((activity) => [activity.start_date, activity.finish_date]),
+        ...delayExtensionFinishDates,
       ]),
     [
       activities,
+      delayExtensionFinishDates,
       effectiveDataDate,
       project.baseline_completion_date,
       project.forecast_completion_date,
@@ -5374,7 +5397,7 @@ function taskMatchesScheduleGridView(
   const lookaheadDays = SCHEDULE_LOOKAHEAD_DAYS[view];
   if (lookaheadDays) {
     const referenceMs = parseDateMs(referenceDate) ?? parseDateMs(todayIsoDate()) ?? Date.now();
-    const finishDate = isoDateFromMs(referenceMs + lookaheadDays * 24 * 60 * 60 * 1000);
+    const finishDate = isoDateFromMs(referenceMs + lookaheadDays * DAY_MS);
     return isIncomplete && taskIntersectsDateWindow(task, referenceDate, finishDate);
   }
   if (view === "critical") return task.isCritical || task.isNearCritical;
@@ -7020,8 +7043,7 @@ function getActivityDurationDays(activity: ScheduleActivityRow) {
   const start = parseDateMs(activity.start_date);
   const finish = parseDateMs(activity.finish_date);
   if (start == null || finish == null) return null;
-  const oneDay = 24 * 60 * 60 * 1000;
-  return Math.max(1, Math.round((finish - start) / oneDay) + 1);
+  return Math.max(1, Math.round((finish - start) / DAY_MS) + 1);
 }
 
 function getTimelineBounds(values: Array<string | null | undefined>): TimelineBounds {
@@ -7029,7 +7051,7 @@ function getTimelineBounds(values: Array<string | null | undefined>): TimelineBo
     .map((value) => parseDateMs(value))
     .filter((value): value is number => value != null);
   const today = parseDateMs(new Date().toISOString().slice(0, 10)) ?? Date.now();
-  const oneWeek = 7 * 24 * 60 * 60 * 1000;
+  const oneWeek = 7 * DAY_MS;
   const start = Math.min(...parsed, today) - oneWeek;
   const end = Math.max(...parsed, today) + oneWeek;
   return {

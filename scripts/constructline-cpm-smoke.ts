@@ -414,6 +414,8 @@ for (const requiredScheduleRiskText of [
   "Browser templates are available",
   "Send to Risk Tally",
   "delay days extend past the current activity bar",
+  "buildDelayExtensionFinishDates",
+  "delayExtensionFinishDates",
   "constructline-delay-extension",
   "constructline-delay-marker",
   "delay extension",
