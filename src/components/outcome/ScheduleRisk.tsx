@@ -4654,10 +4654,10 @@ function ActivityScheduleMatrix({
   const fitDayPx = Math.max(0.85, fitTimelineTargetWidth / Math.max(1, model.totalTimelineDays));
   const activeDayPx = isPrintMode ? printDayPx : isFitZoom ? fitDayPx : dayPx;
   const tableColumns = isPrintMode
-    ? "62px minmax(180px,1fr) 44px 56px 56px 48px 40px 42px"
+    ? "52px minmax(152px,1fr) 34px 34px 48px 48px 38px 32px 34px"
     : isFitZoom
-      ? "64px minmax(190px,1fr) 48px 62px 62px 58px 44px 48px"
-      : "82px minmax(260px,1fr) 64px 86px 86px 74px 56px 64px";
+      ? "60px minmax(165px,1fr) 42px 42px 56px 56px 50px 38px 42px"
+      : "78px minmax(240px,1fr) 54px 54px 78px 78px 64px 50px 56px";
   const rowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
   const headerHeight = isPrintMode ? 30 : 48;
@@ -4838,6 +4838,9 @@ function ActivityScheduleMatrix({
                 <div className="flex min-w-0 items-center px-3">Activity</div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
                   Plan dur
+                </div>
+                <div className="flex items-center justify-end border-l border-hairline/70 px-2">
+                  Rem dur
                 </div>
                 <div className="flex items-center justify-end border-l border-hairline/70 px-2">
                   Current start
@@ -5232,6 +5235,9 @@ function ConstructLineTaskRow({
         </div>
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
           {task.isMilestone ? "M" : task.durationDays}
+        </div>
+        <div className="flex items-center justify-end border-l border-hairline/50 px-2 font-semibold tabular text-foreground">
+          {task.remainingDurationDays}
         </div>
         <div className="flex items-center justify-end border-l border-hairline/50 px-2 tabular text-muted-foreground">
           {shortPrintDate(task.statusStartDate)}

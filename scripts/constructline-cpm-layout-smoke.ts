@@ -58,6 +58,7 @@ for (const requiredMatrixLayoutText of [
   "max-h-[clamp(460px,calc(100vh-330px),820px)]",
   'style={{ width: tableWidth + timelineWidth, minWidth: "100%" }}',
   "Plan dur",
+  "Rem dur",
   "Current start",
   "Exp finish",
   'band.width >= 46 ? band.label : ""',

@@ -500,6 +500,7 @@ for (const requiredScheduleRiskText of [
   'useState<ScheduleActivityOrder>("start")',
   'useState<ScheduleGridView>("all")',
   "Plan dur",
+  "Rem dur",
   "Current start",
   "Exp finish",
   "Current dates",
