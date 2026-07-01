@@ -670,6 +670,8 @@ for (const requiredScheduleRiskText of [
   "MatrixHeaderCell",
   "buildDefaultTableColumnWidths",
   "buildTableColumnTemplate(columnWidths)",
+  "readTableColumnWidths(layoutStorageKey, isFocusMode)",
+  "writeTableColumnWidths(layoutStorageKey, columnWidths)",
   "startColumnResize",
   "draftEditor",
   "constructline-cpm-matrix-editor",

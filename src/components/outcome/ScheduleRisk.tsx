@@ -220,6 +220,7 @@ const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
 const CONSTRUCTLINE_MIN_DAY_PX = 1.1;
 const CONSTRUCTLINE_MAX_DAY_PX = 28;
+const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v1";
 const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
   { id: "id", label: "ID", compactLabel: "ID", min: 50, default: 58, max: 104, align: "left" },
   {
@@ -2953,6 +2954,7 @@ export function CpmActivityPlanner({
           matrixId="cpm-grid"
           model={displayedCpmModel}
           delayFragments={delayFragments}
+          layoutStorageKey={`constructline:cpm-grid-layout:${project.id}:${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION}`}
           draftEditor={isFocusOpen ? null : activityDraftEditor}
           toolbar={
             <CpmGridToolbar
@@ -3217,6 +3219,7 @@ export function CpmActivityPlanner({
           <ActivityScheduleMatrix
             model={displayedCpmModel}
             delayFragments={delayFragments}
+            layoutStorageKey={`constructline:cpm-grid-layout:${project.id}:${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION}`}
             draftEditor={activityDraftEditor}
             dayPx={dayPx}
             onDayPxChange={setDayPx}
@@ -4859,6 +4862,53 @@ function getTableColumnWidth(widths: ConstructLineTableColumnWidths) {
   return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((sum, column) => sum + widths[column.id], 0);
 }
 
+function readTableColumnWidths(
+  storageKey: string | undefined,
+  isFocusMode: boolean,
+): ConstructLineTableColumnWidths {
+  const fallback = buildDefaultTableColumnWidths(isFocusMode);
+  if (!storageKey || typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as {
+      version?: string;
+      widths?: Partial<Record<ConstructLineTableColumnId, number>>;
+    };
+    if (parsed.version !== CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION || !parsed.widths) {
+      return fallback;
+    }
+    return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((widths, column) => {
+      const storedWidth = parsed.widths?.[column.id];
+      widths[column.id] =
+        typeof storedWidth === "number"
+          ? Math.round(clampNumber(storedWidth, column.min, column.max))
+          : fallback[column.id];
+      return widths;
+    }, {} as ConstructLineTableColumnWidths);
+  } catch {
+    return fallback;
+  }
+}
+
+function writeTableColumnWidths(
+  storageKey: string | undefined,
+  widths: ConstructLineTableColumnWidths,
+) {
+  if (!storageKey || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        version: CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION,
+        widths,
+      }),
+    );
+  } catch {
+    // Browser storage can be unavailable in private sessions; the grid still works in memory.
+  }
+}
+
 function MatrixHeaderCell({
   children,
   align = "right",
@@ -4892,6 +4942,7 @@ function ActivityScheduleMatrix({
   matrixId,
   model,
   delayFragments,
+  layoutStorageKey,
   toolbar,
   draftEditor,
   viewSummary,
@@ -4909,6 +4960,7 @@ function ActivityScheduleMatrix({
   matrixId?: string;
   model: ConstructLineCpmModel;
   delayFragments: ScheduleDelayFragmentRow[];
+  layoutStorageKey?: string;
   toolbar?: ReactNode;
   draftEditor?: ReactNode;
   viewSummary?: string;
@@ -4926,9 +4978,11 @@ function ActivityScheduleMatrix({
   const totalActivities = model.tasks.length;
   const isFitZoom = !isPrintMode && dayPx === CONSTRUCTLINE_FIT_DAY_PX;
   const matrixScrollRef = useRef<HTMLDivElement | null>(null);
+  const lastLayoutStorageKeyRef = useRef(layoutStorageKey);
+  const pendingLayoutStorageKeyRef = useRef<string | undefined>(undefined);
   const [matrixViewportWidth, setMatrixViewportWidth] = useState(0);
   const [columnWidths, setColumnWidths] = useState<ConstructLineTableColumnWidths>(() =>
-    buildDefaultTableColumnWidths(isFocusMode),
+    readTableColumnWidths(layoutStorageKey, isFocusMode),
   );
   const measuredMatrixWidth =
     matrixViewportWidth > 0 ? matrixViewportWidth : isFocusMode ? 1320 : 1180;
@@ -4975,6 +5029,21 @@ function ActivityScheduleMatrix({
     observer.observe(element);
     return () => observer.disconnect();
   }, [isPrintMode, model.groups.length]);
+  useEffect(() => {
+    if (isPrintMode || lastLayoutStorageKeyRef.current === layoutStorageKey) return;
+    pendingLayoutStorageKeyRef.current = layoutStorageKey;
+    setColumnWidths(readTableColumnWidths(layoutStorageKey, isFocusMode));
+  }, [isFocusMode, isPrintMode, layoutStorageKey]);
+  useEffect(() => {
+    if (isPrintMode) return;
+    if (pendingLayoutStorageKeyRef.current === layoutStorageKey) {
+      pendingLayoutStorageKeyRef.current = undefined;
+      lastLayoutStorageKeyRef.current = layoutStorageKey;
+      return;
+    }
+    lastLayoutStorageKeyRef.current = layoutStorageKey;
+    writeTableColumnWidths(layoutStorageKey, columnWidths);
+  }, [columnWidths, isPrintMode, layoutStorageKey]);
   const startColumnResize = useCallback(
     (columnId: ConstructLineTableColumnId, event: ReactPointerEvent<HTMLButtonElement>) => {
       if (isPrintMode || typeof window === "undefined") return;
@@ -5230,7 +5299,7 @@ function ActivityScheduleMatrix({
               <div
                 className={cn(
                   "relative shrink-0 bg-muted/45",
-                  !isPrintMode && "cursor-ew-resize select-none",
+                  !isPrintMode && "cursor-grab select-none active:cursor-grabbing",
                 )}
                 style={{ width: timelineWidth }}
                 title="Drag left or right to compress or expand the Gantt timeline."
