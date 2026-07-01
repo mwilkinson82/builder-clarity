@@ -582,7 +582,9 @@ for (const requiredScheduleRiskText of [
   "formatCpmEndpointTitle",
   "View filters",
   "Schedule actions",
-  "Schedule operations bench",
+  "CONSTRUCTLINE_TABLE_COLUMN_SPECS",
+  "Resize activity table and Gantt split",
+  "Drag left or right to compress or expand the Gantt timeline.",
   "Needs update",
   "Show needs update",
   "Open next update row",
@@ -593,7 +595,6 @@ for (const requiredScheduleRiskText of [
   "CPM Update Queue Report",
   "Work this queue row by row",
   "taskIsInDataDateUpdateWindow",
-  "Construction schedule workspace",
   "Concrete / Northwest corner",
   "Southwest corner",
   "Eastern corner",
@@ -667,8 +668,9 @@ for (const requiredScheduleRiskText of [
   "Original planned duration and remaining duration",
   "Current start and expected finish.",
   "MatrixHeaderCell",
-  "const minimumTableWidth = isFocusMode ? 1160 : 1120;",
-  "minmax(420px,1fr)",
+  "buildDefaultTableColumnWidths",
+  "buildTableColumnTemplate(columnWidths)",
+  "startColumnResize",
   "draftEditor",
   "constructline-cpm-matrix-editor",
   "New completion milestone",
@@ -981,9 +983,7 @@ assert.ok(
 );
 
 assert.ok(
-  scheduleRiskSource.includes(
-    'useState<(typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]>(CONSTRUCTLINE_FIT_DAY_PX)',
-  ),
+  scheduleRiskSource.includes("useState<number>(CONSTRUCTLINE_FIT_DAY_PX)"),
   "The CPM schedule must open in Fit scale by default.",
 );
 

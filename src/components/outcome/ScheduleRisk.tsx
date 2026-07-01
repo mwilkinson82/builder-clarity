@@ -1,4 +1,13 @@
-import { useState, useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+  type ReactNode,
+  type RefObject,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -209,9 +218,41 @@ const CONSTRUCTLINE_ZOOM_LEVELS = [
 const CONSTRUCTLINE_FIT_DAY_PX = CONSTRUCTLINE_ZOOM_LEVELS[0].dayPx;
 const CONSTRUCTLINE_PRINT_TABLE_WIDTH = 490;
 const CONSTRUCTLINE_PRINT_TIMELINE_WIDTH = 1040;
+const CONSTRUCTLINE_MIN_DAY_PX = 1.1;
+const CONSTRUCTLINE_MAX_DAY_PX = 28;
+const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
+  { id: "id", label: "ID", compactLabel: "ID", min: 50, default: 58, max: 104, align: "left" },
+  {
+    id: "activity",
+    label: "Activity",
+    compactLabel: "Activity",
+    min: 190,
+    default: 268,
+    max: 520,
+    align: "left",
+  },
+  { id: "dur", label: "Duration", compactLabel: "Dur", min: 44, default: 54, max: 88 },
+  { id: "plan", label: "Planned dates", compactLabel: "Plan", min: 70, default: 86, max: 128 },
+  {
+    id: "current",
+    label: "Current dates",
+    compactLabel: "Current",
+    min: 82,
+    default: 98,
+    max: 148,
+  },
+  { id: "slip", label: "Slip", compactLabel: "Slip", min: 42, default: 50, max: 82 },
+  { id: "done", label: "% done", compactLabel: "% done", min: 48, default: 58, max: 84 },
+  { id: "tf", label: "TF", compactLabel: "TF", min: 34, default: 42, max: 66 },
+  { id: "logic", label: "Logic", compactLabel: "Logic", min: 38, default: 46, max: 76 },
+] as const;
+const CONSTRUCTLINE_TABLE_PRINT_COLUMNS =
+  "42px minmax(130px,1fr) 34px 48px 54px 34px 30px 24px 26px";
 const ACTIVITY_UPDATE_SNAPSHOT_COLUMNS =
   "64px minmax(170px,1.15fr) 54px 82px 82px 78px 58px 54px 82px 58px minmax(170px,1fr)";
 const DAY_MS = 24 * 60 * 60 * 1000;
+type ConstructLineTableColumnId = (typeof CONSTRUCTLINE_TABLE_COLUMN_SPECS)[number]["id"];
+type ConstructLineTableColumnWidths = Record<ConstructLineTableColumnId, number>;
 type ScheduleActivityOrder = "start" | "wbs";
 type ScheduleGridView =
   | "all"
@@ -1925,8 +1966,7 @@ export function CpmActivityPlanner({
   const [showDraft, setShowDraft] = useState(false);
   const [draftSaveError, setDraftSaveError] = useState<string | null>(null);
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
-  const [dayPx, setDayPx] =
-    useState<(typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]>(CONSTRUCTLINE_FIT_DAY_PX);
+  const [dayPx, setDayPx] = useState<number>(CONSTRUCTLINE_FIT_DAY_PX);
   const [showLogicLines, setShowLogicLines] = useState(true);
   const [activityOrder, setActivityOrder] = useState<ScheduleActivityOrder>("start");
   const [scheduleView, setScheduleView] = useState<ScheduleGridView>("all");
@@ -2876,24 +2916,23 @@ export function CpmActivityPlanner({
       <div
         className={cn(
           "constructline-screen-workbench rounded-lg border border-hairline bg-surface",
-          isFullWorkspace ? "p-4 lg:p-5" : "p-5",
+          isFullWorkspace ? "p-3 lg:p-4" : "p-5",
         )}
       >
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              {isFullWorkspace ? "Schedule operations bench" : "ConstructLine beta"}
+        {!isFullWorkspace && (
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                ConstructLine beta
+              </div>
+              <h4 className="mt-1 font-serif text-2xl text-foreground">CPM schedule workbench</h4>
+              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                Build the working job schedule with activity IDs, divisions, start/finish dates,
+                progress, predecessor/successor logic, float, critical path, and activity stacking.
+              </p>
             </div>
-            <h4 className="mt-1 font-serif text-2xl text-foreground">
-              {isFullWorkspace ? "Construction schedule workspace" : "CPM schedule workbench"}
-            </h4>
-            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-              {isFullWorkspace
-                ? "Work the CPM grid first, then use the panels below for schedule intelligence, updates, milestones, delayed decisions, procurement, and trade performance risks."
-                : "Build the working job schedule with activity IDs, divisions, start/finish dates, progress, predecessor/successor logic, float, critical path, and activity stacking."}
-            </p>
           </div>
-        </div>
+        )}
 
         {isWbsMigrationRequired && (
           <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
@@ -2902,7 +2941,7 @@ export function CpmActivityPlanner({
           </div>
         )}
 
-        {isWbsPathFallback && (
+        {!isFullWorkspace && isWbsPathFallback && (
           <div className="mt-4 rounded-md border border-hairline bg-card px-4 py-3 text-sm text-muted-foreground">
             Activity-path WBS mode is active. Parent and child areas save as readable paths such as
             Concrete / Northwest corner, so the CPM grid can group location, room, area, trade, or
@@ -2968,6 +3007,7 @@ export function CpmActivityPlanner({
               : "Switch back to All activities or choose a broader view."
           }
           dayPx={dayPx}
+          onDayPxChange={setDayPx}
           dataDate={effectiveDataDate}
           showLogicLines={showLogicLines}
           onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
@@ -3179,6 +3219,7 @@ export function CpmActivityPlanner({
             delayFragments={delayFragments}
             draftEditor={activityDraftEditor}
             dayPx={dayPx}
+            onDayPxChange={setDayPx}
             dataDate={effectiveDataDate}
             viewSummary={scheduleViewSummary}
             emptyTitle={
@@ -3607,8 +3648,8 @@ function CpmGridToolbar({
   onScheduleViewChange: (value: ScheduleGridView) => void;
   activityOrder: ScheduleActivityOrder;
   onActivityOrderChange: (value: ScheduleActivityOrder) => void;
-  dayPx: (typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"];
-  onZoomChange: (dayPx: (typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]) => void;
+  dayPx: number;
+  onZoomChange: (dayPx: number) => void;
   showLogicLines: boolean;
   onToggleLogicLines: () => void;
   onManageWbs: () => void;
@@ -3941,18 +3982,19 @@ function ScheduleZoomControls({
   dayPx,
   onChange,
 }: {
-  dayPx: (typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"];
-  onChange: (dayPx: (typeof CONSTRUCTLINE_ZOOM_LEVELS)[number]["dayPx"]) => void;
+  dayPx: number;
+  onChange: (dayPx: number) => void;
 }) {
+  const isPresetScale = CONSTRUCTLINE_ZOOM_LEVELS.some((level) => level.dayPx === dayPx);
   return (
-    <div className="flex overflow-hidden rounded-md border border-hairline bg-card">
+    <div className="flex min-w-0 items-center overflow-hidden rounded-md border border-hairline bg-card">
       {CONSTRUCTLINE_ZOOM_LEVELS.map((level) => (
         <button
           key={level.label}
           type="button"
           aria-pressed={dayPx === level.dayPx}
           className={cn(
-            "h-9 border-r border-hairline px-3 text-xs font-semibold text-muted-foreground last:border-r-0 hover:bg-muted/60",
+            "h-9 border-r border-hairline px-3 text-xs font-semibold text-muted-foreground hover:bg-muted/60",
             dayPx === level.dayPx && "bg-foreground text-background hover:bg-foreground",
           )}
           onClick={() => onChange(level.dayPx)}
@@ -3964,6 +4006,11 @@ function ScheduleZoomControls({
           </span>
         </button>
       ))}
+      {!isPresetScale && (
+        <span className="px-2 text-[11px] font-semibold tabular text-muted-foreground">
+          {dayPx.toFixed(1)} px/day
+        </span>
+      )}
     </div>
   );
 }
@@ -4792,21 +4839,51 @@ function ActivityDivisionInput({
   );
 }
 
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function buildDefaultTableColumnWidths(isFocusMode: boolean): ConstructLineTableColumnWidths {
+  return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((widths, column) => {
+    widths[column.id] =
+      column.id === "activity" && isFocusMode ? Math.min(column.max, 320) : column.default;
+    return widths;
+  }, {} as ConstructLineTableColumnWidths);
+}
+
+function buildTableColumnTemplate(widths: ConstructLineTableColumnWidths) {
+  return CONSTRUCTLINE_TABLE_COLUMN_SPECS.map((column) => `${widths[column.id]}px`).join(" ");
+}
+
+function getTableColumnWidth(widths: ConstructLineTableColumnWidths) {
+  return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((sum, column) => sum + widths[column.id], 0);
+}
+
 function MatrixHeaderCell({
   children,
   align = "right",
+  onResizeStart,
 }: {
   children: ReactNode;
   align?: "left" | "right";
+  onResizeStart?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
 }) {
   return (
     <div
       className={cn(
-        "flex min-w-0 items-center border-l border-hairline/70 px-2 leading-[1.05]",
+        "relative flex min-w-0 items-center border-l border-hairline/70 px-2 leading-[1.05]",
         align === "left" ? "justify-start text-left first:border-l-0" : "justify-end text-right",
       )}
     >
       <span className="min-w-0 whitespace-normal break-words">{children}</span>
+      {onResizeStart && (
+        <button
+          type="button"
+          aria-label={`Resize ${String(children)} column`}
+          className="absolute inset-y-0 right-0 z-10 w-2 translate-x-1 cursor-col-resize border-r border-transparent hover:border-foreground/45 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
+          onPointerDown={onResizeStart}
+        />
+      )}
     </div>
   );
 }
@@ -4825,6 +4902,7 @@ function ActivityScheduleMatrix({
   showLogicLines = false,
   isFocusMode = false,
   isPrintMode = false,
+  onDayPxChange,
   onOpenActivity,
   onDeleteActivity,
 }: {
@@ -4841,6 +4919,7 @@ function ActivityScheduleMatrix({
   showLogicLines?: boolean;
   isFocusMode?: boolean;
   isPrintMode?: boolean;
+  onDayPxChange?: (dayPx: number) => void;
   onOpenActivity: (activity: ScheduleActivityRow) => void;
   onDeleteActivity: (id: string) => void;
 }) {
@@ -4848,37 +4927,33 @@ function ActivityScheduleMatrix({
   const isFitZoom = !isPrintMode && dayPx === CONSTRUCTLINE_FIT_DAY_PX;
   const matrixScrollRef = useRef<HTMLDivElement | null>(null);
   const [matrixViewportWidth, setMatrixViewportWidth] = useState(0);
+  const [columnWidths, setColumnWidths] = useState<ConstructLineTableColumnWidths>(() =>
+    buildDefaultTableColumnWidths(isFocusMode),
+  );
   const measuredMatrixWidth =
     matrixViewportWidth > 0 ? matrixViewportWidth : isFocusMode ? 1320 : 1180;
-  const minimumTableWidth = isFocusMode ? 1160 : 1120;
-  const preferredFitTableWidth = isFocusMode ? 1220 : 1160;
-  const fitTableWidth = Math.round(
-    Math.min(
-      preferredFitTableWidth,
-      Math.max(minimumTableWidth, measuredMatrixWidth * (isFocusMode ? 0.62 : 0.76)),
-    ),
-  );
   const tableWidth = isPrintMode
     ? CONSTRUCTLINE_PRINT_TABLE_WIDTH
-    : isFitZoom
-      ? fitTableWidth
-      : isFocusMode
-        ? 1220
-        : 1160;
+    : getTableColumnWidth(columnWidths);
   const fitTimelineTargetWidth =
     matrixViewportWidth > 0
-      ? Math.max(360, measuredMatrixWidth - tableWidth - 1)
+      ? Math.max(isFocusMode ? 520 : 480, measuredMatrixWidth - tableWidth - 1)
       : isFocusMode
-        ? 720
-        : 640;
+        ? 760
+        : 560;
   const printDayPx = CONSTRUCTLINE_PRINT_TIMELINE_WIDTH / Math.max(1, model.totalTimelineDays);
-  const fitDayPx = Math.max(0.85, fitTimelineTargetWidth / Math.max(1, model.totalTimelineDays));
-  const activeDayPx = isPrintMode ? printDayPx : isFitZoom ? fitDayPx : dayPx;
-  const tableColumns = isPrintMode
-    ? "42px minmax(130px,1fr) 34px 48px 54px 34px 30px 24px 26px"
+  const fitDayPx = Math.max(
+    CONSTRUCTLINE_MIN_DAY_PX,
+    fitTimelineTargetWidth / Math.max(1, model.totalTimelineDays),
+  );
+  const activeDayPx = isPrintMode
+    ? printDayPx
     : isFitZoom
-      ? "72px minmax(420px,1fr) 74px 104px 118px 72px 64px 50px 58px"
-      : "82px minmax(480px,1fr) 78px 116px 132px 80px 70px 56px 68px";
+      ? fitDayPx
+      : clampNumber(dayPx, CONSTRUCTLINE_MIN_DAY_PX, CONSTRUCTLINE_MAX_DAY_PX);
+  const tableColumns = isPrintMode
+    ? CONSTRUCTLINE_TABLE_PRINT_COLUMNS
+    : buildTableColumnTemplate(columnWidths);
   const compactHeaders = isFitZoom || isPrintMode;
   const baseRowHeight = isPrintMode ? 31 : 72;
   const groupHeight = isPrintMode ? 16 : 32;
@@ -4900,6 +4975,72 @@ function ActivityScheduleMatrix({
     observer.observe(element);
     return () => observer.disconnect();
   }, [isPrintMode, model.groups.length]);
+  const startColumnResize = useCallback(
+    (columnId: ConstructLineTableColumnId, event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (isPrintMode || typeof window === "undefined") return;
+      const spec = CONSTRUCTLINE_TABLE_COLUMN_SPECS.find((column) => column.id === columnId);
+      if (!spec) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startWidth = columnWidths[columnId];
+      const originalCursor = document.body.style.cursor;
+      const originalSelect = document.body.style.userSelect;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const nextWidth = clampNumber(startWidth + moveEvent.clientX - startX, spec.min, spec.max);
+        setColumnWidths((current) => ({ ...current, [columnId]: Math.round(nextWidth) }));
+      };
+      const onPointerUp = () => {
+        document.body.style.cursor = originalCursor;
+        document.body.style.userSelect = originalSelect;
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    },
+    [columnWidths, isPrintMode],
+  );
+  const startTimelineScaleDrag = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (isPrintMode || !onDayPxChange || typeof window === "undefined") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startDayPx = activeDayPx;
+      const originalCursor = document.body.style.cursor;
+      const originalSelect = document.body.style.userSelect;
+      document.body.style.cursor = "ew-resize";
+      document.body.style.userSelect = "none";
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const nextDayPx = clampNumber(
+          startDayPx + (moveEvent.clientX - startX) / 28,
+          CONSTRUCTLINE_MIN_DAY_PX,
+          CONSTRUCTLINE_MAX_DAY_PX,
+        );
+        onDayPxChange(Number(nextDayPx.toFixed(2)));
+      };
+      const onPointerUp = () => {
+        document.body.style.cursor = originalCursor;
+        document.body.style.userSelect = originalSelect;
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    },
+    [activeDayPx, isPrintMode, onDayPxChange],
+  );
   const monthBands = buildConstructLineMonthBands(
     model.timelineStartDate,
     model.totalTimelineDays,
@@ -4974,7 +5115,7 @@ function ActivityScheduleMatrix({
       className={cn(
         "constructline-cpm-matrix scroll-mt-24 min-w-0 overflow-hidden rounded-md border border-hairline bg-card",
         isPrintMode && "constructline-cpm-matrix-print",
-        isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : isPrintMode ? "mt-0" : "mt-5",
+        isFocusMode ? "mt-0 flex min-h-0 flex-1 flex-col" : isPrintMode ? "mt-0" : "mt-2",
       )}
     >
       <div className="constructline-cpm-matrix-head flex flex-col gap-4 border-b border-hairline px-4 py-4">
@@ -5059,7 +5200,7 @@ function ActivityScheduleMatrix({
               ? "min-h-0 flex-1"
               : isPrintMode
                 ? ""
-                : "max-h-[clamp(460px,calc(100vh-330px),820px)]",
+                : "max-h-[clamp(520px,calc(100vh-260px),900px)]",
           )}
         >
           <div
@@ -5074,17 +5215,35 @@ function ActivityScheduleMatrix({
                 className="sticky left-0 z-40 grid shrink-0 border-r border-hairline bg-muted/80"
                 style={{ width: tableWidth, gridTemplateColumns: tableColumns }}
               >
-                <MatrixHeaderCell align="left">ID</MatrixHeaderCell>
-                <MatrixHeaderCell align="left">Activity</MatrixHeaderCell>
-                <MatrixHeaderCell>{compactHeaders ? "Dur" : "Duration"}</MatrixHeaderCell>
-                <MatrixHeaderCell>{compactHeaders ? "Plan" : "Planned dates"}</MatrixHeaderCell>
-                <MatrixHeaderCell>{compactHeaders ? "Current" : "Current dates"}</MatrixHeaderCell>
-                <MatrixHeaderCell>Slip</MatrixHeaderCell>
-                <MatrixHeaderCell>{compactHeaders ? "% done" : "% done"}</MatrixHeaderCell>
-                <MatrixHeaderCell>TF</MatrixHeaderCell>
-                <MatrixHeaderCell>Logic</MatrixHeaderCell>
+                {CONSTRUCTLINE_TABLE_COLUMN_SPECS.map((column) => (
+                  <MatrixHeaderCell
+                    key={column.id}
+                    align={"align" in column && column.align === "left" ? "left" : "right"}
+                    onResizeStart={
+                      isPrintMode ? undefined : (event) => startColumnResize(column.id, event)
+                    }
+                  >
+                    {compactHeaders ? column.compactLabel : column.label}
+                  </MatrixHeaderCell>
+                ))}
               </div>
-              <div className="relative shrink-0 bg-muted/45" style={{ width: timelineWidth }}>
+              <div
+                className={cn(
+                  "relative shrink-0 bg-muted/45",
+                  !isPrintMode && "cursor-ew-resize select-none",
+                )}
+                style={{ width: timelineWidth }}
+                title="Drag left or right to compress or expand the Gantt timeline."
+                onPointerDown={startTimelineScaleDrag}
+              >
+                {!isPrintMode && (
+                  <button
+                    type="button"
+                    aria-label="Resize activity table and Gantt split"
+                    className="absolute inset-y-0 left-0 z-30 w-3 -translate-x-1/2 cursor-col-resize border-l border-foreground/20 bg-foreground/5 hover:bg-foreground/15 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
+                    onPointerDown={(event) => startColumnResize("activity", event)}
+                  />
+                )}
                 {monthBands.map((band) => (
                   <div
                     key={`${band.label}-${band.x}`}
