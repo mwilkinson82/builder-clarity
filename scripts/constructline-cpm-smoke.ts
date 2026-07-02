@@ -269,6 +269,39 @@ assert.equal(byId.get("MS-001")?.totalFloat, 0);
 assert.equal(byId.get("C")?.isNearCritical, true);
 assert.equal(byId.get("C")?.isCritical, false);
 
+const aheadOfBaselineModel = buildConstructLineCpmModel(
+  [
+    {
+      ...withScheduleActivityStatus({
+        id: "ahead-a",
+        project_id: "project",
+        activity_id: "A",
+        name: "Ahead of baseline task",
+        division: "01 - General",
+        start_date: "2026-01-01",
+        finish_date: "2026-01-05",
+        percent_complete: 0,
+        predecessor_activity_ids: [],
+        successor_activity_ids: [],
+        notes: "",
+        sort_order: 10,
+      }),
+      forecast_finish_date: "2026-01-03",
+    },
+  ],
+  { dataDate: "2026-01-01" },
+);
+const aheadTask = aheadOfBaselineModel.tasks[0];
+assert.equal(aheadOfBaselineModel.cpmFinishDate, "2026-01-03");
+assert.equal(aheadTask?.statusBasis, "expected_finish");
+assert.equal(aheadTask?.statusFinishDate, "2026-01-03");
+assert.equal(
+  aheadTask?.totalFloat,
+  2,
+  "Ahead-of-baseline forecast work should show positive total float against the baseline finish.",
+);
+assert.equal(aheadTask?.isCritical, false);
+
 const relationshipActivities = [
   {
     id: "rel-a",

@@ -430,10 +430,7 @@ export function buildConstructLineCpmModel(
     baselineProjectFinishOffsets.length > 0
       ? Math.max(0, ...baselineProjectFinishOffsets)
       : currentProjectFinishOffset;
-  const backwardProjectFinishOffset = Math.min(
-    currentProjectFinishOffset,
-    requiredProjectFinishOffset,
-  );
+  const backwardProjectFinishOffset = requiredProjectFinishOffset;
   for (const task of [...ordered].reverse()) {
     const successorLateStarts = task.successorLinks
       .map((link) => {
@@ -570,10 +567,11 @@ export function buildConstructLineCpmModel(
   ).length;
   const lateCount = modelTasks.filter((task) => task.isLate).length;
   const outOfSequenceCount = modelTasks.filter((task) => task.isOutOfSequence).length;
-  const cpmFinishMs = Math.max(
-    projectFinishMs,
-    ...modelTasks.map((task) => parseDateMs(task.visualFinishDate) ?? projectFinishMs),
-  );
+  const visualFinishDates = modelTasks
+    .map((task) => parseDateMs(task.visualFinishDate))
+    .filter((value): value is number => value != null);
+  const cpmFinishMs =
+    visualFinishDates.length > 0 ? Math.max(...visualFinishDates) : projectFinishMs;
   const cpmFinishDate = isoDateFromMs(cpmFinishMs);
   const healthScore = scoreSchedule({
     taskCount: modelTasks.length,
