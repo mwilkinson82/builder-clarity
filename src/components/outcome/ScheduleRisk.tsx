@@ -2269,6 +2269,9 @@ export function CpmActivityPlanner({
     const forecastFinish = draft.is_milestone
       ? milestoneDate
       : draft.forecast_finish_date || baselineFinish;
+    const percentComplete = parsePercent(draft.percent_complete);
+    const draftHasStarted =
+      percentComplete > 0 || Boolean(draft.actual_start_date) || Boolean(draft.actual_finish_date);
     setDraftSaveError(null);
     try {
       await Promise.resolve(
@@ -2286,8 +2289,10 @@ export function CpmActivityPlanner({
           actual_finish_date: draft.actual_finish_date || null,
           remaining_duration_days: draft.is_milestone
             ? 0
-            : parseRemainingDuration(draft.remaining_duration_days),
-          percent_complete: parsePercent(draft.percent_complete),
+            : draftHasStarted
+              ? parseRemainingDuration(draft.remaining_duration_days)
+              : null,
+          percent_complete: percentComplete,
           predecessor_activity_ids: serializeActivityLinksToArray(draft.predecessor_activity_ids),
           successor_activity_ids: serializeActivityLinksToArray(draft.successor_activity_ids),
           notes: draft.notes.trim(),

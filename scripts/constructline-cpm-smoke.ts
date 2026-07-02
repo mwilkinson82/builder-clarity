@@ -1008,6 +1008,11 @@ assert.match(
   /function shouldFlagMissingRemainingDuration\(activity: ScheduleActivityRow\) \{[\s\S]*?isConstructLineMilestoneActivity\(activity\)[\s\S]*?!hasScheduleActivityStarted\(activity\)[\s\S]*?activity\.remaining_duration_days == null/s,
   "Missing remaining duration should only be flagged for started, incomplete non-milestone activities.",
 );
+assert.match(
+  scheduleRiskSource,
+  /const percentComplete = parsePercent\(draft\.percent_complete\);[\s\S]*?const draftHasStarted =[\s\S]*?remaining_duration_days: draft\.is_milestone[\s\S]*?\? 0[\s\S]*?: draftHasStarted[\s\S]*?\? parseRemainingDuration\(draft\.remaining_duration_days\)[\s\S]*?: null/s,
+  "New CPM activities should not save remaining duration until the activity has started.",
+);
 
 for (const removedScheduleRiskText of [
   "function ConstructLinePrintReport",
