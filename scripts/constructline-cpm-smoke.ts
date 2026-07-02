@@ -102,9 +102,23 @@ assert.equal(
     },
     "2026-07-08",
     "2026-06-30",
-  ).forecast_finish_date,
-  "2026-07-12",
-  "Unstarted future work should count remaining duration from the later current start.",
+  ).remaining_duration_days,
+  "",
+  "Unstarted future work should clear stale remaining duration and keep current start/finish as the forecast basis.",
+);
+assert.equal(
+  updateScheduleStatusForecastFinishDate(
+    {
+      ...startedStatusDraft,
+      actual_start_date: "",
+      percent_complete: "0",
+      remaining_duration_days: "7",
+    },
+    "2026-07-20",
+    "2026-06-30",
+  ).remaining_duration_days,
+  "",
+  "Unstarted forecast-finish changes should not create a remaining-duration requirement.",
 );
 assert.equal(
   updateScheduleStatusPercentComplete(startedStatusDraft, "100", "2026-06-30")
@@ -304,6 +318,10 @@ const statusedActivities = [
       }
     : activity,
 );
+const unstartedStatusRow = statusedActivities.find((activity) => activity.activity_id === "B");
+if (unstartedStatusRow) {
+  unstartedStatusRow.remaining_duration_days = 99;
+}
 const statusedModel = buildConstructLineCpmModel(statusedActivities, {
   dataDate: "2026-01-09",
 });
@@ -315,6 +333,11 @@ assert.equal(statusedById.get("A")?.statusBasis, "remaining_duration");
 assert.equal(statusedById.get("A")?.slippageDays, 3);
 assert.equal(statusedById.get("B")?.statusStartDate, "2026-01-14");
 assert.equal(statusedById.get("B")?.statusBasis, "planned_dates");
+assert.equal(
+  statusedById.get("B")?.statusFinishDate,
+  "2026-01-18",
+  "Unstarted activities should ignore stale remaining duration in CPM status math.",
+);
 assert.equal(statusedById.get("B")?.isCritical, true);
 assert.equal(statusedById.get("A")?.totalFloat, -3);
 assert.equal(statusedById.get("B")?.totalFloat, -3);
@@ -719,7 +742,7 @@ for (const requiredScheduleRiskText of [
   "shouldFlagMissingActualStart",
   "taskNeedsStatusUpdateBasis",
   "Needs update basis",
-  "Update actuals, remaining duration, or forecast date",
+  "Update actuals, current start, or expected finish",
   "formatTaskStatusBasisLabel",
   'return "remain";',
   'return "forecast";',
@@ -741,7 +764,7 @@ for (const requiredScheduleRiskText of [
   "setDraft(updateDraftActualStartDate(draft, e.target.value, dataDate))",
   "setDraft(updateDraftForecastStartDate(draft, e.target.value, dataDate))",
   "setDraft(updateDraftPercentComplete(draft, e.target.value, dataDate))",
-  "from the later current start for unstarted future work",
+  "Unstarted work is forecast with current start and current expected finish",
   "Schedule variance",
   "Duration",
   "Activity description",

@@ -1909,7 +1909,9 @@ const activityDraftFromRow = (activity: ScheduleActivityRow): ActivityDraft => {
     actual_start_date: activity.actual_start_date ?? "",
     actual_finish_date: activity.actual_finish_date ?? "",
     remaining_duration_days:
-      isMilestone || activity.remaining_duration_days == null
+      isMilestone ||
+      activity.remaining_duration_days == null ||
+      !hasScheduleActivityStarted(activity)
         ? isMilestone
           ? "0"
           : ""
@@ -2673,7 +2675,7 @@ export function CpmActivityPlanner({
       toast.warning("CPM update has status gaps", {
         description: `${updateReadiness.needsStatusCount} open ${
           updateReadiness.needsStatusCount === 1 ? "activity needs" : "activities need"
-        } remaining duration, expected finish, actual start, or late-status review. Click Save snapshot to save anyway.`,
+        } current start, expected finish, actual progress, or late-status review. Click Save snapshot to save anyway.`,
       });
       return;
     }
@@ -3490,7 +3492,7 @@ function ScheduleUpdateReadinessPanel({
         {[
           "1. Set the data date",
           "2. Open needs update",
-          "3. Update actuals, remaining duration, or forecast date",
+          "3. Update actuals, current start, or expected finish",
           "4. Save the CPM update snapshot",
         ].map((step) => (
           <div key={step} className="min-w-0 font-semibold text-foreground">
@@ -6135,7 +6137,9 @@ function ConstructLineTaskRow({
                 : "point"
               : percent >= 100
                 ? "done"
-                : `${task.remainingDurationDays} rem`}
+                : !hasScheduleActivityStarted(activity)
+                  ? "not started"
+                  : `${task.remainingDurationDays} rem`}
           </span>
         </div>
         <div
@@ -6343,7 +6347,7 @@ function formatTaskStatusBasisTitle(task: ConstructLineCpmTask) {
     case "expected_finish":
       return "Current schedule is based on the expected finish forecast.";
     case "needs_update":
-      return "This incomplete activity is past its expected finish. Enter remaining duration or expected finish.";
+      return "This incomplete activity is past its expected finish. Review actual status and update the current forecast.";
     case "planned_dates":
     default:
       return "Current schedule is still carrying the planned baseline dates.";
@@ -6571,7 +6575,11 @@ function shouldFlagMissingActualStart(activity: ScheduleActivityRow) {
 }
 
 function hasScheduleActivityStarted(activity: ScheduleActivityRow) {
-  return activity.percent_complete > 0 || Boolean(activity.actual_start_date);
+  return (
+    activity.percent_complete > 0 ||
+    Boolean(activity.actual_start_date) ||
+    Boolean(activity.actual_finish_date)
+  );
 }
 
 function taskNeedsStatusUpdateBasis(task: ConstructLineCpmTask) {
@@ -6588,10 +6596,7 @@ function formatUpdateReadinessQueueLine(item: ScheduleUpdateReadinessItem) {
     const status = item.task.activity.percent_complete >= 100 ? "met" : "not met";
     return `Forecast point ${shortDate(item.task.statusFinishDate)} · ${status} · TF ${item.task.totalFloat}d`;
   }
-  if (
-    !hasScheduleActivityStarted(item.task.activity) &&
-    item.task.activity.remaining_duration_days == null
-  ) {
+  if (!hasScheduleActivityStarted(item.task.activity)) {
     return `Forecast finish ${shortDate(item.task.statusFinishDate)} · not started · TF ${item.task.totalFloat}d`;
   }
   return `Expected finish ${shortDate(item.task.statusFinishDate)} · remaining ${
@@ -7474,11 +7479,17 @@ function ActivityDetailDialog({
   );
   const isMilestone = isConstructLineMilestoneActivity(activity);
   const hasStarted = hasScheduleActivityStarted(activity);
+  const draftHasStarted =
+    parsePercent(draft.percent_complete) > 0 ||
+    Boolean(draft.actual_start_date) ||
+    Boolean(draft.actual_finish_date);
   const enteredRemainingDuration =
-    isMilestone || activity.percent_complete >= 100 ? 0 : activity.remaining_duration_days;
+    isMilestone || activity.percent_complete >= 100 || !hasStarted
+      ? null
+      : activity.remaining_duration_days;
   const inferredRemainingDuration =
-    isMilestone || activity.percent_complete >= 100
-      ? 0
+    isMilestone || activity.percent_complete >= 100 || !hasStarted
+      ? null
       : getDateDurationDays(
           dataDate ?? activity.forecast_start_date ?? activity.start_date,
           activity.forecast_finish_date ?? activity.finish_date,
@@ -7503,7 +7514,7 @@ function ActivityDetailDialog({
       }
     : activity.percent_complete >= 100
       ? { value: "0", sub: "complete", tone: "success" as const }
-      : !hasStarted && activity.remaining_duration_days == null
+      : !hasStarted
         ? {
             value: "Not started",
             sub: "forecast dates control",
@@ -7623,7 +7634,9 @@ function ActivityDetailDialog({
         actual_finish_date: draft.actual_finish_date || null,
         remaining_duration_days: draft.is_milestone
           ? 0
-          : parseRemainingDuration(draft.remaining_duration_days),
+          : draftHasStarted
+            ? parseRemainingDuration(draft.remaining_duration_days)
+            : null,
         percent_complete: parsePercent(draft.percent_complete),
         predecessor_activity_ids: serializeActivityLinksToArray(draft.predecessor_activity_ids),
         successor_activity_ids: serializeActivityLinksToArray(draft.successor_activity_ids),
@@ -7814,7 +7827,9 @@ function ActivityDetailDialog({
                   <div className="mt-1 text-sm text-muted-foreground">
                     {isMilestone
                       ? "For this data date, mark whether this milestone was met and set the current forecast date. Milestones are zero-duration schedule points."
-                      : "For this data date, enter actual progress and either remaining duration or current expected finish. The other field recalculates so the CPM finish, float, and delay impact reflect the update."}
+                      : draftHasStarted
+                        ? "For this data date, enter actual progress and either remaining duration or current expected finish. The other field recalculates so the CPM finish, float, and delay impact reflect the update."
+                        : "This activity has not started. Leave remaining duration blank; adjust current start and current expected finish until actual start or progress is entered."}
                   </div>
                 </div>
                 <div className="text-xs font-semibold text-muted-foreground">
@@ -7844,12 +7859,12 @@ function ActivityDetailDialog({
                   <Input
                     type="number"
                     min={0}
-                    value={isMilestone ? "0" : draft.remaining_duration_days}
+                    value={isMilestone ? "0" : draftHasStarted ? draft.remaining_duration_days : ""}
                     onChange={(e) =>
                       setDraft(updateDraftRemainingDuration(draft, e.target.value, dataDate))
                     }
-                    placeholder={isMilestone ? "0" : "days"}
-                    disabled={isMilestone}
+                    placeholder={isMilestone ? "0" : draftHasStarted ? "days" : "not started"}
+                    disabled={isMilestone || !draftHasStarted}
                     className="h-10 min-w-0 tabular"
                   />
                 </LabeledField>
@@ -7902,7 +7917,9 @@ function ActivityDetailDialog({
                 <span className="font-semibold text-foreground">Update rule:</span>{" "}
                 {isMilestone
                   ? "Milestones stay at zero duration. Move the current expected finish to forecast the milestone date, or mark it 100% when it is met. The CPM recalculates float against the completion path."
-                  : "Baseline dates stay fixed. Remaining duration is counted from the data date for started work, or from the later current start for unstarted future work. Changing remaining duration moves current expected finish, and changing current expected finish recalculates remaining duration. After save, the CPM recalculates float against the baseline completion path, including negative total float."}
+                  : draftHasStarted
+                    ? "Baseline dates stay fixed. Remaining duration is counted from the data date for started work. Changing remaining duration moves current expected finish, and changing current expected finish recalculates remaining duration. After save, the CPM recalculates float against the baseline completion path, including negative total float."
+                    : "Baseline dates stay fixed. Unstarted work is forecast with current start and current expected finish; remaining duration is not required until actual start or progress is entered."}
               </div>
               {!dataDate && (
                 <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -8947,6 +8964,8 @@ function buildActivityUpdateImpact(draft: ActivityDraft, dataDate?: string | nul
   const remainingDuration = parseRemainingDuration(draft.remaining_duration_days);
   const statusAnchor = getDraftStatusAnchorDate(draft, dataDate);
   const isComplete = percentComplete >= 100 || Boolean(draft.actual_finish_date);
+  const isStarted =
+    percentComplete > 0 || Boolean(draft.actual_start_date) || Boolean(draft.actual_finish_date);
   const finishTone = slipDays == null || slipDays <= 0 ? "default" : "danger";
   const slipTone =
     slipDays == null || slipDays === 0 ? "default" : slipDays > 0 ? "danger" : "success";
@@ -8956,14 +8975,18 @@ function buildActivityUpdateImpact(draft: ActivityDraft, dataDate?: string | nul
     finishTone,
     remainingValue: isComplete
       ? "Complete"
-      : remainingDuration == null
-        ? "Missing"
-        : String(remainingDuration),
+      : !isStarted
+        ? "Not started"
+        : remainingDuration == null
+          ? "Missing"
+          : String(remainingDuration),
     remainingBasis: isComplete
       ? "actual finish controls"
-      : statusAnchor
-        ? `from ${shortDate(statusAnchor)}`
-        : "set data date",
+      : !isStarted
+        ? "current start / finish"
+        : statusAnchor
+          ? `from ${shortDate(statusAnchor)}`
+          : "set data date",
     slipValue:
       slipDays == null
         ? "Set dates"

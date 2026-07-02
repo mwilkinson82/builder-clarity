@@ -47,6 +47,14 @@ export function getScheduleStatusAnchorDate(
   return isoDateFromMs(Math.max(dataDateMs, currentStartMs));
 }
 
+function hasScheduleStatusStarted(draft: ScheduleStatusDraftLike) {
+  return (
+    parseSchedulePercent(draft.percent_complete) > 0 ||
+    Boolean(draft.actual_start_date) ||
+    Boolean(draft.actual_finish_date)
+  );
+}
+
 export function updateScheduleStatusRemainingDuration<TDraft extends ScheduleStatusDraftLike>(
   draft: TDraft,
   value: string,
@@ -70,6 +78,10 @@ export function updateScheduleStatusForecastFinishDate<TDraft extends ScheduleSt
   value: string,
   dataDate?: string | null,
 ): TDraft {
+  if (!hasScheduleStatusStarted(draft)) {
+    return { ...draft, forecast_finish_date: value, remaining_duration_days: "" };
+  }
+
   const anchorMs = parseScheduleDateMs(getScheduleStatusAnchorDate(draft, dataDate));
   const finishMs = parseScheduleDateMs(value);
   if (anchorMs == null || finishMs == null || finishMs < anchorMs) {
@@ -89,6 +101,9 @@ export function updateScheduleStatusActualStartDate<TDraft extends ScheduleStatu
   dataDate?: string | null,
 ): TDraft {
   const next = { ...draft, actual_start_date: value };
+  if (!hasScheduleStatusStarted(next)) {
+    return { ...next, remaining_duration_days: "" };
+  }
   if (next.forecast_finish_date) {
     return updateScheduleStatusForecastFinishDate(next, next.forecast_finish_date, dataDate);
   }
@@ -104,6 +119,9 @@ export function updateScheduleStatusForecastStartDate<TDraft extends ScheduleSta
   dataDate?: string | null,
 ): TDraft {
   const next = { ...draft, forecast_start_date: value };
+  if (!hasScheduleStatusStarted(next)) {
+    return { ...next, remaining_duration_days: "" };
+  }
   if (next.remaining_duration_days.trim()) {
     return updateScheduleStatusRemainingDuration(next, next.remaining_duration_days, dataDate);
   }
@@ -126,6 +144,9 @@ export function updateScheduleStatusPercentComplete<TDraft extends ScheduleStatu
       remaining_duration_days: "0",
       actual_finish_date: next.actual_finish_date || next.forecast_finish_date || next.finish_date,
     };
+  }
+  if (!hasScheduleStatusStarted(next)) {
+    return { ...next, remaining_duration_days: "" };
   }
   if (next.forecast_finish_date) {
     return updateScheduleStatusForecastFinishDate(next, next.forecast_finish_date, dataDate);
