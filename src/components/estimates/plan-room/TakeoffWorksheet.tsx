@@ -1,4 +1,4 @@
-import { AlertTriangle, ClipboardList, Download, Link2, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, ClipboardList, Download, Link2, Rows3, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -145,6 +145,10 @@ export function TakeoffWorksheet({
   linkMeasurement,
   classifyMeasurement,
   classifyPending = false,
+  onBuildFromTakeoffs,
+  buildPending = false,
+  onReviewMatches,
+  matchCount = 0,
 }: {
   measurements: TakeoffMeasurementRow[];
   totalMeasured: number;
@@ -176,6 +180,10 @@ export function TakeoffWorksheet({
       | { type: "label"; description: string; unit: string },
   ) => void;
   classifyPending?: boolean;
+  onBuildFromTakeoffs?: () => void;
+  buildPending?: boolean;
+  onReviewMatches?: () => void;
+  matchCount?: number;
 }) {
   return (
     <>
@@ -192,6 +200,35 @@ export function TakeoffWorksheet({
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2" data-testid="takeoff-report-actions">
+              {onBuildFromTakeoffs && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 gap-1.5 px-2 text-xs"
+                  onClick={onBuildFromTakeoffs}
+                  disabled={buildPending}
+                  title="Group unlinked takeoffs into new estimate rows, then confirm"
+                  data-testid="build-from-takeoffs"
+                >
+                  <Rows3 className="h-3.5 w-3.5" />
+                  Build Estimate From Takeoffs
+                </Button>
+              )}
+              {onReviewMatches && matchCount > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 gap-1.5 px-2 text-xs"
+                  onClick={onReviewMatches}
+                  title="Review suggested takeoff-to-row matches"
+                  data-testid="review-takeoff-matches"
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                  Match to Rows ({matchCount})
+                </Button>
+              )}
               <Button
                 type="button"
                 size="sm"

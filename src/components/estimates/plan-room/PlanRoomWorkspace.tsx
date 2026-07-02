@@ -64,9 +64,12 @@ import {
 } from "@/lib/plan-room.functions";
 import {
   distancePx,
+  groupUnlinkedTakeoffs,
   parseFeetInches,
   statedScaleFeetPerPixel,
+  suggestTakeoffMatches,
   takeoffUnitsCompatible,
+  type TakeoffGroup,
 } from "@/lib/plan-room-math";
 import type { ProcessedSheetPage } from "./PdfSheetViewer";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
@@ -219,6 +222,19 @@ export function PlanRoomWorkspace({
     measurementId: string;
     anchor: Point;
   } | null>(null);
+  const [buildGroups, setBuildGroups] = useState<Array<
+    TakeoffGroup & { accepted: boolean }
+  > | null>(null);
+  const [matchProposals, setMatchProposals] = useState<Array<{
+    measurementId: string;
+    lineId: string;
+    takeoffLabel: string;
+    takeoffQuantity: number;
+    takeoffUnit: string;
+    rowLabel: string;
+    rowUnit: string;
+    accepted: boolean;
+  }> | null>(null);
   const [verifyOutcome, setVerifyOutcome] = useState<{
     measuredFeet: number;
     expectedFeet: number;
@@ -761,6 +777,126 @@ export function PlanRoomWorkspace({
       { onSuccess: () => syncLineMutation.mutate({ lineId }) },
     );
   };
+
+  // Task 3: offered matches, never auto-applied. Computed live so rows that
+  // appear after a master sheet import are matched the moment they exist.
+  const takeoffMatchSuggestions = useMemo(
+    () =>
+      suggestTakeoffMatches(
+        measurements
+          .filter((measurement) => !measurement.estimate_line_item_id)
+          .map((measurement) => ({
+            id: measurement.id,
+            label: measurement.label,
+            unit: measurement.unit,
+          })),
+        lineItems.map((line) => ({
+          id: line.id,
+          cost_code: line.cost_code,
+          description: line.description,
+          unit: line.unit,
+        })),
+      ),
+    [lineItems, measurements],
+  );
+
+  const openBuildFromTakeoffs = () => {
+    const groups = groupUnlinkedTakeoffs(
+      measurements
+        .filter((measurement) => !measurement.estimate_line_item_id)
+        .map((measurement) => ({
+          id: measurement.id,
+          label: measurement.label,
+          unit: measurement.unit,
+          quantity: measurement.quantity,
+          waste_pct: measurement.waste_pct,
+          library_item_id: measurement.library_item_id,
+        })),
+    );
+    if (groups.length === 0) {
+      toast.info("Every takeoff is already linked to an estimate row.");
+      return;
+    }
+    setBuildGroups(groups.map((group) => ({ ...group, accepted: true })));
+  };
+
+  const buildFromTakeoffsMutation = useMutation({
+    mutationFn: async (groups: TakeoffGroup[]) => {
+      const createdLineIds: string[] = [];
+      for (const group of groups) {
+        const result = await createLineForTakeoffsFn({
+          data: {
+            estimate_id: estimate.id,
+            measurement_ids: group.measurement_ids,
+            source: group.library_item_id
+              ? { type: "library", library_item_id: group.library_item_id }
+              : { type: "label", description: group.label, unit: group.unit },
+          },
+        });
+        createdLineIds.push(result.line_item_id);
+      }
+      return createdLineIds;
+    },
+    onSuccess: (createdLineIds) => {
+      toast.success(
+        `${createdLineIds.length} estimate row${createdLineIds.length === 1 ? "" : "s"} created from takeoffs`,
+      );
+      setBuildGroups(null);
+      invalidate();
+      createdLineIds.forEach((lineId) => syncLineMutation.mutate({ lineId }));
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate rows did not build"),
+  });
+
+  const openMatchProposals = () => {
+    const proposals = takeoffMatchSuggestions
+      .map((match) => {
+        const measurement = measurements.find((item) => item.id === match.measurement_id);
+        const line = lineItems.find((item) => item.id === match.line_id);
+        if (!measurement || !line) return null;
+        return {
+          measurementId: measurement.id,
+          lineId: line.id,
+          takeoffLabel: measurement.label,
+          takeoffQuantity: measurement.quantity,
+          takeoffUnit: measurement.unit,
+          rowLabel: `${line.cost_code ? `${line.cost_code} · ` : ""}${line.description}`,
+          rowUnit: line.unit,
+          accepted: true,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+    if (proposals.length === 0) {
+      toast.info("No confident takeoff-to-row matches found.");
+      return;
+    }
+    setMatchProposals(proposals);
+  };
+
+  const applyMatchesMutation = useMutation({
+    mutationFn: async (rows: NonNullable<typeof matchProposals>) => {
+      const accepted = rows.filter((row) => row.accepted);
+      for (const row of accepted) {
+        await updateMeasurementFn({
+          data: { id: row.measurementId, patch: { estimate_line_item_id: row.lineId } },
+        });
+      }
+      return Array.from(new Set(accepted.map((row) => row.lineId)));
+    },
+    onSuccess: (lineIds) => {
+      if (lineIds.length > 0) {
+        toast.success(
+          `${lineIds.length} estimate row${lineIds.length === 1 ? "" : "s"} matched to takeoffs`,
+        );
+      }
+      setMatchProposals(null);
+      invalidate();
+      lineIds.forEach((lineId) => syncLineMutation.mutate({ lineId }));
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Matches did not apply"),
+  });
 
   const renameSheetMutation = useMutation({
     mutationFn: ({
@@ -3136,6 +3272,12 @@ export function PlanRoomWorkspace({
               classifyTakeoffMutation.mutate({ measurementIds: [measurementId], source })
             }
             classifyPending={classifyTakeoffMutation.isPending}
+            onBuildFromTakeoffs={
+              unlinkedMeasurements.length > 0 ? openBuildFromTakeoffs : undefined
+            }
+            buildPending={buildFromTakeoffsMutation.isPending}
+            onReviewMatches={takeoffMatchSuggestions.length > 0 ? openMatchProposals : undefined}
+            matchCount={takeoffMatchSuggestions.length}
           />
           {isCockpitMode && (
             <div
@@ -3150,6 +3292,150 @@ export function PlanRoomWorkspace({
           )}
         </aside>
       </main>
+      {buildGroups && (
+        <Dialog open onOpenChange={(open) => !open && setBuildGroups(null)}>
+          <DialogContent className="max-w-2xl" data-testid="build-from-takeoffs-dialog">
+            <DialogHeader>
+              <DialogTitle>Build estimate rows from takeoffs</DialogTitle>
+              <DialogDescription>
+                Unlinked takeoffs grouped into the rows they would create (waste applied, mixed
+                units kept separate). Uncheck any group to leave it as-is.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-[50vh] space-y-1.5 overflow-y-auto">
+              {buildGroups.map((group) => (
+                <label
+                  key={group.key}
+                  className="flex cursor-pointer items-start gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-sm"
+                  data-testid="build-from-takeoffs-row"
+                >
+                  <input
+                    type="checkbox"
+                    checked={group.accepted}
+                    onChange={(event) =>
+                      setBuildGroups(
+                        (current) =>
+                          current?.map((item) =>
+                            item.key === group.key
+                              ? { ...item, accepted: event.target.checked }
+                              : item,
+                          ) ?? null,
+                      )
+                    }
+                    className="mt-1"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{group.label}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {formatQty(group.quantity, group.unit)} from {group.measurement_count} takeoff
+                      {group.measurement_count === 1 ? "" : "s"}
+                    </span>
+                  </span>
+                  {group.library_item_id ? (
+                    <Badge variant="secondary" className="shrink-0">
+                      Priced from library
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="shrink-0 border-warning/50 bg-warning/10">
+                      Needs pricing
+                    </Badge>
+                  )}
+                </label>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setBuildGroups(null)}
+                disabled={buildFromTakeoffsMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() =>
+                  buildFromTakeoffsMutation.mutate(buildGroups.filter((group) => group.accepted))
+                }
+                disabled={
+                  buildFromTakeoffsMutation.isPending ||
+                  buildGroups.every((group) => !group.accepted)
+                }
+                data-testid="build-from-takeoffs-apply"
+              >
+                {buildFromTakeoffsMutation.isPending
+                  ? "Creating rows..."
+                  : `Create ${buildGroups.filter((group) => group.accepted).length} Row${
+                      buildGroups.filter((group) => group.accepted).length === 1 ? "" : "s"
+                    }`}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+      {matchProposals && (
+        <Dialog open onOpenChange={(open) => !open && setMatchProposals(null)}>
+          <DialogContent className="max-w-2xl" data-testid="takeoff-match-dialog">
+            <DialogHeader>
+              <DialogTitle>Match takeoffs to estimate rows</DialogTitle>
+              <DialogDescription>
+                Suggested matches on cost code or description with compatible units. Uncheck any row
+                to skip it — nothing links until you apply.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-[50vh] space-y-1.5 overflow-y-auto">
+              {matchProposals.map((row) => (
+                <label
+                  key={row.measurementId}
+                  className="flex cursor-pointer items-start gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-sm"
+                  data-testid="takeoff-match-row"
+                >
+                  <input
+                    type="checkbox"
+                    checked={row.accepted}
+                    onChange={(event) =>
+                      setMatchProposals(
+                        (current) =>
+                          current?.map((item) =>
+                            item.measurementId === row.measurementId
+                              ? { ...item, accepted: event.target.checked }
+                              : item,
+                          ) ?? null,
+                      )
+                    }
+                    className="mt-1"
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {row.takeoffLabel} · {formatQty(row.takeoffQuantity, row.takeoffUnit)}
+                    </span>
+                    <span className="block truncate font-medium">
+                      → {row.rowLabel} · per {row.rowUnit}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setMatchProposals(null)}
+                disabled={applyMatchesMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => applyMatchesMutation.mutate(matchProposals)}
+                disabled={
+                  applyMatchesMutation.isPending || matchProposals.every((row) => !row.accepted)
+                }
+                data-testid="takeoff-match-apply"
+              >
+                Apply {matchProposals.filter((row) => row.accepted).length} Match
+                {matchProposals.filter((row) => row.accepted).length === 1 ? "" : "es"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {detectProposals && (
         <Dialog open onOpenChange={(open) => !open && setDetectProposals(null)}>
           <DialogContent className="max-w-2xl" data-testid="detect-names-dialog">

@@ -14,6 +14,9 @@ import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "../src/lib/estima
 import {
   calculateTakeoffQuantity,
   decimalFeetHint,
+  groupUnlinkedTakeoffs,
+  normalizeTakeoffLabel,
+  suggestTakeoffMatches,
   disciplineForSheetNumber,
   extractSheetIdentity,
   formatFeetInches,
@@ -424,6 +427,66 @@ assert.equal(decimalFeetHint("12' 8\""), null);
 const bigFractionHint = decimalFeetHint("12.80");
 assert.ok(bigFractionHint);
 assert.equal(bigFractionHint.suggestion, null);
+
+// --- Takeoff-first grouping and matching (Phase 3) ---
+assert.equal(normalizeTakeoffLabel("  Wash  Brushes! "), "wash brushes");
+assert.equal(normalizeTakeoffLabel('CMU Wall (8")'), "cmu wall 8");
+
+const takeoffGroups = groupUnlinkedTakeoffs([
+  { id: "m1", label: "Slab area", unit: "SF", quantity: 100, waste_pct: 10, library_item_id: null },
+  {
+    id: "m2",
+    label: "slab  AREA",
+    unit: "SQFT",
+    quantity: 50,
+    waste_pct: 0,
+    library_item_id: null,
+  },
+  { id: "m3", label: "Slab area", unit: "LF", quantity: 40, waste_pct: 0, library_item_id: null },
+  { id: "m4", label: "Anything", unit: "SF", quantity: 9, waste_pct: 0, library_item_id: "lib-1" },
+  { id: "m5", label: "Other", unit: "SF", quantity: 1, waste_pct: 0, library_item_id: "lib-1" },
+]);
+// Same normalized label + compatible unit merge; the LF one splits; library
+// items group by item id.
+assert.equal(takeoffGroups.length, 3);
+const slabGroup = takeoffGroups.find((group) => group.key.startsWith("label:slab area:SF"));
+assert.ok(slabGroup);
+assert.deepEqual(slabGroup.measurement_ids, ["m1", "m2"]);
+assert.equal(slabGroup.quantity, 160); // 100 x 1.10 + 50
+const slabLinear = takeoffGroups.find((group) => group.key.startsWith("label:slab area:LF"));
+assert.ok(slabLinear);
+assert.equal(slabLinear.quantity, 40);
+const libraryGroup = takeoffGroups.find((group) => group.library_item_id === "lib-1");
+assert.ok(libraryGroup);
+assert.equal(libraryGroup.measurement_count, 2);
+
+const matches = suggestTakeoffMatches(
+  [
+    { id: "m1", label: "Drywall hang and finish", unit: "SF" },
+    { id: "m2", label: "03-300 slab pour", unit: "SF" },
+    { id: "m3", label: "Fence run", unit: "LF" },
+    { id: "m4", label: "", unit: "SF" },
+  ],
+  [
+    { id: "r1", cost_code: "09-290", description: "Drywall hang and finish", unit: "SQFT" },
+    { id: "r2", cost_code: "03-300", description: "Slab on grade", unit: "SF" },
+    { id: "r3", cost_code: "", description: "Fence run", unit: "SF" },
+  ],
+);
+assert.equal(matches.length, 2);
+assert.deepEqual(
+  matches.find((match) => match.measurement_id === "m1"),
+  { measurement_id: "m1", line_id: "r1", score: 100 },
+);
+assert.deepEqual(
+  matches.find((match) => match.measurement_id === "m2"),
+  { measurement_id: "m2", line_id: "r2", score: 80 },
+);
+// m3 has no unit-compatible candidate (Fence run row is per SF), m4 no label.
+assert.equal(
+  matches.some((match) => match.measurement_id === "m3"),
+  false,
+);
 
 const slab = ESTIMATE_SEED_LIBRARY_ITEMS.find((item) => item.external_id === "slab-4in");
 assert.ok(slab);
