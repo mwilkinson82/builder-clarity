@@ -772,7 +772,9 @@ for (const requiredScheduleRiskText of [
   "hasScheduleActivityStarted(activity)",
   "Start or forecast needed",
   "remaining duration not required",
-  "remaining duration is only required after work starts",
+  "Remaining duration is only required after an actual start",
+  "Progress is entered but actual start is missing",
+  "remaining duration unlocks after actual start",
   "Current forecast",
   "not started",
   "forecast dates control",
@@ -1005,13 +1007,13 @@ assert.match(
 
 assert.match(
   scheduleRiskSource,
-  /function shouldFlagMissingRemainingDuration\(activity: ScheduleActivityRow\) \{[\s\S]*?isConstructLineMilestoneActivity\(activity\)[\s\S]*?!hasScheduleActivityStarted\(activity\)[\s\S]*?activity\.remaining_duration_days == null/s,
-  "Missing remaining duration should only be flagged for started, incomplete non-milestone activities.",
+  /function shouldFlagMissingRemainingDuration\(activity: ScheduleActivityRow\) \{[\s\S]*?isConstructLineMilestoneActivity\(activity\)[\s\S]*?!hasScheduleActivityActualStartBasis\(activity\)[\s\S]*?activity\.remaining_duration_days == null[\s\S]*?!activity\.forecast_finish_date/s,
+  "Missing remaining duration should only be flagged after actual start and when no current expected finish exists.",
 );
 assert.match(
   scheduleRiskSource,
-  /const percentComplete = parsePercent\(draft\.percent_complete\);[\s\S]*?const draftHasStarted =[\s\S]*?remaining_duration_days: draft\.is_milestone[\s\S]*?\? 0[\s\S]*?: draftHasStarted[\s\S]*?\? parseRemainingDuration\(draft\.remaining_duration_days\)[\s\S]*?: null/s,
-  "New CPM activities should not save remaining duration until the activity has started.",
+  /const percentComplete = parsePercent\(draft\.percent_complete\);[\s\S]*?const draftHasActualStartBasis =[\s\S]*?remaining_duration_days: draft\.is_milestone[\s\S]*?\? 0[\s\S]*?: draftHasActualStartBasis[\s\S]*?\? parseRemainingDuration\(draft\.remaining_duration_days\)[\s\S]*?: null/s,
+  "New CPM activities should not save remaining duration until the activity has an actual-start basis.",
 );
 
 for (const removedScheduleRiskText of [
