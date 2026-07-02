@@ -988,6 +988,7 @@ for (const requiredScheduleRiskText of [
   "createActivityExposureFn",
   "activityRiskCreate",
   "buildActivityRiskDescription",
+  "Save it under the Milestones WBS path",
   "schedule_impact_weeks: scheduleImpactWeeks",
   "dollar_exposure: 0",
   "Logged open delay",
@@ -1123,7 +1124,8 @@ for (const requiredScheduleRouteText of [
   "updates={updates}",
   "activityUpdates={activityUpdates}",
   "activity snapshots",
-  "The CPM update fields did not save. Refresh once and save again; baseline dates, WBS, notes, and logic can still save normally.",
+  "The baseline row, WBS, notes, and logic can still save normally. Reopen the activity and save the status update fields after the schedule refresh completes.",
+  "Save it with the typed WBS path",
 ]) {
   assert.ok(
     scheduleRouteSource.includes(requiredScheduleRouteText),

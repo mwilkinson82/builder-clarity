@@ -7337,7 +7337,7 @@ function formatActivityDraftSaveError(error: unknown, isMilestone: boolean) {
     lowerMessage.includes("remaining duration") ||
     lowerMessage.includes("schedule field could not save")
   ) {
-    return "The CPM update fields did not save. Refresh once and save again; baseline dates, WBS, notes, and logic can still save normally.";
+    return "The baseline row, WBS, notes, and logic can still save normally. Reopen the activity and save the status update fields after the schedule refresh completes.";
   }
   if (
     lowerMessage.includes("wbs_section_id") ||
@@ -7345,8 +7345,8 @@ function formatActivityDraftSaveError(error: unknown, isMilestone: boolean) {
     lowerMessage.includes("schedule_activities")
   ) {
     return isMilestone
-      ? "The milestone could not attach to that WBS area yet. Refresh and save again, or save it under the Milestones WBS path."
-      : "The activity could not attach to that WBS area yet. Refresh and save again, or save it with its typed WBS path.";
+      ? "The milestone could not attach to that WBS area yet. Save it under the Milestones WBS path, then attach the area after the schedule refresh completes."
+      : "The activity could not attach to that WBS area yet. Save it with its typed WBS path, then attach the area after the schedule refresh completes.";
   }
   return message || (isMilestone ? "The milestone did not save." : "The activity did not save.");
 }

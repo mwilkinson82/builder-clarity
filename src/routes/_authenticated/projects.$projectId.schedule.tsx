@@ -100,14 +100,14 @@ function formatActivityMutationError(error: unknown) {
     lowerMessage.includes("remaining duration") ||
     lowerMessage.includes("schedule field could not save")
   ) {
-    return "The CPM update fields did not save. Refresh once and save again; baseline dates, WBS, notes, and logic can still save normally.";
+    return "The baseline row, WBS, notes, and logic can still save normally. Reopen the activity and save the status update fields after the schedule refresh completes.";
   }
   if (
     lowerMessage.includes("wbs_section_id") ||
     lowerMessage.includes("schema cache") ||
     lowerMessage.includes("schedule_activities")
   ) {
-    return "The row could not attach to that WBS area yet. Refresh the schedule and save it again.";
+    return "The row could not attach to that WBS area yet. Save it with the typed WBS path or Milestones division, then attach the area after the schedule refresh completes.";
   }
   return message || "Refresh and try again.";
 }
