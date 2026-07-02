@@ -119,6 +119,15 @@ type PdfRenderPlan = {
   maxEdge: number;
   maxPixels: number;
 };
+type PdfDetailMode = "fast" | "sharp" | "max";
+type PdfDetailOption = {
+  mode: PdfDetailMode;
+  label: string;
+  badge: string;
+  testId: string;
+  multiplier: number;
+  title: string;
+};
 type RenderQualityStatus = {
   label: string;
   details: string;
@@ -184,6 +193,37 @@ const PDF_STANDARD_RENDER_MAX_PIXELS = 24_000_000;
 const PDF_HIGH_DETAIL_RENDER_MAX_EDGE = 12_288;
 const PDF_HIGH_DETAIL_RENDER_MAX_PIXELS = 72_000_000;
 const PDF_INSPECTION_RENDER_MULTIPLIER = 2;
+const DEFAULT_PDF_DETAIL_MODE: PdfDetailMode = "max";
+const PDF_DETAIL_OPTIONS: PdfDetailOption[] = [
+  {
+    mode: "fast",
+    label: "Fast",
+    badge: "Fast PDF",
+    testId: "plan-pdf-detail-fast",
+    multiplier: 1,
+    title: "Fast render for quick sheet navigation.",
+  },
+  {
+    mode: "sharp",
+    label: "Sharp",
+    badge: "Sharp PDF",
+    testId: "plan-pdf-detail-sharp",
+    multiplier: PDF_INSPECTION_RENDER_MULTIPLIER,
+    title: "Sharper render for reading notes while you estimate.",
+  },
+  {
+    mode: "max",
+    label: "Max",
+    badge: "Max Detail",
+    testId: "plan-pdf-detail-max",
+    multiplier: 3,
+    title: "Highest available render detail for zoomed-in plan review.",
+  },
+];
+const PDF_DETAIL_OPTION_BY_MODE = PDF_DETAIL_OPTIONS.reduce(
+  (options, option) => ({ ...options, [option.mode]: option }),
+  {} as Record<PdfDetailMode, PdfDetailOption>,
+);
 const EMPTY_VIEWPORT_FRAME: ViewportFrame = { x: 0, y: 0, width: 1, height: 1 };
 const COCKPIT_PANEL_EDGE_GAP = 8;
 const COCKPIT_PANEL_MIN_WIDTH = 280;
@@ -3011,6 +3051,7 @@ function PlanCanvas({
   const [isMiniMapCollapsed, setIsMiniMapCollapsed] = useState(false);
   const [viewportFrame, setViewportFrame] = useState<ViewportFrame>(EMPTY_VIEWPORT_FRAME);
   const [renderQuality, setRenderQuality] = useState<RenderQualityStatus | null>(null);
+  const [pdfDetailMode, setPdfDetailMode] = useState<PdfDetailMode>(DEFAULT_PDF_DETAIL_MODE);
   const [geometryEditDraft, setGeometryEditDraft] = useState<GeometryEditDraft | null>(null);
   const [geometryPreview, setGeometryPreview] = useState<{
     measurementId: string;
@@ -3023,6 +3064,8 @@ function PlanCanvas({
   const overlayBlendMode = overlayMode === "compare" ? "multiply" : "normal";
   const selectedMeasurement =
     measurements.find((measurement) => measurement.id === selectedMeasurementId) ?? null;
+  const pdfDetailOption = PDF_DETAIL_OPTION_BY_MODE[pdfDetailMode];
+  const pdfDetailMultiplier = pdfDetailOption.multiplier;
 
   useEffect(() => {
     let active = true;
@@ -3068,12 +3111,7 @@ function PlanCanvas({
         const page = await pdf.getPage(sheet?.page_number ?? 1);
         const viewport = page.getViewport({ scale: 1 });
         const cssScale = pdfCssScaleFor(viewport);
-        const renderPlan = pdfRenderPlanFor(
-          viewport,
-          cssScale,
-          zoom,
-          PDF_INSPECTION_RENDER_MULTIPLIER,
-        );
+        const renderPlan = pdfRenderPlanFor(viewport, cssScale, zoom, pdfDetailMultiplier);
         const renderScale = renderPlan.renderScale;
         const cssViewport = page.getViewport({ scale: cssScale });
         const renderViewport = page.getViewport({ scale: renderScale });
@@ -3084,10 +3122,10 @@ function PlanCanvas({
         canvas.dataset.pdfRenderScale = renderScale.toFixed(3);
         canvas.dataset.pdfRenderWidth = String(canvas.width);
         canvas.dataset.pdfRenderHeight = String(canvas.height);
-        canvas.dataset.pdfDetailMode = "inspection";
+        canvas.dataset.pdfDetailMode = pdfDetailMode;
         setRenderQuality({
-          label: renderPlan.capped ? "Max PDF detail" : "Sharp PDF",
-          details: `${canvas.width.toLocaleString()} x ${canvas.height.toLocaleString()} PDF inspection render at ${renderScale.toFixed(
+          label: renderPlan.capped ? "Device Max" : pdfDetailOption.badge,
+          details: `${pdfDetailOption.label} mode: ${canvas.width.toLocaleString()} x ${canvas.height.toLocaleString()} PDF render at ${renderScale.toFixed(
             2,
           )}x. Device limit: ${renderPlan.maxEdge.toLocaleString()}px edge / ${(
             renderPlan.maxPixels / 1_000_000
@@ -3115,7 +3153,17 @@ function PlanCanvas({
       cancelled = true;
       renderTask?.cancel();
     };
-  }, [onViewSizeChange, planSet?.file_mime_type, sheet?.page_number, signedUrl, zoom]);
+  }, [
+    onViewSizeChange,
+    pdfDetailMode,
+    pdfDetailMultiplier,
+    pdfDetailOption.badge,
+    pdfDetailOption.label,
+    planSet?.file_mime_type,
+    sheet?.page_number,
+    signedUrl,
+    zoom,
+  ]);
 
   useEffect(() => {
     setZoom(1);
@@ -3574,6 +3622,35 @@ function PlanCanvas({
               Open PDF
             </a>
           </Button>
+        )}
+        {canOpenOriginalPdf && (
+          <div
+            className="flex items-center rounded-md border border-hairline bg-surface p-0.5"
+            data-testid="plan-pdf-detail-controls"
+            title="PDF render detail"
+          >
+            {PDF_DETAIL_OPTIONS.map((option) => {
+              const selected = option.mode === pdfDetailMode;
+              return (
+                <button
+                  key={option.mode}
+                  type="button"
+                  className={cn(
+                    "rounded px-2 py-1 text-xs font-medium transition",
+                    selected
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-background hover:text-foreground",
+                  )}
+                  title={option.title}
+                  aria-pressed={selected}
+                  onClick={() => setPdfDetailMode(option.mode)}
+                  data-testid={option.testId}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
         )}
         <Button
           type="button"
