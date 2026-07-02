@@ -53,6 +53,29 @@ export type EstimateFolder = (typeof ESTIMATE_FOLDER_VALUES)[number];
 export type MarkupBasis = "subtotal" | "material" | "labor";
 export type EstimateKind = "estimate" | "master_sheet";
 export const MASTER_ESTIMATE_PROJECT_TYPE = "master_sheet";
+export type CostLibraryLaborBasis = "per_unit" | "per_hour" | "installed";
+export const COST_LIBRARY_LABOR_BASES: Array<{
+  value: CostLibraryLaborBasis;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "per_unit",
+    label: "Per Unit",
+    description: "Labor $ is the labor price for one takeoff unit (LF, SF, EA...).",
+  },
+  {
+    value: "per_hour",
+    label: "Per Crew Hour",
+    description:
+      "Labor $ is the crew rate for one hour. Needs crew size and production per hour to price a unit.",
+  },
+  {
+    value: "installed",
+    label: "Installed",
+    description: "Labor $ already includes material and labor for one unit. Material $ stays 0.",
+  },
+];
 export const ESTIMATE_FOLDERS: Array<{
   value: EstimateFolder;
   label: string;
@@ -150,6 +173,7 @@ export interface CostLibraryItemRow {
   unit: string;
   material_cost_cents: number;
   labor_cost_cents: number;
+  labor_basis: CostLibraryLaborBasis;
   display_material_cost_cents: number;
   display_labor_cost_cents: number;
   crew_size: number | null;
@@ -233,6 +257,23 @@ const isMissingEstimateKindColumn = (error: { code?: string; message?: string } 
   );
 };
 
+const isMissingLaborBasisColumn = (error: { code?: string; message?: string } | null) => {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" ||
+      error.code === "42703" ||
+      (/labor_basis/i.test(message) &&
+        /schema cache|column|could not find|does not exist/i.test(message))),
+  );
+};
+
+const LABOR_BASIS_PENDING_MESSAGE =
+  "Labor pricing basis is still being enabled on the backend. Wait for the database migration to finish, then try again.";
+
+const INSTALLED_MATERIAL_MESSAGE =
+  "Installed costs already include material in the labor price. Set Material $/Unit to 0, or pick a different labor basis.";
+
 const normalizeEstimate = (row: Record<string, unknown>): EstimateRow => {
   const status = normalizeEstimateStatus(row.status);
   const projectType = str(row.project_type, "commercial");
@@ -298,6 +339,11 @@ const normalizeLineItem = (row: Record<string, unknown>): EstimateLineItemRow =>
   };
 };
 
+const normalizeLaborBasis = (value: unknown): CostLibraryLaborBasis => {
+  const basis = str(value);
+  return basis === "per_hour" || basis === "installed" ? basis : "per_unit";
+};
+
 const normalizeLibraryItem = (
   row: Record<string, unknown>,
   regionMultiplier = 1,
@@ -315,6 +361,7 @@ const normalizeLibraryItem = (
     unit: str(row.unit),
     material_cost_cents: material,
     labor_cost_cents: labor,
+    labor_basis: normalizeLaborBasis(row.labor_basis),
     display_material_cost_cents: Math.round(material * regionMultiplier),
     display_labor_cost_cents: Math.round(labor * regionMultiplier),
     crew_size: row.crew_size == null ? null : num(row.crew_size),
@@ -412,6 +459,49 @@ export function calculateEstimateTotals(
     total_cents,
     indicated_gp_pct:
       total_cents > 0 ? ((total_cents - adjusted_direct_cents) / total_cents) * 100 : 0,
+  };
+}
+
+export type LibraryUnitCostResolution =
+  | { ok: true; material_cost_cents: number; labor_cost_cents: number }
+  | { ok: false; message: string };
+
+// Converts a cost library row into per-unit material and labor costs based on
+// its labor basis. per_hour rows need crew_size and productivity_per_hour;
+// callers must block the pull (not guess) when the resolution fails.
+export function resolveLibraryUnitCosts(
+  item: Pick<
+    CostLibraryItemRow,
+    | "description"
+    | "material_cost_cents"
+    | "labor_cost_cents"
+    | "labor_basis"
+    | "crew_size"
+    | "productivity_per_hour"
+  >,
+): LibraryUnitCostResolution {
+  if (item.labor_basis === "per_hour") {
+    const crewSize = item.crew_size ?? 0;
+    const productivity = item.productivity_per_hour ?? 0;
+    if (crewSize <= 0 || productivity <= 0) {
+      return {
+        ok: false,
+        message: `"${item.description}" is priced per crew hour. Add its crew size and production per hour in the Cost Library, then pull it again.`,
+      };
+    }
+    return {
+      ok: true,
+      material_cost_cents: item.material_cost_cents,
+      labor_cost_cents: Math.round((item.labor_cost_cents * crewSize) / productivity),
+    };
+  }
+  if (item.labor_basis === "installed") {
+    return { ok: true, material_cost_cents: 0, labor_cost_cents: item.labor_cost_cents };
+  }
+  return {
+    ok: true,
+    material_cost_cents: item.material_cost_cents,
+    labor_cost_cents: item.labor_cost_cents,
   };
 }
 
@@ -760,6 +850,7 @@ const costLibraryItemInput = z.object({
   unit: z.string().min(1).max(16),
   material_cost_cents: z.number().int().min(0).max(999999999).default(0),
   labor_cost_cents: z.number().int().min(0).max(999999999).default(0),
+  labor_basis: z.enum(["per_unit", "per_hour", "installed"]).optional().default("per_unit"),
   crew_size: z.number().min(0).max(999).nullable().optional(),
   productivity_per_hour: z.number().min(0).max(999999).nullable().optional(),
   synonyms: z.array(z.string().max(80)).max(40).optional().default([]),
@@ -1809,25 +1900,39 @@ export const createCostLibraryItem = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const organizationId = await getOrganizationId(context);
-    const { data: row, error } = await dynamicTable(context.supabase, "cost_library_items")
-      .insert({
-        organization_id: organizationId,
-        external_id: "",
-        ...data,
-        source: "user",
-        base_region: "national",
-        csi_division: clean(data.csi_division, 8),
-        csi_code: clean(data.csi_code, 16),
-        category: clean(data.category, 64),
-        description: clean(data.description, 500),
-        unit: clean(data.unit.toUpperCase(), 16),
-        synonyms: data.synonyms as unknown as Json,
-        keywords: data.keywords as unknown as Json,
-      })
+    if (data.labor_basis === "installed" && data.material_cost_cents > 0) {
+      throw new Error(INSTALLED_MATERIAL_MESSAGE);
+    }
+    const insertRow = {
+      organization_id: organizationId,
+      external_id: "",
+      ...data,
+      source: "user",
+      base_region: "national",
+      csi_division: clean(data.csi_division, 8),
+      csi_code: clean(data.csi_code, 16),
+      category: clean(data.category, 64),
+      description: clean(data.description, 500),
+      unit: clean(data.unit.toUpperCase(), 16),
+      synonyms: data.synonyms as unknown as Json,
+      keywords: data.keywords as unknown as Json,
+    };
+    let result = await dynamicTable(context.supabase, "cost_library_items")
+      .insert(insertRow)
       .select("*")
       .single();
-    if (error || !row) throw new Error(error?.message ?? "Cost library item did not save.");
-    return { item: normalizeLibraryItem(row as Record<string, unknown>) };
+    if (result.error && isMissingLaborBasisColumn(result.error)) {
+      if (data.labor_basis !== "per_unit") throw new Error(LABOR_BASIS_PENDING_MESSAGE);
+      const { labor_basis: _laborBasis, ...legacyRow } = insertRow;
+      result = await dynamicTable(context.supabase, "cost_library_items")
+        .insert(legacyRow)
+        .select("*")
+        .single();
+    }
+    if (result.error || !result.data) {
+      throw new Error(result.error?.message ?? "Cost library item did not save.");
+    }
+    return { item: normalizeLibraryItem(result.data as Record<string, unknown>) };
   });
 
 export const importCostLibraryItems = createServerFn({ method: "POST" })
@@ -1841,6 +1946,11 @@ export const importCostLibraryItems = createServerFn({ method: "POST" })
       [row.csi_code.trim().toLowerCase(), row.description.trim().toLowerCase(), row.unit.trim()]
         .join("\u001f")
         .slice(0, 700);
+    for (const item of data.items) {
+      if (item.labor_basis === "installed" && item.material_cost_cents > 0) {
+        throw new Error(`"${clean(item.description, 120)}": ${INSTALLED_MATERIAL_MESSAGE}`);
+      }
+    }
     const rowByKey = new Map(
       data.items.map((item) => {
         const row = {
@@ -1853,6 +1963,7 @@ export const importCostLibraryItems = createServerFn({ method: "POST" })
           unit: clean(item.unit.toUpperCase(), 16),
           material_cost_cents: item.material_cost_cents,
           labor_cost_cents: item.labor_cost_cents,
+          labor_basis: item.labor_basis,
           crew_size: item.crew_size ?? null,
           productivity_per_hour: item.productivity_per_hour ?? null,
           synonyms: item.synonyms as unknown as Json,
@@ -1906,25 +2017,49 @@ export const importCostLibraryItems = createServerFn({ method: "POST" })
       }
     }
 
+    // Pre-migration fallback: retry without labor_basis, but only when every
+    // staged row uses the default basis so an explicit choice never saves
+    // silently wrong.
+    const stripLaborBasis = (row: (typeof rows)[number]) => {
+      const { labor_basis: _laborBasis, ...legacy } = row;
+      return legacy;
+    };
+    const requireLaborBasisColumn = () => {
+      if (rows.some((row) => row.labor_basis !== "per_unit")) {
+        throw new Error(LABOR_BASIS_PENDING_MESSAGE);
+      }
+    };
+
     const updatedRows: Record<string, unknown>[] = [];
     for (const update of updates) {
-      const { data: updated, error: updateError } = await dynamicTable(
-        context.supabase,
-        "cost_library_items",
-      )
+      let updateResult = await dynamicTable(context.supabase, "cost_library_items")
         .update(update.row)
         .eq("id", update.id)
         .select("*")
         .single();
-      if (updateError || !updated) {
-        throw new Error(updateError?.message ?? "Imported cost item did not update.");
+      if (updateResult.error && isMissingLaborBasisColumn(updateResult.error)) {
+        requireLaborBasisColumn();
+        updateResult = await dynamicTable(context.supabase, "cost_library_items")
+          .update(stripLaborBasis(update.row))
+          .eq("id", update.id)
+          .select("*")
+          .single();
       }
-      updatedRows.push(updated as Record<string, unknown>);
+      if (updateResult.error || !updateResult.data) {
+        throw new Error(updateResult.error?.message ?? "Imported cost item did not update.");
+      }
+      updatedRows.push(updateResult.data as Record<string, unknown>);
     }
 
-    const insertedResult = inserts.length
+    let insertedResult = inserts.length
       ? await dynamicTable(context.supabase, "cost_library_items").insert(inserts).select("*")
       : { data: [], error: null };
+    if (insertedResult.error && isMissingLaborBasisColumn(insertedResult.error)) {
+      requireLaborBasisColumn();
+      insertedResult = await dynamicTable(context.supabase, "cost_library_items")
+        .insert(inserts.map(stripLaborBasis))
+        .select("*");
+    }
     if (insertedResult.error) throw new Error(insertedResult.error.message);
 
     return {
@@ -1948,15 +2083,28 @@ export const updateCostLibraryItem = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const current = await dynamicTable(context.supabase, "cost_library_items")
-      .select("source")
+    let current = await dynamicTable(context.supabase, "cost_library_items")
+      .select("source,material_cost_cents,labor_basis")
       .eq("id", data.id)
       .single();
+    if (current.error && isMissingLaborBasisColumn(current.error)) {
+      current = await dynamicTable(context.supabase, "cost_library_items")
+        .select("source,material_cost_cents")
+        .eq("id", data.id)
+        .single();
+    }
     if (current.error || !current.data) {
       throw new Error(current.error?.message ?? "Cost library item was not found.");
     }
-    if (str((current.data as Record<string, unknown>).source) === "system") {
+    const currentRow = current.data as Record<string, unknown>;
+    if (str(currentRow.source) === "system") {
       throw new Error("System library items are read-only.");
+    }
+    const nextBasis = data.patch.labor_basis ?? normalizeLaborBasis(currentRow.labor_basis);
+    const nextMaterial =
+      data.patch.material_cost_cents ?? Math.round(num(currentRow.material_cost_cents));
+    if (nextBasis === "installed" && nextMaterial > 0) {
+      throw new Error(INSTALLED_MATERIAL_MESSAGE);
     }
     const patch: Record<string, unknown> = { ...data.patch };
     if (typeof patch.unit === "string") patch.unit = clean(patch.unit.toUpperCase(), 16);
@@ -1964,13 +2112,31 @@ export const updateCostLibraryItem = createServerFn({ method: "POST" })
     if (typeof patch.csi_division === "string") patch.csi_division = clean(patch.csi_division, 8);
     if (typeof patch.csi_code === "string") patch.csi_code = clean(patch.csi_code, 16);
     if (typeof patch.category === "string") patch.category = clean(patch.category, 64);
-    const { data: row, error } = await dynamicTable(context.supabase, "cost_library_items")
+    let result = await dynamicTable(context.supabase, "cost_library_items")
       .update(patch)
       .eq("id", data.id)
       .select("*")
       .single();
-    if (error || !row) throw new Error(error?.message ?? "Cost library item did not update.");
-    return { item: normalizeLibraryItem(row as Record<string, unknown>) };
+    if (result.error && isMissingLaborBasisColumn(result.error) && "labor_basis" in patch) {
+      if (patch.labor_basis !== "per_unit") throw new Error(LABOR_BASIS_PENDING_MESSAGE);
+      const { labor_basis: _laborBasis, ...legacyPatch } = patch;
+      if (Object.keys(legacyPatch).length === 0) {
+        result = await dynamicTable(context.supabase, "cost_library_items")
+          .select("*")
+          .eq("id", data.id)
+          .single();
+      } else {
+        result = await dynamicTable(context.supabase, "cost_library_items")
+          .update(legacyPatch)
+          .eq("id", data.id)
+          .select("*")
+          .single();
+      }
+    }
+    if (result.error || !result.data) {
+      throw new Error(result.error?.message ?? "Cost library item did not update.");
+    }
+    return { item: normalizeLibraryItem(result.data as Record<string, unknown>) };
   });
 
 export const deleteCostLibraryItem = createServerFn({ method: "POST" })
