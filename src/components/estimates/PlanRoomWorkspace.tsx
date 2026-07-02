@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Check,
   ClipboardList,
+  Download,
   ExternalLink,
   Eye,
   EyeOff,
@@ -314,6 +315,227 @@ const searchMatches = (query: string, values: Array<string | number | null | und
       .includes(normalizedQuery),
   );
 };
+
+const safeReportFileName = (value: string, ext: string) =>
+  `${
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "") || "plan-room-takeoffs"
+  }.${ext}`;
+
+function toCsvCell(value: unknown) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadTextFile(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function copyTextToClipboard(text: string) {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    throw new Error("Clipboard is not available in this browser.");
+  }
+  if (window.navigator.clipboard?.writeText) {
+    try {
+      await window.navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the textarea copy path for locked-down browser contexts.
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("Clipboard access was blocked by the browser.");
+}
+
+const reportDate = (value: string) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+};
+
+type TakeoffCsvRow = Array<string | number>;
+
+function buildTakeoffCsvRows({
+  estimate,
+  companyName,
+  lineItems,
+  planSets,
+  sheets,
+  measurements,
+}: {
+  estimate: EstimateRow;
+  companyName: string;
+  lineItems: EstimateLineItemRow[];
+  planSets: PlanSetRow[];
+  sheets: PlanSheetRow[];
+  measurements: TakeoffMeasurementRow[];
+}): TakeoffCsvRow[] {
+  const planSetById = new Map(planSets.map((planSet) => [planSet.id, planSet]));
+  const sheetById = new Map(sheets.map((sheet) => [sheet.id, sheet]));
+  const lineById = new Map(lineItems.map((line) => [line.id, line]));
+  const sheetOrder = new Map(sheets.map((sheet, index) => [sheet.id, index]));
+  const sortedMeasurements = [...measurements].sort((a, b) => {
+    const sheetSort =
+      (sheetOrder.get(a.plan_sheet_id) ?? 9999) - (sheetOrder.get(b.plan_sheet_id) ?? 9999);
+    if (sheetSort !== 0) return sheetSort;
+    return a.label.localeCompare(b.label);
+  });
+
+  return [
+    [
+      "Company",
+      "Estimate",
+      "Drawing Set",
+      "Sheet Number",
+      "Sheet Name",
+      "Takeoff Label",
+      "Type",
+      "Quantity",
+      "Unit",
+      "Linked Cost Code",
+      "Linked Estimate Row",
+      "Scope Group",
+      "Notes",
+      "Created",
+      "Updated",
+    ],
+    ...sortedMeasurements.map((measurement) => {
+      const sheet = sheetById.get(measurement.plan_sheet_id);
+      const planSet = sheet ? planSetById.get(sheet.plan_set_id) : null;
+      const line = measurement.estimate_line_item_id
+        ? lineById.get(measurement.estimate_line_item_id)
+        : null;
+      return [
+        companyName,
+        estimate.name,
+        planSet?.name ?? "",
+        sheet?.sheet_number ?? "",
+        sheet?.sheet_name ?? "",
+        measurement.label,
+        toolLabel(measurement.tool_type),
+        Number(measurement.quantity.toFixed(3)),
+        measurement.unit,
+        line?.cost_code ?? "",
+        line?.description ?? "",
+        line?.scope_group ?? "",
+        measurement.notes,
+        reportDate(measurement.created_at),
+        reportDate(measurement.updated_at),
+      ];
+    }),
+  ];
+}
+
+function buildTakeoffCsv(args: Parameters<typeof buildTakeoffCsvRows>[0]) {
+  return buildTakeoffCsvRows(args)
+    .map((row) => row.map(toCsvCell).join(","))
+    .join("\n");
+}
+
+function buildTakeoffSummary({
+  estimate,
+  lineItems,
+  planSets,
+  sheets,
+  measurements,
+  companyName,
+}: {
+  estimate: EstimateRow;
+  lineItems: EstimateLineItemRow[];
+  planSets: PlanSetRow[];
+  sheets: PlanSheetRow[];
+  measurements: TakeoffMeasurementRow[];
+  companyName: string;
+}) {
+  const lineById = new Map(lineItems.map((line) => [line.id, line]));
+  const planSetById = new Map(planSets.map((planSet) => [planSet.id, planSet]));
+  const sheetById = new Map(sheets.map((sheet) => [sheet.id, sheet]));
+  const linked = measurements.filter((measurement) => measurement.estimate_line_item_id);
+  const unlinkedCount = measurements.length - linked.length;
+  const toolCounts = TAKEOFF_LAYER_KEYS.slice(0, 3)
+    .map(
+      (key) =>
+        `${TAKEOFF_LAYER_COPY[key].label}: ${measurements.filter((item) => item.tool_type === key).length}`,
+    )
+    .join(", ");
+  const sheetCounts = new Map<string, number>();
+  const lineTotals = new Map<string, number>();
+
+  for (const measurement of measurements) {
+    sheetCounts.set(
+      measurement.plan_sheet_id,
+      (sheetCounts.get(measurement.plan_sheet_id) ?? 0) + 1,
+    );
+    if (measurement.estimate_line_item_id) {
+      lineTotals.set(
+        measurement.estimate_line_item_id,
+        (lineTotals.get(measurement.estimate_line_item_id) ?? 0) + measurement.quantity,
+      );
+    }
+  }
+
+  const sheetSummary = [...sheetCounts.entries()]
+    .map(([sheetId, count]) => {
+      const sheet = sheetById.get(sheetId);
+      const planSet = sheet ? planSetById.get(sheet.plan_set_id) : null;
+      return {
+        count,
+        label: sheet ? `${sheet.sheet_number} ${sheet.sheet_name}`.trim() : "Unknown sheet",
+        planSet: planSet?.name ?? "",
+      };
+    })
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6)
+    .map((item) => `- ${item.label}${item.planSet ? ` (${item.planSet})` : ""}: ${item.count}`)
+    .join("\n");
+
+  const linkedRowSummary = [...lineTotals.entries()]
+    .map(([lineId, quantity]) => {
+      const line = lineById.get(lineId);
+      if (!line) return null;
+      const costCode = line.cost_code ? `${line.cost_code} - ` : "";
+      return `- ${costCode}${line.description}: ${formatQty(quantity, line.unit)}`;
+    })
+    .filter((item): item is string => Boolean(item))
+    .slice(0, 12)
+    .join("\n");
+
+  return [
+    "Plan Room Takeoff Summary",
+    `${companyName} - ${estimate.name}`,
+    `${measurements.length} takeoffs: ${linked.length} linked, ${unlinkedCount} unlinked`,
+    `By type: ${toolCounts}`,
+    "",
+    "Sheets with takeoffs:",
+    sheetSummary || "- None",
+    "",
+    "Linked estimate rows:",
+    linkedRowSummary || "- No takeoffs linked to estimate rows yet",
+  ].join("\n");
+}
 
 const slugFileName = (name: string) =>
   name
@@ -706,6 +928,7 @@ export function PlanRoomWorkspace({
     quantity: "",
     unit: "",
   });
+  const [takeoffSummaryFallback, setTakeoffSummaryFallback] = useState("");
 
   const currentSheet = useMemo(
     () => sheets.find((sheet) => sheet.id === selectedSheetId) ?? sheets[0] ?? null,
@@ -1354,6 +1577,45 @@ export function PlanRoomWorkspace({
   const linkedCount = measurements.filter(
     (measurement) => measurement.estimate_line_item_id,
   ).length;
+  const takeoffReportArgs = {
+    estimate,
+    companyName,
+    lineItems,
+    planSets,
+    sheets,
+    measurements,
+  };
+  const downloadTakeoffCsv = () => {
+    if (measurements.length === 0) {
+      toast.info("No takeoffs to export yet.");
+      return;
+    }
+    downloadTextFile(
+      safeReportFileName(`${estimate.name}-takeoffs`, "csv"),
+      buildTakeoffCsv(takeoffReportArgs),
+      "text/csv;charset=utf-8",
+    );
+    toast.success("Takeoff CSV exported");
+  };
+  const copyTakeoffSummary = async () => {
+    if (measurements.length === 0) {
+      toast.info("No takeoffs to copy yet.");
+      return;
+    }
+    const summary = buildTakeoffSummary(takeoffReportArgs);
+    try {
+      await copyTextToClipboard(summary);
+      setTakeoffSummaryFallback("");
+      toast.success("Takeoff summary copied");
+    } catch (error) {
+      setTakeoffSummaryFallback(summary);
+      toast.warning(
+        error instanceof Error
+          ? `${error.message} Summary is ready below.`
+          : "Clipboard access was blocked. Summary is ready below.",
+      );
+    }
+  };
   const backendReady = schemaReady !== false;
   const currentSheetTitle = currentSheet
     ? `${currentSheet.sheet_number} ${currentSheet.sheet_name}`.trim()
@@ -2724,13 +2986,64 @@ export function PlanRoomWorkspace({
 
           <section className="rounded-lg border border-hairline bg-card shadow-card">
             <div className="border-b border-hairline bg-surface px-4 py-3">
-              <h2 className="font-serif text-xl">Takeoff Worksheet</h2>
-              <p className="text-xs text-muted-foreground">
-                {measurements.length} takeoffs. Total measured quantity:{" "}
-                {new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(
-                  totalMeasured,
-                )}
-              </p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="font-serif text-xl">Takeoff Worksheet</h2>
+                  <p className="text-xs text-muted-foreground">
+                    {measurements.length} takeoffs. Total measured quantity:{" "}
+                    {new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(
+                      totalMeasured,
+                    )}
+                  </p>
+                </div>
+                <div
+                  className="flex flex-wrap items-center gap-2"
+                  data-testid="takeoff-report-actions"
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1.5 px-2 text-xs"
+                    onClick={copyTakeoffSummary}
+                    disabled={measurements.length === 0}
+                    data-testid="takeoff-copy-summary"
+                  >
+                    <ClipboardList className="h-3.5 w-3.5" />
+                    Copy Summary
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1.5 px-2 text-xs"
+                    onClick={downloadTakeoffCsv}
+                    disabled={measurements.length === 0}
+                    data-testid="takeoff-export-csv"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Export CSV
+                  </Button>
+                </div>
+              </div>
+              {takeoffSummaryFallback && (
+                <div
+                  className="mt-3 rounded-md border border-hairline bg-card p-3"
+                  data-testid="takeoff-copy-fallback"
+                >
+                  <p className="text-xs font-medium text-foreground">
+                    Copy was blocked by the browser. Select this summary instead.
+                  </p>
+                  <Textarea
+                    readOnly
+                    rows={6}
+                    value={takeoffSummaryFallback}
+                    className="mt-2 font-mono text-xs"
+                    aria-label="Takeoff summary text"
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                </div>
+              )}
             </div>
             <div className="border-b border-hairline p-3" data-testid="takeoff-navigator">
               <div className="relative">
