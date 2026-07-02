@@ -14,6 +14,8 @@ import type {
 } from "react";
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   Check,
   ClipboardList,
   ExternalLink,
@@ -702,6 +704,39 @@ export function PlanRoomWorkspace({
       ),
     [filteredSheetsByPlanSet],
   );
+  const sheetNavigationItems = useMemo(
+    () =>
+      sheets
+        .map((sheet) => {
+          const planSet = planSets.find((item) => item.id === sheet.plan_set_id) ?? null;
+          return {
+            sheet,
+            planSet,
+            measurementCount: measurementCountBySheet.get(sheet.id) ?? 0,
+            label: sheetDisplayName(sheet, planSet),
+          };
+        })
+        .sort((a, b) => {
+          const setSort =
+            planSets.findIndex((item) => item.id === a.sheet.plan_set_id) -
+            planSets.findIndex((item) => item.id === b.sheet.plan_set_id);
+          if (setSort !== 0) return setSort;
+          return a.sheet.sort_order - b.sheet.sort_order;
+        }),
+    [measurementCountBySheet, planSets, sheets],
+  );
+  const currentSheetNavigationIndex = currentSheet
+    ? sheetNavigationItems.findIndex((item) => item.sheet.id === currentSheet.id)
+    : -1;
+  const currentSheetNavigationItem =
+    currentSheetNavigationIndex >= 0 ? sheetNavigationItems[currentSheetNavigationIndex] : null;
+  const previousSheetNavigationItem =
+    currentSheetNavigationIndex > 0 ? sheetNavigationItems[currentSheetNavigationIndex - 1] : null;
+  const nextSheetNavigationItem =
+    currentSheetNavigationIndex >= 0 &&
+    currentSheetNavigationIndex < sheetNavigationItems.length - 1
+      ? sheetNavigationItems[currentSheetNavigationIndex + 1]
+      : null;
   const selectedMeasurement =
     measurements.find((measurement) => measurement.id === selectedMeasurementId) ?? null;
   const selectedMeasurementSheet = selectedMeasurement
@@ -1208,6 +1243,19 @@ export function PlanRoomWorkspace({
   const currentSheetTitle = currentSheet
     ? `${currentSheet.sheet_number} ${currentSheet.sheet_name}`.trim()
     : "No sheet selected";
+  const openSheet = (sheetId: string) => {
+    setSelectedSheetId(sheetId);
+    setPendingPoints([]);
+    setCalibrationPoints([]);
+    if (selectedMeasurement?.plan_sheet_id !== sheetId) {
+      setSelectedMeasurementId("");
+    }
+  };
+  const openAdjacentSheet = (direction: -1 | 1) => {
+    const nextItem = direction < 0 ? previousSheetNavigationItem : nextSheetNavigationItem;
+    if (!nextItem) return;
+    openSheet(nextItem.sheet.id);
+  };
   const toggleCockpitPanel = (panel: CockpitPanelKey) =>
     setCockpitPanels((current) => ({ ...current, [panel]: !current[panel] }));
   const hideCockpitPanels = () => setCockpitPanels({ drawings: false, tools: false });
@@ -1427,6 +1475,78 @@ export function PlanRoomWorkspace({
       )}
     </>
   );
+  const cockpitSheetControls = sheetNavigationItems.length ? (
+    <div
+      className="flex max-w-[min(620px,calc(100vw-2rem))] flex-wrap items-center gap-1.5"
+      data-testid="plan-cockpit-sheet-strip"
+    >
+      <Button
+        type="button"
+        size="icon"
+        variant="outline"
+        className="h-8 w-8"
+        title="Previous sheet"
+        onClick={() => openAdjacentSheet(-1)}
+        disabled={!previousSheetNavigationItem}
+        data-testid="plan-cockpit-prev-sheet"
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </Button>
+      <Select
+        value={currentSheet?.id ?? sheetNavigationItems[0]?.sheet.id}
+        onValueChange={openSheet}
+      >
+        <SelectTrigger
+          className="h-8 w-[min(380px,calc(100vw-12rem))] bg-background/95 text-left"
+          data-testid="plan-cockpit-sheet-select"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent className="max-h-[min(520px,70vh)]">
+          {sheetNavigationItems.map((item, index) => (
+            <SelectItem key={item.sheet.id} value={item.sheet.id}>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
+                  {index + 1}/{sheetNavigationItems.length}
+                </span>
+                <span className="min-w-0 truncate">{item.label}</span>
+                {item.measurementCount > 0 && (
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {item.measurementCount} marks
+                  </span>
+                )}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Button
+        type="button"
+        size="icon"
+        variant="outline"
+        className="h-8 w-8"
+        title="Next sheet"
+        onClick={() => openAdjacentSheet(1)}
+        disabled={!nextSheetNavigationItem}
+        data-testid="plan-cockpit-next-sheet"
+      >
+        <ChevronRight className="h-3.5 w-3.5" />
+      </Button>
+      {currentSheetNavigationItem && (
+        <>
+          <Badge
+            variant={currentSheet?.scale_feet_per_pixel ? "secondary" : "outline"}
+            data-testid="plan-cockpit-sheet-scale-status"
+          >
+            {currentSheet?.scale_feet_per_pixel ? "Scale set" : "Needs scale"}
+          </Badge>
+          <Badge variant="outline" data-testid="plan-cockpit-sheet-mark-count">
+            {currentSheetNavigationItem.measurementCount} marks
+          </Badge>
+        </>
+      )}
+    </div>
+  ) : null;
 
   return (
     <div
@@ -1781,14 +1901,7 @@ export function PlanRoomWorkspace({
                             <button
                               key={sheet.id}
                               type="button"
-                              onClick={() => {
-                                setSelectedSheetId(sheet.id);
-                                setPendingPoints([]);
-                                setCalibrationPoints([]);
-                                if (selectedMeasurement?.plan_sheet_id !== sheet.id) {
-                                  setSelectedMeasurementId("");
-                                }
-                              }}
+                              onClick={() => openSheet(sheet.id)}
                               data-testid="plan-sheet-row"
                               className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm transition ${
                                 sheet.id === currentSheet?.id
@@ -2021,6 +2134,7 @@ export function PlanRoomWorkspace({
             onMeasurementGeometryChange={saveMeasurementGeometry}
             isGeometrySaving={updateMeasurementMutation.isPending}
             showFloatingControls={cockpitChromeVisible}
+            sheetControls={isCockpitMode && cockpitChromeVisible ? cockpitSheetControls : null}
             toolControls={
               isCockpitMode && cockpitChromeVisible ? (
                 <div className="flex max-w-[min(760px,calc(100vw-2rem))] flex-wrap items-center justify-end gap-1.5">
@@ -2028,6 +2142,10 @@ export function PlanRoomWorkspace({
                 </div>
               ) : null
             }
+            hasPreviousSheet={Boolean(previousSheetNavigationItem)}
+            hasNextSheet={Boolean(nextSheetNavigationItem)}
+            onPreviousSheet={() => openAdjacentSheet(-1)}
+            onNextSheet={() => openAdjacentSheet(1)}
           />
         </section>
 
@@ -2645,7 +2763,12 @@ function PlanCanvas({
   onMeasurementGeometryChange,
   isGeometrySaving,
   showFloatingControls = true,
+  sheetControls,
   toolControls,
+  hasPreviousSheet = false,
+  hasNextSheet = false,
+  onPreviousSheet,
+  onNextSheet,
 }: {
   planSet: PlanSetRow | null;
   sheet: PlanSheetRow | null;
@@ -2670,7 +2793,12 @@ function PlanCanvas({
   onMeasurementGeometryChange: (measurementId: string, points: Point[]) => Promise<void>;
   isGeometrySaving: boolean;
   showFloatingControls?: boolean;
+  sheetControls?: ReactNode;
   toolControls?: ReactNode;
+  hasPreviousSheet?: boolean;
+  hasNextSheet?: boolean;
+  onPreviousSheet?: () => void;
+  onNextSheet?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -2975,6 +3103,16 @@ function PlanCanvas({
     if (event.key === "Enter" && draftCommand?.ready && !draftActionDisabled) {
       event.preventDefault();
       onFinishDraft();
+      return;
+    }
+    if (event.key === "PageUp") {
+      event.preventDefault();
+      if (hasPreviousSheet) onPreviousSheet?.();
+      return;
+    }
+    if (event.key === "PageDown") {
+      event.preventDefault();
+      if (hasNextSheet) onNextSheet?.();
       return;
     }
 
@@ -3343,6 +3481,14 @@ function PlanCanvas({
 
       {isCockpitMode && showFloatingControls && (
         <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-wrap items-start justify-between gap-2">
+          {sheetControls && (
+            <div
+              className="pointer-events-auto rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
+              data-testid="plan-cockpit-sheet-controls"
+            >
+              {sheetControls}
+            </div>
+          )}
           {renderPlanControlBar(
             "pointer-events-auto flex max-w-[min(760px,calc(100vw-2rem))] flex-wrap items-center justify-between gap-2 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur",
             "plan-cockpit-floating-controls",
@@ -3382,7 +3528,7 @@ function PlanCanvas({
         onWheel={handleWheel}
         onKeyDown={handleKeyboard}
         aria-label="Plan drawing viewport"
-        title="Plan viewport: use +/- to zoom, arrows to pan, F to fit, W for width, Z for zoom area, Esc to cancel."
+        title="Plan viewport: use +/- to zoom, arrows to pan, PageUp/PageDown for sheets, F to fit, W for width, Z for zoom area, Esc to cancel."
         data-testid="plan-viewport"
       >
         <div className="inline-flex min-h-full min-w-full items-start justify-center p-4">
