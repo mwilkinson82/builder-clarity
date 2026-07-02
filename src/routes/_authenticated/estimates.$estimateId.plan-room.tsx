@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
-import { PlanRoomWorkspace } from "@/components/estimates/PlanRoomWorkspace";
+import { PlanRoomWorkspace } from "@/components/estimates/plan-room/PlanRoomWorkspace";
 import { Button } from "@/components/ui/button";
 import { getEstimate } from "@/lib/estimates.functions";
 import { getPlanRoom } from "@/lib/plan-room.functions";

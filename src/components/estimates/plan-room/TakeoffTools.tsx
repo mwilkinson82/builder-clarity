@@ -1,0 +1,589 @@
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import {
+  Check,
+  MousePointer2,
+  PencilRuler,
+  Plus,
+  Ruler,
+  Square,
+  Undo2,
+  XCircle,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { distancePx } from "@/lib/plan-room-math";
+import type { TakeoffMeasurementRow } from "@/lib/plan-room.functions";
+import {
+  formatQty,
+  geometryPoints,
+  toolLabel,
+  type DraftCommandStatus,
+  type Point,
+  type ToolMode,
+  type ViewSize,
+} from "./planRoomShared";
+
+export function TakeoffTools({
+  compact = false,
+  tool,
+  backendReady,
+  draftCommand,
+  activeDraftPointCount,
+  setTool,
+  setPendingPoints,
+  setCalibrationPoints,
+  finishDraft,
+  undoDraftPoint,
+  clearDraftPoints,
+  createMeasurementMutation,
+  updateSheetMutation,
+}: {
+  compact?: boolean;
+  tool: ToolMode;
+  backendReady: boolean;
+  draftCommand: DraftCommandStatus | null;
+  activeDraftPointCount: number;
+  setTool: (tool: ToolMode) => void;
+  setPendingPoints: (points: Point[]) => void;
+  setCalibrationPoints: (points: Point[]) => void;
+  finishDraft: () => void;
+  undoDraftPoint: () => void;
+  clearDraftPoints: () => void;
+  createMeasurementMutation: { isPending: boolean };
+  updateSheetMutation: { isPending: boolean };
+}) {
+  return (
+    <>
+      {[
+        { value: "select", icon: MousePointer2 },
+        { value: "calibrate", icon: Ruler },
+        { value: "linear", icon: PencilRuler },
+        { value: "area", icon: Square },
+        { value: "count", icon: Plus },
+      ].map((item) => {
+        const Icon = item.icon;
+        return (
+          <Button
+            key={item.value}
+            type="button"
+            size="sm"
+            variant={tool === item.value ? "default" : "outline"}
+            className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+            title={toolLabel(item.value as ToolMode)}
+            data-testid={`takeoff-tool-${item.value}`}
+            disabled={!backendReady}
+            onClick={() => {
+              setTool(item.value as ToolMode);
+              setPendingPoints([]);
+              if (item.value !== "calibrate") setCalibrationPoints([]);
+            }}
+          >
+            <Icon className="h-3.5 w-3.5" />
+            <span className={cn(compact && "hidden 2xl:inline")}>
+              {toolLabel(item.value as ToolMode)}
+            </span>
+          </Button>
+        );
+      })}
+      {draftCommand && (
+        <Button
+          size="sm"
+          className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+          title={draftCommand.actionLabel}
+          onClick={finishDraft}
+          disabled={
+            !backendReady ||
+            !draftCommand.ready ||
+            createMeasurementMutation.isPending ||
+            updateSheetMutation.isPending
+          }
+          data-testid="takeoff-finish-draft"
+        >
+          <Check className="h-3.5 w-3.5" />
+          <span className={cn(compact && "hidden 2xl:inline")}>{draftCommand.actionLabel}</span>
+        </Button>
+      )}
+      {activeDraftPointCount > 0 && (
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+            title="Undo point"
+            onClick={undoDraftPoint}
+            data-testid="takeoff-undo-point"
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+            <span className={cn(compact && "hidden 2xl:inline")}>Undo Point</span>
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+            title="Clear points"
+            onClick={clearDraftPoints}
+            data-testid="takeoff-clear-points"
+          >
+            <XCircle className="h-3.5 w-3.5" />
+            <span className={cn(compact && "hidden 2xl:inline")}>Clear Points</span>
+          </Button>
+        </>
+      )}
+    </>
+  );
+}
+
+export function TakeoffDraftHud({
+  draftCommand,
+  activePointCount,
+  disabled,
+  onFinishDraft,
+  className,
+}: {
+  draftCommand: DraftCommandStatus | null;
+  activePointCount: number;
+  disabled: boolean;
+  onFinishDraft: () => void;
+  className?: string;
+}) {
+  if (!draftCommand) return null;
+
+  return (
+    <div
+      className={cn(
+        "grid gap-3 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm md:grid-cols-[minmax(0,1fr)_auto]",
+        className ?? "mb-3",
+      )}
+      data-testid="takeoff-draft-hud"
+    >
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm font-medium">{draftCommand.title}</p>
+          <Badge variant={draftCommand.ready ? "secondary" : "outline"}>
+            {activePointCount} point{activePointCount === 1 ? "" : "s"}
+          </Badge>
+          <Badge variant="outline" data-testid="takeoff-draft-live-quantity">
+            {draftCommand.value}
+          </Badge>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">{draftCommand.detail}</p>
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        className="gap-1.5 self-center"
+        onClick={onFinishDraft}
+        disabled={!draftCommand.ready || disabled}
+        data-testid="takeoff-draft-hud-finish"
+      >
+        <Check className="h-3.5 w-3.5" />
+        {draftCommand.actionLabel}
+      </Button>
+    </div>
+  );
+}
+
+export function MeasurementShape({
+  measurement,
+  viewSize,
+  selected,
+  editable,
+  pointsOverride,
+  onSelect,
+  onPointDragStart,
+}: {
+  measurement: TakeoffMeasurementRow;
+  viewSize: ViewSize;
+  selected: boolean;
+  editable: boolean;
+  pointsOverride: Point[] | null;
+  onSelect: (measurementId: string) => void;
+  onPointDragStart: (
+    event: ReactPointerEvent<SVGCircleElement>,
+    measurement: TakeoffMeasurementRow,
+    pointIndex: number,
+  ) => void;
+}) {
+  const points = pointsOverride ?? geometryPoints(measurement.geometry);
+  if (points.length === 0) return null;
+  const scaled = points.map((point) => ({
+    x: point.x * viewSize.width,
+    y: point.y * viewSize.height,
+  }));
+  const labelPoint = scaled[0];
+  const handleSelect = (event: ReactMouseEvent<SVGGElement>) => {
+    event.stopPropagation();
+    onSelect(measurement.id);
+  };
+
+  if (measurement.tool_type === "area" && scaled.length >= 3) {
+    return (
+      <g
+        className="cursor-pointer"
+        onClick={handleSelect}
+        data-testid="takeoff-measurement-shape"
+        data-takeoff-tool={measurement.tool_type}
+        data-takeoff-linked={measurement.estimate_line_item_id ? "true" : "false"}
+      >
+        <polygon
+          points={scaled.map((point) => `${point.x},${point.y}`).join(" ")}
+          fill={`${measurement.color}22`}
+          stroke={selected ? "#111827" : measurement.color}
+          strokeWidth={selected ? "6" : "3"}
+        />
+        {selected && (
+          <polygon
+            points={scaled.map((point) => `${point.x},${point.y}`).join(" ")}
+            fill="none"
+            stroke={measurement.color}
+            strokeWidth="3"
+          />
+        )}
+        <MeasurementEditHandles
+          points={scaled}
+          measurement={measurement}
+          editable={editable}
+          onPointDragStart={onPointDragStart}
+        />
+        <MeasurementLabel
+          x={labelPoint.x}
+          y={labelPoint.y}
+          color={measurement.color}
+          text={formatQty(measurement.quantity, measurement.unit)}
+        />
+      </g>
+    );
+  }
+
+  if (measurement.tool_type === "count") {
+    return (
+      <g
+        className="cursor-pointer"
+        onClick={handleSelect}
+        data-testid="takeoff-measurement-shape"
+        data-takeoff-tool={measurement.tool_type}
+        data-takeoff-linked={measurement.estimate_line_item_id ? "true" : "false"}
+      >
+        {scaled.map((point, index) => (
+          <g key={`${point.x}-${point.y}-${index}`}>
+            {selected && <circle cx={point.x} cy={point.y} r="16" fill="white" stroke="#111827" />}
+            <circle cx={point.x} cy={point.y} r="11" fill={measurement.color} />
+            {editable && (
+              <circle
+                cx={point.x}
+                cy={point.y}
+                r="18"
+                fill="transparent"
+                className="cursor-move"
+                data-testid="takeoff-edit-handle"
+                aria-label={`Move ${measurement.label} point ${index + 1}`}
+                onPointerDown={(event) => onPointDragStart(event, measurement, index)}
+              />
+            )}
+            <text
+              x={point.x}
+              y={point.y + 4}
+              textAnchor="middle"
+              fill="white"
+              fontSize="11"
+              fontWeight="700"
+            >
+              {index + 1}
+            </text>
+          </g>
+        ))}
+        <MeasurementLabel
+          x={labelPoint.x + 14}
+          y={labelPoint.y - 14}
+          color={measurement.color}
+          text={formatQty(measurement.quantity, measurement.unit)}
+        />
+      </g>
+    );
+  }
+
+  return (
+    <g
+      className="cursor-pointer"
+      onClick={handleSelect}
+      data-testid="takeoff-measurement-shape"
+      data-takeoff-tool={measurement.tool_type}
+      data-takeoff-linked={measurement.estimate_line_item_id ? "true" : "false"}
+    >
+      {selected && (
+        <polyline
+          points={scaled.map((point) => `${point.x},${point.y}`).join(" ")}
+          fill="none"
+          stroke="#111827"
+          strokeWidth="8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity="0.35"
+        />
+      )}
+      <polyline
+        points={scaled.map((point) => `${point.x},${point.y}`).join(" ")}
+        fill="none"
+        stroke={measurement.color}
+        strokeWidth="4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {scaled.map((point, index) => (
+        <circle key={index} cx={point.x} cy={point.y} r="5" fill={measurement.color} />
+      ))}
+      <MeasurementEditHandles
+        points={scaled}
+        measurement={measurement}
+        editable={editable}
+        onPointDragStart={onPointDragStart}
+      />
+      <MeasurementLabel
+        x={labelPoint.x + 10}
+        y={labelPoint.y - 10}
+        color={measurement.color}
+        text={formatQty(measurement.quantity, measurement.unit)}
+      />
+    </g>
+  );
+}
+
+function MeasurementEditHandles({
+  points,
+  measurement,
+  editable,
+  onPointDragStart,
+}: {
+  points: Array<{ x: number; y: number }>;
+  measurement: TakeoffMeasurementRow;
+  editable: boolean;
+  onPointDragStart: (
+    event: ReactPointerEvent<SVGCircleElement>,
+    measurement: TakeoffMeasurementRow,
+    pointIndex: number,
+  ) => void;
+}) {
+  if (!editable) return null;
+  return (
+    <g data-testid="takeoff-edit-handles">
+      {points.map((point, index) => (
+        <circle
+          key={`${measurement.id}-edit-${index}`}
+          cx={point.x}
+          cy={point.y}
+          r="9"
+          fill="white"
+          stroke={measurement.color}
+          strokeWidth="3"
+          className="cursor-move"
+          data-testid="takeoff-edit-handle"
+          aria-label={`Move ${measurement.label} point ${index + 1}`}
+          onPointerDown={(event) => onPointDragStart(event, measurement, index)}
+        />
+      ))}
+    </g>
+  );
+}
+
+export function DraftShape({
+  points,
+  viewSize,
+  color,
+  dashed,
+  closed,
+  scaleFeetPerPixel,
+  unit,
+  tool,
+  command,
+}: {
+  points: Point[];
+  viewSize: ViewSize;
+  color: string;
+  dashed?: boolean;
+  closed?: boolean;
+  scaleFeetPerPixel: number;
+  unit: string;
+  tool: ToolMode;
+  command: DraftCommandStatus | null;
+}) {
+  if (points.length === 0) return null;
+  const scaled = points.map((point) => ({
+    x: point.x * viewSize.width,
+    y: point.y * viewSize.height,
+  }));
+  const pointText = scaled.map((point) => `${point.x},${point.y}`).join(" ");
+
+  if (tool === "count") {
+    return (
+      <g data-testid="takeoff-draft-points" pointerEvents="none">
+        {scaled.map((point, index) => (
+          <g key={`${point.x}-${point.y}-${index}`}>
+            <circle cx={point.x} cy={point.y} r="12" fill="white" stroke={color} strokeWidth="3" />
+            <circle cx={point.x} cy={point.y} r="7" fill={color} />
+            <DraftPointLabel x={point.x + 10} y={point.y - 10} text={`${index + 1}`} />
+          </g>
+        ))}
+        {command && (
+          <DraftCommandLabel
+            x={scaled[0].x + 18}
+            y={scaled[0].y - 22}
+            color={color}
+            text={command.value}
+          />
+        )}
+      </g>
+    );
+  }
+
+  return (
+    <g data-testid="takeoff-draft-points" pointerEvents="none">
+      {closed && scaled.length >= 3 ? (
+        <polygon
+          points={pointText}
+          fill={`${color}14`}
+          stroke={color}
+          strokeWidth="3"
+          strokeDasharray={dashed ? "8 8" : undefined}
+        />
+      ) : (
+        <polyline
+          points={pointText}
+          fill="none"
+          stroke={color}
+          strokeWidth="3"
+          strokeDasharray={dashed ? "8 8" : undefined}
+          strokeLinecap="round"
+        />
+      )}
+      {scaled.map((point, index) => (
+        <g key={index}>
+          <circle cx={point.x} cy={point.y} r="5" fill={color} />
+          <DraftPointLabel x={point.x + 8} y={point.y - 8} text={`${index + 1}`} />
+        </g>
+      ))}
+      {tool === "linear" &&
+        scaleFeetPerPixel > 0 &&
+        scaled.slice(1).map((point, index) => {
+          const previous = scaled[index];
+          const length = Math.hypot(point.x - previous.x, point.y - previous.y) * scaleFeetPerPixel;
+          return (
+            <DraftSegmentLabel
+              key={`${point.x}-${point.y}-${index}`}
+              x={(point.x + previous.x) / 2}
+              y={(point.y + previous.y) / 2}
+              text={formatQty(length, unit)}
+            />
+          );
+        })}
+      {tool === "calibrate" && scaled.length === 2 && (
+        <DraftSegmentLabel
+          x={(scaled[0].x + scaled[1].x) / 2}
+          y={(scaled[0].y + scaled[1].y) / 2}
+          text={`${Math.round(distancePx(points, viewSize)).toLocaleString()} px`}
+        />
+      )}
+      {command && (
+        <DraftCommandLabel
+          x={scaled[0].x + 14}
+          y={scaled[0].y - 24}
+          color={color}
+          text={command.value}
+        />
+      )}
+    </g>
+  );
+}
+
+function DraftPointLabel({ x, y, text }: { x: number; y: number; text: string }) {
+  return (
+    <g data-testid="takeoff-draft-point-label">
+      <circle cx={x} cy={y - 3} r="8" fill="white" stroke="#28231d" strokeWidth="1" />
+      <text x={x} y={y + 1} textAnchor="middle" fill="#28231d" fontSize="9" fontWeight="700">
+        {text}
+      </text>
+    </g>
+  );
+}
+
+function DraftSegmentLabel({ x, y, text }: { x: number; y: number; text: string }) {
+  const width = Math.max(58, text.length * 6.5);
+  return (
+    <g data-testid="takeoff-draft-segment-label">
+      <rect x={x - width / 2} y={y - 24} width={width} height="20" rx="4" fill="white" />
+      <rect
+        x={x - width / 2}
+        y={y - 24}
+        width={width}
+        height="20"
+        rx="4"
+        fill="#28231d10"
+        stroke="#28231d"
+        strokeWidth="0.75"
+      />
+      <text x={x} y={y - 10} textAnchor="middle" fill="#28231d" fontSize="10" fontWeight="700">
+        {text}
+      </text>
+    </g>
+  );
+}
+
+function DraftCommandLabel({
+  x,
+  y,
+  color,
+  text,
+}: {
+  x: number;
+  y: number;
+  color: string;
+  text: string;
+}) {
+  const width = Math.max(80, text.length * 7);
+  return (
+    <g data-testid="takeoff-draft-command-label">
+      <rect x={x} y={y - 20} width={width} height="24" rx="4" fill="white" />
+      <rect x={x} y={y - 20} width={width} height="24" rx="4" fill={`${color}18`} stroke={color} />
+      <text x={x + 8} y={y - 4} fill="#28231d" fontSize="11" fontWeight="700">
+        {text}
+      </text>
+    </g>
+  );
+}
+
+function MeasurementLabel({
+  x,
+  y,
+  color,
+  text,
+}: {
+  x: number;
+  y: number;
+  color: string;
+  text: string;
+}) {
+  return (
+    <g>
+      <rect
+        x={x}
+        y={y - 18}
+        width={Math.max(76, text.length * 7)}
+        height="22"
+        rx="4"
+        fill="white"
+      />
+      <rect
+        x={x}
+        y={y - 18}
+        width={Math.max(76, text.length * 7)}
+        height="22"
+        rx="4"
+        fill={`${color}18`}
+        stroke={color}
+      />
+      <text x={x + 8} y={y - 3} fill="#28231d" fontSize="11" fontWeight="700">
+        {text}
+      </text>
+    </g>
+  );
+}
