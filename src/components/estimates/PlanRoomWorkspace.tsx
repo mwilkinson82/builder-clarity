@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type {
   ChangeEvent,
+  CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
@@ -25,6 +26,7 @@ import {
   Maximize2,
   Minimize2,
   MousePointer2,
+  Move,
   PencilRuler,
   Plus,
   Ruler,
@@ -80,6 +82,22 @@ import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions
 type ToolMode = "select" | "calibrate" | TakeoffToolType;
 type RevisionOverlayMode = "compare" | "ghost";
 type CockpitPanelKey = "drawings" | "tools";
+type CockpitPanelAnchor = "left" | "right";
+type CockpitPanelLayout = {
+  anchor: CockpitPanelAnchor;
+  x: number | null;
+  y: number;
+  width: number;
+  height: number;
+};
+type CockpitPanelInteraction = {
+  key: CockpitPanelKey;
+  mode: "move" | "resize";
+  offsetX: number;
+  offsetY: number;
+  startWidth: number;
+  startHeight: number;
+};
 type MiniMapDock = "bottom-left" | "bottom-right" | "top-left" | "top-right";
 type MiniMapPosition = { x: number; y: number };
 type SheetFilterMode = "all" | "current" | "needs-scale" | "has-takeoff";
@@ -139,8 +157,63 @@ const PDF_HIGH_DETAIL_RENDER_MAX_EDGE = 12_288;
 const PDF_HIGH_DETAIL_RENDER_MAX_PIXELS = 72_000_000;
 const PDF_INSPECTION_RENDER_MULTIPLIER = 2;
 const EMPTY_VIEWPORT_FRAME: ViewportFrame = { x: 0, y: 0, width: 1, height: 1 };
+const COCKPIT_PANEL_EDGE_GAP = 8;
+const COCKPIT_PANEL_MIN_WIDTH = 280;
+const COCKPIT_PANEL_MAX_WIDTH = 540;
+const COCKPIT_PANEL_MIN_HEIGHT = 280;
+const COCKPIT_PANEL_MAX_HEIGHT = 920;
+const COCKPIT_PANEL_LAYOUT_STORAGE_KEY = "overwatch.plan-room.cockpit-panels.v1";
+const DEFAULT_COCKPIT_PANEL_LAYOUTS: Record<CockpitPanelKey, CockpitPanelLayout> = {
+  drawings: {
+    anchor: "left",
+    x: null,
+    y: COCKPIT_PANEL_EDGE_GAP,
+    width: 360,
+    height: 680,
+  },
+  tools: {
+    anchor: "right",
+    x: null,
+    y: COCKPIT_PANEL_EDGE_GAP,
+    width: 390,
+    height: 720,
+  },
+};
 
 type PdfViewportLike = { width: number; height: number };
+
+const clampNumber = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
+const coerceCockpitPanelLayout = (
+  value: unknown,
+  fallback: CockpitPanelLayout,
+): CockpitPanelLayout => {
+  if (!value || typeof value !== "object") return fallback;
+  const raw = value as Partial<CockpitPanelLayout>;
+  const anchor =
+    raw.anchor === "right" ? "right" : raw.anchor === "left" ? "left" : fallback.anchor;
+  const x = typeof raw.x === "number" && Number.isFinite(raw.x) ? Math.max(0, raw.x) : fallback.x;
+  const y =
+    typeof raw.y === "number" && Number.isFinite(raw.y)
+      ? Math.max(COCKPIT_PANEL_EDGE_GAP, raw.y)
+      : fallback.y;
+  return {
+    anchor,
+    x,
+    y,
+    width: clampNumber(
+      typeof raw.width === "number" && Number.isFinite(raw.width) ? raw.width : fallback.width,
+      COCKPIT_PANEL_MIN_WIDTH,
+      COCKPIT_PANEL_MAX_WIDTH,
+    ),
+    height: clampNumber(
+      typeof raw.height === "number" && Number.isFinite(raw.height) ? raw.height : fallback.height,
+      COCKPIT_PANEL_MIN_HEIGHT,
+      COCKPIT_PANEL_MAX_HEIGHT,
+    ),
+  };
+};
 
 const planSetStatusLabel = (status: PlanSetRow["status"]) => {
   if (status === "superseded") return "Superseded";
@@ -421,28 +494,70 @@ function toolLabel(tool: ToolMode) {
 function CockpitFloatingPanelHeader({
   title,
   closeTestId,
+  dragTestId,
+  resetTestId,
+  layoutLabel,
+  onMoveStart,
+  onMove,
+  onMoveEnd,
+  onReset,
   onClose,
 }: {
   title: string;
   closeTestId: string;
+  dragTestId: string;
+  resetTestId: string;
+  layoutLabel: string;
+  onMoveStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onMoveEnd: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onReset: () => void;
   onClose: () => void;
 }) {
   return (
     <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-        {title}
-      </p>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="h-7 gap-1.5 px-2 text-xs"
-        onClick={onClose}
-        data-testid={closeTestId}
+      <div
+        className="flex min-w-0 flex-1 cursor-move touch-none items-center gap-2"
+        title="Drag this panel anywhere in Command Center"
+        onPointerDown={onMoveStart}
+        onPointerMove={onMove}
+        onPointerUp={onMoveEnd}
+        onPointerCancel={onMoveEnd}
+        data-testid={dragTestId}
       >
-        <Minimize2 className="h-3.5 w-3.5" />
-        Hide
-      </Button>
+        <Move className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            {title}
+          </p>
+          <p className="truncate text-[10px] text-muted-foreground">{layoutLabel}</p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={onReset}
+          data-testid={resetTestId}
+        >
+          Reset
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-7 gap-1.5 px-2 text-xs"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={onClose}
+          data-testid={closeTestId}
+        >
+          <Minimize2 className="h-3.5 w-3.5" />
+          Hide
+        </Button>
+      </div>
     </div>
   );
 }
@@ -467,6 +582,8 @@ export function PlanRoomWorkspace({
 }: PlanRoomWorkspaceProps) {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
+  const cockpitPanelInteractionRef = useRef<CockpitPanelInteraction | null>(null);
   const createPlanSetFn = useServerFn(createPlanSet);
   const createMeasurementFn = useServerFn(createTakeoffMeasurement);
   const updateSheetFn = useServerFn(updatePlanSheet);
@@ -489,6 +606,10 @@ export function PlanRoomWorkspace({
     drawings: false,
     tools: false,
   });
+  const [cockpitPanelLayouts, setCockpitPanelLayouts] = useState<
+    Record<CockpitPanelKey, CockpitPanelLayout>
+  >(DEFAULT_COCKPIT_PANEL_LAYOUTS);
+  const [cockpitChromeVisible, setCockpitChromeVisible] = useState(true);
   const [overlaySheetId, setOverlaySheetId] = useState("");
   const [overlayOpacity, setOverlayOpacity] = useState(65);
   const [overlayMode, setOverlayMode] = useState<RevisionOverlayMode>("compare");
@@ -611,6 +732,41 @@ export function PlanRoomWorkspace({
   useEffect(() => {
     if (!selectedSheetId && sheets[0]) setSelectedSheetId(sheets[0].id);
   }, [selectedSheetId, sheets]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(COCKPIT_PANEL_LAYOUT_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        layouts?: Partial<Record<CockpitPanelKey, unknown>>;
+        chromeVisible?: unknown;
+      };
+      setCockpitPanelLayouts({
+        drawings: coerceCockpitPanelLayout(
+          parsed.layouts?.drawings,
+          DEFAULT_COCKPIT_PANEL_LAYOUTS.drawings,
+        ),
+        tools: coerceCockpitPanelLayout(parsed.layouts?.tools, DEFAULT_COCKPIT_PANEL_LAYOUTS.tools),
+      });
+      if (typeof parsed.chromeVisible === "boolean") {
+        setCockpitChromeVisible(parsed.chromeVisible);
+      }
+    } catch {
+      window.localStorage.removeItem(COCKPIT_PANEL_LAYOUT_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(
+      COCKPIT_PANEL_LAYOUT_STORAGE_KEY,
+      JSON.stringify({
+        layouts: cockpitPanelLayouts,
+        chromeVisible: cockpitChromeVisible,
+      }),
+    );
+  }, [cockpitChromeVisible, cockpitPanelLayouts]);
 
   useEffect(() => {
     if (!overlaySheetId) return;
@@ -1055,6 +1211,152 @@ export function PlanRoomWorkspace({
   const toggleCockpitPanel = (panel: CockpitPanelKey) =>
     setCockpitPanels((current) => ({ ...current, [panel]: !current[panel] }));
   const hideCockpitPanels = () => setCockpitPanels({ drawings: false, tools: false });
+  const clampCockpitPanelLayout = (layout: CockpitPanelLayout): CockpitPanelLayout => {
+    const parent = mainRef.current;
+    const parentRect = parent?.getBoundingClientRect();
+    const parentWidth =
+      parentRect?.width ?? (typeof window === "undefined" ? 1800 : window.innerWidth);
+    const parentHeight =
+      parentRect?.height ?? (typeof window === "undefined" ? 900 : window.innerHeight - 48);
+    const maxWidth = Math.min(COCKPIT_PANEL_MAX_WIDTH, parentWidth - COCKPIT_PANEL_EDGE_GAP * 2);
+    const maxHeight = Math.min(COCKPIT_PANEL_MAX_HEIGHT, parentHeight - COCKPIT_PANEL_EDGE_GAP * 2);
+    const width = clampNumber(layout.width, COCKPIT_PANEL_MIN_WIDTH, Math.max(280, maxWidth));
+    const height = clampNumber(layout.height, COCKPIT_PANEL_MIN_HEIGHT, Math.max(280, maxHeight));
+    const y = clampNumber(
+      layout.y,
+      COCKPIT_PANEL_EDGE_GAP,
+      Math.max(COCKPIT_PANEL_EDGE_GAP, parentHeight - height - COCKPIT_PANEL_EDGE_GAP),
+    );
+    const x =
+      layout.x === null
+        ? null
+        : clampNumber(
+            layout.x,
+            COCKPIT_PANEL_EDGE_GAP,
+            Math.max(COCKPIT_PANEL_EDGE_GAP, parentWidth - width - COCKPIT_PANEL_EDGE_GAP),
+          );
+    return { ...layout, x, y, width, height };
+  };
+  const cockpitPanelStyle = (panel: CockpitPanelKey): CSSProperties => {
+    const layout = clampCockpitPanelLayout(cockpitPanelLayouts[panel]);
+    const style: CSSProperties = {
+      top: layout.y,
+      width: layout.width,
+      height: layout.height,
+      maxHeight: `calc(100% - ${layout.y + COCKPIT_PANEL_EDGE_GAP}px)`,
+    };
+    if (layout.x === null) {
+      if (layout.anchor === "left") style.left = COCKPIT_PANEL_EDGE_GAP;
+      else style.right = COCKPIT_PANEL_EDGE_GAP;
+    } else {
+      style.left = layout.x;
+    }
+    return style;
+  };
+  const cockpitPanelLayoutLabel = (panel: CockpitPanelKey) => {
+    const layout = cockpitPanelLayouts[panel];
+    return `${Math.round(layout.width)} x ${Math.round(layout.height)} · ${
+      layout.x === null ? `docked ${layout.anchor}` : "custom position"
+    }`;
+  };
+  const resetCockpitPanelLayout = (panel: CockpitPanelKey) =>
+    setCockpitPanelLayouts((current) => ({
+      ...current,
+      [panel]: DEFAULT_COCKPIT_PANEL_LAYOUTS[panel],
+    }));
+  const beginCockpitPanelMove = (
+    panel: CockpitPanelKey,
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    const panelElement = event.currentTarget.closest<HTMLElement>("[data-cockpit-panel-key]");
+    const parent = mainRef.current;
+    if (!panelElement || !parent) return;
+    const panelRect = panelElement.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    cockpitPanelInteractionRef.current = {
+      key: panel,
+      mode: "move",
+      offsetX: event.clientX - panelRect.left,
+      offsetY: event.clientY - panelRect.top,
+      startWidth: panelRect.width,
+      startHeight: panelRect.height,
+    };
+    setCockpitPanelLayouts((current) => ({
+      ...current,
+      [panel]: clampCockpitPanelLayout({
+        ...current[panel],
+        x: panelRect.left - parentRect.left,
+        y: panelRect.top - parentRect.top,
+        width: panelRect.width,
+        height: panelRect.height,
+      }),
+    }));
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+  const moveCockpitPanel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const interaction = cockpitPanelInteractionRef.current;
+    const parent = mainRef.current;
+    if (!interaction || !parent) return;
+    const parentRect = parent.getBoundingClientRect();
+    setCockpitPanelLayouts((current) => {
+      const layout = current[interaction.key];
+      const nextLayout =
+        interaction.mode === "move"
+          ? {
+              ...layout,
+              x: event.clientX - parentRect.left - interaction.offsetX,
+              y: event.clientY - parentRect.top - interaction.offsetY,
+            }
+          : {
+              ...layout,
+              width: interaction.startWidth + event.clientX - interaction.offsetX,
+              height: interaction.startHeight + event.clientY - interaction.offsetY,
+            };
+      return {
+        ...current,
+        [interaction.key]: clampCockpitPanelLayout(nextLayout),
+      };
+    });
+  };
+  const endCockpitPanelInteraction = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!cockpitPanelInteractionRef.current) return;
+    cockpitPanelInteractionRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+  const beginCockpitPanelResize = (
+    panel: CockpitPanelKey,
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    const panelElement = event.currentTarget.closest<HTMLElement>("[data-cockpit-panel-key]");
+    const parent = mainRef.current;
+    if (!panelElement || !parent) return;
+    const panelRect = panelElement.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    setCockpitPanelLayouts((current) => ({
+      ...current,
+      [panel]: clampCockpitPanelLayout({
+        ...current[panel],
+        x: panelRect.left - parentRect.left,
+        y: panelRect.top - parentRect.top,
+        width: panelRect.width,
+        height: panelRect.height,
+      }),
+    }));
+    cockpitPanelInteractionRef.current = {
+      key: panel,
+      mode: "resize",
+      offsetX: event.clientX,
+      offsetY: event.clientY,
+      startWidth: panelRect.width,
+      startHeight: panelRect.height,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.stopPropagation();
+    event.preventDefault();
+  };
   const takeoffToolButtons = (
     <>
       {[
@@ -1208,6 +1510,30 @@ export function PlanRoomWorkspace({
                 </Button>
               )}
               <Button
+                type="button"
+                size="sm"
+                variant={cockpitChromeVisible ? "outline" : "default"}
+                className="h-8 gap-1.5 px-2"
+                title={
+                  cockpitChromeVisible
+                    ? "Focus on the drawing and hide floating controls"
+                    : "Show floating controls"
+                }
+                onClick={() => {
+                  const nextVisible = !cockpitChromeVisible;
+                  setCockpitChromeVisible(nextVisible);
+                  if (!nextVisible) hideCockpitPanels();
+                }}
+                data-testid="plan-cockpit-focus-toggle"
+              >
+                {cockpitChromeVisible ? (
+                  <Maximize2 className="h-3.5 w-3.5" />
+                ) : (
+                  <Minimize2 className="h-3.5 w-3.5" />
+                )}
+                {cockpitChromeVisible ? "Focus" : "Controls"}
+              </Button>
+              <Button
                 size="sm"
                 variant="outline"
                 className="h-8 gap-1.5 px-2"
@@ -1302,6 +1628,7 @@ export function PlanRoomWorkspace({
       </header>
 
       <main
+        ref={mainRef}
         className={cn(
           "relative grid min-h-0",
           isCockpitMode
@@ -1325,15 +1652,26 @@ export function PlanRoomWorkspace({
             "min-w-0 space-y-4",
             isCockpitMode &&
               (cockpitPanels.drawings
-                ? "absolute left-2 top-2 z-40 max-h-[calc(100%-1rem)] w-[min(360px,calc(100vw-1rem))] overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
+                ? "absolute z-40 overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
                 : "hidden"),
           )}
+          style={
+            isCockpitMode && cockpitPanels.drawings ? cockpitPanelStyle("drawings") : undefined
+          }
           data-testid="plan-cockpit-drawings-panel"
+          data-cockpit-panel-key="drawings"
         >
           {isCockpitMode && (
             <CockpitFloatingPanelHeader
               title="Drawing Controls"
               closeTestId="plan-cockpit-drawings-close"
+              dragTestId="plan-cockpit-drawings-drag"
+              resetTestId="plan-cockpit-drawings-reset"
+              layoutLabel={cockpitPanelLayoutLabel("drawings")}
+              onMoveStart={(event) => beginCockpitPanelMove("drawings", event)}
+              onMove={moveCockpitPanel}
+              onMoveEnd={endCockpitPanelInteraction}
+              onReset={() => resetCockpitPanelLayout("drawings")}
               onClose={() =>
                 setCockpitPanels((current) => ({
                   ...current,
@@ -1617,6 +1955,17 @@ export function PlanRoomWorkspace({
               </div>
             )}
           </section>
+          {isCockpitMode && (
+            <div
+              className="sticky bottom-0 ml-auto h-5 w-5 cursor-nwse-resize touch-none rounded-tl-md border-l border-t border-hairline bg-surface/90"
+              title="Resize drawing controls panel"
+              onPointerDown={(event) => beginCockpitPanelResize("drawings", event)}
+              onPointerMove={moveCockpitPanel}
+              onPointerUp={endCockpitPanelInteraction}
+              onPointerCancel={endCockpitPanelInteraction}
+              data-testid="plan-cockpit-drawings-resize"
+            />
+          )}
         </aside>
 
         <section
@@ -1671,8 +2020,9 @@ export function PlanRoomWorkspace({
             }}
             onMeasurementGeometryChange={saveMeasurementGeometry}
             isGeometrySaving={updateMeasurementMutation.isPending}
+            showFloatingControls={cockpitChromeVisible}
             toolControls={
-              isCockpitMode ? (
+              isCockpitMode && cockpitChromeVisible ? (
                 <div className="flex max-w-[min(760px,calc(100vw-2rem))] flex-wrap items-center justify-end gap-1.5">
                   {takeoffToolButtons}
                 </div>
@@ -1686,15 +2036,24 @@ export function PlanRoomWorkspace({
             "min-w-0 space-y-4",
             isCockpitMode &&
               (cockpitPanels.tools
-                ? "absolute right-2 top-2 z-40 max-h-[calc(100%-1rem)] w-[min(390px,calc(100vw-1rem))] overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
+                ? "absolute z-40 overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
                 : "hidden"),
           )}
+          style={isCockpitMode && cockpitPanels.tools ? cockpitPanelStyle("tools") : undefined}
           data-testid="plan-cockpit-tools-panel"
+          data-cockpit-panel-key="tools"
         >
           {isCockpitMode && (
             <CockpitFloatingPanelHeader
               title="Takeoff Tools"
               closeTestId="plan-cockpit-tools-close"
+              dragTestId="plan-cockpit-tools-drag"
+              resetTestId="plan-cockpit-tools-reset"
+              layoutLabel={cockpitPanelLayoutLabel("tools")}
+              onMoveStart={(event) => beginCockpitPanelMove("tools", event)}
+              onMove={moveCockpitPanel}
+              onMoveEnd={endCockpitPanelInteraction}
+              onReset={() => resetCockpitPanelLayout("tools")}
               onClose={() =>
                 setCockpitPanels((current) => ({
                   ...current,
@@ -2245,6 +2604,17 @@ export function PlanRoomWorkspace({
               )}
             </div>
           </section>
+          {isCockpitMode && (
+            <div
+              className="sticky bottom-0 ml-auto h-5 w-5 cursor-nwse-resize touch-none rounded-tl-md border-l border-t border-hairline bg-surface/90"
+              title="Resize takeoff tools panel"
+              onPointerDown={(event) => beginCockpitPanelResize("tools", event)}
+              onPointerMove={moveCockpitPanel}
+              onPointerUp={endCockpitPanelInteraction}
+              onPointerCancel={endCockpitPanelInteraction}
+              data-testid="plan-cockpit-tools-resize"
+            />
+          )}
         </aside>
       </main>
     </div>
@@ -2274,6 +2644,7 @@ function PlanCanvas({
   onMeasurementSelect,
   onMeasurementGeometryChange,
   isGeometrySaving,
+  showFloatingControls = true,
   toolControls,
 }: {
   planSet: PlanSetRow | null;
@@ -2298,6 +2669,7 @@ function PlanCanvas({
   onMeasurementSelect: (measurementId: string) => void;
   onMeasurementGeometryChange: (measurementId: string, points: Point[]) => Promise<void>;
   isGeometrySaving: boolean;
+  showFloatingControls?: boolean;
   toolControls?: ReactNode;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -2969,7 +3341,7 @@ function PlanCanvas({
         />
       )}
 
-      {isCockpitMode && (
+      {isCockpitMode && showFloatingControls && (
         <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-wrap items-start justify-between gap-2">
           {renderPlanControlBar(
             "pointer-events-auto flex max-w-[min(760px,calc(100vw-2rem))] flex-wrap items-center justify-between gap-2 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur",
