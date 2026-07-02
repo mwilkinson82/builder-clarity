@@ -141,6 +141,8 @@ export interface EstimateRow {
   opportunity_name?: string;
 }
 
+export type LineQuantitySource = "manual" | "takeoff";
+
 export interface EstimateLineItemRow {
   id: string;
   estimate_id: string;
@@ -149,6 +151,9 @@ export interface EstimateLineItemRow {
   description: string;
   unit: string;
   quantity: number;
+  quantity_source: LineQuantitySource;
+  takeoff_quantity: number | null;
+  takeoff_synced_at: string | null;
   material_unit_cost_cents: number;
   labor_unit_cost_cents: number;
   material_extended_cents: number;
@@ -268,6 +273,17 @@ const isMissingLaborBasisColumn = (error: { code?: string; message?: string } | 
   );
 };
 
+const isMissingQuantityProvenanceColumn = (error: { code?: string; message?: string } | null) => {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" ||
+      error.code === "42703" ||
+      (/quantity_source|takeoff_quantity|takeoff_synced_at/i.test(message) &&
+        /schema cache|column|could not find|does not exist/i.test(message))),
+  );
+};
+
 const LABOR_BASIS_PENDING_MESSAGE =
   "Labor pricing basis is still being enabled on the backend. Wait for the database migration to finish, then try again.";
 
@@ -325,6 +341,9 @@ const normalizeLineItem = (row: Record<string, unknown>): EstimateLineItemRow =>
     description: str(row.description),
     unit: str(row.unit),
     quantity,
+    quantity_source: str(row.quantity_source) === "takeoff" ? "takeoff" : "manual",
+    takeoff_quantity: row.takeoff_quantity == null ? null : num(row.takeoff_quantity),
+    takeoff_synced_at: row.takeoff_synced_at == null ? null : str(row.takeoff_synced_at),
     material_unit_cost_cents: material,
     labor_unit_cost_cents: labor,
     material_extended_cents: Math.round(num(row.material_extended_cents, quantity * material)),
@@ -1688,18 +1707,35 @@ export const updateLineItem = createServerFn({ method: "POST" })
     if (typeof patch.csi_division === "string") patch.csi_division = clean(patch.csi_division, 8);
     if (typeof patch.scope_group === "string") patch.scope_group = clean(patch.scope_group, 200);
     if (typeof patch.notes === "string") patch.notes = clean(patch.notes, 2000);
+    // Grid edits are hand-typed quantities; record that so takeoff syncs know
+    // not to clobber them silently.
+    if (patch.quantity != null) patch.quantity_source = "manual";
 
-    const { data: row, error } = await dynamicTable(context.supabase, "estimate_line_items")
+    let result = await dynamicTable(context.supabase, "estimate_line_items")
       .update(patch)
       .eq("id", data.id)
       .select("*")
       .single();
-    if (error || !row) throw new Error(error?.message ?? "Line item did not update.");
+    if (
+      result.error &&
+      "quantity_source" in patch &&
+      isMissingQuantityProvenanceColumn(result.error)
+    ) {
+      const { quantity_source: _quantitySource, ...legacyPatch } = patch;
+      result = await dynamicTable(context.supabase, "estimate_line_items")
+        .update(legacyPatch)
+        .eq("id", data.id)
+        .select("*")
+        .single();
+    }
+    if (result.error || !result.data) {
+      throw new Error(result.error?.message ?? "Line item did not update.");
+    }
     await recalculateEstimateTotalsInternal(
       context,
       str((current.data as Record<string, unknown>).estimate_id),
     );
-    return { line_item: normalizeLineItem(row as Record<string, unknown>) };
+    return { line_item: normalizeLineItem(result.data as Record<string, unknown>) };
   });
 
 export const deleteLineItem = createServerFn({ method: "POST" })

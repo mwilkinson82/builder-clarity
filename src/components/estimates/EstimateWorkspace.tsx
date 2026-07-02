@@ -1091,6 +1091,18 @@ function EstimateLineRow({
           onBlur={() => commit({ quantity: draft.quantity })}
           className="h-8 w-full min-w-0 text-right tabular"
         />
+        {line.quantity_source === "takeoff" && (
+          <Link
+            to="/estimates/$estimateId/plan-room"
+            params={{ estimateId: estimate.id }}
+            search={{ line: line.id }}
+            className="mt-1 flex items-center justify-end gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+            title="This quantity came from the Plan Room takeoff. Open its sheet and measurement."
+            data-testid="line-takeoff-link"
+          >
+            <PencilRuler className="h-3 w-3" /> Takeoff
+          </Link>
+        )}
       </TableCell>
       <TableCell>
         <MoneyInput

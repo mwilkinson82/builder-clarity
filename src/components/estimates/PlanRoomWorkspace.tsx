@@ -156,6 +156,9 @@ interface PlanRoomWorkspaceProps {
   companyName?: string;
   schemaReady?: boolean;
   schemaMessage?: string;
+  // Estimate line to focus on load: selects its first takeoff measurement
+  // and that measurement's sheet (used by the estimate grid takeoff badge).
+  focusLineItemId?: string;
 }
 
 const DEFAULT_VIEW_SIZE: ViewSize = { width: 960, height: 620 };
@@ -879,9 +882,11 @@ export function PlanRoomWorkspace({
   companyName = "Company",
   schemaReady = true,
   schemaMessage = "",
+  focusLineItemId = "",
 }: PlanRoomWorkspaceProps) {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const focusLineAppliedRef = useRef(false);
   const mainRef = useRef<HTMLElement | null>(null);
   const cockpitPanelInteractionRef = useRef<CockpitPanelInteraction | null>(null);
   const createPlanSetFn = useServerFn(createPlanSet);
@@ -1107,6 +1112,15 @@ export function PlanRoomWorkspace({
   }, [selectedSheetId, sheets]);
 
   useEffect(() => {
+    if (!focusLineItemId || focusLineAppliedRef.current) return;
+    const measurement = measurements.find((item) => item.estimate_line_item_id === focusLineItemId);
+    if (!measurement) return;
+    focusLineAppliedRef.current = true;
+    setSelectedMeasurementId(measurement.id);
+    setSelectedSheetId(measurement.plan_sheet_id);
+  }, [focusLineItemId, measurements]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       const raw = window.localStorage.getItem(COCKPIT_PANEL_LAYOUT_STORAGE_KEY);
@@ -1292,9 +1306,24 @@ export function PlanRoomWorkspace({
   });
 
   const syncLineMutation = useMutation({
-    mutationFn: (lineId: string) =>
-      syncLineFn({ data: { estimate_id: estimate.id, estimate_line_item_id: lineId } }),
-    onSuccess: (result) => {
+    mutationFn: ({ lineId, force = false }: { lineId: string; force?: boolean }) =>
+      syncLineFn({
+        data: { estimate_id: estimate.id, estimate_line_item_id: lineId, force },
+      }),
+    onSuccess: (result, variables) => {
+      if (result.sync.conflict) {
+        // The estimate row's quantity was typed by hand; show old -> new and
+        // ask before replacing it.
+        const confirmed = window.confirm(
+          `This estimate row's quantity was typed by hand: ${formatQty(result.sync.quantity, "")}. ` +
+            `The takeoff measures ${formatQty(result.sync.takeoff_quantity, "")} (waste applied). ` +
+            "Replace the hand-typed quantity with the takeoff number?",
+        );
+        if (confirmed) {
+          syncLineMutation.mutate({ lineId: variables.lineId, force: true });
+        }
+        return;
+      }
       toast.success(`Estimate quantity updated to ${formatQty(result.sync.quantity, "")}`);
       invalidate();
     },
@@ -3120,7 +3149,9 @@ export function PlanRoomWorkspace({
                     <Button
                       size="sm"
                       className="w-full gap-1.5"
-                      onClick={() => syncLineMutation.mutate(selectedMeasurementLine.id)}
+                      onClick={() =>
+                        syncLineMutation.mutate({ lineId: selectedMeasurementLine.id })
+                      }
                     >
                       <Link2 className="h-3.5 w-3.5" />
                       Send This Takeoff Total to Estimate
@@ -3379,7 +3410,7 @@ export function PlanRoomWorkspace({
                             size="sm"
                             variant="outline"
                             className="w-full gap-1.5"
-                            onClick={() => syncLineMutation.mutate(linkedLine.id)}
+                            onClick={() => syncLineMutation.mutate({ lineId: linkedLine.id })}
                           >
                             <Link2 className="h-3.5 w-3.5" />
                             Send Total Qty to Estimate
@@ -3420,7 +3451,7 @@ export function PlanRoomWorkspace({
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => syncLineMutation.mutate(line.id)}
+                        onClick={() => syncLineMutation.mutate({ lineId: line.id })}
                       >
                         Sync
                       </Button>

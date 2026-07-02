@@ -513,6 +513,8 @@ const deleteMeasurementInput = z.object({
 const syncTakeoffInput = z.object({
   estimate_id: z.string().uuid(),
   estimate_line_item_id: z.string().uuid(),
+  // A confirmed sync overwrites a hand-typed quantity after conflict review.
+  force: z.boolean().optional().default(false),
 });
 
 export const planRoomBucket = PLAN_ROOM_BUCKET;
@@ -749,40 +751,115 @@ export const deleteTakeoffMeasurement = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+function isMissingQuantityProvenanceColumn(error: DynamicSupabaseError | null | undefined) {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" ||
+      error.code === "42703" ||
+      (/quantity_source|takeoff_quantity|takeoff_synced_at/i.test(message) &&
+        /schema cache|column|could not find|does not exist/i.test(message))),
+  );
+}
+
 async function syncTakeoffQuantityToLine(
   context: { supabase: unknown },
   estimateId: string,
   lineItemId: string,
+  options: { force?: boolean } = {},
 ) {
-  const [lineResult, measurementsResult] = await Promise.all([
-    dynamicTable(context.supabase, "estimate_line_items")
-      .select("id,estimate_id")
+  let lineResult = await dynamicTable(context.supabase, "estimate_line_items")
+    .select("id,estimate_id,quantity,quantity_source,takeoff_quantity")
+    .eq("id", lineItemId)
+    .eq("estimate_id", estimateId)
+    .single();
+  // Pre-migration fallback: without the provenance columns the sync behaves
+  // like it always has (last write wins).
+  let provenanceReady = true;
+  if (lineResult.error && isMissingQuantityProvenanceColumn(lineResult.error)) {
+    provenanceReady = false;
+    lineResult = await dynamicTable(context.supabase, "estimate_line_items")
+      .select("id,estimate_id,quantity")
       .eq("id", lineItemId)
       .eq("estimate_id", estimateId)
-      .single(),
-    dynamicTable(context.supabase, "estimate_takeoff_measurements")
-      .select("quantity")
-      .eq("estimate_id", estimateId)
-      .eq("estimate_line_item_id", lineItemId),
-  ]);
+      .single();
+  }
   if (lineResult.error || !lineResult.data) {
     throw new Error(lineResult.error?.message ?? "Estimate line was not found.");
   }
+
+  const measurementsResult = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+    .select("quantity,waste_pct")
+    .eq("estimate_id", estimateId)
+    .eq("estimate_line_item_id", lineItemId);
   if (measurementsResult.error) throw new Error(measurementsResult.error.message);
 
-  const quantity = ((measurementsResult.data ?? []) as Record<string, unknown>[]).reduce(
-    (sum, row) => sum + num(row.quantity),
+  const measurements = (measurementsResult.data ?? []) as Record<string, unknown>[];
+  // Waste-applied rollup: each measurement contributes quantity x
+  // (1 + waste_pct / 100). Rounded to the column's 4 decimal places.
+  const rollup = measurements.reduce(
+    (sum, row) => sum + num(row.quantity) * (1 + num(row.waste_pct) / 100),
     0,
   );
-  const { error } = await dynamicTable(context.supabase, "estimate_line_items")
-    .update({ quantity })
-    .eq("id", lineItemId)
-    .eq("estimate_id", estimateId);
-  if (error) throw new Error(error.message);
+  const quantity = Math.round(rollup * 10000) / 10000;
+
+  const line = lineResult.data as Record<string, unknown>;
+  const currentQuantity = num(line.quantity);
+  const lastTakeoffQuantity = line.takeoff_quantity == null ? null : num(line.takeoff_quantity);
+  const quantitySource = str(line.quantity_source, "manual");
+
+  // Anti-clobber: a hand-typed quantity that no longer matches the last
+  // synced takeoff number only gets replaced after the user confirms (force).
+  // A line that was never synced counts as hand-typed when nonzero.
+  const manualQuantityDiffers =
+    lastTakeoffQuantity == null ? currentQuantity > 0 : currentQuantity !== lastTakeoffQuantity;
+  if (
+    provenanceReady &&
+    !options.force &&
+    quantitySource === "manual" &&
+    currentQuantity !== quantity &&
+    manualQuantityDiffers
+  ) {
+    return {
+      conflict: true as const,
+      quantity: currentQuantity,
+      takeoff_quantity: quantity,
+      measurement_count: measurements.length,
+    };
+  }
+
+  let updateError: DynamicSupabaseError | null = null;
+  if (provenanceReady) {
+    const result = await dynamicTable(context.supabase, "estimate_line_items")
+      .update({
+        takeoff_quantity: quantity,
+        takeoff_synced_at: new Date().toISOString(),
+        quantity_source: "takeoff",
+        quantity,
+      })
+      .eq("id", lineItemId)
+      .eq("estimate_id", estimateId);
+    if (result.error && isMissingQuantityProvenanceColumn(result.error)) {
+      provenanceReady = false;
+    } else {
+      updateError = result.error;
+    }
+  }
+  if (!provenanceReady) {
+    const result = await dynamicTable(context.supabase, "estimate_line_items")
+      .update({ quantity })
+      .eq("id", lineItemId)
+      .eq("estimate_id", estimateId);
+    updateError = result.error;
+  }
+  if (updateError) throw new Error(updateError.message);
+
   await recalculateEstimateTotalsInternal(context, estimateId);
   return {
+    conflict: false as const,
     quantity,
-    measurement_count: ((measurementsResult.data ?? []) as unknown[]).length,
+    takeoff_quantity: quantity,
+    measurement_count: measurements.length,
   };
 }
 
@@ -790,5 +867,7 @@ export const syncTakeoffToEstimateLine = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof syncTakeoffInput>) => syncTakeoffInput.parse(input))
   .handler(async ({ data, context }) => ({
-    sync: await syncTakeoffQuantityToLine(context, data.estimate_id, data.estimate_line_item_id),
+    sync: await syncTakeoffQuantityToLine(context, data.estimate_id, data.estimate_line_item_id, {
+      force: data.force,
+    }),
   }));
