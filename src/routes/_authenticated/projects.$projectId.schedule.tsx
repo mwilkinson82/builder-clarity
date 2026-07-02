@@ -112,6 +112,25 @@ function formatActivityMutationError(error: unknown) {
   return message || "Refresh and try again.";
 }
 
+function formatWbsMutationError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  const lowerMessage = message.toLowerCase();
+  if (
+    lowerMessage.includes("schedule_wbs_sections") ||
+    lowerMessage.includes("wbs") ||
+    lowerMessage.includes("parent_id") ||
+    lowerMessage.includes("schema cache") ||
+    lowerMessage.includes("could not find the function") ||
+    lowerMessage.includes("does not exist")
+  ) {
+    return "Activity WBS paths still control the visible grid. Keep grouping rows through each activity WBS field, then try the WBS manager again after the schedule refresh completes.";
+  }
+  return (
+    message ||
+    "The WBS change did not save. Keep grouping rows through the activity WBS field and try the WBS manager again."
+  );
+}
+
 function getNextWbsSortOrder(
   sections: ScheduleWbsSectionRow[] | undefined,
   parentId: string | null,
@@ -389,7 +408,7 @@ function ScheduleWorkspacePage() {
     onError: (error, _variables, context) => {
       if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS did not save", {
-        description: error instanceof Error ? error.message : "Refresh and try again.",
+        description: formatWbsMutationError(error),
       });
     },
   });
@@ -423,7 +442,7 @@ function ScheduleWorkspacePage() {
     onError: (error, _variables, context) => {
       if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS did not update", {
-        description: error instanceof Error ? error.message : "Refresh and try again.",
+        description: formatWbsMutationError(error),
       });
     },
   });
@@ -465,7 +484,7 @@ function ScheduleWorkspacePage() {
     onError: (error, _variables, context) => {
       if (context?.previous) qc.setQueryData(["schedule", projectId], context.previous);
       toast.error("WBS parent did not update", {
-        description: error instanceof Error ? error.message : "Refresh and try again.",
+        description: formatWbsMutationError(error),
       });
     },
   });
@@ -494,7 +513,7 @@ function ScheduleWorkspacePage() {
       }
       toast.error("WBS order did not save", {
         id: wbsOrderToastRef.current ?? "wbs-order-error",
-        description: error instanceof Error ? error.message : "Refresh and try again.",
+        description: formatWbsMutationError(error),
       });
       wbsOrderToastRef.current = null;
       wbsOrderRollbackRef.current = undefined;

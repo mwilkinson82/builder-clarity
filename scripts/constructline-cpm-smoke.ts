@@ -1126,6 +1126,9 @@ for (const requiredScheduleRouteText of [
   "activity snapshots",
   "The baseline row, WBS, notes, and logic can still save normally. Reopen the activity and save the status update fields after the schedule refresh completes.",
   "Save it with the typed WBS path",
+  "formatWbsMutationError",
+  "Activity WBS paths still control the visible grid.",
+  "try the WBS manager again",
 ]) {
   assert.ok(
     scheduleRouteSource.includes(requiredScheduleRouteText),
