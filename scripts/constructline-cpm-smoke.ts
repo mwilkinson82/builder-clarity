@@ -365,6 +365,7 @@ assert.equal(statusedById.get("A")?.remainingDurationDays, 5);
 assert.equal(statusedById.get("A")?.statusStartDate, "2026-01-01");
 assert.equal(statusedById.get("A")?.statusFinishDate, "2026-01-13");
 assert.equal(statusedById.get("A")?.statusBasis, "remaining_duration");
+assert.equal(statusedById.get("A")?.isStatused, true);
 assert.equal(statusedById.get("A")?.slippageDays, 3);
 assert.equal(statusedById.get("B")?.statusStartDate, "2026-01-14");
 assert.equal(statusedById.get("B")?.statusBasis, "planned_dates");
@@ -372,6 +373,38 @@ assert.equal(
   statusedById.get("B")?.statusFinishDate,
   "2026-01-18",
   "Unstarted activities should ignore stale remaining duration in CPM status math.",
+);
+assert.equal(
+  statusedById.get("B")?.isStatused,
+  false,
+  "Unstarted activities should not count stale remaining duration as a saved status update.",
+);
+const forecastOnlyModel = buildConstructLineCpmModel(
+  [
+    {
+      ...withScheduleActivityStatus({
+        id: "forecast-only",
+        project_id: "project",
+        activity_id: "F",
+        name: "Future forecast adjustment",
+        division: "01 - General",
+        start_date: "2026-02-01",
+        finish_date: "2026-02-05",
+        percent_complete: 0,
+        predecessor_activity_ids: [],
+        successor_activity_ids: [],
+        notes: "",
+        sort_order: 10,
+      }),
+      forecast_finish_date: "2026-02-10",
+    },
+  ],
+  { dataDate: "2026-01-09" },
+);
+assert.equal(
+  forecastOnlyModel.tasks[0]?.isStatused,
+  true,
+  "Unstarted activities should only count as statused when their current forecast differs from baseline.",
 );
 const progressWithoutActualStartModel = buildConstructLineCpmModel(
   [

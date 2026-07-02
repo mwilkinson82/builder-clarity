@@ -896,14 +896,20 @@ function getStatusedConstraintStart(task: WorkingTask, dataDateOffset: number | 
 }
 
 function hasStatusedActivityFields(activity: ScheduleActivityRow) {
+  const baselineStartDate = activity.baseline_start_date ?? activity.start_date ?? null;
+  const baselineFinishDate = activity.baseline_finish_date ?? activity.finish_date ?? null;
+  const hasChangedForecastStart =
+    Boolean(activity.forecast_start_date) && activity.forecast_start_date !== baselineStartDate;
+  const hasChangedForecastFinish =
+    Boolean(activity.forecast_finish_date) && activity.forecast_finish_date !== baselineFinishDate;
+  const hasActualStartBasis = hasActivityActualStartBasisForStatus(activity);
+
   return Boolean(
-    activity.baseline_start_date ||
-    activity.baseline_finish_date ||
-    activity.forecast_start_date ||
-    activity.forecast_finish_date ||
+    hasChangedForecastStart ||
+    hasChangedForecastFinish ||
     activity.actual_start_date ||
     activity.actual_finish_date ||
-    activity.remaining_duration_days != null,
+    (hasActualStartBasis && activity.remaining_duration_days != null),
   );
 }
 
