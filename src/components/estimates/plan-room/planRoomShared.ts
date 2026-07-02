@@ -12,7 +12,7 @@ import {
 } from "@/lib/plan-room-math";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 
-export type ToolMode = "select" | "calibrate" | TakeoffToolType;
+export type ToolMode = "select" | "calibrate" | "verify" | TakeoffToolType;
 export type RevisionOverlayMode = "compare" | "ghost";
 export type CockpitPanelKey = "drawings" | "tools";
 export type CockpitPanelAnchor = "left" | "right";
@@ -105,7 +105,57 @@ export const TAKEOFF_LAYER_TEST_IDS: Record<TakeoffLayerKey, string> = {
   linked: "takeoff-layer-linked",
   unlinked: "takeoff-layer-unlinked",
 };
-export const QUICK_CALIBRATION_FEET = [10, 20, 25, 50, 100];
+// Quick two-point calibration distances. Detail-scale calibration needs
+// short runs, so these start at one foot; the field accepts feet + inches.
+export const QUICK_CALIBRATION_FEET = [1, 5, 10];
+
+// A verify measurement within this percentage of the labeled dimension marks
+// the sheet's scale as verified.
+export const VERIFY_SCALE_TOLERANCE_PCT = 1.5;
+
+// Stated-scale presets for vector PDFs (X paper inches = Y real feet).
+export type StatedScalePreset = {
+  id: string;
+  label: string;
+  statedInches: number;
+  statedFeet: number;
+};
+
+export const ARCHITECTURAL_SCALE_PRESETS: StatedScalePreset[] = [
+  { id: "arch-3-32", label: '3/32" = 1\'-0"', statedInches: 3 / 32, statedFeet: 1 },
+  { id: "arch-1-8", label: '1/8" = 1\'-0"', statedInches: 1 / 8, statedFeet: 1 },
+  { id: "arch-3-16", label: '3/16" = 1\'-0"', statedInches: 3 / 16, statedFeet: 1 },
+  { id: "arch-1-4", label: '1/4" = 1\'-0"', statedInches: 1 / 4, statedFeet: 1 },
+  { id: "arch-3-8", label: '3/8" = 1\'-0"', statedInches: 3 / 8, statedFeet: 1 },
+  { id: "arch-1-2", label: '1/2" = 1\'-0"', statedInches: 1 / 2, statedFeet: 1 },
+  { id: "arch-3-4", label: '3/4" = 1\'-0"', statedInches: 3 / 4, statedFeet: 1 },
+  { id: "arch-1", label: '1" = 1\'-0"', statedInches: 1, statedFeet: 1 },
+  { id: "arch-1-1-2", label: '1-1/2" = 1\'-0"', statedInches: 1.5, statedFeet: 1 },
+  { id: "arch-3", label: '3" = 1\'-0"', statedInches: 3, statedFeet: 1 },
+];
+
+export const ENGINEERING_SCALE_PRESETS: StatedScalePreset[] = [10, 20, 30, 40, 50, 60, 100].map(
+  (feet) => ({
+    id: `eng-${feet}`,
+    label: `1" = ${feet}'`,
+    statedInches: 1,
+    statedFeet: feet,
+  }),
+);
+
+export const STATED_SCALE_PRESETS: StatedScalePreset[] = [
+  ...ARCHITECTURAL_SCALE_PRESETS,
+  ...ENGINEERING_SCALE_PRESETS,
+];
+
+// Trust states for a sheet's scale: no scale at all, a scale that has not
+// been checked against a labeled dimension, or a verified scale.
+export function sheetScaleStatus(
+  sheet: Pick<PlanSheetRow, "scale_feet_per_pixel" | "scale_verified_at"> | null,
+): "none" | "unverified" | "verified" {
+  if (!sheet || !sheet.scale_feet_per_pixel) return "none";
+  return sheet.scale_verified_at ? "verified" : "unverified";
+}
 export const MIN_PLAN_ZOOM = 0.25;
 export const MAX_PLAN_ZOOM = 4;
 export const PLAN_ZOOM_STEP = 0.25;
@@ -539,6 +589,21 @@ export function draftCommandFor({
     };
   }
 
+  if (tool === "verify") {
+    const spanPx = distancePx(points, viewSize);
+    const measuredFeet = (sheet?.scale_feet_per_pixel ?? 0) * spanPx;
+    return {
+      title: "Scale check",
+      value: points.length === 2 ? formatQty(measuredFeet, "FT") : `${points.length}/2 points`,
+      detail:
+        points.length === 2
+          ? "Type the labeled dimension, then check it against the active scale."
+          : "Click both ends of a dimension you can read on the drawing.",
+      ready: points.length === 2 && spanPx > 0 && (sheet?.scale_feet_per_pixel ?? 0) > 0,
+      actionLabel: "Check Scale",
+    };
+  }
+
   if (tool === "count") {
     return {
       title: "Count takeoff",
@@ -598,6 +663,7 @@ export function unitFor(tool: TakeoffToolType, selectedLine?: EstimateLineItemRo
 export function toolLabel(tool: ToolMode) {
   if (tool === "select") return "Select";
   if (tool === "calibrate") return "Set Scale";
+  if (tool === "verify") return "Verify Scale";
   if (tool === "linear") return "Linear";
   if (tool === "area") return "Area";
   return "Count";

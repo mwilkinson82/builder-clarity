@@ -15,6 +15,7 @@ import {
   type SheetFilterMode,
   type ViewSize,
   type ViewportFrame,
+  sheetScaleStatus,
 } from "./planRoomShared";
 
 export function CockpitFloatingPanelHeader({
@@ -229,9 +230,21 @@ export function SheetSidebar({
                             {sheet.sheet_name || "Unnamed sheet"}
                           </span>
                           <span className="mt-1 flex flex-wrap gap-1">
-                            {sheet.scale_feet_per_pixel ? (
-                              <Badge variant="outline" className="bg-background/80 px-1 py-0">
-                                Scale set
+                            {sheetScaleStatus(sheet) === "verified" ? (
+                              <Badge
+                                variant="secondary"
+                                className="px-1 py-0"
+                                data-testid="sheet-scale-verified"
+                              >
+                                Scale verified
+                              </Badge>
+                            ) : sheetScaleStatus(sheet) === "unverified" ? (
+                              <Badge
+                                variant="outline"
+                                className="bg-background/80 px-1 py-0"
+                                data-testid="sheet-scale-unverified"
+                              >
+                                Set, not verified
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="bg-background/80 px-1 py-0">

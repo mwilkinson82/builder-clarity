@@ -53,7 +53,8 @@ import {
   type ViewportFrame,
   type ZoomWindowDraft,
 } from "./planRoomShared";
-import { DraftShape, MeasurementShape, TakeoffDraftHud } from "./TakeoffTools";
+import { snapLinearPoint, statedScaleFeetPerPixel } from "@/lib/plan-room-math";
+import { DraftShape, LinearAngleGuide, MeasurementShape, TakeoffDraftHud } from "./TakeoffTools";
 import { PlanMiniMap } from "./SheetSidebar";
 
 const isDirectPlanFileUrl = (filePath: string) =>
@@ -166,6 +167,57 @@ export async function getPdfPageCount(file: File) {
   return Math.max(1, pdf.numPages);
 }
 
+// Computes stated-scale sheet patches for a whole drawing set in one pass.
+// Each page can have its own paper size, so feet-per-pixel is derived per
+// sheet from that page's pdf point dimensions and the same base render rule
+// (pdfCssScaleFor) the viewer uses.
+export async function computeStatedScalePatches({
+  fileUrl,
+  sheets,
+  statedInches,
+  statedFeet,
+  scaleLabel,
+}: {
+  fileUrl: string;
+  sheets: Array<Pick<PlanSheetRow, "id" | "page_number">>;
+  statedInches: number;
+  statedFeet: number;
+  scaleLabel: string;
+}) {
+  const pdfjs = await import("pdfjs-dist");
+  configurePdfWorker(pdfjs);
+  const pdf = await pdfjs.getDocument(await pdfDocumentSourceFor(fileUrl)).promise;
+  const patches: Array<{
+    sheet_id: string;
+    scale_feet_per_pixel: number;
+    scale_label: string;
+    width_px: number;
+    height_px: number;
+  }> = [];
+  for (const sheet of sheets) {
+    const page = await pdf.getPage(Math.max(1, sheet.page_number));
+    const viewport = page.getViewport({ scale: 1 });
+    const cssScale = pdfCssScaleFor(viewport);
+    const widthPx = Math.round(viewport.width * cssScale);
+    const heightPx = Math.round(viewport.height * cssScale);
+    const feetPerPixel = statedScaleFeetPerPixel({
+      statedInches,
+      statedFeet,
+      pageWidthPoints: viewport.width,
+      renderedWidthPx: widthPx,
+    });
+    if (feetPerPixel <= 0) continue;
+    patches.push({
+      sheet_id: sheet.id,
+      scale_feet_per_pixel: feetPerPixel,
+      scale_label: scaleLabel,
+      width_px: widthPx,
+      height_px: heightPx,
+    });
+  }
+  return patches;
+}
+
 export function PlanCanvas({
   planSet,
   sheet,
@@ -183,6 +235,7 @@ export function PlanCanvas({
   tool,
   viewSize,
   onViewSizeChange,
+  onPageMetrics,
   onPoint,
   isCockpitMode,
   selectedMeasurementId,
@@ -214,6 +267,10 @@ export function PlanCanvas({
   tool: ToolMode;
   viewSize: ViewSize;
   onViewSizeChange: (size: ViewSize) => void;
+  // Reports the current pdf page's physical dimensions in pdf points (72 per
+  // paper inch), or null when the sheet is not pdf-sourced. Stated-scale
+  // presets are only offered when these are known.
+  onPageMetrics?: (metrics: { widthPoints: number; heightPoints: number } | null) => void;
   onPoint: (point: Point) => void;
   isCockpitMode: boolean;
   selectedMeasurementId: string;
@@ -239,6 +296,11 @@ export function PlanCanvas({
   const [isPanning, setIsPanning] = useState(false);
   const [isZoomWindowMode, setIsZoomWindowMode] = useState(false);
   const [zoomWindowDraft, setZoomWindowDraft] = useState<ZoomWindowDraft | null>(null);
+  const [linearGuide, setLinearGuide] = useState<{
+    point: Point;
+    angleDeg: number;
+    snapped: boolean;
+  } | null>(null);
   const [miniMapDock, setMiniMapDock] = useState<MiniMapDock>("bottom-left");
   const [miniMapPosition, setMiniMapPosition] = useState<MiniMapPosition | null>(null);
   const [isMiniMapCollapsed, setIsMiniMapCollapsed] = useState(false);
@@ -311,13 +373,19 @@ export function PlanCanvas({
     let cancelled = false;
     let renderTask: { promise: Promise<unknown>; cancel: () => void } | null = null;
     const renderPdf = async () => {
-      if (!signedUrl || planSet?.file_mime_type !== "application/pdf" || !canvasRef.current) return;
+      if (!signedUrl || planSet?.file_mime_type !== "application/pdf" || !canvasRef.current) {
+        onPageMetrics?.(null);
+        return;
+      }
       try {
         const pdfjs = await import("pdfjs-dist");
         configurePdfWorker(pdfjs);
         const pdf = await pdfjs.getDocument(await pdfDocumentSourceFor(signedUrl)).promise;
         const page = await pdf.getPage(sheet?.page_number ?? 1);
         const viewport = page.getViewport({ scale: 1 });
+        if (!cancelled) {
+          onPageMetrics?.({ widthPoints: viewport.width, heightPoints: viewport.height });
+        }
         const cssScale = pdfCssScaleFor(viewport);
         const renderPlan = pdfRenderPlanFor(viewport, cssScale, zoom, pdfDetailMultiplier);
         const renderScale = renderPlan.renderScale;
@@ -362,6 +430,7 @@ export function PlanCanvas({
       renderTask?.cancel();
     };
   }, [
+    onPageMetrics,
     onViewSizeChange,
     pdfDetailMode,
     pdfDetailMultiplier,
@@ -399,6 +468,10 @@ export function PlanCanvas({
 
   const clampZoom = (nextZoom: number) =>
     Math.min(MAX_PLAN_ZOOM, Math.max(MIN_PLAN_ZOOM, nextZoom));
+
+  useEffect(() => {
+    if (tool !== "linear" || pendingPoints.length === 0) setLinearGuide(null);
+  }, [pendingPoints.length, tool]);
 
   const updateViewportFrame = useCallback(() => {
     const stage = scrollRef.current;
@@ -697,6 +770,14 @@ export function PlanCanvas({
       setZoomWindowDraft((current) => (current ? { ...current, end: point } : current));
       return;
     }
+    if (tool === "linear" && pendingPoints.length > 0) {
+      const cursor = pointFromClient(event.clientX, event.clientY);
+      const anchor = pendingPoints[pendingPoints.length - 1];
+      if (cursor && anchor) {
+        setLinearGuide(snapLinearPoint({ anchor, cursor, viewSize, shiftKey: event.shiftKey }));
+      }
+      return;
+    }
     if (!isPanning || !scrollRef.current) return;
     const dx = event.clientX - panStartRef.current.x;
     const dy = event.clientY - panStartRef.current.y;
@@ -757,7 +838,20 @@ export function PlanCanvas({
       return;
     }
     const point = pointFromEvent(event);
-    if (point) onPoint(point);
+    if (!point) return;
+    // The angle guide owns the click while snapped: place the exact point.
+    if (tool === "linear" && pendingPoints.length > 0 && linearGuide?.snapped) {
+      onPoint(
+        snapLinearPoint({
+          anchor: pendingPoints[pendingPoints.length - 1],
+          cursor: point,
+          viewSize,
+          shiftKey: event.shiftKey,
+        }).point,
+      );
+      return;
+    }
+    onPoint(point);
   };
 
   const viewBox = `0 0 ${viewSize.width} ${viewSize.height}`;
@@ -978,7 +1072,11 @@ export function PlanCanvas({
       {!isCockpitMode && (
         <TakeoffDraftHud
           draftCommand={draftCommand}
-          activePointCount={tool === "calibrate" ? calibrationPoints.length : pendingPoints.length}
+          activePointCount={
+            tool === "calibrate" || tool === "verify"
+              ? calibrationPoints.length
+              : pendingPoints.length
+          }
           disabled={draftActionDisabled}
           onFinishDraft={onFinishDraft}
         />
@@ -1024,7 +1122,9 @@ export function PlanCanvas({
           <TakeoffDraftHud
             draftCommand={draftCommand}
             activePointCount={
-              tool === "calibrate" ? calibrationPoints.length : pendingPoints.length
+              tool === "calibrate" || tool === "verify"
+                ? calibrationPoints.length
+                : pendingPoints.length
             }
             disabled={draftActionDisabled}
             onFinishDraft={onFinishDraft}
@@ -1132,6 +1232,7 @@ export function PlanCanvas({
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
               onPointerCancel={handlePointerUp}
+              onPointerLeave={() => setLinearGuide(null)}
             >
               <rect
                 x="0"
@@ -1179,9 +1280,19 @@ export function PlanCanvas({
                 closed={false}
                 scaleFeetPerPixel={0}
                 unit="px"
-                tool={tool === "calibrate" ? "calibrate" : "select"}
-                command={tool === "calibrate" ? draftCommand : null}
+                tool={tool === "calibrate" || tool === "verify" ? tool : "select"}
+                command={tool === "calibrate" || tool === "verify" ? draftCommand : null}
               />
+              {tool === "linear" && pendingPoints.length > 0 && linearGuide && (
+                <LinearAngleGuide
+                  anchor={pendingPoints[pendingPoints.length - 1]}
+                  point={linearGuide.point}
+                  angleDeg={linearGuide.angleDeg}
+                  snapped={linearGuide.snapped}
+                  viewSize={viewSize}
+                  zoom={zoom}
+                />
+              )}
               <ZoomWindowShape draft={zoomWindowDraft} viewSize={viewSize} />
             </svg>
           </div>

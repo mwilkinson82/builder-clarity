@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import {
   ArrowLeft,
@@ -22,6 +22,14 @@ import {
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -38,6 +46,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { fmtUSD } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
+  applyScaleToSheets,
   createPlanSet,
   createTakeoffMeasurement,
   deleteTakeoffMeasurement,
@@ -50,7 +59,12 @@ import {
   type TakeoffMeasurementRow,
   type TakeoffToolType,
 } from "@/lib/plan-room.functions";
-import { distancePx } from "@/lib/plan-room-math";
+import {
+  distancePx,
+  parseFeetInches,
+  statedScaleFeetPerPixel,
+  takeoffUnitsCompatible,
+} from "@/lib/plan-room-math";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 import {
   COCKPIT_CHROME_PANEL_TOP_GAP,
@@ -64,6 +78,10 @@ import {
   DEFAULT_TAKEOFF_LAYER_VISIBILITY,
   DEFAULT_VIEW_SIZE,
   QUICK_CALIBRATION_FEET,
+  ARCHITECTURAL_SCALE_PRESETS,
+  ENGINEERING_SCALE_PRESETS,
+  STATED_SCALE_PRESETS,
+  VERIFY_SCALE_TOLERANCE_PCT,
   TAKEOFF_COLORS,
   TAKEOFF_LAYER_COPY,
   TAKEOFF_LAYER_KEYS,
@@ -86,6 +104,7 @@ import {
   searchMatches,
   sheetDisplayName,
   slugFileName,
+  sheetScaleStatus,
   toolLabel,
   unitFor,
   type CockpitPanelInteraction,
@@ -100,9 +119,14 @@ import {
   type ToolMode,
   type ViewSize,
 } from "./planRoomShared";
-import { PlanCanvas, getPdfPageCount } from "./PdfSheetViewer";
+import { PlanCanvas, computeStatedScalePatches, getPdfPageCount } from "./PdfSheetViewer";
 import { TakeoffTools } from "./TakeoffTools";
-import { TakeoffWorksheet } from "./TakeoffWorksheet";
+import {
+  SyncConflictDialog,
+  TakeoffWorksheet,
+  unitLongName,
+  type SyncConflictState,
+} from "./TakeoffWorksheet";
 import { CockpitFloatingPanelHeader, SheetSidebar } from "./SheetSidebar";
 import { ReadinessPanel } from "./ReadinessPanel";
 
@@ -142,6 +166,7 @@ export function PlanRoomWorkspace({
   const updateMeasurementFn = useServerFn(updateTakeoffMeasurement);
   const deleteMeasurementFn = useServerFn(deleteTakeoffMeasurement);
   const syncLineFn = useServerFn(syncTakeoffToEstimateLine);
+  const applyScaleToSheetsFn = useServerFn(applyScaleToSheets);
 
   const [selectedSheetId, setSelectedSheetId] = useState<string>("");
   const [tool, setTool] = useState<ToolMode>("select");
@@ -150,8 +175,29 @@ export function PlanRoomWorkspace({
   const [takeoffColor, setTakeoffColor] = useState(TAKEOFF_COLORS[0]);
   const [pendingPoints, setPendingPoints] = useState<Point[]>([]);
   const [viewSize, setViewSize] = useState<ViewSize>(DEFAULT_VIEW_SIZE);
-  const [calibrationFeet, setCalibrationFeet] = useState("25");
+  const [calibrationFeet, setCalibrationFeet] = useState("10");
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
+  const [verifyFeet, setVerifyFeet] = useState("");
+  const [pdfPageMetrics, setPdfPageMetrics] = useState<{
+    widthPoints: number;
+    heightPoints: number;
+  } | null>(null);
+  const [statedPresetId, setStatedPresetId] = useState("");
+  const [customStatedInches, setCustomStatedInches] = useState("");
+  const [customStatedFeet, setCustomStatedFeet] = useState("");
+  const [applyToSetOffer, setApplyToSetOffer] = useState<{
+    statedInches: number;
+    statedFeet: number;
+    label: string;
+    count: number;
+  } | null>(null);
+  const [syncConflict, setSyncConflict] = useState<SyncConflictState | null>(null);
+  const [verifyOutcome, setVerifyOutcome] = useState<{
+    measuredFeet: number;
+    expectedFeet: number;
+    offPct: number;
+    correctedScale: number;
+  } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [isCockpitMode, setIsCockpitMode] = useState(false);
   const [cockpitPanels, setCockpitPanels] = useState<Record<CockpitPanelKey, boolean>>({
@@ -338,8 +384,9 @@ export function PlanRoomWorkspace({
   const selectedMeasurementLabel = selectedMeasurement?.label ?? "";
   const selectedMeasurementNotes = selectedMeasurement?.notes ?? "";
   const activeDraftPointCount =
-    tool === "calibrate" ? calibrationPoints.length : pendingPoints.length;
-  const activeDraftPoints = tool === "calibrate" ? calibrationPoints : pendingPoints;
+    tool === "calibrate" || tool === "verify" ? calibrationPoints.length : pendingPoints.length;
+  const activeDraftPoints =
+    tool === "calibrate" || tool === "verify" ? calibrationPoints : pendingPoints;
   const draftUnit =
     tool === "linear" || tool === "area" || tool === "count" ? unitFor(tool, selectedLine) : "";
   const draftCommand = useMemo(
@@ -455,6 +502,24 @@ export function PlanRoomWorkspace({
     qc.invalidateQueries({ queryKey: ["estimates"] });
   };
 
+  const handlePageMetrics = useCallback(
+    (metrics: { widthPoints: number; heightPoints: number } | null) => {
+      setPdfPageMetrics((current) => {
+        if (!current && !metrics) return current;
+        if (
+          current &&
+          metrics &&
+          current.widthPoints === metrics.widthPoints &&
+          current.heightPoints === metrics.heightPoints
+        ) {
+          return current;
+        }
+        return metrics;
+      });
+    },
+    [],
+  );
+
   const createSetMutation = useMutation({
     mutationFn: (file: File) => uploadDrawingSet(file),
     onSuccess: () => {
@@ -525,6 +590,71 @@ export function PlanRoomWorkspace({
     onError: (error) => toast.error(error instanceof Error ? error.message : "Sheet did not save"),
   });
 
+  const verifySheetMutation = useMutation({
+    mutationFn: ({
+      patch,
+    }: {
+      patch: Parameters<typeof updateSheetFn>[0]["data"]["patch"];
+      message: string;
+    }) => {
+      if (!currentSheet) throw new Error("Choose a plan sheet first.");
+      return updateSheetFn({ data: { sheet_id: currentSheet.id, patch } });
+    },
+    onSuccess: (_result, variables) => {
+      toast.success(variables.message);
+      setCalibrationPoints([]);
+      setVerifyFeet("");
+      setTool("select");
+      invalidate();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Scale check did not save"),
+  });
+
+  const applyToSetMutation = useMutation({
+    mutationFn: async (stated: { statedInches: number; statedFeet: number; label: string }) => {
+      if (!currentPlanSet || !currentSheet) throw new Error("Choose a plan sheet first.");
+      const targets = sheets.filter(
+        (sheet) =>
+          sheet.plan_set_id === currentPlanSet.id &&
+          sheet.id !== currentSheet.id &&
+          !sheet.scale_feet_per_pixel,
+      );
+      if (targets.length === 0) return { count: 0 };
+      const { data, error } = await supabase.storage
+        .from(planRoomBucket)
+        .createSignedUrl(currentPlanSet.file_path, 60 * 10);
+      if (error || !data?.signedUrl) {
+        throw new Error(error?.message ?? "The drawing set file did not open.");
+      }
+      const patches = await computeStatedScalePatches({
+        fileUrl: data.signedUrl,
+        sheets: targets,
+        statedInches: stated.statedInches,
+        statedFeet: stated.statedFeet,
+        scaleLabel: `${stated.label} stated scale`,
+      });
+      if (patches.length === 0) {
+        throw new Error("No unscaled sheets could take the stated scale.");
+      }
+      await applyScaleToSheetsFn({
+        data: { estimate_id: estimate.id, sheets: patches },
+      });
+      return { count: patches.length };
+    },
+    onSuccess: ({ count }) => {
+      if (count > 0) {
+        toast.success(
+          `Stated scale applied to ${count} more sheet${count === 1 ? "" : "s"}. Verify one against a known dimension.`,
+        );
+      }
+      setApplyToSetOffer(null);
+      invalidate();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Stated scale did not apply to the set"),
+  });
+
   const updateMeasurementMutation = useMutation({
     mutationFn: ({
       id,
@@ -553,30 +683,72 @@ export function PlanRoomWorkspace({
   });
 
   const syncLineMutation = useMutation({
-    mutationFn: ({ lineId, force = false }: { lineId: string; force?: boolean }) =>
+    mutationFn: ({
+      lineId,
+      force = false,
+      forceUnit = false,
+    }: {
+      lineId: string;
+      force?: boolean;
+      forceUnit?: boolean;
+    }) =>
       syncLineFn({
-        data: { estimate_id: estimate.id, estimate_line_item_id: lineId, force },
+        data: {
+          estimate_id: estimate.id,
+          estimate_line_item_id: lineId,
+          force,
+          force_unit: forceUnit,
+        },
       }),
     onSuccess: (result, variables) => {
-      if (result.sync.conflict) {
-        // The estimate row's quantity was typed by hand; show old -> new and
-        // ask before replacing it.
-        const confirmed = window.confirm(
-          `This estimate row's quantity was typed by hand: ${formatQty(result.sync.quantity, "")}. ` +
-            `The takeoff measures ${formatQty(result.sync.takeoff_quantity, "")} (waste applied). ` +
-            "Replace the hand-typed quantity with the takeoff number?",
-        );
-        if (confirmed) {
-          syncLineMutation.mutate({ lineId: variables.lineId, force: true });
-        }
+      if (result.sync.unit_conflict || result.sync.conflict) {
+        // Show the in-app conflict dialog (unit guard first, then the
+        // hand-typed quantity guard) instead of overwriting silently.
+        const line = lineItems.find((item) => item.id === variables.lineId);
+        const sources = measurements
+          .filter((measurement) => measurement.estimate_line_item_id === variables.lineId)
+          .map((measurement) => {
+            const sourceSheet = sheets.find((sheet) => sheet.id === measurement.plan_sheet_id);
+            return {
+              label: measurement.label,
+              sheetNumber: sourceSheet?.sheet_number ?? "",
+              sheetName: sourceSheet?.sheet_name ?? "",
+              wastePct: measurement.waste_pct,
+              quantity: measurement.quantity,
+              unit: measurement.unit,
+            };
+          });
+        setSyncConflict({
+          kind: result.sync.unit_conflict ? "unit" : "quantity",
+          lineId: variables.lineId,
+          lineDescription: line?.description ?? "",
+          lineUnit: result.sync.line_unit,
+          takeoffUnit: result.sync.takeoff_unit,
+          currentQuantity: result.sync.quantity,
+          incomingQuantity: result.sync.takeoff_quantity,
+          measurementCount: result.sync.measurement_count,
+          forceUnitGranted: Boolean(variables.forceUnit),
+          sources,
+        });
         return;
       }
-      toast.success(`Estimate quantity updated to ${formatQty(result.sync.quantity, "")}`);
+      setSyncConflict(null);
+      toast.success(
+        `Estimate quantity updated to ${formatQty(result.sync.quantity, result.sync.line_unit)}`,
+      );
       invalidate();
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Estimate row did not update"),
   });
+
+  const confirmSyncConflict = (conflict: SyncConflictState) => {
+    syncLineMutation.mutate({
+      lineId: conflict.lineId,
+      force: conflict.kind === "quantity",
+      forceUnit: conflict.kind === "unit" || conflict.forceUnitGranted,
+    });
+  };
 
   const uploadDrawingSet = async (file: File) => {
     setUploading(true);
@@ -617,11 +789,15 @@ export function PlanRoomWorkspace({
   const onCanvasPoint = (point: Point) => {
     if (!currentSheet || tool === "select") return;
 
-    if (tool === "calibrate") {
+    if (tool === "calibrate" || tool === "verify") {
       const next = [...calibrationPoints, point].slice(-2);
       setCalibrationPoints(next);
       if (next.length === 2) {
-        toast.info("Enter the known distance, then save scale.");
+        toast.info(
+          tool === "calibrate"
+            ? "Enter the known distance, then save scale."
+            : "Enter the labeled dimension, then check the scale.",
+        );
       }
       return;
     }
@@ -645,7 +821,7 @@ export function PlanRoomWorkspace({
   };
 
   const undoDraftPoint = () => {
-    if (tool === "calibrate") {
+    if (tool === "calibrate" || tool === "verify") {
       setCalibrationPoints((current) => current.slice(0, -1));
       return;
     }
@@ -653,7 +829,7 @@ export function PlanRoomWorkspace({
   };
 
   const clearDraftPoints = () => {
-    if (tool === "calibrate") {
+    if (tool === "calibrate" || tool === "verify") {
       setCalibrationPoints([]);
       return;
     }
@@ -673,9 +849,9 @@ export function PlanRoomWorkspace({
       toast.warning("Click two points on a known distance first.");
       return;
     }
-    const feet = Number(calibrationFeet);
-    if (!Number.isFinite(feet) || feet <= 0) {
-      toast.warning("Enter the real distance in feet.");
+    const feet = parseFeetInches(calibrationFeet);
+    if (!feet) {
+      toast.warning("Enter the real distance, like 12' 6\" or 12.5.");
       return;
     }
     const px = distancePx(calibrationPoints, viewSize);
@@ -685,15 +861,146 @@ export function PlanRoomWorkspace({
     }
     updateSheetMutation.mutate({
       scale_feet_per_pixel: feet / px,
-      scale_label: `${feet} ft calibration`,
+      scale_label: `${formatQty(feet, "ft")} calibration`,
+      scale_source: "calibrated",
+      scale_verified_at: null,
       width_px: Math.round(viewSize.width),
       height_px: Math.round(viewSize.height),
     });
   };
 
+  // Verify scale: measure a dimension the user can read on the drawing and
+  // compare it against the active scale. A pass marks the sheet verified;
+  // a miss offers the implied correction (half-size prints are the classic
+  // trap: every stated scale reads wrong by exactly 2x).
+  const checkScale = () => {
+    if (!currentSheet || calibrationPoints.length !== 2) {
+      toast.warning("Click both ends of a labeled dimension first.");
+      return;
+    }
+    if (!currentSheet.scale_feet_per_pixel) {
+      toast.warning("Set a scale before verifying it.");
+      return;
+    }
+    const expected = parseFeetInches(verifyFeet);
+    if (!expected) {
+      toast.warning("Enter the labeled dimension, like 12' 6\".");
+      return;
+    }
+    const px = distancePx(calibrationPoints, viewSize);
+    if (px <= 0) {
+      toast.warning("The check line is too short.");
+      return;
+    }
+    const measured = px * currentSheet.scale_feet_per_pixel;
+    const offPct = ((measured - expected) / expected) * 100;
+    if (Math.abs(offPct) <= VERIFY_SCALE_TOLERANCE_PCT) {
+      verifySheetMutation.mutate({
+        patch: { scale_verified_at: new Date().toISOString() },
+        message: "Scale verified. Takeoffs on this sheet can be trusted.",
+      });
+      return;
+    }
+    setVerifyOutcome({
+      measuredFeet: measured,
+      expectedFeet: expected,
+      offPct,
+      correctedScale: expected / px,
+    });
+  };
+
+  const applyVerifyCorrection = () => {
+    if (!verifyOutcome) return;
+    verifySheetMutation.mutate({
+      patch: {
+        scale_feet_per_pixel: verifyOutcome.correctedScale,
+        scale_label: `${formatQty(verifyOutcome.expectedFeet, "ft")} verification calibration`,
+        scale_source: "calibrated",
+        scale_verified_at: new Date().toISOString(),
+        width_px: Math.round(viewSize.width),
+        height_px: Math.round(viewSize.height),
+      },
+      message: "Scale corrected to match the labeled dimension and marked verified.",
+    });
+    setVerifyOutcome(null);
+  };
+
+  // Stated-scale presets (vector PDFs only): the page's physical size is
+  // known, so the stated scale converts directly with no two-point guess.
+  const activeStatedScale = () => {
+    if (statedPresetId === "custom") {
+      const inches = Number(customStatedInches);
+      const feet = Number(customStatedFeet);
+      if (!Number.isFinite(inches) || inches <= 0 || !Number.isFinite(feet) || feet <= 0) {
+        return null;
+      }
+      return { statedInches: inches, statedFeet: feet, label: `${inches}" = ${feet}'` };
+    }
+    const preset = STATED_SCALE_PRESETS.find((item) => item.id === statedPresetId);
+    if (!preset) return null;
+    return {
+      statedInches: preset.statedInches,
+      statedFeet: preset.statedFeet,
+      label: preset.label,
+    };
+  };
+
+  const applyStatedScale = () => {
+    if (!currentSheet) {
+      toast.warning("Choose a plan sheet first.");
+      return;
+    }
+    if (!pdfPageMetrics) {
+      toast.warning(
+        "Stated scale needs a PDF sheet with known page dimensions. Use two-point calibration instead.",
+      );
+      return;
+    }
+    const stated = activeStatedScale();
+    if (!stated) {
+      toast.warning("Choose a stated scale first.");
+      return;
+    }
+    const feetPerPixel = statedScaleFeetPerPixel({
+      statedInches: stated.statedInches,
+      statedFeet: stated.statedFeet,
+      pageWidthPoints: pdfPageMetrics.widthPoints,
+      renderedWidthPx: viewSize.width,
+    });
+    if (feetPerPixel <= 0) {
+      toast.error("The stated scale did not compute for this sheet.");
+      return;
+    }
+    updateSheetMutation.mutate({
+      scale_feet_per_pixel: feetPerPixel,
+      scale_label: `${stated.label} stated scale`,
+      scale_source: "stated",
+      scale_verified_at: null,
+      width_px: Math.round(viewSize.width),
+      height_px: Math.round(viewSize.height),
+    });
+    const remaining = sheets.filter(
+      (sheet) =>
+        sheet.plan_set_id === currentSheet.plan_set_id &&
+        sheet.id !== currentSheet.id &&
+        !sheet.scale_feet_per_pixel,
+    );
+    setApplyToSetOffer(
+      remaining.length > 0 &&
+        currentPlanSet?.file_mime_type === "application/pdf" &&
+        currentPlanSet.file_path
+        ? { ...stated, count: remaining.length }
+        : null,
+    );
+  };
+
   const finishDraft = () => {
     if (tool === "calibrate") {
       saveScale();
+      return;
+    }
+    if (tool === "verify") {
+      checkScale();
       return;
     }
     if (tool === "linear") {
@@ -1164,11 +1471,15 @@ export function PlanRoomWorkspace({
       {currentSheetNavigationItem && (
         <>
           <Badge
-            variant={currentSheet?.scale_feet_per_pixel ? "secondary" : "outline"}
+            variant={sheetScaleStatus(currentSheet) === "verified" ? "secondary" : "outline"}
             className="hidden xl:inline-flex"
             data-testid="plan-cockpit-sheet-scale-status"
           >
-            {currentSheet?.scale_feet_per_pixel ? "Scale set" : "Needs scale"}
+            {sheetScaleStatus(currentSheet) === "verified"
+              ? "Scale verified"
+              : sheetScaleStatus(currentSheet) === "unverified"
+                ? "Scale set — unverified"
+                : "Needs scale"}
           </Badge>
           <Badge
             variant="outline"
@@ -1572,10 +1883,22 @@ export function PlanRoomWorkspace({
                   <SelectItem key={line.id} value={line.id}>
                     {line.cost_code ? `${line.cost_code} · ` : ""}
                     {line.description.slice(0, 70)}
+                    {line.unit ? ` · per ${line.unit}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {selectedLine &&
+              (tool === "linear" || tool === "area" || tool === "count") &&
+              !takeoffUnitsCompatible(unitFor(tool), selectedLine.unit) && (
+                <p
+                  className="mt-2 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs"
+                  data-testid="takeoff-setup-unit-mismatch"
+                >
+                  The {toolLabel(tool)} tool measures {unitLongName(unitFor(tool))}, but this row is
+                  priced per {unitLongName(selectedLine.unit)}. Sync will ask before mixing them.
+                </p>
+              )}
             {selectedLine && (
               <div className="mt-3 rounded-md border border-hairline bg-surface p-3 text-xs">
                 <div className="flex items-start justify-between gap-3">
@@ -1622,7 +1945,13 @@ export function PlanRoomWorkspace({
                 <h2 className="font-serif text-2xl leading-tight">{currentSheetTitle}</h2>
                 <p className="text-xs text-muted-foreground">
                   {currentSheet?.scale_feet_per_pixel
-                    ? `Scale set: ${currentSheet.scale_label || `${currentSheet.scale_feet_per_pixel.toFixed(4)} ft/px`}`
+                    ? `Scale set: ${currentSheet.scale_label || `${currentSheet.scale_feet_per_pixel.toFixed(4)} ft/px`}${
+                        currentSheet.scale_verified_at
+                          ? " — verified"
+                          : currentSheet.scale_source === "stated"
+                            ? " — from stated scale, verify with a known dimension"
+                            : " — not verified yet"
+                      }`
                     : "Set scale before linear or area takeoff."}
                 </p>
               </div>
@@ -1652,6 +1981,7 @@ export function PlanRoomWorkspace({
             tool={tool}
             viewSize={viewSize}
             onViewSizeChange={setViewSize}
+            onPageMetrics={handlePageMetrics}
             onPoint={onCanvasPoint}
             isCockpitMode={isCockpitMode}
             selectedMeasurementId={selectedMeasurementId}
@@ -1749,17 +2079,120 @@ export function PlanRoomWorkspace({
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <Label>Set drawing scale</Label>
-                  {currentSheet?.scale_feet_per_pixel ? (
-                    <Badge variant="secondary">Ready</Badge>
+                  {sheetScaleStatus(currentSheet) === "verified" ? (
+                    <Badge variant="secondary" data-testid="scale-status-verified">
+                      Scale verified
+                    </Badge>
+                  ) : sheetScaleStatus(currentSheet) === "unverified" ? (
+                    <Badge variant="outline" data-testid="scale-status-unverified">
+                      Set, not verified
+                    </Badge>
                   ) : (
-                    <Badge variant="outline">Needed</Badge>
+                    <Badge variant="outline" data-testid="scale-status-none">
+                      Needed
+                    </Badge>
                   )}
                 </div>
+                {pdfPageMetrics ? (
+                  <div className="space-y-2" data-testid="stated-scale-presets">
+                    <p className="text-xs text-muted-foreground">
+                      The drawing states its scale in the title block? Pick it here — no clicking
+                      needed on vector PDFs.
+                    </p>
+                    <Select value={statedPresetId} onValueChange={setStatedPresetId}>
+                      <SelectTrigger aria-label="Stated scale" data-testid="stated-scale-select">
+                        <SelectValue placeholder='Stated scale, e.g. 1/4" = 1&apos;-0"' />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ARCHITECTURAL_SCALE_PRESETS.map((preset) => (
+                          <SelectItem key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </SelectItem>
+                        ))}
+                        {ENGINEERING_SCALE_PRESETS.map((preset) => (
+                          <SelectItem key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="custom">Custom stated scale...</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {statedPresetId === "custom" && (
+                      <div
+                        className="grid grid-cols-[1fr_auto_1fr] items-center gap-2"
+                        data-testid="stated-scale-custom"
+                      >
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={customStatedInches}
+                          onChange={(event) => setCustomStatedInches(event.target.value)}
+                          placeholder={"Paper inches"}
+                          aria-label="Stated paper inches"
+                        />
+                        <span className="text-xs text-muted-foreground">inches =</span>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={customStatedFeet}
+                          onChange={(event) => setCustomStatedFeet(event.target.value)}
+                          placeholder="Real feet"
+                          aria-label="Stated real feet"
+                        />
+                      </div>
+                    )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full gap-1.5"
+                      onClick={applyStatedScale}
+                      disabled={!backendReady || !statedPresetId || updateSheetMutation.isPending}
+                      data-testid="stated-scale-apply"
+                    >
+                      <Save className="h-3.5 w-3.5" /> Use Stated Scale
+                    </Button>
+                    {applyToSetOffer && (
+                      <div
+                        className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs"
+                        data-testid="stated-scale-apply-to-set"
+                      >
+                        <p className="text-muted-foreground">
+                          {applyToSetOffer.count} more sheet
+                          {applyToSetOffer.count === 1 ? "" : "s"} in this set still need a scale.
+                        </p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="mt-2 w-full"
+                          onClick={() => applyToSetMutation.mutate(applyToSetOffer)}
+                          disabled={applyToSetMutation.isPending}
+                          data-testid="stated-scale-apply-to-set-button"
+                        >
+                          {applyToSetMutation.isPending
+                            ? "Applying to set..."
+                            : `Apply ${applyToSetOffer.label} to all unscaled sheets`}
+                        </Button>
+                      </div>
+                    )}
+                    <Separator />
+                  </div>
+                ) : (
+                  <p
+                    className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground"
+                    data-testid="stated-scale-unavailable"
+                  >
+                    This sheet has no PDF page dimensions, so stated-scale presets are off.
+                    Calibrate with two points on a known dimension instead.
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground">
-                  Click both ends of a known dimension on the drawing. Type that real field distance
-                  in feet, then save the sheet scale.
+                  Or calibrate: click both ends of a known dimension on the drawing, type the real
+                  distance, then save the sheet scale.
                 </p>
-                <div className="grid grid-cols-5 gap-1" data-testid="calibration-distance-presets">
+                <div className="grid grid-cols-3 gap-1" data-testid="calibration-distance-presets">
                   {QUICK_CALIBRATION_FEET.map((feet) => (
                     <Button
                       key={feet}
@@ -1776,11 +2209,10 @@ export function PlanRoomWorkspace({
                 </div>
                 <div className="grid grid-cols-[1fr_auto] gap-2">
                   <Input
-                    type="number"
-                    min={0}
                     value={calibrationFeet}
                     onChange={(event) => setCalibrationFeet(event.target.value)}
-                    aria-label="Known distance in feet"
+                    placeholder={`e.g. 12' 6"`}
+                    aria-label="Known distance in feet and inches"
                   />
                   <Button
                     type="button"
@@ -1792,13 +2224,57 @@ export function PlanRoomWorkspace({
                     <Save className="h-3.5 w-3.5" /> Save
                   </Button>
                 </div>
+                {Boolean(currentSheet?.scale_feet_per_pixel) && (
+                  <div className="space-y-2" data-testid="verify-scale-controls">
+                    <Separator />
+                    <div className="flex items-center justify-between gap-2">
+                      <Label>Verify the scale</Label>
+                      {currentSheet?.scale_verified_at && (
+                        <Badge variant="secondary">Verified</Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Use the Verify Scale tool: click both ends of a dimension you can read on the
+                      drawing, type its labeled value, then check it.
+                    </p>
+                    <div className="grid grid-cols-[1fr_auto] gap-2">
+                      <Input
+                        value={verifyFeet}
+                        onChange={(event) => setVerifyFeet(event.target.value)}
+                        placeholder={`Labeled dimension, e.g. 12' 6"`}
+                        aria-label="Labeled dimension in feet and inches"
+                        data-testid="verify-scale-input"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={checkScale}
+                        disabled={
+                          !backendReady ||
+                          verifySheetMutation.isPending ||
+                          tool !== "verify" ||
+                          calibrationPoints.length !== 2
+                        }
+                        data-testid="verify-scale-check"
+                      >
+                        Check
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <div className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
                   {tool === "calibrate" ? (
                     <span>{calibrationPoints.length}/2 calibration points selected.</span>
+                  ) : tool === "verify" ? (
+                    <span>{calibrationPoints.length}/2 check points selected.</span>
                   ) : currentSheet?.scale_feet_per_pixel ? (
                     <span>
                       Scale locked at {currentSheet.scale_feet_per_pixel.toFixed(4)} feet per
                       drawing pixel.
+                      {currentSheet.scale_source === "stated" && !currentSheet.scale_verified_at
+                        ? " From stated scale — verify with a known dimension."
+                        : ""}
                     </span>
                   ) : (
                     <span>Scale is needed before linear or area quantities can calculate.</span>
@@ -2068,10 +2544,25 @@ export function PlanRoomWorkspace({
                         <SelectItem key={line.id} value={line.id}>
                           {line.cost_code ? `${line.cost_code} · ` : ""}
                           {line.description.slice(0, 70)}
+                          {line.unit ? ` · per ${line.unit}` : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectedMeasurementLine &&
+                    !takeoffUnitsCompatible(
+                      selectedMeasurement.unit,
+                      selectedMeasurementLine.unit,
+                    ) && (
+                      <p
+                        className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs"
+                        data-testid="selected-takeoff-unit-mismatch"
+                      >
+                        This takeoff measures {unitLongName(selectedMeasurement.unit)}, but the row
+                        is priced per {unitLongName(selectedMeasurementLine.unit)}. Sync will ask
+                        before mixing them.
+                      </p>
+                    )}
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                       type="button"
@@ -2154,6 +2645,47 @@ export function PlanRoomWorkspace({
           )}
         </aside>
       </main>
+      <SyncConflictDialog
+        conflict={syncConflict}
+        pending={syncLineMutation.isPending}
+        onCancel={() => setSyncConflict(null)}
+        onConfirm={confirmSyncConflict}
+      />
+      {verifyOutcome && (
+        <Dialog open onOpenChange={(open) => !open && setVerifyOutcome(null)}>
+          <DialogContent data-testid="verify-scale-discrepancy-dialog">
+            <DialogHeader>
+              <DialogTitle>The scale is off</DialogTitle>
+              <DialogDescription>
+                Measured {formatQty(verifyOutcome.measuredFeet, "ft")} where you expected{" "}
+                {formatQty(verifyOutcome.expectedFeet, "ft")} — off by{" "}
+                {Math.abs(verifyOutcome.offPct).toFixed(1)}%. Recalibrate?
+              </DialogDescription>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              Recalibrating uses the dimension you just measured as the new scale and marks this
+              sheet verified. Half-size prints are the usual cause when everything reads off by
+              about 100%.
+            </p>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setVerifyOutcome(null)}
+                disabled={verifySheetMutation.isPending}
+              >
+                Keep Current Scale
+              </Button>
+              <Button
+                onClick={applyVerifyCorrection}
+                disabled={verifySheetMutation.isPending}
+                data-testid="verify-scale-recalibrate"
+              >
+                Recalibrate To Match
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

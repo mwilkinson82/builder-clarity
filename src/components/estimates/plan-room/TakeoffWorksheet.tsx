@@ -1,5 +1,13 @@
-import { ClipboardList, Download, Link2, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, ClipboardList, Download, Link2, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -10,9 +18,128 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { normalizeTakeoffUnit, takeoffUnitsCompatible } from "@/lib/plan-room-math";
 import type { EstimateLineItemRow } from "@/lib/estimates.functions";
 import type { PlanSheetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
 import { formatQty, toolLabel, type TakeoffFilterMode } from "./planRoomShared";
+
+const UNIT_LONG_NAMES: Record<string, string> = {
+  LF: "linear feet",
+  SF: "square feet",
+  SY: "square yards",
+  CY: "cubic yards",
+  EA: "each",
+};
+
+export function unitLongName(unit: string) {
+  const canonical = normalizeTakeoffUnit(unit);
+  const longName = UNIT_LONG_NAMES[canonical];
+  return longName ? `${longName} (${canonical})` : canonical || "no unit";
+}
+
+export type SyncConflictState = {
+  kind: "quantity" | "unit";
+  lineId: string;
+  lineDescription: string;
+  lineUnit: string;
+  takeoffUnit: string;
+  currentQuantity: number;
+  incomingQuantity: number;
+  measurementCount: number;
+  // Overrides already granted earlier in this sync attempt, so a confirmed
+  // quantity replace does not re-raise the unit dialog.
+  forceUnitGranted: boolean;
+  sources: Array<{
+    label: string;
+    sheetNumber: string;
+    sheetName: string;
+    wastePct: number;
+    quantity: number;
+    unit: string;
+  }>;
+};
+
+// One dialog frame for both sync guards: the quantity anti-clobber and the
+// Task 0 unit-mismatch guard. All copy in contractor language.
+export function SyncConflictDialog({
+  conflict,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  conflict: SyncConflictState | null;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: (conflict: SyncConflictState) => void;
+}) {
+  if (!conflict) return null;
+  const isUnit = conflict.kind === "unit";
+  return (
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent data-testid="sync-conflict-dialog">
+        <DialogHeader>
+          <DialogTitle>
+            {isUnit ? "This takeoff measures a different unit" : "Replace the hand-typed quantity?"}
+          </DialogTitle>
+          <DialogDescription>
+            {isUnit
+              ? `This takeoff measures ${unitLongName(conflict.takeoffUnit)}, but the estimate row is priced per ${unitLongName(conflict.lineUnit)}. Syncing would treat ${formatQty(conflict.incomingQuantity, conflict.takeoffUnit)} as ${formatQty(conflict.incomingQuantity, conflict.lineUnit)}.`
+              : "This estimate row's quantity was typed by hand. Decide which number the estimate should trust."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 text-sm" data-testid="sync-conflict-details">
+          <div className="rounded-md border border-hairline bg-surface px-3 py-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              Estimate row
+            </p>
+            <p className="mt-1 font-medium">{conflict.lineDescription || "Estimate row"}</p>
+            <p className="text-xs text-muted-foreground">
+              Now: {formatQty(conflict.currentQuantity, conflict.lineUnit)}
+              {conflict.kind === "quantity" ? " — typed by hand" : ""}
+            </p>
+          </div>
+          <div className="rounded-md border border-hairline bg-surface px-3 py-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              From the takeoff
+            </p>
+            <p className="mt-1 font-medium">
+              {formatQty(conflict.incomingQuantity, conflict.takeoffUnit || conflict.lineUnit)}{" "}
+              <span className="text-xs font-normal text-muted-foreground">
+                ({conflict.measurementCount} takeoff
+                {conflict.measurementCount === 1 ? "" : "s"}, waste applied)
+              </span>
+            </p>
+            {conflict.sources.slice(0, 4).map((source, index) => (
+              <p key={index} className="text-xs text-muted-foreground">
+                Sheet {source.sheetNumber || "?"} · {source.label} ·{" "}
+                {formatQty(source.quantity, source.unit)}
+                {source.wastePct > 0 ? ` · waste ${source.wastePct}%` : ""}
+              </p>
+            ))}
+            {conflict.sources.length > 4 && (
+              <p className="text-xs text-muted-foreground">
+                +{conflict.sources.length - 4} more takeoffs
+              </p>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel} disabled={pending}>
+            Cancel
+          </Button>
+          <Button
+            variant={isUnit ? "destructive" : "default"}
+            onClick={() => onConfirm(conflict)}
+            disabled={pending}
+            data-testid="sync-conflict-confirm"
+          >
+            {isUnit ? "Sync Anyway — Units Differ" : "Replace Quantity"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function TakeoffWorksheet({
   measurements,
@@ -287,10 +414,24 @@ export function TakeoffWorksheet({
                           <SelectItem key={line.id} value={line.id}>
                             {line.cost_code ? `${line.cost_code} · ` : ""}
                             {line.description.slice(0, 70)}
+                            {line.unit ? ` · per ${line.unit}` : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    {linkedLine && !takeoffUnitsCompatible(measurement.unit, linkedLine.unit) && (
+                      <p
+                        className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-foreground"
+                        data-testid="takeoff-unit-mismatch"
+                      >
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                        <span>
+                          This takeoff measures {unitLongName(measurement.unit)}, but the row is
+                          priced per {unitLongName(linkedLine.unit)}. Sync will ask before mixing
+                          them.
+                        </span>
+                      </p>
+                    )}
                     {linkedLine ? (
                       <Button
                         size="sm"
