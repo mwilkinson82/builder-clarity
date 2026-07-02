@@ -9211,8 +9211,7 @@ function buildActivityUpdateImpact(draft: ActivityDraft, dataDate?: string | nul
   const remainingDuration = parseRemainingDuration(draft.remaining_duration_days);
   const statusAnchor = getDraftStatusAnchorDate(draft, dataDate);
   const isComplete = percentComplete >= 100 || Boolean(draft.actual_finish_date);
-  const isStarted =
-    percentComplete > 0 || Boolean(draft.actual_start_date) || Boolean(draft.actual_finish_date);
+  const hasActualStartBasis = Boolean(draft.actual_start_date) || Boolean(draft.actual_finish_date);
   const finishTone = slipDays == null || slipDays <= 0 ? "default" : "danger";
   const slipTone =
     slipDays == null || slipDays === 0 ? "default" : slipDays > 0 ? "danger" : "success";
@@ -9222,15 +9221,19 @@ function buildActivityUpdateImpact(draft: ActivityDraft, dataDate?: string | nul
     finishTone,
     remainingValue: isComplete
       ? "Complete"
-      : !isStarted
-        ? "Not started"
+      : !hasActualStartBasis
+        ? percentComplete > 0
+          ? "Actual start"
+          : "Not started"
         : remainingDuration == null
           ? "Missing"
           : String(remainingDuration),
     remainingBasis: isComplete
       ? "actual finish controls"
-      : !isStarted
-        ? "current start / finish"
+      : !hasActualStartBasis
+        ? percentComplete > 0
+          ? "set before remaining duration"
+          : "current start / finish"
         : statusAnchor
           ? `from ${shortDate(statusAnchor)}`
           : "set data date",

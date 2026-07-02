@@ -122,6 +122,20 @@ assert.equal(
   "Unstarted forecast-finish changes should not create a remaining-duration requirement.",
 );
 assert.equal(
+  updateScheduleStatusForecastFinishDate(
+    {
+      ...startedStatusDraft,
+      actual_start_date: "",
+      percent_complete: "40",
+      remaining_duration_days: "7",
+    },
+    "2026-07-20",
+    "2026-06-30",
+  ).remaining_duration_days,
+  "",
+  "Progress without an actual start should not create a remaining-duration requirement.",
+);
+assert.equal(
   updateScheduleStatusPercentComplete(startedStatusDraft, "100", "2026-06-30")
     .remaining_duration_days,
   "0",
@@ -358,6 +372,36 @@ assert.equal(
   statusedById.get("B")?.statusFinishDate,
   "2026-01-18",
   "Unstarted activities should ignore stale remaining duration in CPM status math.",
+);
+const progressWithoutActualStartModel = buildConstructLineCpmModel(
+  [
+    {
+      ...withScheduleActivityStatus({
+        id: "status-progress-no-actual",
+        project_id: "project",
+        activity_id: "P",
+        name: "Progress missing actual start",
+        division: "01 - General",
+        start_date: "2026-01-01",
+        finish_date: "2026-01-15",
+        percent_complete: 40,
+        predecessor_activity_ids: [],
+        successor_activity_ids: [],
+        notes: "",
+        sort_order: 10,
+      }),
+      actual_start_date: null,
+      remaining_duration_days: 99,
+    },
+  ],
+  { dataDate: "2026-01-09" },
+);
+const progressWithoutActualStartTask = progressWithoutActualStartModel.tasks[0];
+assert.equal(progressWithoutActualStartTask?.statusBasis, "expected_finish");
+assert.equal(
+  progressWithoutActualStartTask?.statusFinishDate,
+  "2026-01-15",
+  "Progress without actual start should ignore stale remaining duration in CPM status math.",
 );
 assert.equal(statusedById.get("B")?.isCritical, true);
 assert.equal(statusedById.get("A")?.totalFloat, -3);
@@ -973,6 +1017,7 @@ for (const requiredScheduleRiskText of [
 
 for (const requiredScheduleStatusText of [
   "getScheduleStatusAnchorDate",
+  "hasScheduleStatusActualStartBasis",
   "updateScheduleStatusRemainingDuration",
   "updateScheduleStatusForecastFinishDate",
   "updateScheduleStatusActualStartDate",
@@ -980,7 +1025,7 @@ for (const requiredScheduleStatusText of [
   "updateScheduleStatusForecastStartDate",
   "updateScheduleStatusPercentComplete",
   "Math.max(dataDateMs, currentStartMs)",
-  "percentComplete > 0 || draft.actual_start_date",
+  "Boolean(draft.actual_start_date) || Boolean(draft.actual_finish_date)",
 ]) {
   assert.ok(
     scheduleStatusSource.includes(requiredScheduleStatusText),

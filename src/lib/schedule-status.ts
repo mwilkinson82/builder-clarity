@@ -37,8 +37,7 @@ export function getScheduleStatusAnchorDate(
     null;
   if (!dataDate) return currentStart;
 
-  const percentComplete = parseSchedulePercent(draft.percent_complete);
-  if (percentComplete > 0 || draft.actual_start_date) return dataDate;
+  if (hasScheduleStatusActualStartBasis(draft)) return dataDate;
 
   const dataDateMs = parseScheduleDateMs(dataDate);
   const currentStartMs = parseScheduleDateMs(currentStart);
@@ -47,12 +46,8 @@ export function getScheduleStatusAnchorDate(
   return isoDateFromMs(Math.max(dataDateMs, currentStartMs));
 }
 
-function hasScheduleStatusStarted(draft: ScheduleStatusDraftLike) {
-  return (
-    parseSchedulePercent(draft.percent_complete) > 0 ||
-    Boolean(draft.actual_start_date) ||
-    Boolean(draft.actual_finish_date)
-  );
+function hasScheduleStatusActualStartBasis(draft: ScheduleStatusDraftLike) {
+  return Boolean(draft.actual_start_date) || Boolean(draft.actual_finish_date);
 }
 
 export function updateScheduleStatusRemainingDuration<TDraft extends ScheduleStatusDraftLike>(
@@ -78,7 +73,7 @@ export function updateScheduleStatusForecastFinishDate<TDraft extends ScheduleSt
   value: string,
   dataDate?: string | null,
 ): TDraft {
-  if (!hasScheduleStatusStarted(draft)) {
+  if (!hasScheduleStatusActualStartBasis(draft)) {
     return { ...draft, forecast_finish_date: value, remaining_duration_days: "" };
   }
 
@@ -101,7 +96,7 @@ export function updateScheduleStatusActualStartDate<TDraft extends ScheduleStatu
   dataDate?: string | null,
 ): TDraft {
   const next = { ...draft, actual_start_date: value };
-  if (!hasScheduleStatusStarted(next)) {
+  if (!hasScheduleStatusActualStartBasis(next)) {
     return { ...next, remaining_duration_days: "" };
   }
   if (next.forecast_finish_date) {
@@ -127,7 +122,7 @@ export function updateScheduleStatusActualFinishDate<TDraft extends ScheduleStat
       forecast_finish_date: value,
     };
   }
-  if (!hasScheduleStatusStarted(next)) {
+  if (!hasScheduleStatusActualStartBasis(next)) {
     return { ...next, remaining_duration_days: "" };
   }
   if (next.forecast_finish_date) {
@@ -145,7 +140,7 @@ export function updateScheduleStatusForecastStartDate<TDraft extends ScheduleSta
   dataDate?: string | null,
 ): TDraft {
   const next = { ...draft, forecast_start_date: value };
-  if (!hasScheduleStatusStarted(next)) {
+  if (!hasScheduleStatusActualStartBasis(next)) {
     return { ...next, remaining_duration_days: "" };
   }
   if (next.remaining_duration_days.trim()) {
@@ -171,7 +166,7 @@ export function updateScheduleStatusPercentComplete<TDraft extends ScheduleStatu
       actual_finish_date: next.actual_finish_date || next.forecast_finish_date || next.finish_date,
     };
   }
-  if (!hasScheduleStatusStarted(next)) {
+  if (!hasScheduleStatusActualStartBasis(next)) {
     return { ...next, remaining_duration_days: "" };
   }
   if (next.forecast_finish_date) {

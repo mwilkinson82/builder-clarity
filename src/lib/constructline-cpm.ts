@@ -797,7 +797,7 @@ function getActivityStatusFinishDate(activity: ScheduleActivityRow, dataDateMs?:
   if (
     dataDateMs != null &&
     activity.percent_complete < 100 &&
-    hasActivityStartedForStatus(activity) &&
+    hasActivityActualStartBasisForStatus(activity) &&
     activity.remaining_duration_days != null
   ) {
     return isoDateFromMs(dataDateMs + Math.max(0, activity.remaining_duration_days - 1) * DAY_MS);
@@ -819,7 +819,7 @@ function getActivityStatusBasis(
   statusFinishDate: string | null,
 ): ConstructLineStatusBasis {
   if (activity.actual_finish_date || activity.percent_complete >= 100) return "actual";
-  if (hasActivityStartedForStatus(activity) && activity.remaining_duration_days != null) {
+  if (hasActivityActualStartBasisForStatus(activity) && activity.remaining_duration_days != null) {
     return "remaining_duration";
   }
 
@@ -866,15 +866,15 @@ function getActivityRemainingDurationDays({
   if (isMilestone) return 0;
   if (activity.actual_finish_date) return 0;
   if (activity.percent_complete >= 100) return 0;
-  if (hasActivityStartedForStatus(activity) && activity.remaining_duration_days != null) {
+  if (hasActivityActualStartBasisForStatus(activity) && activity.remaining_duration_days != null) {
     return Math.max(1, Math.round(activity.remaining_duration_days));
   }
   const statusFinishMs = parseDateMs(statusFinishDate);
   const statusStartMs = parseDateMs(statusStartDate);
   const statusAnchorMs =
-    dataDateMs != null && activity.percent_complete > 0
+    dataDateMs != null && hasActivityActualStartBasisForStatus(activity)
       ? dataDateMs
-      : dataDateMs != null && activity.percent_complete === 0
+      : dataDateMs != null
         ? Math.max(dataDateMs, statusStartMs ?? dataDateMs)
         : statusStartMs;
   if (statusAnchorMs != null && statusFinishMs != null && statusFinishMs >= statusAnchorMs) {
@@ -883,12 +883,8 @@ function getActivityRemainingDurationDays({
   return Math.max(1, plannedDurationDays);
 }
 
-function hasActivityStartedForStatus(activity: ScheduleActivityRow) {
-  return (
-    activity.percent_complete > 0 ||
-    Boolean(activity.actual_start_date) ||
-    Boolean(activity.actual_finish_date)
-  );
+function hasActivityActualStartBasisForStatus(activity: ScheduleActivityRow) {
+  return Boolean(activity.actual_start_date) || Boolean(activity.actual_finish_date);
 }
 
 function getStatusedConstraintStart(task: WorkingTask, dataDateOffset: number | null) {
