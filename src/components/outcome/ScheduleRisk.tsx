@@ -3530,7 +3530,8 @@ function ScheduleUpdateReadinessPanel({
         <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
           {summary.missingRemainingCount > 0 && (
             <span className="rounded border border-warning/25 bg-warning/10 px-2 py-1 text-warning">
-              {summary.missingRemainingCount} missing remaining duration
+              {summary.missingRemainingCount} started{" "}
+              {summary.missingRemainingCount === 1 ? "row" : "rows"} missing remaining duration
             </span>
           )}
           {summary.missingExpectedFinishCount > 0 && (
@@ -6744,7 +6745,8 @@ function countActivityMatrixFlags(task: ConstructLineCpmTask, hasOpenDelay: bool
 
 function shouldFlagMissingRemainingDuration(activity: ScheduleActivityRow) {
   if (isConstructLineMilestoneActivity(activity)) return false;
-  if (!hasScheduleActivityActualStartBasis(activity)) return false;
+  const hasActualStartBasis = hasScheduleActivityActualStartBasis(activity);
+  if (!hasActualStartBasis) return false;
   return (
     activity.percent_complete < 100 &&
     activity.remaining_duration_days == null &&
@@ -6798,11 +6800,11 @@ function formatUpdateReadinessQueueLine(item: ScheduleUpdateReadinessItem) {
   }
   if (!hasScheduleActivityActualStartBasis(item.task.activity)) {
     if (item.task.activity.percent_complete > 0) {
-      return `Progress entered without actual start · set actual start before remaining duration · TF ${item.task.totalFloat}d`;
+      return `Progress entered without actual start · set actual start first · no remaining duration until actual start is saved · TF ${item.task.totalFloat}d`;
     }
     return `Current forecast ${shortDate(item.task.statusStartDate)} to ${shortDate(
       item.task.statusFinishDate,
-    )} · not started · remaining duration not required · TF ${item.task.totalFloat}d`;
+    )} · not started · review current dates only · remaining duration not required · TF ${item.task.totalFloat}d`;
   }
   return `Expected finish ${shortDate(item.task.statusFinishDate)} · remaining ${
     item.task.remainingDurationDays

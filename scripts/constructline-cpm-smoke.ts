@@ -1053,8 +1053,20 @@ assert.match(
 
 assert.match(
   scheduleRiskSource,
-  /function shouldFlagMissingRemainingDuration\(activity: ScheduleActivityRow\) \{[\s\S]*?isConstructLineMilestoneActivity\(activity\)[\s\S]*?!hasScheduleActivityActualStartBasis\(activity\)[\s\S]*?activity\.remaining_duration_days == null[\s\S]*?!activity\.forecast_finish_date/s,
+  /function shouldFlagMissingRemainingDuration\(activity: ScheduleActivityRow\) \{[\s\S]*?isConstructLineMilestoneActivity\(activity\)[\s\S]*?const hasActualStartBasis = hasScheduleActivityActualStartBasis\(activity\)[\s\S]*?!hasActualStartBasis[\s\S]*?activity\.remaining_duration_days == null[\s\S]*?!activity\.forecast_finish_date/s,
   "Missing remaining duration should only be flagged after actual start and when no current expected finish exists.",
+);
+assert.ok(
+  scheduleRiskSource.includes("review current dates only · remaining duration not required"),
+  "Unstarted CPM update queue rows should direct the user to review dates, not enter remaining duration.",
+);
+assert.ok(
+  scheduleRiskSource.includes("no remaining duration until actual start is saved"),
+  "Progressed rows without actual start should make the actual-start gate explicit before remaining duration.",
+);
+assert.ok(
+  scheduleRiskSource.includes('started{" "}'),
+  "The readiness badge should clarify that missing remaining duration only applies to started rows.",
 );
 assert.match(
   scheduleRiskSource,
