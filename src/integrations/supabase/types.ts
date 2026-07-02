@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      _repair_results: {
+        Row: {
+          error: string | null
+          file: string
+          ok: boolean | null
+          ran_at: string | null
+          seq: number | null
+        }
+        Insert: {
+          error?: string | null
+          file: string
+          ok?: boolean | null
+          ran_at?: string | null
+          seq?: number | null
+        }
+        Update: {
+          error?: string | null
+          file?: string
+          ok?: boolean | null
+          ran_at?: string | null
+          seq?: number | null
+        }
+        Relationships: []
+      }
       app_super_admins: {
         Row: {
           created_at: string
@@ -31,6 +55,60 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      billing_application_events: {
+        Row: {
+          amount: number
+          billing_application_id: string
+          created_at: string
+          created_by: string | null
+          event_type: string
+          from_status: string
+          id: string
+          notes: string
+          project_id: string
+          to_status: string
+        }
+        Insert: {
+          amount?: number
+          billing_application_id: string
+          created_at?: string
+          created_by?: string | null
+          event_type?: string
+          from_status?: string
+          id?: string
+          notes?: string
+          project_id: string
+          to_status?: string
+        }
+        Update: {
+          amount?: number
+          billing_application_id?: string
+          created_at?: string
+          created_by?: string | null
+          event_type?: string
+          from_status?: string
+          id?: string
+          notes?: string
+          project_id?: string
+          to_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "billing_application_events_billing_application_id_fkey"
+            columns: ["billing_application_id"]
+            isOneToOne: false
+            referencedRelation: "billing_applications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "billing_application_events_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       billing_applications: {
         Row: {
@@ -120,12 +198,18 @@ export type Database = {
           invoice_number: string
           issue_date: string | null
           notes: string
+          online_payment_status: string
           paid_amount: number
           paid_at: string | null
+          payment_enabled: boolean
+          payment_link_sent_at: string | null
+          payment_url: string
           project_id: string
           retainage: number
           sent_at: string | null
           status: string
+          stripe_checkout_session_id: string
+          stripe_payment_intent_id: string
           subtotal: number
           title: string
           total_due: number
@@ -141,12 +225,18 @@ export type Database = {
           invoice_number?: string
           issue_date?: string | null
           notes?: string
+          online_payment_status?: string
           paid_amount?: number
           paid_at?: string | null
+          payment_enabled?: boolean
+          payment_link_sent_at?: string | null
+          payment_url?: string
           project_id: string
           retainage?: number
           sent_at?: string | null
           status?: string
+          stripe_checkout_session_id?: string
+          stripe_payment_intent_id?: string
           subtotal?: number
           title?: string
           total_due?: number
@@ -162,12 +252,18 @@ export type Database = {
           invoice_number?: string
           issue_date?: string | null
           notes?: string
+          online_payment_status?: string
           paid_amount?: number
           paid_at?: string | null
+          payment_enabled?: boolean
+          payment_link_sent_at?: string | null
+          payment_url?: string
           project_id?: string
           retainage?: number
           sent_at?: string | null
           status?: string
+          stripe_checkout_session_id?: string
+          stripe_payment_intent_id?: string
           subtotal?: number
           title?: string
           total_due?: number
@@ -766,6 +862,7 @@ export type Database = {
           external_id: string
           id: string
           keywords: Json
+          labor_basis: string
           labor_cost_cents: number
           material_cost_cents: number
           organization_id: string
@@ -786,6 +883,7 @@ export type Database = {
           external_id?: string
           id?: string
           keywords?: Json
+          labor_basis?: string
           labor_cost_cents?: number
           material_cost_cents?: number
           organization_id: string
@@ -806,6 +904,7 @@ export type Database = {
           external_id?: string
           id?: string
           keywords?: Json
+          labor_basis?: string
           labor_cost_cents?: number
           material_cost_cents?: number
           organization_id?: string
@@ -827,6 +926,9 @@ export type Database = {
       }
       daily_reports: {
         Row: {
+          attachment_bytes: number
+          attachment_count: number
+          attachment_manifest: Json
           attachment_name: string
           attachment_path: string
           attachment_type: string
@@ -837,15 +939,21 @@ export type Database = {
           crew_count: number
           delays: string
           id: string
+          manpower: string
           notes: string
           project_id: string
+          quality_notes: string
           report_date: string
           safety_notes: string
           updated_at: string
+          visitors: string
           weather: string
           work_performed: string
         }
         Insert: {
+          attachment_bytes?: number
+          attachment_count?: number
+          attachment_manifest?: Json
           attachment_name?: string
           attachment_path?: string
           attachment_type?: string
@@ -856,15 +964,21 @@ export type Database = {
           crew_count?: number
           delays?: string
           id?: string
+          manpower?: string
           notes?: string
           project_id: string
+          quality_notes?: string
           report_date?: string
           safety_notes?: string
           updated_at?: string
+          visitors?: string
           weather?: string
           work_performed?: string
         }
         Update: {
+          attachment_bytes?: number
+          attachment_count?: number
+          attachment_manifest?: Json
           attachment_name?: string
           attachment_path?: string
           attachment_type?: string
@@ -875,11 +989,14 @@ export type Database = {
           crew_count?: number
           delays?: string
           id?: string
+          manpower?: string
           notes?: string
           project_id?: string
+          quality_notes?: string
           report_date?: string
           safety_notes?: string
           updated_at?: string
+          visitors?: string
           weather?: string
           work_performed?: string
         }
@@ -904,7 +1021,12 @@ export type Database = {
           linked_exposure_id: string | null
           notes: string
           owner: string
+          owner_email: string
+          owner_user_id: string | null
           project_id: string
+          reminder_at: string | null
+          reminder_channel: string
+          reminder_enabled: boolean
           status: Database["public"]["Enums"]["decision_status"]
           updated_at: string
         }
@@ -918,7 +1040,12 @@ export type Database = {
           linked_exposure_id?: string | null
           notes?: string
           owner?: string
+          owner_email?: string
+          owner_user_id?: string | null
           project_id: string
+          reminder_at?: string | null
+          reminder_channel?: string
+          reminder_enabled?: boolean
           status?: Database["public"]["Enums"]["decision_status"]
           updated_at?: string
         }
@@ -932,7 +1059,12 @@ export type Database = {
           linked_exposure_id?: string | null
           notes?: string
           owner?: string
+          owner_email?: string
+          owner_user_id?: string | null
           project_id?: string
+          reminder_at?: string | null
+          reminder_channel?: string
+          reminder_enabled?: boolean
           status?: Database["public"]["Enums"]["decision_status"]
           updated_at?: string
         }
@@ -949,6 +1081,13 @@ export type Database = {
             columns: ["linked_exposure_id"]
             isOneToOne: false
             referencedRelation: "exposures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "decisions_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
           {
@@ -1062,8 +1201,11 @@ export type Database = {
           material_unit_cost_cents: number
           notes: string
           quantity: number
+          quantity_source: string
           scope_group: string
           sort_order: number
+          takeoff_quantity: number | null
+          takeoff_synced_at: string | null
           total_extended_cents: number | null
           unit: string
           updated_at: string
@@ -1082,8 +1224,11 @@ export type Database = {
           material_unit_cost_cents?: number
           notes?: string
           quantity?: number
+          quantity_source?: string
           scope_group?: string
           sort_order?: number
+          takeoff_quantity?: number | null
+          takeoff_synced_at?: string | null
           total_extended_cents?: number | null
           unit: string
           updated_at?: string
@@ -1102,8 +1247,11 @@ export type Database = {
           material_unit_cost_cents?: number
           notes?: string
           quantity?: number
+          quantity_source?: string
           scope_group?: string
           sort_order?: number
+          takeoff_quantity?: number | null
+          takeoff_synced_at?: string | null
           total_extended_cents?: number | null
           unit?: string
           updated_at?: string
@@ -1410,6 +1558,7 @@ export type Database = {
           folder: string
           general_conditions_pct: number
           id: string
+          kind: string
           name: string
           opportunity_id: string | null
           organization_id: string
@@ -1437,6 +1586,7 @@ export type Database = {
           folder?: string
           general_conditions_pct?: number
           id?: string
+          kind?: string
           name: string
           opportunity_id?: string | null
           organization_id: string
@@ -1464,6 +1614,7 @@ export type Database = {
           folder?: string
           general_conditions_pct?: number
           id?: string
+          kind?: string
           name?: string
           opportunity_id?: string | null
           organization_id?: string
@@ -1482,6 +1633,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "estimates_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_opportunities"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "estimates_organization_id_fkey"
             columns: ["organization_id"]
@@ -1680,58 +1838,124 @@ export type Database = {
       }
       organizations: {
         Row: {
+          address_line1: string
+          address_line2: string
+          billing_contact_name: string
+          billing_email: string
           billing_status: string
+          city: string
           contractor_circle_grant: boolean
+          country: string
           created_at: string
           created_by: string | null
           daily_report_limit_per_month: number
           id: string
+          legal_name: string
+          license_number: string
+          logo_path: string
+          logo_url: string
           name: string
+          office_phone: string
+          payment_processor_ready: boolean
           plan_code: string
+          postal_code: string
           project_limit: number
           seat_limit: number
           slug: string
+          state: string
           storage_limit_mb: number
+          stripe_checkout_session_id: string
+          stripe_connect_account_id: string
+          stripe_connect_status: string
           stripe_customer_id: string
+          stripe_price_id: string
           stripe_subscription_id: string
+          subscription_cancel_at_period_end: boolean
+          subscription_current_period_end: string | null
+          tax_identifier: string
           trial_ends_at: string | null
           updated_at: string
+          website_url: string
         }
         Insert: {
+          address_line1?: string
+          address_line2?: string
+          billing_contact_name?: string
+          billing_email?: string
           billing_status?: string
+          city?: string
           contractor_circle_grant?: boolean
+          country?: string
           created_at?: string
           created_by?: string | null
           daily_report_limit_per_month?: number
           id?: string
+          legal_name?: string
+          license_number?: string
+          logo_path?: string
+          logo_url?: string
           name: string
+          office_phone?: string
+          payment_processor_ready?: boolean
           plan_code?: string
+          postal_code?: string
           project_limit?: number
           seat_limit?: number
           slug?: string
+          state?: string
           storage_limit_mb?: number
+          stripe_checkout_session_id?: string
+          stripe_connect_account_id?: string
+          stripe_connect_status?: string
           stripe_customer_id?: string
+          stripe_price_id?: string
           stripe_subscription_id?: string
+          subscription_cancel_at_period_end?: boolean
+          subscription_current_period_end?: string | null
+          tax_identifier?: string
           trial_ends_at?: string | null
           updated_at?: string
+          website_url?: string
         }
         Update: {
+          address_line1?: string
+          address_line2?: string
+          billing_contact_name?: string
+          billing_email?: string
           billing_status?: string
+          city?: string
           contractor_circle_grant?: boolean
+          country?: string
           created_at?: string
           created_by?: string | null
           daily_report_limit_per_month?: number
           id?: string
+          legal_name?: string
+          license_number?: string
+          logo_path?: string
+          logo_url?: string
           name?: string
+          office_phone?: string
+          payment_processor_ready?: boolean
           plan_code?: string
+          postal_code?: string
           project_limit?: number
           seat_limit?: number
           slug?: string
+          state?: string
           storage_limit_mb?: number
+          stripe_checkout_session_id?: string
+          stripe_connect_account_id?: string
+          stripe_connect_status?: string
           stripe_customer_id?: string
+          stripe_price_id?: string
           stripe_subscription_id?: string
+          subscription_cancel_at_period_end?: boolean
+          subscription_current_period_end?: string | null
+          tax_identifier?: string
           trial_ends_at?: string | null
           updated_at?: string
+          website_url?: string
         }
         Relationships: [
           {
@@ -1760,7 +1984,11 @@ export type Database = {
           processor_fee: number
           processor_payment_id: string
           project_id: string
+          receipt_url: string
           status: string
+          stripe_charge_id: string
+          stripe_checkout_session_id: string
+          stripe_payment_intent_id: string
           updated_at: string
         }
         Insert: {
@@ -1779,7 +2007,11 @@ export type Database = {
           processor_fee?: number
           processor_payment_id?: string
           project_id: string
+          receipt_url?: string
           status?: string
+          stripe_charge_id?: string
+          stripe_checkout_session_id?: string
+          stripe_payment_intent_id?: string
           updated_at?: string
         }
         Update: {
@@ -1798,7 +2030,11 @@ export type Database = {
           processor_fee?: number
           processor_payment_id?: string
           project_id?: string
+          receipt_url?: string
           status?: string
+          stripe_charge_id?: string
+          stripe_checkout_session_id?: string
+          stripe_payment_intent_id?: string
           updated_at?: string
         }
         Relationships: [
@@ -1821,6 +2057,423 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pipeline_accounts: {
+        Row: {
+          account_type: string
+          address: string
+          archived: boolean
+          created_at: string
+          created_by: string | null
+          email: string
+          id: string
+          last_touch_at: string | null
+          market_sector: string
+          name: string
+          next_touch_at: string | null
+          notes: string
+          organization_id: string
+          owner_name: string
+          phone: string
+          relationship_health: string
+          relationship_stage: string
+          source: string
+          updated_at: string
+          website: string
+        }
+        Insert: {
+          account_type?: string
+          address?: string
+          archived?: boolean
+          created_at?: string
+          created_by?: string | null
+          email?: string
+          id?: string
+          last_touch_at?: string | null
+          market_sector?: string
+          name: string
+          next_touch_at?: string | null
+          notes?: string
+          organization_id: string
+          owner_name?: string
+          phone?: string
+          relationship_health?: string
+          relationship_stage?: string
+          source?: string
+          updated_at?: string
+          website?: string
+        }
+        Update: {
+          account_type?: string
+          address?: string
+          archived?: boolean
+          created_at?: string
+          created_by?: string | null
+          email?: string
+          id?: string
+          last_touch_at?: string | null
+          market_sector?: string
+          name?: string
+          next_touch_at?: string | null
+          notes?: string
+          organization_id?: string
+          owner_name?: string
+          phone?: string
+          relationship_health?: string
+          relationship_stage?: string
+          source?: string
+          updated_at?: string
+          website?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_accounts_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pipeline_activity_log: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          event_type: string
+          from_value: string
+          id: string
+          notes: string
+          opportunity_id: string
+          organization_id: string
+          to_value: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          event_type: string
+          from_value?: string
+          id?: string
+          notes?: string
+          opportunity_id: string
+          organization_id: string
+          to_value?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          event_type?: string
+          from_value?: string
+          id?: string
+          notes?: string
+          opportunity_id?: string
+          organization_id?: string
+          to_value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_activity_log_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_opportunities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_activity_log_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pipeline_contacts: {
+        Row: {
+          account_id: string | null
+          archived: boolean
+          created_at: string
+          created_by: string | null
+          email: string
+          id: string
+          influence_level: string
+          last_touch_at: string | null
+          name: string
+          notes: string
+          organization_id: string
+          phone: string
+          relationship_status: string
+          role: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          account_id?: string | null
+          archived?: boolean
+          created_at?: string
+          created_by?: string | null
+          email?: string
+          id?: string
+          influence_level?: string
+          last_touch_at?: string | null
+          name: string
+          notes?: string
+          organization_id: string
+          phone?: string
+          relationship_status?: string
+          role?: string
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string | null
+          archived?: boolean
+          created_at?: string
+          created_by?: string | null
+          email?: string
+          id?: string
+          influence_level?: string
+          last_touch_at?: string | null
+          name?: string
+          notes?: string
+          organization_id?: string
+          phone?: string
+          relationship_status?: string
+          role?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_contacts_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_contacts_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pipeline_next_actions: {
+        Row: {
+          account_id: string | null
+          action_type: string
+          completed_at: string | null
+          completed_by: string | null
+          contact_id: string | null
+          created_at: string
+          created_by: string | null
+          due_date: string | null
+          id: string
+          notes: string
+          opportunity_id: string | null
+          organization_id: string
+          owner_name: string
+          priority: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          account_id?: string | null
+          action_type?: string
+          completed_at?: string | null
+          completed_by?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          due_date?: string | null
+          id?: string
+          notes?: string
+          opportunity_id?: string | null
+          organization_id: string
+          owner_name?: string
+          priority?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string | null
+          action_type?: string
+          completed_at?: string | null
+          completed_by?: string | null
+          contact_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          due_date?: string | null
+          id?: string
+          notes?: string
+          opportunity_id?: string | null
+          organization_id?: string
+          owner_name?: string
+          priority?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_next_actions_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_next_actions_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_next_actions_opportunity_id_fkey"
+            columns: ["opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_opportunities"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_next_actions_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pipeline_opportunities: {
+        Row: {
+          account_id: string | null
+          archived: boolean
+          assigned_to: string
+          bid_decision: string
+          bid_decision_date: string | null
+          bid_decision_reason: string
+          bid_due_date: string | null
+          client: string
+          client_contact_email: string
+          client_contact_name: string
+          client_contact_phone: string
+          converted_at: string | null
+          converted_project_id: string | null
+          created_at: string
+          created_by: string | null
+          decision_date: string | null
+          estimated_contract: number
+          estimated_cost: number
+          estimated_gp_pct: number | null
+          id: string
+          last_activity_at: string
+          name: string
+          notes: string
+          organization_id: string
+          primary_contact_id: string | null
+          probability: number
+          project_type: string
+          scope_summary: string
+          source: string
+          stage: string
+          updated_at: string
+        }
+        Insert: {
+          account_id?: string | null
+          archived?: boolean
+          assigned_to?: string
+          bid_decision?: string
+          bid_decision_date?: string | null
+          bid_decision_reason?: string
+          bid_due_date?: string | null
+          client?: string
+          client_contact_email?: string
+          client_contact_name?: string
+          client_contact_phone?: string
+          converted_at?: string | null
+          converted_project_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          decision_date?: string | null
+          estimated_contract?: number
+          estimated_cost?: number
+          estimated_gp_pct?: number | null
+          id?: string
+          last_activity_at?: string
+          name: string
+          notes?: string
+          organization_id: string
+          primary_contact_id?: string | null
+          probability?: number
+          project_type?: string
+          scope_summary?: string
+          source?: string
+          stage?: string
+          updated_at?: string
+        }
+        Update: {
+          account_id?: string | null
+          archived?: boolean
+          assigned_to?: string
+          bid_decision?: string
+          bid_decision_date?: string | null
+          bid_decision_reason?: string
+          bid_due_date?: string | null
+          client?: string
+          client_contact_email?: string
+          client_contact_name?: string
+          client_contact_phone?: string
+          converted_at?: string | null
+          converted_project_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          decision_date?: string | null
+          estimated_contract?: number
+          estimated_cost?: number
+          estimated_gp_pct?: number | null
+          id?: string
+          last_activity_at?: string
+          name?: string
+          notes?: string
+          organization_id?: string
+          primary_contact_id?: string | null
+          probability?: number
+          project_type?: string
+          scope_summary?: string
+          source?: string
+          stage?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_opportunities_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_opportunities_converted_project_id_fkey"
+            columns: ["converted_project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_opportunities_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pipeline_opportunities_primary_contact_id_fkey"
+            columns: ["primary_contact_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_contacts"
             referencedColumns: ["id"]
           },
         ]
@@ -1941,6 +2594,109 @@ export type Database = {
           },
         ]
       }
+      project_inspections: {
+        Row: {
+          attempt_number: number
+          authority: string
+          completed_date: string | null
+          corrective_action: string
+          cost_impact: number
+          created_at: string
+          created_by: string | null
+          id: string
+          inspection_type: string
+          inspector: string
+          location: string
+          notes: string
+          parent_inspection_id: string | null
+          project_id: string
+          requested_date: string | null
+          required_reinspection: boolean
+          responsible_party: string
+          result: string
+          risk_exposure_id: string | null
+          schedule_impact_weeks: number | null
+          scheduled_date: string | null
+          seed_key: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempt_number?: number
+          authority?: string
+          completed_date?: string | null
+          corrective_action?: string
+          cost_impact?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          inspection_type?: string
+          inspector?: string
+          location?: string
+          notes?: string
+          parent_inspection_id?: string | null
+          project_id: string
+          requested_date?: string | null
+          required_reinspection?: boolean
+          responsible_party?: string
+          result?: string
+          risk_exposure_id?: string | null
+          schedule_impact_weeks?: number | null
+          scheduled_date?: string | null
+          seed_key?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempt_number?: number
+          authority?: string
+          completed_date?: string | null
+          corrective_action?: string
+          cost_impact?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          inspection_type?: string
+          inspector?: string
+          location?: string
+          notes?: string
+          parent_inspection_id?: string | null
+          project_id?: string
+          requested_date?: string | null
+          required_reinspection?: boolean
+          responsible_party?: string
+          result?: string
+          risk_exposure_id?: string | null
+          schedule_impact_weeks?: number | null
+          scheduled_date?: string | null
+          seed_key?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_inspections_parent_inspection_id_fkey"
+            columns: ["parent_inspection_id"]
+            isOneToOne: false
+            referencedRelation: "project_inspections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_inspections_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_inspections_risk_exposure_id_fkey"
+            columns: ["risk_exposure_id"]
+            isOneToOne: false
+            referencedRelation: "exposures"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       project_memberships: {
         Row: {
           created_at: string
@@ -2006,6 +2762,7 @@ export type Database = {
           phase: Database["public"]["Enums"]["project_phase"]
           project_manager: string
           schedule_variance_weeks: number
+          source_opportunity_id: string | null
           updated_at: string
         }
         Insert: {
@@ -2034,6 +2791,7 @@ export type Database = {
           phase?: Database["public"]["Enums"]["project_phase"]
           project_manager?: string
           schedule_variance_weeks?: number
+          source_opportunity_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -2062,6 +2820,7 @@ export type Database = {
           phase?: Database["public"]["Enums"]["project_phase"]
           project_manager?: string
           schedule_variance_weeks?: number
+          source_opportunity_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -2070,6 +2829,13 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "projects_source_opportunity_id_fkey"
+            columns: ["source_opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_opportunities"
             referencedColumns: ["id"]
           },
         ]
@@ -2679,11 +3445,16 @@ export type Database = {
           baseline_completion_date: string | null
           created_at: string
           created_by: string | null
+          data_date: string | null
           forecast_completion_date: string
           id: string
+          money_notes: string
           movement_weeks: number
           notes: string
           project_id: string
+          schedule_money_exposure: number
+          schedule_money_net: number
+          schedule_money_recovery: number
           update_date: string
           update_number: number
           updated_at: string
@@ -2693,11 +3464,16 @@ export type Database = {
           baseline_completion_date?: string | null
           created_at?: string
           created_by?: string | null
+          data_date?: string | null
           forecast_completion_date: string
           id?: string
+          money_notes?: string
           movement_weeks?: number
           notes?: string
           project_id: string
+          schedule_money_exposure?: number
+          schedule_money_net?: number
+          schedule_money_recovery?: number
           update_date?: string
           update_number: number
           updated_at?: string
@@ -2707,11 +3483,16 @@ export type Database = {
           baseline_completion_date?: string | null
           created_at?: string
           created_by?: string | null
+          data_date?: string | null
           forecast_completion_date?: string
           id?: string
+          money_notes?: string
           movement_weeks?: number
           notes?: string
           project_id?: string
+          schedule_money_exposure?: number
+          schedule_money_net?: number
+          schedule_money_recovery?: number
           update_date?: string
           update_number?: number
           updated_at?: string
@@ -2775,8 +3556,175 @@ export type Database = {
           },
         ]
       }
+      sov_imports: {
+        Row: {
+          amount_choices: Json
+          column_map: Json
+          confidence: string
+          created_at: string
+          has_header: boolean
+          id: string
+          imported_by: string | null
+          inserted_count: number
+          merged_rows: number
+          mode: string
+          original_cost_budget: number
+          profile: string
+          project_id: string
+          raw_rows: number
+          selected_budget_column: number | null
+          selected_budget_label: string
+          skipped_count: number
+          source_name: string
+          source_sheet: string
+          source_type: string
+          staged_rows: number
+          total_budget: number
+          updated_count: number
+          warnings: Json
+        }
+        Insert: {
+          amount_choices?: Json
+          column_map?: Json
+          confidence?: string
+          created_at?: string
+          has_header?: boolean
+          id?: string
+          imported_by?: string | null
+          inserted_count?: number
+          merged_rows?: number
+          mode?: string
+          original_cost_budget?: number
+          profile?: string
+          project_id: string
+          raw_rows?: number
+          selected_budget_column?: number | null
+          selected_budget_label?: string
+          skipped_count?: number
+          source_name?: string
+          source_sheet?: string
+          source_type?: string
+          staged_rows?: number
+          total_budget?: number
+          updated_count?: number
+          warnings?: Json
+        }
+        Update: {
+          amount_choices?: Json
+          column_map?: Json
+          confidence?: string
+          created_at?: string
+          has_header?: boolean
+          id?: string
+          imported_by?: string | null
+          inserted_count?: number
+          merged_rows?: number
+          mode?: string
+          original_cost_budget?: number
+          profile?: string
+          project_id?: string
+          raw_rows?: number
+          selected_budget_column?: number | null
+          selected_budget_label?: string
+          skipped_count?: number
+          source_name?: string
+          source_sheet?: string
+          source_type?: string
+          staged_rows?: number
+          total_budget?: number
+          updated_count?: number
+          warnings?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sov_imports_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sov_mapping_profiles: {
+        Row: {
+          amount_choices: Json
+          column_map: Json
+          confidence: string
+          created_at: string
+          created_by: string | null
+          has_header: boolean
+          id: string
+          last_used_at: string | null
+          name: string
+          normalized_name: string
+          organization_id: string
+          profile: string
+          sample_headers: Json
+          selected_budget_column: number | null
+          selected_budget_label: string
+          source_sheet: string
+          source_type: string
+          updated_at: string
+          use_count: number
+          warnings: Json
+        }
+        Insert: {
+          amount_choices?: Json
+          column_map?: Json
+          confidence?: string
+          created_at?: string
+          created_by?: string | null
+          has_header?: boolean
+          id?: string
+          last_used_at?: string | null
+          name: string
+          normalized_name: string
+          organization_id: string
+          profile?: string
+          sample_headers?: Json
+          selected_budget_column?: number | null
+          selected_budget_label?: string
+          source_sheet?: string
+          source_type?: string
+          updated_at?: string
+          use_count?: number
+          warnings?: Json
+        }
+        Update: {
+          amount_choices?: Json
+          column_map?: Json
+          confidence?: string
+          created_at?: string
+          created_by?: string | null
+          has_header?: boolean
+          id?: string
+          last_used_at?: string | null
+          name?: string
+          normalized_name?: string
+          organization_id?: string
+          profile?: string
+          sample_headers?: Json
+          selected_budget_column?: number | null
+          selected_budget_label?: string
+          source_sheet?: string
+          source_type?: string
+          updated_at?: string
+          use_count?: number
+          warnings?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sov_mapping_profiles_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subscription_plans: {
         Row: {
+          checkout_enabled: boolean
           code: string
           created_at: string
           daily_report_limit_per_month: number | null
@@ -2786,9 +3734,12 @@ export type Database = {
           project_limit: number | null
           seat_limit: number | null
           storage_limit_mb: number | null
+          stripe_price_id: string
+          stripe_product_id: string
           updated_at: string
         }
         Insert: {
+          checkout_enabled?: boolean
           code: string
           created_at?: string
           daily_report_limit_per_month?: number | null
@@ -2798,9 +3749,12 @@ export type Database = {
           project_limit?: number | null
           seat_limit?: number | null
           storage_limit_mb?: number | null
+          stripe_price_id?: string
+          stripe_product_id?: string
           updated_at?: string
         }
         Update: {
+          checkout_enabled?: boolean
           code?: string
           created_at?: string
           daily_report_limit_per_month?: number | null
@@ -2810,6 +3764,8 @@ export type Database = {
           project_limit?: number | null
           seat_limit?: number | null
           storage_limit_mb?: number | null
+          stripe_price_id?: string
+          stripe_product_id?: string
           updated_at?: string
         }
         Relationships: []
@@ -2838,6 +3794,69 @@ export type Database = {
         }
         Relationships: []
       }
+      user_activity_presence: {
+        Row: {
+          client_session_id: string
+          created_at: string
+          email: string
+          full_name: string
+          id: string
+          last_seen_at: string
+          login_at: string
+          organization_id: string
+          page_title: string
+          route_path: string
+          updated_at: string
+          user_agent: string
+          user_id: string
+        }
+        Insert: {
+          client_session_id: string
+          created_at?: string
+          email?: string
+          full_name?: string
+          id?: string
+          last_seen_at?: string
+          login_at?: string
+          organization_id: string
+          page_title?: string
+          route_path?: string
+          updated_at?: string
+          user_agent?: string
+          user_id: string
+        }
+        Update: {
+          client_session_id?: string
+          created_at?: string
+          email?: string
+          full_name?: string
+          id?: string
+          last_seen_at?: string
+          login_at?: string
+          organization_id?: string
+          page_title?: string
+          route_path?: string
+          updated_at?: string
+          user_agent?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_activity_presence_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_activity_presence_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -2863,6 +3882,18 @@ export type Database = {
       can_view_client_billing: {
         Args: { p_project_id: string }
         Returns: boolean
+      }
+      can_view_client_change_orders: {
+        Args: { p_project_id: string }
+        Returns: boolean
+      }
+      can_view_client_daily_reports: {
+        Args: { p_project_id: string }
+        Returns: boolean
+      }
+      convert_pipeline_opportunity_to_project: {
+        Args: { p_opportunity_id: string }
+        Returns: string
       }
       cost_actual_rollup_amount: {
         Args: { p_amount: number; p_status: string }
@@ -2893,6 +3924,7 @@ export type Database = {
         }
         Returns: number
       }
+      overwatch_access_email_key: { Args: { p_email: string }; Returns: string }
       read_email_batch: {
         Args: { batch_size: number; queue_name: string; vt: number }
         Returns: {
@@ -2919,6 +3951,7 @@ export type Database = {
         Returns: number
       }
       storage_estimate_id: { Args: { p_name: string }; Returns: string }
+      storage_organization_id: { Args: { p_name: string }; Returns: string }
       storage_project_id: { Args: { p_name: string }; Returns: string }
       sync_billing_application_from_lines: {
         Args: { p_billing_application_id: string }
