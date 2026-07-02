@@ -19,6 +19,8 @@ import {
   Check,
   ClipboardList,
   ExternalLink,
+  Eye,
+  EyeOff,
   FileUp,
   Hand,
   Image as ImageIcon,
@@ -104,6 +106,8 @@ type MiniMapDock = "bottom-left" | "bottom-right" | "top-left" | "top-right";
 type MiniMapPosition = { x: number; y: number };
 type SheetFilterMode = "all" | "current" | "needs-scale" | "has-takeoff";
 type TakeoffFilterMode = "all" | "sheet" | "unlinked" | "linked";
+type TakeoffLayerKey = TakeoffToolType | "linked" | "unlinked";
+type TakeoffLayerVisibility = Record<TakeoffLayerKey, boolean>;
 type Point = PlanRoomPoint;
 type ViewSize = PlanRoomViewSize;
 type ZoomWindowDraft = { start: Point; end: Point };
@@ -146,6 +150,28 @@ interface PlanRoomWorkspaceProps {
 
 const DEFAULT_VIEW_SIZE: ViewSize = { width: 960, height: 620 };
 const TAKEOFF_COLORS = ["#1b7a6e", "#b35035", "#946a21", "#375d8a", "#5d5f6f"];
+const TAKEOFF_LAYER_KEYS: TakeoffLayerKey[] = ["linear", "area", "count", "linked", "unlinked"];
+const DEFAULT_TAKEOFF_LAYER_VISIBILITY: TakeoffLayerVisibility = {
+  linear: true,
+  area: true,
+  count: true,
+  linked: true,
+  unlinked: true,
+};
+const TAKEOFF_LAYER_COPY: Record<TakeoffLayerKey, { label: string; detail: string }> = {
+  linear: { label: "Linear", detail: "LF runs" },
+  area: { label: "Area", detail: "SF zones" },
+  count: { label: "Count", detail: "EA markers" },
+  linked: { label: "Linked", detail: "feeding rows" },
+  unlinked: { label: "Unlinked", detail: "not assigned" },
+};
+const TAKEOFF_LAYER_TEST_IDS: Record<TakeoffLayerKey, string> = {
+  linear: "takeoff-layer-linear",
+  area: "takeoff-layer-area",
+  count: "takeoff-layer-count",
+  linked: "takeoff-layer-linked",
+  unlinked: "takeoff-layer-unlinked",
+};
 const QUICK_CALIBRATION_FEET = [10, 20, 25, 50, 100];
 const MIN_PLAN_ZOOM = 0.25;
 const MAX_PLAN_ZOOM = 4;
@@ -494,6 +520,15 @@ function toolLabel(tool: ToolMode) {
   return "Count";
 }
 
+function measurementMatchesTakeoffLayers(
+  measurement: TakeoffMeasurementRow,
+  visibility: TakeoffLayerVisibility,
+) {
+  const toolVisible = visibility[measurement.tool_type];
+  const linkVisible = measurement.estimate_line_item_id ? visibility.linked : visibility.unlinked;
+  return toolVisible && linkVisible;
+}
+
 function CockpitFloatingPanelHeader({
   title,
   closeTestId,
@@ -621,6 +656,9 @@ export function PlanRoomWorkspace({
   const [sheetFilter, setSheetFilter] = useState<SheetFilterMode>("all");
   const [takeoffSearch, setTakeoffSearch] = useState("");
   const [takeoffFilter, setTakeoffFilter] = useState<TakeoffFilterMode>("all");
+  const [takeoffLayerVisibility, setTakeoffLayerVisibility] = useState<TakeoffLayerVisibility>(
+    DEFAULT_TAKEOFF_LAYER_VISIBILITY,
+  );
   const [selectedMeasurementDraft, setSelectedMeasurementDraft] = useState({
     color: TAKEOFF_COLORS[0],
     label: "",
@@ -661,9 +699,45 @@ export function PlanRoomWorkspace({
     [currentSheet?.id, currentSheet?.sheet_number, planSets, sheets],
   );
   const selectedLine = lineItems.find((line) => line.id === selectedLineId);
-  const sheetMeasurements = measurements.filter(
-    (measurement) => measurement.plan_sheet_id === currentSheet?.id,
+  const sheetMeasurements = useMemo(
+    () => measurements.filter((measurement) => measurement.plan_sheet_id === currentSheet?.id),
+    [currentSheet?.id, measurements],
   );
+  const takeoffLayerCounts = useMemo(() => {
+    const counts: Record<TakeoffLayerKey, number> = {
+      linear: 0,
+      area: 0,
+      count: 0,
+      linked: 0,
+      unlinked: 0,
+    };
+    for (const measurement of sheetMeasurements) {
+      counts[measurement.tool_type] += 1;
+      if (measurement.estimate_line_item_id) counts.linked += 1;
+      else counts.unlinked += 1;
+    }
+    return counts;
+  }, [sheetMeasurements]);
+  const visibleSheetMeasurements = useMemo(
+    () =>
+      sheetMeasurements.filter((measurement) =>
+        measurementMatchesTakeoffLayers(measurement, takeoffLayerVisibility),
+      ),
+    [sheetMeasurements, takeoffLayerVisibility],
+  );
+  const hiddenSheetMeasurementCount = sheetMeasurements.length - visibleSheetMeasurements.length;
+  const allTakeoffLayersVisible = TAKEOFF_LAYER_KEYS.every((key) => takeoffLayerVisibility[key]);
+  const noTakeoffLayersVisible = TAKEOFF_LAYER_KEYS.every((key) => !takeoffLayerVisibility[key]);
+  const setAllTakeoffLayersVisible = (visible: boolean) =>
+    setTakeoffLayerVisibility({
+      linear: visible,
+      area: visible,
+      count: visible,
+      linked: visible,
+      unlinked: visible,
+    });
+  const toggleTakeoffLayer = (key: TakeoffLayerKey) =>
+    setTakeoffLayerVisibility((current) => ({ ...current, [key]: !current[key] }));
   const measurementCountBySheet = useMemo(() => {
     const counts = new Map<string, number>();
     for (const measurement of measurements) {
@@ -2136,7 +2210,7 @@ export function PlanRoomWorkspace({
             overlaySheet={overlaySheet}
             overlayOpacity={overlayOpacity}
             overlayMode={overlayMode}
-            measurements={sheetMeasurements}
+            measurements={visibleSheetMeasurements}
             pendingPoints={pendingPoints}
             calibrationPoints={calibrationPoints}
             draftCommand={draftCommand}
@@ -2303,6 +2377,101 @@ export function PlanRoomWorkspace({
                   )}
                 </div>
               </div>
+            </div>
+          </section>
+
+          <section
+            className="rounded-lg border border-hairline bg-card p-4 shadow-card"
+            data-testid="takeoff-layer-controls"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-serif text-xl">Plan Markup Layers</h2>
+                <p className="text-xs text-muted-foreground">
+                  Show or hide markups on this sheet without deleting any takeoffs.
+                </p>
+              </div>
+              <Layers className="mt-0.5 h-4 w-4 text-muted-foreground" />
+            </div>
+            <div
+              className="mt-4 rounded-md border border-hairline bg-surface px-3 py-2 text-xs"
+              data-testid="takeoff-layer-summary"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium text-foreground">
+                  Showing {visibleSheetMeasurements.length} of {sheetMeasurements.length} marks
+                </span>
+                {hiddenSheetMeasurementCount > 0 ? (
+                  <Badge variant="outline">{hiddenSheetMeasurementCount} hidden</Badge>
+                ) : (
+                  <Badge variant="secondary">All visible</Badge>
+                )}
+              </div>
+              <p className="mt-1 text-muted-foreground">
+                Use this when dense sheets need less noise. The worksheet still keeps every takeoff.
+              </p>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => setAllTakeoffLayersVisible(true)}
+                disabled={allTakeoffLayersVisible}
+                data-testid="takeoff-layer-show-all"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                Show All
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => setAllTakeoffLayersVisible(false)}
+                disabled={noTakeoffLayersVisible}
+                data-testid="takeoff-layer-hide-all"
+              >
+                <EyeOff className="h-3.5 w-3.5" />
+                Hide All
+              </Button>
+            </div>
+            <div className="mt-3 space-y-2" data-testid="takeoff-layer-toggle-list">
+              {TAKEOFF_LAYER_KEYS.map((key) => {
+                const visible = takeoffLayerVisibility[key];
+                const copy = TAKEOFF_LAYER_COPY[key];
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={cn(
+                      "flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-xs transition",
+                      visible
+                        ? "border-primary/30 bg-primary/5"
+                        : "border-hairline bg-surface/70 text-muted-foreground",
+                    )}
+                    onClick={() => toggleTakeoffLayer(key)}
+                    data-testid={TAKEOFF_LAYER_TEST_IDS[key]}
+                    aria-pressed={visible}
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      {visible ? (
+                        <Eye className="h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <EyeOff className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      <span className="min-w-0">
+                        <span className="block font-medium text-foreground">{copy.label}</span>
+                        <span className="block truncate text-muted-foreground">{copy.detail}</span>
+                      </span>
+                    </span>
+                    <Badge variant={visible ? "secondary" : "outline"}>
+                      {takeoffLayerCounts[key]}
+                    </Badge>
+                  </button>
+                );
+              })}
             </div>
           </section>
 
@@ -4353,7 +4522,13 @@ function MeasurementShape({
 
   if (measurement.tool_type === "area" && scaled.length >= 3) {
     return (
-      <g className="cursor-pointer" onClick={handleSelect}>
+      <g
+        className="cursor-pointer"
+        onClick={handleSelect}
+        data-testid="takeoff-measurement-shape"
+        data-takeoff-tool={measurement.tool_type}
+        data-takeoff-linked={measurement.estimate_line_item_id ? "true" : "false"}
+      >
         <polygon
           points={scaled.map((point) => `${point.x},${point.y}`).join(" ")}
           fill={`${measurement.color}22`}
@@ -4386,7 +4561,13 @@ function MeasurementShape({
 
   if (measurement.tool_type === "count") {
     return (
-      <g className="cursor-pointer" onClick={handleSelect}>
+      <g
+        className="cursor-pointer"
+        onClick={handleSelect}
+        data-testid="takeoff-measurement-shape"
+        data-takeoff-tool={measurement.tool_type}
+        data-takeoff-linked={measurement.estimate_line_item_id ? "true" : "false"}
+      >
         {scaled.map((point, index) => (
           <g key={`${point.x}-${point.y}-${index}`}>
             {selected && <circle cx={point.x} cy={point.y} r="16" fill="white" stroke="#111827" />}
@@ -4426,7 +4607,13 @@ function MeasurementShape({
   }
 
   return (
-    <g className="cursor-pointer" onClick={handleSelect}>
+    <g
+      className="cursor-pointer"
+      onClick={handleSelect}
+      data-testid="takeoff-measurement-shape"
+      data-takeoff-tool={measurement.tool_type}
+      data-takeoff-linked={measurement.estimate_line_item_id ? "true" : "false"}
+    >
       {selected && (
         <polyline
           points={scaled.map((point) => `${point.x},${point.y}`).join(" ")}
