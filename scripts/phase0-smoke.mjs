@@ -1249,7 +1249,9 @@ await expectContains(
     /plan-minimap-collapse/,
     /plan-minimap-collapsed/,
     /plan-command-center-toggle/,
-    /plan-cockpit-header/,
+    /plan-cockpit-command-deck/,
+    /plan-cockpit-room-controls/,
+    /plan-cockpit-status-badges/,
     /plan-cockpit-drawings-toggle/,
     /plan-cockpit-tools-toggle/,
     /plan-cockpit-show-panels/,
@@ -1300,9 +1302,9 @@ await expectContains(
     /plan-cockpit-drawing-stage/,
     /fixed inset-0 z-50 min-h-0 overflow-hidden/,
     /absolute inset-0 grid-cols-1 overflow-hidden p-0/,
-    /absolute inset-x-3 top-3 z-50/,
+    /absolute inset-x-3 top-3 z-30/,
     /Command Center/,
-    /Clean View/,
+    /Clean view/,
     /CockpitFloatingPanelHeader/,
     /plan-sheet-finder/,
     /plan-sheet-search/,
@@ -1370,6 +1372,12 @@ await expectContains(
     /Plan Room backend is still coming online/,
   ],
   "plan room workspace supports upload, zoom, scale, takeoff tools, source markup, and estimate sync",
+);
+
+await expectNotContains(
+  "src/components/estimates/PlanRoomWorkspace.tsx",
+  [/plan-cockpit-header/],
+  "plan room command center does not render a separate page header over the drawing",
 );
 
 await expectContains(
