@@ -1,7 +1,8 @@
-import { Check, EyeOff, XCircle } from "lucide-react";
+import { AlertTriangle, Check, EyeOff, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { PlanSheetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
+import { sheetScaleStatus } from "./planRoomShared";
 
 export function ReadinessPanel({
   sheets,
@@ -29,6 +30,10 @@ export function ReadinessPanel({
   setAllTakeoffLayersVisible: (visible: boolean) => void;
 }) {
   const scaledSheetCount = sheets.length - unscaledSheets.length;
+  const verifiedSheetCount = sheets.filter(
+    (sheet) => sheetScaleStatus(sheet) === "verified",
+  ).length;
+  const unverifiedScaledCount = scaledSheetCount - verifiedSheetCount;
   const readinessIssueCount =
     (sheets.length === 0 ? 1 : 0) +
     (measurements.length === 0 ? 1 : 0) +
@@ -66,15 +71,24 @@ export function ReadinessPanel({
       <div className="mt-4 space-y-2 text-xs">
         <div className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2">
           <span className="flex min-w-0 items-center gap-2">
-            {unscaledSheets.length === 0 ? (
-              <Check className="h-3.5 w-3.5 text-primary" />
-            ) : (
+            {unscaledSheets.length > 0 ? (
               <XCircle className="h-3.5 w-3.5 text-danger" />
+            ) : unverifiedScaledCount > 0 ? (
+              <AlertTriangle className="h-3.5 w-3.5 text-warning" />
+            ) : (
+              <Check className="h-3.5 w-3.5 text-primary" />
             )}
             <span className="min-w-0">
               <span className="block font-medium text-foreground">Sheet scales</span>
-              <span className="block truncate text-muted-foreground">
-                {scaledSheetCount} of {sheets.length} sheets calibrated
+              <span
+                className="block truncate text-muted-foreground"
+                data-testid="readiness-scale-summary"
+              >
+                {unscaledSheets.length > 0
+                  ? `${unscaledSheets.length} of ${sheets.length} sheets have no scale`
+                  : unverifiedScaledCount > 0
+                    ? `All scaled — ${unverifiedScaledCount} not verified yet`
+                    : `All ${sheets.length} sheets scaled and verified`}
               </span>
             </span>
           </span>

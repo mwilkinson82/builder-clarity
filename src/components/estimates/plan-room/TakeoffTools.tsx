@@ -5,6 +5,7 @@ import {
   PencilRuler,
   Plus,
   Ruler,
+  ShieldCheck,
   Square,
   Undo2,
   XCircle,
@@ -58,6 +59,7 @@ export function TakeoffTools({
       {[
         { value: "select", icon: MousePointer2 },
         { value: "calibrate", icon: Ruler },
+        { value: "verify", icon: ShieldCheck },
         { value: "linear", icon: PencilRuler },
         { value: "area", icon: Square },
         { value: "count", icon: Plus },
@@ -76,7 +78,9 @@ export function TakeoffTools({
             onClick={() => {
               setTool(item.value as ToolMode);
               setPendingPoints([]);
-              if (item.value !== "calibrate") setCalibrationPoints([]);
+              if (item.value !== "calibrate" && item.value !== "verify") {
+                setCalibrationPoints([]);
+              }
             }}
           >
             <Icon className="h-3.5 w-3.5" />
@@ -584,6 +588,74 @@ function MeasurementLabel({
       <text x={x + 8} y={y - 3} fill="#28231d" fontSize="11" fontWeight="700">
         {text}
       </text>
+    </g>
+  );
+}
+
+// Live guide for the linear tool: a segment from the last vertex to the
+// cursor that turns green when snapped to a 45-degree increment (the level
+// metaphor), with a small angle readout near the cursor. Sizes divide by zoom
+// so the guide stays out of the way when zoomed in close.
+export function LinearAngleGuide({
+  anchor,
+  point,
+  angleDeg,
+  snapped,
+  viewSize,
+  zoom,
+}: {
+  anchor: Point;
+  point: Point;
+  angleDeg: number;
+  snapped: boolean;
+  viewSize: ViewSize;
+  zoom: number;
+}) {
+  const scale = Math.max(1, zoom);
+  const x1 = anchor.x * viewSize.width;
+  const y1 = anchor.y * viewSize.height;
+  const x2 = point.x * viewSize.width;
+  const y2 = point.y * viewSize.height;
+  if (!Number.isFinite(x1) || !Number.isFinite(y2)) return null;
+  const color = snapped ? "#16a34a" : "#64748b";
+  const fontSize = 11 / scale;
+  const labelText = `${Math.round(angleDeg)}°`;
+  const labelWidth = (labelText.length * 7 + 14) / scale;
+  const labelHeight = 18 / scale;
+  const offset = 14 / scale;
+  return (
+    <g data-testid="linear-angle-guide" pointerEvents="none">
+      <line
+        x1={x1}
+        y1={y1}
+        x2={x2}
+        y2={y2}
+        stroke={color}
+        strokeWidth={snapped ? 2.5 / scale : 1.5 / scale}
+        strokeDasharray={snapped ? undefined : `${6 / scale} ${5 / scale}`}
+      />
+      <circle cx={x2} cy={y2} r={4 / scale} fill={color} />
+      <g data-testid="linear-angle-readout">
+        <rect
+          x={x2 + offset}
+          y={y2 - labelHeight - offset / 2}
+          width={labelWidth}
+          height={labelHeight}
+          rx={4 / scale}
+          fill="white"
+          stroke={color}
+          strokeWidth={1 / scale}
+        />
+        <text
+          x={x2 + offset + 6 / scale}
+          y={y2 - offset / 2 - labelHeight * 0.28}
+          fill={snapped ? "#166534" : "#28231d"}
+          fontSize={fontSize}
+          fontWeight="700"
+        >
+          {labelText}
+        </text>
+      </g>
     </g>
   );
 }

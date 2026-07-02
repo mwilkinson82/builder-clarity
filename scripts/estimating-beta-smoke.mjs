@@ -11,7 +11,14 @@ import {
 } from "../src/lib/estimate-import.ts";
 import { analyzeSovIntake, applyMapping, guessColumnMap } from "../src/lib/sov-import.ts";
 import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "../src/lib/estimate-seed-data.ts";
-import { calculateTakeoffQuantity } from "../src/lib/plan-room-math.ts";
+import {
+  calculateTakeoffQuantity,
+  normalizeTakeoffUnit,
+  parseFeetInches,
+  snapLinearPoint,
+  statedScaleFeetPerPixel,
+  takeoffUnitsCompatible,
+} from "../src/lib/plan-room-math.ts";
 
 const parseDelimited = (text, delimiter) =>
   text
@@ -225,6 +232,123 @@ assert.equal(
   }),
   3,
 );
+
+// --- Takeoff unit alias matcher (Phase 2 unit-mismatch guard) ---
+assert.equal(normalizeTakeoffUnit("LF"), "LF");
+assert.equal(normalizeTakeoffUnit("lnft"), "LF");
+assert.equal(normalizeTakeoffUnit("Lin Ft"), "LF");
+assert.equal(normalizeTakeoffUnit("lin. ft."), "LF");
+assert.equal(normalizeTakeoffUnit("feet"), "LF");
+assert.equal(normalizeTakeoffUnit("sq ft"), "SF");
+assert.equal(normalizeTakeoffUnit("SQFT"), "SF");
+assert.equal(normalizeTakeoffUnit("sq. ft."), "SF");
+assert.equal(normalizeTakeoffUnit("square feet"), "SF");
+assert.equal(normalizeTakeoffUnit("each"), "EA");
+assert.equal(normalizeTakeoffUnit("CT"), "EA");
+assert.equal(normalizeTakeoffUnit("count"), "EA");
+assert.equal(normalizeTakeoffUnit("sq yd"), "SY");
+assert.equal(normalizeTakeoffUnit("cu yd"), "CY");
+assert.equal(normalizeTakeoffUnit("cubic yards"), "CY");
+assert.equal(normalizeTakeoffUnit("LS"), "LS");
+assert.equal(normalizeTakeoffUnit("  "), "");
+assert.equal(takeoffUnitsCompatible("LF", "lnft"), true);
+assert.equal(takeoffUnitsCompatible("LF", "SF"), false);
+assert.equal(takeoffUnitsCompatible("SF", "sy"), false);
+assert.equal(takeoffUnitsCompatible("EA", "count"), true);
+assert.equal(takeoffUnitsCompatible("", "SF"), true);
+assert.equal(takeoffUnitsCompatible("LS", "LS"), true);
+assert.equal(takeoffUnitsCompatible("LS", "EA"), false);
+
+// --- Stated-scale conversion (Phase 2 scale trust) ---
+// 36in x 24in sheet: page width = 36 * 72 = 2592 pdf points, rendered at the
+// 1800px base long edge, so 1.44 points per stored pixel.
+const STATED_SCALE_PAGE = { pageWidthPoints: 2592, renderedWidthPx: 1800 };
+const POINTS_PER_PX = STATED_SCALE_PAGE.pageWidthPoints / STATED_SCALE_PAGE.renderedWidthPx;
+const ARCH_PRESET_INCHES = [3 / 32, 1 / 8, 3 / 16, 1 / 4, 3 / 8, 1 / 2, 3 / 4, 1, 1.5, 3];
+for (const statedInches of ARCH_PRESET_INCHES) {
+  const got = statedScaleFeetPerPixel({ statedInches, statedFeet: 1, ...STATED_SCALE_PAGE });
+  const expected = (1 / statedInches / 72) * POINTS_PER_PX;
+  assert.ok(Math.abs(got - expected) < 1e-12, `arch preset ${statedInches}`);
+}
+const ENGINEERING_PRESET_FEET = [10, 20, 30, 40, 50, 60, 100];
+for (const statedFeet of ENGINEERING_PRESET_FEET) {
+  const got = statedScaleFeetPerPixel({ statedInches: 1, statedFeet, ...STATED_SCALE_PAGE });
+  const expected = (statedFeet / 72) * POINTS_PER_PX;
+  assert.ok(Math.abs(got - expected) < 1e-12, `eng preset 1"=${statedFeet}'`);
+}
+// Round trip: at 1/4" = 1'-0" a 100 ft wall draws 25 paper inches; on this
+// sheet that is 1250 stored px, which must measure back to 100 ft.
+const quarterInchScale = statedScaleFeetPerPixel({
+  statedInches: 0.25,
+  statedFeet: 1,
+  ...STATED_SCALE_PAGE,
+});
+assert.ok(Math.abs(1250 * quarterInchScale - 100) < 1e-9);
+// Half-size print trap: the same drawing plotted at 50% (18in page, still
+// rendered to the 1800px base) makes the stated scale read exactly 2x off —
+// the 100 ft wall (still 1250 rendered px) reads 50 ft, which is what the
+// verify-scale check catches.
+const halfSizeScale = statedScaleFeetPerPixel({
+  statedInches: 0.25,
+  statedFeet: 1,
+  pageWidthPoints: 1296,
+  renderedWidthPx: 1800,
+});
+assert.ok(Math.abs(1250 * halfSizeScale - 50) < 1e-9);
+assert.equal(statedScaleFeetPerPixel({ statedInches: 0, statedFeet: 1, ...STATED_SCALE_PAGE }), 0);
+assert.equal(
+  statedScaleFeetPerPixel({
+    statedInches: 0.25,
+    statedFeet: 1,
+    pageWidthPoints: 0,
+    renderedWidthPx: 1800,
+  }),
+  0,
+);
+
+// --- Feet + inches entry ---
+assert.equal(parseFeetInches("12' 6\""), 12.5);
+assert.equal(parseFeetInches("12ft 6in"), 12.5);
+assert.equal(parseFeetInches("12.5"), 12.5);
+assert.equal(parseFeetInches("12"), 12);
+assert.equal(parseFeetInches('6"'), 0.5);
+assert.equal(parseFeetInches("5'"), 5);
+assert.equal(parseFeetInches("0"), null);
+assert.equal(parseFeetInches("wall"), null);
+assert.equal(parseFeetInches(""), null);
+
+// --- Linear angle guide snapping ---
+const guideView = { width: 1000, height: 1000 };
+const nearLevel = snapLinearPoint({
+  anchor: { x: 0.2, y: 0.5 },
+  cursor: { x: 0.6, y: 0.505 },
+  viewSize: guideView,
+});
+assert.equal(nearLevel.snapped, true);
+assert.equal(nearLevel.angleDeg, 0);
+assert.ok(Math.abs(nearLevel.point.y - 0.5) < 1e-9);
+const diagonal = snapLinearPoint({
+  anchor: { x: 0.2, y: 0.5 },
+  cursor: { x: 0.3, y: 0.4 },
+  viewSize: guideView,
+});
+assert.equal(diagonal.snapped, true);
+assert.equal(diagonal.angleDeg, 45);
+const offAngle = snapLinearPoint({
+  anchor: { x: 0.2, y: 0.5 },
+  cursor: { x: 0.4, y: 0.38 },
+  viewSize: guideView,
+});
+assert.equal(offAngle.snapped, false);
+assert.ok(Math.abs(offAngle.angleDeg - 31) < 1.5);
+const shiftConstrained = snapLinearPoint({
+  anchor: { x: 0.2, y: 0.5 },
+  cursor: { x: 0.4, y: 0.38 },
+  viewSize: guideView,
+  shiftKey: true,
+});
+assert.equal(shiftConstrained.snapped, true);
+assert.equal(shiftConstrained.angleDeg, 45);
 
 const slab = ESTIMATE_SEED_LIBRARY_ITEMS.find((item) => item.external_id === "slab-4in");
 assert.ok(slab);

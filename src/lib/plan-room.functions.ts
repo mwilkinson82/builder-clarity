@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { calculateEstimateTotals, type EstimateCustomMarkup } from "@/lib/estimates.functions";
+import { normalizeTakeoffUnit, takeoffUnitsCompatible } from "@/lib/plan-room-math";
 import type { Json } from "@/integrations/supabase/types";
 
 type DynamicSupabaseError = { code?: string; message: string };
@@ -91,6 +92,8 @@ export interface PlanSheetRow {
   sort_order: number;
   scale_label: string;
   scale_feet_per_pixel: number;
+  scale_source: "unset" | "calibrated" | "stated";
+  scale_verified_at: string | null;
   width_px: number;
   height_px: number;
   created_at: string;
@@ -158,6 +161,15 @@ const normalizePlanSheet = (row: Record<string, unknown>): PlanSheetRow => ({
   sort_order: Math.max(1, Math.round(num(row.sort_order, 1))),
   scale_label: str(row.scale_label),
   scale_feet_per_pixel: num(row.scale_feet_per_pixel),
+  // Pre-migration rows have no provenance columns: a scaled sheet was always
+  // a two-point calibration, an unscaled one has nothing to trust yet.
+  scale_source:
+    str(row.scale_source) === "stated"
+      ? "stated"
+      : str(row.scale_source) === "calibrated" || num(row.scale_feet_per_pixel) > 0
+        ? "calibrated"
+        : "unset",
+  scale_verified_at: row.scale_verified_at == null ? null : str(row.scale_verified_at),
   width_px: Math.round(num(row.width_px)),
   height_px: Math.round(num(row.height_px)),
   created_at: str(row.created_at),
@@ -468,19 +480,39 @@ const createPlanSetInput = z.object({
   page_count: z.number().int().min(1).max(500).optional().default(1),
 });
 
+const planSheetPatchFields = {
+  sheet_number: z.string().max(40).optional(),
+  sheet_name: z.string().max(200).optional(),
+  discipline: z.string().max(80).optional(),
+  scale_label: z.string().max(120).optional(),
+  scale_feet_per_pixel: z.number().min(0).max(100000).optional(),
+  scale_source: z.enum(["unset", "calibrated", "stated"]).optional(),
+  scale_verified_at: z.string().datetime({ offset: true }).nullable().optional(),
+  width_px: z.number().int().min(0).max(20000).optional(),
+  height_px: z.number().int().min(0).max(20000).optional(),
+};
+
 const updatePlanSheetInput = z.object({
   sheet_id: z.string().uuid(),
   patch: z
-    .object({
-      sheet_number: z.string().max(40).optional(),
-      sheet_name: z.string().max(200).optional(),
-      discipline: z.string().max(80).optional(),
-      scale_label: z.string().max(120).optional(),
-      scale_feet_per_pixel: z.number().min(0).max(100000).optional(),
-      width_px: z.number().int().min(0).max(20000).optional(),
-      height_px: z.number().int().min(0).max(20000).optional(),
-    })
+    .object(planSheetPatchFields)
     .refine((patch) => Object.keys(patch).length > 0, "No sheet changes were provided."),
+});
+
+const applyScaleToSheetsInput = z.object({
+  estimate_id: z.string().uuid(),
+  sheets: z
+    .array(
+      z.object({
+        sheet_id: z.string().uuid(),
+        scale_feet_per_pixel: z.number().gt(0).max(100000),
+        scale_label: z.string().max(120),
+        width_px: z.number().int().min(0).max(20000),
+        height_px: z.number().int().min(0).max(20000),
+      }),
+    )
+    .min(1)
+    .max(200),
 });
 
 const measurementInput = z.object({
@@ -515,6 +547,8 @@ const syncTakeoffInput = z.object({
   estimate_line_item_id: z.string().uuid(),
   // A confirmed sync overwrites a hand-typed quantity after conflict review.
   force: z.boolean().optional().default(false),
+  // An explicit override syncs across a takeoff/line unit mismatch.
+  force_unit: z.boolean().optional().default(false),
 });
 
 export const planRoomBucket = PLAN_ROOM_BUCKET;
@@ -631,6 +665,58 @@ export const createPlanSet = createServerFn({ method: "POST" })
     };
   });
 
+function isMissingScaleProvenanceColumn(error: DynamicSupabaseError | null | undefined) {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" ||
+      error.code === "42703" ||
+      (/scale_source|scale_verified_at/i.test(message) &&
+        /schema cache|column|could not find|does not exist/i.test(message))),
+  );
+}
+
+async function updatePlanSheetRow(
+  context: { supabase: unknown },
+  sheetId: string,
+  patch: Record<string, unknown>,
+) {
+  let result = await dynamicTable(context.supabase, "estimate_plan_sheets")
+    .update(patch)
+    .eq("id", sheetId)
+    .select("*")
+    .single();
+  if (
+    result.error &&
+    ("scale_source" in patch || "scale_verified_at" in patch) &&
+    isMissingScaleProvenanceColumn(result.error)
+  ) {
+    // Pre-migration fallback: save the scale itself; provenance lands once
+    // the columns exist.
+    const {
+      scale_source: _scaleSource,
+      scale_verified_at: _scaleVerifiedAt,
+      ...legacyPatch
+    } = patch;
+    if (Object.keys(legacyPatch).length === 0) {
+      result = await dynamicTable(context.supabase, "estimate_plan_sheets")
+        .select("*")
+        .eq("id", sheetId)
+        .single();
+    } else {
+      result = await dynamicTable(context.supabase, "estimate_plan_sheets")
+        .update(legacyPatch)
+        .eq("id", sheetId)
+        .select("*")
+        .single();
+    }
+  }
+  if (result.error || !result.data) {
+    throw new Error(result.error?.message ?? "Sheet did not update.");
+  }
+  return normalizePlanSheet(result.data as Record<string, unknown>);
+}
+
 export const updatePlanSheet = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof updatePlanSheetInput>) =>
@@ -641,13 +727,33 @@ export const updatePlanSheet = createServerFn({ method: "POST" })
     for (const key of ["sheet_number", "sheet_name", "discipline", "scale_label"]) {
       if (typeof patch[key] === "string") patch[key] = clean(String(patch[key]), 200);
     }
-    const { data: row, error } = await dynamicTable(context.supabase, "estimate_plan_sheets")
-      .update(patch)
-      .eq("id", data.sheet_id)
-      .select("*")
-      .single();
-    if (error || !row) throw new Error(error?.message ?? "Sheet did not update.");
-    return { sheet: normalizePlanSheet(row as Record<string, unknown>) };
+    const sheet = await updatePlanSheetRow(context, data.sheet_id, patch);
+    return { sheet };
+  });
+
+export const applyScaleToSheets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof applyScaleToSheetsInput>) =>
+    applyScaleToSheetsInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await loadEstimate(context, data.estimate_id);
+    const updated: PlanSheetRow[] = [];
+    for (const entry of data.sheets) {
+      updated.push(
+        await updatePlanSheetRow(context, entry.sheet_id, {
+          scale_feet_per_pixel: entry.scale_feet_per_pixel,
+          scale_label: clean(entry.scale_label, 200),
+          width_px: entry.width_px,
+          height_px: entry.height_px,
+          // Bulk apply always comes from a stated-scale preset, which stays
+          // untrusted until the user verifies it against a known dimension.
+          scale_source: "stated",
+          scale_verified_at: null,
+        }),
+      );
+    }
+    return { sheets: updated };
   });
 
 export const createTakeoffMeasurement = createServerFn({ method: "POST" })
@@ -757,7 +863,7 @@ function isMissingQuantityProvenanceColumn(error: DynamicSupabaseError | null | 
     error &&
     (error.code === "PGRST204" ||
       error.code === "42703" ||
-      (/quantity_source|takeoff_quantity|takeoff_synced_at/i.test(message) &&
+      (/quantity_source|takeoff_quantity|takeoff_synced_at|takeoff_unit/i.test(message) &&
         /schema cache|column|could not find|does not exist/i.test(message))),
   );
 }
@@ -766,10 +872,10 @@ async function syncTakeoffQuantityToLine(
   context: { supabase: unknown },
   estimateId: string,
   lineItemId: string,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; forceUnit?: boolean } = {},
 ) {
   let lineResult = await dynamicTable(context.supabase, "estimate_line_items")
-    .select("id,estimate_id,quantity,quantity_source,takeoff_quantity")
+    .select("id,estimate_id,unit,quantity,quantity_source,takeoff_quantity")
     .eq("id", lineItemId)
     .eq("estimate_id", estimateId)
     .single();
@@ -779,7 +885,7 @@ async function syncTakeoffQuantityToLine(
   if (lineResult.error && isMissingQuantityProvenanceColumn(lineResult.error)) {
     provenanceReady = false;
     lineResult = await dynamicTable(context.supabase, "estimate_line_items")
-      .select("id,estimate_id,quantity")
+      .select("id,estimate_id,unit,quantity")
       .eq("id", lineItemId)
       .eq("estimate_id", estimateId)
       .single();
@@ -789,7 +895,7 @@ async function syncTakeoffQuantityToLine(
   }
 
   const measurementsResult = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
-    .select("quantity,waste_pct")
+    .select("quantity,waste_pct,unit")
     .eq("estimate_id", estimateId)
     .eq("estimate_line_item_id", lineItemId);
   if (measurementsResult.error) throw new Error(measurementsResult.error.message);
@@ -804,9 +910,31 @@ async function syncTakeoffQuantityToLine(
   const quantity = Math.round(rollup * 10000) / 10000;
 
   const line = lineResult.data as Record<string, unknown>;
+  const lineUnit = str(line.unit);
   const currentQuantity = num(line.quantity);
   const lastTakeoffQuantity = line.takeoff_quantity == null ? null : num(line.takeoff_quantity);
   const quantitySource = str(line.quantity_source, "manual");
+
+  // Unit guard: unit-blind sync mixes dimensions silently (a 4.83 LF takeoff
+  // must not price a per-SF row as 4.83 SF). Comparison is by alias family;
+  // an explicit force_unit override syncs anyway and is recorded via the
+  // takeoff_unit column disagreeing with the line unit.
+  const measurementUnits = measurements
+    .map((row) => str(row.unit))
+    .filter((unit) => unit.trim().length > 0);
+  const takeoffUnit = normalizeTakeoffUnit(measurementUnits[0] ?? "");
+  const mismatchedUnit = measurementUnits.find((unit) => !takeoffUnitsCompatible(unit, lineUnit));
+  if (mismatchedUnit != null && !options.forceUnit) {
+    return {
+      conflict: false as const,
+      unit_conflict: true as const,
+      quantity: currentQuantity,
+      takeoff_quantity: quantity,
+      takeoff_unit: normalizeTakeoffUnit(mismatchedUnit),
+      line_unit: lineUnit,
+      measurement_count: measurements.length,
+    };
+  }
 
   // Anti-clobber: a hand-typed quantity that no longer matches the last
   // synced takeoff number only gets replaced after the user confirms (force).
@@ -822,43 +950,54 @@ async function syncTakeoffQuantityToLine(
   ) {
     return {
       conflict: true as const,
+      unit_conflict: false as const,
       quantity: currentQuantity,
       takeoff_quantity: quantity,
+      takeoff_unit: takeoffUnit,
+      line_unit: lineUnit,
       measurement_count: measurements.length,
     };
   }
 
+  // Provenance patches degrade in steps: full metadata, then Phase 1
+  // provenance without takeoff_unit, then the legacy quantity-only write.
+  const updatePatches: Record<string, unknown>[] = provenanceReady
+    ? [
+        {
+          takeoff_quantity: quantity,
+          takeoff_synced_at: new Date().toISOString(),
+          takeoff_unit: takeoffUnit || null,
+          quantity_source: "takeoff",
+          quantity,
+        },
+        {
+          takeoff_quantity: quantity,
+          takeoff_synced_at: new Date().toISOString(),
+          quantity_source: "takeoff",
+          quantity,
+        },
+        { quantity },
+      ]
+    : [{ quantity }];
   let updateError: DynamicSupabaseError | null = null;
-  if (provenanceReady) {
+  for (const patch of updatePatches) {
     const result = await dynamicTable(context.supabase, "estimate_line_items")
-      .update({
-        takeoff_quantity: quantity,
-        takeoff_synced_at: new Date().toISOString(),
-        quantity_source: "takeoff",
-        quantity,
-      })
-      .eq("id", lineItemId)
-      .eq("estimate_id", estimateId);
-    if (result.error && isMissingQuantityProvenanceColumn(result.error)) {
-      provenanceReady = false;
-    } else {
-      updateError = result.error;
-    }
-  }
-  if (!provenanceReady) {
-    const result = await dynamicTable(context.supabase, "estimate_line_items")
-      .update({ quantity })
+      .update(patch)
       .eq("id", lineItemId)
       .eq("estimate_id", estimateId);
     updateError = result.error;
+    if (!updateError || !isMissingQuantityProvenanceColumn(updateError)) break;
   }
   if (updateError) throw new Error(updateError.message);
 
   await recalculateEstimateTotalsInternal(context, estimateId);
   return {
     conflict: false as const,
+    unit_conflict: false as const,
     quantity,
     takeoff_quantity: quantity,
+    takeoff_unit: takeoffUnit,
+    line_unit: lineUnit,
     measurement_count: measurements.length,
   };
 }
@@ -869,5 +1008,6 @@ export const syncTakeoffToEstimateLine = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => ({
     sync: await syncTakeoffQuantityToLine(context, data.estimate_id, data.estimate_line_item_id, {
       force: data.force,
+      forceUnit: data.force_unit,
     }),
   }));
