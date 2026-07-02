@@ -3058,6 +3058,7 @@ function PlanCanvas({
   const [miniMapDock, setMiniMapDock] = useState<MiniMapDock>("bottom-left");
   const [miniMapPosition, setMiniMapPosition] = useState<MiniMapPosition | null>(null);
   const [isMiniMapCollapsed, setIsMiniMapCollapsed] = useState(false);
+  const [hasMiniMapPreference, setHasMiniMapPreference] = useState(false);
   const [viewportFrame, setViewportFrame] = useState<ViewportFrame>(EMPTY_VIEWPORT_FRAME);
   const [renderQuality, setRenderQuality] = useState<RenderQualityStatus | null>(null);
   const [pdfDetailMode, setPdfDetailMode] = useState<PdfDetailMode>(DEFAULT_PDF_DETAIL_MODE);
@@ -3073,6 +3074,20 @@ function PlanCanvas({
   const overlayBlendMode = overlayMode === "compare" ? "multiply" : "normal";
   const selectedMeasurement =
     measurements.find((measurement) => measurement.id === selectedMeasurementId) ?? null;
+
+  useEffect(() => {
+    if (hasMiniMapPreference) return;
+    setIsMiniMapCollapsed(isCockpitMode);
+    if (isCockpitMode) {
+      setMiniMapDock("bottom-left");
+      setMiniMapPosition(null);
+    }
+  }, [hasMiniMapPreference, isCockpitMode]);
+
+  const setMiniMapCollapsedByUser = useCallback((collapsed: boolean) => {
+    setHasMiniMapPreference(true);
+    setIsMiniMapCollapsed(collapsed);
+  }, []);
   const pdfDetailOption = PDF_DETAIL_OPTION_BY_MODE[pdfDetailMode];
   const pdfDetailMultiplier = pdfDetailOption.multiplier;
 
@@ -3616,6 +3631,22 @@ function PlanCanvas({
           <ZoomIn className="h-3.5 w-3.5" />
           Zoom Area
         </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={isMiniMapCollapsed ? "outline" : "default"}
+          className="gap-1.5"
+          title={isMiniMapCollapsed ? "Show sheet map" : "Hide sheet map"}
+          aria-pressed={!isMiniMapCollapsed}
+          onClick={() => {
+            setHasMiniMapPreference(true);
+            setIsMiniMapCollapsed((current) => !current);
+          }}
+          data-testid="plan-minimap-toggle"
+        >
+          <MapIcon className="h-3.5 w-3.5" />
+          Map
+        </Button>
         {canOpenOriginalPdf && (
           <Button
             type="button"
@@ -3973,7 +4004,7 @@ function PlanCanvas({
           position={miniMapPosition}
           onPositionChange={setMiniMapPosition}
           collapsed={isMiniMapCollapsed}
-          onCollapsedChange={setIsMiniMapCollapsed}
+          onCollapsedChange={setMiniMapCollapsedByUser}
         />
       </div>
     </div>
@@ -4086,16 +4117,17 @@ function PlanMiniMap({
       <button
         type="button"
         className={cn(
-          "absolute z-20 hidden items-center gap-2 rounded-md border border-hairline bg-card/95 px-3 py-2 text-xs font-medium text-card-foreground shadow-lg backdrop-blur sm:flex",
+          "absolute z-50 hidden items-center gap-2 rounded-md border border-hairline bg-card/95 px-3 py-2 text-xs font-medium text-card-foreground shadow-lg backdrop-blur sm:flex",
           position ? "" : dockClass,
         )}
         style={positionStyle}
         onClick={() => onCollapsedChange(false)}
         data-testid="plan-minimap-collapsed"
         title="Show sheet map"
+        aria-label="Show sheet map"
       >
         <MapIcon className="h-3.5 w-3.5" />
-        Sheet Map
+        Show Map
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           {measurements.length}
         </Badge>
@@ -4107,7 +4139,7 @@ function PlanMiniMap({
     <div
       ref={mapRef}
       className={cn(
-        "absolute z-20 hidden w-52 overflow-hidden rounded-md border border-hairline bg-card/95 text-card-foreground shadow-lg backdrop-blur sm:block",
+        "absolute z-50 hidden w-52 overflow-hidden rounded-md border border-hairline bg-card/95 text-card-foreground shadow-lg backdrop-blur sm:block",
         position ? "" : dockClass,
       )}
       style={positionStyle}
@@ -4143,9 +4175,17 @@ function PlanMiniMap({
             }}
             data-testid="plan-minimap-dock"
             title="Dock sheet map in another corner"
+            aria-label="Dock sheet map in another corner"
           >
-            Dock
+            Corner
           </Button>
+          <span
+            className="rounded px-1.5 py-1 text-[10px] font-medium text-muted-foreground"
+            data-testid="plan-minimap-move"
+            title="Drag the Sheet Map header to move it anywhere on the drawing"
+          >
+            Move
+          </span>
           <Button
             type="button"
             size="icon"
@@ -4158,6 +4198,7 @@ function PlanMiniMap({
             }}
             data-testid="plan-minimap-collapse"
             title="Hide sheet map"
+            aria-label="Minimize sheet map"
           >
             <Minimize2 className="h-3 w-3" />
           </Button>
