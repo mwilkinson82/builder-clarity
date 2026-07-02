@@ -308,6 +308,11 @@ export async function processPlanSetSheets({
               (item.transform as number[])[2] ?? 0,
               (item.transform as number[])[3] ?? 0,
             ),
+            // Vertical text (90° rotation) advances along y; the extractor
+            // clusters those runs by x instead of y.
+            rotated:
+              Math.abs((item.transform as number[])[1] ?? 0) >
+              Math.abs((item.transform as number[])[0] ?? 0),
           }));
         const identity = extractSheetIdentity({
           items,

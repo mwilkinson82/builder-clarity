@@ -521,6 +521,84 @@ const harborDirectCents = harborLines.reduce(
 );
 assert.ok(harborDirectCents > 200_000_00);
 
+// --- Title-block extraction tuning (Phase 3 Task 6) ---
+// Fixtures modeled on the founder's Crystal Carwash geometry (36x24in page =
+// 2592x1728 pdf points, title block on the right edge / bottom strip).
+const CARWASH_PAGE = { pageWidth: 2592, pageHeight: 1728 };
+
+// (a) Number in the extreme bottom-right corner, title stacked in the
+// right-edge vertical strip ABOVE the old bottom-right band, and a detail
+// caption that appears both mid-page and near the title block. The caption is
+// closer to the number than the real title, so without caption dedupe it wins.
+const rightStripIdentity = extractSheetIdentity({
+  items: [
+    { text: "DOOR JAMB AT GWB PARTITION", x: 1000, y: 900, height: 10 }, // mid-page caption
+    { text: "DOOR JAMB AT GWB PARTITION", x: 2330, y: 380, height: 12 }, // same caption by the block
+    { text: "CRYSTAL CARWASH", x: 2330, y: 1100, height: 16 }, // project name high in the strip
+    { text: "DOOR, WINDOW TYPES &", x: 2330, y: 650, height: 13 },
+    { text: "SCHEDULES", x: 2330, y: 628, height: 13 },
+    { text: "SCALE: AS NOTED", x: 2330, y: 200, height: 8 },
+    { text: "A-700", x: 2440, y: 60, height: 30 },
+  ],
+  ...CARWASH_PAGE,
+});
+assert.equal(rightStripIdentity.sheetNumber, "A-700");
+assert.equal(rightStripIdentity.sheetName, "DOOR, WINDOW TYPES & SCHEDULES");
+assert.equal(rightStripIdentity.sheetName.includes("DOOR JAMB"), false);
+
+// (b) Detail-bubble references (small "A-5" mid-page, small "A-7" inside the
+// bottom strip) must lose to the big corner number.
+const detailBubbleIdentity = extractSheetIdentity({
+  items: [
+    { text: "A-5", x: 1300, y: 850, height: 9 }, // detail bubble mid-page
+    { text: "A-7", x: 500, y: 100, height: 9 }, // stray reference in the bottom strip
+    { text: "EXTERIOR ELEVATIONS", x: 2330, y: 300, height: 13 },
+    { text: 'SCALE: 1/4" = 1\'-0"', x: 2330, y: 200, height: 8 },
+    { text: "A-300", x: 2380, y: 130, height: 26 },
+  ],
+  ...CARWASH_PAGE,
+});
+assert.equal(detailBubbleIdentity.sheetNumber, "A-300");
+assert.equal(detailBubbleIdentity.sheetName, "EXTERIOR ELEVATIONS");
+
+// (c) Bottom-strip title block: the number sits bottom-center-right, outside
+// the old bottom-right band entirely, with the title beside it and the
+// project cell far to the left.
+const bottomStripIdentity = extractSheetIdentity({
+  items: [
+    { text: "WALL TYPES LEGEND", x: 400, y: 1200, height: 12 }, // page-body text
+    { text: "CRYSTAL CARWASH", x: 300, y: 100, height: 14 },
+    { text: "FIRST FLOOR PLAN", x: 1180, y: 96, height: 14 },
+    { text: 'SCALE: 1/8" = 1\'-0"', x: 1180, y: 60, height: 8 },
+    { text: "PROJECT NO. 2214", x: 2000, y: 60, height: 8 },
+    { text: "A-101", x: 1700, y: 90, height: 22 },
+  ],
+  ...CARWASH_PAGE,
+});
+assert.equal(bottomStripIdentity.sheetNumber, "A-101");
+assert.equal(bottomStripIdentity.sheetName, "FIRST FLOOR PLAN");
+
+// (d) Page-body text only (or a scanned page with no vector text) finds nothing.
+const bodyOnlyIdentity = extractSheetIdentity({
+  items: [{ text: "WALL SECTION", x: 1200, y: 900, height: 12 }],
+  ...CARWASH_PAGE,
+});
+assert.equal(bodyOnlyIdentity.sheetNumber, null);
+assert.equal(bodyOnlyIdentity.sheetName, null);
+
+// (e) Rotated (vertical) title text in the right-edge strip clusters by x and
+// reads bottom-to-top.
+const rotatedStripIdentity = extractSheetIdentity({
+  items: [
+    { text: "FOUNDATION", x: 2520, y: 600, height: 12, rotated: true },
+    { text: "PLAN", x: 2520, y: 690, height: 12, rotated: true },
+    { text: "S-201", x: 2450, y: 80, height: 24 },
+  ],
+  ...CARWASH_PAGE,
+});
+assert.equal(rotatedStripIdentity.sheetNumber, "S-201");
+assert.equal(rotatedStripIdentity.sheetName, "FOUNDATION PLAN");
+
 console.log(
   [
     "Estimating beta smoke checks passed:",

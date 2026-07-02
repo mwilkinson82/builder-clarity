@@ -219,18 +219,222 @@ export function disciplineForSheetNumber(sheetNumber: string): string {
 }
 
 // Title-block text extraction. Works on positioned text items (pdf points,
-// origin bottom-left). The sheet number and name live almost always in the
-// bottom-right title block: roughly the right 25% x bottom 30% of the page.
+// origin bottom-left). Title blocks vary: the classic bottom-right block, a
+// vertical strip running the full right edge, or a strip along the bottom.
+// Candidates are collected from all three regions and scored — text size plus
+// proximity to the bottom-right corner — so a big corner number beats a small
+// stray detail reference that happens to match the sheet-number pattern.
 
 export type SheetTextItem = {
   text: string;
   x: number;
   y: number;
   height?: number;
+  // True when the pdf text runs vertically (rotated 90°) — common in
+  // right-edge title strips. Vertical runs cluster by x instead of y.
+  rotated?: boolean;
 };
 
 const TITLE_BLOCK_FIELD_LABELS =
-  /^(scale|date|drawn|checked|approved|designed|project\s*(no|number)?|job\s*(no|number)?|sheet\s*(no|number)?|rev(ision)?|of|as\s+noted|as\s+shown)\b/i;
+  /^(scale|date|drawn|checked|approved|designed|reviewed|project\s*(no|number)?|job\s*(no|number)?|sheet\s*(no|number)?|rev(ision)?s?|of|as\s+noted|as\s+shown|issued?|plot\s*(date|by)|drawing\s*(no|number)|dwg|file\s*(no|name)?|copyright|key\s*plan|seal|stamp|phone|fax|e-?mail|consultants?)\b/i;
+
+// Candidate regions, as fractions of the page. The union of the three covers
+// the places real title blocks live.
+const TITLE_REGION_BAND_X = 0.72; // bottom-right band: right 28% ...
+const TITLE_REGION_BAND_Y = 0.32; // ... x bottom 32% (the original region)
+const TITLE_REGION_RIGHT_STRIP_X = 0.86; // right-edge vertical strip, full height
+const TITLE_REGION_BOTTOM_STRIP_Y = 0.14; // bottom strip, full width
+
+const DEFAULT_TEXT_ITEM_HEIGHT = 8;
+// Rough advance of a text run when pdfjs gives no width: chars x height x 0.55.
+const APPROX_CHAR_WIDTH_RATIO = 0.55;
+const MAX_TITLE_LINES = 3;
+
+type NormalizedTextItem = {
+  text: string;
+  x: number;
+  y: number;
+  height: number;
+  rotated: boolean;
+};
+
+type ExtractedLine = {
+  text: string;
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+  height: number;
+  items: NormalizedTextItem[];
+};
+
+function estimateAdvance(item: NormalizedTextItem): number {
+  return Math.max(item.text.length, 1) * item.height * APPROX_CHAR_WIDTH_RATIO;
+}
+
+function segmentToLine(segment: NormalizedTextItem[], rotated: boolean): ExtractedLine {
+  const height = Math.max(...segment.map((item) => item.height));
+  if (rotated) {
+    // Vertical run: text reads along y (bottom-up start), x is the strip position.
+    const last = segment[segment.length - 1];
+    return {
+      text: segment.map((item) => item.text).join(" "),
+      xMin: Math.min(...segment.map((item) => item.x)),
+      xMax: Math.max(...segment.map((item) => item.x)),
+      yMin: Math.min(...segment.map((item) => item.y)),
+      yMax: last.y + estimateAdvance(last),
+      height,
+      items: segment,
+    };
+  }
+  return {
+    text: segment.map((item) => item.text).join(" "),
+    xMin: Math.min(...segment.map((item) => item.x)),
+    xMax: Math.max(...segment.map((item) => item.x + estimateAdvance(item))),
+    yMin: Math.min(...segment.map((item) => item.y)),
+    yMax: Math.max(...segment.map((item) => item.y)),
+    height,
+    items: segment,
+  };
+}
+
+// Clusters items into visual lines: horizontal text groups by y then splits on
+// large x gaps (so side-by-side title-block cells at the same baseline stay
+// separate lines); rotated text groups by x and reads bottom-to-top.
+function clusterTextLines(source: SheetTextItem[]): ExtractedLine[] {
+  const items: NormalizedTextItem[] = source
+    .filter((item) => item.text.trim().length > 0)
+    .map((item) => ({
+      text: item.text.trim(),
+      x: item.x,
+      y: item.y,
+      height: item.height ?? DEFAULT_TEXT_ITEM_HEIGHT,
+      rotated: item.rotated === true,
+    }));
+  const lines: ExtractedLine[] = [];
+
+  const horizontalRows: Array<{ y: number; items: NormalizedTextItem[] }> = [];
+  for (const item of items
+    .filter((candidate) => !candidate.rotated)
+    .sort((a, b) => b.y - a.y || a.x - b.x)) {
+    const row = horizontalRows.find(
+      (candidate) => Math.abs(candidate.y - item.y) <= item.height * 0.6,
+    );
+    if (row) row.items.push(item);
+    else horizontalRows.push({ y: item.y, items: [item] });
+  }
+  for (const row of horizontalRows) {
+    const ordered = [...row.items].sort((a, b) => a.x - b.x);
+    let segment: NormalizedTextItem[] = [];
+    let reach = 0;
+    for (const item of ordered) {
+      const gapLimit = Math.max(item.height * 2.5, 24);
+      if (segment.length > 0 && item.x - reach > gapLimit) {
+        lines.push(segmentToLine(segment, false));
+        segment = [];
+      }
+      segment.push(item);
+      reach = Math.max(reach, item.x + estimateAdvance(item));
+    }
+    if (segment.length > 0) lines.push(segmentToLine(segment, false));
+  }
+
+  const rotatedColumns: Array<{ x: number; items: NormalizedTextItem[] }> = [];
+  for (const item of items
+    .filter((candidate) => candidate.rotated)
+    .sort((a, b) => a.x - b.x || a.y - b.y)) {
+    const column = rotatedColumns.find(
+      (candidate) => Math.abs(candidate.x - item.x) <= item.height * 0.6,
+    );
+    if (column) column.items.push(item);
+    else rotatedColumns.push({ x: item.x, items: [item] });
+  }
+  for (const column of rotatedColumns) {
+    const ordered = [...column.items].sort((a, b) => a.y - b.y);
+    let segment: NormalizedTextItem[] = [];
+    let reach = 0;
+    for (const item of ordered) {
+      const gapLimit = Math.max(item.height * 2.5, 24);
+      if (segment.length > 0 && item.y - reach > gapLimit) {
+        lines.push(segmentToLine(segment, true));
+        segment = [];
+      }
+      segment.push(item);
+      reach = Math.max(reach, item.y + estimateAdvance(item));
+    }
+    if (segment.length > 0) lines.push(segmentToLine(segment, true));
+  }
+
+  return lines;
+}
+
+type SheetNumberCandidate = {
+  value: string;
+  x: number;
+  y: number;
+  height: number;
+  line: ExtractedLine;
+};
+
+function collectSheetNumberCandidates(lines: ExtractedLine[]): SheetNumberCandidate[] {
+  const candidates: SheetNumberCandidate[] = [];
+  for (const line of lines) {
+    for (const item of line.items) {
+      for (const token of [item.text, ...item.text.split(/\s+/)]) {
+        const value = matchSheetNumber(token);
+        if (value) {
+          candidates.push({ value, x: item.x, y: item.y, height: item.height, line });
+        }
+      }
+    }
+    // Numbers split across adjacent items ("A-" + "700") join with no space.
+    // "REV"/"NO" prefixes are field labels, not disciplines — never join them.
+    for (let index = 1; index < line.items.length; index += 1) {
+      const first = line.items[index - 1];
+      const second = line.items[index];
+      if (/^(rev|no)[-–—.]?$/i.test(first.text)) continue;
+      const value = matchSheetNumber(`${first.text}${second.text}`);
+      if (value) {
+        candidates.push({
+          value,
+          x: first.x,
+          y: Math.min(first.y, second.y),
+          height: Math.max(first.height, second.height),
+          line,
+        });
+      }
+    }
+    if (line.items.length >= 3) {
+      const value = matchSheetNumber(line.text.replace(/\s+/g, ""));
+      if (value) {
+        candidates.push({ value, x: line.xMin, y: line.yMin, height: line.height, line });
+      }
+    }
+  }
+  return candidates;
+}
+
+// Score = normalized text size + proximity to the bottom-right page corner.
+// A large number in the corner (~0.95) dwarfs a small detail-bubble reference
+// mid-strip (~0.35), which is exactly the ordering real sheets need.
+function scoreSheetNumberCandidate(
+  candidate: SheetNumberCandidate,
+  maxHeight: number,
+  pageWidth: number,
+  pageHeight: number,
+): number {
+  const size = maxHeight > 0 ? candidate.height / maxHeight : 0;
+  const dx = Math.min(1, Math.max(0, (pageWidth - candidate.x) / pageWidth));
+  const dy = Math.min(1, Math.max(0, candidate.y / pageHeight));
+  const cornerProximity = 1 - Math.min(1, Math.hypot(dx, dy) / Math.SQRT2);
+  return 0.55 * size + 0.45 * cornerProximity;
+}
+
+function intervalDistance(value: number, min: number, max: number): number {
+  if (value < min) return min - value;
+  if (value > max) return value - max;
+  return 0;
+}
 
 export function extractSheetIdentity({
   items,
@@ -242,71 +446,97 @@ export function extractSheetIdentity({
   pageHeight: number;
 }): { sheetNumber: string | null; sheetName: string | null } {
   if (pageWidth <= 0 || pageHeight <= 0) return { sheetNumber: null, sheetName: null };
-  const region = items.filter(
-    (item) =>
-      item.text.trim().length > 0 && item.x >= pageWidth * 0.72 && item.y <= pageHeight * 0.32,
-  );
-  if (region.length === 0) return { sheetNumber: null, sheetName: null };
+  const nonEmpty = items.filter((item) => item.text.trim().length > 0);
+  const inTitleRegion = (item: SheetTextItem) =>
+    (item.x >= pageWidth * TITLE_REGION_BAND_X && item.y <= pageHeight * TITLE_REGION_BAND_Y) ||
+    item.x >= pageWidth * TITLE_REGION_RIGHT_STRIP_X ||
+    item.y <= pageHeight * TITLE_REGION_BOTTOM_STRIP_Y;
+  const regionItems = nonEmpty.filter(inTitleRegion);
+  if (regionItems.length === 0) return { sheetNumber: null, sheetName: null };
+  const lines = clusterTextLines(regionItems);
 
-  // Cluster items into lines by y, then read each line left to right.
-  const sorted = [...region].sort((a, b) => b.y - a.y || a.x - b.x);
-  const lines: Array<{ text: string; y: number; height: number }> = [];
-  for (const item of sorted) {
-    const height = item.height ?? 8;
-    const line = lines.find((candidate) => Math.abs(candidate.y - item.y) <= height * 0.6);
-    if (line) {
-      line.text = `${line.text} ${item.text.trim()}`.trim();
-      line.height = Math.max(line.height, height);
-    } else {
-      lines.push({ text: item.text.trim(), y: item.y, height });
+  const candidates = collectSheetNumberCandidates(lines);
+  if (candidates.length === 0) return { sheetNumber: null, sheetName: null };
+  const maxCandidateHeight = Math.max(...candidates.map((candidate) => candidate.height));
+  let chosen = candidates[0];
+  let chosenScore = -Infinity;
+  for (const candidate of candidates) {
+    const score = scoreSheetNumberCandidate(candidate, maxCandidateHeight, pageWidth, pageHeight);
+    if (
+      score > chosenScore ||
+      (score === chosenScore &&
+        (candidate.height > chosen.height ||
+          (candidate.height === chosen.height && candidate.y < chosen.y)))
+    ) {
+      chosen = candidate;
+      chosenScore = score;
     }
   }
 
-  // Sheet number: bottom-most match wins; title blocks put it big in the
-  // corner. Ties go to the taller text.
-  let sheetNumber: { value: string; y: number; height: number } | null = null;
-  for (const line of lines) {
-    const candidates = [line.text, ...line.text.split(/\s+/)];
-    for (const candidate of candidates) {
-      const value = matchSheetNumber(candidate);
-      if (!value) continue;
-      if (
-        !sheetNumber ||
-        line.y < sheetNumber.y - 1 ||
-        (Math.abs(line.y - sheetNumber.y) <= 1 && line.height > sheetNumber.height)
-      ) {
-        sheetNumber = { value, y: line.y, height: line.height };
-      }
-    }
+  // Caption dedupe: text that also appears on the page body outside the title
+  // regions is a detail caption, not a sheet name ("DOOR JAMB AT GWB
+  // PARTITION" repeats under its detail view mid-page).
+  const outsideTexts = new Set<string>();
+  const normalizeForDedupe = (text: string) => text.replace(/\s+/g, " ").trim().toUpperCase();
+  for (const line of clusterTextLines(nonEmpty.filter((item) => !inTitleRegion(item)))) {
+    outsideTexts.add(normalizeForDedupe(line.text));
+    for (const item of line.items) outsideTexts.add(normalizeForDedupe(item.text));
   }
 
-  // Sheet name: the nearest multi-word line(s) above the number in the same
-  // region; wrapped lines join. The drawing's own casing is kept.
+  // Sheet name: the best multi-word line adjacent to the chosen number —
+  // bigger text and shorter distance to the number both help — then wrapped
+  // neighbors of similar size join. The drawing's own casing is kept.
+  const eligible = lines.filter((line) => {
+    if (line === chosen.line) return false;
+    if (matchSheetNumber(line.text.replace(/\s+/g, ""))) return false;
+    if (TITLE_BLOCK_FIELD_LABELS.test(line.text)) return false;
+    if (!/[A-Za-z]{3,}/.test(line.text)) return false;
+    if (line.text.split(/\s+/).length < 2 && line.text.length < 6) return false;
+    if (outsideTexts.has(normalizeForDedupe(line.text))) return false;
+    if (line.yMax < chosen.y - chosen.height * 2.5) return false; // beneath the number
+    if (intervalDistance(chosen.y, line.yMin, line.yMax) > pageHeight * 0.5) return false;
+    if (intervalDistance(chosen.x, line.xMin, line.xMax) > pageWidth * 0.45) return false;
+    return true;
+  });
+  const nameScore = (line: ExtractedLine) => {
+    const dyDist = intervalDistance(chosen.y, line.yMin, line.yMax) / pageHeight;
+    const dxDist = intervalDistance(chosen.x, line.xMin, line.xMax) / pageWidth;
+    const below = line.yMax < chosen.y;
+    return line.height - dyDist * 30 * (below ? 2 : 1) - dxDist * 10;
+  };
   let sheetName: string | null = null;
-  if (sheetNumber) {
-    const numberY = sheetNumber.y;
-    const nameLines = lines
-      .filter(
+  if (eligible.length > 0) {
+    const ranked = [...eligible].sort((a, b) => nameScore(b) - nameScore(a));
+    const anchor = ranked[0];
+    const block: ExtractedLine[] = [anchor];
+    const pool = ranked.slice(1);
+    while (block.length < MAX_TITLE_LINES) {
+      const next = pool.find(
         (line) =>
-          line.y > numberY + 1 &&
-          !matchSheetNumber(line.text.replace(/\s+/g, "")) &&
-          !TITLE_BLOCK_FIELD_LABELS.test(line.text) &&
-          /[A-Za-z]{3,}/.test(line.text) &&
-          (line.text.trim().split(/\s+/).length >= 2 || line.text.trim().length >= 6),
-      )
-      .sort((a, b) => a.y - b.y)
-      .slice(0, 2)
-      .sort((a, b) => b.y - a.y);
-    if (nameLines.length > 0) {
-      sheetName = nameLines
-        .map((line) => line.text.trim())
+          !block.includes(line) &&
+          line.height >= anchor.height * 0.66 &&
+          line.height <= anchor.height * 1.5 &&
+          block.some(
+            (member) =>
+              Math.max(0, line.yMin - member.yMax, member.yMin - line.yMax) <=
+                anchor.height * 2.2 &&
+              Math.max(0, line.xMin - member.xMax, member.xMin - line.xMax) <= pageWidth * 0.1,
+          ),
+      );
+      if (!next) break;
+      block.push(next);
+    }
+    sheetName =
+      block
+        .sort((a, b) => b.yMax - a.yMax || a.xMin - b.xMin)
+        .map((line) => line.text)
         .join(" ")
         .replace(/\s+/g, " ")
-        .slice(0, 200);
-    }
+        .trim()
+        .slice(0, 200) || null;
   }
 
-  return { sheetNumber: sheetNumber?.value ?? null, sheetName };
+  return { sheetNumber: chosen.value, sheetName };
 }
 
 // --- Decimal-feet trap -------------------------------------------------------
