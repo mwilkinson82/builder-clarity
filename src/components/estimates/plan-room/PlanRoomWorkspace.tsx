@@ -15,6 +15,7 @@ import {
   Link2,
   Maximize2,
   Minimize2,
+  Pencil,
   Save,
   Target,
   Trash2,
@@ -47,6 +48,7 @@ import { fmtUSD } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   applyScaleToSheets,
+  updatePlanSheets,
   createPlanSet,
   createTakeoffMeasurement,
   deleteTakeoffMeasurement,
@@ -65,6 +67,7 @@ import {
   statedScaleFeetPerPixel,
   takeoffUnitsCompatible,
 } from "@/lib/plan-room-math";
+import type { ProcessedSheetPage } from "./PdfSheetViewer";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 import {
   COCKPIT_CHROME_PANEL_TOP_GAP,
@@ -119,7 +122,13 @@ import {
   type ToolMode,
   type ViewSize,
 } from "./planRoomShared";
-import { PlanCanvas, computeStatedScalePatches, getPdfPageCount } from "./PdfSheetViewer";
+import {
+  PlanCanvas,
+  computeStatedScalePatches,
+  getPdfPageCount,
+  processPlanSetSheets,
+} from "./PdfSheetViewer";
+import { FeetInchesHint } from "./TakeoffTools";
 import { TakeoffTools } from "./TakeoffTools";
 import {
   SyncConflictDialog,
@@ -158,6 +167,8 @@ export function PlanRoomWorkspace({
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const focusLineAppliedRef = useRef(false);
+  const thumbBackfillRef = useRef<Set<string>>(new Set());
+  const pendingPointsRef = useRef<Point[]>([]);
   const mainRef = useRef<HTMLElement | null>(null);
   const cockpitPanelInteractionRef = useRef<CockpitPanelInteraction | null>(null);
   const createPlanSetFn = useServerFn(createPlanSet);
@@ -167,6 +178,7 @@ export function PlanRoomWorkspace({
   const deleteMeasurementFn = useServerFn(deleteTakeoffMeasurement);
   const syncLineFn = useServerFn(syncTakeoffToEstimateLine);
   const applyScaleToSheetsFn = useServerFn(applyScaleToSheets);
+  const updatePlanSheetsFn = useServerFn(updatePlanSheets);
 
   const [selectedSheetId, setSelectedSheetId] = useState<string>("");
   const [tool, setTool] = useState<ToolMode>("select");
@@ -192,6 +204,18 @@ export function PlanRoomWorkspace({
     count: number;
   } | null>(null);
   const [syncConflict, setSyncConflict] = useState<SyncConflictState | null>(null);
+  const [thumbUrlByPath, setThumbUrlByPath] = useState<Record<string, string>>({});
+  const [detectProposals, setDetectProposals] = useState<Array<{
+    sheetId: string;
+    currentLabel: string;
+    detectedNumber: string;
+    detectedName: string;
+    accepted: boolean;
+  }> | null>(null);
+  const [headerRename, setHeaderRename] = useState<{
+    sheetNumber: string;
+    sheetName: string;
+  } | null>(null);
   const [verifyOutcome, setVerifyOutcome] = useState<{
     measuredFeet: number;
     expectedFeet: number;
@@ -502,6 +526,10 @@ export function PlanRoomWorkspace({
     qc.invalidateQueries({ queryKey: ["estimates"] });
   };
 
+  useEffect(() => {
+    pendingPointsRef.current = pendingPoints;
+  }, [pendingPoints]);
+
   const handlePageMetrics = useCallback(
     (metrics: { widthPoints: number; heightPoints: number } | null) => {
       setPdfPageMetrics((current) => {
@@ -682,6 +710,99 @@ export function PlanRoomWorkspace({
       toast.error(error instanceof Error ? error.message : "Takeoff did not delete"),
   });
 
+  const renameSheetMutation = useMutation({
+    mutationFn: ({
+      sheetId,
+      patch,
+    }: {
+      sheetId: string;
+      patch: { sheet_number?: string; sheet_name?: string };
+    }) =>
+      updatePlanSheetsFn({
+        data: { estimate_id: estimate.id, sheets: [{ sheet_id: sheetId, patch }] },
+      }),
+    onSuccess: () => {
+      toast.success("Sheet renamed");
+      setHeaderRename(null);
+      invalidate();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Sheet did not rename"),
+  });
+
+  // "Detect sheet names": run title-block extraction across the set, then
+  // suggest — never silently rename sheets the user may already reference.
+  const detectNamesMutation = useMutation({
+    mutationFn: async () => {
+      if (!currentPlanSet) throw new Error("Choose a plan set first.");
+      if (currentPlanSet.file_mime_type !== "application/pdf" || !currentPlanSet.file_path) {
+        throw new Error("Sheet name detection needs an uploaded PDF drawing set.");
+      }
+      const url = await planSetSignedUrl(currentPlanSet);
+      const setSheets = sheets.filter((sheet) => sheet.plan_set_id === currentPlanSet.id);
+      const processed = await processPlanSetSheets({
+        source: { url },
+        sheets: setSheets,
+        extractIdentityText: true,
+      });
+      return { processed, setSheets };
+    },
+    onSuccess: ({ processed, setSheets }) => {
+      const proposals = processed
+        .map((page) => {
+          const sheet = setSheets.find((item) => item.id === page.sheet_id);
+          if (!sheet || !page.sheet_number) return null;
+          const detectedName = page.sheet_name ?? sheet.sheet_name;
+          if (page.sheet_number === sheet.sheet_number && detectedName === sheet.sheet_name) {
+            return null;
+          }
+          return {
+            sheetId: sheet.id,
+            currentLabel: `${sheet.sheet_number || `Page ${sheet.page_number}`} — ${sheet.sheet_name || "Unnamed sheet"}`,
+            detectedNumber: page.sheet_number,
+            detectedName: detectedName || "",
+            accepted: true,
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
+      if (proposals.length === 0) {
+        toast.info(
+          "No title-block names found. Scanned sets keep their names — use the pencil to rename.",
+        );
+        return;
+      }
+      setDetectProposals(proposals);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Sheet detection did not run"),
+  });
+
+  const applyDetectedNames = useMutation({
+    mutationFn: (proposals: NonNullable<typeof detectProposals>) => {
+      const accepted = proposals.filter((row) => row.accepted);
+      if (accepted.length === 0) return Promise.resolve(null);
+      return updatePlanSheetsFn({
+        data: {
+          estimate_id: estimate.id,
+          sheets: accepted.map((row) => ({
+            sheet_id: row.sheetId,
+            patch: {
+              sheet_number: row.detectedNumber,
+              ...(row.detectedName ? { sheet_name: row.detectedName } : {}),
+            },
+          })),
+        },
+      });
+    },
+    onSuccess: (result) => {
+      if (result) toast.success("Sheet names updated");
+      setDetectProposals(null);
+      invalidate();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Sheet names did not apply"),
+  });
+
   const syncLineMutation = useMutation({
     mutationFn: ({
       lineId,
@@ -762,7 +883,7 @@ export function PlanRoomWorkspace({
           contentType: file.type || "application/octet-stream",
         });
       if (uploadError) throw uploadError;
-      return await createPlanSetFn({
+      const created = await createPlanSetFn({
         data: {
           estimate_id: estimate.id,
           name: file.name.replace(/\.[^.]+$/, ""),
@@ -774,10 +895,157 @@ export function PlanRoomWorkspace({
           page_count: pageCount,
         },
       });
+      void postProcessUploadedSet(
+        file,
+        created.plan_set.id,
+        created.sheets.map((sheet) => ({ id: sheet.id, page_number: sheet.page_number })),
+      );
+      return created;
     } finally {
       setUploading(false);
     }
   };
+
+  const thumbnailPathFor = (planSetId: string, sheetId: string) =>
+    `${estimate.id}/${planSetId}/thumbs/${sheetId}.webp`;
+
+  const uploadThumbnailsAndPatches = async (planSetId: string, processed: ProcessedSheetPage[]) => {
+    const patches: Array<{
+      sheet_id: string;
+      patch: {
+        sheet_number?: string;
+        sheet_name?: string;
+        thumbnail_path?: string;
+      };
+    }> = [];
+    for (const page of processed) {
+      const patch: {
+        sheet_number?: string;
+        sheet_name?: string;
+        thumbnail_path?: string;
+      } = {};
+      if (page.sheet_number) patch.sheet_number = page.sheet_number;
+      if (page.sheet_name) patch.sheet_name = page.sheet_name;
+      if (page.thumbnail) {
+        const path = thumbnailPathFor(planSetId, page.sheet_id);
+        const { error } = await supabase.storage.from(planRoomBucket).upload(path, page.thumbnail, {
+          upsert: true,
+          contentType: page.thumbnail.type || "image/webp",
+        });
+        if (!error) patch.thumbnail_path = path;
+      }
+      if (Object.keys(patch).length > 0) patches.push({ sheet_id: page.sheet_id, patch });
+    }
+    if (patches.length > 0) {
+      await updatePlanSheetsFn({ data: { estimate_id: estimate.id, sheets: patches } });
+    }
+    return patches.length;
+  };
+
+  // Upload post-processing: thumbnails + title-block identity in one pass over
+  // the file that is already in memory. Runs in the background after the set
+  // is created; placeholder names make overwriting safe.
+  const postProcessUploadedSet = async (
+    file: File,
+    planSetId: string,
+    createdSheets: Array<{ id: string; page_number: number }>,
+  ) => {
+    if (file.type !== "application/pdf" || createdSheets.length === 0) return;
+    try {
+      const processed = await processPlanSetSheets({
+        source: { data: await file.arrayBuffer() },
+        sheets: createdSheets,
+        extractIdentityText: true,
+        renderThumbnails: true,
+      });
+      const patched = await uploadThumbnailsAndPatches(planSetId, processed);
+      if (patched > 0) {
+        const named = processed.filter((page) => page.sheet_number).length;
+        if (named > 0) {
+          toast.success(`Sheet names read from ${named} title block${named === 1 ? "" : "s"}`);
+        }
+        invalidate();
+      }
+    } catch {
+      // Thumbnails and names are conveniences; the upload itself already
+      // succeeded, so fail quietly rather than alarming the user.
+    }
+  };
+
+  const planSetSignedUrl = async (planSet: PlanSetRow) => {
+    const { data, error } = await supabase.storage
+      .from(planRoomBucket)
+      .createSignedUrl(planSet.file_path, 60 * 10);
+    if (error || !data?.signedUrl) {
+      throw new Error(error?.message ?? "The drawing set file did not open.");
+    }
+    return data.signedUrl;
+  };
+
+  // Lazy thumbnail backfill: sets uploaded before thumbnails existed gain them
+  // in the background from the already-fetched PDF, current sheet first, one
+  // page at a time.
+  const backfillThumbnails = async (planSet: PlanSetRow, missing: PlanSheetRow[]) => {
+    try {
+      const url = await planSetSignedUrl(planSet);
+      const ordered = [...missing].sort((a, b) =>
+        a.id === currentSheet?.id
+          ? -1
+          : b.id === currentSheet?.id
+            ? 1
+            : a.sort_order - b.sort_order,
+      );
+      const processed = await processPlanSetSheets({
+        source: { url },
+        sheets: ordered,
+        renderThumbnails: true,
+        throttleMs: 150,
+      });
+      const patched = await uploadThumbnailsAndPatches(planSet.id, processed);
+      if (patched > 0) invalidate();
+    } catch {
+      // Background nicety; try again next session.
+    }
+  };
+
+  useEffect(() => {
+    const planSet = currentPlanSet;
+    if (!planSet || planSet.file_mime_type !== "application/pdf" || !planSet.file_path) return;
+    if (planSet.file_path.startsWith("http") || planSet.file_path.startsWith("/")) return;
+    if (thumbBackfillRef.current.has(planSet.id)) return;
+    const missing = sheets.filter(
+      (sheet) => sheet.plan_set_id === planSet.id && !sheet.thumbnail_path,
+    );
+    if (missing.length === 0) return;
+    thumbBackfillRef.current.add(planSet.id);
+    void backfillThumbnails(planSet, missing);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPlanSet, sheets]);
+
+  // Signed URLs for sidebar thumbnails, fetched in one batch per new path set.
+  useEffect(() => {
+    const paths = sheets
+      .map((sheet) => sheet.thumbnail_path)
+      .filter((path) => path && !(path in thumbUrlByPath));
+    if (paths.length === 0) return;
+    let active = true;
+    supabase.storage
+      .from(planRoomBucket)
+      .createSignedUrls(paths, 60 * 60)
+      .then(({ data }) => {
+        if (!active || !data) return;
+        setThumbUrlByPath((current) => {
+          const next = { ...current };
+          data.forEach((entry, index) => {
+            if (entry.signedUrl) next[entry.path ?? paths[index]] = entry.signedUrl;
+          });
+          return next;
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [sheets, thumbUrlByPath]);
 
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -992,6 +1260,24 @@ export function PlanRoomWorkspace({
         ? { ...stated, count: remaining.length }
         : null,
     );
+  };
+
+  // Double-click / Enter / right-click closeout: finish the run with the
+  // vertices placed so far. Double-click's second click is skipped by the
+  // canvas, so the pair plants exactly one final point.
+  const finishRunFromCanvas = () => {
+    const points = pendingPointsRef.current;
+    if (tool === "linear" && points.length >= 2) {
+      createMeasurementMutation.mutate({ measurementTool: "linear", points });
+      return;
+    }
+    if (tool === "area" && points.length >= 3) {
+      createMeasurementMutation.mutate({ measurementTool: "area", points });
+    }
+  };
+
+  const abandonDraftRun = () => {
+    setPendingPoints([]);
   };
 
   const finishDraft = () => {
@@ -1780,6 +2066,15 @@ export function PlanRoomWorkspace({
             filteredSheetsByPlanSet={filteredSheetsByPlanSet}
             currentSheet={currentSheet}
             openSheet={openSheet}
+            thumbnailUrlByPath={thumbUrlByPath}
+            onRenameSheet={(sheetId, patch) => renameSheetMutation.mutate({ sheetId, patch })}
+            renamePending={renameSheetMutation.isPending}
+            onDetectSheetNames={
+              currentPlanSet?.file_mime_type === "application/pdf" && currentPlanSet.file_path
+                ? () => detectNamesMutation.mutate()
+                : undefined
+            }
+            detectingNames={detectNamesMutation.isPending}
           />
 
           <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
@@ -1942,7 +2237,80 @@ export function PlanRoomWorkspace({
           {!isCockpitMode && (
             <div className="flex flex-col gap-3 border-b border-hairline bg-surface px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
-                <h2 className="font-serif text-2xl leading-tight">{currentSheetTitle}</h2>
+                {headerRename && currentSheet ? (
+                  <div
+                    className="flex flex-wrap items-center gap-2"
+                    data-testid="sheet-header-rename"
+                  >
+                    <Input
+                      value={headerRename.sheetNumber}
+                      onChange={(event) =>
+                        setHeaderRename((current) =>
+                          current ? { ...current, sheetNumber: event.target.value } : current,
+                        )
+                      }
+                      className="h-8 w-28"
+                      aria-label="Sheet number"
+                    />
+                    <Input
+                      value={headerRename.sheetName}
+                      onChange={(event) =>
+                        setHeaderRename((current) =>
+                          current ? { ...current, sheetName: event.target.value } : current,
+                        )
+                      }
+                      className="h-8 w-64"
+                      aria-label="Sheet name"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() =>
+                        renameSheetMutation.mutate({
+                          sheetId: currentSheet.id,
+                          patch: {
+                            sheet_number: headerRename.sheetNumber.trim(),
+                            sheet_name: headerRename.sheetName.trim(),
+                          },
+                        })
+                      }
+                      disabled={renameSheetMutation.isPending || !headerRename.sheetNumber.trim()}
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setHeaderRename(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <h2 className="group flex items-center gap-2 font-serif text-2xl leading-tight">
+                    <span className="truncate">{currentSheetTitle}</span>
+                    {currentSheet && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 opacity-0 transition group-hover:opacity-100"
+                        title="Rename this sheet"
+                        aria-label="Rename this sheet"
+                        data-testid="sheet-header-rename-button"
+                        onClick={() =>
+                          setHeaderRename({
+                            sheetNumber: currentSheet.sheet_number,
+                            sheetName: currentSheet.sheet_name,
+                          })
+                        }
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </h2>
+                )}
                 <p className="text-xs text-muted-foreground">
                   {currentSheet?.scale_feet_per_pixel
                     ? `Scale set: ${currentSheet.scale_label || `${currentSheet.scale_feet_per_pixel.toFixed(4)} ft/px`}${
@@ -1978,6 +2346,8 @@ export function PlanRoomWorkspace({
               updateSheetMutation.isPending
             }
             onFinishDraft={finishDraft}
+            onFinishRun={finishRunFromCanvas}
+            onAbandonDraft={abandonDraftRun}
             tool={tool}
             viewSize={viewSize}
             onViewSizeChange={setViewSize}
@@ -2211,7 +2581,7 @@ export function PlanRoomWorkspace({
                   <Input
                     value={calibrationFeet}
                     onChange={(event) => setCalibrationFeet(event.target.value)}
-                    placeholder={`e.g. 12' 6"`}
+                    placeholder={`Feet & inches, e.g. 12' 6"`}
                     aria-label="Known distance in feet and inches"
                   />
                   <Button
@@ -2224,6 +2594,7 @@ export function PlanRoomWorkspace({
                     <Save className="h-3.5 w-3.5" /> Save
                   </Button>
                 </div>
+                <FeetInchesHint value={calibrationFeet} onAccept={setCalibrationFeet} />
                 {Boolean(currentSheet?.scale_feet_per_pixel) && (
                   <div className="space-y-2" data-testid="verify-scale-controls">
                     <Separator />
@@ -2261,6 +2632,7 @@ export function PlanRoomWorkspace({
                         Check
                       </Button>
                     </div>
+                    <FeetInchesHint value={verifyFeet} onAccept={setVerifyFeet} />
                   </div>
                 )}
                 <div className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
@@ -2645,6 +3017,71 @@ export function PlanRoomWorkspace({
           )}
         </aside>
       </main>
+      {detectProposals && (
+        <Dialog open onOpenChange={(open) => !open && setDetectProposals(null)}>
+          <DialogContent className="max-w-2xl" data-testid="detect-names-dialog">
+            <DialogHeader>
+              <DialogTitle>Detected sheet names</DialogTitle>
+              <DialogDescription>
+                Read from each sheet's title block. Uncheck any row you want to keep as-is — nothing
+                renames until you apply.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-[50vh] space-y-1.5 overflow-y-auto">
+              {detectProposals.map((row) => (
+                <label
+                  key={row.sheetId}
+                  className="flex cursor-pointer items-start gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-sm"
+                  data-testid="detect-names-row"
+                >
+                  <input
+                    type="checkbox"
+                    checked={row.accepted}
+                    onChange={(event) =>
+                      setDetectProposals(
+                        (current) =>
+                          current?.map((item) =>
+                            item.sheetId === row.sheetId
+                              ? { ...item, accepted: event.target.checked }
+                              : item,
+                          ) ?? null,
+                      )
+                    }
+                    className="mt-1"
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {row.currentLabel}
+                    </span>
+                    <span className="block truncate font-medium">
+                      {row.detectedNumber} — {row.detectedName || "(name unchanged)"}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setDetectProposals(null)}
+                disabled={applyDetectedNames.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => applyDetectedNames.mutate(detectProposals)}
+                disabled={
+                  applyDetectedNames.isPending || detectProposals.every((row) => !row.accepted)
+                }
+                data-testid="detect-names-apply"
+              >
+                Apply {detectProposals.filter((row) => row.accepted).length} Rename
+                {detectProposals.filter((row) => row.accepted).length === 1 ? "" : "s"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       <SyncConflictDialog
         conflict={syncConflict}
         pending={syncLineMutation.isPending}

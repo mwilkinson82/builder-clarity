@@ -633,8 +633,8 @@ export function draftCommandFor({
       detail: !hasScale
         ? "Set the sheet scale before linear quantities can calculate."
         : points.length >= 2
-          ? "Click additional turns for a run, or finish this linear takeoff."
-          : "Click the start point, then the next point on the run.",
+          ? "Click more turns, then double-click or press Enter to finish (right-click works too)."
+          : "Click the start point, then the next point on the run. Esc abandons the run.",
       ready: hasScale && points.length >= 2 && quantity > 0,
       actionLabel: "Finish Linear",
     };
@@ -646,7 +646,7 @@ export function draftCommandFor({
     detail: !hasScale
       ? "Set the sheet scale before area quantities can calculate."
       : points.length >= 3
-        ? "Keep clicking corners, then finish to close and save the area."
+        ? "Keep clicking corners, then double-click or press Enter to close and save."
         : "Click at least three corners around the area.",
     ready: hasScale && points.length >= 3 && quantity > 0,
     actionLabel: "Finish Area",

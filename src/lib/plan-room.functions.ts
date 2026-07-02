@@ -2,7 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { calculateEstimateTotals, type EstimateCustomMarkup } from "@/lib/estimates.functions";
-import { normalizeTakeoffUnit, takeoffUnitsCompatible } from "@/lib/plan-room-math";
+import {
+  disciplineForSheetNumber,
+  normalizeTakeoffUnit,
+  takeoffUnitsCompatible,
+} from "@/lib/plan-room-math";
 import type { Json } from "@/integrations/supabase/types";
 
 type DynamicSupabaseError = { code?: string; message: string };
@@ -94,6 +98,7 @@ export interface PlanSheetRow {
   scale_feet_per_pixel: number;
   scale_source: "unset" | "calibrated" | "stated";
   scale_verified_at: string | null;
+  thumbnail_path: string;
   width_px: number;
   height_px: number;
   created_at: string;
@@ -170,6 +175,7 @@ const normalizePlanSheet = (row: Record<string, unknown>): PlanSheetRow => ({
         ? "calibrated"
         : "unset",
   scale_verified_at: row.scale_verified_at == null ? null : str(row.scale_verified_at),
+  thumbnail_path: str(row.thumbnail_path),
   width_px: Math.round(num(row.width_px)),
   height_px: Math.round(num(row.height_px)),
   created_at: str(row.created_at),
@@ -488,9 +494,30 @@ const planSheetPatchFields = {
   scale_feet_per_pixel: z.number().min(0).max(100000).optional(),
   scale_source: z.enum(["unset", "calibrated", "stated"]).optional(),
   scale_verified_at: z.string().datetime({ offset: true }).nullable().optional(),
+  thumbnail_path: z.string().max(1000).optional(),
   width_px: z.number().int().min(0).max(20000).optional(),
   height_px: z.number().int().min(0).max(20000).optional(),
 };
+
+const updatePlanSheetsInput = z.object({
+  estimate_id: z.string().uuid(),
+  sheets: z
+    .array(
+      z.object({
+        sheet_id: z.string().uuid(),
+        patch: z
+          .object({
+            sheet_number: z.string().max(40).optional(),
+            sheet_name: z.string().max(200).optional(),
+            discipline: z.string().max(80).optional(),
+            thumbnail_path: z.string().max(1000).optional(),
+          })
+          .refine((patch) => Object.keys(patch).length > 0, "No sheet changes were provided."),
+      }),
+    )
+    .min(1)
+    .max(200),
+});
 
 const updatePlanSheetInput = z.object({
   sheet_id: z.string().uuid(),
@@ -640,7 +667,8 @@ export const createPlanSet = createServerFn({ method: "POST" })
     const sheetRows = Array.from({ length: data.page_count }, (_, index) => ({
       plan_set_id: planSetId,
       estimate_id: data.estimate_id,
-      sheet_number: `P-${String(index + 1).padStart(3, "0")}`,
+      // PG = page. A bare P prefix reads as plumbing to every contractor.
+      sheet_number: `PG-${String(index + 1).padStart(3, "0")}`,
       sheet_name: index === 0 ? clean(data.name, 180) : `Page ${index + 1}`,
       discipline: "",
       page_number: index + 1,
@@ -665,13 +693,13 @@ export const createPlanSet = createServerFn({ method: "POST" })
     };
   });
 
-function isMissingScaleProvenanceColumn(error: DynamicSupabaseError | null | undefined) {
+function isMissingSheetColumn(error: DynamicSupabaseError | null | undefined) {
   const message = error?.message ?? "";
   return Boolean(
     error &&
     (error.code === "PGRST204" ||
       error.code === "42703" ||
-      (/scale_source|scale_verified_at/i.test(message) &&
+      (/scale_source|scale_verified_at|thumbnail_path/i.test(message) &&
         /schema cache|column|could not find|does not exist/i.test(message))),
   );
 }
@@ -681,6 +709,11 @@ async function updatePlanSheetRow(
   sheetId: string,
   patch: Record<string, unknown>,
 ) {
+  // Whenever the sheet number changes, the discipline follows its prefix
+  // (A- architectural, S- structural...) unless the caller set it explicitly.
+  if (typeof patch.sheet_number === "string" && patch.discipline === undefined) {
+    patch.discipline = disciplineForSheetNumber(patch.sheet_number);
+  }
   let result = await dynamicTable(context.supabase, "estimate_plan_sheets")
     .update(patch)
     .eq("id", sheetId)
@@ -688,14 +721,15 @@ async function updatePlanSheetRow(
     .single();
   if (
     result.error &&
-    ("scale_source" in patch || "scale_verified_at" in patch) &&
-    isMissingScaleProvenanceColumn(result.error)
+    ("scale_source" in patch || "scale_verified_at" in patch || "thumbnail_path" in patch) &&
+    isMissingSheetColumn(result.error)
   ) {
-    // Pre-migration fallback: save the scale itself; provenance lands once
-    // the columns exist.
+    // Pre-migration fallback: save what the schema can hold; the new columns
+    // land once the migration applies.
     const {
       scale_source: _scaleSource,
       scale_verified_at: _scaleVerifiedAt,
+      thumbnail_path: _thumbnailPath,
       ...legacyPatch
     } = patch;
     if (Object.keys(legacyPatch).length === 0) {
@@ -729,6 +763,24 @@ export const updatePlanSheet = createServerFn({ method: "POST" })
     }
     const sheet = await updatePlanSheetRow(context, data.sheet_id, patch);
     return { sheet };
+  });
+
+export const updatePlanSheets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof updatePlanSheetsInput>) =>
+    updatePlanSheetsInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await loadEstimate(context, data.estimate_id);
+    const updated: PlanSheetRow[] = [];
+    for (const entry of data.sheets) {
+      const patch: Record<string, unknown> = { ...entry.patch };
+      for (const key of ["sheet_number", "sheet_name", "discipline"]) {
+        if (typeof patch[key] === "string") patch[key] = clean(String(patch[key]), 200);
+      }
+      updated.push(await updatePlanSheetRow(context, entry.sheet_id, patch));
+    }
+    return { sheets: updated };
   });
 
 export const applyScaleToSheets = createServerFn({ method: "POST" })

@@ -13,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { distancePx } from "@/lib/plan-room-math";
+import { decimalFeetHint, distancePx } from "@/lib/plan-room-math";
 import type { TakeoffMeasurementRow } from "@/lib/plan-room.functions";
 import {
   formatQty,
@@ -657,5 +657,37 @@ export function LinearAngleGuide({
         </text>
       </g>
     </g>
+  );
+}
+
+// Live conversion line for real-world distance fields. A bare decimal like
+// "12.8" shows its true feet-inches value and, when the digits read like an
+// inch count, a one-tap "did you mean 12'-8\"?" fix. Never blocks entry.
+export function FeetInchesHint({
+  value,
+  onAccept,
+}: {
+  value: string;
+  onAccept: (value: string) => void;
+}) {
+  const hint = decimalFeetHint(value);
+  if (!hint) return null;
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs"
+      data-testid="feet-inches-hint"
+    >
+      <span className="text-muted-foreground">{hint.conversionLabel}</span>
+      {hint.suggestion && (
+        <button
+          type="button"
+          className="rounded border border-warning/50 bg-warning/10 px-1.5 py-0.5 font-medium hover:bg-warning/20"
+          onClick={() => onAccept(hint.suggestion!.value)}
+          data-testid="feet-inches-suggestion"
+        >
+          {hint.suggestion.label}
+        </button>
+      )}
+    </div>
   );
 }

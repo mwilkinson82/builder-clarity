@@ -53,7 +53,11 @@ import {
   type ViewportFrame,
   type ZoomWindowDraft,
 } from "./planRoomShared";
-import { snapLinearPoint, statedScaleFeetPerPixel } from "@/lib/plan-room-math";
+import {
+  extractSheetIdentity,
+  snapLinearPoint,
+  statedScaleFeetPerPixel,
+} from "@/lib/plan-room-math";
 import { DraftShape, LinearAngleGuide, MeasurementShape, TakeoffDraftHud } from "./TakeoffTools";
 import { PlanMiniMap } from "./SheetSidebar";
 
@@ -218,6 +222,114 @@ export async function computeStatedScalePatches({
   return patches;
 }
 
+const THUMBNAIL_LONG_EDGE_PX = 240;
+
+// Renders a page thumbnail (~240px long edge, webp with jpeg fallback, small
+// enough for sidebar rows) from an already-loaded pdfjs page.
+async function renderPageThumbnail(page: {
+  getViewport: (options: { scale: number }) => PdfViewportLike;
+  // pdfjs's own RenderParameters type; kept loose so the helper accepts the
+  // dynamically imported page object.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  render: (options: any) => { promise: Promise<unknown> };
+}): Promise<Blob | null> {
+  const baseViewport = page.getViewport({ scale: 1 });
+  const longEdge = Math.max(baseViewport.width, baseViewport.height);
+  if (!Number.isFinite(longEdge) || longEdge <= 0) return null;
+  const viewport = page.getViewport({ scale: THUMBNAIL_LONG_EDGE_PX / longEdge });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(viewport.width));
+  canvas.height = Math.max(1, Math.round(viewport.height));
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvas, canvasContext: context, viewport }).promise;
+  const toBlob = (type: string, quality: number) =>
+    new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+  const webp = await toBlob("image/webp", 0.72);
+  if (webp && webp.type === "image/webp") return webp;
+  return toBlob("image/jpeg", 0.72);
+}
+
+export type ProcessedSheetPage = {
+  sheet_id: string;
+  page_number: number;
+  sheet_number: string | null;
+  sheet_name: string | null;
+  thumbnail: Blob | null;
+};
+
+// Walks a plan set's pages once with the already-loaded pdfjs machinery,
+// optionally extracting title-block identity (vector text only; scanned PDFs
+// simply find nothing) and rendering sidebar thumbnails. `throttleMs` keeps
+// background backfills polite.
+export async function processPlanSetSheets({
+  source,
+  sheets,
+  extractIdentityText = false,
+  renderThumbnails = false,
+  throttleMs = 0,
+}: {
+  source: { url: string } | { data: ArrayBuffer };
+  sheets: Array<Pick<PlanSheetRow, "id" | "page_number">>;
+  extractIdentityText?: boolean;
+  renderThumbnails?: boolean;
+  throttleMs?: number;
+}): Promise<ProcessedSheetPage[]> {
+  const pdfjs = await import("pdfjs-dist");
+  configurePdfWorker(pdfjs);
+  const documentSource = "url" in source ? await pdfDocumentSourceFor(source.url) : source;
+  const pdf = await pdfjs.getDocument(documentSource).promise;
+  const results: ProcessedSheetPage[] = [];
+  for (const sheet of sheets) {
+    const result: ProcessedSheetPage = {
+      sheet_id: sheet.id,
+      page_number: sheet.page_number,
+      sheet_number: null,
+      sheet_name: null,
+      thumbnail: null,
+    };
+    try {
+      const page = await pdf.getPage(Math.max(1, sheet.page_number));
+      if (extractIdentityText) {
+        const viewport = page.getViewport({ scale: 1 });
+        const textContent = (await page.getTextContent()) as {
+          items: Array<{ str?: string; transform?: number[] }>;
+        };
+        const items = textContent.items
+          .filter((item) => typeof item.str === "string" && Array.isArray(item.transform))
+          .map((item) => ({
+            text: item.str as string,
+            x: (item.transform as number[])[4] ?? 0,
+            y: (item.transform as number[])[5] ?? 0,
+            height: Math.hypot(
+              (item.transform as number[])[2] ?? 0,
+              (item.transform as number[])[3] ?? 0,
+            ),
+          }));
+        const identity = extractSheetIdentity({
+          items,
+          pageWidth: viewport.width,
+          pageHeight: viewport.height,
+        });
+        result.sheet_number = identity.sheetNumber;
+        result.sheet_name = identity.sheetName;
+      }
+      if (renderThumbnails) {
+        result.thumbnail = await renderPageThumbnail(page);
+      }
+    } catch {
+      // A single unreadable page must not sink the rest of the set.
+    }
+    results.push(result);
+    if (throttleMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, throttleMs));
+    }
+  }
+  return results;
+}
+
 export function PlanCanvas({
   planSet,
   sheet,
@@ -232,6 +344,8 @@ export function PlanCanvas({
   draftUnit,
   draftActionDisabled,
   onFinishDraft,
+  onFinishRun,
+  onAbandonDraft,
   tool,
   viewSize,
   onViewSizeChange,
@@ -264,6 +378,11 @@ export function PlanCanvas({
   draftUnit: string;
   draftActionDisabled: boolean;
   onFinishDraft: () => void;
+  // Finishes an in-progress linear/area run with the vertices placed so far
+  // (double-click, Enter, right-click closeout).
+  onFinishRun?: () => void;
+  // Abandons the in-progress run entirely (Esc).
+  onAbandonDraft?: () => void;
   tool: ToolMode;
   viewSize: ViewSize;
   onViewSizeChange: (size: ViewSize) => void;
@@ -623,6 +742,10 @@ export function PlanCanvas({
       setZoomWindowDraft(null);
       setGeometryEditDraft(null);
       setGeometryPreview(null);
+      if ((tool === "linear" || tool === "area") && pendingPoints.length > 0) {
+        onAbandonDraft?.();
+        setLinearGuide(null);
+      }
       return;
     }
     if (event.key === "Enter" && draftCommand?.ready && !draftActionDisabled) {
@@ -839,6 +962,9 @@ export function PlanCanvas({
     }
     const point = pointFromEvent(event);
     if (!point) return;
+    // The second click of a double-click finishes the run (via onDoubleClick)
+    // instead of planting a duplicate vertex.
+    if ((tool === "linear" || tool === "area") && event.detail > 1) return;
     // The angle guide owns the click while snapped: place the exact point.
     if (tool === "linear" && pendingPoints.length > 0 && linearGuide?.snapped) {
       onPoint(
@@ -1233,6 +1359,17 @@ export function PlanCanvas({
               onPointerUp={handlePointerUp}
               onPointerCancel={handlePointerUp}
               onPointerLeave={() => setLinearGuide(null)}
+              onDoubleClick={() => {
+                if ((tool === "linear" || tool === "area") && pendingPoints.length > 0) {
+                  onFinishRun?.();
+                }
+              }}
+              onContextMenu={(event) => {
+                if ((tool === "linear" || tool === "area") && pendingPoints.length > 0) {
+                  event.preventDefault();
+                  onFinishRun?.();
+                }
+              }}
             >
               <rect
                 x="0"

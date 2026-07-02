@@ -179,3 +179,193 @@ export function snapLinearPoint({
     snapped: true,
   };
 }
+
+// --- Sheet identity ----------------------------------------------------------
+// Construction sheet numbers: 1-3 letters + optional separator + digits with
+// an optional dot suffix (A-101, A1.1, E-201, M-1.1, FP-102, A-700).
+
+const SHEET_NUMBER_PATTERN = /^([A-Za-z]{1,3})[-–—.\s]?(\d{1,3}(?:\.\d{1,2})?)$/;
+
+export function matchSheetNumber(token: string): string | null {
+  const cleaned = token.trim();
+  if (!cleaned) return null;
+  const match = cleaned.match(SHEET_NUMBER_PATTERN);
+  if (!match) return null;
+  return cleaned.replace(/\s+/g, "");
+}
+
+// Standard discipline map keyed by the sheet-number letter prefix. "PG" is the
+// app's own page placeholder and deliberately maps to nothing — P alone is
+// plumbing, and mislabeling pages as plumbing is the exact bug this fixes.
+const DISCIPLINE_BY_PREFIX: Record<string, string> = {
+  A: "Architectural",
+  AD: "Architectural",
+  S: "Structural",
+  M: "Mechanical",
+  E: "Electrical",
+  P: "Plumbing",
+  C: "Civil",
+  L: "Landscape",
+  FP: "Fire Protection",
+  T: "Low Voltage",
+  LV: "Low Voltage",
+  G: "General",
+};
+
+export function disciplineForSheetNumber(sheetNumber: string): string {
+  const match = sheetNumber.trim().match(/^([A-Za-z]{1,3})/);
+  if (!match) return "";
+  return DISCIPLINE_BY_PREFIX[match[1].toUpperCase()] ?? "";
+}
+
+// Title-block text extraction. Works on positioned text items (pdf points,
+// origin bottom-left). The sheet number and name live almost always in the
+// bottom-right title block: roughly the right 25% x bottom 30% of the page.
+
+export type SheetTextItem = {
+  text: string;
+  x: number;
+  y: number;
+  height?: number;
+};
+
+const TITLE_BLOCK_FIELD_LABELS =
+  /^(scale|date|drawn|checked|approved|designed|project\s*(no|number)?|job\s*(no|number)?|sheet\s*(no|number)?|rev(ision)?|of|as\s+noted|as\s+shown)\b/i;
+
+export function extractSheetIdentity({
+  items,
+  pageWidth,
+  pageHeight,
+}: {
+  items: SheetTextItem[];
+  pageWidth: number;
+  pageHeight: number;
+}): { sheetNumber: string | null; sheetName: string | null } {
+  if (pageWidth <= 0 || pageHeight <= 0) return { sheetNumber: null, sheetName: null };
+  const region = items.filter(
+    (item) =>
+      item.text.trim().length > 0 && item.x >= pageWidth * 0.72 && item.y <= pageHeight * 0.32,
+  );
+  if (region.length === 0) return { sheetNumber: null, sheetName: null };
+
+  // Cluster items into lines by y, then read each line left to right.
+  const sorted = [...region].sort((a, b) => b.y - a.y || a.x - b.x);
+  const lines: Array<{ text: string; y: number; height: number }> = [];
+  for (const item of sorted) {
+    const height = item.height ?? 8;
+    const line = lines.find((candidate) => Math.abs(candidate.y - item.y) <= height * 0.6);
+    if (line) {
+      line.text = `${line.text} ${item.text.trim()}`.trim();
+      line.height = Math.max(line.height, height);
+    } else {
+      lines.push({ text: item.text.trim(), y: item.y, height });
+    }
+  }
+
+  // Sheet number: bottom-most match wins; title blocks put it big in the
+  // corner. Ties go to the taller text.
+  let sheetNumber: { value: string; y: number; height: number } | null = null;
+  for (const line of lines) {
+    const candidates = [line.text, ...line.text.split(/\s+/)];
+    for (const candidate of candidates) {
+      const value = matchSheetNumber(candidate);
+      if (!value) continue;
+      if (
+        !sheetNumber ||
+        line.y < sheetNumber.y - 1 ||
+        (Math.abs(line.y - sheetNumber.y) <= 1 && line.height > sheetNumber.height)
+      ) {
+        sheetNumber = { value, y: line.y, height: line.height };
+      }
+    }
+  }
+
+  // Sheet name: the nearest multi-word line(s) above the number in the same
+  // region; wrapped lines join. The drawing's own casing is kept.
+  let sheetName: string | null = null;
+  if (sheetNumber) {
+    const numberY = sheetNumber.y;
+    const nameLines = lines
+      .filter(
+        (line) =>
+          line.y > numberY + 1 &&
+          !matchSheetNumber(line.text.replace(/\s+/g, "")) &&
+          !TITLE_BLOCK_FIELD_LABELS.test(line.text) &&
+          /[A-Za-z]{3,}/.test(line.text) &&
+          (line.text.trim().split(/\s+/).length >= 2 || line.text.trim().length >= 6),
+      )
+      .sort((a, b) => a.y - b.y)
+      .slice(0, 2)
+      .sort((a, b) => b.y - a.y);
+    if (nameLines.length > 0) {
+      sheetName = nameLines
+        .map((line) => line.text.trim())
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .slice(0, 200);
+    }
+  }
+
+  return { sheetNumber: sheetNumber?.value ?? null, sheetName };
+}
+
+// --- Decimal-feet trap -------------------------------------------------------
+// Typing "12.8" for a 12'-8" dimension is a silent ~1% error. These helpers
+// power the live conversion line and the one-tap "did you mean" suggestion.
+
+export function formatFeetInches(feet: number): string {
+  if (!Number.isFinite(feet) || feet < 0) return "";
+  const totalEighths = Math.round(feet * 12 * 8);
+  let wholeFeet = Math.floor(totalEighths / (12 * 8));
+  const remainingEighths = totalEighths - wholeFeet * 12 * 8;
+  let inches = Math.floor(remainingEighths / 8);
+  const eighths = remainingEighths - inches * 8;
+  if (inches === 12) {
+    wholeFeet += 1;
+    inches = 0;
+  }
+  const fraction =
+    eighths === 0
+      ? ""
+      : eighths % 4 === 0
+        ? " 1/2"
+        : eighths % 2 === 0
+          ? ` ${eighths / 2}/4`
+          : ` ${eighths}/8`;
+  if (inches === 0 && !fraction) return `${wholeFeet}'`;
+  return `${wholeFeet}'-${inches}${fraction}"`;
+}
+
+export type DecimalFeetHint = {
+  decimalFeet: number;
+  conversionLabel: string;
+  suggestion: { label: string; value: string } | null;
+};
+
+// Returns a hint only for bare decimal entries with a fractional part. The
+// suggestion fires when the digits after the point read as a whole inch count
+// (0-11) that the decimal itself does not land on — ".8" is 9.6 inches, so it
+// was probably a typo for 8 inches; ".5" is exactly 6 inches, so it was
+// probably meant as a true decimal.
+export function decimalFeetHint(input: string): DecimalFeetHint | null {
+  const text = input.trim();
+  if (!/^\d+\.\d+$/.test(text)) return null;
+  const decimalFeet = Number(text);
+  if (!Number.isFinite(decimalFeet) || decimalFeet <= 0) return null;
+  const [wholePart, fractionPart] = text.split(".");
+  const inchesFromFraction = (decimalFeet - Number(wholePart)) * 12;
+  const landsOnWholeInch = Math.abs(inchesFromFraction - Math.round(inchesFromFraction)) < 1e-9;
+  const digitsAsInches = Number(fractionPart);
+  let suggestion: DecimalFeetHint["suggestion"] = null;
+  if (!landsOnWholeInch && Number.isInteger(digitsAsInches) && digitsAsInches <= 11) {
+    suggestion = {
+      label: `Did you mean ${wholePart}'-${digitsAsInches}"?`,
+      value: `${wholePart}' ${digitsAsInches}"`,
+    };
+  }
+  return {
+    decimalFeet,
+    conversionLabel: `${text} ft = ${formatFeetInches(decimalFeet)}`,
+    suggestion,
+  };
+}
