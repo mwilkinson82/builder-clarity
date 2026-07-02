@@ -798,8 +798,10 @@ export function EstimateWorkspace({
                     <TableCell
                       colSpan={13}
                       className="py-12 text-center text-sm text-muted-foreground"
+                      data-testid="estimate-grid-empty"
                     >
-                      No line items yet.
+                      Measure it in the Plan Room, price it from your Cost Library, or import your
+                      master sheet — start wherever you like.
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -1131,7 +1133,18 @@ function EstimateLineRow({
       <TableCell className="text-right tabular">{fmtUSD(materialExt / 100)}</TableCell>
       <TableCell className="text-right tabular">{fmtUSD(laborExt / 100)}</TableCell>
       <TableCell className="text-right font-medium tabular">
-        {fmtUSD((materialExt + laborExt) / 100)}
+        {draft.material_unit_cost_cents === 0 && draft.labor_unit_cost_cents === 0 ? (
+          <Badge
+            variant="outline"
+            className="border-warning/50 bg-warning/10"
+            title="This row came in without pricing. Add material or labor unit costs."
+            data-testid="line-needs-pricing"
+          >
+            Needs pricing
+          </Badge>
+        ) : (
+          fmtUSD((materialExt + laborExt) / 100)
+        )}
       </TableCell>
       <TableCell>
         <Button

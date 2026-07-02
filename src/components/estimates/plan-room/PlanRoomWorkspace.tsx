@@ -49,6 +49,7 @@ import { cn } from "@/lib/utils";
 import {
   applyScaleToSheets,
   updatePlanSheets,
+  createLineItemForTakeoffs,
   createPlanSet,
   createTakeoffMeasurement,
   deleteTakeoffMeasurement,
@@ -110,6 +111,7 @@ import {
   sheetScaleStatus,
   toolLabel,
   unitFor,
+  unitLongName,
   type CockpitPanelInteraction,
   type CockpitPanelKey,
   type CockpitPanelLayout,
@@ -130,12 +132,8 @@ import {
 } from "./PdfSheetViewer";
 import { FeetInchesHint } from "./TakeoffTools";
 import { TakeoffTools } from "./TakeoffTools";
-import {
-  SyncConflictDialog,
-  TakeoffWorksheet,
-  unitLongName,
-  type SyncConflictState,
-} from "./TakeoffWorksheet";
+import { SyncConflictDialog, TakeoffWorksheet, type SyncConflictState } from "./TakeoffWorksheet";
+import { LinkOrCreatePicker, TakeoffFinishPopover } from "./TakeoffClassify";
 import { CockpitFloatingPanelHeader, SheetSidebar } from "./SheetSidebar";
 import { ReadinessPanel } from "./ReadinessPanel";
 
@@ -179,6 +177,7 @@ export function PlanRoomWorkspace({
   const syncLineFn = useServerFn(syncTakeoffToEstimateLine);
   const applyScaleToSheetsFn = useServerFn(applyScaleToSheets);
   const updatePlanSheetsFn = useServerFn(updatePlanSheets);
+  const createLineForTakeoffsFn = useServerFn(createLineItemForTakeoffs);
 
   const [selectedSheetId, setSelectedSheetId] = useState<string>("");
   const [tool, setTool] = useState<ToolMode>("select");
@@ -215,6 +214,10 @@ export function PlanRoomWorkspace({
   const [headerRename, setHeaderRename] = useState<{
     sheetNumber: string;
     sheetName: string;
+  } | null>(null);
+  const [finishPopover, setFinishPopover] = useState<{
+    measurementId: string;
+    anchor: Point;
   } | null>(null);
   const [verifyOutcome, setVerifyOutcome] = useState<{
     measuredFeet: number;
@@ -405,6 +408,9 @@ export function PlanRoomWorkspace({
   const selectedMeasurementLine = selectedMeasurement?.estimate_line_item_id
     ? (lineItems.find((line) => line.id === selectedMeasurement.estimate_line_item_id) ?? null)
     : null;
+  const finishPopoverMeasurement = finishPopover
+    ? (measurements.find((item) => item.id === finishPopover.measurementId) ?? null)
+    : null;
   const selectedMeasurementLabel = selectedMeasurement?.label ?? "";
   const selectedMeasurementNotes = selectedMeasurement?.notes ?? "";
   const activeDraftPointCount =
@@ -494,6 +500,16 @@ export function PlanRoomWorkspace({
       setSelectedMeasurementId("");
     }
   }, [measurements, selectedMeasurementId]);
+
+  useEffect(() => {
+    setFinishPopover((current) =>
+      current && !measurements.some((item) => item.id === current.measurementId) ? null : current,
+    );
+  }, [measurements]);
+
+  useEffect(() => {
+    setFinishPopover(null);
+  }, [tool, selectedSheetId]);
 
   useEffect(() => {
     if (!selectedMeasurementId) {
@@ -599,6 +615,11 @@ export function PlanRoomWorkspace({
       setPendingPoints([]);
       setSelectedMeasurementId(result.measurement.id);
       if (variables.measurementTool !== "count") setTool("select");
+      const anchor = variables.points[variables.points.length - 1];
+      if (anchor) {
+        // The takeoff comes to you: classify right where you finished.
+        setFinishPopover({ measurementId: result.measurement.id, anchor });
+      }
       invalidate();
     },
     onError: (error) =>
@@ -709,6 +730,37 @@ export function PlanRoomWorkspace({
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Takeoff did not delete"),
   });
+
+  // Link-or-create classification. The subsequent sync runs through the
+  // normal mutation so waste, unit-guard, and anti-clobber dialogs all apply.
+  const classifyTakeoffMutation = useMutation({
+    mutationFn: (variables: {
+      measurementIds: string[];
+      source:
+        | { type: "library"; library_item_id: string }
+        | { type: "label"; description: string; unit: string };
+    }) =>
+      createLineForTakeoffsFn({
+        data: {
+          estimate_id: estimate.id,
+          measurement_ids: variables.measurementIds,
+          source: variables.source,
+        },
+      }),
+    onSuccess: (result) => {
+      invalidate();
+      syncLineMutation.mutate({ lineId: result.line_item_id });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate row did not save"),
+  });
+
+  const linkMeasurementToRow = (measurementId: string, lineId: string) => {
+    updateMeasurementMutation.mutate(
+      { id: measurementId, patch: { estimate_line_item_id: lineId } },
+      { onSuccess: () => syncLineMutation.mutate({ lineId }) },
+    );
+  };
 
   const renameSheetMutation = useMutation({
     mutationFn: ({
@@ -1055,6 +1107,7 @@ export function PlanRoomWorkspace({
   };
 
   const onCanvasPoint = (point: Point) => {
+    if (finishPopover) setFinishPopover(null);
     if (!currentSheet || tool === "select") return;
 
     if (tool === "calibrate" || tool === "verify") {
@@ -1273,6 +1326,10 @@ export function PlanRoomWorkspace({
     }
     if (tool === "area" && points.length >= 3) {
       createMeasurementMutation.mutate({ measurementTool: "area", points });
+      return;
+    }
+    if (tool === "count" && points.length >= 1) {
+      createMeasurementMutation.mutate({ measurementTool: "count", points });
     }
   };
 
@@ -2348,6 +2405,46 @@ export function PlanRoomWorkspace({
             onFinishDraft={finishDraft}
             onFinishRun={finishRunFromCanvas}
             onAbandonDraft={abandonDraftRun}
+            finishPopoverAnchor={finishPopover?.anchor ?? null}
+            finishPopover={
+              finishPopoverMeasurement ? (
+                <TakeoffFinishPopover
+                  key={finishPopoverMeasurement.id}
+                  measurement={finishPopoverMeasurement}
+                  lineItems={lineItems}
+                  linkedLine={
+                    lineItems.find(
+                      (line) => line.id === finishPopoverMeasurement.estimate_line_item_id,
+                    ) ?? null
+                  }
+                  onSaveDetails={({ label, wastePct }) =>
+                    updateMeasurementMutation.mutate({
+                      id: finishPopoverMeasurement.id,
+                      patch: { label, waste_pct: wastePct },
+                    })
+                  }
+                  onPickRow={(lineId) => linkMeasurementToRow(finishPopoverMeasurement.id, lineId)}
+                  onPickLibraryItem={(item) =>
+                    classifyTakeoffMutation.mutate({
+                      measurementIds: [finishPopoverMeasurement.id],
+                      source: { type: "library", library_item_id: item.id },
+                    })
+                  }
+                  onCreateFromLabel={(label) =>
+                    classifyTakeoffMutation.mutate({
+                      measurementIds: [finishPopoverMeasurement.id],
+                      source: {
+                        type: "label",
+                        description: label,
+                        unit: finishPopoverMeasurement.unit,
+                      },
+                    })
+                  }
+                  onDismiss={() => setFinishPopover(null)}
+                  pending={classifyTakeoffMutation.isPending || updateMeasurementMutation.isPending}
+                />
+              ) : null
+            }
             tool={tool}
             viewSize={viewSize}
             onViewSizeChange={setViewSize}
@@ -2896,31 +2993,62 @@ export function PlanRoomWorkspace({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Select
-                    value={selectedMeasurement.estimate_line_item_id ?? "unlinked"}
-                    onValueChange={(lineId) =>
-                      updateMeasurementMutation.mutate({
-                        id: selectedMeasurement.id,
-                        patch: {
-                          estimate_line_item_id: lineId === "unlinked" ? null : lineId,
-                        },
-                      })
-                    }
-                  >
-                    <SelectTrigger data-testid="selected-takeoff-row-link">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="unlinked">Not linked to estimate</SelectItem>
-                      {lineItems.map((line) => (
-                        <SelectItem key={line.id} value={line.id}>
-                          {line.cost_code ? `${line.cost_code} · ` : ""}
-                          {line.description.slice(0, 70)}
-                          {line.unit ? ` · per ${line.unit}` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {selectedMeasurementLine ? (
+                    <div
+                      className="flex items-center justify-between gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs"
+                      data-testid="selected-takeoff-row-link"
+                    >
+                      <span className="min-w-0 truncate">
+                        Linked:{" "}
+                        {selectedMeasurementLine.cost_code
+                          ? `${selectedMeasurementLine.cost_code} · `
+                          : ""}
+                        {selectedMeasurementLine.description.slice(0, 50)} · per{" "}
+                        {selectedMeasurementLine.unit}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 shrink-0 px-2 text-xs"
+                        onClick={() =>
+                          updateMeasurementMutation.mutate({
+                            id: selectedMeasurement.id,
+                            patch: { estimate_line_item_id: null },
+                          })
+                        }
+                        data-testid="selected-takeoff-unlink"
+                      >
+                        Unlink
+                      </Button>
+                    </div>
+                  ) : (
+                    <div data-testid="selected-takeoff-row-link">
+                      <LinkOrCreatePicker
+                        lineItems={lineItems}
+                        takeoffUnit={selectedMeasurement.unit}
+                        onPickRow={(lineId) => linkMeasurementToRow(selectedMeasurement.id, lineId)}
+                        onPickLibraryItem={(item) =>
+                          classifyTakeoffMutation.mutate({
+                            measurementIds: [selectedMeasurement.id],
+                            source: { type: "library", library_item_id: item.id },
+                          })
+                        }
+                        onCreateFromLabel={(label) =>
+                          classifyTakeoffMutation.mutate({
+                            measurementIds: [selectedMeasurement.id],
+                            source: {
+                              type: "label",
+                              description: label,
+                              unit: selectedMeasurement.unit,
+                            },
+                          })
+                        }
+                        pending={classifyTakeoffMutation.isPending}
+                        compact
+                      />
+                    </div>
+                  )}
                   {selectedMeasurementLine &&
                     !takeoffUnitsCompatible(
                       selectedMeasurement.unit,
@@ -3003,6 +3131,11 @@ export function PlanRoomWorkspace({
             updateMeasurementMutation={updateMeasurementMutation}
             syncLineMutation={syncLineMutation}
             lineTotals={lineTotals}
+            linkMeasurement={linkMeasurementToRow}
+            classifyMeasurement={(measurementId, source) =>
+              classifyTakeoffMutation.mutate({ measurementIds: [measurementId], source })
+            }
+            classifyPending={classifyTakeoffMutation.isPending}
           />
           {isCockpitMode && (
             <div

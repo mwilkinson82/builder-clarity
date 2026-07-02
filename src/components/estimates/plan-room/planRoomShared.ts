@@ -9,6 +9,7 @@ import {
   distancePx,
   type PlanRoomPoint,
   type PlanRoomViewSize,
+  normalizeTakeoffUnit,
 } from "@/lib/plan-room-math";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 
@@ -658,6 +659,20 @@ export function unitFor(tool: TakeoffToolType, selectedLine?: EstimateLineItemRo
   if (tool === "linear") return "LF";
   if (tool === "area") return "SF";
   return "EA";
+}
+
+const UNIT_LONG_NAMES: Record<string, string> = {
+  LF: "linear feet",
+  SF: "square feet",
+  SY: "square yards",
+  CY: "cubic yards",
+  EA: "each",
+};
+
+export function unitLongName(unit: string) {
+  const canonical = normalizeTakeoffUnit(unit);
+  const longName = UNIT_LONG_NAMES[canonical];
+  return longName ? `${longName} (${canonical})` : canonical || "no unit";
 }
 
 export function toolLabel(tool: ToolMode) {

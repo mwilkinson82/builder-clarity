@@ -1,7 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { calculateEstimateTotals, type EstimateCustomMarkup } from "@/lib/estimates.functions";
+import {
+  calculateEstimateTotals,
+  resolveLibraryUnitCosts,
+  type CostLibraryLaborBasis,
+  type EstimateCustomMarkup,
+} from "@/lib/estimates.functions";
 import {
   disciplineForSheetNumber,
   normalizeTakeoffUnit,
@@ -569,6 +574,19 @@ const deleteMeasurementInput = z.object({
   id: z.string().uuid(),
 });
 
+const createLineForTakeoffsInput = z.object({
+  estimate_id: z.string().uuid(),
+  measurement_ids: z.array(z.string().uuid()).min(1).max(200),
+  source: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("library"), library_item_id: z.string().uuid() }),
+    z.object({
+      type: z.literal("label"),
+      description: z.string().min(1).max(500),
+      unit: z.string().min(1).max(16),
+    }),
+  ]),
+});
+
 const syncTakeoffInput = z.object({
   estimate_id: z.string().uuid(),
   estimate_line_item_id: z.string().uuid(),
@@ -1053,6 +1071,100 @@ async function syncTakeoffQuantityToLine(
     measurement_count: measurements.length,
   };
 }
+
+// Link-or-create: a takeoff can become an estimate row in one gesture.
+// Library source prices the row through the item's labor basis; label source
+// creates a $0 "needs pricing" row so the contractor labels now, prices later.
+// The caller runs the normal sync afterwards, so the Phase 1/2 waste, unit,
+// and anti-clobber guards all apply unchanged.
+export const createLineItemForTakeoffs = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof createLineForTakeoffsInput>) =>
+    createLineForTakeoffsInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await loadEstimate(context, data.estimate_id);
+
+    let insertRow: Record<string, unknown>;
+    let libraryItemId: string | null = null;
+    if (data.source.type === "library") {
+      const itemResult = await dynamicTable(context.supabase, "cost_library_items")
+        .select("*")
+        .eq("id", data.source.library_item_id)
+        .single();
+      if (itemResult.error || !itemResult.data) {
+        throw new Error(itemResult.error?.message ?? "Cost library item was not found.");
+      }
+      const item = itemResult.data as Record<string, unknown>;
+      const basis = str(item.labor_basis);
+      const resolved = resolveLibraryUnitCosts({
+        description: str(item.description),
+        material_cost_cents: Math.round(num(item.material_cost_cents)),
+        labor_cost_cents: Math.round(num(item.labor_cost_cents)),
+        labor_basis: (basis === "per_hour" || basis === "installed"
+          ? basis
+          : "per_unit") as CostLibraryLaborBasis,
+        crew_size: item.crew_size == null ? null : num(item.crew_size),
+        productivity_per_hour:
+          item.productivity_per_hour == null ? null : num(item.productivity_per_hour),
+      });
+      if (!resolved.ok) throw new Error(resolved.message);
+      libraryItemId = str(item.id);
+      insertRow = {
+        estimate_id: data.estimate_id,
+        csi_division: str(item.csi_division),
+        cost_code: str(item.csi_code),
+        description: str(item.description),
+        unit: str(item.unit).toUpperCase(),
+        quantity: 0,
+        material_unit_cost_cents: resolved.material_cost_cents,
+        labor_unit_cost_cents: resolved.labor_cost_cents,
+        library_item_id: libraryItemId,
+        notes: "Created from a Plan Room takeoff.",
+      };
+    } else {
+      insertRow = {
+        estimate_id: data.estimate_id,
+        description: clean(data.source.description, 500),
+        unit: clean(data.source.unit.toUpperCase(), 16),
+        quantity: 0,
+        material_unit_cost_cents: 0,
+        labor_unit_cost_cents: 0,
+        notes: "Created from a Plan Room takeoff. Needs pricing.",
+      };
+    }
+
+    const orderResult = await dynamicTable(context.supabase, "estimate_line_items")
+      .select("sort_order")
+      .eq("estimate_id", data.estimate_id)
+      .order("sort_order", { ascending: false })
+      .limit(1);
+    if (orderResult.error) throw new Error(orderResult.error.message);
+    const maxOrder = ((orderResult.data ?? []) as Record<string, unknown>[]).reduce(
+      (max, row) => Math.max(max, Math.round(num(row.sort_order))),
+      0,
+    );
+
+    const lineResult = await dynamicTable(context.supabase, "estimate_line_items")
+      .insert({ ...insertRow, sort_order: maxOrder + 1 })
+      .select("id")
+      .single();
+    if (lineResult.error || !lineResult.data) {
+      throw new Error(lineResult.error?.message ?? "Estimate row did not save.");
+    }
+    const lineId = str((lineResult.data as Record<string, unknown>).id);
+
+    const linkResult = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+      .update({
+        estimate_line_item_id: lineId,
+        ...(libraryItemId ? { library_item_id: libraryItemId } : {}),
+      })
+      .eq("estimate_id", data.estimate_id)
+      .in("id", data.measurement_ids);
+    if (linkResult.error) throw new Error(linkResult.error.message);
+
+    return { line_item_id: lineId };
+  });
 
 export const syncTakeoffToEstimateLine = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

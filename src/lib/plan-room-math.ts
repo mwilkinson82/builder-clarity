@@ -369,3 +369,109 @@ export function decimalFeetHint(input: string): DecimalFeetHint | null {
     suggestion,
   };
 }
+
+// --- Takeoff-first estimating ------------------------------------------------
+// Groups unlinked takeoffs into would-be estimate rows and suggests matches
+// against existing rows. Pure so the smoke tests can drive them.
+
+export function normalizeTakeoffLabel(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export type TakeoffGroupInput = {
+  id: string;
+  label: string;
+  unit: string;
+  quantity: number;
+  waste_pct: number;
+  library_item_id: string | null;
+};
+
+export type TakeoffGroup = {
+  key: string;
+  label: string;
+  unit: string;
+  library_item_id: string | null;
+  measurement_ids: string[];
+  // Waste-applied rollup, matching the sync formula.
+  quantity: number;
+  measurement_count: number;
+};
+
+// Groups by library item when recorded, else by normalized label + canonical
+// unit. Mixed-unit labels split into separate groups rather than merging —
+// the Phase 2 unit guard extends to rollups.
+export function groupUnlinkedTakeoffs(measurements: TakeoffGroupInput[]): TakeoffGroup[] {
+  const groups = new Map<string, TakeoffGroup>();
+  for (const measurement of measurements) {
+    const canonicalUnit = normalizeTakeoffUnit(measurement.unit);
+    const key = measurement.library_item_id
+      ? `library:${measurement.library_item_id}:${canonicalUnit}`
+      : `label:${normalizeTakeoffLabel(measurement.label) || "unlabeled"}:${canonicalUnit}`;
+    const rollup = measurement.quantity * (1 + measurement.waste_pct / 100);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.measurement_ids.push(measurement.id);
+      existing.quantity = Math.round((existing.quantity + rollup) * 10000) / 10000;
+      existing.measurement_count += 1;
+    } else {
+      groups.set(key, {
+        key,
+        label: measurement.label.trim() || "Unlabeled takeoff",
+        unit: measurement.unit.trim().toUpperCase() || canonicalUnit || "EA",
+        library_item_id: measurement.library_item_id,
+        measurement_ids: [measurement.id],
+        quantity: Math.round(rollup * 10000) / 10000,
+        measurement_count: 1,
+      });
+    }
+  }
+  return Array.from(groups.values());
+}
+
+export type MatchCandidateRow = {
+  id: string;
+  cost_code: string;
+  description: string;
+  unit: string;
+};
+
+export type TakeoffRowMatch = {
+  measurement_id: string;
+  line_id: string;
+  score: number;
+};
+
+// Suggests takeoff -> row matches on cost code and/or normalized description
+// with compatible units. One best candidate per takeoff; never auto-applied.
+export function suggestTakeoffMatches(
+  measurements: Array<Pick<TakeoffGroupInput, "id" | "label" | "unit">>,
+  rows: MatchCandidateRow[],
+): TakeoffRowMatch[] {
+  const matches: TakeoffRowMatch[] = [];
+  for (const measurement of measurements) {
+    const label = normalizeTakeoffLabel(measurement.label);
+    if (!label) continue;
+    let best: TakeoffRowMatch | null = null;
+    for (const row of rows) {
+      if (!takeoffUnitsCompatible(measurement.unit, row.unit)) continue;
+      const description = normalizeTakeoffLabel(row.description);
+      const costCode = row.cost_code.trim().toLowerCase();
+      let score = 0;
+      if (description && description === label) score = 100;
+      else if (costCode && measurement.label.toLowerCase().includes(costCode)) score = 80;
+      else if (description && (description.includes(label) || label.includes(description))) {
+        score = 60;
+      }
+      if (score > 0 && (!best || score > best.score)) {
+        best = { measurement_id: measurement.id, line_id: row.id, score };
+      }
+    }
+    if (best) matches.push(best);
+  }
+  return matches;
+}

@@ -9,33 +9,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { normalizeTakeoffUnit, takeoffUnitsCompatible } from "@/lib/plan-room-math";
+import { takeoffUnitsCompatible } from "@/lib/plan-room-math";
 import type { EstimateLineItemRow } from "@/lib/estimates.functions";
 import type { PlanSheetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
-import { formatQty, toolLabel, type TakeoffFilterMode } from "./planRoomShared";
-
-const UNIT_LONG_NAMES: Record<string, string> = {
-  LF: "linear feet",
-  SF: "square feet",
-  SY: "square yards",
-  CY: "cubic yards",
-  EA: "each",
-};
-
-export function unitLongName(unit: string) {
-  const canonical = normalizeTakeoffUnit(unit);
-  const longName = UNIT_LONG_NAMES[canonical];
-  return longName ? `${longName} (${canonical})` : canonical || "no unit";
-}
+import { formatQty, toolLabel, unitLongName, type TakeoffFilterMode } from "./planRoomShared";
+import { LinkOrCreatePicker } from "./TakeoffClassify";
 
 export type SyncConflictState = {
   kind: "quantity" | "unit";
@@ -162,6 +142,9 @@ export function TakeoffWorksheet({
   updateMeasurementMutation,
   syncLineMutation,
   lineTotals,
+  linkMeasurement,
+  classifyMeasurement,
+  classifyPending = false,
 }: {
   measurements: TakeoffMeasurementRow[];
   totalMeasured: number;
@@ -185,6 +168,14 @@ export function TakeoffWorksheet({
   };
   syncLineMutation: { mutate: (variables: { lineId: string }) => void };
   lineTotals: Map<string, { quantity: number; count: number }>;
+  linkMeasurement: (measurementId: string, lineId: string) => void;
+  classifyMeasurement: (
+    measurementId: string,
+    source:
+      | { type: "library"; library_item_id: string }
+      | { type: "label"; description: string; unit: string },
+  ) => void;
+  classifyPending?: boolean;
 }) {
   return (
     <>
@@ -394,31 +385,51 @@ export function TakeoffWorksheet({
                     </div>
                   </div>
                   <div className="mt-3 space-y-2">
-                    <Select
-                      value={measurement.estimate_line_item_id ?? "unlinked"}
-                      onValueChange={(lineId) =>
-                        updateMeasurementMutation.mutate({
-                          id: measurement.id,
-                          patch: {
-                            estimate_line_item_id: lineId === "unlinked" ? null : lineId,
-                          },
-                        })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="unlinked">Not linked to estimate</SelectItem>
-                        {lineItems.map((line) => (
-                          <SelectItem key={line.id} value={line.id}>
-                            {line.cost_code ? `${line.cost_code} · ` : ""}
-                            {line.description.slice(0, 70)}
-                            {line.unit ? ` · per ${line.unit}` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {linkedLine ? (
+                      <div className="flex items-center justify-between gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs">
+                        <span className="min-w-0 truncate">
+                          Linked: {linkedLine.cost_code ? `${linkedLine.cost_code} · ` : ""}
+                          {linkedLine.description.slice(0, 50)} · per {linkedLine.unit}
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 shrink-0 px-2 text-xs"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            updateMeasurementMutation.mutate({
+                              id: measurement.id,
+                              patch: { estimate_line_item_id: null },
+                            });
+                          }}
+                          data-testid="takeoff-row-unlink"
+                        >
+                          Unlink
+                        </Button>
+                      </div>
+                    ) : (
+                      <LinkOrCreatePicker
+                        lineItems={lineItems}
+                        takeoffUnit={measurement.unit}
+                        onPickRow={(lineId) => linkMeasurement(measurement.id, lineId)}
+                        onPickLibraryItem={(item) =>
+                          classifyMeasurement(measurement.id, {
+                            type: "library",
+                            library_item_id: item.id,
+                          })
+                        }
+                        onCreateFromLabel={(label) =>
+                          classifyMeasurement(measurement.id, {
+                            type: "label",
+                            description: label,
+                            unit: measurement.unit,
+                          })
+                        }
+                        pending={classifyPending}
+                        compact
+                      />
+                    )}
                     {linkedLine && !takeoffUnitsCompatible(measurement.unit, linkedLine.unit) && (
                       <p
                         className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-foreground"
