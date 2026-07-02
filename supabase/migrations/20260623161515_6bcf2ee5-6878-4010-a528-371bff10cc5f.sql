@@ -29,9 +29,10 @@ AS $$
   );
 $$;
 
--- Grant Marshall super admin
+-- Grant Marshall super admin (guarded: only inserts if the user exists in this
+-- environment, so this migration replays cleanly on fresh databases)
 INSERT INTO public.app_super_admins (user_id)
-VALUES ('f60c77bb-f6fa-4c03-8608-6f79575c11d5')
+SELECT id FROM auth.users WHERE id = 'f60c77bb-f6fa-4c03-8608-6f79575c11d5'
 ON CONFLICT (user_id) DO NOTHING;
 
 -- Expand project access functions to include super admins
