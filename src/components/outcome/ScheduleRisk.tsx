@@ -233,6 +233,7 @@ const CONSTRUCTLINE_MIN_DAY_PX = 1.1;
 const CONSTRUCTLINE_MAX_DAY_PX = 28;
 const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_VERSION = "v7";
 const CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_NAMESPACE = "constructline:cpm-grid-layout";
+const CONSTRUCTLINE_FOCUS_MATRIX_STICKY_TOP = 8;
 const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
   { id: "id", label: "ID", compactLabel: "ID", min: 40, default: 44, max: 72 },
   {
@@ -5745,9 +5746,12 @@ function ActivityScheduleMatrix({
             <div
               className={cn(
                 "flex border-b border-hairline bg-card text-[9px] font-semibold uppercase tracking-normal text-muted-foreground shadow-sm",
-                isFocusMode ? "sticky top-0 z-20" : "relative z-0",
+                isFocusMode ? "sticky z-20" : "relative z-0",
               )}
-              style={{ height: headerHeight }}
+              style={{
+                height: headerHeight,
+                top: isFocusMode ? CONSTRUCTLINE_FOCUS_MATRIX_STICKY_TOP : undefined,
+              }}
             >
               <div
                 className="sticky left-0 z-30 grid shrink-0 border-r border-hairline bg-card"
