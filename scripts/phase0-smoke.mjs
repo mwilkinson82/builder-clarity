@@ -1258,7 +1258,7 @@ await expectContains(
     /plan-cockpit-tools-reset/,
     /plan-cockpit-drawings-resize/,
     /plan-cockpit-tools-resize/,
-    /COCKPIT_PANEL_LAYOUT_STORAGE_KEY/,
+    /readCockpitPanelLayoutStorage/,
     /COCKPIT_CHROME_PANEL_TOP_GAP/,
     /TakeoffLayerVisibility/,
     /measurementMatchesTakeoffLayers/,

@@ -49,6 +49,7 @@ import { cn } from "@/lib/utils";
 import {
   applyScaleToSheets,
   updatePlanSheets,
+  createLineItemForTakeoffs,
   createPlanSet,
   createTakeoffMeasurement,
   deleteTakeoffMeasurement,
@@ -63,16 +64,18 @@ import {
 } from "@/lib/plan-room.functions";
 import {
   distancePx,
+  groupUnlinkedTakeoffs,
   parseFeetInches,
   statedScaleFeetPerPixel,
+  suggestTakeoffMatches,
   takeoffUnitsCompatible,
+  type TakeoffGroup,
 } from "@/lib/plan-room-math";
 import type { ProcessedSheetPage } from "./PdfSheetViewer";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 import {
   COCKPIT_CHROME_PANEL_TOP_GAP,
   COCKPIT_PANEL_EDGE_GAP,
-  COCKPIT_PANEL_LAYOUT_STORAGE_KEY,
   COCKPIT_PANEL_MAX_HEIGHT,
   COCKPIT_PANEL_MAX_WIDTH,
   COCKPIT_PANEL_MIN_HEIGHT,
@@ -94,6 +97,8 @@ import {
   calculateQuantity,
   centsToDollars,
   clampNumber,
+  clearCockpitPanelLayoutStorage,
+  cockpitPanelLayoutsEqual,
   coerceCockpitPanelLayout,
   copyTextToClipboard,
   downloadTextFile,
@@ -103,6 +108,7 @@ import {
   geometryPoints,
   measurementMatchesTakeoffLayers,
   planSetStatusLabel,
+  readCockpitPanelLayoutStorage,
   safeReportFileName,
   searchMatches,
   sheetDisplayName,
@@ -110,6 +116,8 @@ import {
   sheetScaleStatus,
   toolLabel,
   unitFor,
+  unitLongName,
+  writeCockpitPanelLayoutStorage,
   type CockpitPanelInteraction,
   type CockpitPanelKey,
   type CockpitPanelLayout,
@@ -130,12 +138,8 @@ import {
 } from "./PdfSheetViewer";
 import { FeetInchesHint } from "./TakeoffTools";
 import { TakeoffTools } from "./TakeoffTools";
-import {
-  SyncConflictDialog,
-  TakeoffWorksheet,
-  unitLongName,
-  type SyncConflictState,
-} from "./TakeoffWorksheet";
+import { SyncConflictDialog, TakeoffWorksheet, type SyncConflictState } from "./TakeoffWorksheet";
+import { LinkOrCreatePicker, TakeoffFinishPopover } from "./TakeoffClassify";
 import { CockpitFloatingPanelHeader, SheetSidebar } from "./SheetSidebar";
 import { ReadinessPanel } from "./ReadinessPanel";
 
@@ -179,6 +183,7 @@ export function PlanRoomWorkspace({
   const syncLineFn = useServerFn(syncTakeoffToEstimateLine);
   const applyScaleToSheetsFn = useServerFn(applyScaleToSheets);
   const updatePlanSheetsFn = useServerFn(updatePlanSheets);
+  const createLineForTakeoffsFn = useServerFn(createLineItemForTakeoffs);
 
   const [selectedSheetId, setSelectedSheetId] = useState<string>("");
   const [tool, setTool] = useState<ToolMode>("select");
@@ -216,6 +221,23 @@ export function PlanRoomWorkspace({
     sheetNumber: string;
     sheetName: string;
   } | null>(null);
+  const [finishPopover, setFinishPopover] = useState<{
+    measurementId: string;
+    anchor: Point;
+  } | null>(null);
+  const [buildGroups, setBuildGroups] = useState<Array<
+    TakeoffGroup & { accepted: boolean }
+  > | null>(null);
+  const [matchProposals, setMatchProposals] = useState<Array<{
+    measurementId: string;
+    lineId: string;
+    takeoffLabel: string;
+    takeoffQuantity: number;
+    takeoffUnit: string;
+    rowLabel: string;
+    rowUnit: string;
+    accepted: boolean;
+  }> | null>(null);
   const [verifyOutcome, setVerifyOutcome] = useState<{
     measuredFeet: number;
     expectedFeet: number;
@@ -405,6 +427,9 @@ export function PlanRoomWorkspace({
   const selectedMeasurementLine = selectedMeasurement?.estimate_line_item_id
     ? (lineItems.find((line) => line.id === selectedMeasurement.estimate_line_item_id) ?? null)
     : null;
+  const finishPopoverMeasurement = finishPopover
+    ? (measurements.find((item) => item.id === finishPopover.measurementId) ?? null)
+    : null;
   const selectedMeasurementLabel = selectedMeasurement?.label ?? "";
   const selectedMeasurementNotes = selectedMeasurement?.notes ?? "";
   const activeDraftPointCount =
@@ -439,10 +464,9 @@ export function PlanRoomWorkspace({
   }, [focusLineItemId, measurements]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    const raw = readCockpitPanelLayoutStorage();
+    if (!raw) return;
     try {
-      const raw = window.localStorage.getItem(COCKPIT_PANEL_LAYOUT_STORAGE_KEY);
-      if (!raw) return;
       const parsed = JSON.parse(raw) as {
         layouts?: Partial<Record<CockpitPanelKey, unknown>>;
         chromeVisible?: unknown;
@@ -458,14 +482,12 @@ export function PlanRoomWorkspace({
         setCockpitChromeVisible(parsed.chromeVisible);
       }
     } catch {
-      window.localStorage.removeItem(COCKPIT_PANEL_LAYOUT_STORAGE_KEY);
+      clearCockpitPanelLayoutStorage();
     }
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(
-      COCKPIT_PANEL_LAYOUT_STORAGE_KEY,
+    writeCockpitPanelLayoutStorage(
       JSON.stringify({
         layouts: cockpitPanelLayouts,
         chromeVisible: cockpitChromeVisible,
@@ -494,6 +516,16 @@ export function PlanRoomWorkspace({
       setSelectedMeasurementId("");
     }
   }, [measurements, selectedMeasurementId]);
+
+  useEffect(() => {
+    setFinishPopover((current) =>
+      current && !measurements.some((item) => item.id === current.measurementId) ? null : current,
+    );
+  }, [measurements]);
+
+  useEffect(() => {
+    setFinishPopover(null);
+  }, [tool, selectedSheetId]);
 
   useEffect(() => {
     if (!selectedMeasurementId) {
@@ -599,6 +631,11 @@ export function PlanRoomWorkspace({
       setPendingPoints([]);
       setSelectedMeasurementId(result.measurement.id);
       if (variables.measurementTool !== "count") setTool("select");
+      const anchor = variables.points[variables.points.length - 1];
+      if (anchor) {
+        // The takeoff comes to you: classify right where you finished.
+        setFinishPopover({ measurementId: result.measurement.id, anchor });
+      }
       invalidate();
     },
     onError: (error) =>
@@ -708,6 +745,157 @@ export function PlanRoomWorkspace({
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Takeoff did not delete"),
+  });
+
+  // Link-or-create classification. The subsequent sync runs through the
+  // normal mutation so waste, unit-guard, and anti-clobber dialogs all apply.
+  const classifyTakeoffMutation = useMutation({
+    mutationFn: (variables: {
+      measurementIds: string[];
+      source:
+        | { type: "library"; library_item_id: string }
+        | { type: "label"; description: string; unit: string };
+    }) =>
+      createLineForTakeoffsFn({
+        data: {
+          estimate_id: estimate.id,
+          measurement_ids: variables.measurementIds,
+          source: variables.source,
+        },
+      }),
+    onSuccess: (result) => {
+      invalidate();
+      syncLineMutation.mutate({ lineId: result.line_item_id });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate row did not save"),
+  });
+
+  const linkMeasurementToRow = (measurementId: string, lineId: string) => {
+    updateMeasurementMutation.mutate(
+      { id: measurementId, patch: { estimate_line_item_id: lineId } },
+      { onSuccess: () => syncLineMutation.mutate({ lineId }) },
+    );
+  };
+
+  // Task 3: offered matches, never auto-applied. Computed live so rows that
+  // appear after a master sheet import are matched the moment they exist.
+  const takeoffMatchSuggestions = useMemo(
+    () =>
+      suggestTakeoffMatches(
+        measurements
+          .filter((measurement) => !measurement.estimate_line_item_id)
+          .map((measurement) => ({
+            id: measurement.id,
+            label: measurement.label,
+            unit: measurement.unit,
+          })),
+        lineItems.map((line) => ({
+          id: line.id,
+          cost_code: line.cost_code,
+          description: line.description,
+          unit: line.unit,
+        })),
+      ),
+    [lineItems, measurements],
+  );
+
+  const openBuildFromTakeoffs = () => {
+    const groups = groupUnlinkedTakeoffs(
+      measurements
+        .filter((measurement) => !measurement.estimate_line_item_id)
+        .map((measurement) => ({
+          id: measurement.id,
+          label: measurement.label,
+          unit: measurement.unit,
+          quantity: measurement.quantity,
+          waste_pct: measurement.waste_pct,
+          library_item_id: measurement.library_item_id,
+        })),
+    );
+    if (groups.length === 0) {
+      toast.info("Every takeoff is already linked to an estimate row.");
+      return;
+    }
+    setBuildGroups(groups.map((group) => ({ ...group, accepted: true })));
+  };
+
+  const buildFromTakeoffsMutation = useMutation({
+    mutationFn: async (groups: TakeoffGroup[]) => {
+      const createdLineIds: string[] = [];
+      for (const group of groups) {
+        const result = await createLineForTakeoffsFn({
+          data: {
+            estimate_id: estimate.id,
+            measurement_ids: group.measurement_ids,
+            source: group.library_item_id
+              ? { type: "library", library_item_id: group.library_item_id }
+              : { type: "label", description: group.label, unit: group.unit },
+          },
+        });
+        createdLineIds.push(result.line_item_id);
+      }
+      return createdLineIds;
+    },
+    onSuccess: (createdLineIds) => {
+      toast.success(
+        `${createdLineIds.length} estimate row${createdLineIds.length === 1 ? "" : "s"} created from takeoffs`,
+      );
+      setBuildGroups(null);
+      invalidate();
+      createdLineIds.forEach((lineId) => syncLineMutation.mutate({ lineId }));
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Estimate rows did not build"),
+  });
+
+  const openMatchProposals = () => {
+    const proposals = takeoffMatchSuggestions
+      .map((match) => {
+        const measurement = measurements.find((item) => item.id === match.measurement_id);
+        const line = lineItems.find((item) => item.id === match.line_id);
+        if (!measurement || !line) return null;
+        return {
+          measurementId: measurement.id,
+          lineId: line.id,
+          takeoffLabel: measurement.label,
+          takeoffQuantity: measurement.quantity,
+          takeoffUnit: measurement.unit,
+          rowLabel: `${line.cost_code ? `${line.cost_code} · ` : ""}${line.description}`,
+          rowUnit: line.unit,
+          accepted: true,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+    if (proposals.length === 0) {
+      toast.info("No confident takeoff-to-row matches found.");
+      return;
+    }
+    setMatchProposals(proposals);
+  };
+
+  const applyMatchesMutation = useMutation({
+    mutationFn: async (rows: NonNullable<typeof matchProposals>) => {
+      const accepted = rows.filter((row) => row.accepted);
+      for (const row of accepted) {
+        await updateMeasurementFn({
+          data: { id: row.measurementId, patch: { estimate_line_item_id: row.lineId } },
+        });
+      }
+      return Array.from(new Set(accepted.map((row) => row.lineId)));
+    },
+    onSuccess: (lineIds) => {
+      if (lineIds.length > 0) {
+        toast.success(
+          `${lineIds.length} estimate row${lineIds.length === 1 ? "" : "s"} matched to takeoffs`,
+        );
+      }
+      setMatchProposals(null);
+      invalidate();
+      lineIds.forEach((lineId) => syncLineMutation.mutate({ lineId }));
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Matches did not apply"),
   });
 
   const renameSheetMutation = useMutation({
@@ -1055,6 +1243,7 @@ export function PlanRoomWorkspace({
   };
 
   const onCanvasPoint = (point: Point) => {
+    if (finishPopover) setFinishPopover(null);
     if (!currentSheet || tool === "select") return;
 
     if (tool === "calibrate" || tool === "verify") {
@@ -1273,6 +1462,10 @@ export function PlanRoomWorkspace({
     }
     if (tool === "area" && points.length >= 3) {
       createMeasurementMutation.mutate({ measurementTool: "area", points });
+      return;
+    }
+    if (tool === "count" && points.length >= 1) {
+      createMeasurementMutation.mutate({ measurementTool: "count", points });
     }
   };
 
@@ -1528,41 +1721,75 @@ export function PlanRoomWorkspace({
     setCockpitPanels((current) => ({ ...current, [panel]: !current[panel] }));
   const showCockpitPanels = () => setCockpitPanels({ drawings: true, tools: true });
   const hideCockpitPanels = () => setCockpitPanels({ drawings: false, tools: false });
-  const clampCockpitPanelLayout = (layout: CockpitPanelLayout): CockpitPanelLayout => {
-    const parent = mainRef.current;
-    const parentRect = parent?.getBoundingClientRect();
-    const parentWidth =
-      parentRect?.width ?? (typeof window === "undefined" ? 1800 : window.innerWidth);
-    const parentHeight =
-      parentRect?.height ?? (typeof window === "undefined" ? 900 : window.innerHeight - 48);
-    const maxWidth = Math.min(COCKPIT_PANEL_MAX_WIDTH, parentWidth - COCKPIT_PANEL_EDGE_GAP * 2);
-    const maxHeight = Math.min(COCKPIT_PANEL_MAX_HEIGHT, parentHeight - COCKPIT_PANEL_EDGE_GAP * 2);
-    const width = clampNumber(layout.width, COCKPIT_PANEL_MIN_WIDTH, Math.max(280, maxWidth));
-    const height = clampNumber(layout.height, COCKPIT_PANEL_MIN_HEIGHT, Math.max(280, maxHeight));
-    const y = clampNumber(
-      layout.y,
-      COCKPIT_PANEL_EDGE_GAP,
-      Math.max(COCKPIT_PANEL_EDGE_GAP, parentHeight - height - COCKPIT_PANEL_EDGE_GAP),
+  // Panels must stay below the floating command deck. The deck wraps to extra
+  // rows on narrow viewports, so measure its real footprint when it is in the
+  // DOM and only fall back to the chrome constant when it is not measurable.
+  const cockpitPanelTopGap = useCallback(() => {
+    if (!cockpitChromeVisible) return COCKPIT_PANEL_EDGE_GAP;
+    const parentRect = mainRef.current?.getBoundingClientRect();
+    const deck = mainRef.current?.querySelector<HTMLElement>(
+      '[data-testid="plan-cockpit-command-deck"]',
     );
-    const x =
-      layout.x === null
-        ? null
-        : clampNumber(
-            layout.x,
-            COCKPIT_PANEL_EDGE_GAP,
-            Math.max(COCKPIT_PANEL_EDGE_GAP, parentWidth - width - COCKPIT_PANEL_EDGE_GAP),
-          );
-    return { ...layout, x, y, width, height };
-  };
+    const deckRect = deck?.getBoundingClientRect();
+    if (!parentRect || !deckRect || deckRect.height <= 0) return COCKPIT_CHROME_PANEL_TOP_GAP;
+    return Math.max(
+      COCKPIT_CHROME_PANEL_TOP_GAP,
+      deckRect.bottom - parentRect.top + COCKPIT_PANEL_EDGE_GAP,
+    );
+  }, [cockpitChromeVisible]);
+  const clampCockpitPanelLayout = useCallback(
+    (layout: CockpitPanelLayout): CockpitPanelLayout => {
+      const parent = mainRef.current;
+      const parentRect = parent?.getBoundingClientRect();
+      const parentWidth =
+        parentRect?.width ?? (typeof window === "undefined" ? 1800 : window.innerWidth);
+      const parentHeight =
+        parentRect?.height ?? (typeof window === "undefined" ? 900 : window.innerHeight - 48);
+      const topGap = cockpitPanelTopGap();
+      const maxWidth = Math.min(COCKPIT_PANEL_MAX_WIDTH, parentWidth - COCKPIT_PANEL_EDGE_GAP * 2);
+      const maxHeight = Math.min(
+        COCKPIT_PANEL_MAX_HEIGHT,
+        parentHeight - topGap - COCKPIT_PANEL_EDGE_GAP,
+      );
+      const width = clampNumber(layout.width, COCKPIT_PANEL_MIN_WIDTH, Math.max(280, maxWidth));
+      const height = clampNumber(layout.height, COCKPIT_PANEL_MIN_HEIGHT, Math.max(280, maxHeight));
+      const y = clampNumber(
+        layout.y,
+        topGap,
+        Math.max(topGap, parentHeight - height - COCKPIT_PANEL_EDGE_GAP),
+      );
+      const x =
+        layout.x === null
+          ? null
+          : clampNumber(
+              layout.x,
+              COCKPIT_PANEL_EDGE_GAP,
+              Math.max(COCKPIT_PANEL_EDGE_GAP, parentWidth - width - COCKPIT_PANEL_EDGE_GAP),
+            );
+      return { ...layout, x, y, width, height };
+    },
+    [cockpitPanelTopGap],
+  );
+  // Re-clamp both panels whenever the viewport changes (or the command deck
+  // appears/disappears with cockpit chrome) so restored or dragged layouts
+  // never sit under the deck or outside the visible canvas.
+  useEffect(() => {
+    if (!isCockpitMode || typeof window === "undefined") return;
+    const reclampCockpitPanels = () =>
+      setCockpitPanelLayouts((current) => {
+        const drawings = clampCockpitPanelLayout(current.drawings);
+        const tools = clampCockpitPanelLayout(current.tools);
+        return cockpitPanelLayoutsEqual(drawings, current.drawings) &&
+          cockpitPanelLayoutsEqual(tools, current.tools)
+          ? current
+          : { drawings, tools };
+      });
+    reclampCockpitPanels();
+    window.addEventListener("resize", reclampCockpitPanels);
+    return () => window.removeEventListener("resize", reclampCockpitPanels);
+  }, [clampCockpitPanelLayout, isCockpitMode]);
   const cockpitPanelStyle = (panel: CockpitPanelKey): CSSProperties => {
-    const rawLayout = cockpitPanelLayouts[panel];
-    const layout = clampCockpitPanelLayout({
-      ...rawLayout,
-      y: Math.max(
-        cockpitChromeVisible ? COCKPIT_CHROME_PANEL_TOP_GAP : COCKPIT_PANEL_EDGE_GAP,
-        rawLayout.y,
-      ),
-    });
+    const layout = clampCockpitPanelLayout(cockpitPanelLayouts[panel]);
     const style: CSSProperties = {
       top: layout.y,
       width: layout.width,
@@ -2348,6 +2575,46 @@ export function PlanRoomWorkspace({
             onFinishDraft={finishDraft}
             onFinishRun={finishRunFromCanvas}
             onAbandonDraft={abandonDraftRun}
+            finishPopoverAnchor={finishPopover?.anchor ?? null}
+            finishPopover={
+              finishPopoverMeasurement ? (
+                <TakeoffFinishPopover
+                  key={finishPopoverMeasurement.id}
+                  measurement={finishPopoverMeasurement}
+                  lineItems={lineItems}
+                  linkedLine={
+                    lineItems.find(
+                      (line) => line.id === finishPopoverMeasurement.estimate_line_item_id,
+                    ) ?? null
+                  }
+                  onSaveDetails={({ label, wastePct }) =>
+                    updateMeasurementMutation.mutate({
+                      id: finishPopoverMeasurement.id,
+                      patch: { label, waste_pct: wastePct },
+                    })
+                  }
+                  onPickRow={(lineId) => linkMeasurementToRow(finishPopoverMeasurement.id, lineId)}
+                  onPickLibraryItem={(item) =>
+                    classifyTakeoffMutation.mutate({
+                      measurementIds: [finishPopoverMeasurement.id],
+                      source: { type: "library", library_item_id: item.id },
+                    })
+                  }
+                  onCreateFromLabel={(label) =>
+                    classifyTakeoffMutation.mutate({
+                      measurementIds: [finishPopoverMeasurement.id],
+                      source: {
+                        type: "label",
+                        description: label,
+                        unit: finishPopoverMeasurement.unit,
+                      },
+                    })
+                  }
+                  onDismiss={() => setFinishPopover(null)}
+                  pending={classifyTakeoffMutation.isPending || updateMeasurementMutation.isPending}
+                />
+              ) : null
+            }
             tool={tool}
             viewSize={viewSize}
             onViewSizeChange={setViewSize}
@@ -2896,31 +3163,62 @@ export function PlanRoomWorkspace({
                   />
                 </div>
                 <div className="space-y-2">
-                  <Select
-                    value={selectedMeasurement.estimate_line_item_id ?? "unlinked"}
-                    onValueChange={(lineId) =>
-                      updateMeasurementMutation.mutate({
-                        id: selectedMeasurement.id,
-                        patch: {
-                          estimate_line_item_id: lineId === "unlinked" ? null : lineId,
-                        },
-                      })
-                    }
-                  >
-                    <SelectTrigger data-testid="selected-takeoff-row-link">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="unlinked">Not linked to estimate</SelectItem>
-                      {lineItems.map((line) => (
-                        <SelectItem key={line.id} value={line.id}>
-                          {line.cost_code ? `${line.cost_code} · ` : ""}
-                          {line.description.slice(0, 70)}
-                          {line.unit ? ` · per ${line.unit}` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {selectedMeasurementLine ? (
+                    <div
+                      className="flex items-center justify-between gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs"
+                      data-testid="selected-takeoff-row-link"
+                    >
+                      <span className="min-w-0 truncate">
+                        Linked:{" "}
+                        {selectedMeasurementLine.cost_code
+                          ? `${selectedMeasurementLine.cost_code} · `
+                          : ""}
+                        {selectedMeasurementLine.description.slice(0, 50)} · per{" "}
+                        {selectedMeasurementLine.unit}
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 shrink-0 px-2 text-xs"
+                        onClick={() =>
+                          updateMeasurementMutation.mutate({
+                            id: selectedMeasurement.id,
+                            patch: { estimate_line_item_id: null },
+                          })
+                        }
+                        data-testid="selected-takeoff-unlink"
+                      >
+                        Unlink
+                      </Button>
+                    </div>
+                  ) : (
+                    <div data-testid="selected-takeoff-row-link">
+                      <LinkOrCreatePicker
+                        lineItems={lineItems}
+                        takeoffUnit={selectedMeasurement.unit}
+                        onPickRow={(lineId) => linkMeasurementToRow(selectedMeasurement.id, lineId)}
+                        onPickLibraryItem={(item) =>
+                          classifyTakeoffMutation.mutate({
+                            measurementIds: [selectedMeasurement.id],
+                            source: { type: "library", library_item_id: item.id },
+                          })
+                        }
+                        onCreateFromLabel={(label) =>
+                          classifyTakeoffMutation.mutate({
+                            measurementIds: [selectedMeasurement.id],
+                            source: {
+                              type: "label",
+                              description: label,
+                              unit: selectedMeasurement.unit,
+                            },
+                          })
+                        }
+                        pending={classifyTakeoffMutation.isPending}
+                        compact
+                      />
+                    </div>
+                  )}
                   {selectedMeasurementLine &&
                     !takeoffUnitsCompatible(
                       selectedMeasurement.unit,
@@ -3003,6 +3301,17 @@ export function PlanRoomWorkspace({
             updateMeasurementMutation={updateMeasurementMutation}
             syncLineMutation={syncLineMutation}
             lineTotals={lineTotals}
+            linkMeasurement={linkMeasurementToRow}
+            classifyMeasurement={(measurementId, source) =>
+              classifyTakeoffMutation.mutate({ measurementIds: [measurementId], source })
+            }
+            classifyPending={classifyTakeoffMutation.isPending}
+            onBuildFromTakeoffs={
+              unlinkedMeasurements.length > 0 ? openBuildFromTakeoffs : undefined
+            }
+            buildPending={buildFromTakeoffsMutation.isPending}
+            onReviewMatches={takeoffMatchSuggestions.length > 0 ? openMatchProposals : undefined}
+            matchCount={takeoffMatchSuggestions.length}
           />
           {isCockpitMode && (
             <div
@@ -3017,6 +3326,150 @@ export function PlanRoomWorkspace({
           )}
         </aside>
       </main>
+      {buildGroups && (
+        <Dialog open onOpenChange={(open) => !open && setBuildGroups(null)}>
+          <DialogContent className="max-w-2xl" data-testid="build-from-takeoffs-dialog">
+            <DialogHeader>
+              <DialogTitle>Build estimate rows from takeoffs</DialogTitle>
+              <DialogDescription>
+                Unlinked takeoffs grouped into the rows they would create (waste applied, mixed
+                units kept separate). Uncheck any group to leave it as-is.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-[50vh] space-y-1.5 overflow-y-auto">
+              {buildGroups.map((group) => (
+                <label
+                  key={group.key}
+                  className="flex cursor-pointer items-start gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-sm"
+                  data-testid="build-from-takeoffs-row"
+                >
+                  <input
+                    type="checkbox"
+                    checked={group.accepted}
+                    onChange={(event) =>
+                      setBuildGroups(
+                        (current) =>
+                          current?.map((item) =>
+                            item.key === group.key
+                              ? { ...item, accepted: event.target.checked }
+                              : item,
+                          ) ?? null,
+                      )
+                    }
+                    className="mt-1"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{group.label}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {formatQty(group.quantity, group.unit)} from {group.measurement_count} takeoff
+                      {group.measurement_count === 1 ? "" : "s"}
+                    </span>
+                  </span>
+                  {group.library_item_id ? (
+                    <Badge variant="secondary" className="shrink-0">
+                      Priced from library
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="shrink-0 border-warning/50 bg-warning/10">
+                      Needs pricing
+                    </Badge>
+                  )}
+                </label>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setBuildGroups(null)}
+                disabled={buildFromTakeoffsMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() =>
+                  buildFromTakeoffsMutation.mutate(buildGroups.filter((group) => group.accepted))
+                }
+                disabled={
+                  buildFromTakeoffsMutation.isPending ||
+                  buildGroups.every((group) => !group.accepted)
+                }
+                data-testid="build-from-takeoffs-apply"
+              >
+                {buildFromTakeoffsMutation.isPending
+                  ? "Creating rows..."
+                  : `Create ${buildGroups.filter((group) => group.accepted).length} Row${
+                      buildGroups.filter((group) => group.accepted).length === 1 ? "" : "s"
+                    }`}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+      {matchProposals && (
+        <Dialog open onOpenChange={(open) => !open && setMatchProposals(null)}>
+          <DialogContent className="max-w-2xl" data-testid="takeoff-match-dialog">
+            <DialogHeader>
+              <DialogTitle>Match takeoffs to estimate rows</DialogTitle>
+              <DialogDescription>
+                Suggested matches on cost code or description with compatible units. Uncheck any row
+                to skip it — nothing links until you apply.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="max-h-[50vh] space-y-1.5 overflow-y-auto">
+              {matchProposals.map((row) => (
+                <label
+                  key={row.measurementId}
+                  className="flex cursor-pointer items-start gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-sm"
+                  data-testid="takeoff-match-row"
+                >
+                  <input
+                    type="checkbox"
+                    checked={row.accepted}
+                    onChange={(event) =>
+                      setMatchProposals(
+                        (current) =>
+                          current?.map((item) =>
+                            item.measurementId === row.measurementId
+                              ? { ...item, accepted: event.target.checked }
+                              : item,
+                          ) ?? null,
+                      )
+                    }
+                    className="mt-1"
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {row.takeoffLabel} · {formatQty(row.takeoffQuantity, row.takeoffUnit)}
+                    </span>
+                    <span className="block truncate font-medium">
+                      → {row.rowLabel} · per {row.rowUnit}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setMatchProposals(null)}
+                disabled={applyMatchesMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => applyMatchesMutation.mutate(matchProposals)}
+                disabled={
+                  applyMatchesMutation.isPending || matchProposals.every((row) => !row.accepted)
+                }
+                data-testid="takeoff-match-apply"
+              >
+                Apply {matchProposals.filter((row) => row.accepted).length} Match
+                {matchProposals.filter((row) => row.accepted).length === 1 ? "" : "es"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {detectProposals && (
         <Dialog open onOpenChange={(open) => !open && setDetectProposals(null)}>
           <DialogContent className="max-w-2xl" data-testid="detect-names-dialog">

@@ -5,6 +5,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
+  RefObject,
   WheelEvent as ReactWheelEvent,
 } from "react";
 import { ExternalLink, Hand, Map as MapIcon, Target, ZoomIn, ZoomOut } from "lucide-react";
@@ -307,6 +308,11 @@ export async function processPlanSetSheets({
               (item.transform as number[])[2] ?? 0,
               (item.transform as number[])[3] ?? 0,
             ),
+            // Vertical text (90° rotation) advances along y; the extractor
+            // clusters those runs by x instead of y.
+            rotated:
+              Math.abs((item.transform as number[])[1] ?? 0) >
+              Math.abs((item.transform as number[])[0] ?? 0),
           }));
         const identity = extractSheetIdentity({
           items,
@@ -346,6 +352,8 @@ export function PlanCanvas({
   onFinishDraft,
   onFinishRun,
   onAbandonDraft,
+  finishPopover,
+  finishPopoverAnchor,
   tool,
   viewSize,
   onViewSizeChange,
@@ -378,11 +386,15 @@ export function PlanCanvas({
   draftUnit: string;
   draftActionDisabled: boolean;
   onFinishDraft: () => void;
-  // Finishes an in-progress linear/area run with the vertices placed so far
-  // (double-click, Enter, right-click closeout).
+  // Finishes an in-progress linear/area/count run with the vertices placed so
+  // far (double-click, Enter, right-click closeout).
   onFinishRun?: () => void;
   // Abandons the in-progress run entirely (Esc).
   onAbandonDraft?: () => void;
+  // Post-finish classification popover, anchored near the final markup point
+  // and clamped inside the visible stage.
+  finishPopover?: ReactNode;
+  finishPopoverAnchor?: Point | null;
   tool: ToolMode;
   viewSize: ViewSize;
   onViewSizeChange: (size: ViewSize) => void;
@@ -406,6 +418,7 @@ export function PlanCanvas({
   onNextSheet?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -742,7 +755,7 @@ export function PlanCanvas({
       setZoomWindowDraft(null);
       setGeometryEditDraft(null);
       setGeometryPreview(null);
-      if ((tool === "linear" || tool === "area") && pendingPoints.length > 0) {
+      if ((tool === "linear" || tool === "area" || tool === "count") && pendingPoints.length > 0) {
         onAbandonDraft?.();
         setLinearGuide(null);
       }
@@ -1184,11 +1197,22 @@ export function PlanCanvas({
 
   return (
     <div
+      ref={rootRef}
       className={cn(
         "relative flex flex-col bg-background",
         isCockpitMode ? "min-h-0 flex-1 p-0" : "p-4",
       )}
     >
+      {finishPopover && finishPopoverAnchor && (
+        <FinishPopoverOverlay
+          anchor={finishPopoverAnchor}
+          rootRef={rootRef}
+          svgRef={svgRef}
+          viewportFrame={viewportFrame}
+        >
+          {finishPopover}
+        </FinishPopoverOverlay>
+      )}
       {!isCockpitMode &&
         renderPlanControlBar(
           "mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2",
@@ -1365,7 +1389,10 @@ export function PlanCanvas({
                 }
               }}
               onContextMenu={(event) => {
-                if ((tool === "linear" || tool === "area") && pendingPoints.length > 0) {
+                if (
+                  (tool === "linear" || tool === "area" || tool === "count") &&
+                  pendingPoints.length > 0
+                ) {
                   event.preventDefault();
                   onFinishRun?.();
                 }
@@ -1716,5 +1743,48 @@ function SamplePlanBackground({
         Overwatch sample plan sheet
       </text>
     </svg>
+  );
+}
+
+// Positions the post-finish classification popover near the takeoff's final
+// point, clamped inside the visible stage so it never leaves the viewport.
+// viewportFrame changes on scroll/zoom/resize keep it re-anchored.
+function FinishPopoverOverlay({
+  anchor,
+  rootRef,
+  svgRef,
+  viewportFrame,
+  children,
+}: {
+  anchor: Point;
+  rootRef: RefObject<HTMLDivElement | null>;
+  svgRef: RefObject<SVGSVGElement | null>;
+  viewportFrame: ViewportFrame;
+  children: ReactNode;
+}) {
+  void viewportFrame;
+  const root = rootRef.current;
+  const svg = svgRef.current;
+  if (!root || !svg) return null;
+  const rootRect = root.getBoundingClientRect();
+  const svgRect = svg.getBoundingClientRect();
+  if (rootRect.width <= 0 || svgRect.width <= 0) return null;
+  const POPOVER_WIDTH = 328;
+  const POPOVER_HEIGHT = 340;
+  const margin = 8;
+  const rawLeft = svgRect.left - rootRect.left + anchor.x * svgRect.width + 14;
+  const rawTop = svgRect.top - rootRect.top + anchor.y * svgRect.height + 14;
+  const left = Math.min(
+    Math.max(margin, rawLeft),
+    Math.max(margin, rootRect.width - POPOVER_WIDTH - margin),
+  );
+  const top = Math.min(
+    Math.max(margin, rawTop),
+    Math.max(margin, rootRect.height - POPOVER_HEIGHT - margin),
+  );
+  return (
+    <div className="absolute z-40" style={{ left, top }} data-testid="takeoff-popover-overlay">
+      {children}
+    </div>
   );
 }
