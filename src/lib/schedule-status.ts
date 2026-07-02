@@ -55,6 +55,10 @@ export function updateScheduleStatusRemainingDuration<TDraft extends ScheduleSta
   value: string,
   dataDate?: string | null,
 ): TDraft {
+  if (!hasScheduleStatusActualStartBasis(draft)) {
+    return { ...draft, remaining_duration_days: "" };
+  }
+
   const remainingDuration = parseScheduleRemainingDuration(value);
   const anchorMs = parseScheduleDateMs(getScheduleStatusAnchorDate(draft, dataDate));
   if (remainingDuration == null || anchorMs == null) {

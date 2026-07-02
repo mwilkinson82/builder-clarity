@@ -8139,7 +8139,7 @@ function ActivityDetailDialog({
                   tone={updateImpact.finishTone}
                 />
                 <ActivityUpdateImpactTile
-                  label="Remaining basis"
+                  label={isMilestone ? "Milestone basis" : "Remaining basis"}
                   value={updateImpact.remainingValue}
                   sub={updateImpact.remainingBasis}
                 />
@@ -8162,8 +8162,9 @@ function ActivityDetailDialog({
                 <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>
-                    Set the CPM data date before updating remaining duration so expected finish
-                    dates are anchored to the right schedule snapshot.
+                    {isMilestone
+                      ? "Set the CPM data date before updating this milestone forecast so it is anchored to the right schedule snapshot."
+                      : "Set the CPM data date before updating remaining duration so expected finish dates are anchored to the right schedule snapshot."}
                   </span>
                 </div>
               )}
@@ -8179,7 +8180,9 @@ function ActivityDetailDialog({
                       {openDelayForecastAligned
                         ? "The current expected finish already carries at least this delay against the baseline."
                         : delayAdjustedDraft?.forecast_finish_date
-                          ? `Apply this to move expected finish to ${shortDate(delayAdjustedDraft.forecast_finish_date)} and recalculate remaining duration.`
+                          ? isMilestone
+                            ? `Apply this to move the milestone forecast to ${shortDate(delayAdjustedDraft.forecast_finish_date)}.`
+                            : `Apply this to move expected finish to ${shortDate(delayAdjustedDraft.forecast_finish_date)} and recalculate remaining duration.`
                           : "Set a baseline or expected finish, then apply the delay to the forecast."}
                     </div>
                   </div>
@@ -9217,6 +9220,7 @@ function buildActivityUpdateImpact(draft: ActivityDraft, dataDate?: string | nul
   const remainingDuration = parseRemainingDuration(draft.remaining_duration_days);
   const statusAnchor = getDraftStatusAnchorDate(draft, dataDate);
   const isComplete = percentComplete >= 100 || Boolean(draft.actual_finish_date);
+  const isMilestone = draft.is_milestone;
   const hasActualStartBasis = Boolean(draft.actual_start_date) || Boolean(draft.actual_finish_date);
   const finishTone = slipDays == null || slipDays <= 0 ? "default" : "danger";
   const slipTone =
@@ -9225,24 +9229,28 @@ function buildActivityUpdateImpact(draft: ActivityDraft, dataDate?: string | nul
     baselineFinish: baselineFinish ? shortDate(baselineFinish) : "Set baseline",
     expectedFinish: expectedFinish ? shortDate(expectedFinish) : "Set forecast",
     finishTone,
-    remainingValue: isComplete
-      ? "Complete"
-      : !hasActualStartBasis
-        ? percentComplete > 0
-          ? "Actual start"
-          : "Not started"
-        : remainingDuration == null
-          ? "Missing"
-          : String(remainingDuration),
-    remainingBasis: isComplete
-      ? "actual finish controls"
-      : !hasActualStartBasis
-        ? percentComplete > 0
-          ? "set before remaining duration"
-          : "current start / finish"
-        : statusAnchor
-          ? `from ${shortDate(statusAnchor)}`
-          : "set data date",
+    remainingValue: isMilestone
+      ? "Milestone"
+      : isComplete
+        ? "Complete"
+        : !hasActualStartBasis
+          ? percentComplete > 0
+            ? "Actual start"
+            : "Not started"
+          : remainingDuration == null
+            ? "Missing"
+            : String(remainingDuration),
+    remainingBasis: isMilestone
+      ? "zero-duration point"
+      : isComplete
+        ? "actual finish controls"
+        : !hasActualStartBasis
+          ? percentComplete > 0
+            ? "set before remaining duration"
+            : "current start / finish"
+          : statusAnchor
+            ? `from ${shortDate(statusAnchor)}`
+            : "set data date",
     slipValue:
       slipDays == null
         ? "Set dates"

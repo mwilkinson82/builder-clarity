@@ -136,6 +136,34 @@ assert.equal(
   "Progress without an actual start should not create a remaining-duration requirement.",
 );
 assert.equal(
+  updateScheduleStatusRemainingDuration(
+    {
+      ...startedStatusDraft,
+      actual_start_date: "",
+      percent_complete: "0",
+      remaining_duration_days: "9",
+    },
+    "12",
+    "2026-06-30",
+  ).remaining_duration_days,
+  "",
+  "Unstarted rows should reject manually entered remaining duration until actual start is saved.",
+);
+assert.equal(
+  updateScheduleStatusRemainingDuration(
+    {
+      ...startedStatusDraft,
+      actual_start_date: "",
+      percent_complete: "40",
+      remaining_duration_days: "9",
+    },
+    "12",
+    "2026-06-30",
+  ).remaining_duration_days,
+  "",
+  "Progressed rows without actual start should reject remaining duration until actual start is saved.",
+);
+assert.equal(
   updateScheduleStatusPercentComplete(startedStatusDraft, "100", "2026-06-30")
     .remaining_duration_days,
   "0",
@@ -860,6 +888,9 @@ for (const requiredScheduleRiskText of [
   "Milestones are zero-duration schedule points.",
   "Milestones stay at zero duration.",
   "Milestone duration",
+  "Milestone basis",
+  "Set the CPM data date before updating this milestone forecast",
+  "move the milestone forecast",
   '? "met"',
   ': "point"',
   "needs remaining",
