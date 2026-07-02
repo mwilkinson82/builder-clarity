@@ -1080,7 +1080,7 @@ function buildScheduleUpdateReadiness(
           ? "Milestone update needed"
           : hasScheduleActivityActualStartBasis(activity)
             ? "Current forecast needed"
-            : "Start or forecast needed",
+            : "Current dates need review",
       );
       severity = "danger";
       sort = Math.min(sort, hasScheduleActivityActualStartBasis(activity) ? 14 : 18);
@@ -5070,7 +5070,6 @@ const CONSTRUCTLINE_TABLE_SPLIT_SHRINK_ORDER: ConstructLineTableColumnId[] = [
 ];
 
 const CONSTRUCTLINE_TABLE_SPLIT_GROW_ORDER: ConstructLineTableColumnId[] = [
-  "activity",
   "current",
   "plan",
   "logic",
@@ -5079,6 +5078,7 @@ const CONSTRUCTLINE_TABLE_SPLIT_GROW_ORDER: ConstructLineTableColumnId[] = [
   "slip",
   "done",
   "id",
+  "activity",
 ];
 
 function resizeTableColumnWidthsToTarget(

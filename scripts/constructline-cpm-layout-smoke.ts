@@ -148,6 +148,11 @@ assertMatches(
   /id: "activity",[\s\S]*?label: "Activity description",[\s\S]*?align: "left",/,
   "Only the Activity Description column should opt into left-aligned CPM table text.",
 );
+assertMatches(
+  scheduleRiskSource,
+  /const CONSTRUCTLINE_TABLE_SPLIT_GROW_ORDER: ConstructLineTableColumnId\[\] = \[[\s\S]*?"current",[\s\S]*?"plan",[\s\S]*?"logic",[\s\S]*?"activity",[\s\S]*?\];/,
+  "Dragging the table/Gantt split wider should prioritize technical columns before Activity Description.",
+);
 assert.equal(
   scheduleRiskSource.match(/align: "left"/g)?.length ?? 0,
   1,

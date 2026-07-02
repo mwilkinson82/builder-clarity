@@ -814,7 +814,7 @@ for (const requiredScheduleRiskText of [
   "Expected finish missing",
   "isConstructLineMilestoneActivity(activity)",
   "hasScheduleActivityStarted(activity)",
-  "Start or forecast needed",
+  "Current dates need review",
   "remaining duration not required",
   "Remaining duration is only required after an actual start",
   "Progress is entered but actual start is missing",
