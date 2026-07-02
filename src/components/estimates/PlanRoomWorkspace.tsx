@@ -231,7 +231,7 @@ const COCKPIT_PANEL_MIN_WIDTH = 280;
 const COCKPIT_PANEL_MAX_WIDTH = 540;
 const COCKPIT_PANEL_MIN_HEIGHT = 280;
 const COCKPIT_PANEL_MAX_HEIGHT = 920;
-const COCKPIT_CHROME_PANEL_TOP_GAP = 96;
+const COCKPIT_CHROME_PANEL_TOP_GAP = 72;
 const COCKPIT_PANEL_LAYOUT_STORAGE_KEY = "overwatch.plan-room.cockpit-panels.v2";
 const DEFAULT_COCKPIT_PANEL_LAYOUTS: Record<CockpitPanelKey, CockpitPanelLayout> = {
   drawings: {
@@ -1577,6 +1577,27 @@ export function PlanRoomWorkspace({
   const linkedCount = measurements.filter(
     (measurement) => measurement.estimate_line_item_id,
   ).length;
+  const unlinkedMeasurements = useMemo(
+    () => measurements.filter((measurement) => !measurement.estimate_line_item_id),
+    [measurements],
+  );
+  const unscaledSheets = useMemo(
+    () => sheets.filter((sheet) => !sheet.scale_feet_per_pixel),
+    [sheets],
+  );
+  const scaledSheetCount = sheets.length - unscaledSheets.length;
+  const readinessIssueCount =
+    (sheets.length === 0 ? 1 : 0) +
+    (measurements.length === 0 ? 1 : 0) +
+    unscaledSheets.length +
+    unlinkedMeasurements.length +
+    hiddenSheetMeasurementCount;
+  const readinessReady =
+    sheets.length > 0 &&
+    measurements.length > 0 &&
+    unscaledSheets.length === 0 &&
+    unlinkedMeasurements.length === 0 &&
+    hiddenSheetMeasurementCount === 0;
   const takeoffReportArgs = {
     estimate,
     companyName,
@@ -1627,6 +1648,20 @@ export function PlanRoomWorkspace({
     if (selectedMeasurement?.plan_sheet_id !== sheetId) {
       setSelectedMeasurementId("");
     }
+  };
+  const openFirstUnscaledSheet = () => {
+    const sheet = unscaledSheets[0];
+    if (!sheet) return;
+    openSheet(sheet.id);
+    setTool("calibrate");
+    setCockpitPanels((current) => ({ ...current, tools: true }));
+    toast.info("Opened the first sheet that still needs scale.");
+  };
+  const showUnlinkedTakeoffs = () => {
+    setTakeoffFilter("unlinked");
+    setTakeoffSearch("");
+    const measurement = unlinkedMeasurements[0];
+    if (measurement) selectMeasurement(measurement);
   };
   const openAdjacentSheet = (direction: -1 | 1) => {
     const nextItem = direction < 0 ? previousSheetNavigationItem : nextSheetNavigationItem;
@@ -1790,7 +1825,7 @@ export function PlanRoomWorkspace({
     event.stopPropagation();
     event.preventDefault();
   };
-  const takeoffToolButtons = (
+  const renderTakeoffToolButtons = (compact = false) => (
     <>
       {[
         { value: "select", icon: MousePointer2 },
@@ -1806,7 +1841,8 @@ export function PlanRoomWorkspace({
             type="button"
             size="sm"
             variant={tool === item.value ? "default" : "outline"}
-            className="gap-1.5"
+            className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+            title={toolLabel(item.value as ToolMode)}
             data-testid={`takeoff-tool-${item.value}`}
             disabled={!backendReady}
             onClick={() => {
@@ -1816,14 +1852,17 @@ export function PlanRoomWorkspace({
             }}
           >
             <Icon className="h-3.5 w-3.5" />
-            {toolLabel(item.value as ToolMode)}
+            <span className={cn(compact && "hidden 2xl:inline")}>
+              {toolLabel(item.value as ToolMode)}
+            </span>
           </Button>
         );
       })}
       {draftCommand && (
         <Button
           size="sm"
-          className="gap-1.5"
+          className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+          title={draftCommand.actionLabel}
           onClick={finishDraft}
           disabled={
             !backendReady ||
@@ -1833,7 +1872,8 @@ export function PlanRoomWorkspace({
           }
           data-testid="takeoff-finish-draft"
         >
-          <Check className="h-3.5 w-3.5" /> {draftCommand.actionLabel}
+          <Check className="h-3.5 w-3.5" />
+          <span className={cn(compact && "hidden 2xl:inline")}>{draftCommand.actionLabel}</span>
         </Button>
       )}
       {activeDraftPointCount > 0 && (
@@ -1841,28 +1881,34 @@ export function PlanRoomWorkspace({
           <Button
             size="sm"
             variant="outline"
-            className="gap-1.5"
+            className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+            title="Undo point"
             onClick={undoDraftPoint}
             data-testid="takeoff-undo-point"
           >
-            <Undo2 className="h-3.5 w-3.5" /> Undo Point
+            <Undo2 className="h-3.5 w-3.5" />
+            <span className={cn(compact && "hidden 2xl:inline")}>Undo Point</span>
           </Button>
           <Button
             size="sm"
             variant="outline"
-            className="gap-1.5"
+            className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+            title="Clear points"
             onClick={clearDraftPoints}
             data-testid="takeoff-clear-points"
           >
-            <XCircle className="h-3.5 w-3.5" /> Clear Points
+            <XCircle className="h-3.5 w-3.5" />
+            <span className={cn(compact && "hidden 2xl:inline")}>Clear Points</span>
           </Button>
         </>
       )}
     </>
   );
+  const takeoffToolButtons = renderTakeoffToolButtons(false);
+  const cockpitTakeoffToolButtons = renderTakeoffToolButtons(true);
   const cockpitSheetControls = sheetNavigationItems.length ? (
     <div
-      className="flex max-w-[min(620px,calc(100vw-2rem))] flex-wrap items-center gap-1.5"
+      className="flex max-w-[min(500px,calc(100vw-2rem))] flex-wrap items-center gap-1.5"
       data-testid="plan-cockpit-sheet-strip"
     >
       <Button
@@ -1882,7 +1928,7 @@ export function PlanRoomWorkspace({
         onValueChange={openSheet}
       >
         <SelectTrigger
-          className="h-8 w-[min(380px,calc(100vw-12rem))] bg-background/95 text-left"
+          className="h-8 w-[min(260px,calc(100vw-12rem))] bg-background/95 text-left"
           data-testid="plan-cockpit-sheet-select"
         >
           <SelectValue />
@@ -1921,11 +1967,16 @@ export function PlanRoomWorkspace({
         <>
           <Badge
             variant={currentSheet?.scale_feet_per_pixel ? "secondary" : "outline"}
+            className="hidden xl:inline-flex"
             data-testid="plan-cockpit-sheet-scale-status"
           >
             {currentSheet?.scale_feet_per_pixel ? "Scale set" : "Needs scale"}
           </Badge>
-          <Badge variant="outline" data-testid="plan-cockpit-sheet-mark-count">
+          <Badge
+            variant="outline"
+            className="hidden xl:inline-flex"
+            data-testid="plan-cockpit-sheet-mark-count"
+          >
             {currentSheetNavigationItem.measurementCount} marks
           </Badge>
         </>
@@ -1934,7 +1985,7 @@ export function PlanRoomWorkspace({
   ) : null;
   const cockpitRoomControls = (
     <div
-      className="pointer-events-auto flex max-w-[min(620px,calc(100vw-1.5rem))] flex-wrap items-center gap-1.5 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
+      className="pointer-events-auto flex max-w-[min(580px,calc(100vw-1.5rem))] flex-wrap items-center gap-1.5 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
       data-testid="plan-cockpit-room-controls"
     >
       <Button
@@ -1948,7 +1999,7 @@ export function PlanRoomWorkspace({
           <ArrowLeft className="h-4 w-4" />
         </Link>
       </Button>
-      <div className="mr-1 min-w-[130px] max-w-[180px]">
+      <div className="mr-1 min-w-[110px] max-w-[145px]">
         <p className="truncate text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
           {companyName}
         </p>
@@ -1967,24 +2018,28 @@ export function PlanRoomWorkspace({
         </Badge>
       </div>
       <Separator orientation="vertical" className="mx-1 hidden h-6 lg:block" />
-      <Button
-        type="button"
-        size="icon"
-        variant="outline"
-        className="h-8 w-8"
-        title="Show drawing and takeoff panels"
-        aria-label="Show drawing and takeoff panels"
-        onClick={showCockpitPanels}
-        data-testid="plan-cockpit-show-panels"
-      >
-        <Maximize2 className="h-3.5 w-3.5" />
-      </Button>
+      {(!cockpitPanels.drawings || !cockpitPanels.tools) && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 gap-1.5 px-2"
+          title="Show both side panels"
+          aria-label="Show both side panels"
+          onClick={showCockpitPanels}
+          data-testid="plan-cockpit-show-panels"
+        >
+          <Maximize2 className="h-3.5 w-3.5" />
+          Panels
+        </Button>
+      )}
       <Button
         type="button"
         size="sm"
         variant={cockpitPanels.drawings ? "default" : "outline"}
         className="h-8 gap-1.5 px-2"
         aria-pressed={cockpitPanels.drawings}
+        title={cockpitPanels.drawings ? "Hide drawings panel" : "Show drawings panel"}
         onClick={() => toggleCockpitPanel("drawings")}
         data-testid="plan-cockpit-drawings-toggle"
       >
@@ -1997,11 +2052,12 @@ export function PlanRoomWorkspace({
         variant={cockpitPanels.tools ? "default" : "outline"}
         className="h-8 gap-1.5 px-2"
         aria-pressed={cockpitPanels.tools}
+        title={cockpitPanels.tools ? "Hide takeoff tools panel" : "Show takeoff tools panel"}
         onClick={() => toggleCockpitPanel("tools")}
         data-testid="plan-cockpit-tools-toggle"
       >
         <Target className="h-3.5 w-3.5" />
-        Tools
+        Takeoff Tools
       </Button>
       {(cockpitPanels.drawings || cockpitPanels.tools) && (
         <Button
@@ -2540,15 +2596,11 @@ export function PlanRoomWorkspace({
             isGeometrySaving={updateMeasurementMutation.isPending}
             showFloatingControls={cockpitChromeVisible}
             roomControls={isCockpitMode && cockpitChromeVisible ? cockpitRoomControls : null}
-            sheetControls={
-              isCockpitMode && cockpitChromeVisible && !cockpitPanels.drawings
-                ? cockpitSheetControls
-                : null
-            }
+            sheetControls={isCockpitMode && cockpitChromeVisible ? cockpitSheetControls : null}
             toolControls={
               isCockpitMode && cockpitChromeVisible ? (
-                <div className="flex max-w-[min(760px,calc(100vw-2rem))] flex-wrap items-center justify-end gap-1.5">
-                  {takeoffToolButtons}
+                <div className="flex max-w-[min(620px,calc(100vw-2rem))] flex-wrap items-center justify-center gap-1.5">
+                  {cockpitTakeoffToolButtons}
                 </div>
               ) : null
             }
@@ -2781,6 +2833,110 @@ export function PlanRoomWorkspace({
                   </button>
                 );
               })}
+            </div>
+          </section>
+
+          <section
+            className="rounded-lg border border-hairline bg-card p-4 shadow-card"
+            data-testid="takeoff-readiness-checklist"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-serif text-xl">Estimate Readiness</h2>
+                <p className="text-xs text-muted-foreground">
+                  Clean up the plan room before you trust the estimate quantities.
+                </p>
+              </div>
+              {readinessReady ? (
+                <Badge variant="secondary" data-testid="takeoff-readiness-ready">
+                  Ready
+                </Badge>
+              ) : (
+                <Badge variant="outline" data-testid="takeoff-readiness-issues">
+                  {readinessIssueCount} to check
+                </Badge>
+              )}
+            </div>
+            <div className="mt-4 space-y-2 text-xs">
+              <div className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2">
+                <span className="flex min-w-0 items-center gap-2">
+                  {unscaledSheets.length === 0 ? (
+                    <Check className="h-3.5 w-3.5 text-primary" />
+                  ) : (
+                    <XCircle className="h-3.5 w-3.5 text-danger" />
+                  )}
+                  <span className="min-w-0">
+                    <span className="block font-medium text-foreground">Sheet scales</span>
+                    <span className="block truncate text-muted-foreground">
+                      {scaledSheetCount} of {sheets.length} sheets calibrated
+                    </span>
+                  </span>
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-2 text-xs"
+                  onClick={openFirstUnscaledSheet}
+                  disabled={unscaledSheets.length === 0}
+                  data-testid="takeoff-readiness-open-unscaled"
+                >
+                  Open
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2">
+                <span className="flex min-w-0 items-center gap-2">
+                  {unlinkedMeasurements.length === 0 ? (
+                    <Check className="h-3.5 w-3.5 text-primary" />
+                  ) : (
+                    <XCircle className="h-3.5 w-3.5 text-danger" />
+                  )}
+                  <span className="min-w-0">
+                    <span className="block font-medium text-foreground">Takeoff links</span>
+                    <span className="block truncate text-muted-foreground">
+                      {linkedCount} of {measurements.length} takeoffs linked to estimate rows
+                    </span>
+                  </span>
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-2 text-xs"
+                  onClick={showUnlinkedTakeoffs}
+                  disabled={unlinkedMeasurements.length === 0}
+                  data-testid="takeoff-readiness-show-unlinked"
+                >
+                  Review
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2">
+                <span className="flex min-w-0 items-center gap-2">
+                  {hiddenSheetMeasurementCount === 0 ? (
+                    <Check className="h-3.5 w-3.5 text-primary" />
+                  ) : (
+                    <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+                  )}
+                  <span className="min-w-0">
+                    <span className="block font-medium text-foreground">Visible markups</span>
+                    <span className="block truncate text-muted-foreground">
+                      {visibleSheetMeasurements.length} of {sheetMeasurements.length} marks visible
+                      on this sheet
+                    </span>
+                  </span>
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-2 text-xs"
+                  onClick={() => setAllTakeoffLayersVisible(true)}
+                  disabled={hiddenSheetMeasurementCount === 0}
+                  data-testid="takeoff-readiness-show-markups"
+                >
+                  Show
+                </Button>
+              </div>
             </div>
           </section>
 
@@ -3894,7 +4050,7 @@ function PlanCanvas({
   const zoomSliderValue = Math.round(zoom * 100);
   const canOpenOriginalPdf =
     Boolean(signedUrl) && planSet?.file_mime_type === "application/pdf" && !planSet?.sample_key;
-  const renderPlanControlBar = (className: string, testId: string) => (
+  const renderPlanControlBar = (className: string, testId: string, compact = false) => (
     <div className={className} data-testid={testId}>
       <div className="flex min-w-0 items-center gap-2">
         <Badge variant={tool === "select" ? "secondary" : "outline"} className="gap-1.5">
@@ -3934,6 +4090,7 @@ function PlanCanvas({
           type="button"
           size="sm"
           variant={isZoomWindowMode ? "default" : "outline"}
+          className={cn(compact && "h-8 gap-1.5 px-2 text-xs")}
           title="Zoom to area"
           onClick={() => {
             setIsZoomWindowMode((current) => !current);
@@ -3942,13 +4099,13 @@ function PlanCanvas({
           data-testid="plan-zoom-window"
         >
           <ZoomIn className="h-3.5 w-3.5" />
-          Zoom Area
+          <span className={cn(compact && "hidden 2xl:inline")}>Zoom Area</span>
         </Button>
         <Button
           type="button"
           size="sm"
           variant={isMiniMapCollapsed ? "outline" : "default"}
-          className="gap-1.5"
+          className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
           title={isMiniMapCollapsed ? "Show sheet map" : "Hide sheet map"}
           aria-pressed={!isMiniMapCollapsed}
           onClick={() => {
@@ -3958,21 +4115,21 @@ function PlanCanvas({
           data-testid="plan-minimap-toggle"
         >
           <MapIcon className="h-3.5 w-3.5" />
-          Map
+          <span className={cn(compact && "hidden 2xl:inline")}>Map</span>
         </Button>
         {canOpenOriginalPdf && (
           <Button
             type="button"
             size="sm"
             variant="outline"
-            className="gap-1.5"
+            className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
             title="Open the untouched source PDF in a new tab"
             asChild
             data-testid="plan-open-original-pdf"
           >
             <a href={signedUrl} target="_blank" rel="noreferrer">
               <ExternalLink className="h-3.5 w-3.5" />
-              Open PDF
+              <span className={cn(compact && "hidden 2xl:inline")}>Open Source PDF</span>
             </a>
           </Button>
         )}
@@ -4021,6 +4178,7 @@ function PlanCanvas({
           type="button"
           size="sm"
           variant="outline"
+          className={cn(compact && "h-8 px-2 text-xs")}
           title="Fit sheet"
           onClick={fitToStage}
           data-testid="plan-fit-sheet"
@@ -4031,6 +4189,7 @@ function PlanCanvas({
           type="button"
           size="sm"
           variant="outline"
+          className={cn(compact && "h-8 px-2 text-xs")}
           title="Fit width"
           onClick={fitToWidth}
           data-testid="plan-fit-width"
@@ -4041,6 +4200,7 @@ function PlanCanvas({
           type="button"
           size="sm"
           variant="outline"
+          className={cn(compact && "h-8 px-2 text-xs")}
           title="Fit height"
           onClick={fitToHeight}
           data-testid="plan-fit-height"
@@ -4051,6 +4211,7 @@ function PlanCanvas({
           type="button"
           size="sm"
           variant="outline"
+          className={cn(compact && "h-8 px-2 text-xs")}
           title="Actual size"
           onClick={setActualSize}
           data-testid="plan-actual-size"
@@ -4069,7 +4230,10 @@ function PlanCanvas({
         >
           <ZoomIn className="h-3.5 w-3.5" />
         </Button>
-        <div className="flex w-36 items-center px-2" data-testid="plan-zoom-slider">
+        <div
+          className={cn("flex w-36 items-center px-2", compact && "hidden 2xl:flex")}
+          data-testid="plan-zoom-slider"
+        >
           <Slider
             min={ZOOM_SLIDER_MIN}
             max={ZOOM_SLIDER_MAX}
@@ -4107,10 +4271,18 @@ function PlanCanvas({
 
       {isCockpitMode && showFloatingControls && (
         <div
-          className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-wrap items-start justify-between gap-2"
+          className="pointer-events-none absolute inset-x-2 top-2 z-30 flex flex-wrap items-start justify-between gap-2"
           data-testid="plan-cockpit-command-deck"
         >
           {roomControls}
+          {toolControls && (
+            <div
+              className="pointer-events-auto rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
+              data-testid="plan-cockpit-floating-takeoff-tools"
+            >
+              {toolControls}
+            </div>
+          )}
           {sheetControls && (
             <div
               className="pointer-events-auto rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
@@ -4119,21 +4291,16 @@ function PlanCanvas({
               {sheetControls}
             </div>
           )}
-          {renderPlanControlBar(
-            "pointer-events-auto flex max-w-[min(760px,calc(100vw-2rem))] flex-wrap items-center justify-between gap-2 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur",
-            "plan-cockpit-floating-controls",
-          )}
         </div>
       )}
 
-      {isCockpitMode && showFloatingControls && toolControls && (
+      {isCockpitMode && showFloatingControls && (
         <div className="pointer-events-none absolute inset-x-3 bottom-3 z-30 flex justify-center">
-          <div
-            className="pointer-events-auto rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
-            data-testid="plan-cockpit-floating-takeoff-tools"
-          >
-            {toolControls}
-          </div>
+          {renderPlanControlBar(
+            "pointer-events-auto flex max-w-[min(680px,calc(100vw-2rem))] flex-wrap items-center justify-between gap-2 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur",
+            "plan-cockpit-floating-controls",
+            true,
+          )}
         </div>
       )}
 
