@@ -770,7 +770,10 @@ for (const requiredScheduleRiskText of [
   "Expected finish missing",
   "isConstructLineMilestoneActivity(activity)",
   "hasScheduleActivityStarted(activity)",
-  "Forecast finish",
+  "Start or forecast needed",
+  "remaining duration not required",
+  "remaining duration is only required after work starts",
+  "Current forecast",
   "not started",
   "forecast dates control",
   "Forecast point",
@@ -998,6 +1001,12 @@ assert.match(
   scheduleRiskSource,
   /readyTaskCount: Math\.max\(0, updateWindowTasks\.length - sortedItems\.length\)/,
   "CPM update readiness should calculate ready rows from the same data-date update window as status-gap rows.",
+);
+
+assert.match(
+  scheduleRiskSource,
+  /function shouldFlagMissingRemainingDuration\(activity: ScheduleActivityRow\) \{[\s\S]*?isConstructLineMilestoneActivity\(activity\)[\s\S]*?!hasScheduleActivityStarted\(activity\)[\s\S]*?activity\.remaining_duration_days == null/s,
+  "Missing remaining duration should only be flagged for started, incomplete non-milestone activities.",
 );
 
 for (const removedScheduleRiskText of [

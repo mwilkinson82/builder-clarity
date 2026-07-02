@@ -1074,6 +1074,17 @@ function buildScheduleUpdateReadiness(
       reasons.push("Actual start missing");
       sort = Math.min(sort, 22);
     }
+    if (task.statusBasis === "needs_update") {
+      reasons.push(
+        task.isMilestone
+          ? "Milestone update needed"
+          : hasScheduleActivityStarted(activity)
+            ? "Current forecast needed"
+            : "Start or forecast needed",
+      );
+      severity = "danger";
+      sort = Math.min(sort, hasScheduleActivityStarted(activity) ? 12 : 18);
+    }
     if (task.isLate) {
       reasons.push("Past data date");
       severity = "danger";
@@ -1137,7 +1148,13 @@ function buildScheduleQualityGuidance(task: ConstructLineCpmTask, reasons: strin
     return "Update progress, add a delay impact, or revise the recovery path.";
   }
   if (reasons.includes("Needs update basis")) {
-    return "Enter remaining duration, expected finish, and actual start before saving the data-date snapshot.";
+    if (task.isMilestone) {
+      return "Confirm the milestone date or mark the milestone met before relying on this snapshot.";
+    }
+    if (!hasScheduleActivityStarted(task.activity)) {
+      return "Confirm the current start and expected finish; remaining duration is only required after work starts.";
+    }
+    return "Enter actual start, remaining duration, or expected finish before saving the data-date snapshot.";
   }
   if (reasons.includes("No logic ties")) {
     return task.totalFloat <= 0
@@ -3015,9 +3032,11 @@ export function CpmActivityPlanner({
           model={displayedCpmModel}
           delayFragments={delayFragments}
           layoutStorageKey={cpmGridLayoutStorageKey}
+          isDenseHeader={isFullWorkspace}
           draftEditor={isFocusOpen ? null : activityDraftEditor}
           toolbar={
             <CpmGridToolbar
+              compact={isFullWorkspace}
               scheduleView={scheduleView}
               onScheduleViewChange={setScheduleView}
               activityOrder={activityOrder}
@@ -3682,6 +3701,7 @@ function ScheduleQualityQueue({
 }
 
 function CpmGridToolbar({
+  compact = false,
   scheduleView,
   onScheduleViewChange,
   activityOrder,
@@ -3722,6 +3742,7 @@ function CpmGridToolbar({
   onSaveTemplate,
   onApplyTemplate,
 }: {
+  compact?: boolean;
   scheduleView: ScheduleGridView;
   onScheduleViewChange: (value: ScheduleGridView) => void;
   activityOrder: ScheduleActivityOrder;
@@ -3765,9 +3786,14 @@ function CpmGridToolbar({
   const [showTemplateTools, setShowTemplateTools] = useState(false);
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-3">
-      <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(280px,0.82fr)_minmax(0,1.8fr)_minmax(260px,0.78fr)]">
-        <CpmToolbarGroup label="Schedule snapshot">
+    <div className={cn("flex w-full min-w-0 flex-col", compact ? "gap-2" : "gap-3")}>
+      <div
+        className={cn(
+          "grid min-w-0 gap-2 xl:grid-cols-[minmax(280px,0.82fr)_minmax(0,1.8fr)_minmax(260px,0.78fr)]",
+          compact && "gap-1.5",
+        )}
+      >
+        <CpmToolbarGroup label="Schedule snapshot" compact={compact}>
           <CpmDataDateControl
             value={dataDateDraft}
             savedValue={latestDataDate}
@@ -3780,10 +3806,10 @@ function CpmGridToolbar({
             embedded
           />
         </CpmToolbarGroup>
-        <CpmToolbarGroup label="View filters">
+        <CpmToolbarGroup label="View filters" compact={compact}>
           <ScheduleViewControls value={scheduleView} onChange={onScheduleViewChange} />
         </CpmToolbarGroup>
-        <CpmToolbarGroup label="Sort and WBS">
+        <CpmToolbarGroup label="Sort and WBS" compact={compact}>
           <ScheduleOrderControls value={activityOrder} onChange={onActivityOrderChange} />
           <Button
             type="button"
@@ -3797,8 +3823,13 @@ function CpmGridToolbar({
         </CpmToolbarGroup>
       </div>
 
-      <div className="grid min-w-0 gap-2 xl:grid-cols-[minmax(0,0.72fr)_minmax(520px,1.28fr)]">
-        <CpmToolbarGroup label="Scale and logic">
+      <div
+        className={cn(
+          "grid min-w-0 gap-2 xl:grid-cols-[minmax(0,0.72fr)_minmax(520px,1.28fr)]",
+          compact && "gap-1.5",
+        )}
+      >
+        <CpmToolbarGroup label="Scale and logic" compact={compact}>
           <ScheduleZoomControls dayPx={dayPx} onChange={onZoomChange} />
           <Button
             type="button"
@@ -3830,7 +3861,7 @@ function CpmGridToolbar({
             Expand
           </Button>
         </CpmToolbarGroup>
-        <CpmToolbarGroup label="Schedule actions">
+        <CpmToolbarGroup label="Schedule actions" compact={compact}>
           <Button
             type="button"
             variant="outline"
@@ -3908,7 +3939,7 @@ function CpmGridToolbar({
       )}
 
       {showTemplateTools && (
-        <CpmToolbarGroup label="Templates">
+        <CpmToolbarGroup label="Templates" compact={compact}>
           <Input
             value={templateName}
             onChange={(event) => onTemplateNameChange(event.target.value)}
@@ -3971,16 +4002,27 @@ function CpmToolbarGroup({
   label,
   children,
   className,
+  compact = false,
 }: {
   label: string;
   children: ReactNode;
   className?: string;
+  compact?: boolean;
 }) {
   return (
     <div
-      className={cn("min-w-0 rounded-md border border-hairline bg-surface px-2.5 py-2", className)}
+      className={cn(
+        "min-w-0 rounded-md border border-hairline bg-surface",
+        compact ? "px-2 py-1.5" : "px-2.5 py-2",
+        className,
+      )}
     >
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+      <div
+        className={cn(
+          "text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground",
+          compact ? "mb-1" : "mb-1.5",
+        )}
+      >
         {label}
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
@@ -5214,6 +5256,7 @@ function ActivityScheduleMatrix({
   dataDate,
   showLogicLines = false,
   showBaselineBars = true,
+  isDenseHeader = false,
   isFocusMode = false,
   isPrintMode = false,
   onDayPxChange,
@@ -5233,6 +5276,7 @@ function ActivityScheduleMatrix({
   dataDate: string | null;
   showLogicLines?: boolean;
   showBaselineBars?: boolean;
+  isDenseHeader?: boolean;
   isFocusMode?: boolean;
   isPrintMode?: boolean;
   onDayPxChange?: (dayPx: number) => void;
@@ -5241,6 +5285,7 @@ function ActivityScheduleMatrix({
 }) {
   const totalActivities = model.tasks.length;
   const isFitZoom = !isPrintMode && dayPx === CONSTRUCTLINE_FIT_DAY_PX;
+  const useDenseHeader = isFocusMode || isDenseHeader;
   const matrixScrollRef = useRef<HTMLDivElement | null>(null);
   const lastLayoutStorageKeyRef = useRef(layoutStorageKey);
   const pendingLayoutStorageKeyRef = useRef<string | undefined>(undefined);
@@ -5515,38 +5560,64 @@ function ActivityScheduleMatrix({
       <div
         className={cn(
           "constructline-cpm-matrix-head flex flex-col border-b border-hairline bg-card",
-          isFocusMode ? "gap-1 px-2 py-1.5" : "gap-2 px-3 py-2",
+          useDenseHeader ? "gap-1 px-2 py-1.5" : "gap-2 px-3 py-2",
         )}
       >
         <div
           className={cn(
             "flex flex-col xl:flex-row xl:justify-between",
-            isFocusMode ? "gap-1 xl:items-center" : "gap-2 xl:items-start",
+            useDenseHeader ? "gap-1 xl:items-center" : "gap-2 xl:items-start",
           )}
         >
-          <div className={cn("constructline-cpm-matrix-title", isFocusMode && "sr-only")}>
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              <GitBranch className="h-3.5 w-3.5" />
-              ConstructLine CPM grid
-            </div>
-            <div className="mt-0.5 font-serif text-lg text-foreground">Activity table + Gantt</div>
-            <div className="mt-0.5 text-xs text-muted-foreground">
-              {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
-            </div>
-            {viewSummary && (
-              <div className="mt-1 text-xs font-semibold text-foreground">{viewSummary}</div>
+          <div
+            className={cn(
+              "constructline-cpm-matrix-title",
+              isFocusMode && "sr-only",
+              useDenseHeader && !isFocusMode && "min-w-0",
+            )}
+          >
+            {useDenseHeader && !isFocusMode ? (
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  <GitBranch className="h-3.5 w-3.5" />
+                  ConstructLine CPM grid
+                </span>
+                <span className="font-serif text-base text-foreground">Activity table + Gantt</span>
+                <span className="text-xs text-muted-foreground">
+                  {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
+                </span>
+                {viewSummary && (
+                  <span className="text-xs font-semibold text-foreground">{viewSummary}</span>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  <GitBranch className="h-3.5 w-3.5" />
+                  ConstructLine CPM grid
+                </div>
+                <div className="mt-0.5 font-serif text-lg text-foreground">
+                  Activity table + Gantt
+                </div>
+                <div className="mt-0.5 text-xs text-muted-foreground">
+                  {shortDate(model.timelineStartDate)} to {shortDate(model.timelineFinishDate)}
+                </div>
+                {viewSummary && (
+                  <div className="mt-1 text-xs font-semibold text-foreground">{viewSummary}</div>
+                )}
+              </>
             )}
           </div>
           <div
             className={cn(
               "flex min-w-0 flex-1 flex-col xl:items-end",
-              isFocusMode ? "gap-1" : "gap-2",
+              useDenseHeader ? "gap-1" : "gap-2",
             )}
           >
             <div
               className={cn(
                 "constructline-cpm-matrix-legend flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground xl:justify-end",
-                isFocusMode ? "text-[11px]" : "text-[12px]",
+                useDenseHeader ? "text-[11px]" : "text-[12px]",
               )}
             >
               <span className="inline-flex items-center gap-1">
@@ -5656,7 +5727,9 @@ function ActivityScheduleMatrix({
               ? "min-h-0 flex-1"
               : isPrintMode
                 ? ""
-                : "max-h-[clamp(520px,calc(100vh-260px),900px)]",
+                : isDenseHeader
+                  ? "max-h-[clamp(640px,calc(100vh-205px),1120px)]"
+                  : "max-h-[clamp(520px,calc(100vh-260px),900px)]",
           )}
         >
           <div
@@ -6714,7 +6787,9 @@ function formatUpdateReadinessQueueLine(item: ScheduleUpdateReadinessItem) {
     return `Forecast point ${shortDate(item.task.statusFinishDate)} · ${status} · TF ${item.task.totalFloat}d`;
   }
   if (!hasScheduleActivityStarted(item.task.activity)) {
-    return `Forecast finish ${shortDate(item.task.statusFinishDate)} · not started · TF ${item.task.totalFloat}d`;
+    return `Current forecast ${shortDate(item.task.statusStartDate)} to ${shortDate(
+      item.task.statusFinishDate,
+    )} · not started · remaining duration not required · TF ${item.task.totalFloat}d`;
   }
   return `Expected finish ${shortDate(item.task.statusFinishDate)} · remaining ${
     item.task.remainingDurationDays

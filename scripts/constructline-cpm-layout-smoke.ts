@@ -125,6 +125,11 @@ for (const requiredMatrixLayoutText of [
   "border border-accent/35 bg-accent/10",
   "showTemplateTools",
   "aria-pressed={showTemplateTools}",
+  "isDenseHeader={isFullWorkspace}",
+  "compact={isFullWorkspace}",
+  "const useDenseHeader = isFocusMode || isDenseHeader;",
+  "useDenseHeader ?",
+  "max-h-[clamp(640px,calc(100vh-205px),1120px)]",
 ]) {
   assertIncludes(
     scheduleRiskSource,
