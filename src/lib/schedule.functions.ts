@@ -31,7 +31,6 @@ type ScheduleUpdateInsert = TablesInsert<"schedule_updates">;
 type ScheduleDelayFragmentInsert = TablesInsert<"schedule_delay_fragments">;
 type ScheduleDelayFragmentUpdate = TablesUpdate<"schedule_delay_fragments">;
 type ScheduleActivityInsert = TablesInsert<"schedule_activities">;
-type ScheduleActivityUpdate = TablesUpdate<"schedule_activities">;
 type ScheduleWbsSectionInsert = TablesInsert<"schedule_wbs_sections">;
 type ScheduleWbsSectionUpdate = TablesUpdate<"schedule_wbs_sections">;
 type DynamicSupabaseError = { code?: string; message?: string } | null;
@@ -1517,6 +1516,13 @@ function includesScheduleActivityStatusColumn(payload: Record<string, unknown>) 
   return SCHEDULE_ACTIVITY_STATUS_COLUMNS.some((column) => column in payload);
 }
 
+function isScheduleActivitySchemaFallbackError(error: DynamicSupabaseError) {
+  return Boolean(
+    error &&
+    (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error)),
+  );
+}
+
 function stripScheduleActivityMissingColumns<T extends Record<string, unknown>>(
   payload: T,
   error: DynamicSupabaseError,
@@ -1537,11 +1543,7 @@ async function insertScheduleActivityRowsWithSchemaFallback(
   let { error } = await dynamicTable(supabase, "schedule_activities").insert(payloadRows);
   let attempts = 0;
 
-  while (
-    error &&
-    attempts < 2 &&
-    (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error))
-  ) {
+  while (error && attempts < 3 && isScheduleActivitySchemaFallbackError(error)) {
     const shouldWriteStatusFallback = isMissingScheduleActivityStatusColumn(error);
     payloadRows = payloadRows.map((row, index) => {
       const originalRow = rows[index] ?? row;
@@ -1552,6 +1554,66 @@ async function insertScheduleActivityRowsWithSchemaFallback(
       return fallbackRow;
     });
     ({ error } = await dynamicTable(supabase, "schedule_activities").insert(payloadRows));
+    attempts += 1;
+  }
+
+  return error;
+}
+
+async function insertScheduleActivityRowWithSchemaFallback(
+  supabase: ScheduleSupabaseClient,
+  row: Record<string, unknown>,
+) {
+  let payload = { ...row };
+  let result = await dynamicTable(supabase, "schedule_activities")
+    .insert(payload)
+    .select("*")
+    .single();
+  let attempts = 0;
+
+  while (result.error && attempts < 3 && isScheduleActivitySchemaFallbackError(result.error)) {
+    const fallbackPayload = stripScheduleActivityMissingColumns(payload, result.error);
+    if (isMissingScheduleActivityStatusColumn(result.error)) {
+      fallbackPayload.notes = writeScheduleActivityStatusFallback(fallbackPayload.notes, row);
+    }
+    payload = fallbackPayload;
+    result = await dynamicTable(supabase, "schedule_activities")
+      .insert(payload)
+      .select("*")
+      .single();
+    attempts += 1;
+  }
+
+  return result;
+}
+
+async function updateScheduleActivityWithSchemaFallback(
+  supabase: ScheduleSupabaseClient,
+  activityId: string,
+  patch: Record<string, unknown>,
+  beforeNotes: string,
+) {
+  const requestedStatusUpdate = includesScheduleActivityStatusColumn(patch);
+  let payload = { ...patch };
+  let { error } = await dynamicTable(supabase, "schedule_activities")
+    .update(payload)
+    .eq("id", activityId);
+  let attempts = 0;
+
+  while (error && attempts < 3 && isScheduleActivitySchemaFallbackError(error)) {
+    const fallbackPatch = stripScheduleActivityMissingColumns(payload, error);
+    if (requestedStatusUpdate && isMissingScheduleActivityStatusColumn(error)) {
+      fallbackPatch.notes = writeScheduleActivityStatusFallback(
+        "notes" in patch ? patch.notes : beforeNotes,
+        patch,
+      );
+    }
+    if (Object.keys(fallbackPatch).length === 0) return null;
+
+    payload = fallbackPatch;
+    ({ error } = await dynamicTable(supabase, "schedule_activities")
+      .update(payload)
+      .eq("id", activityId));
     attempts += 1;
   }
 
@@ -2254,28 +2316,10 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
       activity_id: activityId,
       sort_order: sortOrder,
     };
-    let { data: createdRow, error } = await context.supabase
-      .from("schedule_activities")
-      .insert(basePayload)
-      .select("*")
-      .single();
-    if (
-      error &&
-      (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error))
-    ) {
-      const fallbackPayload = stripScheduleActivityMissingColumns(basePayload, error);
-      if (isMissingScheduleActivityStatusColumn(error)) {
-        fallbackPayload.notes = writeScheduleActivityStatusFallback(
-          fallbackPayload.notes,
-          basePayload as Record<string, unknown>,
-        );
-      }
-      ({ data: createdRow, error } = await context.supabase
-        .from("schedule_activities")
-        .insert(fallbackPayload as ScheduleActivityInsert)
-        .select("*")
-        .single());
-    }
+    const { data: createdRow, error } = await insertScheduleActivityRowWithSchemaFallback(
+      context.supabase,
+      basePayload as Record<string, unknown>,
+    );
     if (error) throw new Error(error.message);
     const createdActivity = normalizeScheduleActivity(
       createdRow as unknown as Record<string, unknown>,
@@ -2320,37 +2364,12 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
     );
     const beforeNotes = str((beforeRow as unknown as Record<string, unknown>).notes);
 
-    let { error } = await context.supabase
-      .from("schedule_activities")
-      .update(data.patch as ScheduleActivityUpdate)
-      .eq("id", data.id);
-    const requestedStatusUpdate = includesScheduleActivityStatusColumn(
+    const error = await updateScheduleActivityWithSchemaFallback(
+      context.supabase,
+      data.id,
       data.patch as Record<string, unknown>,
+      beforeNotes,
     );
-    if (
-      error &&
-      (isMissingRestColumn(error, "wbs_section_id") || isMissingScheduleActivityStatusColumn(error))
-    ) {
-      const fallbackPatch = stripScheduleActivityMissingColumns(
-        data.patch as Record<string, unknown>,
-        error,
-      );
-      if (requestedStatusUpdate && isMissingScheduleActivityStatusColumn(error)) {
-        fallbackPatch.notes = writeScheduleActivityStatusFallback(
-          "notes" in data.patch ? data.patch.notes : beforeNotes,
-          data.patch as Record<string, unknown>,
-        );
-      }
-      if (Object.keys(fallbackPatch).length === 0) {
-        throw new Error(
-          "That schedule field could not save yet. Refresh the schedule and try again.",
-        );
-      }
-      ({ error } = await context.supabase
-        .from("schedule_activities")
-        .update(fallbackPatch as ScheduleActivityUpdate)
-        .eq("id", data.id));
-    }
     if (error) throw new Error(error.message);
 
     const shouldSyncLogic =
