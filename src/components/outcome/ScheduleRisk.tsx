@@ -263,7 +263,7 @@ const CONSTRUCTLINE_TABLE_COLUMN_SPECS = [
 const CONSTRUCTLINE_TABLE_PRINT_COLUMNS =
   "40px minmax(120px,1fr) 34px 50px 56px 34px 30px 30px 32px";
 const ACTIVITY_UPDATE_SNAPSHOT_COLUMNS =
-  "64px minmax(170px,1.15fr) 54px 82px 82px 78px 58px 54px 82px 58px minmax(170px,1fr)";
+  "64px minmax(170px,1.15fr) 54px 82px 82px 82px 58px 82px 64px 78px 58px minmax(170px,1fr)";
 const DAY_MS = 24 * 60 * 60 * 1000;
 type ConstructLineTableColumnId = (typeof CONSTRUCTLINE_TABLE_COLUMN_SPECS)[number]["id"];
 type ConstructLineTableColumnWidths = Record<ConstructLineTableColumnId, number>;
@@ -9650,7 +9650,7 @@ function ScheduleUpdateLedger({
                     <div>Current start</div>
                     <div>Expected finish</div>
                     <div>Variance</div>
-                    <div>Rem</div>
+                    <div>Remaining</div>
                     <div>% done</div>
                     <div>Basis</div>
                     <div>TF</div>
@@ -9698,7 +9698,7 @@ function ScheduleUpdateLedger({
                         {formatFinishVarianceDays(snapshot.slippage_days)}
                       </div>
                       <div className="tabular text-muted-foreground">
-                        {snapshot.is_milestone ? "0d" : `${snapshot.remaining_duration_days}d`}
+                        {formatActivityUpdateSnapshotRemaining(snapshot)}
                       </div>
                       <div className="font-semibold tabular text-foreground">
                         {Math.round(snapshot.percent_complete)}%
@@ -9856,6 +9856,16 @@ function formatActivityUpdateSnapshotStatus(row: ScheduleActivityUpdateRow) {
     row.is_milestone ? "milestone" : null,
   ].filter(Boolean);
   return tags.length > 0 ? tags.join(" · ") : `${row.percent_complete}% complete`;
+}
+
+function formatActivityUpdateSnapshotRemaining(row: ScheduleActivityUpdateRow) {
+  if (row.is_milestone) return "0d";
+  if (row.actual_finish_date || row.percent_complete >= 100) return "0d";
+  if (!row.actual_start_date) {
+    return row.percent_complete > 0 ? "needs actual" : "not started";
+  }
+  if (row.status_basis === "needs_update") return "update";
+  return `${row.remaining_duration_days}d`;
 }
 
 function formatActivityUpdateStatusBasisLabel(value: ConstructLineStatusBasis) {

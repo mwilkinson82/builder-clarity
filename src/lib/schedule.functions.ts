@@ -16,6 +16,7 @@ import {
 import {
   buildConstructLineCpmModel,
   buildReciprocalActivityLogicPatches,
+  type ConstructLineCpmTask,
   type ConstructLineStatusBasis,
 } from "@/lib/constructline-cpm";
 
@@ -549,6 +550,17 @@ const normalizeScheduleActivity = (r: Record<string, unknown>): ScheduleActivity
     sort_order: num(r.sort_order),
   };
 };
+
+function hasActivityActualStartBasisForSnapshot(activity: ScheduleActivityRow) {
+  return Boolean(activity.actual_start_date) || Boolean(activity.actual_finish_date);
+}
+
+function getActivityUpdateSnapshotRemainingDurationDays(task: ConstructLineCpmTask) {
+  if (task.isMilestone) return 0;
+  if (task.activity.actual_finish_date || task.activity.percent_complete >= 100) return 0;
+  if (!hasActivityActualStartBasisForSnapshot(task.activity)) return 0;
+  return Math.max(0, Math.round(task.remainingDurationDays));
+}
 
 const normalizeScheduleWbsSection = (r: Record<string, unknown>): ScheduleWbsSectionRow => ({
   id: r.id as string,
@@ -1089,7 +1101,7 @@ async function snapshotScheduleActivityUpdates(
     actual_start_date: task.activity.actual_start_date,
     actual_finish_date: task.activity.actual_finish_date,
     planned_duration_days: Math.max(0, Math.round(task.durationDays)),
-    remaining_duration_days: Math.max(0, Math.round(task.remainingDurationDays)),
+    remaining_duration_days: getActivityUpdateSnapshotRemainingDurationDays(task),
     status_basis: task.statusBasis,
     percent_complete: task.activity.percent_complete,
     total_float_days: Math.round(task.totalFloat),
