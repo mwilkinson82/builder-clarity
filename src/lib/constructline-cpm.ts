@@ -864,6 +864,7 @@ function getActivityRemainingDurationDays({
   plannedDurationDays: number;
 }) {
   if (isMilestone) return 0;
+  if (activity.actual_finish_date) return 0;
   if (activity.percent_complete >= 100) return 0;
   if (hasActivityStartedForStatus(activity) && activity.remaining_duration_days != null) {
     return Math.max(1, Math.round(activity.remaining_duration_days));

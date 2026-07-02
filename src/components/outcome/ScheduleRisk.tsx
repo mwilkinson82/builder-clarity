@@ -142,6 +142,7 @@ import {
 import {
   getScheduleStatusAnchorDate,
   parseScheduleRemainingDuration,
+  updateScheduleStatusActualFinishDate,
   updateScheduleStatusActualStartDate,
   updateScheduleStatusForecastFinishDate,
   updateScheduleStatusForecastStartDate,
@@ -7967,7 +7968,9 @@ function ActivityDetailDialog({
                   <Input
                     type="date"
                     value={draft.actual_finish_date}
-                    onChange={(e) => setDraft({ ...draft, actual_finish_date: e.target.value })}
+                    onChange={(e) =>
+                      setDraft(updateDraftActualFinishDate(draft, e.target.value, dataDate))
+                    }
                     className="h-10 min-w-0"
                   />
                 </LabeledField>
@@ -8965,6 +8968,22 @@ function updateDraftActualStartDate(
     return { ...draft, actual_start_date: value, remaining_duration_days: "0" };
   }
   return updateScheduleStatusActualStartDate(draft, value, dataDate);
+}
+
+function updateDraftActualFinishDate(
+  draft: ActivityDraft,
+  value: string,
+  dataDate?: string | null,
+): ActivityDraft {
+  if (draft.is_milestone) {
+    return {
+      ...draft,
+      actual_finish_date: value,
+      percent_complete: value ? "100" : draft.percent_complete,
+      remaining_duration_days: "0",
+    };
+  }
+  return updateScheduleStatusActualFinishDate(draft, value, dataDate);
 }
 
 function updateDraftForecastStartDate(

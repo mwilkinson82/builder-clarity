@@ -10,6 +10,7 @@ import {
   parseConstructLineDependencyToken,
 } from "../src/lib/constructline-cpm.ts";
 import {
+  updateScheduleStatusActualFinishDate,
   updateScheduleStatusActualStartDate,
   updateScheduleStatusForecastFinishDate,
   updateScheduleStatusForecastStartDate,
@@ -125,6 +126,26 @@ assert.equal(
     .remaining_duration_days,
   "0",
   "Completed CPM status rows should carry zero remaining duration.",
+);
+const actualFinishDraft = updateScheduleStatusActualFinishDate(
+  { ...startedStatusDraft, percent_complete: "40", remaining_duration_days: "18" },
+  "2026-07-02",
+  "2026-06-30",
+);
+assert.equal(
+  actualFinishDraft.remaining_duration_days,
+  "0",
+  "Entering actual finish should clear stale remaining duration.",
+);
+assert.equal(
+  actualFinishDraft.percent_complete,
+  "100",
+  "Entering actual finish should mark the activity complete.",
+);
+assert.equal(
+  actualFinishDraft.forecast_finish_date,
+  "2026-07-02",
+  "Entering actual finish should make the current expected finish match the actual finish.",
 );
 
 const activities = [
@@ -360,6 +381,29 @@ const staleStatusModel = buildConstructLineCpmModel(statusedActivities, {
 });
 const staleStatusById = new Map(staleStatusModel.tasks.map((task) => [task.dependencyKey, task]));
 assert.equal(staleStatusById.get("B")?.statusBasis, "needs_update");
+
+const actualFinishedStatusModel = buildConstructLineCpmModel(
+  statusedActivities.map((activity) =>
+    activity.activity_id === "A"
+      ? {
+          ...activity,
+          actual_finish_date: "2026-01-08",
+          percent_complete: 50,
+          remaining_duration_days: 12,
+        }
+      : activity,
+  ),
+  { dataDate: "2026-01-09" },
+);
+const actualFinishedStatusById = new Map(
+  actualFinishedStatusModel.tasks.map((task) => [task.dependencyKey, task]),
+);
+assert.equal(actualFinishedStatusById.get("A")?.statusBasis, "actual");
+assert.equal(
+  actualFinishedStatusById.get("A")?.remainingDurationDays,
+  0,
+  "Actual-finished activities should ignore stale remaining duration in CPM status math.",
+);
 
 const reciprocalPatches = buildReciprocalActivityLogicPatches(
   {
@@ -762,9 +806,11 @@ for (const requiredScheduleRiskText of [
   "hasSameDateReadinessWarning",
   "Update rule:",
   "updateDraftActualStartDate",
+  "updateDraftActualFinishDate",
   "updateDraftForecastStartDate",
   "updateDraftPercentComplete",
   "setDraft(updateDraftActualStartDate(draft, e.target.value, dataDate))",
+  "setDraft(updateDraftActualFinishDate(draft, e.target.value, dataDate))",
   "setDraft(updateDraftForecastStartDate(draft, e.target.value, dataDate))",
   "setDraft(updateDraftPercentComplete(draft, e.target.value, dataDate))",
   "Unstarted work is forecast with current start and current expected finish",
@@ -925,6 +971,7 @@ for (const requiredScheduleStatusText of [
   "updateScheduleStatusRemainingDuration",
   "updateScheduleStatusForecastFinishDate",
   "updateScheduleStatusActualStartDate",
+  "updateScheduleStatusActualFinishDate",
   "updateScheduleStatusForecastStartDate",
   "updateScheduleStatusPercentComplete",
   "Math.max(dataDateMs, currentStartMs)",

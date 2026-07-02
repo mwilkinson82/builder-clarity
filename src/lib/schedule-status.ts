@@ -113,6 +113,32 @@ export function updateScheduleStatusActualStartDate<TDraft extends ScheduleStatu
   return next;
 }
 
+export function updateScheduleStatusActualFinishDate<TDraft extends ScheduleStatusDraftLike>(
+  draft: TDraft,
+  value: string,
+  dataDate?: string | null,
+): TDraft {
+  const next = { ...draft, actual_finish_date: value };
+  if (value) {
+    return {
+      ...next,
+      percent_complete: "100",
+      remaining_duration_days: "0",
+      forecast_finish_date: value,
+    };
+  }
+  if (!hasScheduleStatusStarted(next)) {
+    return { ...next, remaining_duration_days: "" };
+  }
+  if (next.forecast_finish_date) {
+    return updateScheduleStatusForecastFinishDate(next, next.forecast_finish_date, dataDate);
+  }
+  if (next.remaining_duration_days.trim()) {
+    return updateScheduleStatusRemainingDuration(next, next.remaining_duration_days, dataDate);
+  }
+  return next;
+}
+
 export function updateScheduleStatusForecastStartDate<TDraft extends ScheduleStatusDraftLike>(
   draft: TDraft,
   value: string,
