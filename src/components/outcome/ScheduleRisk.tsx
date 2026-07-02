@@ -4997,6 +4997,79 @@ function getTableColumnWidth(widths: ConstructLineTableColumnWidths) {
   return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((sum, column) => sum + widths[column.id], 0);
 }
 
+function getTableColumnMinWidth() {
+  return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((sum, column) => sum + column.min, 0);
+}
+
+function getTableColumnMaxWidth() {
+  return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((sum, column) => sum + column.max, 0);
+}
+
+function getTableColumnSpec(columnId: ConstructLineTableColumnId) {
+  return CONSTRUCTLINE_TABLE_COLUMN_SPECS.find((column) => column.id === columnId);
+}
+
+const CONSTRUCTLINE_TABLE_SPLIT_SHRINK_ORDER: ConstructLineTableColumnId[] = [
+  "activity",
+  "current",
+  "plan",
+  "logic",
+  "tf",
+  "slip",
+  "done",
+  "dur",
+  "id",
+];
+
+const CONSTRUCTLINE_TABLE_SPLIT_GROW_ORDER: ConstructLineTableColumnId[] = [
+  "activity",
+  "current",
+  "plan",
+  "logic",
+  "tf",
+  "dur",
+  "slip",
+  "done",
+  "id",
+];
+
+function resizeTableColumnWidthsToTarget(
+  widths: ConstructLineTableColumnWidths,
+  targetTableWidth: number,
+) {
+  const target = Math.round(
+    clampNumber(targetTableWidth, getTableColumnMinWidth(), getTableColumnMaxWidth()),
+  );
+  let remainingDelta = target - getTableColumnWidth(widths);
+  const next = { ...widths };
+  const order =
+    remainingDelta < 0
+      ? CONSTRUCTLINE_TABLE_SPLIT_SHRINK_ORDER
+      : CONSTRUCTLINE_TABLE_SPLIT_GROW_ORDER;
+
+  for (const columnId of order) {
+    if (remainingDelta === 0) break;
+    const spec = getTableColumnSpec(columnId);
+    if (!spec) continue;
+    if (remainingDelta < 0) {
+      const capacity = Math.max(0, next[columnId] - spec.min);
+      const adjustment = Math.min(capacity, Math.abs(remainingDelta));
+      next[columnId] -= adjustment;
+      remainingDelta += adjustment;
+    } else {
+      const capacity = Math.max(0, spec.max - next[columnId]);
+      const adjustment = Math.min(capacity, remainingDelta);
+      next[columnId] += adjustment;
+      remainingDelta -= adjustment;
+    }
+  }
+
+  return CONSTRUCTLINE_TABLE_COLUMN_SPECS.reduce((normalized, column) => {
+    normalized[column.id] = Math.round(clampNumber(next[column.id], column.min, column.max));
+    return normalized;
+  }, {} as ConstructLineTableColumnWidths);
+}
+
 function getCpmGridLayoutStorageKey(projectId: string) {
   return `${CONSTRUCTLINE_TABLE_LAYOUT_STORAGE_NAMESPACE}:${projectId}`;
 }
@@ -5265,6 +5338,49 @@ function ActivityScheduleMatrix({
       window.addEventListener("pointercancel", onPointerUp);
     },
     [columnWidths, isPrintMode],
+  );
+  const startTableSplitResize = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (isPrintMode || typeof window === "undefined") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startWidths = { ...columnWidths };
+      const startTableWidth = getTableColumnWidth(startWidths);
+      const minTimelineWidth = isFocusMode ? 520 : 480;
+      const maxTableWidthForViewport =
+        matrixViewportWidth > 0
+          ? Math.max(
+              getTableColumnMinWidth(),
+              Math.min(getTableColumnMaxWidth(), measuredMatrixWidth - minTimelineWidth),
+            )
+          : getTableColumnMaxWidth();
+      const originalCursor = document.body.style.cursor;
+      const originalSelect = document.body.style.userSelect;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const targetTableWidth = clampNumber(
+          startTableWidth + moveEvent.clientX - startX,
+          getTableColumnMinWidth(),
+          maxTableWidthForViewport,
+        );
+        setColumnWidths(resizeTableColumnWidthsToTarget(startWidths, targetTableWidth));
+      };
+      const onPointerUp = () => {
+        document.body.style.cursor = originalCursor;
+        document.body.style.userSelect = originalSelect;
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
+    },
+    [columnWidths, isFocusMode, isPrintMode, matrixViewportWidth, measuredMatrixWidth],
   );
   const startTimelineScaleDrag = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -5611,11 +5727,11 @@ function ActivityScheduleMatrix({
             {!isPrintMode && (
               <button
                 type="button"
-                aria-label="Resize logic column and Gantt split"
-                title="Drag to resize the Logic column at the Gantt edge"
+                aria-label="Resize activity table and Gantt split"
+                title="Drag to give more space to the activity table or Gantt chart"
                 className="group absolute z-30 flex w-4 -translate-x-1/2 cursor-col-resize items-start justify-center focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground"
                 style={{ left: tableWidth, top: headerHeight, height: bodyHeight }}
-                onPointerDown={(event) => startColumnResize("logic", event)}
+                onPointerDown={startTableSplitResize}
               >
                 <span className="mt-2 h-[calc(100%-16px)] w-1 rounded-full bg-foreground/20 transition-colors group-hover:bg-foreground/65" />
               </button>
