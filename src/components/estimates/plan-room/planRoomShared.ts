@@ -226,6 +226,49 @@ export const DEFAULT_COCKPIT_PANEL_LAYOUTS: Record<CockpitPanelKey, CockpitPanel
 
 export type PdfViewportLike = { width: number; height: number };
 
+// Some embedded browsers throw on any localStorage access. Panel layout
+// persistence falls back to this in-memory copy so dragged positions still
+// survive for the rest of the session when persistent storage is unavailable.
+let cockpitPanelLayoutMemoryStore: string | null = null;
+
+export const readCockpitPanelLayoutStorage = (): string | null => {
+  if (typeof window === "undefined") return cockpitPanelLayoutMemoryStore;
+  try {
+    return (
+      window.localStorage.getItem(COCKPIT_PANEL_LAYOUT_STORAGE_KEY) ?? cockpitPanelLayoutMemoryStore
+    );
+  } catch {
+    return cockpitPanelLayoutMemoryStore;
+  }
+};
+
+export const writeCockpitPanelLayoutStorage = (value: string) => {
+  cockpitPanelLayoutMemoryStore = value;
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(COCKPIT_PANEL_LAYOUT_STORAGE_KEY, value);
+  } catch {
+    // Storage is blocked; the in-memory copy above keeps the session working.
+  }
+};
+
+export const clearCockpitPanelLayoutStorage = () => {
+  cockpitPanelLayoutMemoryStore = null;
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(COCKPIT_PANEL_LAYOUT_STORAGE_KEY);
+  } catch {
+    // Storage is blocked; there is nothing persistent left to clear.
+  }
+};
+
+export const cockpitPanelLayoutsEqual = (a: CockpitPanelLayout, b: CockpitPanelLayout) =>
+  a.anchor === b.anchor &&
+  a.x === b.x &&
+  a.y === b.y &&
+  a.width === b.width &&
+  a.height === b.height;
+
 export const clampNumber = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
 

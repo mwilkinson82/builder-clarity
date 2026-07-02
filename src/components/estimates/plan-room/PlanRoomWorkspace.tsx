@@ -76,7 +76,6 @@ import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions
 import {
   COCKPIT_CHROME_PANEL_TOP_GAP,
   COCKPIT_PANEL_EDGE_GAP,
-  COCKPIT_PANEL_LAYOUT_STORAGE_KEY,
   COCKPIT_PANEL_MAX_HEIGHT,
   COCKPIT_PANEL_MAX_WIDTH,
   COCKPIT_PANEL_MIN_HEIGHT,
@@ -98,6 +97,8 @@ import {
   calculateQuantity,
   centsToDollars,
   clampNumber,
+  clearCockpitPanelLayoutStorage,
+  cockpitPanelLayoutsEqual,
   coerceCockpitPanelLayout,
   copyTextToClipboard,
   downloadTextFile,
@@ -107,6 +108,7 @@ import {
   geometryPoints,
   measurementMatchesTakeoffLayers,
   planSetStatusLabel,
+  readCockpitPanelLayoutStorage,
   safeReportFileName,
   searchMatches,
   sheetDisplayName,
@@ -115,6 +117,7 @@ import {
   toolLabel,
   unitFor,
   unitLongName,
+  writeCockpitPanelLayoutStorage,
   type CockpitPanelInteraction,
   type CockpitPanelKey,
   type CockpitPanelLayout,
@@ -461,10 +464,9 @@ export function PlanRoomWorkspace({
   }, [focusLineItemId, measurements]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    const raw = readCockpitPanelLayoutStorage();
+    if (!raw) return;
     try {
-      const raw = window.localStorage.getItem(COCKPIT_PANEL_LAYOUT_STORAGE_KEY);
-      if (!raw) return;
       const parsed = JSON.parse(raw) as {
         layouts?: Partial<Record<CockpitPanelKey, unknown>>;
         chromeVisible?: unknown;
@@ -480,14 +482,12 @@ export function PlanRoomWorkspace({
         setCockpitChromeVisible(parsed.chromeVisible);
       }
     } catch {
-      window.localStorage.removeItem(COCKPIT_PANEL_LAYOUT_STORAGE_KEY);
+      clearCockpitPanelLayoutStorage();
     }
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(
-      COCKPIT_PANEL_LAYOUT_STORAGE_KEY,
+    writeCockpitPanelLayoutStorage(
       JSON.stringify({
         layouts: cockpitPanelLayouts,
         chromeVisible: cockpitChromeVisible,
@@ -1721,41 +1721,75 @@ export function PlanRoomWorkspace({
     setCockpitPanels((current) => ({ ...current, [panel]: !current[panel] }));
   const showCockpitPanels = () => setCockpitPanels({ drawings: true, tools: true });
   const hideCockpitPanels = () => setCockpitPanels({ drawings: false, tools: false });
-  const clampCockpitPanelLayout = (layout: CockpitPanelLayout): CockpitPanelLayout => {
-    const parent = mainRef.current;
-    const parentRect = parent?.getBoundingClientRect();
-    const parentWidth =
-      parentRect?.width ?? (typeof window === "undefined" ? 1800 : window.innerWidth);
-    const parentHeight =
-      parentRect?.height ?? (typeof window === "undefined" ? 900 : window.innerHeight - 48);
-    const maxWidth = Math.min(COCKPIT_PANEL_MAX_WIDTH, parentWidth - COCKPIT_PANEL_EDGE_GAP * 2);
-    const maxHeight = Math.min(COCKPIT_PANEL_MAX_HEIGHT, parentHeight - COCKPIT_PANEL_EDGE_GAP * 2);
-    const width = clampNumber(layout.width, COCKPIT_PANEL_MIN_WIDTH, Math.max(280, maxWidth));
-    const height = clampNumber(layout.height, COCKPIT_PANEL_MIN_HEIGHT, Math.max(280, maxHeight));
-    const y = clampNumber(
-      layout.y,
-      COCKPIT_PANEL_EDGE_GAP,
-      Math.max(COCKPIT_PANEL_EDGE_GAP, parentHeight - height - COCKPIT_PANEL_EDGE_GAP),
+  // Panels must stay below the floating command deck. The deck wraps to extra
+  // rows on narrow viewports, so measure its real footprint when it is in the
+  // DOM and only fall back to the chrome constant when it is not measurable.
+  const cockpitPanelTopGap = useCallback(() => {
+    if (!cockpitChromeVisible) return COCKPIT_PANEL_EDGE_GAP;
+    const parentRect = mainRef.current?.getBoundingClientRect();
+    const deck = mainRef.current?.querySelector<HTMLElement>(
+      '[data-testid="plan-cockpit-command-deck"]',
     );
-    const x =
-      layout.x === null
-        ? null
-        : clampNumber(
-            layout.x,
-            COCKPIT_PANEL_EDGE_GAP,
-            Math.max(COCKPIT_PANEL_EDGE_GAP, parentWidth - width - COCKPIT_PANEL_EDGE_GAP),
-          );
-    return { ...layout, x, y, width, height };
-  };
+    const deckRect = deck?.getBoundingClientRect();
+    if (!parentRect || !deckRect || deckRect.height <= 0) return COCKPIT_CHROME_PANEL_TOP_GAP;
+    return Math.max(
+      COCKPIT_CHROME_PANEL_TOP_GAP,
+      deckRect.bottom - parentRect.top + COCKPIT_PANEL_EDGE_GAP,
+    );
+  }, [cockpitChromeVisible]);
+  const clampCockpitPanelLayout = useCallback(
+    (layout: CockpitPanelLayout): CockpitPanelLayout => {
+      const parent = mainRef.current;
+      const parentRect = parent?.getBoundingClientRect();
+      const parentWidth =
+        parentRect?.width ?? (typeof window === "undefined" ? 1800 : window.innerWidth);
+      const parentHeight =
+        parentRect?.height ?? (typeof window === "undefined" ? 900 : window.innerHeight - 48);
+      const topGap = cockpitPanelTopGap();
+      const maxWidth = Math.min(COCKPIT_PANEL_MAX_WIDTH, parentWidth - COCKPIT_PANEL_EDGE_GAP * 2);
+      const maxHeight = Math.min(
+        COCKPIT_PANEL_MAX_HEIGHT,
+        parentHeight - topGap - COCKPIT_PANEL_EDGE_GAP,
+      );
+      const width = clampNumber(layout.width, COCKPIT_PANEL_MIN_WIDTH, Math.max(280, maxWidth));
+      const height = clampNumber(layout.height, COCKPIT_PANEL_MIN_HEIGHT, Math.max(280, maxHeight));
+      const y = clampNumber(
+        layout.y,
+        topGap,
+        Math.max(topGap, parentHeight - height - COCKPIT_PANEL_EDGE_GAP),
+      );
+      const x =
+        layout.x === null
+          ? null
+          : clampNumber(
+              layout.x,
+              COCKPIT_PANEL_EDGE_GAP,
+              Math.max(COCKPIT_PANEL_EDGE_GAP, parentWidth - width - COCKPIT_PANEL_EDGE_GAP),
+            );
+      return { ...layout, x, y, width, height };
+    },
+    [cockpitPanelTopGap],
+  );
+  // Re-clamp both panels whenever the viewport changes (or the command deck
+  // appears/disappears with cockpit chrome) so restored or dragged layouts
+  // never sit under the deck or outside the visible canvas.
+  useEffect(() => {
+    if (!isCockpitMode || typeof window === "undefined") return;
+    const reclampCockpitPanels = () =>
+      setCockpitPanelLayouts((current) => {
+        const drawings = clampCockpitPanelLayout(current.drawings);
+        const tools = clampCockpitPanelLayout(current.tools);
+        return cockpitPanelLayoutsEqual(drawings, current.drawings) &&
+          cockpitPanelLayoutsEqual(tools, current.tools)
+          ? current
+          : { drawings, tools };
+      });
+    reclampCockpitPanels();
+    window.addEventListener("resize", reclampCockpitPanels);
+    return () => window.removeEventListener("resize", reclampCockpitPanels);
+  }, [clampCockpitPanelLayout, isCockpitMode]);
   const cockpitPanelStyle = (panel: CockpitPanelKey): CSSProperties => {
-    const rawLayout = cockpitPanelLayouts[panel];
-    const layout = clampCockpitPanelLayout({
-      ...rawLayout,
-      y: Math.max(
-        cockpitChromeVisible ? COCKPIT_CHROME_PANEL_TOP_GAP : COCKPIT_PANEL_EDGE_GAP,
-        rawLayout.y,
-      ),
-    });
+    const layout = clampCockpitPanelLayout(cockpitPanelLayouts[panel]);
     const style: CSSProperties = {
       top: layout.y,
       width: layout.width,
