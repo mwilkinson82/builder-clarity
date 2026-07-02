@@ -67,7 +67,6 @@ import {
   duplicateEstimate,
   ESTIMATE_FOLDERS,
   importEstimateLineItems,
-  MASTER_ESTIMATE_PROJECT_TYPE,
   reorderLineItems,
   saveEstimateMarkupDefaults,
   searchCostLibrary,
@@ -306,7 +305,7 @@ export function EstimateWorkspace({
     rowIndex: number;
     colIndex: number;
   } | null>(null);
-  const isMasterSheet = estimate.project_type === MASTER_ESTIMATE_PROJECT_TYPE;
+  const isMasterSheet = estimate.kind === "master_sheet";
   const titleRows = Math.min(3, Math.max(1, Math.ceil(Math.max(nameDraft.length, 1) / 42)));
 
   useEffect(() => setNameDraft(estimate.name), [estimate.name]);
