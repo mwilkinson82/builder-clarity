@@ -230,7 +230,7 @@ const COCKPIT_PANEL_MIN_WIDTH = 280;
 const COCKPIT_PANEL_MAX_WIDTH = 540;
 const COCKPIT_PANEL_MIN_HEIGHT = 280;
 const COCKPIT_PANEL_MAX_HEIGHT = 920;
-const COCKPIT_CHROME_PANEL_TOP_GAP = 72;
+const COCKPIT_CHROME_PANEL_TOP_GAP = 96;
 const COCKPIT_PANEL_LAYOUT_STORAGE_KEY = "overwatch.plan-room.cockpit-panels.v2";
 const DEFAULT_COCKPIT_PANEL_LAYOUTS: Record<CockpitPanelKey, CockpitPanelLayout> = {
   drawings: {
@@ -1670,6 +1670,136 @@ export function PlanRoomWorkspace({
       )}
     </div>
   ) : null;
+  const cockpitRoomControls = (
+    <div
+      className="pointer-events-auto flex max-w-[min(620px,calc(100vw-1.5rem))] flex-wrap items-center gap-1.5 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
+      data-testid="plan-cockpit-room-controls"
+    >
+      <Button
+        asChild
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 shrink-0"
+        title="Back to estimate"
+      >
+        <Link to="/estimates/$estimateId" params={{ estimateId: estimate.id }}>
+          <ArrowLeft className="h-4 w-4" />
+        </Link>
+      </Button>
+      <div className="mr-1 min-w-[130px] max-w-[180px]">
+        <p className="truncate text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          {companyName}
+        </p>
+        <p className="truncate font-serif text-sm leading-tight text-foreground">
+          {currentSheetTitle}
+        </p>
+      </div>
+      <div
+        className="hidden items-center gap-1.5 2xl:flex"
+        data-testid="plan-cockpit-status-badges"
+      >
+        <Badge variant="outline">{planSets.length} sets</Badge>
+        <Badge variant="outline">{sheets.length} sheets</Badge>
+        <Badge variant={linkedCount === measurements.length ? "secondary" : "outline"}>
+          {linkedCount}/{measurements.length} linked
+        </Badge>
+      </div>
+      <Separator orientation="vertical" className="mx-1 hidden h-6 lg:block" />
+      <Button
+        type="button"
+        size="icon"
+        variant="outline"
+        className="h-8 w-8"
+        title="Show drawing and takeoff panels"
+        aria-label="Show drawing and takeoff panels"
+        onClick={showCockpitPanels}
+        data-testid="plan-cockpit-show-panels"
+      >
+        <Maximize2 className="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant={cockpitPanels.drawings ? "default" : "outline"}
+        className="h-8 gap-1.5 px-2"
+        aria-pressed={cockpitPanels.drawings}
+        onClick={() => toggleCockpitPanel("drawings")}
+        data-testid="plan-cockpit-drawings-toggle"
+      >
+        <Layers className="h-3.5 w-3.5" />
+        Drawings
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant={cockpitPanels.tools ? "default" : "outline"}
+        className="h-8 gap-1.5 px-2"
+        aria-pressed={cockpitPanels.tools}
+        onClick={() => toggleCockpitPanel("tools")}
+        data-testid="plan-cockpit-tools-toggle"
+      >
+        <Target className="h-3.5 w-3.5" />
+        Tools
+      </Button>
+      {(cockpitPanels.drawings || cockpitPanels.tools) && (
+        <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          className="h-8 w-8"
+          title="Hide command center panels"
+          onClick={hideCockpitPanels}
+          data-testid="plan-cockpit-hide-panels"
+        >
+          <Minimize2 className="h-3.5 w-3.5" />
+        </Button>
+      )}
+      <Button
+        type="button"
+        size="icon"
+        variant="outline"
+        className="h-8 w-8"
+        title="Clean view: hide floating command bars without closing your panels"
+        aria-label="Clean view"
+        onClick={() => setCockpitChromeVisible(false)}
+        data-testid="plan-cockpit-focus-toggle"
+      >
+        <Maximize2 className="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        size="icon"
+        variant="outline"
+        className="h-8 w-8"
+        onClick={() => {
+          setIsCockpitMode(false);
+          hideCockpitPanels();
+          setCockpitChromeVisible(true);
+        }}
+        title="Exit command center"
+        aria-label="Exit command center"
+        data-testid="plan-command-center-toggle"
+      >
+        <Minimize2 className="h-3.5 w-3.5" />
+      </Button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        accept="application/pdf,image/png,image/jpeg,image/webp"
+        onChange={onFileChange}
+      />
+      <Button
+        size="icon"
+        className="h-8 w-8"
+        title="Upload plans"
+        aria-label="Upload plans"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={!backendReady || uploading || createSetMutation.isPending}
+      >
+        <FileUp className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
 
   return (
     <div
@@ -1680,135 +1810,7 @@ export function PlanRoomWorkspace({
       data-testid="plan-room-workspace"
     >
       {isCockpitMode ? (
-        cockpitChromeVisible ? (
-          <div
-            className="pointer-events-none absolute inset-x-3 top-3 z-50 flex flex-wrap items-start justify-between gap-2"
-            data-testid="plan-cockpit-header"
-          >
-            <div className="pointer-events-auto flex min-w-0 max-w-[min(560px,calc(100vw-1.5rem))] items-center gap-2 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur">
-              <Button
-                asChild
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                title="Back to estimate"
-              >
-                <Link to="/estimates/$estimateId" params={{ estimateId: estimate.id }}>
-                  <ArrowLeft className="h-4 w-4" />
-                </Link>
-              </Button>
-              <div className="min-w-0">
-                <p className="truncate text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                  {companyName}
-                </p>
-                <div className="flex min-w-0 items-baseline gap-2">
-                  <h1 className="shrink-0 font-serif text-base leading-none text-foreground">
-                    Command Center
-                  </h1>
-                  <p className="truncate text-xs text-muted-foreground">{currentSheetTitle}</p>
-                </div>
-              </div>
-            </div>
-            <div className="pointer-events-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur">
-              <div className="hidden items-center gap-1.5 md:flex">
-                <Badge variant="outline">{planSets.length} sets</Badge>
-                <Badge variant="outline">{sheets.length} sheets</Badge>
-                <Badge variant={linkedCount === measurements.length ? "secondary" : "outline"}>
-                  {linkedCount}/{measurements.length} linked
-                </Badge>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5 px-2"
-                onClick={showCockpitPanels}
-                data-testid="plan-cockpit-show-panels"
-              >
-                <Maximize2 className="h-3.5 w-3.5" />
-                Both Panels
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={cockpitPanels.drawings ? "default" : "outline"}
-                className="h-8 gap-1.5 px-2"
-                onClick={() => toggleCockpitPanel("drawings")}
-                data-testid="plan-cockpit-drawings-toggle"
-              >
-                <Layers className="h-3.5 w-3.5" />
-                Drawings
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={cockpitPanels.tools ? "default" : "outline"}
-                className="h-8 gap-1.5 px-2"
-                onClick={() => toggleCockpitPanel("tools")}
-                data-testid="plan-cockpit-tools-toggle"
-              >
-                <Target className="h-3.5 w-3.5" />
-                Tools
-              </Button>
-              {(cockpitPanels.drawings || cockpitPanels.tools) && (
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="outline"
-                  className="h-8 w-8"
-                  title="Hide command center panels"
-                  onClick={hideCockpitPanels}
-                  data-testid="plan-cockpit-hide-panels"
-                >
-                  <Minimize2 className="h-3.5 w-3.5" />
-                </Button>
-              )}
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5 px-2"
-                title="Clean view: hide floating command bars without closing your panels"
-                onClick={() => setCockpitChromeVisible(false)}
-                data-testid="plan-cockpit-focus-toggle"
-              >
-                <Maximize2 className="h-3.5 w-3.5" />
-                Clean View
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5 px-2"
-                onClick={() => {
-                  setIsCockpitMode(false);
-                  hideCockpitPanels();
-                  setCockpitChromeVisible(true);
-                }}
-                title="Exit command center"
-                data-testid="plan-command-center-toggle"
-              >
-                <Minimize2 className="h-3.5 w-3.5" />
-                Exit
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                accept="application/pdf,image/png,image/jpeg,image/webp"
-                onChange={onFileChange}
-              />
-              <Button
-                size="sm"
-                className="h-8 gap-1.5 px-2"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={!backendReady || uploading || createSetMutation.isPending}
-              >
-                <FileUp className="h-3.5 w-3.5" />
-                Upload
-              </Button>
-            </div>
-          </div>
-        ) : (
+        !cockpitChromeVisible && (
           <div className="pointer-events-none absolute right-3 top-3 z-50">
             <Button
               type="button"
@@ -2275,7 +2277,12 @@ export function PlanRoomWorkspace({
             onMeasurementGeometryChange={saveMeasurementGeometry}
             isGeometrySaving={updateMeasurementMutation.isPending}
             showFloatingControls={cockpitChromeVisible}
-            sheetControls={isCockpitMode && cockpitChromeVisible ? cockpitSheetControls : null}
+            roomControls={isCockpitMode && cockpitChromeVisible ? cockpitRoomControls : null}
+            sheetControls={
+              isCockpitMode && cockpitChromeVisible && !cockpitPanels.drawings
+                ? cockpitSheetControls
+                : null
+            }
             toolControls={
               isCockpitMode && cockpitChromeVisible ? (
                 <div className="flex max-w-[min(760px,calc(100vw-2rem))] flex-wrap items-center justify-end gap-1.5">
@@ -2999,6 +3006,7 @@ function PlanCanvas({
   onMeasurementGeometryChange,
   isGeometrySaving,
   showFloatingControls = true,
+  roomControls,
   sheetControls,
   toolControls,
   hasPreviousSheet = false,
@@ -3029,6 +3037,7 @@ function PlanCanvas({
   onMeasurementGeometryChange: (measurementId: string, points: Point[]) => Promise<void>;
   isGeometrySaving: boolean;
   showFloatingControls?: boolean;
+  roomControls?: ReactNode;
   sheetControls?: ReactNode;
   toolControls?: ReactNode;
   hasPreviousSheet?: boolean;
@@ -3753,7 +3762,11 @@ function PlanCanvas({
       )}
 
       {isCockpitMode && showFloatingControls && (
-        <div className="pointer-events-none absolute inset-x-3 top-16 z-30 flex flex-wrap items-start justify-between gap-2">
+        <div
+          className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-wrap items-start justify-between gap-2"
+          data-testid="plan-cockpit-command-deck"
+        >
+          {roomControls}
           {sheetControls && (
             <div
               className="pointer-events-auto rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
@@ -3766,14 +3779,17 @@ function PlanCanvas({
             "pointer-events-auto flex max-w-[min(760px,calc(100vw-2rem))] flex-wrap items-center justify-between gap-2 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur",
             "plan-cockpit-floating-controls",
           )}
-          {toolControls && (
-            <div
-              className="pointer-events-auto rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
-              data-testid="plan-cockpit-floating-takeoff-tools"
-            >
-              {toolControls}
-            </div>
-          )}
+        </div>
+      )}
+
+      {isCockpitMode && showFloatingControls && toolControls && (
+        <div className="pointer-events-none absolute inset-x-3 bottom-3 z-30 flex justify-center">
+          <div
+            className="pointer-events-auto rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
+            data-testid="plan-cockpit-floating-takeoff-tools"
+          >
+            {toolControls}
+          </div>
         </div>
       )}
 
