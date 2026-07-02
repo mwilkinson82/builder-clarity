@@ -164,19 +164,20 @@ const COCKPIT_PANEL_MIN_WIDTH = 280;
 const COCKPIT_PANEL_MAX_WIDTH = 540;
 const COCKPIT_PANEL_MIN_HEIGHT = 280;
 const COCKPIT_PANEL_MAX_HEIGHT = 920;
-const COCKPIT_PANEL_LAYOUT_STORAGE_KEY = "overwatch.plan-room.cockpit-panels.v1";
+const COCKPIT_CHROME_PANEL_TOP_GAP = 72;
+const COCKPIT_PANEL_LAYOUT_STORAGE_KEY = "overwatch.plan-room.cockpit-panels.v2";
 const DEFAULT_COCKPIT_PANEL_LAYOUTS: Record<CockpitPanelKey, CockpitPanelLayout> = {
   drawings: {
     anchor: "left",
     x: null,
-    y: COCKPIT_PANEL_EDGE_GAP,
+    y: COCKPIT_CHROME_PANEL_TOP_GAP,
     width: 360,
     height: 680,
   },
   tools: {
     anchor: "right",
     x: null,
-    y: COCKPIT_PANEL_EDGE_GAP,
+    y: COCKPIT_CHROME_PANEL_TOP_GAP,
     width: 390,
     height: 720,
   },
@@ -1258,6 +1259,7 @@ export function PlanRoomWorkspace({
   };
   const toggleCockpitPanel = (panel: CockpitPanelKey) =>
     setCockpitPanels((current) => ({ ...current, [panel]: !current[panel] }));
+  const showCockpitPanels = () => setCockpitPanels({ drawings: true, tools: true });
   const hideCockpitPanels = () => setCockpitPanels({ drawings: false, tools: false });
   const clampCockpitPanelLayout = (layout: CockpitPanelLayout): CockpitPanelLayout => {
     const parent = mainRef.current;
@@ -1286,7 +1288,14 @@ export function PlanRoomWorkspace({
     return { ...layout, x, y, width, height };
   };
   const cockpitPanelStyle = (panel: CockpitPanelKey): CSSProperties => {
-    const layout = clampCockpitPanelLayout(cockpitPanelLayouts[panel]);
+    const rawLayout = cockpitPanelLayouts[panel];
+    const layout = clampCockpitPanelLayout({
+      ...rawLayout,
+      y: Math.max(
+        cockpitChromeVisible ? COCKPIT_CHROME_PANEL_TOP_GAP : COCKPIT_PANEL_EDGE_GAP,
+        rawLayout.y,
+      ),
+    });
     const style: CSSProperties = {
       top: layout.y,
       width: layout.width,
@@ -1552,22 +1561,22 @@ export function PlanRoomWorkspace({
     <div
       className={cn(
         "bg-background",
-        isCockpitMode ? "fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden" : "min-h-screen",
+        isCockpitMode ? "fixed inset-0 z-50 min-h-0 overflow-hidden" : "min-h-screen",
       )}
       data-testid="plan-room-workspace"
     >
-      <header className="shrink-0 border-b border-hairline bg-surface-elevated">
-        {isCockpitMode ? (
+      {isCockpitMode ? (
+        cockpitChromeVisible ? (
           <div
-            className="flex h-12 items-center justify-between gap-2 px-3 lg:px-4"
+            className="pointer-events-none absolute inset-x-3 top-3 z-50 flex flex-wrap items-start justify-between gap-2"
             data-testid="plan-cockpit-header"
           >
-            <div className="flex min-w-0 items-center gap-2">
+            <div className="pointer-events-auto flex min-w-0 max-w-[min(560px,calc(100vw-1.5rem))] items-center gap-2 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur">
               <Button
                 asChild
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-8 w-8 shrink-0"
                 title="Back to estimate"
               >
                 <Link to="/estimates/$estimateId" params={{ estimateId: estimate.id }}>
@@ -1579,14 +1588,14 @@ export function PlanRoomWorkspace({
                   {companyName}
                 </p>
                 <div className="flex min-w-0 items-baseline gap-2">
-                  <h1 className="shrink-0 font-serif text-xl leading-none text-foreground">
-                    Plan Room
+                  <h1 className="shrink-0 font-serif text-base leading-none text-foreground">
+                    Command Center
                   </h1>
                   <p className="truncate text-xs text-muted-foreground">{currentSheetTitle}</p>
                 </div>
               </div>
             </div>
-            <div className="flex min-w-0 items-center justify-end gap-1.5">
+            <div className="pointer-events-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5 rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur">
               <div className="hidden items-center gap-1.5 md:flex">
                 <Badge variant="outline">{planSets.length} sets</Badge>
                 <Badge variant="outline">{sheets.length} sheets</Badge>
@@ -1594,6 +1603,17 @@ export function PlanRoomWorkspace({
                   {linkedCount}/{measurements.length} linked
                 </Badge>
               </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5 px-2"
+                onClick={showCockpitPanels}
+                data-testid="plan-cockpit-show-panels"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+                Both Panels
+              </Button>
               <Button
                 type="button"
                 size="sm"
@@ -1632,26 +1652,14 @@ export function PlanRoomWorkspace({
               <Button
                 type="button"
                 size="sm"
-                variant={cockpitChromeVisible ? "outline" : "default"}
+                variant="outline"
                 className="h-8 gap-1.5 px-2"
-                title={
-                  cockpitChromeVisible
-                    ? "Focus on the drawing and hide floating controls"
-                    : "Show floating controls"
-                }
-                onClick={() => {
-                  const nextVisible = !cockpitChromeVisible;
-                  setCockpitChromeVisible(nextVisible);
-                  if (!nextVisible) hideCockpitPanels();
-                }}
+                title="Clean view: hide floating command bars without closing your panels"
+                onClick={() => setCockpitChromeVisible(false)}
                 data-testid="plan-cockpit-focus-toggle"
               >
-                {cockpitChromeVisible ? (
-                  <Maximize2 className="h-3.5 w-3.5" />
-                ) : (
-                  <Minimize2 className="h-3.5 w-3.5" />
-                )}
-                {cockpitChromeVisible ? "Focus" : "Controls"}
+                <Maximize2 className="h-3.5 w-3.5" />
+                Clean View
               </Button>
               <Button
                 size="sm"
@@ -1660,6 +1668,7 @@ export function PlanRoomWorkspace({
                 onClick={() => {
                   setIsCockpitMode(false);
                   hideCockpitPanels();
+                  setCockpitChromeVisible(true);
                 }}
                 title="Exit command center"
                 data-testid="plan-command-center-toggle"
@@ -1686,6 +1695,21 @@ export function PlanRoomWorkspace({
             </div>
           </div>
         ) : (
+          <div className="pointer-events-none absolute right-3 top-3 z-50">
+            <Button
+              type="button"
+              size="sm"
+              className="pointer-events-auto gap-1.5 shadow-lg"
+              onClick={() => setCockpitChromeVisible(true)}
+              data-testid="plan-cockpit-controls-restore"
+            >
+              <Minimize2 className="h-3.5 w-3.5" />
+              Controls
+            </Button>
+          </div>
+        )
+      ) : (
+        <header className="shrink-0 border-b border-hairline bg-surface-elevated">
           <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-5 py-4 lg:px-8">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
               <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -1717,7 +1741,8 @@ export function PlanRoomWorkspace({
                   className="gap-1.5"
                   onClick={() => {
                     setIsCockpitMode(true);
-                    hideCockpitPanels();
+                    setCockpitChromeVisible(true);
+                    showCockpitPanels();
                   }}
                   title="Open command center"
                   data-testid="plan-command-center-toggle"
@@ -1744,15 +1769,15 @@ export function PlanRoomWorkspace({
               </div>
             </div>
           </div>
-        )}
-      </header>
+        </header>
+      )}
 
       <main
         ref={mainRef}
         className={cn(
           "relative grid min-h-0",
           isCockpitMode
-            ? "flex-1 grid-cols-1 overflow-hidden p-2"
+            ? "absolute inset-0 grid-cols-1 overflow-hidden p-0"
             : "mx-auto max-w-[1800px] gap-5 px-5 py-6 lg:px-8 xl:grid-cols-[220px_minmax(0,1fr)_300px] 2xl:grid-cols-[280px_minmax(0,1fr)_390px]",
         )}
         data-testid="plan-room-main"
@@ -2083,8 +2108,10 @@ export function PlanRoomWorkspace({
 
         <section
           className={cn(
-            "min-w-0 overflow-hidden rounded-lg border border-hairline bg-card shadow-card",
-            isCockpitMode && "flex h-full min-h-0 w-full flex-col",
+            "min-w-0 overflow-hidden bg-card",
+            isCockpitMode
+              ? "flex h-full min-h-0 w-full flex-col border-0 shadow-none"
+              : "rounded-lg border border-hairline shadow-card",
           )}
           data-testid="plan-cockpit-drawing-stage"
         >
@@ -3480,7 +3507,7 @@ function PlanCanvas({
       )}
 
       {isCockpitMode && showFloatingControls && (
-        <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-wrap items-start justify-between gap-2">
+        <div className="pointer-events-none absolute inset-x-3 top-16 z-30 flex flex-wrap items-start justify-between gap-2">
           {sheetControls && (
             <div
               className="pointer-events-auto rounded-md border border-hairline bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
@@ -3522,8 +3549,10 @@ function PlanCanvas({
         ref={scrollRef}
         tabIndex={0}
         className={cn(
-          "relative min-h-0 overflow-auto rounded-md border border-hairline bg-[#f7f4ef] shadow-inner outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-          isCockpitMode ? "flex-1" : "h-[min(72vh,760px)]",
+          "relative min-h-0 overflow-auto bg-[#f7f4ef] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+          isCockpitMode
+            ? "flex-1 rounded-none border-0"
+            : "h-[min(72vh,760px)] rounded-md border border-hairline shadow-inner",
         )}
         onWheel={handleWheel}
         onKeyDown={handleKeyboard}
@@ -3531,7 +3560,12 @@ function PlanCanvas({
         title="Plan viewport: use +/- to zoom, arrows to pan, PageUp/PageDown for sheets, F to fit, W for width, Z for zoom area, Esc to cancel."
         data-testid="plan-viewport"
       >
-        <div className="inline-flex min-h-full min-w-full items-start justify-center p-4">
+        <div
+          className={cn(
+            "inline-flex min-h-full min-w-full items-start justify-center",
+            isCockpitMode ? "p-2" : "p-4",
+          )}
+        >
           <div
             className="relative shrink-0 overflow-hidden rounded-sm bg-white shadow-sm"
             style={{
