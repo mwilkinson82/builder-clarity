@@ -7240,6 +7240,18 @@ function formatActivityDraftSaveError(error: unknown, isMilestone: boolean) {
   const message = error instanceof Error ? error.message : "";
   const lowerMessage = message.toLowerCase();
   if (
+    lowerMessage.includes("activity-status") ||
+    lowerMessage.includes("actual_start_date") ||
+    lowerMessage.includes("actual_finish_date") ||
+    lowerMessage.includes("remaining_duration_days") ||
+    lowerMessage.includes("actual start") ||
+    lowerMessage.includes("actual finish") ||
+    lowerMessage.includes("remaining duration") ||
+    lowerMessage.includes("schedule field could not save")
+  ) {
+    return "The CPM update fields did not save. Refresh once and save again; baseline dates, WBS, notes, and logic can still save normally.";
+  }
+  if (
     lowerMessage.includes("wbs_section_id") ||
     lowerMessage.includes("schema cache") ||
     lowerMessage.includes("schedule_activities")

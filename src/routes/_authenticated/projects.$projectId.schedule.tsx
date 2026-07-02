@@ -92,10 +92,15 @@ function formatActivityMutationError(error: unknown) {
   const lowerMessage = message.toLowerCase();
   if (
     lowerMessage.includes("activity-status") ||
+    lowerMessage.includes("actual_start_date") ||
+    lowerMessage.includes("actual_finish_date") ||
+    lowerMessage.includes("remaining_duration_days") ||
     lowerMessage.includes("actual start") ||
-    lowerMessage.includes("remaining duration")
+    lowerMessage.includes("actual finish") ||
+    lowerMessage.includes("remaining duration") ||
+    lowerMessage.includes("schedule field could not save")
   ) {
-    return "The activity status did not save. Refresh the schedule and try again.";
+    return "The CPM update fields did not save. Refresh once and save again; baseline dates, WBS, notes, and logic can still save normally.";
   }
   if (
     lowerMessage.includes("wbs_section_id") ||

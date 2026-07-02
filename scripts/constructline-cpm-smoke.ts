@@ -1062,7 +1062,7 @@ for (const requiredScheduleRouteText of [
   "updates={updates}",
   "activityUpdates={activityUpdates}",
   "activity snapshots",
-  "The activity status did not save. Refresh the schedule and try again.",
+  "The CPM update fields did not save. Refresh once and save again; baseline dates, WBS, notes, and logic can still save normally.",
 ]) {
   assert.ok(
     scheduleRouteSource.includes(requiredScheduleRouteText),
