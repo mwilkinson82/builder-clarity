@@ -34,8 +34,7 @@ import {
   createBlankLineItems,
   createEstimate,
   listEstimateRegions,
-  listEstimates,
-  MASTER_ESTIMATE_PROJECT_TYPE,
+  listMasterSheets,
 } from "@/lib/estimates.functions";
 import { fmtUSD } from "@/lib/format";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
@@ -62,7 +61,7 @@ function shortDate(value: string) {
 }
 
 function EstimateMastersPage() {
-  const list = useServerFn(listEstimates);
+  const list = useServerFn(listMasterSheets);
   const create = useServerFn(createEstimate);
   const createBlankLines = useServerFn(createBlankLineItems);
   const regionList = useServerFn(listEstimateRegions);
@@ -75,7 +74,7 @@ function EstimateMastersPage() {
   const [newBlankRows, setNewBlankRows] = useState("10");
 
   const estimatesQuery = useQuery({
-    queryKey: ["estimates"],
+    queryKey: ["estimate-masters"],
     queryFn: () => list(),
   });
   const regionsQuery = useQuery({
@@ -90,15 +89,14 @@ function EstimateMastersPage() {
 
   const visibleMasters = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return (estimatesQuery.data ?? [])
-      .filter((estimate) => estimate.project_type === MASTER_ESTIMATE_PROJECT_TYPE)
-      .filter((estimate) => {
-        if (!q) return true;
-        return [estimate.name, estimate.description, estimate.region]
-          .join(" ")
-          .toLowerCase()
-          .includes(q);
-      });
+    // listMasterSheets returns only master sheets, filtered server-side.
+    return (estimatesQuery.data ?? []).filter((estimate) => {
+      if (!q) return true;
+      return [estimate.name, estimate.description, estimate.region]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
+    });
   }, [estimatesQuery.data, search]);
 
   const createMutation = useMutation({
@@ -107,7 +105,7 @@ function EstimateMastersPage() {
         data: {
           name: newName,
           description: newDescription,
-          project_type: MASTER_ESTIMATE_PROJECT_TYPE,
+          kind: "master_sheet",
           region: newRegion === "national" ? "" : newRegion,
         },
       });

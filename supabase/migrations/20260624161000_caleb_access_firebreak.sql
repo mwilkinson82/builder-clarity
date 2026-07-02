@@ -55,8 +55,8 @@ BEGIN
     SELECT DISTINCT
       m.organization_id,
       p_user_id,
-      'owner',
-      'active',
+      'owner'::public.account_role,
+      'active'::public.member_status,
       coalesce(p_email, '')
     FROM public.organization_memberships m
     JOIN public.profiles p ON p.id = m.user_id
@@ -123,8 +123,8 @@ BEGIN
     SELECT
       p.organization_id,
       p.owner_id,
-      'owner',
-      'active',
+      'owner'::public.account_role,
+      'active'::public.member_status,
       ''
     FROM public.projects p
     WHERE p.organization_id = v_invite.organization_id

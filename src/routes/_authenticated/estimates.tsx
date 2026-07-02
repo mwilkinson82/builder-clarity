@@ -47,7 +47,6 @@ import {
   ESTIMATE_FOLDERS,
   listEstimateRegions,
   listEstimates,
-  MASTER_ESTIMATE_PROJECT_TYPE,
   updateEstimate,
   type EstimateFolder,
   type EstimateRow,
@@ -112,13 +111,8 @@ function EstimatesPage() {
   });
   const companyName = companyContext?.name || "Company";
 
-  const projectEstimates = useMemo(
-    () =>
-      (estimatesQuery.data ?? []).filter(
-        (estimate) => estimate.project_type !== MASTER_ESTIMATE_PROJECT_TYPE,
-      ),
-    [estimatesQuery.data],
-  );
+  // listEstimates filters master sheets out server-side.
+  const projectEstimates = useMemo(() => estimatesQuery.data ?? [], [estimatesQuery.data]);
 
   const folderCounts = useMemo(() => {
     const counts = new Map<EstimateFolder, number>();

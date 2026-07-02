@@ -49,12 +49,14 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  COST_LIBRARY_LABOR_BASES,
   createCostLibraryItem,
   deleteCostLibraryItem,
   importCostLibraryItems,
   listCostLibraryItems,
   updateCostLibraryItem,
   type CostLibraryItemRow,
+  type CostLibraryLaborBasis,
 } from "@/lib/estimates.functions";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import {
@@ -100,12 +102,15 @@ type NewItem = {
   unit: string;
   material_cost_cents: number;
   labor_cost_cents: number;
+  // "" means the form has not chosen a basis yet; saving requires a choice.
+  labor_basis: CostLibraryLaborBasis | "";
   crew_size: number | null;
   productivity_per_hour: number | null;
 };
 
 type LibraryView = "system" | "my";
 type CostFocus = "all" | "material" | "labor" | "installed";
+type LaborBasisFilter = "all" | CostLibraryLaborBasis;
 
 const blankItem: NewItem = {
   csi_division: "",
@@ -115,9 +120,13 @@ const blankItem: NewItem = {
   unit: "EA",
   material_cost_cents: 0,
   labor_cost_cents: 0,
+  labor_basis: "",
   crew_size: null,
   productivity_per_hour: null,
 };
+
+const laborBasisLabel = (basis: CostLibraryLaborBasis) =>
+  COST_LIBRARY_LABOR_BASES.find((option) => option.value === basis)?.label ?? "Per Unit";
 
 const EMPTY_COST_ITEMS: CostLibraryItemRow[] = [];
 
@@ -160,10 +169,12 @@ function CostRateDisplay({
   cents,
   unit,
   kind,
+  basis = "per_unit",
 }: {
   cents: number;
   unit: string;
   kind: "Material" | "Labor";
+  basis?: CostLibraryLaborBasis;
 }) {
   const normalizedUnit = unitLabel(unit);
   if (cents <= 0) {
@@ -171,28 +182,39 @@ function CostRateDisplay({
       <div className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs">
         <div className="flex items-center justify-between gap-2">
           <span className="font-medium text-foreground">{kind}</span>
-          <span className="text-muted-foreground">Not priced</span>
+          <span className="text-muted-foreground">
+            {kind === "Material" && basis === "installed" ? "In the installed price" : "Not priced"}
+          </span>
         </div>
         <div className="mt-0.5 text-muted-foreground">
-          {kind === "Material" ? "No material cost" : "No labor cost"}
+          {kind === "Material"
+            ? basis === "installed"
+              ? "Material is included in the installed labor price"
+              : "No material cost"
+            : "No labor cost"}
         </div>
       </div>
     );
   }
+  const perLabel = kind === "Labor" && basis === "per_hour" ? "crew hr" : normalizedUnit;
+  const explainer =
+    kind === "Material"
+      ? `Material price per ${normalizedUnit}`
+      : basis === "per_hour"
+        ? "Crew rate for one hour. Crew size and production turn it into a unit price."
+        : basis === "installed"
+          ? `Material and labor together for one ${normalizedUnit}`
+          : `Labor price per ${normalizedUnit}, not per worker`;
   return (
     <div className="rounded-md border border-hairline bg-surface px-2 py-1.5">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xs font-medium text-muted-foreground">{kind}</span>
         <span className="text-sm font-semibold tabular text-foreground">
           {fmtUSD(cents / 100)}{" "}
-          <span className="text-xs font-normal text-muted-foreground">/ {normalizedUnit}</span>
+          <span className="text-xs font-normal text-muted-foreground">/ {perLabel}</span>
         </span>
       </div>
-      <div className="text-[11px] text-muted-foreground">
-        {kind === "Labor"
-          ? `Labor price per ${normalizedUnit}, not per worker`
-          : `Material price per ${normalizedUnit}`}
-      </div>
+      <div className="text-[11px] text-muted-foreground">{explainer}</div>
     </div>
   );
 }
@@ -262,6 +284,7 @@ function CostLibraryPage() {
   const [search, setSearch] = useState("");
   const [division, setDivision] = useState("all");
   const [category, setCategory] = useState("all");
+  const [basisFilter, setBasisFilter] = useState<LaborBasisFilter>("all");
   const [newOpen, setNewOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
@@ -288,10 +311,14 @@ function CostLibraryPage() {
   const companyName = companyContext?.name || "Company";
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      create({
+    mutationFn: () => {
+      if (!draft.labor_basis) {
+        return Promise.reject(new Error("Choose what the labor price means before saving."));
+      }
+      return create({
         data: {
           ...draft,
+          labor_basis: draft.labor_basis,
           unit: draft.unit.toUpperCase(),
           synonyms: [],
           keywords: draft.description
@@ -299,7 +326,8 @@ function CostLibraryPage() {
             .split(/[^a-z0-9]+/)
             .filter(Boolean),
         },
-      }),
+      });
+    },
     onSuccess: (result) => {
       toast.success("Custom item added to My Cost Library");
       setNewOpen(false);
@@ -322,6 +350,7 @@ function CostLibraryPage() {
           unit: item.unit,
           material_cost_cents: item.material_cost_cents,
           labor_cost_cents: item.labor_cost_cents,
+          labor_basis: item.labor_basis,
           crew_size: item.crew_size,
           productivity_per_hour: item.productivity_per_hour,
           synonyms: item.synonyms.map(String).slice(0, 40),
@@ -378,8 +407,12 @@ function CostLibraryPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: Partial<NewItem> }) =>
-      update({ data: { id, patch } }),
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<NewItem> }) => {
+      const { labor_basis, ...rest } = patch;
+      return update({
+        data: { id, patch: labor_basis ? { ...rest, labor_basis } : rest },
+      });
+    },
     onSuccess: () => {
       toast.success("Item updated");
       qc.invalidateQueries({ queryKey: ["cost-library"] });
@@ -418,7 +451,9 @@ function CostLibraryPage() {
 
   const visibleItems = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const sourceFiltered = sourceItems.filter((item) => matchesCostFocus(item, costFocus));
+    const sourceFiltered = sourceItems
+      .filter((item) => matchesCostFocus(item, costFocus))
+      .filter((item) => basisFilter === "all" || item.labor_basis === basisFilter);
     const searched = sourceFiltered.filter((item) => {
       if (!q) return true;
       return [
@@ -429,6 +464,7 @@ function CostLibraryPage() {
         item.unit,
         item.source,
         profileLabel(getCostProfile(item)),
+        laborBasisLabel(item.labor_basis),
       ]
         .join(" ")
         .toLowerCase()
@@ -438,7 +474,7 @@ function CostLibraryPage() {
     return [...searched].sort(
       (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
     );
-  }, [activeView, costFocus, search, sourceItems]);
+  }, [activeView, basisFilter, costFocus, search, sourceItems]);
 
   const activeEmptyMessage =
     activeView === "system"
@@ -604,10 +640,11 @@ function CostLibraryPage() {
             </div>
             <div>
               <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Labor $/Unit
+                Labor Price
               </div>
               <p className="mt-1 text-sm text-foreground">
-                The labor price for one unit. It is not multiplied by crew size.
+                Each row says what its labor price means: per unit, per crew hour, or installed
+                (material and labor together).
               </p>
             </div>
             <div>
@@ -615,13 +652,14 @@ function CostLibraryPage() {
                 Crew / Production
               </div>
               <p className="mt-1 text-sm text-foreground">
-                The crew and speed assumption behind the labor price.
+                The crew and speed assumption behind the labor price. Per-crew-hour rows need both
+                to price a unit.
               </p>
             </div>
           </div>
         </section>
 
-        <div className="grid gap-3 rounded-lg border border-hairline bg-card p-4 shadow-card lg:grid-cols-[1fr_180px_220px]">
+        <div className="grid gap-3 rounded-lg border border-hairline bg-card p-4 shadow-card lg:grid-cols-[1fr_160px_190px_190px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -653,6 +691,22 @@ function CostLibraryPage() {
               {(libraryQuery.data?.categories ?? []).map((item) => (
                 <SelectItem key={item} value={item}>
                   {item}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={basisFilter}
+            onValueChange={(value) => setBasisFilter(value as LaborBasisFilter)}
+          >
+            <SelectTrigger aria-label="Filter by labor basis">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All labor pricing</SelectItem>
+              {COST_LIBRARY_LABOR_BASES.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -754,24 +808,62 @@ function CostLibraryPage() {
                 className="uppercase"
               />
             </Field>
-            <Field label="Material $/Unit">
-              <CostMoneyInput
-                value={centsToDollars(draft.material_cost_cents)}
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label>What does the labor price mean?</Label>
+              <Select
+                value={draft.labor_basis}
                 onValueChange={(value) =>
-                  setDraft({ ...draft, material_cost_cents: dollarsToCents(value) })
+                  setDraft({
+                    ...draft,
+                    labor_basis: value as CostLibraryLaborBasis,
+                    material_cost_cents: value === "installed" ? 0 : draft.material_cost_cents,
+                  })
                 }
-                unit={draft.unit}
-                ariaLabel="Material dollars per unit"
-              />
+              >
+                <SelectTrigger aria-label="Labor pricing basis">
+                  <SelectValue placeholder="Choose before saving" />
+                </SelectTrigger>
+                <SelectContent>
+                  {COST_LIBRARY_LABOR_BASES.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label} — {option.description}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Field label="Material $/Unit">
+              {draft.labor_basis === "installed" ? (
+                <p className="rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
+                  Installed pricing keeps material inside the labor price, so this stays $0.
+                </p>
+              ) : (
+                <CostMoneyInput
+                  value={centsToDollars(draft.material_cost_cents)}
+                  onValueChange={(value) =>
+                    setDraft({ ...draft, material_cost_cents: dollarsToCents(value) })
+                  }
+                  unit={draft.unit}
+                  ariaLabel="Material dollars per unit"
+                />
+              )}
             </Field>
-            <Field label="Labor $/Unit (not per worker)">
+            <Field
+              label={
+                draft.labor_basis === "per_hour"
+                  ? "Labor $ / Crew Hour"
+                  : draft.labor_basis === "installed"
+                    ? "Installed $/Unit (material + labor)"
+                    : "Labor $/Unit (not per worker)"
+              }
+            >
               <CostMoneyInput
                 value={centsToDollars(draft.labor_cost_cents)}
                 onValueChange={(value) =>
                   setDraft({ ...draft, labor_cost_cents: dollarsToCents(value) })
                 }
-                unit={draft.unit}
-                ariaLabel="Labor dollars per unit"
+                unit={draft.labor_basis === "per_hour" ? "HR" : draft.unit}
+                ariaLabel="Labor dollars"
               />
             </Field>
             <Field label="Crew Size">
@@ -814,6 +906,7 @@ function CostLibraryPage() {
                 !draft.csi_division.trim() ||
                 !draft.description.trim() ||
                 !draft.unit.trim() ||
+                !draft.labor_basis ||
                 createMutation.isPending
               }
             >
@@ -866,6 +959,7 @@ function CostLibraryRow({
     unit: item.unit,
     material_cost_cents: item.material_cost_cents,
     labor_cost_cents: item.labor_cost_cents,
+    labor_basis: item.labor_basis,
     crew_size: item.crew_size,
     productivity_per_hour: item.productivity_per_hour,
   });
@@ -878,6 +972,7 @@ function CostLibraryRow({
       unit: item.unit,
       material_cost_cents: item.material_cost_cents,
       labor_cost_cents: item.labor_cost_cents,
+      labor_basis: item.labor_basis,
       crew_size: item.crew_size,
       productivity_per_hour: item.productivity_per_hour,
     });
@@ -909,6 +1004,7 @@ function CostLibraryRow({
               <Badge variant={profile === "labor" ? "default" : "outline"} className="capitalize">
                 {profileLabel(profile)}
               </Badge>
+              <Badge variant="outline">{laborBasisLabel(item.labor_basis)}</Badge>
             </div>
           </div>
         ) : (
@@ -922,6 +1018,7 @@ function CostLibraryRow({
               <Badge variant={profile === "labor" ? "default" : "outline"} className="capitalize">
                 {profileLabel(profile)}
               </Badge>
+              <Badge variant="outline">{laborBasisLabel(item.labor_basis)}</Badge>
               <span className="text-xs tabular text-muted-foreground">
                 CSI {item.csi_code || item.csi_division}
               </span>
@@ -959,35 +1056,81 @@ function CostLibraryRow({
           <div className="space-y-2">
             <div>
               <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Material $/Unit
+                Labor Pricing
               </div>
-              <CostMoneyInput
-                value={centsToDollars(draft.material_cost_cents)}
+              <Select
+                value={draft.labor_basis || "per_unit"}
                 onValueChange={(value) =>
-                  setDraft({ ...draft, material_cost_cents: dollarsToCents(value) })
+                  setDraft({
+                    ...draft,
+                    labor_basis: value as CostLibraryLaborBasis,
+                    material_cost_cents: value === "installed" ? 0 : draft.material_cost_cents,
+                  })
                 }
-                unit={draft.unit}
-                ariaLabel="Material dollars per unit"
-              />
+              >
+                <SelectTrigger className="h-8" aria-label="Labor pricing basis">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COST_LIBRARY_LABOR_BASES.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Labor $/Unit
+                Material $/Unit
+              </div>
+              {draft.labor_basis === "installed" ? (
+                <p className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-[11px] text-muted-foreground">
+                  Included in the installed price
+                </p>
+              ) : (
+                <CostMoneyInput
+                  value={centsToDollars(draft.material_cost_cents)}
+                  onValueChange={(value) =>
+                    setDraft({ ...draft, material_cost_cents: dollarsToCents(value) })
+                  }
+                  unit={draft.unit}
+                  ariaLabel="Material dollars per unit"
+                />
+              )}
+            </div>
+            <div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                {draft.labor_basis === "per_hour"
+                  ? "Labor $ / Crew Hour"
+                  : draft.labor_basis === "installed"
+                    ? "Installed $/Unit"
+                    : "Labor $/Unit"}
               </div>
               <CostMoneyInput
                 value={centsToDollars(draft.labor_cost_cents)}
                 onValueChange={(value) =>
                   setDraft({ ...draft, labor_cost_cents: dollarsToCents(value) })
                 }
-                unit={draft.unit}
-                ariaLabel="Labor dollars per unit"
+                unit={draft.labor_basis === "per_hour" ? "HR" : draft.unit}
+                ariaLabel="Labor dollars"
               />
             </div>
           </div>
         ) : (
           <div className="space-y-2">
-            <CostRateDisplay cents={item.material_cost_cents} unit={item.unit} kind="Material" />
-            <CostRateDisplay cents={item.labor_cost_cents} unit={item.unit} kind="Labor" />
+            <CostRateDisplay
+              cents={item.material_cost_cents}
+              unit={item.unit}
+              kind="Material"
+              basis={item.labor_basis}
+            />
+            <CostRateDisplay
+              cents={item.labor_cost_cents}
+              unit={item.unit}
+              kind="Labor"
+              basis={item.labor_basis}
+            />
           </div>
         )}
       </TableCell>

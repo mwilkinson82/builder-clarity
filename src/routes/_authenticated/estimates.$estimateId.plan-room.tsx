@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
-import { PlanRoomWorkspace } from "@/components/estimates/PlanRoomWorkspace";
+import { PlanRoomWorkspace } from "@/components/estimates/plan-room/PlanRoomWorkspace";
 import { Button } from "@/components/ui/button";
 import { getEstimate } from "@/lib/estimates.functions";
 import { getPlanRoom } from "@/lib/plan-room.functions";
@@ -10,6 +10,9 @@ import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 
 export const Route = createFileRoute("/_authenticated/estimates/$estimateId/plan-room")({
   ssr: false,
+  // ?line=<estimate line id> focuses that line's takeoff (sheet + measurement).
+  validateSearch: (search: Record<string, unknown>): { line?: string } =>
+    typeof search.line === "string" && search.line ? { line: search.line } : {},
   head: () => ({
     meta: [
       { title: "Plan Room — Overwatch" },
@@ -24,6 +27,7 @@ export const Route = createFileRoute("/_authenticated/estimates/$estimateId/plan
 
 function PlanRoomPage() {
   const { estimateId } = Route.useParams();
+  const { line: focusLineItemId } = Route.useSearch();
   const loadEstimate = useServerFn(getEstimate);
   const loadPlanRoom = useServerFn(getPlanRoom);
   const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
@@ -91,6 +95,7 @@ function PlanRoomPage() {
       schemaReady={planRoomQuery.data.schema_ready}
       schemaMessage={planRoomQuery.data.schema_message}
       companyName={companyQuery.data?.name || "Company"}
+      focusLineItemId={focusLineItemId}
     />
   );
 }

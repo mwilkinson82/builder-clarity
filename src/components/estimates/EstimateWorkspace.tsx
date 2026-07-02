@@ -67,8 +67,8 @@ import {
   duplicateEstimate,
   ESTIMATE_FOLDERS,
   importEstimateLineItems,
-  MASTER_ESTIMATE_PROJECT_TYPE,
   reorderLineItems,
+  resolveLibraryUnitCosts,
   saveEstimateMarkupDefaults,
   searchCostLibrary,
   updateEstimate,
@@ -156,6 +156,8 @@ const dollarsToCents = (value: number) => Math.round(value * 100);
 const centsToDollars = (value: number) => Math.round(value) / 100;
 
 const costProfileLabel = (item: CostLibraryItemRow) => {
+  if (item.labor_basis === "installed") return "Installed";
+  if (item.labor_basis === "per_hour") return "Crew Hour Rate";
   const hasMaterial = item.display_material_cost_cents > 0;
   const hasLabor = item.display_labor_cost_cents > 0;
   if (hasMaterial && hasLabor) return "Installed";
@@ -306,7 +308,7 @@ export function EstimateWorkspace({
     rowIndex: number;
     colIndex: number;
   } | null>(null);
-  const isMasterSheet = estimate.project_type === MASTER_ESTIMATE_PROJECT_TYPE;
+  const isMasterSheet = estimate.kind === "master_sheet";
   const titleRows = Math.min(3, Math.max(1, Math.ceil(Math.max(nameDraft.length, 1) / 42)));
 
   useEffect(() => setNameDraft(estimate.name), [estimate.name]);
@@ -986,6 +988,15 @@ function EstimateLineRow({
     onKeyDown: handleGridKeyDown(colIndex),
   });
   const selectLibraryItem = (item: CostLibraryItemRow, mode: CostApplyMode) => {
+    // Material-only pulls skip the labor conversion, so they never block.
+    const resolved =
+      mode === "material"
+        ? { ok: true as const, material_cost_cents: item.material_cost_cents, labor_cost_cents: 0 }
+        : resolveLibraryUnitCosts(item);
+    if (!resolved.ok) {
+      toast.error(resolved.message);
+      return;
+    }
     const sharedPatch = {
       unit: item.unit,
       csi_division: item.csi_division,
@@ -998,17 +1009,17 @@ function EstimateLineRow({
       mode === "material"
         ? {
             ...sharedPatch,
-            material_unit_cost_cents: item.material_cost_cents,
+            material_unit_cost_cents: resolved.material_cost_cents,
           }
         : mode === "labor"
           ? {
               ...sharedPatch,
-              labor_unit_cost_cents: item.labor_cost_cents,
+              labor_unit_cost_cents: resolved.labor_cost_cents,
             }
           : {
               ...sharedPatch,
-              material_unit_cost_cents: item.material_cost_cents,
-              labor_unit_cost_cents: item.labor_cost_cents,
+              material_unit_cost_cents: resolved.material_cost_cents,
+              labor_unit_cost_cents: resolved.labor_cost_cents,
             };
     setDraft((current) => ({ ...current, ...patch }));
     onUpdate(patch);
@@ -1080,6 +1091,18 @@ function EstimateLineRow({
           onBlur={() => commit({ quantity: draft.quantity })}
           className="h-8 w-full min-w-0 text-right tabular"
         />
+        {line.quantity_source === "takeoff" && (
+          <Link
+            to="/estimates/$estimateId/plan-room"
+            params={{ estimateId: estimate.id }}
+            search={{ line: line.id }}
+            className="mt-1 flex items-center justify-end gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+            title="This quantity came from the Plan Room takeoff. Open its sheet and measurement."
+            data-testid="line-takeoff-link"
+          >
+            <PencilRuler className="h-3 w-3" /> Takeoff
+          </Link>
+        )}
       </TableCell>
       <TableCell>
         <MoneyInput

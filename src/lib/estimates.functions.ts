@@ -13,6 +13,7 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   delete(): DynamicSupabaseQuery;
   upsert(values: unknown, options?: { onConflict?: string }): DynamicSupabaseQuery;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
+  or(filters: string): DynamicSupabaseQuery;
   in(column: string, values: readonly string[]): Promise<DynamicSupabaseResult<unknown[]>>;
   order(
     column: string,
@@ -50,7 +51,31 @@ export type EstimateStatus = "draft" | "final" | "awarded" | "lost";
 const ESTIMATE_FOLDER_VALUES = ["sales_process", "won", "not_won", "archived"] as const;
 export type EstimateFolder = (typeof ESTIMATE_FOLDER_VALUES)[number];
 export type MarkupBasis = "subtotal" | "material" | "labor";
+export type EstimateKind = "estimate" | "master_sheet";
 export const MASTER_ESTIMATE_PROJECT_TYPE = "master_sheet";
+export type CostLibraryLaborBasis = "per_unit" | "per_hour" | "installed";
+export const COST_LIBRARY_LABOR_BASES: Array<{
+  value: CostLibraryLaborBasis;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "per_unit",
+    label: "Per Unit",
+    description: "Labor $ is the labor price for one takeoff unit (LF, SF, EA...).",
+  },
+  {
+    value: "per_hour",
+    label: "Per Crew Hour",
+    description:
+      "Labor $ is the crew rate for one hour. Needs crew size and production per hour to price a unit.",
+  },
+  {
+    value: "installed",
+    label: "Installed",
+    description: "Labor $ already includes material and labor for one unit. Material $ stays 0.",
+  },
+];
 export const ESTIMATE_FOLDERS: Array<{
   value: EstimateFolder;
   label: string;
@@ -93,6 +118,7 @@ export interface EstimateRow {
   opportunity_id: string | null;
   project_id: string | null;
   project_type: string;
+  kind: EstimateKind;
   region: string;
   region_multiplier: number;
   overhead_pct: number;
@@ -115,6 +141,8 @@ export interface EstimateRow {
   opportunity_name?: string;
 }
 
+export type LineQuantitySource = "manual" | "takeoff";
+
 export interface EstimateLineItemRow {
   id: string;
   estimate_id: string;
@@ -123,6 +151,9 @@ export interface EstimateLineItemRow {
   description: string;
   unit: string;
   quantity: number;
+  quantity_source: LineQuantitySource;
+  takeoff_quantity: number | null;
+  takeoff_synced_at: string | null;
   material_unit_cost_cents: number;
   labor_unit_cost_cents: number;
   material_extended_cents: number;
@@ -147,6 +178,7 @@ export interface CostLibraryItemRow {
   unit: string;
   material_cost_cents: number;
   labor_cost_cents: number;
+  labor_basis: CostLibraryLaborBasis;
   display_material_cost_cents: number;
   display_labor_cost_cents: number;
   crew_size: number | null;
@@ -219,8 +251,54 @@ const isMissingEstimateFolderColumn = (error: { code?: string; message?: string 
   );
 };
 
+const isMissingEstimateKindColumn = (error: { code?: string; message?: string } | null) => {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" ||
+      error.code === "42703" ||
+      (/kind/i.test(message) &&
+        /schema cache|column|could not find|does not exist/i.test(message))),
+  );
+};
+
+const isMissingLaborBasisColumn = (error: { code?: string; message?: string } | null) => {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" ||
+      error.code === "42703" ||
+      (/labor_basis/i.test(message) &&
+        /schema cache|column|could not find|does not exist/i.test(message))),
+  );
+};
+
+const isMissingQuantityProvenanceColumn = (error: { code?: string; message?: string } | null) => {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" ||
+      error.code === "42703" ||
+      (/quantity_source|takeoff_quantity|takeoff_synced_at/i.test(message) &&
+        /schema cache|column|could not find|does not exist/i.test(message))),
+  );
+};
+
+const LABOR_BASIS_PENDING_MESSAGE =
+  "Labor pricing basis is still being enabled on the backend. Wait for the database migration to finish, then try again.";
+
+const INSTALLED_MATERIAL_MESSAGE =
+  "Installed costs already include material in the labor price. Set Material $/Unit to 0, or pick a different labor basis.";
+
 const normalizeEstimate = (row: Record<string, unknown>): EstimateRow => {
   const status = normalizeEstimateStatus(row.status);
+  const projectType = str(row.project_type, "commercial");
+  // Transition tolerance: rows written before the kind column landed flag
+  // master sheets via project_type, so treat either signal as master.
+  const kind: EstimateKind =
+    str(row.kind) === "master_sheet" || projectType === MASTER_ESTIMATE_PROJECT_TYPE
+      ? "master_sheet"
+      : "estimate";
   return {
     id: str(row.id),
     organization_id: str(row.organization_id),
@@ -229,7 +307,8 @@ const normalizeEstimate = (row: Record<string, unknown>): EstimateRow => {
     description: str(row.description),
     opportunity_id: (row.opportunity_id as string | null) ?? null,
     project_id: (row.project_id as string | null) ?? null,
-    project_type: str(row.project_type, "commercial"),
+    project_type: projectType,
+    kind,
     region: str(row.region),
     region_multiplier: num(row.region_multiplier, 1),
     overhead_pct: Math.round(num(row.overhead_pct, 1000)),
@@ -262,6 +341,9 @@ const normalizeLineItem = (row: Record<string, unknown>): EstimateLineItemRow =>
     description: str(row.description),
     unit: str(row.unit),
     quantity,
+    quantity_source: str(row.quantity_source) === "takeoff" ? "takeoff" : "manual",
+    takeoff_quantity: row.takeoff_quantity == null ? null : num(row.takeoff_quantity),
+    takeoff_synced_at: row.takeoff_synced_at == null ? null : str(row.takeoff_synced_at),
     material_unit_cost_cents: material,
     labor_unit_cost_cents: labor,
     material_extended_cents: Math.round(num(row.material_extended_cents, quantity * material)),
@@ -274,6 +356,11 @@ const normalizeLineItem = (row: Record<string, unknown>): EstimateLineItemRow =>
     created_at: str(row.created_at),
     updated_at: str(row.updated_at),
   };
+};
+
+const normalizeLaborBasis = (value: unknown): CostLibraryLaborBasis => {
+  const basis = str(value);
+  return basis === "per_hour" || basis === "installed" ? basis : "per_unit";
 };
 
 const normalizeLibraryItem = (
@@ -293,6 +380,7 @@ const normalizeLibraryItem = (
     unit: str(row.unit),
     material_cost_cents: material,
     labor_cost_cents: labor,
+    labor_basis: normalizeLaborBasis(row.labor_basis),
     display_material_cost_cents: Math.round(material * regionMultiplier),
     display_labor_cost_cents: Math.round(labor * regionMultiplier),
     crew_size: row.crew_size == null ? null : num(row.crew_size),
@@ -390,6 +478,49 @@ export function calculateEstimateTotals(
     total_cents,
     indicated_gp_pct:
       total_cents > 0 ? ((total_cents - adjusted_direct_cents) / total_cents) * 100 : 0,
+  };
+}
+
+export type LibraryUnitCostResolution =
+  | { ok: true; material_cost_cents: number; labor_cost_cents: number }
+  | { ok: false; message: string };
+
+// Converts a cost library row into per-unit material and labor costs based on
+// its labor basis. per_hour rows need crew_size and productivity_per_hour;
+// callers must block the pull (not guess) when the resolution fails.
+export function resolveLibraryUnitCosts(
+  item: Pick<
+    CostLibraryItemRow,
+    | "description"
+    | "material_cost_cents"
+    | "labor_cost_cents"
+    | "labor_basis"
+    | "crew_size"
+    | "productivity_per_hour"
+  >,
+): LibraryUnitCostResolution {
+  if (item.labor_basis === "per_hour") {
+    const crewSize = item.crew_size ?? 0;
+    const productivity = item.productivity_per_hour ?? 0;
+    if (crewSize <= 0 || productivity <= 0) {
+      return {
+        ok: false,
+        message: `"${item.description}" is priced per crew hour. Add its crew size and production per hour in the Cost Library, then pull it again.`,
+      };
+    }
+    return {
+      ok: true,
+      material_cost_cents: item.material_cost_cents,
+      labor_cost_cents: Math.round((item.labor_cost_cents * crewSize) / productivity),
+    };
+  }
+  if (item.labor_basis === "installed") {
+    return { ok: true, material_cost_cents: 0, labor_cost_cents: item.labor_cost_cents };
+  }
+  return {
+    ok: true,
+    material_cost_cents: item.material_cost_cents,
+    labor_cost_cents: item.labor_cost_cents,
   };
 }
 
@@ -565,6 +696,35 @@ async function ensureHarborDemoEstimate(
   await recalculateEstimateTotalsInternal(context, estimateId);
 }
 
+async function insertEstimateRow(
+  context: { supabase: unknown },
+  insert: Record<string, unknown> & { kind: EstimateKind },
+  fallbackMessage: string,
+) {
+  let result = await dynamicTable(context.supabase, "estimates")
+    .insert(insert)
+    .select("id")
+    .single();
+  if (result.error && isMissingEstimateKindColumn(result.error)) {
+    // The kind column has not landed in this environment yet; fall back to
+    // the legacy project_type overload so master sheets never leak into the
+    // estimates list.
+    const { kind, ...legacy } = insert;
+    result = await dynamicTable(context.supabase, "estimates")
+      .insert(
+        kind === "master_sheet"
+          ? { ...legacy, project_type: MASTER_ESTIMATE_PROJECT_TYPE }
+          : legacy,
+      )
+      .select("id")
+      .single();
+  }
+  if (result.error || !result.data) {
+    throw new Error(result.error?.message ?? fallbackMessage);
+  }
+  return str((result.data as Record<string, unknown>).id);
+}
+
 async function loadEstimate(context: { supabase: unknown }, id: string): Promise<EstimateRow> {
   const { data, error } = await dynamicTable(context.supabase, "estimates")
     .select("*")
@@ -645,6 +805,7 @@ const createEstimateInput = z.object({
   opportunity_id: z.string().uuid().nullable().optional(),
   project_id: z.string().uuid().nullable().optional(),
   project_type: z.string().max(32).optional().default("commercial"),
+  kind: z.enum(["estimate", "master_sheet"]).optional().default("estimate"),
   region: z.string().max(64).optional().default(""),
 });
 
@@ -708,6 +869,7 @@ const costLibraryItemInput = z.object({
   unit: z.string().min(1).max(16),
   material_cost_cents: z.number().int().min(0).max(999999999).default(0),
   labor_cost_cents: z.number().int().min(0).max(999999999).default(0),
+  labor_basis: z.enum(["per_unit", "per_hour", "installed"]).optional().default("per_unit"),
   crew_size: z.number().min(0).max(999).nullable().optional(),
   productivity_per_hour: z.number().min(0).max(999999).nullable().optional(),
   synonyms: z.array(z.string().max(80)).max(40).optional().default([]),
@@ -1062,20 +1224,24 @@ async function ensureHarborSampleMasterSheet(
   context: { supabase: unknown; userId: string },
   organizationId: string,
 ) {
-  const { data: existingEstimates, error: existingError } = await dynamicTable(
-    context.supabase,
-    "estimates",
-  )
-    .select("id,name,project_type")
+  let existingResult = await dynamicTable(context.supabase, "estimates")
+    .select("id,name,project_type,kind")
     .eq("organization_id", organizationId)
     .limit(500);
-  if (existingError) throw new Error(existingError.message);
+  if (existingResult.error && isMissingEstimateKindColumn(existingResult.error)) {
+    existingResult = await dynamicTable(context.supabase, "estimates")
+      .select("id,name,project_type")
+      .eq("organization_id", organizationId)
+      .limit(500);
+  }
+  if (existingResult.error) throw new Error(existingResult.error.message);
 
-  const estimates = (existingEstimates ?? []) as Record<string, unknown>[];
+  const estimates = (existingResult.data ?? []) as Record<string, unknown>[];
   if (
     estimates.some(
       (estimate) =>
-        str(estimate.project_type) === MASTER_ESTIMATE_PROJECT_TYPE &&
+        (str(estimate.kind) === "master_sheet" ||
+          str(estimate.project_type) === MASTER_ESTIMATE_PROJECT_TYPE) &&
         str(estimate.name).toLowerCase() === HARBOR_SAMPLE_MASTER_SHEET_NAME.toLowerCase(),
     )
   ) {
@@ -1113,15 +1279,17 @@ async function ensureHarborSampleMasterSheet(
     ]),
   );
 
-  const { data: masterRow, error: masterError } = await dynamicTable(context.supabase, "estimates")
-    .insert({
+  const masterId = await insertEstimateRow(
+    context,
+    {
       organization_id: organizationId,
       created_by: context.userId,
       name: HARBOR_SAMPLE_MASTER_SHEET_NAME,
       description:
         "Sample reusable master sheet seeded from Harbor Residence. Open it to see the format, copy it for your company, or create a project estimate from it.",
       project_id: str(harborProject?.id) || null,
-      project_type: MASTER_ESTIMATE_PROJECT_TYPE,
+      project_type: "commercial",
+      kind: "master_sheet",
       region: "national",
       region_multiplier: 1,
       overhead_pct: 800,
@@ -1132,14 +1300,9 @@ async function ensureHarborSampleMasterSheet(
       general_conditions_pct: 450,
       custom_markups: [] as unknown as Json,
       status: "draft",
-    })
-    .select("id")
-    .single();
-  if (masterError || !masterRow) {
-    throw new Error(masterError?.message ?? "Harbor sample master sheet did not save.");
-  }
-
-  const masterId = str((masterRow as Record<string, unknown>).id);
+    },
+    "Harbor sample master sheet did not save.",
+  );
   const { error: linesError } = await dynamicTable(context.supabase, "estimate_line_items").insert(
     HARBOR_SAMPLE_MASTER_SHEET_LINES.map((line, index) => ({
       estimate_id: masterId,
@@ -1165,6 +1328,108 @@ export const listEstimateRegions = createServerFn({ method: "GET" }).handler(asy
   regions: ESTIMATE_REGIONS,
 }));
 
+async function listEstimateRowsOfKind(
+  context: { supabase: unknown },
+  organizationId: string,
+  kind: EstimateKind,
+) {
+  const baseQuery = () =>
+    dynamicTable(context.supabase, "estimates")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .order("updated_at", { ascending: false });
+
+  let result =
+    kind === "master_sheet"
+      ? await baseQuery().or(`kind.eq.master_sheet,project_type.eq.${MASTER_ESTIMATE_PROJECT_TYPE}`)
+      : await baseQuery().eq("kind", "estimate");
+  if (result.error && isMissingEstimateKindColumn(result.error)) {
+    // The kind column has not landed in this environment yet; filter on the
+    // legacy project_type overload instead.
+    result =
+      kind === "master_sheet"
+        ? await baseQuery().eq("project_type", MASTER_ESTIMATE_PROJECT_TYPE)
+        : await baseQuery();
+  }
+  if (result.error) throw new Error(result.error.message);
+
+  // normalizeEstimate treats either signal as master, so this drops
+  // pre-migration master rows the kind filter alone would let leak through.
+  return ((result.data ?? []) as Record<string, unknown>[])
+    .map(normalizeEstimate)
+    .filter((estimate) => estimate.kind === kind);
+}
+
+async function withEstimateListMeta(
+  context: { supabase: unknown },
+  estimates: EstimateRow[],
+): Promise<EstimateRow[]> {
+  const ids = estimates.map((estimate) => estimate.id);
+  if (ids.length === 0) return [];
+  const projectIds = estimates
+    .map((estimate) => estimate.project_id)
+    .filter((id): id is string => Boolean(id));
+  const opportunityIds = estimates
+    .map((estimate) => estimate.opportunity_id)
+    .filter((id): id is string => Boolean(id));
+
+  const [lineRes, projectRes, opportunityRes] = await Promise.all([
+    dynamicTable(context.supabase, "estimate_line_items")
+      .select("estimate_id")
+      .in("estimate_id", ids),
+    projectIds.length
+      ? dynamicTable(context.supabase, "projects").select("id,name").in("id", projectIds)
+      : Promise.resolve({ data: [], error: null }),
+    opportunityIds.length
+      ? dynamicTable(context.supabase, "pipeline_opportunities")
+          .select("id,name")
+          .in("id", opportunityIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (lineRes.error) throw new Error(lineRes.error.message);
+  if (
+    projectRes.error &&
+    projectRes.error.code !== "42P01" &&
+    projectRes.error.code !== "PGRST205"
+  ) {
+    throw new Error(projectRes.error.message);
+  }
+  const opportunityRows =
+    opportunityRes.error &&
+    (opportunityRes.error.code === "42P01" || opportunityRes.error.code === "PGRST205")
+      ? []
+      : ((opportunityRes.data ?? []) as Record<string, unknown>[]);
+  if (
+    opportunityRes.error &&
+    opportunityRows.length === 0 &&
+    !["42P01", "PGRST205"].includes(opportunityRes.error.code ?? "")
+  ) {
+    throw new Error(opportunityRes.error.message);
+  }
+
+  const lineCounts = new Map<string, number>();
+  for (const row of (lineRes.data ?? []) as Record<string, unknown>[]) {
+    const id = str(row.estimate_id);
+    lineCounts.set(id, (lineCounts.get(id) ?? 0) + 1);
+  }
+  const projectNames = new Map(
+    ((projectRes.data ?? []) as Record<string, unknown>[]).map((row) => [
+      str(row.id),
+      str(row.name),
+    ]),
+  );
+  const opportunityNames = new Map(opportunityRows.map((row) => [str(row.id), str(row.name)]));
+
+  return estimates.map((estimate) => ({
+    ...estimate,
+    line_item_count: lineCounts.get(estimate.id) ?? 0,
+    project_name: estimate.project_id ? (projectNames.get(estimate.project_id) ?? "") : "",
+    opportunity_name: estimate.opportunity_id
+      ? (opportunityNames.get(estimate.opportunity_id) ?? "")
+      : "",
+  }));
+}
+
 export const listEstimates = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -1173,77 +1438,19 @@ export const listEstimates = createServerFn({ method: "GET" })
     await ensureHarborDemoEstimate(context, organizationId);
     await ensureHarborSampleMasterSheet(context, organizationId);
 
-    const { data, error } = await dynamicTable(context.supabase, "estimates")
-      .select("*")
-      .eq("organization_id", organizationId)
-      .order("updated_at", { ascending: false });
-    if (error) throw new Error(error.message);
+    const estimates = await listEstimateRowsOfKind(context, organizationId, "estimate");
+    return withEstimateListMeta(context, estimates);
+  });
 
-    const estimates = ((data ?? []) as Record<string, unknown>[]).map(normalizeEstimate);
-    const ids = estimates.map((estimate) => estimate.id);
-    if (ids.length === 0) return [];
-    const projectIds = estimates
-      .map((estimate) => estimate.project_id)
-      .filter((id): id is string => Boolean(id));
-    const opportunityIds = estimates
-      .map((estimate) => estimate.opportunity_id)
-      .filter((id): id is string => Boolean(id));
+export const listMasterSheets = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const organizationId = await getOrganizationId(context);
+    await ensureCostLibrarySeeded(context, organizationId);
+    await ensureHarborSampleMasterSheet(context, organizationId);
 
-    const [lineRes, projectRes, opportunityRes] = await Promise.all([
-      dynamicTable(context.supabase, "estimate_line_items")
-        .select("estimate_id")
-        .in("estimate_id", ids),
-      projectIds.length
-        ? dynamicTable(context.supabase, "projects").select("id,name").in("id", projectIds)
-        : Promise.resolve({ data: [], error: null }),
-      opportunityIds.length
-        ? dynamicTable(context.supabase, "pipeline_opportunities")
-            .select("id,name")
-            .in("id", opportunityIds)
-        : Promise.resolve({ data: [], error: null }),
-    ]);
-    if (lineRes.error) throw new Error(lineRes.error.message);
-    if (
-      projectRes.error &&
-      projectRes.error.code !== "42P01" &&
-      projectRes.error.code !== "PGRST205"
-    ) {
-      throw new Error(projectRes.error.message);
-    }
-    const opportunityRows =
-      opportunityRes.error &&
-      (opportunityRes.error.code === "42P01" || opportunityRes.error.code === "PGRST205")
-        ? []
-        : ((opportunityRes.data ?? []) as Record<string, unknown>[]);
-    if (
-      opportunityRes.error &&
-      opportunityRows.length === 0 &&
-      !["42P01", "PGRST205"].includes(opportunityRes.error.code ?? "")
-    ) {
-      throw new Error(opportunityRes.error.message);
-    }
-
-    const lineCounts = new Map<string, number>();
-    for (const row of (lineRes.data ?? []) as Record<string, unknown>[]) {
-      const id = str(row.estimate_id);
-      lineCounts.set(id, (lineCounts.get(id) ?? 0) + 1);
-    }
-    const projectNames = new Map(
-      ((projectRes.data ?? []) as Record<string, unknown>[]).map((row) => [
-        str(row.id),
-        str(row.name),
-      ]),
-    );
-    const opportunityNames = new Map(opportunityRows.map((row) => [str(row.id), str(row.name)]));
-
-    return estimates.map((estimate) => ({
-      ...estimate,
-      line_item_count: lineCounts.get(estimate.id) ?? 0,
-      project_name: estimate.project_id ? (projectNames.get(estimate.project_id) ?? "") : "",
-      opportunity_name: estimate.opportunity_id
-        ? (opportunityNames.get(estimate.opportunity_id) ?? "")
-        : "",
-    }));
+    const masters = await listEstimateRowsOfKind(context, organizationId, "master_sheet");
+    return withEstimateListMeta(context, masters);
   });
 
 export const getEstimate = createServerFn({ method: "GET" })
@@ -1277,31 +1484,36 @@ export const createEstimate = createServerFn({ method: "POST" })
     const region = clean(data.region || str(defaultsRow?.default_region));
     const regionMultiplier =
       regionMultiplierFor(region) || num(defaultsRow?.default_region_multiplier, 1) || 1;
-    const insert = {
-      organization_id: organizationId,
-      created_by: context.userId,
-      name: clean(data.name, 200),
-      description: clean(data.description ?? "", 2000),
-      opportunity_id: data.opportunity_id ?? null,
-      project_id: data.project_id ?? null,
-      project_type: clean(data.project_type ?? "commercial", 32) || "commercial",
-      region,
-      region_multiplier: regionMultiplier,
-      overhead_pct: Math.round(num(defaultsRow?.overhead_pct, 1000)),
-      profit_pct: Math.round(num(defaultsRow?.profit_pct, 1000)),
-      contingency_pct: Math.round(num(defaultsRow?.contingency_pct, 500)),
-      bond_pct: Math.round(num(defaultsRow?.bond_pct, 150)),
-      tax_pct: Math.round(num(defaultsRow?.tax_pct)),
-      general_conditions_pct: Math.round(num(defaultsRow?.general_conditions_pct)),
-      custom_markups: normalizeCustomMarkup(defaultsRow?.custom_markups) as unknown as Json,
-    };
-
-    const { data: row, error } = await dynamicTable(context.supabase, "estimates")
-      .insert(insert)
-      .select("id")
-      .single();
-    if (error || !row) throw new Error(error?.message ?? "Estimate did not save.");
-    return { id: str((row as Record<string, unknown>).id) };
+    const projectType = clean(data.project_type ?? "commercial", 32) || "commercial";
+    // Transition tolerance: legacy callers flag master sheets via project_type.
+    const kind: EstimateKind =
+      data.kind === "master_sheet" || projectType === MASTER_ESTIMATE_PROJECT_TYPE
+        ? "master_sheet"
+        : "estimate";
+    const id = await insertEstimateRow(
+      context,
+      {
+        organization_id: organizationId,
+        created_by: context.userId,
+        name: clean(data.name, 200),
+        description: clean(data.description ?? "", 2000),
+        opportunity_id: data.opportunity_id ?? null,
+        project_id: data.project_id ?? null,
+        project_type: projectType === MASTER_ESTIMATE_PROJECT_TYPE ? "commercial" : projectType,
+        kind,
+        region,
+        region_multiplier: regionMultiplier,
+        overhead_pct: Math.round(num(defaultsRow?.overhead_pct, 1000)),
+        profit_pct: Math.round(num(defaultsRow?.profit_pct, 1000)),
+        contingency_pct: Math.round(num(defaultsRow?.contingency_pct, 500)),
+        bond_pct: Math.round(num(defaultsRow?.bond_pct, 150)),
+        tax_pct: Math.round(num(defaultsRow?.tax_pct)),
+        general_conditions_pct: Math.round(num(defaultsRow?.general_conditions_pct)),
+        custom_markups: normalizeCustomMarkup(defaultsRow?.custom_markups) as unknown as Json,
+      },
+      "Estimate did not save.",
+    );
+    return { id };
   });
 
 export const updateEstimate = createServerFn({ method: "POST" })
@@ -1495,18 +1707,35 @@ export const updateLineItem = createServerFn({ method: "POST" })
     if (typeof patch.csi_division === "string") patch.csi_division = clean(patch.csi_division, 8);
     if (typeof patch.scope_group === "string") patch.scope_group = clean(patch.scope_group, 200);
     if (typeof patch.notes === "string") patch.notes = clean(patch.notes, 2000);
+    // Grid edits are hand-typed quantities; record that so takeoff syncs know
+    // not to clobber them silently.
+    if (patch.quantity != null) patch.quantity_source = "manual";
 
-    const { data: row, error } = await dynamicTable(context.supabase, "estimate_line_items")
+    let result = await dynamicTable(context.supabase, "estimate_line_items")
       .update(patch)
       .eq("id", data.id)
       .select("*")
       .single();
-    if (error || !row) throw new Error(error?.message ?? "Line item did not update.");
+    if (
+      result.error &&
+      "quantity_source" in patch &&
+      isMissingQuantityProvenanceColumn(result.error)
+    ) {
+      const { quantity_source: _quantitySource, ...legacyPatch } = patch;
+      result = await dynamicTable(context.supabase, "estimate_line_items")
+        .update(legacyPatch)
+        .eq("id", data.id)
+        .select("*")
+        .single();
+    }
+    if (result.error || !result.data) {
+      throw new Error(result.error?.message ?? "Line item did not update.");
+    }
     await recalculateEstimateTotalsInternal(
       context,
       str((current.data as Record<string, unknown>).estimate_id),
     );
-    return { line_item: normalizeLineItem(row as Record<string, unknown>) };
+    return { line_item: normalizeLineItem(result.data as Record<string, unknown>) };
   });
 
 export const deleteLineItem = createServerFn({ method: "POST" })
@@ -1564,15 +1793,20 @@ export const duplicateEstimate = createServerFn({ method: "POST" })
           .replace(/\s+/g, " ")
           .slice(0, 200) || `Estimate from ${estimate.name}`.slice(0, 200)
       : `Copy of ${estimate.name}`.slice(0, 200);
-    const { data: copy, error } = await dynamicTable(context.supabase, "estimates")
-      .insert({
+    const copyId = await insertEstimateRow(
+      context,
+      {
         organization_id: estimate.organization_id,
         created_by: context.userId,
         name: copyName,
         description: estimate.description,
         opportunity_id: estimate.opportunity_id,
         project_id: null,
-        project_type: copyAsProjectEstimate ? "commercial" : estimate.project_type,
+        project_type:
+          copyAsProjectEstimate || estimate.project_type === MASTER_ESTIMATE_PROJECT_TYPE
+            ? "commercial"
+            : estimate.project_type,
+        kind: copyAsProjectEstimate ? "estimate" : estimate.kind,
         region: estimate.region,
         region_multiplier: estimate.region_multiplier,
         overhead_pct: estimate.overhead_pct,
@@ -1583,11 +1817,9 @@ export const duplicateEstimate = createServerFn({ method: "POST" })
         general_conditions_pct: estimate.general_conditions_pct,
         custom_markups: estimate.custom_markups as unknown as Json,
         status: "draft",
-      })
-      .select("id")
-      .single();
-    if (error || !copy) throw new Error(error?.message ?? "Estimate copy did not save.");
-    const copyId = str((copy as Record<string, unknown>).id);
+      },
+      "Estimate copy did not save.",
+    );
     if (lines.length > 0) {
       const { error: lineError } = await dynamicTable(
         context.supabase,
@@ -1704,25 +1936,39 @@ export const createCostLibraryItem = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const organizationId = await getOrganizationId(context);
-    const { data: row, error } = await dynamicTable(context.supabase, "cost_library_items")
-      .insert({
-        organization_id: organizationId,
-        external_id: "",
-        ...data,
-        source: "user",
-        base_region: "national",
-        csi_division: clean(data.csi_division, 8),
-        csi_code: clean(data.csi_code, 16),
-        category: clean(data.category, 64),
-        description: clean(data.description, 500),
-        unit: clean(data.unit.toUpperCase(), 16),
-        synonyms: data.synonyms as unknown as Json,
-        keywords: data.keywords as unknown as Json,
-      })
+    if (data.labor_basis === "installed" && data.material_cost_cents > 0) {
+      throw new Error(INSTALLED_MATERIAL_MESSAGE);
+    }
+    const insertRow = {
+      organization_id: organizationId,
+      external_id: "",
+      ...data,
+      source: "user",
+      base_region: "national",
+      csi_division: clean(data.csi_division, 8),
+      csi_code: clean(data.csi_code, 16),
+      category: clean(data.category, 64),
+      description: clean(data.description, 500),
+      unit: clean(data.unit.toUpperCase(), 16),
+      synonyms: data.synonyms as unknown as Json,
+      keywords: data.keywords as unknown as Json,
+    };
+    let result = await dynamicTable(context.supabase, "cost_library_items")
+      .insert(insertRow)
       .select("*")
       .single();
-    if (error || !row) throw new Error(error?.message ?? "Cost library item did not save.");
-    return { item: normalizeLibraryItem(row as Record<string, unknown>) };
+    if (result.error && isMissingLaborBasisColumn(result.error)) {
+      if (data.labor_basis !== "per_unit") throw new Error(LABOR_BASIS_PENDING_MESSAGE);
+      const { labor_basis: _laborBasis, ...legacyRow } = insertRow;
+      result = await dynamicTable(context.supabase, "cost_library_items")
+        .insert(legacyRow)
+        .select("*")
+        .single();
+    }
+    if (result.error || !result.data) {
+      throw new Error(result.error?.message ?? "Cost library item did not save.");
+    }
+    return { item: normalizeLibraryItem(result.data as Record<string, unknown>) };
   });
 
 export const importCostLibraryItems = createServerFn({ method: "POST" })
@@ -1736,6 +1982,11 @@ export const importCostLibraryItems = createServerFn({ method: "POST" })
       [row.csi_code.trim().toLowerCase(), row.description.trim().toLowerCase(), row.unit.trim()]
         .join("\u001f")
         .slice(0, 700);
+    for (const item of data.items) {
+      if (item.labor_basis === "installed" && item.material_cost_cents > 0) {
+        throw new Error(`"${clean(item.description, 120)}": ${INSTALLED_MATERIAL_MESSAGE}`);
+      }
+    }
     const rowByKey = new Map(
       data.items.map((item) => {
         const row = {
@@ -1748,6 +1999,7 @@ export const importCostLibraryItems = createServerFn({ method: "POST" })
           unit: clean(item.unit.toUpperCase(), 16),
           material_cost_cents: item.material_cost_cents,
           labor_cost_cents: item.labor_cost_cents,
+          labor_basis: item.labor_basis,
           crew_size: item.crew_size ?? null,
           productivity_per_hour: item.productivity_per_hour ?? null,
           synonyms: item.synonyms as unknown as Json,
@@ -1801,25 +2053,49 @@ export const importCostLibraryItems = createServerFn({ method: "POST" })
       }
     }
 
+    // Pre-migration fallback: retry without labor_basis, but only when every
+    // staged row uses the default basis so an explicit choice never saves
+    // silently wrong.
+    const stripLaborBasis = (row: (typeof rows)[number]) => {
+      const { labor_basis: _laborBasis, ...legacy } = row;
+      return legacy;
+    };
+    const requireLaborBasisColumn = () => {
+      if (rows.some((row) => row.labor_basis !== "per_unit")) {
+        throw new Error(LABOR_BASIS_PENDING_MESSAGE);
+      }
+    };
+
     const updatedRows: Record<string, unknown>[] = [];
     for (const update of updates) {
-      const { data: updated, error: updateError } = await dynamicTable(
-        context.supabase,
-        "cost_library_items",
-      )
+      let updateResult = await dynamicTable(context.supabase, "cost_library_items")
         .update(update.row)
         .eq("id", update.id)
         .select("*")
         .single();
-      if (updateError || !updated) {
-        throw new Error(updateError?.message ?? "Imported cost item did not update.");
+      if (updateResult.error && isMissingLaborBasisColumn(updateResult.error)) {
+        requireLaborBasisColumn();
+        updateResult = await dynamicTable(context.supabase, "cost_library_items")
+          .update(stripLaborBasis(update.row))
+          .eq("id", update.id)
+          .select("*")
+          .single();
       }
-      updatedRows.push(updated as Record<string, unknown>);
+      if (updateResult.error || !updateResult.data) {
+        throw new Error(updateResult.error?.message ?? "Imported cost item did not update.");
+      }
+      updatedRows.push(updateResult.data as Record<string, unknown>);
     }
 
-    const insertedResult = inserts.length
+    let insertedResult = inserts.length
       ? await dynamicTable(context.supabase, "cost_library_items").insert(inserts).select("*")
       : { data: [], error: null };
+    if (insertedResult.error && isMissingLaborBasisColumn(insertedResult.error)) {
+      requireLaborBasisColumn();
+      insertedResult = await dynamicTable(context.supabase, "cost_library_items")
+        .insert(inserts.map(stripLaborBasis))
+        .select("*");
+    }
     if (insertedResult.error) throw new Error(insertedResult.error.message);
 
     return {
@@ -1843,15 +2119,28 @@ export const updateCostLibraryItem = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const current = await dynamicTable(context.supabase, "cost_library_items")
-      .select("source")
+    let current = await dynamicTable(context.supabase, "cost_library_items")
+      .select("source,material_cost_cents,labor_basis")
       .eq("id", data.id)
       .single();
+    if (current.error && isMissingLaborBasisColumn(current.error)) {
+      current = await dynamicTable(context.supabase, "cost_library_items")
+        .select("source,material_cost_cents")
+        .eq("id", data.id)
+        .single();
+    }
     if (current.error || !current.data) {
       throw new Error(current.error?.message ?? "Cost library item was not found.");
     }
-    if (str((current.data as Record<string, unknown>).source) === "system") {
+    const currentRow = current.data as Record<string, unknown>;
+    if (str(currentRow.source) === "system") {
       throw new Error("System library items are read-only.");
+    }
+    const nextBasis = data.patch.labor_basis ?? normalizeLaborBasis(currentRow.labor_basis);
+    const nextMaterial =
+      data.patch.material_cost_cents ?? Math.round(num(currentRow.material_cost_cents));
+    if (nextBasis === "installed" && nextMaterial > 0) {
+      throw new Error(INSTALLED_MATERIAL_MESSAGE);
     }
     const patch: Record<string, unknown> = { ...data.patch };
     if (typeof patch.unit === "string") patch.unit = clean(patch.unit.toUpperCase(), 16);
@@ -1859,13 +2148,31 @@ export const updateCostLibraryItem = createServerFn({ method: "POST" })
     if (typeof patch.csi_division === "string") patch.csi_division = clean(patch.csi_division, 8);
     if (typeof patch.csi_code === "string") patch.csi_code = clean(patch.csi_code, 16);
     if (typeof patch.category === "string") patch.category = clean(patch.category, 64);
-    const { data: row, error } = await dynamicTable(context.supabase, "cost_library_items")
+    let result = await dynamicTable(context.supabase, "cost_library_items")
       .update(patch)
       .eq("id", data.id)
       .select("*")
       .single();
-    if (error || !row) throw new Error(error?.message ?? "Cost library item did not update.");
-    return { item: normalizeLibraryItem(row as Record<string, unknown>) };
+    if (result.error && isMissingLaborBasisColumn(result.error) && "labor_basis" in patch) {
+      if (patch.labor_basis !== "per_unit") throw new Error(LABOR_BASIS_PENDING_MESSAGE);
+      const { labor_basis: _laborBasis, ...legacyPatch } = patch;
+      if (Object.keys(legacyPatch).length === 0) {
+        result = await dynamicTable(context.supabase, "cost_library_items")
+          .select("*")
+          .eq("id", data.id)
+          .single();
+      } else {
+        result = await dynamicTable(context.supabase, "cost_library_items")
+          .update(legacyPatch)
+          .eq("id", data.id)
+          .select("*")
+          .single();
+      }
+    }
+    if (result.error || !result.data) {
+      throw new Error(result.error?.message ?? "Cost library item did not update.");
+    }
+    return { item: normalizeLibraryItem(result.data as Record<string, unknown>) };
   });
 
 export const deleteCostLibraryItem = createServerFn({ method: "POST" })
