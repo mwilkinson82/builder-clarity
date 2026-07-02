@@ -1206,6 +1206,7 @@ export type Database = {
           sort_order: number
           takeoff_quantity: number | null
           takeoff_synced_at: string | null
+          takeoff_unit: string | null
           total_extended_cents: number | null
           unit: string
           updated_at: string
@@ -1229,6 +1230,7 @@ export type Database = {
           sort_order?: number
           takeoff_quantity?: number | null
           takeoff_synced_at?: string | null
+          takeoff_unit?: string | null
           total_extended_cents?: number | null
           unit: string
           updated_at?: string
@@ -1252,6 +1254,7 @@ export type Database = {
           sort_order?: number
           takeoff_quantity?: number | null
           takeoff_synced_at?: string | null
+          takeoff_unit?: string | null
           total_extended_cents?: number | null
           unit?: string
           updated_at?: string
@@ -1406,6 +1409,8 @@ export type Database = {
           plan_set_id: string
           scale_feet_per_pixel: number
           scale_label: string
+          scale_source: string
+          scale_verified_at: string | null
           sheet_name: string
           sheet_number: string
           sort_order: number
@@ -1422,6 +1427,8 @@ export type Database = {
           plan_set_id: string
           scale_feet_per_pixel?: number
           scale_label?: string
+          scale_source?: string
+          scale_verified_at?: string | null
           sheet_name?: string
           sheet_number?: string
           sort_order?: number
@@ -1438,6 +1445,8 @@ export type Database = {
           plan_set_id?: string
           scale_feet_per_pixel?: number
           scale_label?: string
+          scale_source?: string
+          scale_verified_at?: string | null
           sheet_name?: string
           sheet_number?: string
           sort_order?: number
