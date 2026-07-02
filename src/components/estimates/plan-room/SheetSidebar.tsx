@@ -1,6 +1,18 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { Image as ImageIcon, Map as MapIcon, Minimize2, Move, Search } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Image as ImageIcon,
+  Map as MapIcon,
+  Minimize2,
+  Move,
+  Pencil,
+  ScanSearch,
+  Search,
+  X,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,6 +101,25 @@ export function CockpitFloatingPanelHeader({
   );
 }
 
+// Canonical order for discipline group headers; anything unmapped sorts last.
+const DISCIPLINE_GROUP_ORDER = [
+  "General",
+  "Civil",
+  "Landscape",
+  "Structural",
+  "Architectural",
+  "Mechanical",
+  "Electrical",
+  "Plumbing",
+  "Fire Protection",
+  "Low Voltage",
+];
+
+const disciplineGroupRank = (discipline: string) => {
+  const index = DISCIPLINE_GROUP_ORDER.indexOf(discipline);
+  return index === -1 ? DISCIPLINE_GROUP_ORDER.length : index;
+};
+
 export function SheetSidebar({
   sheets,
   planSets,
@@ -101,6 +132,11 @@ export function SheetSidebar({
   filteredSheetsByPlanSet,
   currentSheet,
   openSheet,
+  thumbnailUrlByPath = {},
+  onRenameSheet,
+  renamePending = false,
+  onDetectSheetNames,
+  detectingNames = false,
 }: {
   sheets: PlanSheetRow[];
   planSets: PlanSetRow[];
@@ -113,14 +149,203 @@ export function SheetSidebar({
   filteredSheetsByPlanSet: Map<string, PlanSheetRow[]>;
   currentSheet: PlanSheetRow | null;
   openSheet: (sheetId: string) => void;
+  thumbnailUrlByPath?: Record<string, string>;
+  onRenameSheet?: (sheetId: string, patch: { sheet_number: string; sheet_name: string }) => void;
+  renamePending?: boolean;
+  onDetectSheetNames?: () => void;
+  detectingNames?: boolean;
 }) {
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [editingSheetId, setEditingSheetId] = useState("");
+  const [editNumber, setEditNumber] = useState("");
+  const [editName, setEditName] = useState("");
+
+  const beginRename = (sheet: PlanSheetRow) => {
+    setEditingSheetId(sheet.id);
+    setEditNumber(sheet.sheet_number);
+    setEditName(sheet.sheet_name);
+  };
+
+  const commitRename = () => {
+    if (!editingSheetId || !editNumber.trim()) return;
+    onRenameSheet?.(editingSheetId, {
+      sheet_number: editNumber.trim(),
+      sheet_name: editName.trim(),
+    });
+    setEditingSheetId("");
+  };
+
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const renderSheetRow = (sheet: PlanSheetRow) => {
+    const sheetMeasurementCount = measurementCountBySheet.get(sheet.id) ?? 0;
+    const thumbnailUrl = sheet.thumbnail_path
+      ? thumbnailUrlByPath[sheet.thumbnail_path]
+      : undefined;
+    if (sheet.id === editingSheetId) {
+      return (
+        <div
+          key={sheet.id}
+          className="space-y-1.5 rounded-md border border-hairline bg-surface px-2 py-2"
+          data-testid="sheet-row-rename"
+        >
+          <Input
+            value={editNumber}
+            onChange={(event) => setEditNumber(event.target.value)}
+            className="h-8"
+            aria-label="Sheet number"
+            placeholder="Sheet number, e.g. A-101"
+          />
+          <Input
+            value={editName}
+            onChange={(event) => setEditName(event.target.value)}
+            className="h-8"
+            aria-label="Sheet name"
+            placeholder="Sheet name"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commitRename();
+              if (event.key === "Escape") setEditingSheetId("");
+            }}
+          />
+          <div className="flex justify-end gap-1">
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              title="Cancel rename"
+              aria-label="Cancel rename"
+              onClick={() => setEditingSheetId("")}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              title="Save sheet name"
+              aria-label="Save sheet name"
+              onClick={commitRename}
+              disabled={renamePending || !editNumber.trim()}
+              data-testid="sheet-row-rename-save"
+            >
+              <Check className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div key={sheet.id} className="group/sheet relative">
+        <button
+          type="button"
+          onClick={() => openSheet(sheet.id)}
+          data-testid="plan-sheet-row"
+          className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm transition ${
+            sheet.id === currentSheet?.id
+              ? "bg-primary text-primary-foreground"
+              : "hover:bg-surface"
+          }`}
+        >
+          {thumbnailUrl ? (
+            <img
+              src={thumbnailUrl}
+              alt=""
+              loading="lazy"
+              className="mt-0.5 h-12 w-16 shrink-0 rounded border border-hairline bg-white object-contain"
+              data-testid="sheet-thumbnail"
+            />
+          ) : (
+            <ImageIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="min-w-0">
+            <span className="block truncate font-medium">
+              {sheet.sheet_number || `Page ${sheet.page_number}`}
+            </span>
+            <span className="block truncate text-xs opacity-75">
+              {sheet.sheet_name || "Unnamed sheet"}
+            </span>
+            <span className="mt-1 flex flex-wrap gap-1">
+              {sheetScaleStatus(sheet) === "verified" ? (
+                <Badge variant="secondary" className="px-1 py-0" data-testid="sheet-scale-verified">
+                  Scale verified
+                </Badge>
+              ) : sheetScaleStatus(sheet) === "unverified" ? (
+                <Badge
+                  variant="outline"
+                  className="bg-background/80 px-1 py-0"
+                  data-testid="sheet-scale-unverified"
+                >
+                  Set, not verified
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="bg-background/80 px-1 py-0">
+                  Needs scale
+                </Badge>
+              )}
+              {sheetMeasurementCount > 0 && (
+                <Badge variant="outline" className="bg-background/80 px-1 py-0">
+                  {sheetMeasurementCount} marks
+                </Badge>
+              )}
+            </span>
+          </span>
+        </button>
+        {onRenameSheet && (
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="absolute right-1 top-1 h-7 w-7 opacity-0 transition group-hover/sheet:opacity-100"
+            title="Rename sheet"
+            aria-label="Rename sheet"
+            data-testid="sheet-row-rename-button"
+            onClick={(event) => {
+              event.stopPropagation();
+              beginRename(sheet);
+            }}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <section className="rounded-lg border border-hairline bg-card shadow-card">
       <div className="border-b border-hairline bg-surface px-4 py-3">
-        <h2 className="font-serif text-xl">Drawing Sets</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Open a sheet, set scale, then take off quantities.
-        </p>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h2 className="font-serif text-xl">Drawing Sets</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Open a sheet, set scale, then take off quantities.
+            </p>
+          </div>
+          {onDetectSheetNames && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+              title="Read sheet numbers and names from each title block, then confirm"
+              onClick={onDetectSheetNames}
+              disabled={detectingNames}
+              data-testid="detect-sheet-names"
+            >
+              <ScanSearch className="h-3.5 w-3.5" />
+              {detectingNames ? "Reading..." : "Detect sheet names"}
+            </Button>
+          )}
+        </div>
       </div>
       <div className="border-b border-hairline p-3" data-testid="plan-sheet-finder">
         <div className="relative">
@@ -207,60 +432,54 @@ export function SheetSidebar({
                   </div>
                 </div>
                 <div className="p-1.5">
-                  {planSetSheets.map((sheet) => {
-                    const sheetMeasurementCount = measurementCountBySheet.get(sheet.id) ?? 0;
-                    return (
-                      <button
-                        key={sheet.id}
-                        type="button"
-                        onClick={() => openSheet(sheet.id)}
-                        data-testid="plan-sheet-row"
-                        className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm transition ${
-                          sheet.id === currentSheet?.id
-                            ? "bg-primary text-primary-foreground"
-                            : "hover:bg-surface"
-                        }`}
-                      >
-                        <ImageIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                        <span className="min-w-0">
-                          <span className="block truncate font-medium">
-                            {sheet.sheet_number || `Page ${sheet.page_number}`}
-                          </span>
-                          <span className="block truncate text-xs opacity-75">
-                            {sheet.sheet_name || "Unnamed sheet"}
-                          </span>
-                          <span className="mt-1 flex flex-wrap gap-1">
-                            {sheetScaleStatus(sheet) === "verified" ? (
-                              <Badge
-                                variant="secondary"
-                                className="px-1 py-0"
-                                data-testid="sheet-scale-verified"
-                              >
-                                Scale verified
-                              </Badge>
-                            ) : sheetScaleStatus(sheet) === "unverified" ? (
-                              <Badge
-                                variant="outline"
-                                className="bg-background/80 px-1 py-0"
-                                data-testid="sheet-scale-unverified"
-                              >
-                                Set, not verified
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="bg-background/80 px-1 py-0">
-                                Needs scale
-                              </Badge>
-                            )}
-                            {sheetMeasurementCount > 0 && (
-                              <Badge variant="outline" className="bg-background/80 px-1 py-0">
-                                {sheetMeasurementCount} marks
-                              </Badge>
-                            )}
-                          </span>
-                        </span>
-                      </button>
+                  {(() => {
+                    const disciplines = new Set(
+                      planSetSheets
+                        .map((sheet) => sheet.discipline)
+                        .filter((discipline) => discipline),
                     );
-                  })}
+                    if (disciplines.size < 2) {
+                      return planSetSheets.map(renderSheetRow);
+                    }
+                    const groups = new Map<string, PlanSheetRow[]>();
+                    for (const sheet of planSetSheets) {
+                      const key = sheet.discipline || "Other";
+                      const group = groups.get(key) ?? [];
+                      group.push(sheet);
+                      groups.set(key, group);
+                    }
+                    return Array.from(groups.entries())
+                      .sort(
+                        (a, b) =>
+                          disciplineGroupRank(a[0]) - disciplineGroupRank(b[0]) ||
+                          a[0].localeCompare(b[0]),
+                      )
+                      .map(([discipline, groupSheets]) => {
+                        const groupKey = `${planSet.id}:${discipline}`;
+                        const collapsed = collapsedGroups.has(groupKey);
+                        return (
+                          <div key={groupKey} data-testid="sheet-discipline-group">
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground hover:bg-surface"
+                              onClick={() => toggleGroup(groupKey)}
+                              data-testid="sheet-discipline-header"
+                            >
+                              {collapsed ? (
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              ) : (
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              )}
+                              <span className="min-w-0 truncate">{discipline}</span>
+                              <Badge variant="outline" className="ml-auto px-1 py-0">
+                                {groupSheets.length}
+                              </Badge>
+                            </button>
+                            {!collapsed && groupSheets.map(renderSheetRow)}
+                          </div>
+                        );
+                      });
+                  })()}
                 </div>
               </div>
             );

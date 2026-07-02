@@ -13,6 +13,11 @@ import { analyzeSovIntake, applyMapping, guessColumnMap } from "../src/lib/sov-i
 import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "../src/lib/estimate-seed-data.ts";
 import {
   calculateTakeoffQuantity,
+  decimalFeetHint,
+  disciplineForSheetNumber,
+  extractSheetIdentity,
+  formatFeetInches,
+  matchSheetNumber,
   normalizeTakeoffUnit,
   parseFeetInches,
   snapLinearPoint,
@@ -349,6 +354,76 @@ const shiftConstrained = snapLinearPoint({
 });
 assert.equal(shiftConstrained.snapped, true);
 assert.equal(shiftConstrained.angleDeg, 45);
+
+// --- Sheet-number pattern matcher (Phase 2.5 sheet identity) ---
+for (const token of ["A-101", "A1.1", "E-201", "M-1.1", "FP-102", "A-700", "AD-3", "LV-101"]) {
+  assert.equal(matchSheetNumber(token), token, `sheet number ${token}`);
+}
+assert.equal(matchSheetNumber("A 101"), "A101");
+assert.equal(matchSheetNumber("SCALE"), null);
+assert.equal(matchSheetNumber("12"), null);
+assert.equal(matchSheetNumber("ABCD-1"), null);
+assert.equal(matchSheetNumber("A-1234"), null);
+assert.equal(matchSheetNumber(""), null);
+
+// --- Discipline map ---
+assert.equal(disciplineForSheetNumber("A-101"), "Architectural");
+assert.equal(disciplineForSheetNumber("AD-3"), "Architectural");
+assert.equal(disciplineForSheetNumber("S-201"), "Structural");
+assert.equal(disciplineForSheetNumber("M-1.1"), "Mechanical");
+assert.equal(disciplineForSheetNumber("E-201"), "Electrical");
+assert.equal(disciplineForSheetNumber("P-102"), "Plumbing");
+assert.equal(disciplineForSheetNumber("C-100"), "Civil");
+assert.equal(disciplineForSheetNumber("L-1"), "Landscape");
+assert.equal(disciplineForSheetNumber("FP-102"), "Fire Protection");
+assert.equal(disciplineForSheetNumber("T-1"), "Low Voltage");
+assert.equal(disciplineForSheetNumber("LV-2"), "Low Voltage");
+assert.equal(disciplineForSheetNumber("G-001"), "General");
+// PG is the app's page placeholder, never plumbing.
+assert.equal(disciplineForSheetNumber("PG-001"), "");
+assert.equal(disciplineForSheetNumber(""), "");
+
+// --- Title-block extraction on a synthetic 2592x1728pt page ---
+const titleBlockItems = [
+  { text: "GENERAL NOTES", x: 300, y: 1500, height: 14 },
+  { text: "CRYSTAL CARWASH", x: 2200, y: 500, height: 10 },
+  { text: "DOOR, WINDOW TYPES", x: 2200, y: 300, height: 12 },
+  { text: "& SCHEDULES", x: 2200, y: 284, height: 12 },
+  { text: "SCALE: AS NOTED", x: 2200, y: 200, height: 8 },
+  { text: "A-700", x: 2260, y: 120, height: 28 },
+];
+const identity = extractSheetIdentity({
+  items: titleBlockItems,
+  pageWidth: 2592,
+  pageHeight: 1728,
+});
+assert.equal(identity.sheetNumber, "A-700");
+assert.equal(identity.sheetName, "DOOR, WINDOW TYPES & SCHEDULES");
+const scannedIdentity = extractSheetIdentity({ items: [], pageWidth: 2592, pageHeight: 1728 });
+assert.equal(scannedIdentity.sheetNumber, null);
+assert.equal(scannedIdentity.sheetName, null);
+
+// --- Decimal-feet trap (Phase 2.5 founder finding) ---
+assert.equal(parseFeetInches("12' 8\""), 12 + 8 / 12);
+assert.ok(Math.abs(parseFeetInches("12' 8\"") - 12.6667) < 0.001);
+assert.equal(formatFeetInches(12.8), "12'-9 5/8\"");
+assert.equal(formatFeetInches(12.5), "12'-6\"");
+assert.equal(formatFeetInches(12), "12'");
+const typoHint = decimalFeetHint("12.8");
+assert.ok(typoHint);
+assert.equal(typoHint.conversionLabel, "12.8 ft = 12'-9 5/8\"");
+assert.ok(typoHint.suggestion);
+assert.equal(typoHint.suggestion.label, "Did you mean 12'-8\"?");
+assert.equal(parseFeetInches(typoHint.suggestion.value), 12 + 8 / 12);
+const halfFootHint = decimalFeetHint("12.5");
+assert.ok(halfFootHint);
+assert.equal(halfFootHint.conversionLabel, "12.5 ft = 12'-6\"");
+assert.equal(halfFootHint.suggestion, null);
+assert.equal(decimalFeetHint("12"), null);
+assert.equal(decimalFeetHint("12' 8\""), null);
+const bigFractionHint = decimalFeetHint("12.80");
+assert.ok(bigFractionHint);
+assert.equal(bigFractionHint.suggestion, null);
 
 const slab = ESTIMATE_SEED_LIBRARY_ITEMS.find((item) => item.external_id === "slab-4in");
 assert.ok(slab);
