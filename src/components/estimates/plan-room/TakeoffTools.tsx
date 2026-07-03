@@ -1,6 +1,7 @@
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   Check,
+  DraftingCompass,
   MousePointer2,
   PencilRuler,
   Plus,
@@ -14,7 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { decimalFeetHint, distancePx } from "@/lib/plan-room-math";
+import { decimalFeetHint, distancePx, formatFeetInches } from "@/lib/plan-room-math";
 import type { TakeoffMeasurementRow } from "@/lib/plan-room.functions";
 import {
   formatQty,
@@ -74,6 +75,7 @@ export function TakeoffTools({
         { value: "linear", icon: PencilRuler },
         { value: "area", icon: Square },
         { value: "count", icon: Plus },
+        { value: "ruler", icon: DraftingCompass },
       ].map((item) => {
         const Icon = item.icon;
         return (
@@ -101,7 +103,7 @@ export function TakeoffTools({
           </Button>
         );
       })}
-      {draftCommand && (
+      {draftCommand && draftCommand.actionLabel && (
         <Button
           size="sm"
           className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
@@ -212,17 +214,19 @@ export function TakeoffDraftHud({
         </div>
         <p className="mt-1 text-xs text-muted-foreground">{draftCommand.detail}</p>
       </div>
-      <Button
-        type="button"
-        size="sm"
-        className="gap-1.5 self-center"
-        onClick={onFinishDraft}
-        disabled={!draftCommand.ready || disabled}
-        data-testid="takeoff-draft-hud-finish"
-      >
-        <Check className="h-3.5 w-3.5" />
-        {draftCommand.actionLabel}
-      </Button>
+      {draftCommand.actionLabel && (
+        <Button
+          type="button"
+          size="sm"
+          className="gap-1.5 self-center"
+          onClick={onFinishDraft}
+          disabled={!draftCommand.ready || disabled}
+          data-testid="takeoff-draft-hud-finish"
+        >
+          <Check className="h-3.5 w-3.5" />
+          {draftCommand.actionLabel}
+        </Button>
+      )}
     </div>
   );
 }
@@ -516,6 +520,20 @@ export function DraftShape({
               x={(point.x + previous.x) / 2}
               y={(point.y + previous.y) / 2}
               text={formatQty(length, unit)}
+            />
+          );
+        })}
+      {tool === "ruler" &&
+        scaleFeetPerPixel > 0 &&
+        scaled.slice(1).map((point, index) => {
+          const previous = scaled[index];
+          const length = Math.hypot(point.x - previous.x, point.y - previous.y) * scaleFeetPerPixel;
+          return (
+            <DraftSegmentLabel
+              key={`${point.x}-${point.y}-${index}`}
+              x={(point.x + previous.x) / 2}
+              y={(point.y + previous.y) / 2}
+              text={formatFeetInches(length)}
             />
           );
         })}

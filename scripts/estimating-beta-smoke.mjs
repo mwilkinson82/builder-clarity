@@ -16,6 +16,8 @@ import {
   calculateTakeoffQuantity,
   decimalFeetHint,
   defaultPlanRoomSheetId,
+  findTakeoffGroupMatch,
+  groupTakeoffWorksheet,
   groupUnlinkedTakeoffs,
   normalizeTakeoffLabel,
   suggestTakeoffMatches,
@@ -30,6 +32,8 @@ import {
   snapLinearPoint,
   snapToTakeoffVertex,
   statedScaleFeetPerPixel,
+  takeoffGroupKey,
+  takeoffGroupRollup,
   takeoffUnitsCompatible,
   GEOMETRY_SNAP_TOLERANCE_PX,
 } from "../src/lib/plan-room-math.ts";
@@ -678,6 +682,153 @@ assert.equal(slabLinear.quantity, 40);
 const libraryGroup = takeoffGroups.find((group) => group.library_item_id === "lib-1");
 assert.ok(libraryGroup);
 assert.equal(libraryGroup.measurement_count, 2);
+
+// --- Takeoff groups (beta batch 2) -------------------------------------------
+// Group identity: normalization prevents whitespace/case/punctuation forks,
+// and unit aliases share a key. Different labels stay distinct.
+assert.equal(
+  takeoffGroupKey(" Demo  Ramps and Landings ", "SF"),
+  takeoffGroupKey("demo ramps AND landings", "SQFT"),
+);
+assert.equal(takeoffGroupKey("Demo Ramps", "SF") === takeoffGroupKey("Demo Ramp", "SF"), false);
+assert.equal(takeoffGroupKey("Fence", "LF") === takeoffGroupKey("Fence", "SF"), false);
+assert.equal(takeoffGroupKey("Fence", "FT"), takeoffGroupKey("Fence", "LF"));
+
+// Rollup math is the shared waste-applied formula.
+assert.equal(
+  takeoffGroupRollup([
+    { quantity: 100, waste_pct: 10 },
+    { quantity: 50, waste_pct: 0 },
+  ]),
+  160,
+);
+
+// The tester's exact scenario: two areas, same label, same sheet family —
+// one group, correct measured total, link/color derived from members.
+const rampMembers = [
+  {
+    id: "t1",
+    label: "Demo Ramps and Landings",
+    unit: "SF",
+    quantity: 279,
+    waste_pct: 0,
+    color: "#b91c1c",
+    plan_sheet_id: "sheet-1",
+    estimate_line_item_id: "row-1",
+    library_item_id: "lib-9",
+  },
+  {
+    id: "t2",
+    label: "demo ramps and landings",
+    unit: "SQFT",
+    quantity: 25.54,
+    waste_pct: 0,
+    color: "#b91c1c",
+    plan_sheet_id: "sheet-2",
+    estimate_line_item_id: "row-1",
+    library_item_id: "lib-9",
+  },
+  {
+    id: "t3",
+    label: "Fence run",
+    unit: "LF",
+    quantity: 80,
+    waste_pct: 5,
+    color: "#15803d",
+    plan_sheet_id: "sheet-1",
+    estimate_line_item_id: null,
+    library_item_id: null,
+  },
+];
+const worksheetGroups = groupTakeoffWorksheet(rampMembers);
+assert.equal(worksheetGroups.length, 2);
+const rampGroup = worksheetGroups.find((group) => group.key.startsWith("demo ramps"));
+assert.ok(rampGroup);
+assert.equal(rampGroup.members.length, 2);
+assert.equal(rampGroup.measuredQuantity, 304.54);
+assert.equal(rampGroup.rollupQuantity, 304.54);
+assert.deepEqual(rampGroup.sheetIds, ["sheet-1", "sheet-2"]);
+assert.equal(rampGroup.linkedLineId, "row-1");
+assert.equal(rampGroup.mixedLinks, false);
+assert.equal(rampGroup.libraryItemId, "lib-9");
+assert.equal(rampGroup.color, "#b91c1c");
+
+// Worksheet grouping and Build Estimate from Takeoffs share the same rollup.
+const alignedBuild = groupUnlinkedTakeoffs(
+  rampGroup.members.map((member) => ({ ...member, library_item_id: null })),
+);
+assert.equal(alignedBuild.length, 1);
+assert.equal(alignedBuild[0].quantity, rampGroup.rollupQuantity);
+
+// Detach semantics: clearing one member's link keeps the group together and
+// keeps the group's link from the remaining member — no mixed-links state.
+const afterDetach = groupTakeoffWorksheet(
+  rampMembers.map((member) =>
+    member.id === "t2" ? { ...member, estimate_line_item_id: null, library_item_id: null } : member,
+  ),
+);
+const detachedRampGroup = afterDetach.find((group) => group.key.startsWith("demo ramps"));
+assert.ok(detachedRampGroup);
+assert.equal(detachedRampGroup.members.length, 2);
+assert.equal(detachedRampGroup.linkedLineId, "row-1");
+assert.equal(detachedRampGroup.mixedLinks, false);
+
+// Members pointing at different rows flag mixedLinks and surrender the
+// group-level link.
+const mixed = groupTakeoffWorksheet(
+  rampMembers.map((member) =>
+    member.id === "t2" ? { ...member, estimate_line_item_id: "row-2" } : member,
+  ),
+).find((group) => group.key.startsWith("demo ramps"));
+assert.ok(mixed);
+assert.equal(mixed.linkedLineId, null);
+assert.equal(mixed.mixedLinks, true);
+
+// Label-match inheritance: a new same-label compatible-unit takeoff joins
+// and inherits the group's link and library item.
+const joinMatch = findTakeoffGroupMatch({
+  label: "DEMO RAMPS AND LANDINGS",
+  unit: "SQFT",
+  measurements: rampMembers,
+});
+assert.equal(joinMatch.joins, true);
+assert.equal(joinMatch.unitMismatch, false);
+assert.equal(joinMatch.group.linkedLineId, "row-1");
+assert.equal(joinMatch.group.libraryItemId, "lib-9");
+assert.equal(joinMatch.group.color, "#b91c1c");
+
+// Unit mismatch refuses to join: same label, LF vs SF, is a new group
+// candidate with a warning — never an auto-join.
+const mismatch = findTakeoffGroupMatch({
+  label: "Demo Ramps and Landings",
+  unit: "LF",
+  measurements: rampMembers,
+});
+assert.equal(mismatch.joins, false);
+assert.equal(mismatch.unitMismatch, true);
+assert.equal(mismatch.group, null);
+
+// The measurement being relabeled never matches itself, and unknown labels
+// match nothing.
+const selfExcluded = findTakeoffGroupMatch({
+  label: "Fence run",
+  unit: "LF",
+  measurements: rampMembers,
+  excludeId: "t3",
+});
+assert.equal(selfExcluded.joins, false);
+assert.equal(selfExcluded.unitMismatch, false);
+const noMatch = findTakeoffGroupMatch({
+  label: "Brand new scope",
+  unit: "SF",
+  measurements: rampMembers,
+});
+assert.equal(noMatch.joins, false);
+assert.equal(noMatch.unitMismatch, false);
+assert.equal(
+  findTakeoffGroupMatch({ label: "  ", unit: "SF", measurements: rampMembers }).joins,
+  false,
+);
 
 const matches = suggestTakeoffMatches(
   [

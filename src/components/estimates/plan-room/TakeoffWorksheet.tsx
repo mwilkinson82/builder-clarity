@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AlertTriangle, ClipboardList, Download, Link2, Rows3, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,11 +12,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { takeoffUnitsCompatible } from "@/lib/plan-room-math";
+import {
+  groupTakeoffWorksheet,
+  takeoffUnitsCompatible,
+  type TakeoffWorksheetGroup,
+} from "@/lib/plan-room-math";
 import type { EstimateLineItemRow } from "@/lib/estimates.functions";
 import type { PlanSheetRow, TakeoffMeasurementRow } from "@/lib/plan-room.functions";
 import { formatQty, toolLabel, unitLongName, type TakeoffFilterMode } from "./planRoomShared";
 import { LinkOrCreatePicker } from "./TakeoffClassify";
+import { TakeoffGroupCard } from "./TakeoffGroupCard";
 
 export type SyncConflictState = {
   kind: "quantity" | "unit";
@@ -144,6 +150,9 @@ export function TakeoffWorksheet({
   lineTotals,
   linkMeasurement,
   classifyMeasurement,
+  linkMeasurements,
+  classifyMeasurements,
+  detachMeasurement,
   classifyPending = false,
   onBuildFromTakeoffs,
   buildPending = false,
@@ -179,12 +188,60 @@ export function TakeoffWorksheet({
       | { type: "library"; library_item_id: string }
       | { type: "label"; description: string; unit: string },
   ) => void;
+  // Group-card actions (beta batch 2): one answer classifies or links every
+  // member; detach clears the link on a single member only.
+  linkMeasurements: (measurementIds: string[], lineId: string) => void;
+  classifyMeasurements: (
+    measurementIds: string[],
+    source:
+      | { type: "library"; library_item_id: string }
+      | { type: "label"; description: string; unit: string },
+  ) => void;
+  detachMeasurement: (measurementId: string) => void;
   classifyPending?: boolean;
   onBuildFromTakeoffs?: () => void;
   buildPending?: boolean;
   onReviewMatches?: () => void;
   matchCount?: number;
 }) {
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+  // Per-session worksheet color filter — the all-my-red-is-demo scan.
+  const [hiddenCardColors, setHiddenCardColors] = useState<string[]>([]);
+
+  // One card per (normalized label, unit) group; singletons render exactly as
+  // before. Grouping is the same pure function Build Estimate from Takeoffs
+  // normalizes with, so the two can never disagree.
+  const groups = groupTakeoffWorksheet(visibleMeasurements);
+  const worksheetColors = Array.from(new Set(measurements.map((item) => item.color)));
+  const displayGroups =
+    hiddenCardColors.length > 0
+      ? groups.filter((group) => !hiddenCardColors.includes(group.color))
+      : groups;
+
+  const toggleGroupExpanded = (key: string) =>
+    setExpandedGroups((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key],
+    );
+
+  const renderGroupCard = (group: TakeoffWorksheetGroup<TakeoffMeasurementRow>) => (
+    <TakeoffGroupCard
+      key={group.key}
+      group={group}
+      lineItems={lineItems}
+      sheets={sheets}
+      selectedMeasurementId={selectedMeasurementId}
+      expanded={expandedGroups.includes(group.key)}
+      onToggleExpanded={() => toggleGroupExpanded(group.key)}
+      selectMeasurement={selectMeasurement}
+      deleteMeasurement={(measurementId) => deleteMeasurementMutation.mutate(measurementId)}
+      detachMeasurement={detachMeasurement}
+      linkMeasurements={linkMeasurements}
+      classifyMeasurements={classifyMeasurements}
+      syncLine={(lineId) => syncLineMutation.mutate({ lineId })}
+      classifyPending={classifyPending}
+    />
+  );
+
   return (
     <>
       <section className="rounded-lg border border-hairline bg-card shadow-card">
@@ -327,9 +384,54 @@ export function TakeoffWorksheet({
               </Button>
             ))}
           </div>
+          {worksheetColors.length > 1 && (
+            <div
+              className="mt-2 flex flex-wrap items-center gap-1.5"
+              data-testid="takeoff-worksheet-color-filter"
+            >
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Colors
+              </span>
+              {worksheetColors.map((color) => {
+                const hidden = hiddenCardColors.includes(color);
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    className={cn(
+                      "h-6 w-6 rounded border transition",
+                      hidden ? "border-hairline opacity-25" : "border-foreground/40",
+                    )}
+                    style={{ backgroundColor: color }}
+                    title={hidden ? "Show these cards" : "Hide these cards"}
+                    aria-pressed={!hidden}
+                    onClick={() =>
+                      setHiddenCardColors((current) =>
+                        hidden ? current.filter((item) => item !== color) : [...current, color],
+                      )
+                    }
+                    data-testid="takeoff-worksheet-color-chip"
+                  />
+                );
+              })}
+              {hiddenCardColors.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={() => setHiddenCardColors([])}
+                  data-testid="takeoff-worksheet-color-clear"
+                >
+                  Show all colors
+                </Button>
+              )}
+            </div>
+          )}
           <p className="mt-2 text-xs text-muted-foreground">
-            Showing {visibleMeasurements.length} takeoffs. Selecting one opens its sheet and centers
-            the markup.
+            Showing {visibleMeasurements.length} takeoffs in {displayGroups.length} card
+            {displayGroups.length === 1 ? "" : "s"}.
+            {" Selecting one opens its sheet and centers the markup."}
           </p>
         </div>
         <div className="max-h-[520px] space-y-3 overflow-y-auto p-3">
@@ -342,8 +444,15 @@ export function TakeoffWorksheet({
             <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
               No takeoffs match that navigator view. Clear the search or choose another filter.
             </div>
+          ) : displayGroups.length === 0 ? (
+            <div className="rounded-md border border-dashed border-hairline bg-surface/50 p-4 text-sm text-muted-foreground">
+              Every takeoff here is hidden by the color filter. Turn a color chip back on to see its
+              cards.
+            </div>
           ) : (
-            visibleMeasurements.map((measurement) => {
+            displayGroups.map((group) => {
+              if (group.members.length > 1) return renderGroupCard(group);
+              const measurement = group.members[0];
               const linkedLine = lineItems.find(
                 (line) => line.id === measurement.estimate_line_item_id,
               );

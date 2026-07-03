@@ -1,4 +1,4 @@
-import { calculateTakeoffQuantity } from "@/lib/plan-room-math";
+import { calculateTakeoffQuantity, formatFeetInches } from "@/lib/plan-room-math";
 import { formatQty, type Point, type ToolMode, type ViewSize } from "./planRoomShared";
 import { LinearAngleGuide } from "./TakeoffTools";
 
@@ -41,7 +41,13 @@ export function TakeoffRunPreview({
 
   let readout: { x: number; y: number; text: string } | null = null;
   if (anchor && scaleFeetPerPixel > 0) {
-    if (tool === "linear") {
+    if (tool === "linear" || tool === "ruler") {
+      // The ruler answers in feet-inches (the dimension-string dialect);
+      // linear keeps the takeoff quantity format.
+      const formatLength =
+        tool === "ruler"
+          ? (feet: number) => formatFeetInches(feet)
+          : (feet: number) => formatQty(feet, unit);
       const segmentFeet =
         Math.hypot(
           (cursor.point.x - anchor.x) * viewSize.width,
@@ -58,8 +64,8 @@ export function TakeoffRunPreview({
         y: (cursorY + anchor.y * viewSize.height) / 2,
         text:
           pendingPoints.length >= 2
-            ? `${formatQty(segmentFeet, unit)} · run ${formatQty(runFeet, unit)}`
-            : formatQty(segmentFeet, unit),
+            ? `${formatLength(segmentFeet)} · run ${formatLength(runFeet)}`
+            : formatLength(segmentFeet),
       };
     }
     if (tool === "area" && pendingPoints.length >= 2) {

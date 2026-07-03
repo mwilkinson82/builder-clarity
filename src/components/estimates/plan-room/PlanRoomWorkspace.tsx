@@ -65,7 +65,10 @@ import {
 import {
   defaultPlanRoomSheetId,
   distancePx,
+  findTakeoffGroupMatch,
+  groupTakeoffWorksheet,
   groupUnlinkedTakeoffs,
+  normalizeTakeoffLabel,
   parseFeetInches,
   SAMPLE_PLAN_SET_MIME,
   statedScaleFeetPerPixel,
@@ -293,6 +296,9 @@ export function PlanRoomWorkspace({
   const [takeoffLayerVisibility, setTakeoffLayerVisibility] = useState<TakeoffLayerVisibility>(
     DEFAULT_TAKEOFF_LAYER_VISIBILITY,
   );
+  // Per-color canvas visibility (beta batch 2): the layers-style workflow —
+  // hide the demo reds while measuring the new-work greens. Per-session.
+  const [hiddenTakeoffColors, setHiddenTakeoffColors] = useState<string[]>([]);
   const [selectedMeasurementDraft, setSelectedMeasurementDraft] = useState({
     color: TAKEOFF_COLORS[0],
     label: "",
@@ -359,10 +365,16 @@ export function PlanRoomWorkspace({
   }, [sheetMeasurements]);
   const visibleSheetMeasurements = useMemo(
     () =>
-      sheetMeasurements.filter((measurement) =>
-        measurementMatchesTakeoffLayers(measurement, takeoffLayerVisibility),
+      sheetMeasurements.filter(
+        (measurement) =>
+          measurementMatchesTakeoffLayers(measurement, takeoffLayerVisibility) &&
+          !hiddenTakeoffColors.includes(measurement.color),
       ),
-    [sheetMeasurements, takeoffLayerVisibility],
+    [hiddenTakeoffColors, sheetMeasurements, takeoffLayerVisibility],
+  );
+  const sheetColorsInUse = useMemo(
+    () => Array.from(new Set(sheetMeasurements.map((measurement) => measurement.color))),
+    [sheetMeasurements],
   );
   const hiddenSheetMeasurementCount = sheetMeasurements.length - visibleSheetMeasurements.length;
   const allTakeoffLayersVisible = TAKEOFF_LAYER_KEYS.every((key) => takeoffLayerVisibility[key]);
@@ -462,6 +474,54 @@ export function PlanRoomWorkspace({
   const finishPopoverMeasurement = finishPopover
     ? (measurements.find((item) => item.id === finishPopover.measurementId) ?? null)
     : null;
+  // Group recognition for the finish popover (beta batch 2): the banner counts
+  // INCLUDE the just-finished measurement.
+  const finishPopoverGroupState = useMemo(() => {
+    if (!finishPopoverMeasurement) return null;
+    const match = findTakeoffGroupMatch({
+      label: finishPopoverMeasurement.label,
+      unit: finishPopoverMeasurement.unit,
+      measurements,
+      excludeId: finishPopoverMeasurement.id,
+    });
+    if (match.joins && match.group) {
+      return {
+        kind: "joined" as const,
+        label: match.group.label,
+        memberCount: match.group.members.length + 1,
+        measuredTotal:
+          Math.round((match.group.measuredQuantity + finishPopoverMeasurement.quantity) * 10000) /
+          10000,
+        unit: finishPopoverMeasurement.unit,
+      };
+    }
+    if (match.unitMismatch) {
+      const normalized = normalizeTakeoffLabel(finishPopoverMeasurement.label);
+      const other = measurements.find(
+        (item) =>
+          item.id !== finishPopoverMeasurement.id &&
+          normalizeTakeoffLabel(item.label) === normalized,
+      );
+      return {
+        kind: "unit-mismatch" as const,
+        label: finishPopoverMeasurement.label.trim(),
+        memberCount: 1,
+        measuredTotal: finishPopoverMeasurement.quantity,
+        unit: finishPopoverMeasurement.unit,
+        otherUnit: other?.unit,
+      };
+    }
+    return null;
+  }, [finishPopoverMeasurement, measurements]);
+  // Existing group labels for the popover's autocomplete, so joining a group
+  // is the default gesture and a typo doesn't fork a new one.
+  const groupLabelSuggestions = useMemo(
+    () =>
+      Array.from(new Set(groupTakeoffWorksheet(measurements).map((group) => group.label)))
+        .sort((a, b) => a.localeCompare(b))
+        .slice(0, 60),
+    [measurements],
+  );
   const selectedMeasurementLabel = selectedMeasurement?.label ?? "";
   const selectedMeasurementNotes = selectedMeasurement?.notes ?? "";
   const activeDraftPointCount =
@@ -670,6 +730,10 @@ export function PlanRoomWorkspace({
   useEffect(() => {
     pendingPointsRef.current = pendingPoints;
   }, [pendingPoints]);
+  // Ruler chains are ephemeral by design: they do not survive sheet changes.
+  useEffect(() => {
+    if (tool === "ruler") setPendingPoints([]);
+  }, [currentSheet?.id, tool]);
 
   const handlePageMetrics = useCallback(
     (metrics: { widthPoints: number; heightPoints: number } | null) => {
@@ -717,26 +781,41 @@ export function PlanRoomWorkspace({
             : "Set the drawing scale before measuring this takeoff.",
         );
       }
-      return createMeasurementFn({
+      const label =
+        measurementLabel.trim() || line?.description || `${toolLabel(measurementTool)} takeoff`;
+      const unit = unitFor(measurementTool, line);
+      // Label-match inheritance (beta batch 2): finishing into an existing
+      // group inherits its estimate-row link, library item, and color —
+      // unless the takeoff was explicitly aimed at a row in the tools panel.
+      // A same-label group with an incompatible unit never auto-joins.
+      const match = findTakeoffGroupMatch({ label, unit, measurements });
+      const joinedGroup = !line && match.joins ? match.group : null;
+      const result = await createMeasurementFn({
         data: {
           estimate_id: estimate.id,
           plan_sheet_id: currentSheet.id,
-          estimate_line_item_id: line?.id ?? null,
-          library_item_id: line?.library_item_id ?? null,
+          estimate_line_item_id: line?.id ?? joinedGroup?.linkedLineId ?? null,
+          library_item_id: line?.library_item_id ?? joinedGroup?.libraryItemId ?? null,
           tool_type: measurementTool,
-          label:
-            measurementLabel.trim() || line?.description || `${toolLabel(measurementTool)} takeoff`,
-          unit: unitFor(measurementTool, line),
+          label,
+          unit,
           quantity,
           waste_pct: 0,
-          color: takeoffColor,
+          color: joinedGroup ? joinedGroup.color : takeoffColor,
           geometry: geometryFromPoints(points, viewSize),
           notes: line ? "Quantity produced from Plan Room takeoff." : "",
         },
       });
+      return { ...result, joinedGroupLinked: Boolean(joinedGroup?.linkedLineId) };
     },
     onSuccess: (result, variables) => {
-      toast.success(selectedLine ? "Takeoff saved and estimate row updated" : "Takeoff saved");
+      toast.success(
+        result.joinedGroupLinked
+          ? "Takeoff saved — added to its group and linked"
+          : selectedLine
+            ? "Takeoff saved and estimate row updated"
+            : "Takeoff saved",
+      );
       setPendingPoints([]);
       setSelectedMeasurementId(result.measurement.id);
       recordTakeoffCommand(result.measurement.plan_sheet_id, {
@@ -907,6 +986,47 @@ export function PlanRoomWorkspace({
     );
   };
 
+  // Group actions (beta batch 2): one answer links every member; each link is
+  // recorded on the undo stack, then the row syncs once.
+  const linkGroupMutation = useMutation({
+    mutationFn: async ({
+      measurementIds,
+      lineId,
+    }: {
+      measurementIds: string[];
+      lineId: string;
+    }) => {
+      for (const id of measurementIds) {
+        await updateMeasurementFn({ data: { id, patch: { estimate_line_item_id: lineId } } });
+      }
+      return { measurementIds, lineId };
+    },
+    onSuccess: ({ measurementIds, lineId }) => {
+      // `measurements` still holds the pre-update rows here, so the undo
+      // snapshots are accurate (same pattern as updateMeasurementMutation).
+      measurementIds.forEach((id) =>
+        recordMeasurementUpdate(id, { estimate_line_item_id: lineId }),
+      );
+      toast.success(
+        `${measurementIds.length} takeoff${measurementIds.length === 1 ? "" : "s"} linked`,
+      );
+      invalidate();
+      syncLineMutation.mutate({ lineId });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "The group did not link"),
+  });
+
+  // Detach covers the intentional same-name-different-thing case: clears the
+  // inherited link on that measurement only. The server re-syncs the row it
+  // left so the group rollup stays honest.
+  const detachMeasurementFromGroup = (measurementId: string) => {
+    updateMeasurementMutation.mutate({
+      id: measurementId,
+      patch: { estimate_line_item_id: null, library_item_id: null },
+    });
+  };
+
   // Executes the server side of an undo/redo. Recreates return the fresh row
   // id so the stacks can follow it. These call the raw server functions, not
   // the recording mutations — an undo must never record itself.
@@ -1002,7 +1122,8 @@ export function PlanRoomWorkspace({
   // Esc. Only with no run active does the shortcut fall through to the
   // committed undo stack.
   const isRunActive =
-    ((tool === "linear" || tool === "area" || tool === "count") && pendingPoints.length > 0) ||
+    ((tool === "linear" || tool === "area" || tool === "count" || tool === "ruler") &&
+      pendingPoints.length > 0) ||
     ((tool === "calibrate" || tool === "verify") && calibrationPoints.length > 0);
   const undoRunVertex = () => {
     if (!isRunActive) return false;
@@ -1718,6 +1839,11 @@ export function PlanRoomWorkspace({
   // vertices placed so far. Double-click's second click is skipped by the
   // canvas, so the pair plants exactly one final point.
   const finishRunFromCanvas = () => {
+    // The ruler saves nothing: any finish gesture just clears the chain.
+    if (tool === "ruler") {
+      setPendingPoints([]);
+      return;
+    }
     const points = pendingPointsRef.current;
     if (tool === "linear" && points.length >= 2) {
       createMeasurementMutation.mutate({ measurementTool: "linear", points });
@@ -1737,6 +1863,10 @@ export function PlanRoomWorkspace({
   };
 
   const finishDraft = () => {
+    if (tool === "ruler") {
+      setPendingPoints([]);
+      return;
+    }
     if (tool === "calibrate") {
       saveScale();
       return;
@@ -2881,12 +3011,43 @@ export function PlanRoomWorkspace({
                       (line) => line.id === finishPopoverMeasurement.estimate_line_item_id,
                     ) ?? null
                   }
-                  onSaveDetails={({ label, wastePct }) =>
+                  groupState={finishPopoverGroupState}
+                  groupLabelSuggestions={groupLabelSuggestions}
+                  onDetach={
+                    finishPopoverGroupState?.kind === "joined" &&
+                    finishPopoverMeasurement.estimate_line_item_id
+                      ? () => detachMeasurementFromGroup(finishPopoverMeasurement.id)
+                      : null
+                  }
+                  onSaveDetails={({ label, wastePct }) => {
+                    // Committing a label that matches an existing group joins
+                    // it: take the group's color, and inherit its link only
+                    // when this takeoff is still unlinked. Unit mismatch
+                    // never auto-joins (Phase 2 guard).
+                    const match = findTakeoffGroupMatch({
+                      label,
+                      unit: finishPopoverMeasurement.unit,
+                      measurements,
+                      excludeId: finishPopoverMeasurement.id,
+                    });
+                    const joined = match.joins ? match.group : null;
                     updateMeasurementMutation.mutate({
                       id: finishPopoverMeasurement.id,
-                      patch: { label, waste_pct: wastePct },
-                    })
-                  }
+                      patch: {
+                        label,
+                        waste_pct: wastePct,
+                        ...(joined ? { color: joined.color } : {}),
+                        ...(joined &&
+                        joined.linkedLineId &&
+                        !finishPopoverMeasurement.estimate_line_item_id
+                          ? {
+                              estimate_line_item_id: joined.linkedLineId,
+                              library_item_id: joined.libraryItemId,
+                            }
+                          : {}),
+                      },
+                    });
+                  }}
                   onPickRow={(lineId) => linkMeasurementToRow(finishPopoverMeasurement.id, lineId)}
                   onPickLibraryItem={(item) =>
                     classifyTakeoffMutation.mutate({
@@ -3310,6 +3471,53 @@ export function PlanRoomWorkspace({
                 );
               })}
             </div>
+            {sheetColorsInUse.length > 0 && (
+              <div className="mt-3" data-testid="takeoff-color-visibility">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Colors on this sheet
+                </p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {sheetColorsInUse.map((color) => {
+                    const hidden = hiddenTakeoffColors.includes(color);
+                    return (
+                      <button
+                        key={color}
+                        type="button"
+                        className={cn(
+                          "h-7 w-7 rounded border transition",
+                          hidden ? "border-hairline opacity-25" : "border-foreground/40",
+                        )}
+                        style={{ backgroundColor: color }}
+                        title={
+                          hidden
+                            ? "Show this color's markups on the sheet"
+                            : "Hide this color's markups on the sheet"
+                        }
+                        aria-pressed={!hidden}
+                        onClick={() =>
+                          setHiddenTakeoffColors((current) =>
+                            hidden ? current.filter((item) => item !== color) : [...current, color],
+                          )
+                        }
+                        data-testid="takeoff-color-chip"
+                      />
+                    );
+                  })}
+                  {hiddenTakeoffColors.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setHiddenTakeoffColors([])}
+                      data-testid="takeoff-color-show-all"
+                    >
+                      Show all colors
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
 
           <ReadinessPanel
@@ -3599,6 +3807,13 @@ export function PlanRoomWorkspace({
             classifyMeasurement={(measurementId, source) =>
               classifyTakeoffMutation.mutate({ measurementIds: [measurementId], source })
             }
+            linkMeasurements={(measurementIds, lineId) =>
+              linkGroupMutation.mutate({ measurementIds, lineId })
+            }
+            classifyMeasurements={(measurementIds, source) =>
+              classifyTakeoffMutation.mutate({ measurementIds, source })
+            }
+            detachMeasurement={detachMeasurementFromGroup}
             classifyPending={classifyTakeoffMutation.isPending}
             onBuildFromTakeoffs={
               unlinkedMeasurements.length > 0 ? openBuildFromTakeoffs : undefined

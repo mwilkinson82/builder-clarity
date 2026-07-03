@@ -34,6 +34,7 @@ import {
   PDF_STANDARD_RENDER_MAX_EDGE,
   PDF_STANDARD_RENDER_MAX_PIXELS,
   PLAN_ZOOM_STEP,
+  RULER_COLOR,
   ZOOM_SLIDER_MAX,
   ZOOM_SLIDER_MIN,
   geometryPoints,
@@ -675,7 +676,7 @@ export function PlanCanvas({
     Math.min(MAX_PLAN_ZOOM, Math.max(MIN_PLAN_ZOOM, nextZoom));
 
   useEffect(() => {
-    if (tool !== "linear" && tool !== "area") setRunCursor(null);
+    if (tool !== "linear" && tool !== "area" && tool !== "ruler") setRunCursor(null);
   }, [tool]);
 
   const updateViewportFrame = useCallback(() => {
@@ -824,7 +825,10 @@ export function PlanCanvas({
       setZoomWindowDraft(null);
       setGeometryEditDraft(null);
       setGeometryPreview(null);
-      if ((tool === "linear" || tool === "area" || tool === "count") && pendingPoints.length > 0) {
+      if (
+        (tool === "linear" || tool === "area" || tool === "count" || tool === "ruler") &&
+        pendingPoints.length > 0
+      ) {
         onAbandonDraft?.();
         setRunCursor(null);
       }
@@ -940,7 +944,7 @@ export function PlanCanvas({
   // Re-resolves the rubber band from the last known pointer position after
   // the sheet moves under a still cursor (pan, wheel zoom, placed vertex).
   const refreshRunCursorFromLastPointer = useCallback(() => {
-    if (tool !== "linear" && tool !== "area") return;
+    if (tool !== "linear" && tool !== "area" && tool !== "ruler") return;
     const last = lastPointerRef.current;
     if (!last) return;
     const cursor = pointFromClient(last.x, last.y);
@@ -1056,7 +1060,7 @@ export function PlanCanvas({
     svgRef.current?.setPointerCapture(event.pointerId);
   };
 
-  const isDrawTool = tool === "linear" || tool === "area" || tool === "count";
+  const isDrawTool = tool === "linear" || tool === "area" || tool === "count" || tool === "ruler";
 
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (geometryEditDraft) return;
@@ -1151,7 +1155,7 @@ export function PlanCanvas({
       refreshRunCursorFromLastPointer();
       return;
     }
-    if (tool === "linear" || tool === "area") {
+    if (tool === "linear" || tool === "area" || tool === "ruler") {
       const cursor = pointFromClient(event.clientX, event.clientY);
       if (cursor) {
         lastPointerRef.current = {
@@ -1233,10 +1237,10 @@ export function PlanCanvas({
     if (!point) return;
     // The second click of a double-click finishes the run (via onDoubleClick)
     // instead of planting a duplicate vertex.
-    if ((tool === "linear" || tool === "area") && event.detail > 1) return;
+    if ((tool === "linear" || tool === "area" || tool === "ruler") && event.detail > 1) return;
     // The committed click obeys the same snaps as the rubber-band preview:
     // geometry snap first, then the ortho magnet; Alt places the raw point.
-    if (tool === "linear" || tool === "area") {
+    if (tool === "linear" || tool === "area" || tool === "ruler") {
       onPoint(resolveDrawCursor(point, event.altKey, event.shiftKey).point);
       return;
     }
@@ -1622,7 +1626,10 @@ export function PlanCanvas({
                 lastPointerRef.current = null;
               }}
               onDoubleClick={() => {
-                if ((tool === "linear" || tool === "area") && pendingPoints.length > 0) {
+                if (
+                  (tool === "linear" || tool === "area" || tool === "ruler") &&
+                  pendingPoints.length > 0
+                ) {
                   onFinishRun?.();
                 }
               }}
@@ -1637,7 +1644,7 @@ export function PlanCanvas({
                   return;
                 }
                 if (
-                  (tool === "linear" || tool === "area" || tool === "count") &&
+                  (tool === "linear" || tool === "area" || tool === "count" || tool === "ruler") &&
                   pendingPoints.length > 0
                 ) {
                   event.preventDefault();
@@ -1674,7 +1681,7 @@ export function PlanCanvas({
               <DraftShape
                 points={pendingPoints}
                 viewSize={viewSize}
-                color="#1b7a6e"
+                color={tool === "ruler" ? RULER_COLOR : "#1b7a6e"}
                 dashed
                 closed={tool === "area"}
                 scaleFeetPerPixel={sheet?.scale_feet_per_pixel ?? 0}
@@ -1693,7 +1700,7 @@ export function PlanCanvas({
                 tool={tool === "calibrate" || tool === "verify" ? tool : "select"}
                 command={tool === "calibrate" || tool === "verify" ? draftCommand : null}
               />
-              {(tool === "linear" || tool === "area") && runCursor && (
+              {(tool === "linear" || tool === "area" || tool === "ruler") && runCursor && (
                 <TakeoffRunPreview
                   pendingPoints={pendingPoints}
                   cursor={runCursor}
