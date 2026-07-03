@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/outcome/ScheduleRisk";
+import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/schedule";
 import { buildWbsSectionPathMap, replaceWbsPathInDivision } from "@/lib/constructline-wbs";
 import { getProject, type ProjectRow } from "@/lib/projects.functions";
 import {

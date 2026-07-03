@@ -46,7 +46,7 @@ import {
 } from "@/components/ui/select";
 import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
-import { ScheduleRisk } from "@/components/outcome/ScheduleRisk";
+import { ScheduleRisk } from "@/components/schedule";
 import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
 import { ImportSOVSheet, type SovMappingProfileDraft } from "@/components/outcome/ImportSOVSheet";
 import { ReviewsTab } from "@/components/outcome/ReviewsTab";

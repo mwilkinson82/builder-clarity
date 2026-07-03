@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -28,7 +28,15 @@ import {
 } from "../src/lib/constructline-wbs.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const readProjectFile = (filePath: string) => readFileSync(resolve(rootDir, filePath), "utf8");
+const readProjectFile = (filePath: string) => {
+  const target = resolve(rootDir, filePath);
+  if (!statSync(target).isDirectory()) return readFileSync(target, "utf8");
+  return readdirSync(target)
+    .filter((entry) => entry.endsWith(".ts") || entry.endsWith(".tsx"))
+    .sort()
+    .map((entry) => readFileSync(resolve(target, entry), "utf8"))
+    .join("\n");
+};
 const withScheduleActivityStatus = <
   T extends {
     start_date: string | null;
@@ -809,7 +817,7 @@ assert.deepEqual(
   ["03 - Concrete / Southwest corner", "03 - Concrete / Northwest corner"],
 );
 
-const scheduleRiskSource = readProjectFile("src/components/outcome/ScheduleRisk.tsx");
+const scheduleRiskSource = readProjectFile("src/components/schedule");
 const scheduleStatusSource = readProjectFile("src/lib/schedule-status.ts");
 const scheduleRouteSource = readProjectFile(
   "src/routes/_authenticated/projects.$projectId.schedule.tsx",
