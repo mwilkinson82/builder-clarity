@@ -119,6 +119,7 @@ import {
 } from "./CpmGridToolbar";
 import { ActivityDivisionInput, LabeledField, WbsManagerDialog } from "./WbsManager";
 import { ActivityScheduleMatrix } from "./ScheduleGridMatrix";
+import { CpmPrintSheet } from "./CpmPrintSheet";
 import { StackingMiniMap } from "./ScheduleGridRows";
 import { ActivityDependencyPicker } from "./ScheduleActivityRegister";
 import { ActivityDetailDialog } from "./ActivityDetailDialog";
@@ -1027,128 +1028,21 @@ export function CpmActivityPlanner({
 
   return (
     <>
-      <section className="constructline-cpm-print-shell" aria-label="Printable CPM schedule">
-        <div className="constructline-cpm-print-titlebar">
-          <div>
-            {(project.organization_logo_url || project.organization_name) && (
-              <div className="constructline-print-brand">
-                {project.organization_logo_url && (
-                  <img
-                    src={project.organization_logo_url}
-                    alt={`${project.organization_name} logo`}
-                  />
-                )}
-                {project.organization_name && <span>{project.organization_name}</span>}
-              </div>
-            )}
-            <div className="constructline-cpm-print-kicker">
-              {contractorName} · ConstructLine CPM
-            </div>
-            <h1>
-              {project.name} · {printReportLabel}
-            </h1>
-            <div className="constructline-cpm-print-meta">
-              {project.job_number && <span>Job # {project.job_number}</span>}
-              {project.client && <span>{project.client}</span>}
-              {project.project_manager && <span>PM {project.project_manager}</span>}
-              <span>Data date {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}</span>
-              <span>
-                {shortDate(displayedCpmModel.timelineStartDate)} to{" "}
-                {shortDate(displayedCpmModel.timelineFinishDate)}
-              </span>
-              <span>
-                {displayedCpmModel.tasks.length} activities · {printedLogicTieCount} logic ties in
-                view
-              </span>
-              {delaySummary.openCount > 0 && (
-                <span>
-                  {delaySummary.openCount} open delay impact
-                  {delaySummary.openCount === 1 ? "" : "s"} · {delaySummary.openDays} days
-                </span>
-              )}
-              <span>Optimized for 11 x 17 landscape</span>
-              <span>{activityOrder === "start" ? "Start-date order" : "WBS order"}</span>
-              <span>{scheduleViewSummary}</span>
-            </div>
-          </div>
-          <div
-            className={cn(
-              "constructline-cpm-print-status",
-              isCriticalPathReport && "constructline-cpm-print-status-critical",
-              isRecoveryReport && "constructline-cpm-print-status-recovery",
-            )}
-          >
-            <span>
-              {isCriticalPathReport
-                ? "Critical path report"
-                : isRecoveryReport
-                  ? "Recovery report"
-                  : "Report type"}
-            </span>
-            <strong>{printReportLabel}</strong>
-            <em>
-              {criticalBasisLabel} · Finish {shortDate(displayedCpmModel.cpmFinishDate)}
-            </em>
-          </div>
-        </div>
-        <div className="constructline-cpm-print-report-strip">
-          <span className="constructline-cpm-print-report-strip-company">
-            <strong>Company</strong>
-            {contractorName}
-          </span>
-          <span className="constructline-cpm-print-report-strip-report">
-            <strong>Report</strong>
-            {printReportLabel}
-          </span>
-          <span className="constructline-cpm-print-report-strip-basis">
-            <strong>Critical basis</strong>
-            {displayedCpmModel.criticalPathReliable ? "Valid" : "Provisional"}
-          </span>
-          <span>
-            <strong>Finish</strong>
-            {shortDate(displayedCpmModel.cpmFinishDate)}
-          </span>
-          <span>
-            <strong>Data date</strong>
-            {effectiveDataDate ? shortDate(effectiveDataDate) : "Not set"}
-          </span>
-          <span>
-            <strong>Legend</strong>
-            Critical red · near critical gold · complete green · milestone diamond · hatched delay
-            period
-          </span>
-        </div>
-        {/* The printed report always carries logic lines and baseline bars,
-            regardless of the on-screen toggles — that context is the point. */}
-        <ActivityScheduleMatrix
-          model={displayedCpmModel}
-          delayFragments={delayFragments}
-          dayPx={CONSTRUCTLINE_FIT_DAY_PX}
-          dataDate={effectiveDataDate}
-          viewSummary={scheduleViewSummary}
-          emptyTitle="No activities match this schedule view."
-          emptyDescription="Switch back to All activities or choose a broader view."
-          showLogicLines
-          showBaselineBars
-          isPrintMode
-          onOpenActivity={() => undefined}
-          onDeleteActivity={() => undefined}
-        />
-        <footer className="constructline-cpm-print-footer">
-          <span className="constructline-cpm-print-footer-primary">Company: {contractorName}</span>
-          <span className="constructline-cpm-print-footer-report">
-            {printReportLabel} · {criticalBasisLabel} · Finish{" "}
-            {shortDate(displayedCpmModel.cpmFinishDate)}
-          </span>
-          <span>Critical path finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
-          <span>Project finish {shortDate(displayedCpmModel.cpmFinishDate)}</span>
-          <span>Data date {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}</span>
-          <span>
-            Legend: critical red · near critical gold · complete green · milestone diamond · hatched
-            delay period
-          </span>
-        </footer>
-      </section>
+      <CpmPrintSheet
+        project={project}
+        model={displayedCpmModel}
+        delayFragments={delayFragments}
+        delaySummary={delaySummary}
+        effectiveDataDate={effectiveDataDate}
+        activityOrder={activityOrder}
+        scheduleViewSummary={scheduleViewSummary}
+        printReportLabel={printReportLabel}
+        criticalBasisLabel={criticalBasisLabel}
+        isCriticalPathReport={isCriticalPathReport}
+        isRecoveryReport={isRecoveryReport}
+        contractorName={contractorName}
+        printedLogicTieCount={printedLogicTieCount}
+      />
       <div
         className={cn(
           "constructline-screen-workbench rounded-lg border border-hairline bg-surface",

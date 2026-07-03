@@ -15,6 +15,7 @@
     "test:crm": "node --experimental-strip-types scripts/crm-pipeline-smoke.ts",
     "test:schedule": "node --experimental-strip-types scripts/schedule-spine-smoke.ts",
     "test:cpm:layout": "node --experimental-strip-types scripts/constructline-cpm-layout-smoke.ts",
+    "test:cpm:print": "node --experimental-strip-types scripts/constructline-cpm-print-smoke.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

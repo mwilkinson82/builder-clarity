@@ -171,7 +171,7 @@ export function ActivityScheduleMatrix({
     ? CONSTRUCTLINE_TABLE_PRINT_COLUMNS
     : buildTableColumnTemplate(columnWidths);
   const baseRowHeight = isPrintMode ? 31 : 72;
-  const groupHeight = isPrintMode ? 16 : 32;
+  const groupHeight = isPrintMode ? 12 : 32;
   const headerHeight = isPrintMode ? 30 : 44;
   const timelineWidth = isPrintMode
     ? CONSTRUCTLINE_PRINT_TIMELINE_WIDTH
@@ -808,7 +808,7 @@ export function ActivityScheduleMatrix({
         </div>
       )}
 
-      <div className="flex justify-between border-t border-hairline px-4 py-2 text-[11px] text-muted-foreground">
+      <div className="constructline-cpm-matrix-scale flex justify-between border-t border-hairline px-4 py-2 text-[11px] text-muted-foreground">
         <span>{shortDate(model.timelineStartDate)}</span>
         <span>{shortDate(model.timelineFinishDate)}</span>
       </div>

@@ -23,6 +23,24 @@ import {
   shortDate,
   varianceLabel,
   varianceTone,
+  isoDateFromMs,
+  parseDateMs,
+} from "./scheduleShared";
+
+export { isoDateFromMs, parseDateMs };
+export {
+  getActivityBaselineFinish,
+  getActivityBaselineStart,
+  getActivityForecastFinish,
+  getActivityForecastStart,
+  getDateDurationDays,
+} from "./scheduleShared";
+import {
+  getActivityBaselineFinish,
+  getActivityBaselineStart,
+  getActivityForecastFinish,
+  getActivityForecastStart,
+  getDateDurationDays,
 } from "./scheduleShared";
 import { MilestoneViewSelect, filterMilestones } from "./ScheduleRiskTab";
 import { ScheduleWorkbenchStat } from "./CpmWorkbenchPanels";
@@ -377,55 +395,11 @@ export type TimelineBounds = {
   endLabel: string | null;
 };
 
-export function parseDateMs(value?: string | null) {
-  if (!value) return null;
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return null;
-  return Date.UTC(year, month - 1, day);
-}
-
-export function isoDateFromMs(ms: number) {
-  return new Date(ms).toISOString().slice(0, 10);
-}
-
 export function getActivityDurationDays(activity: ScheduleActivityRow) {
   return getDateDurationDays(
     getActivityBaselineStart(activity),
     getActivityBaselineFinish(activity),
   );
-}
-
-export function getActivityBaselineStart(activity: ScheduleActivityRow) {
-  return activity.baseline_start_date ?? activity.start_date;
-}
-
-export function getActivityBaselineFinish(activity: ScheduleActivityRow) {
-  return activity.baseline_finish_date ?? activity.finish_date;
-}
-
-export function getActivityForecastStart(activity: ScheduleActivityRow) {
-  return (
-    activity.actual_start_date ??
-    activity.forecast_start_date ??
-    activity.start_date ??
-    activity.baseline_start_date
-  );
-}
-
-export function getActivityForecastFinish(activity: ScheduleActivityRow) {
-  return (
-    activity.actual_finish_date ??
-    activity.forecast_finish_date ??
-    activity.finish_date ??
-    activity.baseline_finish_date
-  );
-}
-
-export function getDateDurationDays(startDate?: string | null, finishDate?: string | null) {
-  const start = parseDateMs(startDate);
-  const finish = parseDateMs(finishDate);
-  if (start == null || finish == null) return null;
-  return Math.max(1, Math.round((finish - start) / DAY_MS) + 1);
 }
 
 export function getTimelineBounds(values: Array<string | null | undefined>): TimelineBounds {
