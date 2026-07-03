@@ -829,10 +829,15 @@ function TeamPage() {
                 Portfolio
               </Link>
             </Button>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              <span className="inline-block h-px w-7 bg-accent" />
               {team?.organization.name || "Company Workspace"}
             </div>
-            <h1 className="mt-1 font-serif text-3xl text-foreground">Your Company</h1>
+            <h1 className="mt-1 font-serif text-3xl text-foreground lg:text-4xl">Your Company</h1>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Who works here, what each person can do, what clients can see, and how this company
+              gets paid.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Button asChild variant="outline" size="sm">
@@ -867,7 +872,7 @@ function TeamPage() {
           <div className="space-y-6">
             <section
               data-testid="company-command-center"
-              className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6"
+              className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-hairline bg-hairline shadow-card md:grid-cols-3 xl:grid-cols-6"
             >
               <UsageCard
                 icon={<ShieldCheck className="h-4 w-4" />}
@@ -956,6 +961,7 @@ function TeamPage() {
                   icon={<MailPlus className="h-4 w-4" />}
                   eyebrow="Seats"
                   title="Invite company users"
+                  description="Send a sign-in link by email and set exactly what the new person can do before it goes out."
                 />
                 <div className="mt-5 grid gap-3 sm:grid-cols-3">
                   <SummaryMetric
@@ -1043,8 +1049,9 @@ function TeamPage() {
                     Pending invites
                   </div>
                   {team.invites.length === 0 ? (
-                    <div className="px-3 py-4 text-sm text-muted-foreground">
-                      No pending invites.
+                    <div className="px-3 py-6 text-sm text-muted-foreground">
+                      No pending invites. Send one above — the person gets a sign-in link by email
+                      and lands in this company with the access you chose.
                     </div>
                   ) : (
                     <div className="divide-y divide-hairline">
@@ -1087,6 +1094,7 @@ function TeamPage() {
                   icon={<Users className="h-4 w-4" />}
                   eyebrow="Members"
                   title="Company users and roles"
+                  description="Everyone with a seat in this company. Open a person's access to adjust what they can do."
                 />
                 <div className="mt-5 grid gap-3 sm:grid-cols-3">
                   <SummaryMetric
@@ -1223,6 +1231,7 @@ function TeamPage() {
                 icon={<ShieldCheck className="h-4 w-4" />}
                 eyebrow="Client Portal"
                 title="Client project access"
+                description="Give a client a view of their own project. You pick which modules they see — nothing else is visible."
               />
               <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <SummaryMetric
@@ -1402,8 +1411,14 @@ function TeamPage() {
 
               <div className="mt-5 overflow-hidden rounded-md border border-hairline">
                 {team.clientProjectAccess.length === 0 ? (
-                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    No client project access has been granted yet.
+                  <div className="px-4 py-10 text-center">
+                    <div className="font-serif text-xl text-foreground">
+                      No clients have portal access yet
+                    </div>
+                    <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                      Invite a client above to share progress on their project. They only see the
+                      modules you turn on — change orders, daily reports, or billing.
+                    </p>
                   </div>
                 ) : (
                   <div className="divide-y divide-hairline">
@@ -1546,6 +1561,7 @@ function TeamPage() {
                 icon={<ShieldCheck className="h-4 w-4" />}
                 eyebrow="Asset Access"
                 title="Project access assignments"
+                description="Put a company member on a specific job with a project role. Company-wide access stays as set above."
               />
               <div className="mt-5 grid gap-3 rounded-md border border-hairline bg-surface p-3 lg:grid-cols-[1fr_1fr_180px_auto] lg:items-end">
                 <div className="space-y-1.5">
@@ -1610,8 +1626,14 @@ function TeamPage() {
 
               <div className="mt-5 overflow-hidden rounded-md border border-hairline">
                 {team.projectMembers.length === 0 ? (
-                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    No project-level access has been assigned yet.
+                  <div className="px-4 py-10 text-center">
+                    <div className="font-serif text-xl text-foreground">
+                      No project assignments yet
+                    </div>
+                    <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                      Use the pickers above to put a company member on a specific job — useful for
+                      supers and PMs who should only see their own projects.
+                    </p>
                   </div>
                 ) : (
                   <div className="divide-y divide-hairline">
@@ -1680,6 +1702,7 @@ function TeamPage() {
                   icon={<UserCog className="h-4 w-4" />}
                   eyebrow="Profile"
                   title="Your Overwatch profile"
+                  description="Your name and contact details as they appear on invites, reports, and daily logs."
                 />
                 <div className="mt-5 grid gap-4">
                   <div className="space-y-1.5">
@@ -1733,6 +1756,7 @@ function TeamPage() {
                   icon={<BriefcaseBusiness className="h-4 w-4" />}
                   eyebrow="Company"
                   title={team.organization.name}
+                  description="The company identity that shows up on estimates, invoices, and client pages."
                 />
                 <div className="mt-5 grid gap-4">
                   <div className="grid gap-4 lg:grid-cols-[180px_1fr]">
@@ -1855,101 +1879,113 @@ function TeamPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label>Address line 1</Label>
-                      <Input
-                        value={orgForm.address_line1}
-                        disabled={!team.canManageSettings}
-                        onChange={(event) =>
-                          setOrgForm({ ...orgForm, address_line1: event.target.value })
-                        }
-                      />
+                  <div className="grid gap-4 rounded-md border border-hairline bg-surface p-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Office address
                     </div>
-                    <div className="space-y-1.5">
-                      <Label>Address line 2</Label>
-                      <Input
-                        value={orgForm.address_line2}
-                        disabled={!team.canManageSettings}
-                        onChange={(event) =>
-                          setOrgForm({ ...orgForm, address_line2: event.target.value })
-                        }
-                      />
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label>Address line 1</Label>
+                        <Input
+                          value={orgForm.address_line1}
+                          disabled={!team.canManageSettings}
+                          onChange={(event) =>
+                            setOrgForm({ ...orgForm, address_line1: event.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Address line 2</Label>
+                        <Input
+                          value={orgForm.address_line2}
+                          disabled={!team.canManageSettings}
+                          onChange={(event) =>
+                            setOrgForm({ ...orgForm, address_line2: event.target.value })
+                          }
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-[1fr_120px_140px]">
-                    <div className="space-y-1.5">
-                      <Label>City</Label>
-                      <Input
-                        value={orgForm.city}
-                        disabled={!team.canManageSettings}
-                        onChange={(event) => setOrgForm({ ...orgForm, city: event.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>State</Label>
-                      <Input
-                        value={orgForm.state}
-                        disabled={!team.canManageSettings}
-                        onChange={(event) => setOrgForm({ ...orgForm, state: event.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>ZIP</Label>
-                      <Input
-                        value={orgForm.postal_code}
-                        disabled={!team.canManageSettings}
-                        onChange={(event) =>
-                          setOrgForm({ ...orgForm, postal_code: event.target.value })
-                        }
-                      />
-                    </div>
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label>License number</Label>
-                      <Input
-                        value={orgForm.license_number}
-                        disabled={!team.canManageSettings}
-                        onChange={(event) =>
-                          setOrgForm({ ...orgForm, license_number: event.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Tax identifier</Label>
-                      <Input
-                        value={orgForm.tax_identifier}
-                        disabled={!team.canManageSettings}
-                        onChange={(event) =>
-                          setOrgForm({ ...orgForm, tax_identifier: event.target.value })
-                        }
-                      />
+                    <div className="grid gap-4 md:grid-cols-[1fr_120px_140px]">
+                      <div className="space-y-1.5">
+                        <Label>City</Label>
+                        <Input
+                          value={orgForm.city}
+                          disabled={!team.canManageSettings}
+                          onChange={(event) => setOrgForm({ ...orgForm, city: event.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>State</Label>
+                        <Input
+                          value={orgForm.state}
+                          disabled={!team.canManageSettings}
+                          onChange={(event) =>
+                            setOrgForm({ ...orgForm, state: event.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>ZIP</Label>
+                        <Input
+                          value={orgForm.postal_code}
+                          disabled={!team.canManageSettings}
+                          onChange={(event) =>
+                            setOrgForm({ ...orgForm, postal_code: event.target.value })
+                          }
+                        />
+                      </div>
                     </div>
                   </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label>Billing contact</Label>
-                      <Input
-                        value={orgForm.billing_contact_name}
-                        disabled={!team.canManageSettings}
-                        onChange={(event) =>
-                          setOrgForm({ ...orgForm, billing_contact_name: event.target.value })
-                        }
-                        placeholder="Owner or accounting contact"
-                      />
+                  <div className="grid gap-4 rounded-md border border-hairline bg-surface p-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      License and billing
                     </div>
-                    <div className="space-y-1.5">
-                      <Label>Billing email</Label>
-                      <Input
-                        type="email"
-                        value={orgForm.billing_email}
-                        disabled={!team.canManageSettings}
-                        onChange={(event) =>
-                          setOrgForm({ ...orgForm, billing_email: event.target.value })
-                        }
-                        placeholder="billing@company.com"
-                      />
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label>License number</Label>
+                        <Input
+                          value={orgForm.license_number}
+                          disabled={!team.canManageSettings}
+                          onChange={(event) =>
+                            setOrgForm({ ...orgForm, license_number: event.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Tax identifier</Label>
+                        <Input
+                          value={orgForm.tax_identifier}
+                          disabled={!team.canManageSettings}
+                          onChange={(event) =>
+                            setOrgForm({ ...orgForm, tax_identifier: event.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label>Billing contact</Label>
+                        <Input
+                          value={orgForm.billing_contact_name}
+                          disabled={!team.canManageSettings}
+                          onChange={(event) =>
+                            setOrgForm({ ...orgForm, billing_contact_name: event.target.value })
+                          }
+                          placeholder="Owner or accounting contact"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Billing email</Label>
+                        <Input
+                          type="email"
+                          value={orgForm.billing_email}
+                          disabled={!team.canManageSettings}
+                          onChange={(event) =>
+                            setOrgForm({ ...orgForm, billing_email: event.target.value })
+                          }
+                          placeholder="billing@company.com"
+                        />
+                      </div>
                     </div>
                   </div>
                   <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-3">
@@ -2172,6 +2208,7 @@ function PlanReadinessPanel({
             icon={<Gauge className="h-4 w-4" />}
             eyebrow="Plan and payment readiness"
             title="Commercial setup"
+            description="Where this company stands on plan limits, billing, and the rails client money moves on."
           />
           <div className="mt-5 grid gap-3 text-sm">
             <PlanFact label="Plan" value={planLabel} />
@@ -2372,10 +2409,12 @@ function SectionHeader({
   icon,
   eyebrow,
   title,
+  description,
 }: {
   icon: ReactNode;
   eyebrow: string;
   title: string;
+  description?: string;
 }) {
   return (
     <div>
@@ -2384,18 +2423,25 @@ function SectionHeader({
         {eyebrow}
       </div>
       <h2 className="mt-1 font-serif text-2xl text-foreground">{title}</h2>
+      {description && (
+        <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          {description}
+        </p>
+      )}
     </div>
   );
 }
 
 function SummaryMetric({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <div className="flex min-h-20 flex-col items-center justify-center rounded-md border border-hairline bg-surface px-3 py-3 text-center">
-      <div className="text-2xl font-medium leading-none tabular-nums text-foreground">{value}</div>
-      <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+    <div className="min-h-20 min-w-0 rounded-md border border-hairline bg-surface px-3 py-3">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
-      <div className="mt-1 text-xs leading-snug text-muted-foreground">{sub}</div>
+      <div className="mt-2 truncate font-serif text-2xl leading-none tabular text-foreground">
+        {value}
+      </div>
+      <div className="mt-1.5 truncate text-xs leading-snug text-muted-foreground">{sub}</div>
     </div>
   );
 }
@@ -2415,25 +2461,27 @@ function UsageCard({
   meterValue?: number;
   tone?: UsageTone;
 }) {
-  const toneClass =
-    tone === "danger"
-      ? "border-danger/35 bg-danger/10"
-      : tone === "warning"
-        ? "border-warning/35 bg-warning/10"
-        : "border-hairline bg-card";
+  const toneBarClass =
+    tone === "danger" ? "bg-danger" : tone === "warning" ? "bg-warning" : "bg-foreground/60";
+  const valueClass =
+    tone === "danger" ? "text-danger" : tone === "warning" ? "text-warning" : "text-foreground";
   const meterClass =
     tone === "danger" ? "bg-danger" : tone === "warning" ? "bg-warning" : "bg-success";
   return (
-    <div
-      className={`flex min-h-[112px] flex-col items-center justify-between rounded-lg border p-4 text-center shadow-card ${toneClass}`}
-    >
-      <div className="flex items-center justify-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+    <div className="relative flex min-h-[112px] min-w-0 flex-col justify-between bg-card px-4 py-4">
+      <span className={`absolute left-0 top-0 h-full w-px ${toneBarClass}`} />
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {icon}
         {label}
       </div>
-      <div className="w-full">
-        <div className="text-2xl font-medium leading-tight tabular text-foreground">{value}</div>
-        <div className="mt-1 text-xs text-muted-foreground">{sub}</div>
+      <div className="min-w-0">
+        <div
+          title={value}
+          className={`mt-2 truncate font-serif text-2xl leading-none tabular ${valueClass}`}
+        >
+          {value}
+        </div>
+        <div className="mt-1.5 truncate text-xs text-muted-foreground">{sub}</div>
         {meterValue !== undefined && (
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
             <div

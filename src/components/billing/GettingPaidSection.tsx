@@ -178,12 +178,16 @@ export function GettingPaidSection({
       data-testid="getting-paid-section"
       className="rounded-lg border border-hairline bg-card p-5 shadow-card"
     >
-      <div className="flex items-center gap-2">
-        <Banknote className="h-4 w-4" />
-        <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Getting paid</p>
-          <h2 className="text-base font-semibold">How clients pay this company</h2>
+      <div>
+        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <Banknote className="h-4 w-4" />
+          Getting paid
         </div>
+        <h2 className="mt-1 font-serif text-2xl text-foreground">How clients pay this company</h2>
+        <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          Your direct bank details print on invoices. Stripe adds card and bank-debit options for
+          smaller payments when you turn them on.
+        </p>
       </div>
 
       {profile?.schemaMissing && (
@@ -195,7 +199,7 @@ export function GettingPaidSection({
 
       <div className="mt-5 grid gap-6 lg:grid-cols-2">
         {/* Tier 0: direct remittance details — the rail that never depends on Stripe. */}
-        <div className="space-y-4">
+        <div className="space-y-4 rounded-md border border-hairline bg-surface p-4">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Landmark className="h-4 w-4" />
             Direct bank transfer details
@@ -298,12 +302,12 @@ export function GettingPaidSection({
         </div>
 
         {/* Tier 1: Stripe Connect status + company-level payment defaults. */}
-        <div className="space-y-4">
+        <div className="space-y-4 rounded-md border border-hairline bg-surface p-4">
           <div className="flex items-center gap-2 text-sm font-medium">
             <CreditCard className="h-4 w-4" />
             Online payments (Stripe)
           </div>
-          <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="rounded-md border border-hairline bg-card p-4">
             <div className="flex items-center gap-2">
               {stripeReady ? (
                 <CheckCircle2 className="h-4 w-4 text-success" />

@@ -107,7 +107,8 @@ function statusFor(originalPct: number, indicatedPct: number) {
     return { label: "At Risk", className: "border-danger/40 bg-danger/10 text-danger" };
   if (erosion >= 2)
     return { label: "Watch", className: "border-warning/40 bg-warning/10 text-warning" };
-  return { label: "Healthy", className: "border-success/40 bg-success/10 text-success" };
+  // "Aligned" matches the IOR header's posture vocabulary.
+  return { label: "Aligned", className: "border-success/40 bg-success/10 text-success" };
 }
 
 function scheduleFor(weeks: number, scheduleRiskCount: number) {
@@ -123,7 +124,7 @@ function scheduleFor(weeks: number, scheduleRiskCount: number) {
 }
 
 type PortfolioSortMode = "manager" | "profitability" | "gp-risk" | "schedule" | "overdue" | "name";
-type PortfolioRiskFilter = "all" | "at-risk" | "watch" | "healthy";
+type PortfolioRiskFilter = "all" | "at-risk" | "watch" | "aligned";
 type PortfolioScheduleFilter = "all" | "slipped" | "watch" | "on-plan";
 type PortfolioReviewFilter = "all" | "stale" | "current" | "never";
 type PortfolioDailyFilter = "all" | "current" | "stale" | "none" | "client-visible";
@@ -464,7 +465,7 @@ function PortfolioPage() {
               <EmptyState />
             ) : (
               <div className="space-y-6">
-                <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,0.65fr)]">
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(400px,0.65fr)]">
                   <PortfolioDashboard totals={portfolioTotals} />
                   <PortfolioCrmDashboard
                     opportunities={crmOpportunities}
@@ -547,7 +548,7 @@ function PortfolioPage() {
                         <SelectItem value="all">All risk</SelectItem>
                         <SelectItem value="at-risk">At risk</SelectItem>
                         <SelectItem value="watch">Watch</SelectItem>
-                        <SelectItem value="healthy">Healthy</SelectItem>
+                        <SelectItem value="aligned">Aligned</SelectItem>
                       </SelectContent>
                     </Select>
                     <Select
@@ -727,7 +728,7 @@ function PortfolioProjectLedger({
               <a
                 key={project.id}
                 href={projectHref}
-                className={`group grid gap-4 px-4 py-4 text-foreground transition hover:bg-surface/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-2 ${PROJECT_LEDGER_GRID_CLASS} ${
+                className={`group grid gap-4 px-4 py-4 text-foreground transition hover:bg-surface/70 active:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-2 ${PROJECT_LEDGER_GRID_CLASS} ${
                   highlightRisk ? "border-l-2 border-l-danger/60 bg-danger/5" : ""
                 }`}
               >
@@ -746,7 +747,7 @@ function PortfolioProjectLedger({
                   )}
                   <div className="min-w-0">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <div className="truncate font-serif text-xl leading-tight text-foreground">
+                      <div className="truncate font-serif text-xl leading-tight text-foreground group-hover:underline">
                         {project.name}
                       </div>
                       {isDemo && (
@@ -1144,7 +1145,7 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
   const reviewDebt = totals.staleReviewProjects + totals.neverReviewedProjects;
   return (
     <section className="rounded-lg border border-hairline bg-card p-4 shadow-card md:p-5">
-      <div className="grid gap-4 xl:grid-cols-[minmax(260px,0.78fr)_minmax(520px,1.22fr)] xl:items-start">
+      <div className="grid gap-4 2xl:grid-cols-[minmax(260px,0.78fr)_minmax(520px,1.22fr)] 2xl:items-start">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             <BriefcaseBusiness className="h-3.5 w-3.5" />
@@ -1327,7 +1328,7 @@ function PortfolioCrmDashboard({
         </p>
       </div>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+      <div className="mt-3 grid gap-2 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
         <PortfolioSignal
           icon={<BriefcaseBusiness className="h-3.5 w-3.5" />}
           label="Open opps"
@@ -1541,13 +1542,45 @@ function PortfolioLoadError({
 
 function EmptyState() {
   return (
-    <div className="rounded-lg border border-hairline bg-card p-16 text-center">
-      <h2 className="font-serif text-2xl text-foreground">No projects yet</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-        Create your first outcome review to begin tracking margin, holds, and required decisions.
-      </p>
-      <div className="mt-6 flex justify-center">
-        <NewProjectButton />
+    <div className="rounded-lg border border-hairline bg-card p-10 shadow-card sm:p-16">
+      <div className="mx-auto max-w-xl text-center">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-accent/20 bg-accent/10 text-accent">
+          <BriefcaseBusiness className="h-5 w-5" />
+        </div>
+        <h2 className="mt-4 font-serif text-3xl text-foreground">No projects yet</h2>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+          This page becomes your control room: margin, schedule pressure, and field follow-through
+          for every active job, in one view. It starts with your first project.
+        </p>
+        <div className="mx-auto mt-6 grid max-w-lg gap-2 text-left sm:grid-cols-3">
+          <div className="rounded-md border border-hairline bg-surface px-3 py-2.5">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Step 1
+            </div>
+            <div className="mt-1 text-xs leading-relaxed text-foreground">
+              Create the project — a name is enough to start.
+            </div>
+          </div>
+          <div className="rounded-md border border-hairline bg-surface px-3 py-2.5">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Step 2
+            </div>
+            <div className="mt-1 text-xs leading-relaxed text-foreground">
+              Add the contract value and completion dates when you have them.
+            </div>
+          </div>
+          <div className="rounded-md border border-hairline bg-surface px-3 py-2.5">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Step 3
+            </div>
+            <div className="mt-1 text-xs leading-relaxed text-foreground">
+              Work the job from its IOR page — schedule, risks, and billing.
+            </div>
+          </div>
+        </div>
+        <div className="mt-6 flex justify-center">
+          <NewProjectButton />
+        </div>
       </div>
     </div>
   );
