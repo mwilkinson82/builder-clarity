@@ -71,6 +71,24 @@ import {
   takeoffUnitsCompatible,
   type TakeoffGroup,
 } from "@/lib/plan-room-math";
+import {
+  commitRedo,
+  commitUndo,
+  dropRedo,
+  dropUndo,
+  emptyTakeoffUndoStack,
+  peekRedoCommand,
+  peekUndoCommand,
+  pushTakeoffCommand,
+  redoOperationFor,
+  remapTakeoffMeasurementId,
+  undoOperationFor,
+  type TakeoffCommand,
+  type TakeoffInverseOp,
+  type TakeoffSnapshot,
+  type TakeoffUndoStack,
+  type TakeoffUpdatePatch,
+} from "@/lib/takeoff-undo";
 import type { ProcessedSheetPage } from "./PdfSheetViewer";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 import {
@@ -273,6 +291,10 @@ export function PlanRoomWorkspace({
     unit: "",
   });
   const [takeoffSummaryFallback, setTakeoffSummaryFallback] = useState("");
+  // Per-sheet undo/redo stacks for takeoff operations. In-memory only: they
+  // survive sheet switches within the session and reset on reload.
+  const [undoStacks, setUndoStacks] = useState<Record<string, TakeoffUndoStack>>({});
+  const [undoBusy, setUndoBusy] = useState(false);
 
   const currentSheet = useMemo(
     () => sheets.find((sheet) => sheet.id === selectedSheetId) ?? sheets[0] ?? null,
@@ -558,6 +580,67 @@ export function PlanRoomWorkspace({
     qc.invalidateQueries({ queryKey: ["estimates"] });
   };
 
+  // --- Takeoff undo/redo (Phase 4 Task 0) ---
+  // Commands are recorded only after the server confirms the original
+  // operation. Scale changes and estimate-row creation stay off this stack:
+  // both are multi-user, server-side operations a per-session undo must not
+  // silently reverse.
+  const snapshotFromMeasurement = (measurement: TakeoffMeasurementRow): TakeoffSnapshot => ({
+    estimate_id: measurement.estimate_id,
+    plan_sheet_id: measurement.plan_sheet_id,
+    estimate_line_item_id: measurement.estimate_line_item_id,
+    library_item_id: measurement.library_item_id,
+    tool_type: measurement.tool_type,
+    label: measurement.label,
+    unit: measurement.unit,
+    quantity: measurement.quantity,
+    waste_pct: measurement.waste_pct,
+    color: measurement.color,
+    geometry: measurement.geometry,
+    notes: measurement.notes,
+  });
+
+  const recordTakeoffCommand = (sheetId: string, command: TakeoffCommand) => {
+    setUndoStacks((current) => ({
+      ...current,
+      [sheetId]: pushTakeoffCommand(current[sheetId] ?? emptyTakeoffUndoStack(), command),
+    }));
+  };
+
+  const UNDOABLE_PATCH_KEYS = [
+    "estimate_line_item_id",
+    "library_item_id",
+    "label",
+    "unit",
+    "quantity",
+    "waste_pct",
+    "color",
+    "geometry",
+    "notes",
+  ] as const;
+
+  const recordMeasurementUpdate = (
+    id: string,
+    patch: Parameters<typeof updateMeasurementFn>[0]["data"]["patch"],
+  ) => {
+    const measurement = measurements.find((item) => item.id === id);
+    if (!measurement) return;
+    const before: TakeoffUpdatePatch = {};
+    const after: TakeoffUpdatePatch = {};
+    for (const key of UNDOABLE_PATCH_KEYS) {
+      if (!(key in patch) || patch[key] === undefined) continue;
+      before[key] = measurement[key] as never;
+      after[key] = patch[key] as never;
+    }
+    if (Object.keys(after).length === 0) return;
+    recordTakeoffCommand(measurement.plan_sheet_id, {
+      kind: "update",
+      measurementId: id,
+      before,
+      after,
+    });
+  };
+
   useEffect(() => {
     pendingPointsRef.current = pendingPoints;
   }, [pendingPoints]);
@@ -630,6 +713,11 @@ export function PlanRoomWorkspace({
       toast.success(selectedLine ? "Takeoff saved and estimate row updated" : "Takeoff saved");
       setPendingPoints([]);
       setSelectedMeasurementId(result.measurement.id);
+      recordTakeoffCommand(result.measurement.plan_sheet_id, {
+        kind: "create",
+        measurementId: result.measurement.id,
+        snapshot: snapshotFromMeasurement(result.measurement),
+      });
       if (variables.measurementTool !== "count") setTool("select");
       const anchor = variables.points[variables.points.length - 1];
       if (anchor) {
@@ -728,8 +816,11 @@ export function PlanRoomWorkspace({
       id: string;
       patch: Parameters<typeof updateMeasurementFn>[0]["data"]["patch"];
     }) => updateMeasurementFn({ data: { id, patch } }),
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       toast.success("Takeoff updated");
+      // `measurements` still holds the pre-update row here — the query only
+      // refetches after invalidate below — so the undo `before` is accurate.
+      recordMeasurementUpdate(variables.id, variables.patch);
       invalidate();
     },
     onError: (error) =>
@@ -737,10 +828,22 @@ export function PlanRoomWorkspace({
   });
 
   const deleteMeasurementMutation = useMutation({
-    mutationFn: (id: string) => deleteMeasurementFn({ data: { id } }),
-    onSuccess: (_result, id) => {
+    mutationFn: async (id: string) => {
+      // Capture the row before it is gone; undo recreates it from this.
+      const measurement = measurements.find((item) => item.id === id) ?? null;
+      await deleteMeasurementFn({ data: { id } });
+      return measurement;
+    },
+    onSuccess: (measurement, id) => {
       toast.success("Takeoff deleted");
       if (selectedMeasurementId === id) setSelectedMeasurementId("");
+      if (measurement) {
+        recordTakeoffCommand(measurement.plan_sheet_id, {
+          kind: "delete",
+          measurementId: id,
+          snapshot: snapshotFromMeasurement(measurement),
+        });
+      }
       invalidate();
     },
     onError: (error) =>
@@ -777,6 +880,111 @@ export function PlanRoomWorkspace({
       { onSuccess: () => syncLineMutation.mutate({ lineId }) },
     );
   };
+
+  // Executes the server side of an undo/redo. Recreates return the fresh row
+  // id so the stacks can follow it. These call the raw server functions, not
+  // the recording mutations — an undo must never record itself.
+  const runTakeoffInverseOp = async (op: TakeoffInverseOp): Promise<string | null> => {
+    if (op.type === "delete") {
+      await deleteMeasurementFn({ data: { id: op.measurementId } });
+      return null;
+    }
+    if (op.type === "update") {
+      await updateMeasurementFn({
+        data: {
+          id: op.measurementId,
+          patch: op.patch as Parameters<typeof updateMeasurementFn>[0]["data"]["patch"],
+        },
+      });
+      return null;
+    }
+    const result = await createMeasurementFn({
+      data: op.snapshot as Parameters<typeof createMeasurementFn>[0]["data"],
+    });
+    return result.measurement.id;
+  };
+
+  const undoToastCopy = (command: TakeoffCommand, direction: "undo" | "redo") => {
+    const reversed = direction === "undo";
+    if (command.kind === "create") return reversed ? "Takeoff removed" : "Takeoff restored";
+    if (command.kind === "delete") return reversed ? "Takeoff restored" : "Takeoff removed";
+    return reversed ? "Takeoff change undone" : "Takeoff change reapplied";
+  };
+
+  const activeUndoStack = currentSheet ? (undoStacks[currentSheet.id] ?? null) : null;
+  const canUndoTakeoff = !undoBusy && Boolean(activeUndoStack && activeUndoStack.undo.length > 0);
+  const canRedoTakeoff = !undoBusy && Boolean(activeUndoStack && activeUndoStack.redo.length > 0);
+
+  const runStackStep = async (direction: "undo" | "redo") => {
+    if (!currentSheet || undoBusy) return;
+    const sheetId = currentSheet.id;
+    const stack = undoStacks[sheetId];
+    const command = stack
+      ? direction === "undo"
+        ? peekUndoCommand(stack)
+        : peekRedoCommand(stack)
+      : null;
+    if (!command) return;
+    setUndoBusy(true);
+    try {
+      const op = direction === "undo" ? undoOperationFor(command) : redoOperationFor(command);
+      const newId = await runTakeoffInverseOp(op);
+      setUndoStacks((current) => {
+        const base = current[sheetId] ?? emptyTakeoffUndoStack();
+        let next = direction === "undo" ? commitUndo(base) : commitRedo(base);
+        if (newId && op.type === "create") {
+          next = remapTakeoffMeasurementId(next, op.replacesId, newId);
+        }
+        return { ...current, [sheetId]: next };
+      });
+      // A removed takeoff cannot stay selected or keep its popover open.
+      if (op.type === "delete") {
+        if (selectedMeasurementId === op.measurementId) setSelectedMeasurementId("");
+        setFinishPopover((current) =>
+          current?.measurementId === op.measurementId ? null : current,
+        );
+      }
+      toast.success(undoToastCopy(command, direction));
+      invalidate();
+    } catch {
+      // The inverse mutation failed. Drop the entry so the stack and the
+      // server never disagree, and say so plainly.
+      setUndoStacks((current) => {
+        const base = current[sheetId] ?? emptyTakeoffUndoStack();
+        return { ...current, [sheetId]: direction === "undo" ? dropUndo(base) : dropRedo(base) };
+      });
+      toast.error(
+        direction === "undo"
+          ? "Couldn't undo — the change already synced"
+          : "Couldn't redo — the change already synced",
+      );
+    } finally {
+      setUndoBusy(false);
+    }
+  };
+
+  const undoTakeoff = () => void runStackStep("undo");
+  const redoTakeoff = () => void runStackStep("redo");
+
+  // Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z work anywhere in the Plan Room except
+  // while typing. Window-level so the shortcut works from the worksheet and
+  // panels, not just the canvas.
+  const undoHandlersRef = useRef({ undo: undoTakeoff, redo: redoTakeoff });
+  useEffect(() => {
+    undoHandlersRef.current = { undo: undoTakeoff, redo: redoTakeoff };
+  });
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input,textarea,select,[contenteditable='true']")) return;
+      event.preventDefault();
+      if (event.shiftKey) undoHandlersRef.current.redo();
+      else undoHandlersRef.current.undo();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   // Task 3: offered matches, never auto-applied. Computed live so rows that
   // appear after a master sheet import are matched the moment they exist.
@@ -1921,6 +2129,10 @@ export function PlanRoomWorkspace({
     clearDraftPoints,
     createMeasurementMutation,
     updateSheetMutation,
+    canUndo: canUndoTakeoff,
+    canRedo: canRedoTakeoff,
+    onUndo: undoTakeoff,
+    onRedo: redoTakeoff,
   };
   const takeoffToolButtons = <TakeoffTools {...takeoffToolsProps} compact={false} />;
   const cockpitTakeoffToolButtons = <TakeoffTools {...takeoffToolsProps} compact />;

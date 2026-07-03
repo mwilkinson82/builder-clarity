@@ -29,6 +29,20 @@ import {
   statedScaleFeetPerPixel,
   takeoffUnitsCompatible,
 } from "../src/lib/plan-room-math.ts";
+import {
+  TAKEOFF_UNDO_DEPTH,
+  commitRedo,
+  commitUndo,
+  dropRedo,
+  dropUndo,
+  emptyTakeoffUndoStack,
+  peekRedoCommand,
+  peekUndoCommand,
+  pushTakeoffCommand,
+  redoOperationFor,
+  remapTakeoffMeasurementId,
+  undoOperationFor,
+} from "../src/lib/takeoff-undo.ts";
 
 const parseDelimited = (text, delimiter) =>
   text
@@ -489,6 +503,106 @@ assert.equal(
   matches.some((match) => match.measurement_id === "m3"),
   false,
 );
+
+// --- Takeoff undo/redo stack (Phase 4 Task 0) ---
+const undoSnapshot = (overrides = {}) => ({
+  estimate_id: "est-1",
+  plan_sheet_id: "sheet-1",
+  estimate_line_item_id: null,
+  library_item_id: null,
+  tool_type: "linear",
+  label: "Wall run",
+  unit: "LF",
+  quantity: 42,
+  waste_pct: 0,
+  color: "#1b7a6e",
+  geometry: { points: [] },
+  notes: "",
+  ...overrides,
+});
+
+// Inverse ops per command kind.
+const createCommand = { kind: "create", measurementId: "m1", snapshot: undoSnapshot() };
+const deleteCommand = { kind: "delete", measurementId: "m2", snapshot: undoSnapshot() };
+const updateCommand = {
+  kind: "update",
+  measurementId: "m3",
+  before: { label: "Wall run", waste_pct: 0 },
+  after: { label: "North wall", waste_pct: 10 },
+};
+assert.deepEqual(undoOperationFor(createCommand), { type: "delete", measurementId: "m1" });
+assert.deepEqual(undoOperationFor(deleteCommand), {
+  type: "create",
+  snapshot: deleteCommand.snapshot,
+  replacesId: "m2",
+});
+assert.deepEqual(undoOperationFor(updateCommand), {
+  type: "update",
+  measurementId: "m3",
+  patch: { label: "Wall run", waste_pct: 0 },
+});
+assert.deepEqual(redoOperationFor(createCommand), {
+  type: "create",
+  snapshot: createCommand.snapshot,
+  replacesId: "m1",
+});
+assert.deepEqual(redoOperationFor(deleteCommand), { type: "delete", measurementId: "m2" });
+assert.deepEqual(redoOperationFor(updateCommand), {
+  type: "update",
+  measurementId: "m3",
+  patch: { label: "North wall", waste_pct: 10 },
+});
+
+// Depth limit: the oldest entries fall off at 50.
+let undoStack = emptyTakeoffUndoStack();
+for (let index = 0; index < 55; index += 1) {
+  undoStack = pushTakeoffCommand(undoStack, {
+    kind: "update",
+    measurementId: `m${index}`,
+    before: { waste_pct: index },
+    after: { waste_pct: index + 1 },
+  });
+}
+assert.equal(TAKEOFF_UNDO_DEPTH, 50);
+assert.equal(undoStack.undo.length, 50);
+assert.equal(undoStack.undo[0].measurementId, "m5");
+assert.equal(peekUndoCommand(undoStack).measurementId, "m54");
+assert.equal(peekRedoCommand(undoStack), null);
+
+// Undo moves the entry to redo; a new command clears the redo branch.
+undoStack = commitUndo(undoStack);
+assert.equal(undoStack.undo.length, 49);
+assert.equal(undoStack.redo.length, 1);
+assert.equal(peekRedoCommand(undoStack).measurementId, "m54");
+undoStack = commitRedo(undoStack);
+assert.equal(undoStack.undo.length, 50);
+assert.equal(undoStack.redo.length, 0);
+undoStack = commitUndo(undoStack);
+undoStack = pushTakeoffCommand(undoStack, createCommand);
+assert.equal(undoStack.redo.length, 0);
+assert.equal(peekUndoCommand(undoStack).measurementId, "m1");
+
+// A failed inverse mutation drops the entry outright — the stack must never
+// disagree with the server.
+const droppedStack = dropUndo(undoStack);
+assert.equal(droppedStack.undo.length, undoStack.undo.length - 1);
+assert.equal(droppedStack.redo.length, 0);
+const redoDropStack = dropRedo(commitUndo(undoStack));
+assert.equal(redoDropStack.redo.length, 0);
+
+// Recreates mint a new server id; every remaining entry follows it.
+let remapStack = emptyTakeoffUndoStack();
+remapStack = pushTakeoffCommand(remapStack, { ...deleteCommand, measurementId: "old-id" });
+remapStack = pushTakeoffCommand(remapStack, {
+  kind: "update",
+  measurementId: "old-id",
+  before: { waste_pct: 0 },
+  after: { waste_pct: 5 },
+});
+remapStack = commitUndo(remapStack);
+remapStack = remapTakeoffMeasurementId(remapStack, "old-id", "new-id");
+assert.equal(remapStack.undo[0].measurementId, "new-id");
+assert.equal(remapStack.redo[0].measurementId, "new-id");
 
 const slab = ESTIMATE_SEED_LIBRARY_ITEMS.find((item) => item.external_id === "slab-4in");
 assert.ok(slab);

@@ -755,7 +755,9 @@ export function PlanCanvas({
       fitToWidth();
       return;
     }
-    if (event.key.toLowerCase() === "z") {
+    // Bare Z toggles zoom-window mode. Cmd/Ctrl+Z is takeoff undo — let it
+    // bubble to the workspace's window-level handler untouched.
+    if (event.key.toLowerCase() === "z" && !event.metaKey && !event.ctrlKey) {
       event.preventDefault();
       setIsZoomWindowMode((current) => !current);
       setZoomWindowDraft(null);

@@ -271,7 +271,10 @@ function lineTitleRegions(
   pageHeight: number,
 ): TitleRegionKey[] {
   const regions: TitleRegionKey[] = [];
-  if (line.xMax >= pageWidth * TITLE_REGION_BAND_X && line.yMin <= pageHeight * TITLE_REGION_BAND_Y) {
+  if (
+    line.xMax >= pageWidth * TITLE_REGION_BAND_X &&
+    line.yMin <= pageHeight * TITLE_REGION_BAND_Y
+  ) {
     regions.push("band");
   }
   if (line.xMax >= pageWidth * TITLE_REGION_RIGHT_STRIP_X) regions.push("right-strip");
