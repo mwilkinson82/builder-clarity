@@ -125,7 +125,7 @@ export function TakeoffTools({
             size="sm"
             variant="outline"
             className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
-            title="Undo point"
+            title="Remove the last placed point (Ctrl/Cmd+Z while drawing)"
             onClick={undoDraftPoint}
             data-testid="takeoff-undo-point"
           >

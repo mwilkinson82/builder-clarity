@@ -995,9 +995,32 @@ export function PlanRoomWorkspace({
   // Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z work anywhere in the Plan Room except
   // while typing. Window-level so the shortcut works from the worksheet and
   // panels, not just the canvas.
-  const undoHandlersRef = useRef({ undo: undoTakeoff, redo: redoTakeoff });
+  //
+  // While a run is active, Cmd/Ctrl+Z peels off the last placed vertex
+  // instead of touching the committed-takeoff stack (beta batch 1 Task 2).
+  // Removing the final vertex leaves an empty run — the same end state as
+  // Esc. Only with no run active does the shortcut fall through to the
+  // committed undo stack.
+  const isRunActive =
+    ((tool === "linear" || tool === "area" || tool === "count") && pendingPoints.length > 0) ||
+    ((tool === "calibrate" || tool === "verify") && calibrationPoints.length > 0);
+  const undoRunVertex = () => {
+    if (!isRunActive) return false;
+    if (tool === "calibrate" || tool === "verify") {
+      setCalibrationPoints((current) => current.slice(0, -1));
+      return true;
+    }
+    setPendingPoints((current) => current.slice(0, -1));
+    return true;
+  };
+  const undoHandlersRef = useRef({
+    undo: undoTakeoff,
+    redo: redoTakeoff,
+    undoRunVertex,
+    isRunActive,
+  });
   useEffect(() => {
-    undoHandlersRef.current = { undo: undoTakeoff, redo: redoTakeoff };
+    undoHandlersRef.current = { undo: undoTakeoff, redo: redoTakeoff, undoRunVertex, isRunActive };
   });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1005,8 +1028,14 @@ export function PlanRoomWorkspace({
       const target = event.target as HTMLElement | null;
       if (target?.closest("input,textarea,select,[contenteditable='true']")) return;
       event.preventDefault();
-      if (event.shiftKey) undoHandlersRef.current.redo();
-      else undoHandlersRef.current.undo();
+      if (event.shiftKey) {
+        // Redo stays inert during an active run: the committed stack must
+        // not change underneath a half-drawn takeoff.
+        if (!undoHandlersRef.current.isRunActive) undoHandlersRef.current.redo();
+        return;
+      }
+      if (undoHandlersRef.current.undoRunVertex()) return;
+      undoHandlersRef.current.undo();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

@@ -140,8 +140,11 @@ export function parseFeetInches(input: string): number | null {
 // tolerance of a 45-degree increment the point snaps to the exact angle
 // (Shift hard-constrains to the nearest increment). Works in screen pixel
 // space so the guide matches the eye regardless of sheet aspect ratio.
+// Tolerance widened from 2 to 3 degrees after the first external beta:
+// click precision is the dominant measurement error, so the magnet gets
+// a slightly larger catch window.
 
-export const ANGLE_GUIDE_SNAP_TOLERANCE_DEG = 2;
+export const ANGLE_GUIDE_SNAP_TOLERANCE_DEG = 3;
 
 export function snapLinearPoint({
   anchor,
@@ -177,6 +180,134 @@ export function snapLinearPoint({
     },
     angleDeg: snappedAngle,
     snapped: true,
+  };
+}
+
+// --- Draw-point resolution (beta batch 1) ------------------------------------
+// One resolver decides where a takeoff click or rubber-band preview lands:
+//   1. Alt/Option bypasses every snap — the raw cursor wins.
+//   2. Geometry snap: a committed takeoff vertex within the screen-space
+//      tolerance wins, so runs can start/finish exactly where a prior run
+//      ended. Geometry beats ortho when both apply (the CAD convention:
+//      object snaps override ortho).
+//   3. Ortho snap: within the angle tolerance of a 45-degree increment from
+//      the last vertex the point snaps to the exact angle; Shift
+//      hard-constrains to the nearest increment.
+// Tolerances are screen pixels/degrees: candidate distance scales with zoom.
+
+export const GEOMETRY_SNAP_TOLERANCE_PX = 8;
+
+export function snapToTakeoffVertex({
+  cursor,
+  candidates,
+  viewSize,
+  zoom = 1,
+  tolerancePx = GEOMETRY_SNAP_TOLERANCE_PX,
+}: {
+  cursor: PlanRoomPoint;
+  candidates: PlanRoomPoint[];
+  viewSize: PlanRoomViewSize;
+  zoom?: number;
+  tolerancePx?: number;
+}): PlanRoomPoint | null {
+  if (viewSize.width <= 0 || viewSize.height <= 0 || zoom <= 0) return null;
+  let best: PlanRoomPoint | null = null;
+  let bestDistance = tolerancePx;
+  for (const candidate of candidates) {
+    const screenPx =
+      Math.hypot(
+        (candidate.x - cursor.x) * viewSize.width,
+        (candidate.y - cursor.y) * viewSize.height,
+      ) * zoom;
+    if (screenPx <= bestDistance) {
+      best = candidate;
+      bestDistance = screenPx;
+    }
+  }
+  return best;
+}
+
+export type TakeoffDrawResolution = {
+  point: PlanRoomPoint;
+  // Angle of anchor->point in degrees (0 when there is no anchor yet).
+  angleDeg: number;
+  // The point sits on an exact 45-degree increment via snap or Shift.
+  orthoSnapped: boolean;
+  // The point was magnetized onto an existing takeoff vertex.
+  geometrySnapped: boolean;
+};
+
+const rawAngleDeg = (
+  anchor: PlanRoomPoint | null,
+  point: PlanRoomPoint,
+  viewSize: PlanRoomViewSize,
+) => {
+  if (!anchor) return 0;
+  const dx = (point.x - anchor.x) * viewSize.width;
+  const dy = (point.y - anchor.y) * viewSize.height;
+  if (dx === 0 && dy === 0) return 0;
+  return ((Math.atan2(-dy, dx) * 180) / Math.PI + 360) % 360;
+};
+
+export function resolveTakeoffDrawPoint({
+  anchor,
+  cursor,
+  viewSize,
+  zoom = 1,
+  candidates = [],
+  altKey = false,
+  shiftKey = false,
+  orthoToleranceDeg = ANGLE_GUIDE_SNAP_TOLERANCE_DEG,
+  geometryTolerancePx = GEOMETRY_SNAP_TOLERANCE_PX,
+}: {
+  anchor: PlanRoomPoint | null;
+  cursor: PlanRoomPoint;
+  viewSize: PlanRoomViewSize;
+  zoom?: number;
+  candidates?: PlanRoomPoint[];
+  altKey?: boolean;
+  shiftKey?: boolean;
+  orthoToleranceDeg?: number;
+  geometryTolerancePx?: number;
+}): TakeoffDrawResolution {
+  if (altKey) {
+    return {
+      point: cursor,
+      angleDeg: rawAngleDeg(anchor, cursor, viewSize),
+      orthoSnapped: false,
+      geometrySnapped: false,
+    };
+  }
+  const vertex = snapToTakeoffVertex({
+    cursor,
+    candidates,
+    viewSize,
+    zoom,
+    tolerancePx: geometryTolerancePx,
+  });
+  if (vertex) {
+    return {
+      point: vertex,
+      angleDeg: rawAngleDeg(anchor, vertex, viewSize),
+      orthoSnapped: false,
+      geometrySnapped: true,
+    };
+  }
+  if (!anchor) {
+    return { point: cursor, angleDeg: 0, orthoSnapped: false, geometrySnapped: false };
+  }
+  const ortho = snapLinearPoint({
+    anchor,
+    cursor,
+    viewSize,
+    shiftKey,
+    snapToleranceDeg: orthoToleranceDeg,
+  });
+  return {
+    point: ortho.point,
+    angleDeg: ortho.angleDeg,
+    orthoSnapped: ortho.snapped,
+    geometrySnapped: false,
   };
 }
 

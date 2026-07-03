@@ -1,11 +1,10 @@
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
-  WheelEvent as ReactWheelEvent,
 } from "react";
 import { ExternalLink, Hand, Map as MapIcon, Target, ZoomIn, ZoomOut } from "lucide-react";
 import { toast } from "sonner";
@@ -56,11 +55,12 @@ import {
 } from "./planRoomShared";
 import {
   extractSheetIdentities,
-  snapLinearPoint,
+  resolveTakeoffDrawPoint,
   statedScaleFeetPerPixel,
   type SheetIdentityPage,
 } from "@/lib/plan-room-math";
-import { DraftShape, LinearAngleGuide, MeasurementShape, TakeoffDraftHud } from "./TakeoffTools";
+import { DraftShape, MeasurementShape, TakeoffDraftHud } from "./TakeoffTools";
+import { TakeoffRunPreview, type RunCursorState } from "./TakeoffRunPreview";
 import { PlanMiniMap } from "./SheetSidebar";
 
 const isDirectPlanFileUrl = (filePath: string) =>
@@ -443,15 +443,19 @@ export function PlanCanvas({
   const [renderFailed, setRenderFailed] = useState(false);
   const [signedUrlNonce, setSignedUrlNonce] = useState(0);
   const fetchAttemptRef = useRef(0);
+  // Tracks what the last pdf render drew, so zoom-only changes can debounce:
+  // the canvas css-scales instantly and the expensive pdfjs re-render waits
+  // for the wheel to settle.
+  const lastRenderSignatureRef = useRef("");
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
   const [isZoomWindowMode, setIsZoomWindowMode] = useState(false);
   const [zoomWindowDraft, setZoomWindowDraft] = useState<ZoomWindowDraft | null>(null);
-  const [linearGuide, setLinearGuide] = useState<{
-    point: Point;
-    angleDeg: number;
-    snapped: boolean;
-  } | null>(null);
+  // The resolved rubber-band cursor for an active linear/area run, plus the
+  // hover snap indicator before the first vertex (beta batch 1 Tasks 0/1).
+  const [runCursor, setRunCursor] = useState<RunCursorState | null>(null);
+  // Space-bar-hold turns any tool into the pan hand without leaving the run.
+  const [spaceHeld, setSpaceHeld] = useState(false);
   const [miniMapDock, setMiniMapDock] = useState<MiniMapDock>("bottom-left");
   const [miniMapPosition, setMiniMapPosition] = useState<MiniMapPosition | null>(null);
   const [isMiniMapCollapsed, setIsMiniMapCollapsed] = useState(false);
@@ -465,6 +469,25 @@ export function PlanCanvas({
     points: Point[];
   } | null>(null);
   const panStartRef = useRef({ x: 0, y: 0, left: 0, top: 0, dragged: false });
+  // Right-button drag pans the sheet mid-run; a right click without drag
+  // (travel <= 4px) finishes the run on pointer up (beta batch 1 Task 3).
+  const rightPanRef = useRef({
+    active: false,
+    pointerId: 0,
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    dragged: false,
+  });
+  // macOS raises the context menu at press time, so suppression is decided
+  // at pointer down and consumed by the next contextmenu event.
+  const suppressContextMenuRef = useRef(false);
+  // Last pointer position over the canvas, so the rubber-band preview can
+  // re-resolve after pans and zooms move the sheet under a still cursor.
+  const lastPointerRef = useRef<{ x: number; y: number; alt: boolean; shift: boolean } | null>(
+    null,
+  );
   const zoomWindowClickBlockRef = useRef(false);
   const geometryEditClickBlockRef = useRef(false);
   const hasRevisionOverlay = Boolean(overlayPlanSet && overlaySheet);
@@ -595,8 +618,12 @@ export function PlanCanvas({
         }
       }
     };
-    renderPdf();
+    const signature = `${signedUrl}|${sheet?.page_number ?? 1}|${pdfDetailMode}`;
+    const zoomOnlyChange = lastRenderSignatureRef.current === signature;
+    lastRenderSignatureRef.current = signature;
+    const timer = window.setTimeout(() => void renderPdf(), zoomOnlyChange ? 160 : 0);
     return () => {
+      window.clearTimeout(timer);
       cancelled = true;
       renderTask?.cancel();
     };
@@ -625,6 +652,7 @@ export function PlanCanvas({
     setZoomWindowDraft(null);
     setGeometryEditDraft(null);
     setGeometryPreview(null);
+    setRunCursor(null);
     requestAnimationFrame(() => {
       if (!scrollRef.current) return;
       scrollRef.current.scrollLeft = 0;
@@ -647,8 +675,8 @@ export function PlanCanvas({
     Math.min(MAX_PLAN_ZOOM, Math.max(MIN_PLAN_ZOOM, nextZoom));
 
   useEffect(() => {
-    if (tool !== "linear" || pendingPoints.length === 0) setLinearGuide(null);
-  }, [pendingPoints.length, tool]);
+    if (tool !== "linear" && tool !== "area") setRunCursor(null);
+  }, [tool]);
 
   const updateViewportFrame = useCallback(() => {
     const stage = scrollRef.current;
@@ -748,12 +776,6 @@ export function PlanCanvas({
     setZoomAndScroll(nextZoom, scrollLeft, scrollTop);
   };
 
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!event.metaKey && !event.ctrlKey) return;
-    event.preventDefault();
-    zoomBy(event.deltaY > 0 ? -PLAN_ZOOM_STEP : PLAN_ZOOM_STEP);
-  };
-
   const panBy = (left: number, top: number) => {
     scrollRef.current?.scrollBy({ left, top });
     requestAnimationFrame(updateViewportFrame);
@@ -804,7 +826,7 @@ export function PlanCanvas({
       setGeometryPreview(null);
       if ((tool === "linear" || tool === "area" || tool === "count") && pendingPoints.length > 0) {
         onAbandonDraft?.();
-        setLinearGuide(null);
+        setRunCursor(null);
       }
       return;
     }
@@ -881,7 +903,7 @@ export function PlanCanvas({
     };
   }, [updateViewportFrame]);
 
-  const pointFromClient = (clientX: number, clientY: number): Point | null => {
+  const pointFromClient = useCallback((clientX: number, clientY: number): Point | null => {
     const svg = svgRef.current;
     if (!svg) return null;
     const rect = svg.getBoundingClientRect();
@@ -890,7 +912,127 @@ export function PlanCanvas({
       x: Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)),
       y: Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)),
     };
+  }, []);
+
+  // Geometry-snap candidates: every vertex of every visible takeoff on this
+  // sheet, so a new run can start or finish exactly where a prior one ended.
+  const snapCandidates = useMemo(
+    () => measurements.flatMap((measurement) => geometryPoints(measurement.geometry)),
+    [measurements],
+  );
+
+  // Where the next click will land: Alt bypasses snapping, a nearby committed
+  // vertex beats the ortho magnet, Shift hard-constrains to 45s.
+  const resolveDrawCursor = useCallback(
+    (cursor: Point, altKey: boolean, shiftKey: boolean): RunCursorState =>
+      resolveTakeoffDrawPoint({
+        anchor: pendingPoints.length > 0 ? pendingPoints[pendingPoints.length - 1] : null,
+        cursor,
+        viewSize,
+        zoom,
+        candidates: snapCandidates,
+        altKey,
+        shiftKey,
+      }),
+    [pendingPoints, snapCandidates, viewSize, zoom],
+  );
+
+  // Re-resolves the rubber band from the last known pointer position after
+  // the sheet moves under a still cursor (pan, wheel zoom, placed vertex).
+  const refreshRunCursorFromLastPointer = useCallback(() => {
+    if (tool !== "linear" && tool !== "area") return;
+    const last = lastPointerRef.current;
+    if (!last) return;
+    const cursor = pointFromClient(last.x, last.y);
+    if (cursor) setRunCursor(resolveDrawCursor(cursor, last.alt, last.shift));
+  }, [pointFromClient, resolveDrawCursor, tool]);
+
+  useEffect(() => {
+    refreshRunCursorFromLastPointer();
+  }, [refreshRunCursorFromLastPointer]);
+
+  // Wheel/pinch zoom anchored to the cursor: the sheet point under the
+  // pointer stays under the pointer, so zooming mid-run never loses the
+  // place being drawn (beta batch 1 Task 4).
+  const zoomAtCursor = (nextZoomRaw: number, clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    const nextZoom = clampZoom(Number(nextZoomRaw.toFixed(2)));
+    if (!svg || nextZoom === zoom) return;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      setClampedZoom(nextZoom);
+      return;
+    }
+    const fractionX = (clientX - rect.left) / rect.width;
+    const fractionY = (clientY - rect.top) / rect.height;
+    setZoom(nextZoom);
+    requestAnimationFrame(() => {
+      const stage = scrollRef.current;
+      const svgAfter = svgRef.current;
+      if (!stage || !svgAfter) return;
+      const after = svgAfter.getBoundingClientRect();
+      stage.scrollLeft += after.left + fractionX * after.width - clientX;
+      stage.scrollTop += after.top + fractionY * after.height - clientY;
+      updateViewportFrame();
+      refreshRunCursorFromLastPointer();
+    });
   };
+
+  // Plain wheel zooms the sheet (trackpad pinch arrives as a ctrlKey wheel);
+  // panels outside this viewport keep native scrolling. A native non-passive
+  // listener is required — React root wheel listeners are passive, and the
+  // browser must not also scroll the stage or page-zoom.
+  const wheelHandlerRef = useRef<(event: WheelEvent) => void>(() => {});
+  useEffect(() => {
+    wheelHandlerRef.current = (event: WheelEvent) => {
+      event.preventDefault();
+      const deltaScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 120 : 1;
+      const factor = Math.exp(-event.deltaY * deltaScale * (event.ctrlKey ? 0.01 : 0.0022));
+      lastPointerRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        alt: event.altKey,
+        shift: event.shiftKey,
+      };
+      zoomAtCursor(zoom * factor, event.clientX, event.clientY);
+    };
+  });
+  useEffect(() => {
+    const stage = scrollRef.current;
+    if (!stage) return;
+    const listener = (event: WheelEvent) => wheelHandlerRef.current(event);
+    stage.addEventListener("wheel", listener, { passive: false });
+    return () => stage.removeEventListener("wheel", listener);
+  }, []);
+
+  // Space-bar-hold + drag pans with any tool active, without disturbing an
+  // in-progress run (CAD muscle memory). Window-level so it works no matter
+  // what has focus, guarded so typing and buttons keep their space.
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || event.repeat) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.closest("input,textarea,select,button,a,[contenteditable='true'],[role='combobox']")
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setSpaceHeld(true);
+    };
+    const up = (event: KeyboardEvent) => {
+      if (event.code === "Space") setSpaceHeld(false);
+    };
+    const clear = () => setSpaceHeld(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", clear);
+    };
+  }, []);
 
   const pointsForMeasurement = (measurement: TakeoffMeasurementRow) => {
     if (geometryPreview?.measurementId === measurement.id) return geometryPreview.points;
@@ -914,9 +1056,30 @@ export function PlanCanvas({
     svgRef.current?.setPointerCapture(event.pointerId);
   };
 
+  const isDrawTool = tool === "linear" || tool === "area" || tool === "count";
+
   const handlePointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (geometryEditDraft) return;
-    if (isZoomWindowMode) {
+    // Right button on a draw tool: drag pans the sheet mid-run, a click
+    // without drag finishes the run on pointer up. The context menu is
+    // suppressed from here because macOS raises it at press time.
+    if (event.button === 2 && isDrawTool && scrollRef.current) {
+      event.preventDefault();
+      suppressContextMenuRef.current = true;
+      rightPanRef.current = {
+        active: true,
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        left: scrollRef.current.scrollLeft,
+        top: scrollRef.current.scrollTop,
+        dragged: false,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (event.button !== 0) return;
+    if (isZoomWindowMode && !spaceHeld) {
       const point = pointFromClient(event.clientX, event.clientY);
       if (!point) return;
       setZoomWindowDraft({ start: point, end: point });
@@ -924,7 +1087,7 @@ export function PlanCanvas({
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
-    if (tool !== "select" || !scrollRef.current) return;
+    if ((tool !== "select" && !spaceHeld) || !scrollRef.current) return;
     panStartRef.current = {
       x: event.clientX,
       y: event.clientY,
@@ -937,6 +1100,26 @@ export function PlanCanvas({
   };
 
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (rightPanRef.current.active) {
+      const dx = event.clientX - rightPanRef.current.x;
+      const dy = event.clientY - rightPanRef.current.y;
+      // 4px of travel separates a pan from a finish-run click.
+      if (!rightPanRef.current.dragged && Math.hypot(dx, dy) > 4) {
+        rightPanRef.current.dragged = true;
+      }
+      if (rightPanRef.current.dragged && scrollRef.current) {
+        scrollRef.current.scrollLeft = rightPanRef.current.left - dx;
+        scrollRef.current.scrollTop = rightPanRef.current.top - dy;
+        lastPointerRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+          alt: event.altKey,
+          shift: event.shiftKey,
+        };
+        refreshRunCursorFromLastPointer();
+      }
+      return;
+    }
     if (geometryEditDraft) {
       const point = pointFromClient(event.clientX, event.clientY);
       if (!point) return;
@@ -953,23 +1136,48 @@ export function PlanCanvas({
       setZoomWindowDraft((current) => (current ? { ...current, end: point } : current));
       return;
     }
-    if (tool === "linear" && pendingPoints.length > 0) {
-      const cursor = pointFromClient(event.clientX, event.clientY);
-      const anchor = pendingPoints[pendingPoints.length - 1];
-      if (cursor && anchor) {
-        setLinearGuide(snapLinearPoint({ anchor, cursor, viewSize, shiftKey: event.shiftKey }));
-      }
+    if (isPanning && scrollRef.current) {
+      const dx = event.clientX - panStartRef.current.x;
+      const dy = event.clientY - panStartRef.current.y;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) panStartRef.current.dragged = true;
+      scrollRef.current.scrollLeft = panStartRef.current.left - dx;
+      scrollRef.current.scrollTop = panStartRef.current.top - dy;
+      lastPointerRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        alt: event.altKey,
+        shift: event.shiftKey,
+      };
+      refreshRunCursorFromLastPointer();
       return;
     }
-    if (!isPanning || !scrollRef.current) return;
-    const dx = event.clientX - panStartRef.current.x;
-    const dy = event.clientY - panStartRef.current.y;
-    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) panStartRef.current.dragged = true;
-    scrollRef.current.scrollLeft = panStartRef.current.left - dx;
-    scrollRef.current.scrollTop = panStartRef.current.top - dy;
+    if (tool === "linear" || tool === "area") {
+      const cursor = pointFromClient(event.clientX, event.clientY);
+      if (cursor) {
+        lastPointerRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+          alt: event.altKey,
+          shift: event.shiftKey,
+        };
+        setRunCursor(resolveDrawCursor(cursor, event.altKey, event.shiftKey));
+      }
+    }
   };
 
   const handlePointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (rightPanRef.current.active && event.pointerId === rightPanRef.current.pointerId) {
+      const wasDrag = rightPanRef.current.dragged;
+      rightPanRef.current.active = false;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      // Right click without drag keeps its shipped finish-run behavior.
+      if (!wasDrag && event.button === 2 && pendingPoints.length > 0) {
+        onFinishRun?.();
+      }
+      return;
+    }
     if (geometryEditDraft) {
       const point = pointFromClient(event.clientX, event.clientY);
       const completedPoints = point
@@ -1020,21 +1228,16 @@ export function PlanCanvas({
       panStartRef.current.dragged = false;
       return;
     }
+    if (spaceHeld) return;
     const point = pointFromEvent(event);
     if (!point) return;
     // The second click of a double-click finishes the run (via onDoubleClick)
     // instead of planting a duplicate vertex.
     if ((tool === "linear" || tool === "area") && event.detail > 1) return;
-    // The angle guide owns the click while snapped: place the exact point.
-    if (tool === "linear" && pendingPoints.length > 0 && linearGuide?.snapped) {
-      onPoint(
-        snapLinearPoint({
-          anchor: pendingPoints[pendingPoints.length - 1],
-          cursor: point,
-          viewSize,
-          shiftKey: event.shiftKey,
-        }).point,
-      );
+    // The committed click obeys the same snaps as the rubber-band preview:
+    // geometry snap first, then the ortho magnet; Alt places the raw point.
+    if (tool === "linear" || tool === "area") {
+      onPoint(resolveDrawCursor(point, event.altKey, event.shiftKey).point);
       return;
     }
     onPoint(point);
@@ -1329,10 +1532,9 @@ export function PlanCanvas({
             ? "flex-1 rounded-none border-0"
             : "h-[min(72vh,760px)] rounded-md border border-hairline shadow-inner",
         )}
-        onWheel={handleWheel}
         onKeyDown={handleKeyboard}
         aria-label="Plan drawing viewport"
-        title="Plan viewport: use +/- to zoom, arrows to pan, PageUp/PageDown for sheets, F to fit, W for width, Z for zoom area, Esc to cancel."
+        title="Plan viewport: scroll wheel zooms at the cursor (+/- keys too), right-drag or hold Space to pan, arrows pan, PageUp/PageDown for sheets, F to fit, W for width, Z for zoom area, Esc to cancel."
         data-testid="plan-viewport"
       >
         <div
@@ -1401,12 +1603,12 @@ export function PlanCanvas({
               viewBox={viewBox}
               className={cn(
                 "absolute inset-0 h-full w-full",
-                isZoomWindowMode
-                  ? "cursor-zoom-in"
-                  : tool === "select"
-                    ? isPanning
-                      ? "cursor-grabbing"
-                      : "cursor-grab"
+                spaceHeld || tool === "select"
+                  ? isPanning
+                    ? "cursor-grabbing"
+                    : "cursor-grab"
+                  : isZoomWindowMode
+                    ? "cursor-zoom-in"
                     : "cursor-crosshair",
               )}
               data-testid="plan-canvas"
@@ -1415,19 +1617,30 @@ export function PlanCanvas({
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
               onPointerCancel={handlePointerUp}
-              onPointerLeave={() => setLinearGuide(null)}
+              onPointerLeave={() => {
+                setRunCursor(null);
+                lastPointerRef.current = null;
+              }}
               onDoubleClick={() => {
                 if ((tool === "linear" || tool === "area") && pendingPoints.length > 0) {
                   onFinishRun?.();
                 }
               }}
               onContextMenu={(event) => {
+                // Right-button gestures own the menu while a draw tool is
+                // active: click finishes the run (decided on pointer up),
+                // drag pans. Finishing happens there, not here — macOS fires
+                // contextmenu at press time, before a drag can be told apart.
+                if (suppressContextMenuRef.current) {
+                  suppressContextMenuRef.current = false;
+                  event.preventDefault();
+                  return;
+                }
                 if (
                   (tool === "linear" || tool === "area" || tool === "count") &&
                   pendingPoints.length > 0
                 ) {
                   event.preventDefault();
-                  onFinishRun?.();
                 }
               }}
             >
@@ -1480,14 +1693,15 @@ export function PlanCanvas({
                 tool={tool === "calibrate" || tool === "verify" ? tool : "select"}
                 command={tool === "calibrate" || tool === "verify" ? draftCommand : null}
               />
-              {tool === "linear" && pendingPoints.length > 0 && linearGuide && (
-                <LinearAngleGuide
-                  anchor={pendingPoints[pendingPoints.length - 1]}
-                  point={linearGuide.point}
-                  angleDeg={linearGuide.angleDeg}
-                  snapped={linearGuide.snapped}
+              {(tool === "linear" || tool === "area") && runCursor && (
+                <TakeoffRunPreview
+                  pendingPoints={pendingPoints}
+                  cursor={runCursor}
+                  tool={tool}
                   viewSize={viewSize}
                   zoom={zoom}
+                  scaleFeetPerPixel={sheet?.scale_feet_per_pixel ?? 0}
+                  unit={draftUnit}
                 />
               )}
               <ZoomWindowShape draft={zoomWindowDraft} viewSize={viewSize} />
