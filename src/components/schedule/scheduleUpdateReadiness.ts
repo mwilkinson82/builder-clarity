@@ -1,9 +1,13 @@
-import { type ScheduleActivityRow } from "@/lib/schedule.functions";
+import { type ConstructLineCpmModel, type ConstructLineCpmTask } from "@/lib/constructline-cpm";
 import {
-  isConstructLineMilestoneActivity,
-  type ConstructLineCpmModel,
-  type ConstructLineCpmTask,
-} from "@/lib/constructline-cpm";
+  hasScheduleActivityActualStartBasis,
+  hasScheduleActivityStarted,
+  shouldFlagMissingActualStart,
+  shouldFlagMissingExpectedFinish,
+  shouldFlagMissingRemainingDuration,
+  taskIsInDataDateUpdateWindow,
+  taskNeedsStatusUpdateBasis,
+} from "@/lib/schedule-update-queue";
 import {
   type ScheduleQualityQueueItem,
   type ScheduleUpdateReadinessItem,
@@ -11,7 +15,16 @@ import {
   shortDate,
   todayIsoDate,
 } from "./scheduleShared";
-import { parseDateMs } from "./ScheduleSnapshotTimeline";
+
+export {
+  hasScheduleActivityActualStartBasis,
+  hasScheduleActivityStarted,
+  shouldFlagMissingActualStart,
+  shouldFlagMissingExpectedFinish,
+  shouldFlagMissingRemainingDuration,
+  taskIsInDataDateUpdateWindow,
+  taskNeedsStatusUpdateBasis,
+};
 
 export function buildScheduleQualityQueue(
   model: ConstructLineCpmModel,
@@ -211,56 +224,6 @@ function buildScheduleQualityGuidance(task: ConstructLineCpmTask, reasons: strin
   return "Open the activity and clean up dates, logic, or progress.";
 }
 
-export function shouldFlagMissingRemainingDuration(activity: ScheduleActivityRow) {
-  if (isConstructLineMilestoneActivity(activity)) return false;
-  const hasActualStartBasis = hasScheduleActivityActualStartBasis(activity);
-  if (!hasActualStartBasis) return false;
-  return (
-    activity.percent_complete < 100 &&
-    activity.remaining_duration_days == null &&
-    !activity.forecast_finish_date &&
-    !activity.actual_finish_date
-  );
-}
-
-export function shouldFlagMissingExpectedFinish(activity: ScheduleActivityRow) {
-  return (
-    activity.percent_complete < 100 &&
-    !activity.actual_finish_date &&
-    !activity.forecast_finish_date &&
-    !activity.finish_date &&
-    !activity.baseline_finish_date
-  );
-}
-
-export function shouldFlagMissingActualStart(activity: ScheduleActivityRow) {
-  if (isConstructLineMilestoneActivity(activity)) return false;
-  return (
-    activity.percent_complete > 0 && activity.percent_complete < 100 && !activity.actual_start_date
-  );
-}
-
-export function hasScheduleActivityStarted(activity: ScheduleActivityRow) {
-  return (
-    activity.percent_complete > 0 ||
-    Boolean(activity.actual_start_date) ||
-    Boolean(activity.actual_finish_date)
-  );
-}
-
-export function hasScheduleActivityActualStartBasis(activity: ScheduleActivityRow) {
-  return Boolean(activity.actual_start_date) || Boolean(activity.actual_finish_date);
-}
-
-export function taskNeedsStatusUpdateBasis(task: ConstructLineCpmTask) {
-  return (
-    task.statusBasis === "needs_update" ||
-    shouldFlagMissingRemainingDuration(task.activity) ||
-    shouldFlagMissingExpectedFinish(task.activity) ||
-    shouldFlagMissingActualStart(task.activity)
-  );
-}
-
 export function formatUpdateReadinessQueueLine(item: ScheduleUpdateReadinessItem) {
   if (item.task.isMilestone) {
     const status = item.task.activity.percent_complete >= 100 ? "met" : "not met";
@@ -277,19 +240,4 @@ export function formatUpdateReadinessQueueLine(item: ScheduleUpdateReadinessItem
   return `Expected finish ${shortDate(item.task.statusFinishDate)} · remaining ${
     item.task.remainingDurationDays
   }d · TF ${item.task.totalFloat}d`;
-}
-
-// The needs-update queue contains only rows genuinely needing action for the
-// current data date: started-but-not-finished work spanning the data date, or
-// rows planned to have started by the data date with no actual start recorded.
-// Complete activities and future-window rows never appear.
-export function taskIsInDataDateUpdateWindow(task: ConstructLineCpmTask, referenceDate: string) {
-  const activity = task.activity;
-  if (activity.percent_complete >= 100 || activity.actual_finish_date) return false;
-  if (hasScheduleActivityStarted(activity)) return true;
-  const referenceMs = parseDateMs(referenceDate) ?? parseDateMs(todayIsoDate());
-  const plannedStartMs = parseDateMs(
-    activity.forecast_start_date ?? activity.start_date ?? activity.baseline_start_date,
-  );
-  return referenceMs != null && plannedStartMs != null && plannedStartMs <= referenceMs;
 }

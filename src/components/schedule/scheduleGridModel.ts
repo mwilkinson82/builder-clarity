@@ -30,9 +30,9 @@ import {
   shouldFlagMissingActualStart,
   shouldFlagMissingExpectedFinish,
   shouldFlagMissingRemainingDuration,
-  taskIsInDataDateUpdateWindow,
   taskNeedsStatusUpdateBasis,
-} from "./scheduleUpdateReadiness";
+  taskNeedsUpdateQueueAction,
+} from "@/lib/schedule-update-queue";
 import { isoDateFromMs, parseDateMs } from "./ScheduleSnapshotTimeline";
 
 export function getDelayPeriodLabel(days: number, width: number, isPrintMode: boolean) {
@@ -292,10 +292,7 @@ function taskMatchesScheduleGridView(
   if (view === "update_queue") {
     // Mirrors the needs-update queue exactly: rows in the data-date update
     // window that still need action. Complete and future rows never appear.
-    return (
-      taskIsInDataDateUpdateWindow(task, referenceDate) &&
-      (taskNeedsStatusUpdateBasis(task) || task.isLate || task.isOutOfSequence)
-    );
+    return taskNeedsUpdateQueueAction(task, referenceDate);
   }
   const lookaheadDays = SCHEDULE_LOOKAHEAD_DAYS[view];
   if (lookaheadDays) {

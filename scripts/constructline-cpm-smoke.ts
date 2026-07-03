@@ -819,6 +819,7 @@ assert.deepEqual(
 
 const scheduleRiskSource = readProjectFile("src/components/schedule");
 const scheduleStatusSource = readProjectFile("src/lib/schedule-status.ts");
+const scheduleUpdateQueueSource = readProjectFile("src/lib/schedule-update-queue.ts");
 const scheduleRouteSource = readProjectFile(
   "src/routes/_authenticated/projects.$projectId.schedule.tsx",
 );
@@ -1076,7 +1077,6 @@ for (const requiredScheduleRiskText of [
   "needs actual",
   "ACTIVITY_UPDATE_SNAPSHOT_COLUMNS",
   "64px minmax(170px,1.15fr) 54px 82px 82px 82px 58px 82px 64px 78px 58px minmax(170px,1fr)",
-  "if (!hasActualStartBasis) return false",
   "remaining duration not required",
   "updates = EMPTY_SCHEDULE_UPDATES",
   "const workbenchDraft = buildCpmScheduleUpdateDraft",
@@ -1158,7 +1158,7 @@ assert.match(
 );
 
 assert.match(
-  scheduleRiskSource,
+  scheduleUpdateQueueSource,
   /function shouldFlagMissingRemainingDuration\(activity: ScheduleActivityRow\) \{[\s\S]*?isConstructLineMilestoneActivity\(activity\)[\s\S]*?const hasActualStartBasis = hasScheduleActivityActualStartBasis\(activity\)[\s\S]*?!hasActualStartBasis[\s\S]*?activity\.remaining_duration_days == null[\s\S]*?!activity\.forecast_finish_date/s,
   "Missing remaining duration should only be flagged after actual start and when no current expected finish exists.",
 );
@@ -1300,6 +1300,21 @@ for (const requiredScheduleFunctionText of [
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),
     `Schedule functions are missing required WBS persistence contract: ${requiredScheduleFunctionText}`,
+  );
+}
+
+for (const requiredScheduleUpdateQueueText of [
+  "export function taskIsInDataDateUpdateWindow",
+  "export function taskNeedsUpdateQueueAction",
+  "if (activity.percent_complete >= 100 || activity.actual_finish_date) return false;",
+  "if (hasScheduleActivityStarted(activity)) return true;",
+  "plannedStartMs <= referenceMs",
+  "if (!hasActualStartBasis) return false",
+  "taskNeedsStatusUpdateBasis(task) || task.isLate || task.isOutOfSequence",
+]) {
+  assert.ok(
+    scheduleUpdateQueueSource.includes(requiredScheduleUpdateQueueText),
+    `Schedule update queue is missing required contract: ${requiredScheduleUpdateQueueText}`,
   );
 }
 
