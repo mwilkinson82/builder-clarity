@@ -12,12 +12,14 @@ import {
 import { analyzeSovIntake, applyMapping, guessColumnMap } from "../src/lib/sov-import.ts";
 import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "../src/lib/estimate-seed-data.ts";
 import {
+  buildProjectFieldTexts,
   calculateTakeoffQuantity,
   decimalFeetHint,
   groupUnlinkedTakeoffs,
   normalizeTakeoffLabel,
   suggestTakeoffMatches,
   disciplineForSheetNumber,
+  extractSheetIdentities,
   extractSheetIdentity,
   formatFeetInches,
   matchSheetNumber,
@@ -598,6 +600,105 @@ const rotatedStripIdentity = extractSheetIdentity({
 });
 assert.equal(rotatedStripIdentity.sheetNumber, "S-201");
 assert.equal(rotatedStripIdentity.sheetName, "FOUNDATION PLAN");
+
+// --- Extraction v3: consultant layouts (Phase 4 Task 1) ---
+// Consultant title blocks run a wider full-right-edge strip than the
+// architectural sheets. The number sits in a boxed cell mid-strip (outside
+// the old bottom-right band) and often splits into separate glyph runs.
+const consultantStripIdentity = extractSheetIdentity({
+  items: [
+    { text: "GENERAL STRUCTURAL NOTES", x: 700, y: 1500, height: 12 }, // page body
+    { text: "NBS 365M LLC", x: 2160, y: 1500, height: 11 },
+    { text: "MIAMI GARDENS, FL", x: 2160, y: 1460, height: 10 },
+    { text: "FOUNDATION PLAN", x: 2160, y: 860, height: 14 },
+    { text: "SHEET NO.", x: 2150, y: 760, height: 8 },
+    { text: "S", x: 2150, y: 700, height: 24 }, // boxed cell, split glyph runs
+    { text: "-", x: 2180, y: 700, height: 24 },
+    { text: "201", x: 2200, y: 700, height: 24 },
+    { text: "DRAWN: JT", x: 2160, y: 500, height: 8 },
+  ],
+  ...CARWASH_PAGE,
+});
+assert.equal(consultantStripIdentity.sheetNumber, "S-201");
+assert.equal(consultantStripIdentity.sheetName, "FOUNDATION PLAN");
+
+// Consultant bottom band: taller than the architectural strip, number in a
+// boxed cell at bottom-center (outside the band and the right strip), split
+// into three runs ("M" + "-" + "1.1").
+const consultantBottomBandIdentity = extractSheetIdentity({
+  items: [
+    { text: "MECHANICAL SCHEDULES", x: 900, y: 1000, height: 12 }, // page body
+    { text: "MECHANICAL FLOOR PLAN", x: 1200, y: 280, height: 14 },
+    { text: 'SCALE: 1/8" = 1\'-0"', x: 1200, y: 240, height: 8 },
+    { text: "M", x: 1560, y: 260, height: 22 },
+    { text: "-", x: 1585, y: 260, height: 22 },
+    { text: "1.1", x: 1600, y: 260, height: 22 },
+    { text: "PROJECT NO. 2214", x: 2000, y: 260, height: 8 },
+  ],
+  ...CARWASH_PAGE,
+});
+assert.equal(consultantBottomBandIdentity.sheetNumber, "M-1.1");
+assert.equal(consultantBottomBandIdentity.sheetName, "MECHANICAL FLOOR PLAN");
+
+// --- Extraction v3: cross-sheet frequency filter (Phase 4 Task 1) ---
+// Project-block fields (owner LLC, city) sit closer to the number cell than
+// the real title, so per-sheet extraction alone picks them. They repeat in
+// the same region on every sheet; the set-level pass drops them.
+const projectFieldItems = (y) => [
+  { text: "NBS 365M LLC", x: 2330, y: y + 180, height: 13 },
+  { text: "MIAMI GARDENS, FL", x: 2330, y: y + 150, height: 11 },
+];
+const consultantPage = (number, title, extra = []) => ({
+  items: [
+    ...projectFieldItems(120),
+    { text: title, x: 2330, y: 700, height: 13 },
+    { text: number, x: 2400, y: 120, height: 26 },
+    ...extra,
+  ],
+  ...CARWASH_PAGE,
+});
+const frequencySet = [
+  consultantPage("S-201", "FOUNDATION PLAN"),
+  consultantPage("S-202", "FRAMING PLAN"),
+  consultantPage("M-101", "MECHANICAL FLOOR PLAN"),
+  consultantPage("P-301", "PLUMBING RISER DIAGRAM"),
+  // Two sheets legitimately share a title; two repeats stay under the 3+
+  // project-field threshold and both keep their name.
+  consultantPage("A-501", "ROOF DETAILS"),
+  consultantPage("A-502", "ROOF DETAILS"),
+];
+// Without the set-level filter, the LLC line outscores the real title.
+const contaminated = extractSheetIdentity(frequencySet[0]);
+assert.equal(contaminated.sheetNumber, "S-201");
+assert.equal(contaminated.sheetName.includes("NBS 365M LLC"), true);
+// The set-level pass drops the repeated project fields on every sheet.
+const filteredIdentities = extractSheetIdentities(frequencySet);
+assert.deepEqual(
+  filteredIdentities.map((identity) => identity.sheetNumber),
+  ["S-201", "S-202", "M-101", "P-301", "A-501", "A-502"],
+);
+assert.deepEqual(
+  filteredIdentities.map((identity) => identity.sheetName),
+  [
+    "FOUNDATION PLAN",
+    "FRAMING PLAN",
+    "MECHANICAL FLOOR PLAN",
+    "PLUMBING RISER DIAGRAM",
+    "ROOF DETAILS",
+    "ROOF DETAILS",
+  ],
+);
+for (const identity of filteredIdentities) {
+  assert.equal(identity.sheetName.includes("NBS"), false);
+  assert.equal(identity.sheetName.includes("MIAMI"), false);
+}
+// buildProjectFieldTexts exposes the raw rule for direct checks: 3+ sheets in
+// the same region marks a project field; 2 does not.
+const projectFields = buildProjectFieldTexts(frequencySet);
+assert.equal(projectFields.has("NBS 365M LLC"), true);
+assert.equal(projectFields.has("MIAMI GARDENS, FL"), true);
+assert.equal(projectFields.has("ROOF DETAILS"), false);
+assert.equal(projectFields.has("FOUNDATION PLAN"), false);
 
 console.log(
   [
