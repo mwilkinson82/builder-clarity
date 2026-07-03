@@ -7,13 +7,16 @@ import type {
 import {
   calculateTakeoffQuantity,
   distancePx,
+  formatFeetInches,
   type PlanRoomPoint,
   type PlanRoomViewSize,
   normalizeTakeoffUnit,
 } from "@/lib/plan-room-math";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 
-export type ToolMode = "select" | "calibrate" | "verify" | TakeoffToolType;
+// "ruler" is a question, not a takeoff: quick two-point (or chained) distance
+// checks that are never persisted and never reach the worksheet.
+export type ToolMode = "select" | "calibrate" | "verify" | "ruler" | TakeoffToolType;
 export type RevisionOverlayMode = "compare" | "ghost";
 export type CockpitPanelKey = "drawings" | "tools";
 export type CockpitPanelAnchor = "left" | "right";
@@ -77,7 +80,31 @@ export type GeometryEditDraft = {
 };
 
 export const DEFAULT_VIEW_SIZE: ViewSize = { width: 960, height: 620 };
-export const TAKEOFF_COLORS = ["#1b7a6e", "#b35035", "#946a21", "#375d8a", "#5d5f6f"];
+// Sixteen drawing-legible markup colors (beta batch 2): dark, saturated tones
+// that hold contrast on white paper and against dense linework — no pale
+// pastels that vanish on a sheet. The original five lead so existing takeoffs
+// keep their swatch position.
+export const TAKEOFF_COLORS = [
+  "#1b7a6e", // teal
+  "#b35035", // rust
+  "#946a21", // ochre
+  "#375d8a", // steel blue
+  "#5d5f6f", // slate
+  "#b91c1c", // red
+  "#15803d", // green
+  "#1d4ed8", // royal blue
+  "#c2410c", // orange
+  "#7c3aed", // violet
+  "#be185d", // magenta
+  "#0e7490", // cyan
+  "#4d7c0f", // olive
+  "#78350f", // brown
+  "#6b21a8", // deep purple
+  "#1f2937", // charcoal
+];
+// The ruler draws in a color outside the takeoff palette so a quick check
+// never reads as a saved markup.
+export const RULER_COLOR = "#0369a1";
 export const TAKEOFF_LAYER_KEYS: TakeoffLayerKey[] = [
   "linear",
   "area",
@@ -677,6 +704,35 @@ export function draftCommandFor({
     };
   }
 
+  if (tool === "ruler") {
+    // A question, not a takeoff: reads distance in feet-inches off the active
+    // scale and saves nothing. actionLabel stays empty so no finish button
+    // renders — there is nothing to finish.
+    const scale = sheet?.scale_feet_per_pixel ?? 0;
+    const spanFeet = scale > 0 ? distancePx(points, viewSize) * scale : 0;
+    const unverifiedCaveat =
+      scale > 0 && sheetScaleStatus(sheet) === "unverified"
+        ? " Scale is unverified — check it against a labeled dimension."
+        : "";
+    return {
+      title: "Ruler check",
+      value:
+        scale <= 0
+          ? "Needs scale"
+          : points.length >= 2
+            ? formatFeetInches(spanFeet)
+            : `${points.length}/2 points`,
+      detail:
+        scale <= 0
+          ? "Set the sheet scale before the ruler can read distances."
+          : points.length >= 2
+            ? `Keep clicking to chain segments and total them. Nothing is saved — Esc clears.${unverifiedCaveat}`
+            : `Click two points to read a distance the drawing doesn't give you.${unverifiedCaveat}`,
+      ready: false,
+      actionLabel: "",
+    };
+  }
+
   if (tool === "count") {
     return {
       title: "Count takeoff",
@@ -751,6 +807,7 @@ export function toolLabel(tool: ToolMode) {
   if (tool === "select") return "Select";
   if (tool === "calibrate") return "Set Scale";
   if (tool === "verify") return "Verify Scale";
+  if (tool === "ruler") return "Ruler";
   if (tool === "linear") return "Linear";
   if (tool === "area") return "Area";
   return "Count";

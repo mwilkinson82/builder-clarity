@@ -919,21 +919,34 @@ export type TakeoffGroup = {
   measurement_count: number;
 };
 
+const round4 = (value: number) => Math.round(value * 10000) / 10000;
+
+// Waste-applied rollup — the same per-measurement formula the sync path
+// applies. Every group total that can feed the estimate goes through this one
+// function so the worksheet, the finish popover, and Build Estimate from
+// Takeoffs can never disagree.
+export function takeoffGroupRollup(
+  members: Array<Pick<TakeoffGroupInput, "quantity" | "waste_pct">>,
+): number {
+  return round4(
+    members.reduce((sum, member) => sum + member.quantity * (1 + (member.waste_pct || 0) / 100), 0),
+  );
+}
+
 // Groups by library item when recorded, else by normalized label + canonical
 // unit. Mixed-unit labels split into separate groups rather than merging —
 // the Phase 2 unit guard extends to rollups.
 export function groupUnlinkedTakeoffs(measurements: TakeoffGroupInput[]): TakeoffGroup[] {
-  const groups = new Map<string, TakeoffGroup>();
+  const groups = new Map<string, TakeoffGroup & { members: TakeoffGroupInput[] }>();
   for (const measurement of measurements) {
     const canonicalUnit = normalizeTakeoffUnit(measurement.unit);
     const key = measurement.library_item_id
       ? `library:${measurement.library_item_id}:${canonicalUnit}`
       : `label:${normalizeTakeoffLabel(measurement.label) || "unlabeled"}:${canonicalUnit}`;
-    const rollup = measurement.quantity * (1 + measurement.waste_pct / 100);
     const existing = groups.get(key);
     if (existing) {
       existing.measurement_ids.push(measurement.id);
-      existing.quantity = Math.round((existing.quantity + rollup) * 10000) / 10000;
+      existing.members.push(measurement);
       existing.measurement_count += 1;
     } else {
       groups.set(key, {
@@ -942,12 +955,147 @@ export function groupUnlinkedTakeoffs(measurements: TakeoffGroupInput[]): Takeof
         unit: measurement.unit.trim().toUpperCase() || canonicalUnit || "EA",
         library_item_id: measurement.library_item_id,
         measurement_ids: [measurement.id],
-        quantity: Math.round(rollup * 10000) / 10000,
+        members: [measurement],
+        quantity: 0,
         measurement_count: 1,
       });
     }
   }
+  return Array.from(groups.values()).map(({ members, ...group }) => ({
+    ...group,
+    quantity: takeoffGroupRollup(members),
+  }));
+}
+
+// --- Takeoff groups (beta batch 2) --------------------------------------------
+// Contractors measure one quantity in pieces; the system treated every markup
+// as an island. Same normalized label + compatible unit = same group. Grouping
+// is derived from the existing label/unit/link columns — no schema.
+
+export type TakeoffWorksheetGroupMember = {
+  id: string;
+  label: string;
+  unit: string;
+  quantity: number;
+  waste_pct: number;
+  color: string;
+  plan_sheet_id: string;
+  estimate_line_item_id: string | null;
+  library_item_id: string | null;
+};
+
+export type TakeoffWorksheetGroup<T extends TakeoffWorksheetGroupMember> = {
+  key: string;
+  label: string;
+  unit: string;
+  members: T[];
+  // Raw measured sum — the number the contractor reads (279 + 25.54 = 304.54).
+  measuredQuantity: number;
+  // Waste-applied rollup — the number sync sends to the estimate row.
+  rollupQuantity: number;
+  // The group's color is its first member's; new joiners inherit it.
+  color: string;
+  sheetIds: string[];
+  // The sole distinct estimate-row link among members, when exactly one.
+  linkedLineId: string | null;
+  // Members link to more than one row — the card asks to expand and review.
+  mixedLinks: boolean;
+  libraryItemId: string | null;
+};
+
+export function takeoffGroupKey(label: string, unit: string): string {
+  const canonicalUnit = normalizeTakeoffUnit(unit) || unit.trim().toUpperCase() || "EA";
+  return `${normalizeTakeoffLabel(label) || "unlabeled"}|${canonicalUnit}`;
+}
+
+export function groupTakeoffWorksheet<T extends TakeoffWorksheetGroupMember>(
+  measurements: T[],
+): Array<TakeoffWorksheetGroup<T>> {
+  const groups = new Map<string, TakeoffWorksheetGroup<T>>();
+  for (const measurement of measurements) {
+    const key = takeoffGroupKey(measurement.label, measurement.unit);
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key,
+        label: measurement.label.trim() || "Unlabeled takeoff",
+        unit:
+          measurement.unit.trim().toUpperCase() || normalizeTakeoffUnit(measurement.unit) || "EA",
+        members: [],
+        measuredQuantity: 0,
+        rollupQuantity: 0,
+        color: measurement.color,
+        sheetIds: [],
+        linkedLineId: null,
+        mixedLinks: false,
+        libraryItemId: null,
+      };
+      groups.set(key, group);
+    }
+    group.members.push(measurement);
+    if (!group.sheetIds.includes(measurement.plan_sheet_id)) {
+      group.sheetIds.push(measurement.plan_sheet_id);
+    }
+  }
+  for (const group of groups.values()) {
+    group.measuredQuantity = round4(
+      group.members.reduce((sum, member) => sum + member.quantity, 0),
+    );
+    group.rollupQuantity = takeoffGroupRollup(group.members);
+    const lineIds = Array.from(
+      new Set(
+        group.members
+          .map((member) => member.estimate_line_item_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+    group.linkedLineId = lineIds.length === 1 ? lineIds[0] : null;
+    group.mixedLinks = lineIds.length > 1;
+    const libraryIds = Array.from(
+      new Set(
+        group.members
+          .map((member) => member.library_item_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+    group.libraryItemId = libraryIds.length === 1 ? libraryIds[0] : null;
+  }
   return Array.from(groups.values());
+}
+
+// Label-match inheritance for the finish popover: given a just-finished (or
+// just-relabeled) measurement, find the group it joins among the OTHER
+// measurements on the estimate. A same-label group with an incompatible unit
+// is reported as a mismatch and never auto-joined — the Phase 2 unit guard.
+export type TakeoffGroupMatch<T extends TakeoffWorksheetGroupMember> = {
+  joins: boolean;
+  unitMismatch: boolean;
+  group: TakeoffWorksheetGroup<T> | null;
+};
+
+export function findTakeoffGroupMatch<T extends TakeoffWorksheetGroupMember>({
+  label,
+  unit,
+  measurements,
+  excludeId = null,
+}: {
+  label: string;
+  unit: string;
+  measurements: T[];
+  excludeId?: string | null;
+}): TakeoffGroupMatch<T> {
+  const normalized = normalizeTakeoffLabel(label);
+  if (!normalized) return { joins: false, unitMismatch: false, group: null };
+  const sameLabel = measurements.filter(
+    (measurement) =>
+      measurement.id !== excludeId && normalizeTakeoffLabel(measurement.label) === normalized,
+  );
+  if (sameLabel.length === 0) return { joins: false, unitMismatch: false, group: null };
+  const compatible = sameLabel.filter((measurement) =>
+    takeoffUnitsCompatible(unit, measurement.unit),
+  );
+  if (compatible.length === 0) return { joins: false, unitMismatch: true, group: null };
+  return { joins: true, unitMismatch: false, group: groupTakeoffWorksheet(compatible)[0] };
 }
 
 export type MatchCandidateRow = {

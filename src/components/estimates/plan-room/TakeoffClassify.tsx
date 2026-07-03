@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { AlertTriangle, Check, Library, Plus, Search, X } from "lucide-react";
+import { AlertTriangle, Check, Library, Plus, Search, Unlink, Users, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -181,6 +181,21 @@ export function LinkOrCreatePicker({
   );
 }
 
+// Group recognition at the finish popover (beta batch 2): when this
+// measurement's label matches an existing group with a compatible unit, the
+// popover says so and the link was inherited automatically. A same-label
+// group with a different unit warns and stays separate.
+export type TakeoffPopoverGroupState = {
+  kind: "joined" | "unit-mismatch";
+  label: string;
+  // Both counts INCLUDE this measurement.
+  memberCount: number;
+  measuredTotal: number;
+  unit: string;
+  // The unit the existing same-name group measures, for the mismatch copy.
+  otherUnit?: string;
+};
+
 // The takeoff comes to you: after finishing any takeoff, this compact card
 // appears near the final markup point. Measuring never blocks — starting the
 // next takeoff dismisses it, and Esc keeps the takeoff, dropping only the
@@ -189,6 +204,9 @@ export function TakeoffFinishPopover({
   measurement,
   lineItems,
   linkedLine,
+  groupState = null,
+  groupLabelSuggestions = [],
+  onDetach,
   onSaveDetails,
   onPickRow,
   onPickLibraryItem,
@@ -199,6 +217,13 @@ export function TakeoffFinishPopover({
   measurement: TakeoffMeasurementRow;
   lineItems: EstimateLineItemRow[];
   linkedLine: EstimateLineItemRow | null;
+  groupState?: TakeoffPopoverGroupState | null;
+  // Existing group labels, offered while typing so joining a group is the
+  // default gesture and a typo doesn't fork a new group.
+  groupLabelSuggestions?: string[];
+  // Detach for the intentional same-name-different-thing case: clears the
+  // inherited link on this measurement only.
+  onDetach?: (() => void) | null;
   onSaveDetails: (details: { label: string; wastePct: number }) => void;
   onPickRow: (lineId: string) => void;
   onPickLibraryItem: (item: CostLibraryItemRow) => void;
@@ -255,6 +280,52 @@ export function TakeoffFinishPopover({
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
+      {groupState?.kind === "joined" && (
+        <div
+          className="mt-2 shrink-0 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-2 text-xs"
+          data-testid="takeoff-popover-group"
+        >
+          <p className="flex items-center gap-1.5 font-medium">
+            <Users className="h-3.5 w-3.5 shrink-0 text-primary" />
+            <span className="min-w-0 truncate">
+              Added to <strong>{groupState.label}</strong>
+            </span>
+          </p>
+          <p className="mt-0.5 text-muted-foreground">
+            {groupState.memberCount} takeoffs ·{" "}
+            {formatQty(groupState.measuredTotal, groupState.unit)} total
+          </p>
+          {onDetach && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="mt-1 h-7 gap-1.5 px-2 text-xs"
+              title="Same name, different thing? Detach clears the inherited link on this takeoff only."
+              onClick={onDetach}
+              disabled={pending}
+              data-testid="takeoff-popover-detach"
+            >
+              <Unlink className="h-3 w-3" />
+              Detach from group
+            </Button>
+          )}
+        </div>
+      )}
+      {groupState?.kind === "unit-mismatch" && (
+        <p
+          className="mt-2 flex shrink-0 items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs"
+          data-testid="takeoff-popover-group-mismatch"
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+          <span>
+            “{groupState.label}” already measures{" "}
+            {unitLongName(groupState.otherUnit ?? groupState.unit)}; this one measures{" "}
+            {unitLongName(measurement.unit)}, so it stays its own group. Sync will ask before mixing
+            units.
+          </span>
+        </p>
+      )}
       <div className="mt-2 grid shrink-0 grid-cols-[1fr_88px] gap-2">
         <div className="space-y-1">
           <Label className="text-xs">Label</Label>
@@ -263,6 +334,7 @@ export function TakeoffFinishPopover({
             value={label}
             onChange={(event) => setLabel(event.target.value)}
             className="h-8 text-sm"
+            list={`takeoff-group-labels-${measurement.id}`}
             data-testid="takeoff-popover-label"
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -272,6 +344,11 @@ export function TakeoffFinishPopover({
               }
             }}
           />
+          <datalist id={`takeoff-group-labels-${measurement.id}`}>
+            {groupLabelSuggestions.map((suggestion) => (
+              <option key={suggestion} value={suggestion} />
+            ))}
+          </datalist>
         </div>
         <div className="space-y-1">
           <Label className="text-xs">Waste %</Label>
