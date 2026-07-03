@@ -2576,6 +2576,7 @@ export function PlanRoomWorkspace({
             onFinishRun={finishRunFromCanvas}
             onAbandonDraft={abandonDraftRun}
             finishPopoverAnchor={finishPopover?.anchor ?? null}
+            onFinishPopoverDismiss={() => setFinishPopover(null)}
             finishPopover={
               finishPopoverMeasurement ? (
                 <TakeoffFinishPopover
