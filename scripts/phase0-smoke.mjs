@@ -356,9 +356,35 @@ await expectContains(
     /getHarborDemoCpmActivityRows/,
     /job_number/,
     /client/,
-    /includes\(HARBOR_DEMO_NAME\.toLowerCase\(\)\)/,
+    /harborDemoSeedAction/,
+    /@\/lib\/demo-seed/,
   ],
   "Harbor Residence demo seeds Marshall Wilkinson as PM and self-detects a full CPM activity plan with predecessor and successor logic",
+);
+
+// Hotfix (demo hides on delete, never reseeds): the demo identity matchers
+// moved to the pure module so the smoke harness can unit-test the opt-out.
+await expectContains(
+  "src/lib/demo-seed.ts",
+  [
+    /HARBOR_DEMO_JOB_NUMBER = "DEMO-HARBOR"/,
+    /includes\(HARBOR_DEMO_NAME\.toLowerCase\(\)\)/,
+    /isHarborDemoProject/,
+    /harborDemoSeedAction/,
+    /findHarborDemoProject/,
+    /archived_at/,
+  ],
+  "demo opt-out decision lives in the pure demo-seed module (archived demo = seed nothing)",
+);
+
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /select\("id,archived_at"\)/,
+    /demoArchived: true/,
+    /harborDemoSeedAction\(existingDemo\) === "skip"/,
+  ],
+  "deleting the Harbor demo archives it and seedDemoIfEmpty respects the archived opt-out",
 );
 
 await expectContains(

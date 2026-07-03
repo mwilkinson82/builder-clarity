@@ -17,6 +17,7 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   update(values: unknown): DynamicSupabaseQuery;
   delete(): DynamicSupabaseQuery;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
+  is(column: string, value: unknown): DynamicSupabaseQuery;
   in(column: string, values: readonly string[]): DynamicSupabaseQuery;
   order(
     column: string,
@@ -1223,8 +1224,11 @@ export const listPortfolioBilling = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const ctx = context as unknown as BillingServerContext;
+    // Archived projects (including a hidden Harbor demo) stay out of the
+    // billing portfolio, matching the main project list.
     const projectRes = await dynamicTable(ctx.supabase, "projects")
       .select("*")
+      .is("archived_at", null)
       .order("name", { ascending: true });
     if (projectRes.error) throw new Error(projectRes.error.message);
     const projectRows = (projectRes.data ?? []) as Record<string, unknown>[];

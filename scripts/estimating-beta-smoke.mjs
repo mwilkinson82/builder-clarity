@@ -47,6 +47,57 @@ import {
   remapTakeoffMeasurementId,
   undoOperationFor,
 } from "../src/lib/takeoff-undo.ts";
+import {
+  HARBOR_DEMO_JOB_NUMBER,
+  findHarborDemoProject,
+  harborDemoSeedAction,
+  isHarborDemoProject,
+} from "../src/lib/demo-seed.ts";
+
+// --- Demo hide-not-delete opt-out (hotfix: demo never reseeds) ---------------
+// Every demo ensure-path routes its decision through harborDemoSeedAction on
+// a lookup that INCLUDES archived rows. Archived demo -> all seeders no-op;
+// active demo -> unchanged ensure behavior; no demo row -> initial seed.
+assert.equal(harborDemoSeedAction(null), "seed");
+assert.equal(harborDemoSeedAction(undefined), "seed");
+assert.equal(harborDemoSeedAction({ archived_at: null }), "ensure");
+assert.equal(harborDemoSeedAction({}), "ensure");
+assert.equal(harborDemoSeedAction({ archived_at: "2026-07-03T04:00:00.000Z" }), "skip");
+
+// Identity matching covers job number, name, and client variants.
+assert.equal(isHarborDemoProject({ job_number: HARBOR_DEMO_JOB_NUMBER }), true);
+assert.equal(isHarborDemoProject({ job_number: "demo-harbor" }), true);
+assert.equal(isHarborDemoProject({ name: "Harbor Residence" }), true);
+assert.equal(isHarborDemoProject({ name: "  harbor residence (training)  " }), true);
+assert.equal(isHarborDemoProject({ client: "Private Luxury Residence" }), true);
+assert.equal(isHarborDemoProject({ job_number: "J-2211", name: "Elm Street Duplex" }), false);
+assert.equal(isHarborDemoProject(null), false);
+
+// The finder must return the demo row even when archived — filtering
+// archived rows out is exactly the bug that resurrected the demo.
+const archivedDemoRow = {
+  id: "p2",
+  job_number: HARBOR_DEMO_JOB_NUMBER,
+  archived_at: "2026-07-03T04:00:00.000Z",
+};
+const otherProjects = [
+  { id: "p1", job_number: "J-1001", name: "Elm Street Duplex", client: "Smith" },
+  { id: "p3", job_number: "J-1002", name: "Oak Ridge Remodel", client: "Jones" },
+];
+const foundArchived = findHarborDemoProject([...otherProjects, archivedDemoRow]);
+assert.equal(foundArchived?.id, "p2");
+assert.equal(harborDemoSeedAction(foundArchived), "skip");
+
+const activeDemoRow = { id: "p4", name: "Harbor Residence", archived_at: null };
+assert.equal(findHarborDemoProject([...otherProjects, activeDemoRow])?.id, "p4");
+assert.equal(
+  harborDemoSeedAction(findHarborDemoProject([...otherProjects, activeDemoRow])),
+  "ensure",
+);
+assert.equal(findHarborDemoProject(otherProjects), null);
+assert.equal(harborDemoSeedAction(findHarborDemoProject(otherProjects)), "seed");
+assert.equal(findHarborDemoProject([]), null);
+assert.equal(findHarborDemoProject(null), null);
 
 const parseDelimited = (text, delimiter) =>
   text
