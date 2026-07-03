@@ -158,6 +158,20 @@ assertMatches(
   /style=\{\{ width: tableWidth, gridTemplateColumns: tableColumns \}\}/,
   "CPM table header must use the same width and columns contract as activity rows.",
 );
+
+// Print 11x17 contract: the printed report always carries logic lines and
+// baseline bars regardless of the on-screen toggles.
+assertMatches(
+  scheduleRiskSource,
+  /showLogicLines\s+showBaselineBars\s+isPrintMode/,
+  "The print-mode matrix must force logic lines and baseline bars on.",
+);
+assertIncludes(stylesSource, "size: 17in 11in;", "Print output must target 11x17 landscape.");
+assertIncludes(
+  stylesSource,
+  ".constructline-schedule-page main > :not(.constructline-cpm-print-shell)",
+  "Printing must hide everything except the CPM print shell.",
+);
 assertMatches(
   scheduleRiskSource,
   /id: "activity",[\s\S]*?label: "Activity description",[\s\S]*?align: "left",/,
@@ -208,7 +222,7 @@ for (const requiredModalLayoutText of [
   "Baseline plan",
   "Current update",
   "Save & next update row",
-  'disabled={!updateQueueContext || !draft.name.trim() || saving}',
+  "disabled={!updateQueueContext || !draft.name.trim() || saving}",
   "Baseline start",
   "Remaining duration",
   "Expected finish",
