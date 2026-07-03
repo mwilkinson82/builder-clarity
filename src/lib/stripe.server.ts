@@ -306,8 +306,9 @@ export async function stripePost<T>(
   // Connected account id for direct charges: per Stripe's Connect docs the
   // request is made AS the connected account via the Stripe-Account header.
   stripeAccount?: string,
+  mode: StripeMode = "test",
 ): Promise<T> {
-  const secretKey = requireStripeSecretKey();
+  const secretKey = requireStripeSecretKey(mode);
   const response = await fetch(`https://api.stripe.com/v1/${path.replace(/^\//, "")}`, {
     method: "POST",
     headers: {
@@ -338,8 +339,8 @@ export async function stripePost<T>(
   return payload as T;
 }
 
-export async function stripeGet<T>(path: string): Promise<T> {
-  const secretKey = requireStripeSecretKey();
+export async function stripeGet<T>(path: string, mode: StripeMode = "test"): Promise<T> {
+  const secretKey = requireStripeSecretKey(mode);
   const response = await fetch(`https://api.stripe.com/v1/${path.replace(/^\//, "")}`, {
     method: "GET",
     headers: {
@@ -365,6 +366,7 @@ export async function stripeGet<T>(path: string): Promise<T> {
 
   return payload as T;
 }
+
 
 function timingSafeEqual(a: string, b: string) {
   if (a.length !== b.length) return false;
