@@ -5,6 +5,13 @@ import type { Json } from "@/integrations/supabase/types";
 import { normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 import {
+  HARBOR_DEMO_CLIENT,
+  HARBOR_DEMO_JOB_NUMBER,
+  HARBOR_DEMO_NAME,
+  harborDemoSeedAction,
+  isHarborDemoProject,
+} from "@/lib/demo-seed";
+import {
   computeRollup,
   computeScheduleVarianceWeeks,
   evaluateWarnings,
@@ -1258,7 +1265,11 @@ export const getProject = createServerFn({ method: "GET" })
       .order("created_at", { ascending: false });
     if (pRes.error) throw new Error(pRes.error.message);
     if (!pRes.data) throw new Error("Project not found");
-    if (isHarborDemoProject(pRes.data as Record<string, unknown>)) {
+    // Archived demo = the company opted out; opening it must not reseed.
+    if (
+      isHarborDemoProject(pRes.data as Record<string, unknown>) &&
+      harborDemoSeedAction(pRes.data as { archived_at?: unknown }) !== "skip"
+    ) {
       await seedHarborDemoCpmActivities(context.supabase, pid, []);
       await seedHarborDemoInspections(context.supabase, pid, []);
     }
@@ -1756,16 +1767,31 @@ export const deleteProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => projectIdInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase
+    // The Harbor demo hides instead of deleting: the demo seeders run
+    // ensure-on-load, so a hard-deleted demo would simply come back. The
+    // archived row is the durable opt-out signal every seeder checks.
+    const { data: projectRow, error: lookupError } = await context.supabase
       .from("projects")
-      .delete()
-      .eq("id", data.projectId);
+      .select("id,name,client,job_number,archived_at")
+      .eq("id", data.projectId)
+      .maybeSingle();
+    if (lookupError) throw new Error(lookupError.message);
+    if (projectRow && isHarborDemoProject(projectRow as Record<string, unknown>)) {
+      const { error } = await context.supabase
+        .from("projects")
+        .update({
+          archived_at: projectRow.archived_at ?? new Date().toISOString(),
+        } as never)
+        .eq("id", data.projectId);
+      if (error) throw new Error(error.message);
+      return { ok: true, demoArchived: true };
+    }
+    const { error } = await context.supabase.from("projects").delete().eq("id", data.projectId);
     if (error) throw new Error(error.message);
-    return { ok: true };
+    return { ok: true, demoArchived: false };
   });
 
 // ---------------- EXPOSURES ----------------
-
 
 const EXPOSURE_CATEGORIES = [
   "owner_decision",
@@ -2227,13 +2253,13 @@ export const createDecision = createServerFn({ method: "POST" })
     const { projectId, ...rest } = data;
     const { error } = await context.supabase
       .from("decisions")
-      .insert({ project_id: projectId, ...rest } as any);
+      .insert({ project_id: projectId, ...rest } as never);
     if (error) {
       if (isMissingDecisionEnhancementColumn(error)) {
         const { error: fallbackError } = await context.supabase.from("decisions").insert({
           project_id: projectId,
           ...stripDecisionEnhancementFields(rest),
-        } as any);
+        } as never);
         if (fallbackError) throw new Error(fallbackError.message);
         return { ok: true, reminderFieldsPersisted: false };
       }
@@ -2249,12 +2275,15 @@ export const updateDecision = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { id, ...patch } = data;
-    const { error } = await context.supabase.from("decisions").update(patch as any).eq("id", id);
+    const { error } = await context.supabase
+      .from("decisions")
+      .update(patch as never)
+      .eq("id", id);
     if (error) {
       if (isMissingDecisionEnhancementColumn(error)) {
         const { error: fallbackError } = await context.supabase
           .from("decisions")
-          .update(stripDecisionEnhancementFields(patch) as any)
+          .update(stripDecisionEnhancementFields(patch) as never)
           .eq("id", id);
         if (fallbackError) throw new Error(fallbackError.message);
         return { ok: true, reminderFieldsPersisted: false };
@@ -3128,10 +3157,10 @@ export const importCostBuckets = createServerFn({ method: "POST" })
 // ---------------- DEMO SEED ----------------
 // Every company workspace should have one fully built Harbor Residence project
 // so new users can learn the IOR workflow before loading their own job.
+// Identity constants and the opt-out decision live in @/lib/demo-seed (pure,
+// unit-tested); an ARCHIVED demo project means the company opted out and
+// every seeder here must leave all demo artifacts alone.
 
-const HARBOR_DEMO_JOB_NUMBER = "DEMO-HARBOR";
-const HARBOR_DEMO_NAME = "Harbor Residence";
-const HARBOR_DEMO_CLIENT = "Private Luxury Residence";
 const HARBOR_DEMO_PROJECT_MANAGER = "Marshall Wilkinson";
 const HARBOR_DEMO_FIRST_CPM_ACTIVITY_ID = "01-010";
 
@@ -3753,30 +3782,6 @@ const isProjectInspectionsSchemaError = (error: DynamicSupabaseError | null) => 
   );
 };
 
-const normalizeDemoText = (value: unknown) =>
-  typeof value === "string" ? value.trim().toLowerCase() : "";
-
-export const isHarborDemoProjectName = (name: unknown) => {
-  const normalizedName = normalizeDemoText(name);
-  return (
-    normalizedName === HARBOR_DEMO_NAME.toLowerCase() ||
-    normalizedName.includes(HARBOR_DEMO_NAME.toLowerCase())
-  );
-};
-
-export const isHarborDemoProject = (project: Record<string, unknown> | null | undefined) => {
-  if (!project) return false;
-  const jobNumber = normalizeDemoText(project.job_number);
-  const client = normalizeDemoText(project.client);
-
-  return (
-    isHarborDemoProjectName(project.name) ||
-    jobNumber === HARBOR_DEMO_JOB_NUMBER.toLowerCase() ||
-    jobNumber.includes("harbor") ||
-    client === HARBOR_DEMO_CLIENT.toLowerCase()
-  );
-};
-
 const seedHarborDemoInspections = async (
   supabase: unknown,
   projectId: string,
@@ -3945,7 +3950,7 @@ export const ensureHarborDemoCpmActivitiesForProject = async (
   seedWarnings: string[] = [],
 ) => {
   const { data: projectRow, error: projectError } = await dynamicTable(supabase, "projects")
-    .select("name,job_number,client")
+    .select("name,job_number,client,archived_at")
     .eq("id", projectId)
     .maybeSingle();
 
@@ -3955,6 +3960,11 @@ export const ensureHarborDemoCpmActivitiesForProject = async (
   }
 
   if (!isHarborDemoProject(projectRow as Record<string, unknown> | null)) {
+    return { ensured: false, insertedCount: 0, seedWarnings };
+  }
+
+  // Archived demo = the company opted out; leave the schedule alone too.
+  if (harborDemoSeedAction(projectRow as { archived_at?: unknown }) === "skip") {
     return { ensured: false, insertedCount: 0, seedWarnings };
   }
 
@@ -4014,14 +4024,26 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
 
     const seedWarnings: string[] = [];
 
+    // Both lookups deliberately INCLUDE archived rows: an archived demo
+    // project is the "this company opted out" signal — seed and top up
+    // nothing, for any of the demo artifacts.
     const { data: existingDemo, error: demoLookupError } = await context.supabase
       .from("projects")
-      .select("id")
+      .select("id,archived_at")
       .eq("organization_id", organizationId)
       .eq("job_number", HARBOR_DEMO_JOB_NUMBER)
       .maybeSingle();
     if (demoLookupError) throw new Error(demoLookupError.message);
     if (existingDemo?.id) {
+      if (harborDemoSeedAction(existingDemo) === "skip") {
+        return {
+          seeded: false as const,
+          exists: true,
+          optedOut: true,
+          demoProjectId: existingDemo.id as string,
+          seedWarnings,
+        };
+      }
       await ensureHarborDemoProjectManager(
         context.supabase,
         existingDemo.id as string,
@@ -4039,7 +4061,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
 
     const { data: existingHarbor, error: harborLookupError } = await context.supabase
       .from("projects")
-      .select("id")
+      .select("id,archived_at")
       .eq("organization_id", organizationId)
       .eq("name", HARBOR_DEMO_NAME)
       .eq("client", HARBOR_DEMO_CLIENT)
@@ -4047,6 +4069,15 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       .maybeSingle();
     if (harborLookupError) throw new Error(harborLookupError.message);
     if (existingHarbor?.id) {
+      if (harborDemoSeedAction(existingHarbor) === "skip") {
+        return {
+          seeded: false as const,
+          exists: true,
+          optedOut: true,
+          demoProjectId: existingHarbor.id as string,
+          seedWarnings,
+        };
+      }
       await ensureHarborDemoProjectManager(
         context.supabase,
         existingHarbor.id as string,
@@ -4096,17 +4127,20 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
     if (projectError?.code === "23505") {
       const { data: retryDemo, error: retryError } = await context.supabase
         .from("projects")
-        .select("id")
+        .select("id,archived_at")
         .eq("organization_id", organizationId)
         .eq("job_number", HARBOR_DEMO_JOB_NUMBER)
         .maybeSingle();
       if (retryError) throw new Error(retryError.message);
       if (retryDemo?.id) {
-        await seedHarborDemoCpmActivities(context.supabase, retryDemo.id as string, seedWarnings);
-        await seedHarborDemoInspections(context.supabase, retryDemo.id as string, seedWarnings);
+        if (harborDemoSeedAction(retryDemo) !== "skip") {
+          await seedHarborDemoCpmActivities(context.supabase, retryDemo.id as string, seedWarnings);
+          await seedHarborDemoInspections(context.supabase, retryDemo.id as string, seedWarnings);
+        }
         return {
           seeded: false as const,
           exists: true,
+          optedOut: harborDemoSeedAction(retryDemo) === "skip",
           demoProjectId: retryDemo.id as string,
           seedWarnings,
         };

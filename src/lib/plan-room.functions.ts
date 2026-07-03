@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { findHarborDemoProject, harborDemoSeedAction } from "@/lib/demo-seed";
 import {
   calculateEstimateTotals,
   resolveLibraryUnitCosts,
@@ -301,6 +302,20 @@ async function ensureHarborPlanRoomDemo(
   if (isMissingPlanRoomSchemaError(existing.error)) return false;
   if (existing.error) throw new Error(existing.error.message);
   if (((existing.data ?? []) as unknown[]).length > 0) return true;
+
+  // An archived Harbor demo project means the company opted out of the
+  // demo: the sample plan set must not come back either. Schema is fine,
+  // so report ready — there is just nothing to seed.
+  const { data: orgProjects, error: orgProjectsError } = await dynamicTable(
+    context.supabase,
+    "projects",
+  )
+    .select("id,name,client,job_number,archived_at")
+    .eq("organization_id", str(estimate.organization_id))
+    .limit(100);
+  if (orgProjectsError) throw new Error(orgProjectsError.message);
+  const harborProject = findHarborDemoProject((orgProjects ?? []) as Record<string, unknown>[]);
+  if (harborDemoSeedAction(harborProject) === "skip") return true;
 
   const { data: planSet, error: planSetError } = await dynamicTable(
     context.supabase,

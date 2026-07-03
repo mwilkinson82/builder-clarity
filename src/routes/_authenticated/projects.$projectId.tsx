@@ -126,6 +126,7 @@ import {
   type SovImportRow,
   type BucketRow,
 } from "@/lib/projects.functions";
+import { isHarborDemoProject } from "@/lib/demo-seed";
 import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
 import {
@@ -571,10 +572,15 @@ function ProjectPage() {
   });
   const deleteMutation = useMutation({
     mutationFn: () => deleteProjectFn({ data: { projectId } }),
-    onSuccess: () => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["portfolio-billing"] });
-      toast.success("Project deleted");
+      const demoArchived = Boolean(result && "demoArchived" in result && result.demoArchived);
+      toast.success(demoArchived ? "Training project hidden" : "Project deleted", {
+        description: demoArchived
+          ? "Harbor Residence is hidden for your whole company and won't come back on its own."
+          : undefined,
+      });
       navigate({ to: "/" });
     },
     onError: (err) =>
@@ -1170,6 +1176,9 @@ function ProjectPage() {
     reviews[0]?.forecast_completion_date_before ??
     null;
   const jobNumber = project.job_number || `ID ${project.id.slice(0, 8).toUpperCase()}`;
+  // The Harbor training project hides for the whole company instead of
+  // hard-deleting (the demo seeders would just bring a deleted one back).
+  const isDemoProject = isHarborDemoProject(project as unknown as Record<string, unknown>);
   const openTodoCount = decisions.filter((d) => d.status !== "resolved").length;
   const openInspectionCount = inspections.filter(
     (inspection) => !["passed", "cancelled"].includes(inspection.status),
@@ -1667,15 +1676,26 @@ function ProjectPage() {
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete this project permanently?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This permanently deletes “{project.name}” and every related record — SOV/cost
-                      buckets, exposures, change orders, decisions, schedule, daily reports, billing
-                      applications, invoices, and payments. This cannot be undone. Prefer{" "}
-                      <strong>Archive</strong> if you might need it back.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
+                  {isDemoProject ? (
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Hide the training project?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This hides the Harbor Residence training project for your whole company. It
+                        won’t come back on its own; an admin can restore it later if you want it
+                        again.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                  ) : (
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete this project permanently?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This permanently deletes “{project.name}” and every related record —
+                        SOV/cost buckets, exposures, change orders, decisions, schedule, daily
+                        reports, billing applications, invoices, and payments. This cannot be
+                        undone. Prefer <strong>Archive</strong> if you might need it back.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                  )}
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
                     <AlertDialogAction
@@ -1686,7 +1706,13 @@ function ProjectPage() {
                         deleteMutation.mutate();
                       }}
                     >
-                      {deleteMutation.isPending ? "Deleting…" : "Delete forever"}
+                      {deleteMutation.isPending
+                        ? isDemoProject
+                          ? "Hiding…"
+                          : "Deleting…"
+                        : isDemoProject
+                          ? "Hide training project"
+                          : "Delete forever"}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>

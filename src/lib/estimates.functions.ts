@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { findHarborDemoProject, harborDemoSeedAction } from "@/lib/demo-seed";
 import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "@/lib/estimate-seed-data";
 import type { Json } from "@/integrations/supabase/types";
 
@@ -615,16 +616,15 @@ async function ensureHarborDemoEstimate(
   }
 
   const { data: projects, error: projectsError } = await dynamicTable(context.supabase, "projects")
-    .select("id,name,client,job_number")
+    .select("id,name,client,job_number,archived_at")
     .eq("organization_id", organizationId)
     .limit(100);
   if (projectsError) throw new Error(projectsError.message);
 
-  const harborProject = ((projects ?? []) as Record<string, unknown>[]).find((project) => {
-    const name = str(project.name).toLowerCase();
-    const jobNumber = str(project.job_number).toLowerCase();
-    return name.includes("harbor residence") || jobNumber.includes("harbor");
-  });
+  const harborProject = findHarborDemoProject((projects ?? []) as Record<string, unknown>[]);
+  // An archived demo project means the company opted out of the demo:
+  // the sample estimate must not come back either.
+  if (harborDemoSeedAction(harborProject) === "skip") return;
 
   const externalIds = Array.from(
     new Set(HARBOR_DEMO_ESTIMATE_LINES.map((line) => line.external_id).filter(Boolean)),
@@ -1249,16 +1249,14 @@ async function ensureHarborSampleMasterSheet(
   }
 
   const { data: projects, error: projectsError } = await dynamicTable(context.supabase, "projects")
-    .select("id,name,job_number")
+    .select("id,name,client,job_number,archived_at")
     .eq("organization_id", organizationId)
     .limit(100);
   if (projectsError) throw new Error(projectsError.message);
 
-  const harborProject = ((projects ?? []) as Record<string, unknown>[]).find((project) => {
-    const name = str(project.name).toLowerCase();
-    const jobNumber = str(project.job_number).toLowerCase();
-    return name.includes("harbor residence") || jobNumber.includes("harbor");
-  });
+  const harborProject = findHarborDemoProject((projects ?? []) as Record<string, unknown>[]);
+  // Same opt-out rule as the sample estimate: archived demo, no reseed.
+  if (harborDemoSeedAction(harborProject) === "skip") return;
 
   const externalIds = Array.from(
     new Set(HARBOR_SAMPLE_MASTER_SHEET_LINES.map((line) => line.external_id).filter(Boolean)),
