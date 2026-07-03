@@ -154,6 +154,7 @@ export type ScheduleGridView =
   | "recovery"
   | "critical"
   | "issues"
+  | "no_logic"
   | "milestones";
 export type ActivityPatchOptions = { silent?: boolean };
 export type ActivityMatrixRow =
@@ -203,6 +204,7 @@ export const SCHEDULE_GRID_VIEW_OPTIONS: Array<{ value: ScheduleGridView; label:
   { value: "recovery", label: "Recovery" },
   { value: "critical", label: "Critical" },
   { value: "issues", label: "Issues" },
+  { value: "no_logic", label: "No logic" },
   { value: "milestones", label: "Milestones" },
 ];
 export const SCHEDULE_LOOKAHEAD_DAYS: Partial<Record<ScheduleGridView, number>> = {

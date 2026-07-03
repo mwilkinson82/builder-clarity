@@ -1,5 +1,6 @@
 import { type ScheduleActivityRow, type ScheduleDelayFragmentRow } from "@/lib/schedule.functions";
 import {
+  isUntiedConstructLineTask,
   offsetFromTimelineStart,
   type ConstructLineCpmModel,
   type ConstructLineCpmTask,
@@ -35,7 +36,6 @@ import {
   taskNeedsStatusUpdateBasis,
   taskNeedsUpdateQueueAction,
 } from "@/lib/schedule-update-queue";
-
 
 export function getDelayPeriodLabel(days: number, width: number, isPrintMode: boolean) {
   if (days <= 0 || width <= 0) return null;
@@ -333,6 +333,7 @@ function taskMatchesScheduleGridView(
       )
     );
   }
+  if (view === "no_logic") return isUntiedConstructLineTask(task);
   if (view === "milestones") return task.isMilestone;
   return true;
 }
@@ -377,6 +378,8 @@ export function describeScheduleGridView(
     return `Recovery needed · negative float, delay, or status exceptions · ${countText}`;
   if (view === "critical") return `Critical and near-critical path · ${countText}`;
   if (view === "issues") return `Schedule issues · ${countText}`;
+  if (view === "no_logic")
+    return `No logic ties yet · tag predecessors to activate CPM · ${countText}`;
   if (view === "milestones") return `Milestones only · ${countText}`;
   return countText;
 }
@@ -389,6 +392,7 @@ export function getScheduleReportTitle(view: ScheduleGridView) {
   if (view === "lookahead_6w") return "6-Week Lookahead Report";
   if (view === "update_queue") return "CPM Update Queue Report";
   if (view === "issues") return "Schedule Issues Report";
+  if (view === "no_logic") return "Activities Without Logic Report";
   if (view === "milestones") return "Milestone Report";
   if (view === "active") return "Active Schedule Report";
   return "Full CPM Schedule Report";

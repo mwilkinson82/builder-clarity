@@ -12,10 +12,12 @@ import {
   Plus,
   ClipboardList,
   CheckCircle2,
+  FileSpreadsheet,
   Printer,
   GitBranch,
   Layers,
   Maximize2,
+  Upload,
   ZoomIn,
   ZoomOut,
   Diamond,
@@ -50,6 +52,8 @@ export function CpmGridToolbar({
   onSeedActivities,
   canSeedActivities,
   isSeedingActivities,
+  onImportSchedule,
+  onBuildFromSov,
   onPrint,
   onToggleActivityDraft,
   isActivityDraftOpen,
@@ -90,6 +94,8 @@ export function CpmGridToolbar({
   onSeedActivities: () => void;
   canSeedActivities: boolean;
   isSeedingActivities: boolean;
+  onImportSchedule: () => void;
+  onBuildFromSov: () => void;
   onPrint: () => void;
   onToggleActivityDraft: () => void;
   isActivityDraftOpen: boolean;
@@ -202,6 +208,28 @@ export function CpmGridToolbar({
           >
             <ClipboardList className="h-4 w-4" />
             {isSeedingActivities ? "Building..." : "Build from milestones"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 gap-2 whitespace-nowrap"
+            title="Bring in a schedule you already have in Excel or CSV"
+            disabled={isSeedingActivities}
+            onClick={onImportSchedule}
+          >
+            <Upload className="h-4 w-4" />
+            Import schedule
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 gap-2 whitespace-nowrap"
+            title="Propose one activity per schedule-of-values line"
+            disabled={isSeedingActivities}
+            onClick={onBuildFromSov}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Build from SOV
           </Button>
           <Button
             type="button"
