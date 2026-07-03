@@ -1,66 +1,95 @@
-## Lovable-managed Supabase migration plan
 
-Overwatch uses the Supabase/database environment managed by Lovable. A GitHub push can deliver the migration files, but the live database still needs Lovable to apply the migrations in order.
+# Stripe test + live coexistence with per-org mode toggle
 
-## Required migration order
+## Goal
 
-1. Confirm the CPM activity foundation is already applied:
-   - `20260626153000_schedule_cpm_activities.sql`
-   - `20260626170000_seed_harbor_residence_cpm_demo.sql`
-   - `20260626232000_reseed_harbor_residence_cpm_demo.sql`
-2. Apply the WBS persistence migration:
-   - `20260629130000_schedule_wbs_sections.sql`
-3. Apply the schedule delay-fragment migration:
-   - `20260629165311_schedule_delay_fragments.sql`
-4. For the estimating module release, apply the estimating migration:
-   - `20260629222000_estimating_module.sql`
+Fire sandbox webhook tests today. Add live keys later without swapping secrets or touching code. Each Overwatch company (organization) chooses its own Stripe mode: `test` or `live`.
 
-The WBS migration creates `public.schedule_wbs_sections`, enables RLS, grants authenticated access, uses the existing `can_read_project` / `can_manage_project` policies, and seeds each project from the existing `schedule_activities.division` values.
+## Step 1 — Reset secrets
 
-The delay-fragment migration creates `public.schedule_delay_fragments`, enables RLS, grants authenticated access, and stores activity-linked delay records with days, source, status, owner, identified date, and resolved date. The CPM workspace degrades safely until this table exists, but activity-level delay records will not save without it.
+Delete the existing `STRIPE_SECRET_KEY` and start clean with explicitly named secrets.
 
-The estimating migration creates `public.cost_library_items`, `public.estimates`, `public.estimate_line_items`, and `public.estimate_markup_defaults`, enables RLS, grants authenticated/service role access, and stores the cost library plus estimate worksheet data used by `/estimates` and `/cost-library`.
+**Sandbox now (you provide):**
+- `STRIPE_SECRET_KEY_TEST` — sandbox `sk_test_...`
+- `STRIPE_WEBHOOK_SECRET_TEST` — signing secret for the sandbox **account** webhook endpoint
+- `STRIPE_CONNECT_WEBHOOK_SECRET_TEST` — signing secret for the sandbox **Connect** webhook endpoint
 
-## Why this matters
+**Live later (added when you're ready, sandbox stays in place):**
+- `STRIPE_SECRET_KEY_LIVE`
+- `STRIPE_WEBHOOK_SECRET_LIVE`
+- `STRIPE_CONNECT_WEBHOOK_SECRET_LIVE`
 
-The CPM workspace now saves WBS add, rename, and drag/drop reorder operations through server functions. Without `schedule_wbs_sections`, the UI can still derive sections from activity divisions as a safe fallback, but WBS order/title changes will not persist in the Lovable-managed database.
+Nothing is ever deleted when going live. Both environments stay available so you can fall back instantly.
 
-## Verification SQL
+## Step 2 — Per-organization mode toggle
 
-Run after applying the migrations:
+Add a `stripe_mode` column to the `organizations` table (enum: `test` | `live`, default `test`). Migration file only — you apply it via your usual protocol.
 
-```sql
-select to_regclass('public.schedule_activities') as schedule_activities_table;
-select to_regclass('public.schedule_wbs_sections') as schedule_wbs_sections_table;
-select to_regclass('public.schedule_delay_fragments') as schedule_delay_fragments_table;
-select to_regclass('public.cost_library_items') as cost_library_items_table;
-select to_regclass('public.estimates') as estimates_table;
-select to_regclass('public.estimate_line_items') as estimate_line_items_table;
-select to_regclass('public.estimate_markup_defaults') as estimate_markup_defaults_table;
+In the **Getting paid** section of Company settings, add a mode selector (visible/editable to `billing.manage`):
+- **Test mode** — badge shown, uses sandbox keys, all Pay buttons and client-facing invoices display a "TEST MODE — no real money" banner so a client never accidentally thinks a sandbox invoice is real.
+- **Live mode** — uses live keys. Requires Stripe Connect account to be `ready` in live before it can be toggled on.
 
-select
-  project_id,
-  count(*) as activity_count
-from public.schedule_activities
-group by project_id
-order by activity_count desc;
+## Step 3 — Server-side key resolution
 
-select
-  project_id,
-  count(*) as wbs_section_count
-from public.schedule_wbs_sections
-group by project_id
-order by wbs_section_count desc;
+Add `src/lib/stripe.server.ts` helpers (extend existing file):
+- `getStripeClient(mode)` returns a Stripe SDK instance built from `STRIPE_SECRET_KEY_TEST` or `STRIPE_SECRET_KEY_LIVE`.
+- `getStripeModeForOrganization(orgId)` reads `organizations.stripe_mode`.
+- All existing payment server functions (checkout session creation, Connect account link, refunds) resolve mode from the organization, then use the matching client. No mode flag is ever accepted from the browser.
 
-select
-  project_id,
-  count(*) as delay_fragment_count,
-  sum(delay_days) filter (where status in ('active', 'accepted')) as open_delay_days
-from public.schedule_delay_fragments
-group by project_id
-order by delay_fragment_count desc;
+## Step 4 — Single webhook endpoint, tries both signing secrets
+
+Keep one route: `src/routes/api/stripe/webhook.ts` (already exists). Behavior:
+
+1. Read raw body + `Stripe-Signature` header.
+2. Try verify against each configured secret in this order until one succeeds:
+   `STRIPE_WEBHOOK_SECRET_TEST`, `STRIPE_WEBHOOK_SECRET_LIVE`, `STRIPE_CONNECT_WEBHOOK_SECRET_TEST`, `STRIPE_CONNECT_WEBHOOK_SECRET_LIVE`.
+3. Missing/unset secrets are skipped silently (so you can run with only test secrets today).
+4. Once verified, tag the event with `mode: 'test' | 'live'` and `source: 'account' | 'connect'` for the idempotency + payment records.
+5. Reject with 401 only if none match.
+6. Idempotency table already planned in STRIPEPHASE1 — event id is unique, duplicates no-op.
+
+You configure **four Stripe webhook endpoints** total (two per environment) all pointing at the same URL:
+
+```
+https://builder-clarity.lovable.app/api/public/stripe/webhook
 ```
 
-Expected result: all `to_regclass` checks return table names, Harbor/demo projects have CPM activity rows, projects with CPM activities have seeded WBS sections, and the delay-fragment count query runs even when no delay records exist yet.
+(Move the route to `/api/public/stripe/webhook` if it isn't already — Stripe is an external caller and the `/api/public/*` prefix bypasses Lovable's auth on published sites.)
 
-For the estimating release, also run `supabase/verification/20260629222000_estimating_module.sql` and confirm the estimating tables, RLS policies, grants, generated total columns, and indexes are present before publishing `main` through Lovable.
+## Step 5 — Test-mode UI safety rail
+
+Anywhere a Stripe-driven surface is client-visible (client invoice page, Pay buttons, Connect status card): if the resolved org mode is `test`, render a persistent "Sandbox — no real payment" ribbon. Prevents any accidental client-facing use of test infrastructure.
+
+## Step 6 — Fire the sandbox tests
+
+Once secrets are in and code is deployed:
+1. In your Stripe sandbox dashboard, create the two webhook endpoints (account + Connect) pointing at the URL above.
+2. Copy the `whsec_...` for each into the two `_TEST` secrets.
+3. Use "Send test webhook" or `stripe trigger checkout.session.completed` / `stripe trigger account.updated`.
+4. I'll check server logs (`stack_modern--server-function-logs` on the published deployment) to confirm signature verification passed, the event was written idempotently, and the invoice/payment/Connect status updated correctly.
+
+## Step 7 — Go live
+
+When ready:
+1. You add the three `_LIVE` secrets.
+2. Create the two live webhook endpoints in Stripe live dashboard, pointing at the same URL, copy their signing secrets into the `_LIVE` slots.
+3. In each org that's ready, toggle Company settings → Getting paid → mode from Test to Live.
+
+No code change, no redeploy, no sandbox teardown.
+
+## Files touched
+
+- `supabase/migrations/<timestamp>_organization_stripe_mode.sql` (new)
+- `src/lib/stripe.server.ts` (extend: mode-aware client resolver)
+- `src/lib/payments.functions.ts` (thread org mode through Checkout, Connect account link, refunds)
+- `src/routes/api/stripe/webhook.ts` — or move to `src/routes/api/public/stripe/webhook.ts` if not already public — multi-secret verify + mode/source tagging
+- `src/components/billing/GettingPaidSection.tsx` (mode selector + guard against flipping to live before Connect is live-ready)
+- `src/components/billing/HowToPayBlock.tsx` + client invoice route (sandbox ribbon)
+- `src/integrations/supabase/types.ts` regenerates from the migration (auto)
+
+## What I need from you to start
+
+1. Approve this plan.
+2. Then I'll switch to build mode, delete the existing `STRIPE_SECRET_KEY`, and open the secure form for the three `_TEST` secrets. You paste them in.
+3. You create the two sandbox webhook endpoints in Stripe and give me their signing secrets (they'll go into the same secure form).
+4. I ship the code, we fire tests, verify logs.
