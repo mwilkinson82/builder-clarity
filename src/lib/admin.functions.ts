@@ -1,6 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { isOverwatchAdminEmail } from "@/lib/admin-access";
 
 type DynamicSupabaseError = { code?: string; message?: string } | null;
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError };
@@ -63,18 +62,34 @@ function isMissingRestRelation(error: DynamicSupabaseError, relation: string) {
   );
 }
 
-async function requireOverwatchAdmin(context: { supabase: unknown; userId: string }) {
-  const profileRes = await dynamicTable(context.supabase, "profiles")
-    .select("email,full_name")
-    .eq("id", context.userId)
-    .maybeSingle();
+type SuperAdminRpcClient = {
+  rpc(fn: string): PromiseLike<{ data: unknown; error: { message?: string } | null }>;
+};
 
-  if (profileRes.error) throw new Error(profileRes.error.message);
-  const profile = (profileRes.data ?? {}) as Record<string, unknown>;
-  if (!isOverwatchAdminEmail(str(profile.email))) {
-    throw new Error("This Overwatch admin workspace is restricted to Marshall Wilkinson.");
+// One admin list: the database's is_super_admin() (app_super_admins table
+// plus its recovery emails) decides who is an Overwatch admin. The old
+// client-side email constant is gone (audit Finding 8).
+async function checkIsSuperAdmin(context: { supabase: unknown }) {
+  const { data, error } = await (context.supabase as SuperAdminRpcClient).rpc("is_super_admin");
+  if (error) throw new Error(error.message ?? "Could not verify Overwatch admin access.");
+  return Boolean(data);
+}
+
+async function requireOverwatchAdmin(context: { supabase: unknown; userId: string }) {
+  if (!(await checkIsSuperAdmin(context))) {
+    throw new Error("This Overwatch admin workspace is restricted to Overwatch super admins.");
   }
 }
+
+export const getIsSuperAdmin = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<boolean> => {
+    try {
+      return await checkIsSuperAdmin(context);
+    } catch {
+      return false;
+    }
+  });
 
 function normalizeActivitySession(
   row: Record<string, unknown>,

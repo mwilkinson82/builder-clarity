@@ -202,7 +202,8 @@ await expectFile(
   "IOR report email template",
 );
 await expectFile("src/lib/stripe.server.ts", "Stripe server helper");
-await expectFile("src/lib/admin-access.ts", "admin access helper");
+await expectFile("src/lib/capabilities.ts", "roles capability model");
+await expectFile("src/components/team/CapabilityPicker.tsx", "capability picker component");
 await expectFile("src/lib/admin.functions.ts", "admin server functions");
 await expectFile(
   "src/routes/api/stripe/connect/account-link.ts",
@@ -718,8 +719,11 @@ await expectContains(
     /data-testid="client-access-priority-panel"/,
     /data-testid="project-asset-access-assignments"/,
     /data-testid="company-profile-record"/,
-    /isOverwatchAdminEmail/,
+    /team\?\.isSuperAdmin/,
     /<Link to="\/admin">/,
+    /CapabilityPicker/,
+    /accessLabelForMember/,
+    /ROLE_PRESETS/,
     /PlanReadinessPanel/,
     /Plan and payment readiness/,
     /Commercial setup/,
@@ -754,13 +758,19 @@ await expectContains(
   "src/routes/_authenticated/admin.tsx",
   [
     /createFileRoute\("\/_authenticated\/admin"\)/,
-    /isOverwatchAdminEmail/,
+    /getIsSuperAdmin/,
     /getOverwatchAdminWorkspace/,
     /data-testid="overwatch-admin-live-activity"/,
     /refetchInterval:\s*30_000/,
     /Active users/,
   ],
-  "Marshall-only admin page shows live site activity",
+  "super-admin-only admin page shows live site activity",
+);
+
+await expectNotContains(
+  "src/routes/_authenticated/admin.tsx",
+  [/isOverwatchAdminEmail/],
+  "admin route asks the database's is_super_admin instead of a client-side email list",
 );
 
 await expectContains(
@@ -812,22 +822,60 @@ await expectContains(
 );
 
 await expectContains(
-  "src/lib/admin-access.ts",
-  [/wilkinson\.marshall@gmail\.com/, /isOverwatchAdminEmail/],
-  "admin access helper restricts admin affordances to Marshall's email",
+  "src/lib/capabilities.ts",
+  [
+    /projects\.view_assigned/,
+    /projects\.view_all/,
+    /projects\.manage/,
+    /financials\.view/,
+    /company\.manage_team/,
+    /company\.manage_settings/,
+    /ROLE_PRESETS/,
+    /seedCapabilitiesForRole/,
+    /accessLabelForMember/,
+    /Custom \(based on/,
+  ],
+  "capability model defines the twelve flags, role presets, and custom labeling",
 );
 
 await expectContains(
   "src/lib/admin.functions.ts",
   [
     /requireOverwatchAdmin/,
-    /isOverwatchAdminEmail/,
+    /is_super_admin/,
+    /getIsSuperAdmin/,
     /supabaseAdmin/,
     /user_activity_presence/,
     /schemaReady/,
     /activeWindowSeconds/,
   ],
-  "admin server function gates service-role activity reads behind Marshall-only authorization",
+  "admin server function gates service-role activity reads behind the database super-admin list",
+);
+
+await expectContains(
+  "supabase/migrations/20260703070000_roles_capabilities_foundation.sql",
+  [
+    /ADD COLUMN IF NOT EXISTS capabilities jsonb NOT NULL DEFAULT '\{\}'::jsonb/,
+    /role_preset_capabilities/,
+    /tg_membership_capabilities_default/,
+    /\|\| jsonb_build_object\('projects\.view_all', true\)/,
+    /WHERE capabilities = '\{\}'::jsonb/,
+  ],
+  "capabilities foundation migration stores flags, presets, and the behavior-preserving seed",
+);
+
+await expectContains(
+  "supabase/migrations/20260703070100_roles_capability_enforcement.sql",
+  [
+    /has_org_capability/,
+    /can_view_financials/,
+    /'projects\.view_all'/,
+    /'projects\.view_assigned'/,
+    /'projects\.manage'/,
+    /"company\.manage_team": true/,
+    /NULLIF\(v_invite\.capabilities, '\{\}'::jsonb\)/,
+  ],
+  "capability enforcement migration rewrites access helpers without touching any RLS policy",
 );
 
 await expectContains(

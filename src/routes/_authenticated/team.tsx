@@ -8,6 +8,7 @@ import {
   BriefcaseBusiness,
   Building2,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   CreditCard,
   FileImage,
@@ -30,7 +31,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { isOverwatchAdminEmail } from "@/lib/admin-access";
 import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 import {
   Select,
@@ -41,6 +41,9 @@ import {
 } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
+import { CapabilityPicker } from "@/components/team/CapabilityPicker";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ROLE_PRESETS, accessLabelForMember, type CapabilitySet } from "@/lib/capabilities";
 import {
   grantClientProjectAccess,
   revokeClientProjectAccess,
@@ -330,6 +333,9 @@ function TeamPage() {
   });
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<AccountRole>("project_manager");
+  const [inviteCapabilities, setInviteCapabilities] = useState<CapabilitySet>({
+    ...ROLE_PRESETS.project_manager,
+  });
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedUserId, setSelectedUserId] = useState("");
   const [projectRole, setProjectRole] = useState<ProjectMemberRole>("viewer");
@@ -535,7 +541,9 @@ function TeamPage() {
     mutationFn: async () => {
       const email = inviteEmail.trim().toLowerCase();
       if (!email) throw new Error("Enter an email address.");
-      await createInvite({ data: { email, role: inviteRole } });
+      await createInvite({
+        data: { email, role: inviteRole, capabilities: inviteCapabilities },
+      });
       await sendOverwatchMagicLink({ email, next: "/", context: "company_invite" });
       return email;
     },
@@ -546,6 +554,7 @@ function TeamPage() {
       });
       setInviteEmail("");
       setInviteRole("project_manager");
+      setInviteCapabilities({ ...ROLE_PRESETS.project_manager });
     },
     onError: (error) => {
       toast.error("Invite did not send", {
@@ -559,6 +568,7 @@ function TeamPage() {
       membershipId: string;
       role?: AccountRole;
       status?: "active" | "disabled";
+      capabilities?: CapabilitySet;
     }) => updateMember({ data: payload }),
     onSuccess: async () => {
       await refreshWorkspace();
@@ -770,7 +780,8 @@ function TeamPage() {
       : "";
   const isClientPermissionSaving = (accessId: string, field: ClientPermissionField) =>
     clientPermissionSavingKey === `${accessId}:${field}`;
-  const canOpenOverwatchAdmin = isOverwatchAdminEmail(team?.currentProfile.email);
+  // One admin list: the workspace payload asks the database's is_super_admin().
+  const canOpenOverwatchAdmin = Boolean(team?.isSuperAdmin);
   const memberSummary = useMemo(() => {
     if (!team) {
       return { active: 0, disabled: 0, owners: 0 };
@@ -860,8 +871,11 @@ function TeamPage() {
               <UsageCard
                 icon={<ShieldCheck className="h-4 w-4" />}
                 label="Access"
-                value={roleLabel(team.currentUserRole ?? "member")}
-                sub={team.canManageTeam ? "can manage company" : "limited access"}
+                value={accessLabelForMember(
+                  team.currentUserRole ?? "member",
+                  team.currentUserCapabilities,
+                )}
+                sub={team.canManageTeam ? "can manage people" : "limited access"}
               />
               <UsageCard
                 icon={<Users className="h-4 w-4" />}
@@ -923,8 +937,12 @@ function TeamPage() {
 
             {!team.canManageTeam && (
               <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-                Your role is {roleLabel(team.currentUserRole ?? "member")}. Owners, admins, and
-                executives can change company access.
+                Your access is{" "}
+                {accessLabelForMember(
+                  team.currentUserRole ?? "member",
+                  team.currentUserCapabilities,
+                )}
+                . Only people with the "Manage people" capability can change company access.
               </div>
             )}
 
@@ -967,11 +985,16 @@ function TeamPage() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Company role</Label>
+                    <Label>Access preset</Label>
                     <Select
                       value={inviteRole}
                       disabled={!team.canManageTeam}
-                      onValueChange={(value) => setInviteRole(value as AccountRole)}
+                      onValueChange={(value) => {
+                        const role = value as AccountRole;
+                        setInviteRole(role);
+                        // Choosing a preset fills the checkboxes below.
+                        setInviteCapabilities({ ...ROLE_PRESETS[role] });
+                      }}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -997,6 +1020,23 @@ function TeamPage() {
                   </Button>
                 </div>
 
+                <div className="mt-4 rounded-md border border-hairline p-3">
+                  <div className="mb-3 flex items-baseline justify-between gap-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      What this invite can do
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {accessLabelForMember(inviteRole, inviteCapabilities)}
+                    </div>
+                  </div>
+                  <CapabilityPicker
+                    idPrefix="invite"
+                    value={inviteCapabilities}
+                    onChange={setInviteCapabilities}
+                    disabled={!team.canManageTeam}
+                  />
+                </div>
+
                 <div className="mt-5 rounded-md border border-hairline">
                   <div className="border-b border-hairline bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     Pending invites
@@ -1019,7 +1059,7 @@ function TeamPage() {
                             </div>
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            {roleLabel(invite.role)}
+                            {accessLabelForMember(invite.role, invite.capabilities)}
                           </div>
                           <div className="text-xs font-semibold uppercase tracking-[0.12em] text-warning">
                             {invite.status}
@@ -1065,70 +1105,111 @@ function TeamPage() {
                   />
                 </div>
                 <div className="mt-4 divide-y divide-hairline rounded-md border border-hairline">
-                  {team.members.map((member) => (
-                    <div
-                      key={member.id}
-                      className="grid gap-3 px-3 py-3 lg:grid-cols-[1fr_190px_150px] lg:items-center"
-                    >
-                      <div>
-                        <div className="font-medium">{member.full_name || member.email}</div>
-                        <div className="text-xs text-muted-foreground">{member.email}</div>
+                  {team.members.map((member) => {
+                    const isOwnerRow = member.role === "owner";
+                    const isSelf = member.user_id === team.currentProfile.id;
+                    const canEditRow = team.canManageTeam && !isOwnerRow;
+                    const accessLabel = accessLabelForMember(member.role, member.capabilities);
+                    return (
+                      <div key={member.id} className="space-y-3 px-3 py-3">
+                        <div className="grid gap-3 lg:grid-cols-[1fr_190px_150px] lg:items-center">
+                          <div>
+                            <div className="font-medium">{member.full_name || member.email}</div>
+                            <div className="text-xs text-muted-foreground">{member.email}</div>
+                          </div>
+                          {canEditRow ? (
+                            <>
+                              <Select
+                                value={member.role}
+                                onValueChange={(value) =>
+                                  // Choosing a preset fills the capability
+                                  // boxes with that preset's set.
+                                  memberMutation.mutate({
+                                    membershipId: member.id,
+                                    role: value as AccountRole,
+                                    capabilities: { ...ROLE_PRESETS[value as AccountRole] },
+                                  })
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {roleOptions.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Select
+                                value={member.status === "pending" ? "active" : member.status}
+                                onValueChange={(value) =>
+                                  memberMutation.mutate({
+                                    membershipId: member.id,
+                                    status: value as "active" | "disabled",
+                                  })
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {memberStatusOptions.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-sm text-muted-foreground">{accessLabel}</div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                                {member.status}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                        {isOwnerRow ? (
+                          <div className="text-xs text-muted-foreground">
+                            Company owner — full access. Owner access can't be edited.
+                          </div>
+                        ) : (
+                          <Collapsible>
+                            <CollapsibleTrigger className="group flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
+                              <ChevronDown className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180" />
+                              <span>
+                                Access: <span className="text-foreground">{accessLabel}</span>
+                              </span>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="pt-3">
+                              <CapabilityPicker
+                                idPrefix={`member-${member.id}`}
+                                value={member.capabilities}
+                                disabled={!team.canManageTeam || memberMutation.isPending}
+                                lockedKeys={
+                                  isSelf
+                                    ? {
+                                        "company.manage_team":
+                                          "You can't remove your own people-management access.",
+                                      }
+                                    : undefined
+                                }
+                                onChange={(next) =>
+                                  memberMutation.mutate({
+                                    membershipId: member.id,
+                                    capabilities: next,
+                                  })
+                                }
+                              />
+                            </CollapsibleContent>
+                          </Collapsible>
+                        )}
                       </div>
-                      {team.canManageTeam ? (
-                        <>
-                          <Select
-                            value={member.role}
-                            onValueChange={(value) =>
-                              memberMutation.mutate({
-                                membershipId: member.id,
-                                role: value as AccountRole,
-                              })
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {roleOptions.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Select
-                            value={member.status === "pending" ? "active" : member.status}
-                            onValueChange={(value) =>
-                              memberMutation.mutate({
-                                membershipId: member.id,
-                                status: value as "active" | "disabled",
-                              })
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {memberStatusOptions.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </>
-                      ) : (
-                        <>
-                          <div className="text-sm text-muted-foreground">
-                            {roleLabel(member.role)}
-                          </div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                            {member.status}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </section>
@@ -1656,7 +1737,7 @@ function TeamPage() {
                           companyInitials(orgForm.name)
                         )}
                       </div>
-                      {team.canManageTeam && (
+                      {team.canManageSettings && (
                         <div className="space-y-2">
                           <Label htmlFor="company-logo-upload">Logo</Label>
                           <Input
@@ -1698,7 +1779,7 @@ function TeamPage() {
                           <Label>Company name</Label>
                           <Input
                             value={orgForm.name}
-                            disabled={!team.canManageTeam}
+                            disabled={!team.canManageSettings}
                             onChange={(event) =>
                               setOrgForm({ ...orgForm, name: event.target.value })
                             }
@@ -1708,7 +1789,7 @@ function TeamPage() {
                           <Label>Legal name</Label>
                           <Input
                             value={orgForm.legal_name}
-                            disabled={!team.canManageTeam}
+                            disabled={!team.canManageSettings}
                             onChange={(event) =>
                               setOrgForm({ ...orgForm, legal_name: event.target.value })
                             }
@@ -1719,7 +1800,7 @@ function TeamPage() {
                           <Label>Slug</Label>
                           <Input
                             value={orgForm.slug}
-                            disabled={!team.canManageTeam}
+                            disabled={!team.canManageSettings}
                             onChange={(event) =>
                               setOrgForm({ ...orgForm, slug: event.target.value })
                             }
@@ -1731,7 +1812,7 @@ function TeamPage() {
                           <Label>Website</Label>
                           <Input
                             value={orgForm.website_url}
-                            disabled={!team.canManageTeam}
+                            disabled={!team.canManageSettings}
                             onChange={(event) =>
                               setOrgForm({ ...orgForm, website_url: event.target.value })
                             }
@@ -1742,7 +1823,7 @@ function TeamPage() {
                           <Label>Office phone</Label>
                           <Input
                             value={orgForm.office_phone}
-                            disabled={!team.canManageTeam}
+                            disabled={!team.canManageSettings}
                             onChange={(event) =>
                               setOrgForm({ ...orgForm, office_phone: event.target.value })
                             }
@@ -1752,7 +1833,7 @@ function TeamPage() {
                           <Label>Country</Label>
                           <Input
                             value={orgForm.country}
-                            disabled={!team.canManageTeam}
+                            disabled={!team.canManageSettings}
                             onChange={(event) =>
                               setOrgForm({ ...orgForm, country: event.target.value })
                             }
@@ -1767,7 +1848,7 @@ function TeamPage() {
                       <Label>Address line 1</Label>
                       <Input
                         value={orgForm.address_line1}
-                        disabled={!team.canManageTeam}
+                        disabled={!team.canManageSettings}
                         onChange={(event) =>
                           setOrgForm({ ...orgForm, address_line1: event.target.value })
                         }
@@ -1777,7 +1858,7 @@ function TeamPage() {
                       <Label>Address line 2</Label>
                       <Input
                         value={orgForm.address_line2}
-                        disabled={!team.canManageTeam}
+                        disabled={!team.canManageSettings}
                         onChange={(event) =>
                           setOrgForm({ ...orgForm, address_line2: event.target.value })
                         }
@@ -1789,7 +1870,7 @@ function TeamPage() {
                       <Label>City</Label>
                       <Input
                         value={orgForm.city}
-                        disabled={!team.canManageTeam}
+                        disabled={!team.canManageSettings}
                         onChange={(event) => setOrgForm({ ...orgForm, city: event.target.value })}
                       />
                     </div>
@@ -1797,7 +1878,7 @@ function TeamPage() {
                       <Label>State</Label>
                       <Input
                         value={orgForm.state}
-                        disabled={!team.canManageTeam}
+                        disabled={!team.canManageSettings}
                         onChange={(event) => setOrgForm({ ...orgForm, state: event.target.value })}
                       />
                     </div>
@@ -1805,7 +1886,7 @@ function TeamPage() {
                       <Label>ZIP</Label>
                       <Input
                         value={orgForm.postal_code}
-                        disabled={!team.canManageTeam}
+                        disabled={!team.canManageSettings}
                         onChange={(event) =>
                           setOrgForm({ ...orgForm, postal_code: event.target.value })
                         }
@@ -1817,7 +1898,7 @@ function TeamPage() {
                       <Label>License number</Label>
                       <Input
                         value={orgForm.license_number}
-                        disabled={!team.canManageTeam}
+                        disabled={!team.canManageSettings}
                         onChange={(event) =>
                           setOrgForm({ ...orgForm, license_number: event.target.value })
                         }
@@ -1827,7 +1908,7 @@ function TeamPage() {
                       <Label>Tax identifier</Label>
                       <Input
                         value={orgForm.tax_identifier}
-                        disabled={!team.canManageTeam}
+                        disabled={!team.canManageSettings}
                         onChange={(event) =>
                           setOrgForm({ ...orgForm, tax_identifier: event.target.value })
                         }
@@ -1839,7 +1920,7 @@ function TeamPage() {
                       <Label>Billing contact</Label>
                       <Input
                         value={orgForm.billing_contact_name}
-                        disabled={!team.canManageTeam}
+                        disabled={!team.canManageSettings}
                         onChange={(event) =>
                           setOrgForm({ ...orgForm, billing_contact_name: event.target.value })
                         }
@@ -1851,7 +1932,7 @@ function TeamPage() {
                       <Input
                         type="email"
                         value={orgForm.billing_email}
-                        disabled={!team.canManageTeam}
+                        disabled={!team.canManageSettings}
                         onChange={(event) =>
                           setOrgForm({ ...orgForm, billing_email: event.target.value })
                         }
@@ -1918,7 +1999,7 @@ function TeamPage() {
                       value={team.organization.contractor_circle_grant ? "Active" : "None"}
                     />
                   </div>
-                  {team.canManageTeam && (
+                  {team.canManageSettings && (
                     <div className="flex justify-end">
                       <Button
                         onClick={() => orgMutation.mutate()}
