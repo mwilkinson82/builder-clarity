@@ -845,7 +845,7 @@ for (const requiredScheduleRiskText of [
   "{printReportLabel} · {criticalBasisLabel} · Finish",
   "constructline-cpm-print-status-critical",
   "constructline-cpm-print-status-recovery",
-  "Critical path finish {shortDate(displayedCpmModel.cpmFinishDate)}",
+  "Critical path finish {shortDate(model.cpmFinishDate)}",
   "Legend: critical red",
   "Schedule snapshot",
   "CpmNetworkBasisStrip",
@@ -1437,7 +1437,7 @@ assert.ok(
 
 for (const requiredPrintStyle of [
   ".constructline-cpm-print-footer",
-  ".constructline-cpm-print-report-strip",
+  ".constructline-cpm-print-strip-compact",
   ".constructline-cpm-print-footer-report",
   ".constructline-delay-extension",
   ".constructline-delay-marker",

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -269,17 +270,16 @@ assertIncludes(
 // the CPM matrix on the printed page rather than reverting to a browser-like scrolling grid.
 for (const requiredPrintLayoutText of [
   "size: 17in 11in;",
-  ".constructline-cpm-print-report-strip",
-  "grid-template-columns: 1.28in 1.45in 1.1in 1.05in 1.05in minmax(0, 1fr);",
+  ".constructline-cpm-print-page-break",
+  "break-after: page;",
+  ".constructline-cpm-print-strip-compact",
   "overflow: hidden;",
   "text-overflow: ellipsis;",
   "white-space: nowrap;",
   ".constructline-cpm-print-status-critical",
   "border-left-width: 0.055in;",
-  ".constructline-cpm-print-report-strip-report",
-  "background: #221f1b !important;",
-  ".constructline-cpm-print-report-strip-basis",
-  "border-left: 0.035in solid #d53c31;",
+  "background: #221f1b;",
+  "border-color: #d53c31;",
   ".constructline-cpm-print-footer",
   "flex-wrap: wrap;",
   ".constructline-cpm-print-footer-report",
@@ -314,5 +314,36 @@ for (const requiredStatusedCpmText of [
     `CPM statused update workflow missing source contract: ${requiredStatusedCpmText}`,
   );
 }
+
+// Print pagination contract: one sheet when it fits, explicit page chunks
+// when it does not (headers repeat per page, orphan control, footer under
+// the last content). The full PDF proof runs in the print smoke below.
+for (const requiredPrintPaginationText of [
+  "export function computeCpmPrintChunks",
+  "paginateSchedulePrint({",
+  "PRINT_MIN_TASK_ROWS_PER_PAGE",
+  "constructline-cpm-print-page-break",
+  "constructline-cpm-print-strip-compact",
+]) {
+  assertIncludes(
+    scheduleRiskSource,
+    requiredPrintPaginationText,
+    `Print pagination contract missing: ${requiredPrintPaginationText}`,
+  );
+}
+assertIncludes(
+  stylesSource,
+  ".constructline-cpm-matrix-print .constructline-cpm-matrix-scale",
+  "The timeline range strip must be hidden in print (dates live in the titlebar).",
+);
+
+// Headless-Chromium PDF proof: 22 activities -> exactly one 11x17 sheet;
+// 60 activities -> paginated to the same page count the math predicts, no
+// orphan pages. Requires a prior `npm run build` (compiled CSS) and Chrome.
+execFileSync(
+  process.execPath,
+  ["--experimental-strip-types", resolve(rootDir, "scripts/constructline-cpm-print-smoke.ts")],
+  { cwd: rootDir, stdio: ["ignore", "inherit", "inherit"] },
+);
 
 console.log("ConstructLine CPM layout smoke checks passed.");
