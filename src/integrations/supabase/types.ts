@@ -239,6 +239,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           due_date: string | null
+          enabled_payment_methods: Json
           id: string
           invoice_number: string
           issue_date: string | null
@@ -266,6 +267,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           due_date?: string | null
+          enabled_payment_methods?: Json
           id?: string
           invoice_number?: string
           issue_date?: string | null
@@ -293,6 +295,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           due_date?: string | null
+          enabled_payment_methods?: Json
           id?: string
           invoice_number?: string
           issue_date?: string | null
@@ -1803,6 +1806,7 @@ export type Database = {
         Row: {
           accepted_at: string | null
           accepted_by: string | null
+          capabilities: Json
           created_at: string
           email: string
           expires_at: string
@@ -1816,6 +1820,7 @@ export type Database = {
         Insert: {
           accepted_at?: string | null
           accepted_by?: string | null
+          capabilities?: Json
           created_at?: string
           email: string
           expires_at?: string
@@ -1829,6 +1834,7 @@ export type Database = {
         Update: {
           accepted_at?: string | null
           accepted_by?: string | null
+          capabilities?: Json
           created_at?: string
           email?: string
           expires_at?: string
@@ -1851,6 +1857,7 @@ export type Database = {
       }
       organization_memberships: {
         Row: {
+          capabilities: Json
           created_at: string
           id: string
           invited_by: string | null
@@ -1862,6 +1869,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          capabilities?: Json
           created_at?: string
           id?: string
           invited_by?: string | null
@@ -1873,6 +1881,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          capabilities?: Json
           created_at?: string
           id?: string
           invited_by?: string | null
@@ -1888,6 +1897,62 @@ export type Database = {
             foreignKeyName: "organization_memberships_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_payment_profiles: {
+        Row: {
+          account_number: string
+          bank_name: string
+          card_fee_pass_through: boolean
+          created_at: string
+          created_by: string | null
+          default_payment_methods: Json
+          id: string
+          organization_id: string
+          remittance_memo_template: string
+          routing_number: string
+          stripe_amount_threshold_cents: number
+          updated_at: string
+          wire_instructions: string
+        }
+        Insert: {
+          account_number?: string
+          bank_name?: string
+          card_fee_pass_through?: boolean
+          created_at?: string
+          created_by?: string | null
+          default_payment_methods?: Json
+          id?: string
+          organization_id: string
+          remittance_memo_template?: string
+          routing_number?: string
+          stripe_amount_threshold_cents?: number
+          updated_at?: string
+          wire_instructions?: string
+        }
+        Update: {
+          account_number?: string
+          bank_name?: string
+          card_fee_pass_through?: boolean
+          created_at?: string
+          created_by?: string | null
+          default_payment_methods?: Json
+          id?: string
+          organization_id?: string
+          remittance_memo_template?: string
+          routing_number?: string
+          stripe_amount_threshold_cents?: number
+          updated_at?: string
+          wire_instructions?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_payment_profiles_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
@@ -2027,13 +2092,16 @@ export type Database = {
       payment_ledger: {
         Row: {
           amount: number
+          amount_cents: number
           billing_application_id: string | null
           created_at: string
           created_by: string | null
+          currency: string
           id: string
           invoice_id: string
           net_payout: number
           notes: string
+          organization_id: string | null
           overwatch_fee: number
           paid_at: string
           payment_method: string
@@ -2042,6 +2110,7 @@ export type Database = {
           processor_payment_id: string
           project_id: string
           receipt_url: string
+          reference: string
           status: string
           stripe_charge_id: string
           stripe_checkout_session_id: string
@@ -2050,13 +2119,16 @@ export type Database = {
         }
         Insert: {
           amount?: number
+          amount_cents?: number
           billing_application_id?: string | null
           created_at?: string
           created_by?: string | null
+          currency?: string
           id?: string
           invoice_id: string
           net_payout?: number
           notes?: string
+          organization_id?: string | null
           overwatch_fee?: number
           paid_at?: string
           payment_method?: string
@@ -2065,6 +2137,7 @@ export type Database = {
           processor_payment_id?: string
           project_id: string
           receipt_url?: string
+          reference?: string
           status?: string
           stripe_charge_id?: string
           stripe_checkout_session_id?: string
@@ -2073,13 +2146,16 @@ export type Database = {
         }
         Update: {
           amount?: number
+          amount_cents?: number
           billing_application_id?: string | null
           created_at?: string
           created_by?: string | null
+          currency?: string
           id?: string
           invoice_id?: string
           net_payout?: number
           notes?: string
+          organization_id?: string | null
           overwatch_fee?: number
           paid_at?: string
           payment_method?: string
@@ -2088,6 +2164,7 @@ export type Database = {
           processor_payment_id?: string
           project_id?: string
           receipt_url?: string
+          reference?: string
           status?: string
           stripe_charge_id?: string
           stripe_checkout_session_id?: string
@@ -2107,6 +2184,13 @@ export type Database = {
             columns: ["invoice_id"]
             isOneToOne: false
             referencedRelation: "billing_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_ledger_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
           {
@@ -3779,6 +3863,24 @@ export type Database = {
           },
         ]
       }
+      stripe_webhook_events: {
+        Row: {
+          event_id: string
+          event_type: string
+          processed_at: string
+        }
+        Insert: {
+          event_id: string
+          event_type?: string
+          processed_at?: string
+        }
+        Update: {
+          event_id?: string
+          event_type?: string
+          processed_at?: string
+        }
+        Relationships: []
+      }
       subscription_plans: {
         Row: {
           checkout_enabled: boolean
@@ -3948,6 +4050,7 @@ export type Database = {
         Args: { p_project_id: string }
         Returns: boolean
       }
+      can_view_financials: { Args: { p_project_id: string }; Returns: boolean }
       convert_pipeline_opportunity_to_project: {
         Args: { p_opportunity_id: string }
         Returns: string
@@ -3969,6 +4072,10 @@ export type Database = {
       ensure_user_account: {
         Args: { p_email: string; p_full_name?: string; p_user_id: string }
         Returns: string
+      }
+      has_org_capability: {
+        Args: { p_capability: string; p_org_id: string }
+        Returns: boolean
       }
       is_org_member: { Args: { p_org_id: string }; Returns: boolean }
       is_super_admin: { Args: never; Returns: boolean }
@@ -4006,6 +4113,10 @@ export type Database = {
           p_project_id: string
         }
         Returns: number
+      }
+      role_preset_capabilities: {
+        Args: { p_role: Database["public"]["Enums"]["account_role"] }
+        Returns: Json
       }
       storage_estimate_id: { Args: { p_name: string }; Returns: string }
       storage_organization_id: { Args: { p_name: string }; Returns: string }
