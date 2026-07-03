@@ -42,6 +42,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
 import { CapabilityPicker } from "@/components/team/CapabilityPicker";
+import { GettingPaidSection } from "@/components/billing/GettingPaidSection";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ROLE_PRESETS, accessLabelForMember, type CapabilitySet } from "@/lib/capabilities";
 import {
@@ -1525,6 +1526,17 @@ function TeamPage() {
                 stripeConnectPending={stripeConnectMutation.isPending}
               />
             )}
+
+            <GettingPaidSection
+              canManage={Boolean(team.canManageSettings || team.canManageBilling)}
+              stripe={{
+                accountId: team.organization.stripe_connect_account_id,
+                connectStatus: team.organization.stripe_connect_status,
+                processorReady: team.organization.payment_processor_ready,
+              }}
+              onConnectStripe={() => stripeConnectMutation.mutate()}
+              stripeConnectPending={stripeConnectMutation.isPending}
+            />
 
             <section
               data-testid="project-asset-access-assignments"

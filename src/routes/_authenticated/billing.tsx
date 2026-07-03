@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
 import { listPortfolioBilling, type PortfolioBillingProject } from "@/lib/billing.functions";
+import { StripeConnectNudge } from "@/components/billing/StripeConnectNudge";
 import { fmtPct, fmtUSD } from "@/lib/format";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import {
@@ -92,6 +93,7 @@ function BillingPortfolioPage() {
           </div>
         ) : totals ? (
           <>
+            <StripeConnectNudge />
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
               <BillingSummaryTile
                 icon={<BriefcaseBusiness className="h-4 w-4" />}
