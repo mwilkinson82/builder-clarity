@@ -1,4 +1,4 @@
-import { Archive, ExternalLink, Mail, Phone, Save } from "lucide-react";
+import { ExternalLink, Mail, Phone, Save, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { fmtPct } from "@/lib/format";
@@ -23,6 +23,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -32,7 +43,13 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { ActivityTimeline } from "./ActivityTimeline";
-import { gpToneClass, STAGE_LABELS, STAGE_ORDER, STAGE_PILL_CLASS } from "./pipeline-ui";
+import {
+  gpToneClass,
+  isDemoOpportunityId,
+  STAGE_LABELS,
+  STAGE_ORDER,
+  STAGE_PILL_CLASS,
+} from "./pipeline-ui";
 
 type OpportunityPatch = Partial<{
   name: string;
@@ -67,14 +84,14 @@ type OpportunityDetailProps = {
   isCreatingAction: boolean;
   isCreatingEstimate: boolean;
   isConverting: boolean;
-  isArchiving: boolean;
+  isDeleting: boolean;
   onOpenChange: (open: boolean) => void;
   onUpdate: (patch: OpportunityPatch) => Promise<void>;
   onAddNote: (note: string) => Promise<void>;
   onCreateAction: (input: CreateNextActionInput) => Promise<void>;
   onCreateEstimate: () => Promise<void>;
   onConvert: () => Promise<void>;
-  onArchive: () => Promise<void>;
+  onDelete: () => Promise<void>;
 };
 
 export function OpportunityDetail({
@@ -88,14 +105,14 @@ export function OpportunityDetail({
   isCreatingAction,
   isCreatingEstimate,
   isConverting,
-  isArchiving,
+  isDeleting,
   onOpenChange,
   onUpdate,
   onAddNote,
   onCreateAction,
   onCreateEstimate,
   onConvert,
-  onArchive,
+  onDelete,
 }: OpportunityDetailProps) {
   const [draft, setDraft] = useState<OpportunityPatch>({});
   const [actionDraft, setActionDraft] = useState({
@@ -164,6 +181,7 @@ export function OpportunityDetail({
   };
 
   const canConvert = opportunity?.stage === "won" && !opportunity.converted_project_id;
+  const isSampleOpportunity = Boolean(opportunity && isDemoOpportunityId(opportunity.id));
   const contactName =
     draft.client_contact_name ||
     opportunity?.primary_contact_name ||
@@ -246,17 +264,54 @@ export function OpportunityDetail({
                 <Save className="mr-1.5 h-4 w-4" />
                 Save changes
               </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                onClick={() => {
-                  if (window.confirm("Archive this opportunity?")) onArchive();
-                }}
-                disabled={isArchiving}
-              >
-                <Archive className="mr-1.5 h-4 w-4" />
-                Archive
-              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button type="button" variant="destructive" disabled={isDeleting}>
+                    <Trash2 className="mr-1.5 h-4 w-4" />
+                    Delete
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  {isSampleOpportunity ? (
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Remove this sample opportunity?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        “{opportunity.name}” is sample data that shows how the pipeline works.
+                        Removing it hides it from your pipeline on this device. Your own
+                        opportunities are not affected.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                  ) : (
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete this opportunity?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        “{opportunity.name}” will be removed from your pipeline. It moves to
+                        Archived — turn on the Archived switch above the pipeline to see it again.
+                        Nothing is permanently erased.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                  )}
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={isDeleting}
+                      className="bg-danger text-destructive-foreground hover:bg-danger/90"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void onDelete();
+                      }}
+                    >
+                      {isDeleting
+                        ? isSampleOpportunity
+                          ? "Removing…"
+                          : "Deleting…"
+                        : isSampleOpportunity
+                          ? "Remove sample"
+                          : "Delete opportunity"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
 
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,0.85fr)]">

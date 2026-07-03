@@ -41,6 +41,7 @@ import { PipelineCrmOverview } from "./PipelineCrmOverview";
 import { OpportunityCreateDialog } from "./OpportunityCreateDialog";
 import { OpportunityDetail } from "./OpportunityDetail";
 import {
+  isDemoOpportunityId,
   STAGE_LABELS,
   STAGE_ORDER,
   type PipelineSortMode,
@@ -54,7 +55,7 @@ type PipelineWorkspaceProps = {
 const EMPTY_OPPORTUNITIES: PipelineOpportunityRow[] = [];
 const DEMO_OPPORTUNITY_STORAGE_KEY = "overwatch.crm.demo-opportunity-overrides.v1";
 const DEMO_ACTIVITY_STORAGE_KEY = "overwatch.crm.demo-communications.v1";
-const DEMO_OPPORTUNITY_ID_PREFIX = "00000000-0000-4000-8000-00000000010";
+const DEMO_REMOVED_STORAGE_KEY = "overwatch.crm.demo-opportunity-removals.v1";
 
 type DemoOpportunityOverride = Partial<
   Pick<
@@ -114,6 +115,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   >(readDemoOpportunityOverrides);
   const [demoActivityLog, setDemoActivityLog] =
     useState<Record<string, PipelineActivityRow[]>>(readDemoActivityLog);
+  const [demoRemovedIds, setDemoRemovedIds] = useState<string[]>(readDemoOpportunityRemovals);
 
   useEffect(() => {
     if (initialOpportunityId) setSelectedId(initialOpportunityId);
@@ -140,10 +142,10 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   const rawOpportunities = opportunitiesQuery.data ?? EMPTY_OPPORTUNITIES;
   const opportunities = useMemo(
     () =>
-      rawOpportunities.map((opportunity) =>
-        applyDemoOpportunityOverride(opportunity, demoOpportunityOverrides),
-      ),
-    [demoOpportunityOverrides, rawOpportunities],
+      rawOpportunities
+        .filter((opportunity) => !demoRemovedIds.includes(opportunity.id))
+        .map((opportunity) => applyDemoOpportunityOverride(opportunity, demoOpportunityOverrides)),
+    [demoOpportunityOverrides, demoRemovedIds, rawOpportunities],
   );
   const members = membersQuery.data ?? [];
 
@@ -153,6 +155,9 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   useEffect(() => {
     writeDemoActivityLog(demoActivityLog);
   }, [demoActivityLog]);
+  useEffect(() => {
+    writeDemoOpportunityRemovals(demoRemovedIds);
+  }, [demoRemovedIds]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -232,7 +237,10 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
     ) {
       return;
     }
-    if (opportunities.length > 0) {
+    // Seed-check against the unfiltered server response: sample rows a user
+    // removed locally still count as "the CRM is not empty", so removing all
+    // samples never re-triggers the database seeder.
+    if (rawOpportunities.length > 0) {
       setDemoSeedChecked(true);
       return;
     }
@@ -241,7 +249,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   }, [
     demoSeedChecked,
     ensureDemoMutation,
-    opportunities.length,
+    rawOpportunities.length,
     opportunitiesQuery.isError,
     opportunitiesQuery.isLoading,
     showArchived,
@@ -326,15 +334,23 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
       toast.error("Opportunity did not convert", { description: errorMessage(error) }),
   });
 
-  const archiveMutation = useMutation({
+  // "Delete" archives: the pipeline schema keeps deleted opportunities as
+  // archived rows (same hidden-not-erased pattern as projects).
+  const deleteMutation = useMutation({
     mutationFn: (id: string) => archiveFn({ data: { id } }),
-    onSuccess: async () => {
+    onSuccess: async (_result, id) => {
       await invalidatePipeline();
       setSelectedId(null);
-      toast.success("Opportunity archived");
+      if (isDemoOpportunityId(id)) {
+        toast.success("Sample opportunity removed");
+      } else {
+        toast.success("Opportunity deleted", {
+          description: "It moved to Archived. Turn on the Archived switch to see it again.",
+        });
+      }
     },
     onError: (error) =>
-      toast.error("Opportunity did not archive", { description: errorMessage(error) }),
+      toast.error("Opportunity did not delete", { description: errorMessage(error) }),
   });
 
   const completeActionMutation = useMutation({
@@ -353,6 +369,11 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
     setAssignedFilter("all");
     setTypeFilter("all");
     setShowArchived(false);
+  };
+
+  const applyLocalDemoRemoval = (id: string) => {
+    if (!isDemoOpportunityId(id)) return;
+    setDemoRemovedIds((current) => (current.includes(id) ? current : [...current, id]));
   };
 
   const applyLocalDemoPatch = (id: string, patch: Record<string, unknown>) => {
@@ -567,7 +588,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
         isCreatingAction={createActionMutation.isPending}
         isCreatingEstimate={createEstimateMutation.isPending}
         isConverting={convertMutation.isPending}
-        isArchiving={archiveMutation.isPending}
+        isDeleting={deleteMutation.isPending}
         onOpenChange={(open) => {
           if (!open) setSelectedId(null);
         }}
@@ -595,9 +616,10 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
           }
           return convertMutation.mutateAsync(selectedId).then(() => undefined);
         }}
-        onArchive={() => {
+        onDelete={() => {
           if (!selectedId) return Promise.resolve();
-          return archiveMutation.mutateAsync(selectedId).then(() => undefined);
+          applyLocalDemoRemoval(selectedId);
+          return deleteMutation.mutateAsync(selectedId).then(() => undefined);
         }}
       />
     </div>
@@ -628,10 +650,6 @@ function isMissingPipelineSchemaMessage(error: unknown) {
   return /pipeline_(opportunities|accounts|contacts|next_actions|activity_log)/i.test(
     errorMessage(error),
   );
-}
-
-function isDemoOpportunityId(id: string) {
-  return id.startsWith(DEMO_OPPORTUNITY_ID_PREFIX);
 }
 
 function applyDemoOpportunityOverride(
@@ -674,6 +692,28 @@ function writeDemoOpportunityOverrides(overrides: Record<string, DemoOpportunity
     DEMO_OPPORTUNITY_STORAGE_KEY,
     JSON.stringify(Object.fromEntries(entries)),
   );
+}
+
+function readDemoOpportunityRemovals(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(DEMO_REMOVED_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string" && isDemoOpportunityId(id));
+  } catch {
+    return [];
+  }
+}
+
+function writeDemoOpportunityRemovals(removedIds: string[]) {
+  if (typeof window === "undefined") return;
+  if (removedIds.length === 0) {
+    window.localStorage.removeItem(DEMO_REMOVED_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(DEMO_REMOVED_STORAGE_KEY, JSON.stringify(removedIds));
 }
 
 function readDemoActivityLog(): Record<string, PipelineActivityRow[]> {

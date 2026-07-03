@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { HARBOR_DEMO_CLIENT, HARBOR_DEMO_JOB_NUMBER, HARBOR_DEMO_NAME } from "@/lib/demo-seed";
+import { planCrmDemoSeed } from "@/lib/pipeline-demo-seed";
 
 export const PIPELINE_STAGES = [
   "lead",
@@ -632,57 +634,54 @@ const DEMO_CRM_SEEDS = [
 
 function demoOpportunities(organizationId: string, userId: string) {
   const nowIso = new Date().toISOString();
-  return DEMO_CRM_SEEDS.map(
-    (seed): PipelineOpportunityRow => ({
-      id: seed.opportunityId,
-      organization_id: organizationId,
-      created_by: userId,
-      account_id: seed.accountId,
-      primary_contact_id: seed.contactId,
-      name: seed.name,
-      client: seed.client,
-      client_contact_name: seed.contactName,
-      client_contact_email: seed.contactEmail,
-      client_contact_phone: seed.contactPhone,
-      stage: seed.stage,
-      estimated_contract: seed.contract,
-      estimated_cost: seed.cost,
-      estimated_gp_pct: seed.contract > 0 ? ((seed.contract - seed.cost) / seed.contract) * 100 : 0,
-      bid_due_date: datePlusDays(seed.bidDueOffset),
-      decision_date: datePlusDays(seed.decisionOffset),
-      probability: seed.probability,
-      source: seed.source,
-      project_type: seed.projectType,
-      scope_summary: seed.scope,
-      bid_decision: seed.bidDecision,
-      bid_decision_reason:
-        seed.bidDecision === "no_bid"
-          ? "Drawings were incomplete, schedule penalties were heavy, and the margin profile was too thin."
-          : "",
-      bid_decision_date:
-        seed.bidDecision === "undecided" ? null : datePlusDays(seed.decisionOffset),
-      converted_project_id: null,
-      converted_at: seed.stage === "won" ? datePlusDays(seed.decisionOffset) : null,
-      assigned_to: DEMO_OWNER_NAME,
-      notes:
-        seed.stage === "won"
-          ? "Sample won pursuit connected to the Harbor Residence teaching project."
-          : "Sample CRM pursuit showing relationship, bid/no-bid, and follow-up behavior.",
-      last_activity_at: nowIso,
-      created_at: nowIso,
-      updated_at: nowIso,
-      archived: false,
-      days_until_bid_due: daysUntil(datePlusDays(seed.bidDueOffset)),
-      account_name: seed.client,
-      primary_contact_name: seed.contactName,
-      primary_contact_email: seed.contactEmail,
-      next_action_id: seed.actionId,
-      next_action_title: seed.actionTitle,
-      next_action_due_date: datePlusDays(seed.actionDueOffset),
-      next_action_priority: seed.actionPriority,
-      next_action_type: seed.actionType,
-    }),
-  );
+  return DEMO_CRM_SEEDS.map((seed): PipelineOpportunityRow => ({
+    id: seed.opportunityId,
+    organization_id: organizationId,
+    created_by: userId,
+    account_id: seed.accountId,
+    primary_contact_id: seed.contactId,
+    name: seed.name,
+    client: seed.client,
+    client_contact_name: seed.contactName,
+    client_contact_email: seed.contactEmail,
+    client_contact_phone: seed.contactPhone,
+    stage: seed.stage,
+    estimated_contract: seed.contract,
+    estimated_cost: seed.cost,
+    estimated_gp_pct: seed.contract > 0 ? ((seed.contract - seed.cost) / seed.contract) * 100 : 0,
+    bid_due_date: datePlusDays(seed.bidDueOffset),
+    decision_date: datePlusDays(seed.decisionOffset),
+    probability: seed.probability,
+    source: seed.source,
+    project_type: seed.projectType,
+    scope_summary: seed.scope,
+    bid_decision: seed.bidDecision,
+    bid_decision_reason:
+      seed.bidDecision === "no_bid"
+        ? "Drawings were incomplete, schedule penalties were heavy, and the margin profile was too thin."
+        : "",
+    bid_decision_date: seed.bidDecision === "undecided" ? null : datePlusDays(seed.decisionOffset),
+    converted_project_id: null,
+    converted_at: seed.stage === "won" ? datePlusDays(seed.decisionOffset) : null,
+    assigned_to: DEMO_OWNER_NAME,
+    notes:
+      seed.stage === "won"
+        ? "Sample won pursuit connected to the Harbor Residence teaching project."
+        : "Sample CRM pursuit showing relationship, bid/no-bid, and follow-up behavior.",
+    last_activity_at: nowIso,
+    created_at: nowIso,
+    updated_at: nowIso,
+    archived: false,
+    days_until_bid_due: daysUntil(datePlusDays(seed.bidDueOffset)),
+    account_name: seed.client,
+    primary_contact_name: seed.contactName,
+    primary_contact_email: seed.contactEmail,
+    next_action_id: seed.actionId,
+    next_action_title: seed.actionTitle,
+    next_action_due_date: datePlusDays(seed.actionDueOffset),
+    next_action_priority: seed.actionPriority,
+    next_action_type: seed.actionType,
+  }));
 }
 
 function demoCrmSnapshot(organizationId: string, userId: string): PipelineCrmSnapshot {
@@ -725,50 +724,46 @@ function demoCrmSnapshot(organizationId: string, userId: string): PipelineCrmSna
   }).sort(
     (a, b) => b.active_pipeline_value - a.active_pipeline_value || a.name.localeCompare(b.name),
   );
-  const contacts = DEMO_CRM_SEEDS.map(
-    (seed): PipelineContactRow => ({
-      id: seed.contactId,
-      organization_id: organizationId,
-      account_id: seed.accountId,
-      created_by: userId,
-      name: seed.contactName,
-      title: seed.contactTitle,
-      email: seed.contactEmail,
-      phone: seed.contactPhone,
-      role: seed.stage === "won" ? "Client decision maker" : "Pursuit contact",
-      influence_level: seed.stage === "won" ? "decision_maker" : "influencer",
-      relationship_status: seed.stage === "no_bid" ? "warm" : "active",
-      notes: `Sample CRM contact for ${seed.client}.`,
-      last_touch_at: nowIso,
-      archived: false,
-      created_at: nowIso,
-      updated_at: nowIso,
-      account_name: seed.client,
-    }),
-  );
-  const openActions = DEMO_CRM_SEEDS.map(
-    (seed): PipelineNextActionRow => ({
-      id: seed.actionId,
-      organization_id: organizationId,
-      opportunity_id: seed.opportunityId,
-      account_id: seed.accountId,
-      contact_id: seed.contactId,
-      created_by: userId,
-      completed_by: null,
-      owner_name: DEMO_OWNER_NAME,
-      action_type: seed.actionType,
-      priority: seed.actionPriority,
-      title: seed.actionTitle,
-      notes: `Sample next action for ${seed.name}.`,
-      due_date: datePlusDays(seed.actionDueOffset),
-      completed_at: null,
-      created_at: nowIso,
-      updated_at: nowIso,
-      opportunity_name: seed.name,
-      account_name: seed.client,
-      contact_name: seed.contactName,
-    }),
-  )
+  const contacts = DEMO_CRM_SEEDS.map((seed): PipelineContactRow => ({
+    id: seed.contactId,
+    organization_id: organizationId,
+    account_id: seed.accountId,
+    created_by: userId,
+    name: seed.contactName,
+    title: seed.contactTitle,
+    email: seed.contactEmail,
+    phone: seed.contactPhone,
+    role: seed.stage === "won" ? "Client decision maker" : "Pursuit contact",
+    influence_level: seed.stage === "won" ? "decision_maker" : "influencer",
+    relationship_status: seed.stage === "no_bid" ? "warm" : "active",
+    notes: `Sample CRM contact for ${seed.client}.`,
+    last_touch_at: nowIso,
+    archived: false,
+    created_at: nowIso,
+    updated_at: nowIso,
+    account_name: seed.client,
+  }));
+  const openActions = DEMO_CRM_SEEDS.map((seed): PipelineNextActionRow => ({
+    id: seed.actionId,
+    organization_id: organizationId,
+    opportunity_id: seed.opportunityId,
+    account_id: seed.accountId,
+    contact_id: seed.contactId,
+    created_by: userId,
+    completed_by: null,
+    owner_name: DEMO_OWNER_NAME,
+    action_type: seed.actionType,
+    priority: seed.actionPriority,
+    title: seed.actionTitle,
+    notes: `Sample next action for ${seed.name}.`,
+    due_date: datePlusDays(seed.actionDueOffset),
+    completed_at: null,
+    created_at: nowIso,
+    updated_at: nowIso,
+    opportunity_name: seed.name,
+    account_name: seed.client,
+    contact_name: seed.contactName,
+  }))
     .sort(sortOpenActions)
     .slice(0, 12);
 
@@ -1315,12 +1310,30 @@ export const ensurePipelineCrmDemo = createServerFn({ method: "POST" })
       return { seeded: false as const, reason: "crm_not_empty" };
     }
 
+    // Both lookups deliberately INCLUDE archived rows: an archived Harbor
+    // demo project is the "this company opted out" tombstone (PR #76), and
+    // the CRM demo seeder must seed nothing — not seed unlinked copies.
     const { data: harborProject } = await dynamicTable(context.supabase, "projects")
-      .select("id")
+      .select("id,archived_at")
       .eq("organization_id", organizationId)
-      .eq("job_number", "DEMO-HARBOR")
+      .eq("job_number", HARBOR_DEMO_JOB_NUMBER)
       .maybeSingle();
-    const harborProjectId = nullableStr((harborProject as Record<string, unknown> | null)?.id);
+    let harborProjectRow = harborProject as { id?: unknown; archived_at?: unknown } | null;
+    if (!harborProjectRow) {
+      const { data: harborByName } = await dynamicTable(context.supabase, "projects")
+        .select("id,archived_at")
+        .eq("organization_id", organizationId)
+        .eq("name", HARBOR_DEMO_NAME)
+        .eq("client", HARBOR_DEMO_CLIENT)
+        .limit(1)
+        .maybeSingle();
+      harborProjectRow = harborByName as { id?: unknown; archived_at?: unknown } | null;
+    }
+    const seedPlan = planCrmDemoSeed(harborProjectRow);
+    if (seedPlan.action === "skip") {
+      return { seeded: false as const, reason: "demo_opted_out" };
+    }
+    const harborProjectId = seedPlan.harborProjectId;
     const nowIso = new Date().toISOString();
     const ownerName = "Marshall Wilkinson";
     const seedOpportunities = [
@@ -1970,6 +1983,22 @@ export const archiveOpportunity = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const organizationId = await currentOrganizationId(context);
+    const { data: existing, error: lookupError } = await dynamicTable(
+      context.supabase,
+      "pipeline_opportunities",
+    )
+      .select("id")
+      .eq("id", data.id)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (lookupError) {
+      if (isMissingPipelineSchemaError(lookupError)) return { ok: true };
+      throw new Error(lookupError.message);
+    }
+    if (!existing) {
+      if (DEMO_CRM_SEEDS.some((seed) => seed.opportunityId === data.id)) return { ok: true };
+      throw new Error("Opportunity not found.");
+    }
     const { error } = await dynamicTable(context.supabase, "pipeline_opportunities")
       .update({ archived: true, last_activity_at: new Date().toISOString() })
       .eq("id", data.id)
@@ -1982,7 +2011,7 @@ export const archiveOpportunity = createServerFn({ method: "POST" })
       opportunityId: data.id,
       organizationId,
       eventType: "archived",
-      notes: "Opportunity archived",
+      notes: "Opportunity deleted (moved to Archived)",
     });
     return { ok: true };
   });

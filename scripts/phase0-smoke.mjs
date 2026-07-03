@@ -337,6 +337,36 @@ await expectContains(
 );
 
 await expectContains(
+  "src/components/pipeline/OpportunityDetail.tsx",
+  [
+    /AlertDialogTitle>Delete this opportunity\?/,
+    /Remove this sample opportunity\?/,
+    /\{opportunity\.name\}/,
+    /onDelete/,
+    /isDeleting/,
+  ],
+  "CRM opportunity delete confirms with a dialog that names the record and archives instead of erasing",
+);
+
+await expectContains(
+  "src/lib/pipeline.functions.ts",
+  [
+    /planCrmDemoSeed/,
+    /select\("id,archived_at"\)/,
+    /demo_opted_out/,
+    /HARBOR_DEMO_JOB_NUMBER/,
+    /Opportunity not found\./,
+  ],
+  "CRM demo seeder respects the archived Harbor demo opt-out and delete verifies the row before archiving",
+);
+
+await expectContains(
+  "src/lib/pipeline-demo-seed.ts",
+  [/harborDemoSeedAction/, /planCrmDemoSeed/, /archived_at/],
+  "CRM demo seed decision lives in a pure module the CRM smoke can unit-test",
+);
+
+await expectContains(
   "src/lib/projects.functions.ts",
   [
     /HARBOR_DEMO_CPM_ACTIVITIES/,
