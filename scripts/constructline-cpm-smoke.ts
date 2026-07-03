@@ -1288,10 +1288,7 @@ for (const requiredScheduleFunctionText of [
   "total_float_days",
   "is_out_of_sequence",
   "is_open_finish",
-  "getActivityUpdateSnapshotRemainingDurationDays",
-  "hasActivityActualStartBasisForSnapshot",
-  "if (!hasActivityActualStartBasisForSnapshot(task.activity)) return 0",
-  "remaining_duration_days: getActivityUpdateSnapshotRemainingDurationDays(task)",
+  "buildActivityUpdateSnapshotRows(activities, {",
   "const { wbs_section_id: requestedWbsSectionId, ...activityFields } = rest;",
   "insertScheduleActivityRowWithSchemaFallback(",
   "basePayload as Record<string, unknown>",
@@ -1317,6 +1314,24 @@ for (const requiredScheduleFunctionText of [
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),
     `Schedule functions are missing required WBS persistence contract: ${requiredScheduleFunctionText}`,
+  );
+}
+
+const scheduleUpdateSpineSource = readProjectFile("src/lib/schedule-update-spine.ts");
+for (const requiredScheduleUpdateSpineText of [
+  "export function resolveScheduleUpdateWriteMode",
+  'return replaceExisting ? "amend" : "duplicate_blocked";',
+  "export function buildScheduleUpdateRecord",
+  "export function buildActivityUpdateSnapshotRows",
+  "export function buildMilestoneUpdateSnapshotRows",
+  "getActivityUpdateSnapshotRemainingDurationDays",
+  "hasActivityActualStartBasisForSnapshot",
+  "if (!hasActivityActualStartBasisForSnapshot(task.activity)) return 0",
+  "remaining_duration_days: getActivityUpdateSnapshotRemainingDurationDays(task)",
+]) {
+  assert.ok(
+    scheduleUpdateSpineSource.includes(requiredScheduleUpdateSpineText),
+    `Schedule update spine is missing required contract: ${requiredScheduleUpdateSpineText}`,
   );
 }
 

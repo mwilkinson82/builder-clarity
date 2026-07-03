@@ -14,11 +14,15 @@ import {
   getHarborDemoCpmActivityRows,
 } from "@/lib/projects.functions";
 import {
-  buildConstructLineCpmModel,
   buildReciprocalActivityLogicPatches,
-  type ConstructLineCpmTask,
   type ConstructLineStatusBasis,
 } from "@/lib/constructline-cpm";
+import {
+  buildActivityUpdateSnapshotRows,
+  buildMilestoneUpdateSnapshotRows,
+  buildScheduleUpdateRecord,
+  resolveScheduleUpdateWriteMode,
+} from "@/lib/schedule-update-spine";
 
 export type MilestoneStatus = "on_track" | "at_risk" | "delayed" | "complete";
 export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_decision";
@@ -551,17 +555,6 @@ const normalizeScheduleActivity = (r: Record<string, unknown>): ScheduleActivity
   };
 };
 
-function hasActivityActualStartBasisForSnapshot(activity: ScheduleActivityRow) {
-  return Boolean(activity.actual_start_date) || Boolean(activity.actual_finish_date);
-}
-
-function getActivityUpdateSnapshotRemainingDurationDays(task: ConstructLineCpmTask) {
-  if (task.isMilestone) return 0;
-  if (task.activity.actual_finish_date || task.activity.percent_complete >= 100) return 0;
-  if (!hasActivityActualStartBasisForSnapshot(task.activity)) return 0;
-  return Math.max(0, Math.round(task.remainingDurationDays));
-}
-
 const normalizeScheduleWbsSection = (r: Record<string, unknown>): ScheduleWbsSectionRow => ({
   id: r.id as string,
   project_id: r.project_id as string,
@@ -1081,58 +1074,21 @@ async function snapshotScheduleActivityUpdates(
   const activities = (activityRows ?? []).map((row) =>
     normalizeScheduleActivity(row as Record<string, unknown>),
   );
-  if (activities.length === 0) return "no_activities" as const;
+  const snapshots = buildActivityUpdateSnapshotRows(activities, {
+    projectId,
+    scheduleUpdateId,
+    updateNumber,
+    dataDate,
+  });
+  if (snapshots.length === 0) return 0;
 
-  const cpmModel = buildConstructLineCpmModel(activities, { dataDate });
-  const snapshots = cpmModel.tasks.map((task) => ({
-    project_id: projectId,
-    schedule_update_id: scheduleUpdateId,
-    schedule_activity_id: task.activity.id,
-    update_number: updateNumber,
-    data_date: dataDate,
-    activity_id: task.activity.activity_id,
-    name: task.activity.name,
-    division: task.activity.division,
-    wbs_section_id: task.activity.wbs_section_id,
-    baseline_start_date: task.baselineStartDate || task.activity.baseline_start_date,
-    baseline_finish_date: task.baselineFinishDate || task.activity.baseline_finish_date,
-    current_start_date: task.statusStartDate || task.activity.forecast_start_date,
-    current_finish_date: task.statusFinishDate || task.activity.forecast_finish_date,
-    actual_start_date: task.activity.actual_start_date,
-    actual_finish_date: task.activity.actual_finish_date,
-    planned_duration_days: Math.max(0, Math.round(task.durationDays)),
-    remaining_duration_days: getActivityUpdateSnapshotRemainingDurationDays(task),
-    status_basis: task.statusBasis,
-    percent_complete: task.activity.percent_complete,
-    total_float_days: Math.round(task.totalFloat),
-    free_float_days: Math.round(task.freeFloat),
-    slippage_days: Math.round(task.slippageDays),
-    is_critical: task.isCritical,
-    is_near_critical: task.isNearCritical,
-    is_late: task.isLate,
-    is_out_of_sequence: task.isOutOfSequence,
-    is_open_start: task.isOpenStart,
-    is_open_finish: task.isOpenFinish,
-    is_milestone: task.isMilestone,
-    predecessor_activity_ids: task.activity.predecessor_activity_ids,
-    successor_activity_ids: task.activity.successor_activity_ids,
-    notes: task.activity.notes,
-  }));
-
-  let { error: snapshotError } = await dynamicTable(supabase, "schedule_activity_updates").insert(
-    snapshots,
-  );
-  if (snapshotError && isMissingRestColumn(snapshotError, "status_basis")) {
-    const legacySnapshots = snapshots.map(({ status_basis, ...snapshot }) => snapshot);
-    ({ error: snapshotError } = await dynamicTable(supabase, "schedule_activity_updates").insert(
-      legacySnapshots,
-    ));
+  const { error: snapshotError } = await supabase
+    .from("schedule_activity_updates")
+    .insert(snapshots);
+  if (snapshotError) {
+    throw new Error(snapshotError.message ?? "Activity update snapshots did not save.");
   }
-  if (!snapshotError) return "saved" as const;
-  if (isMissingRestRelation(snapshotError, "schedule_activity_updates")) {
-    return "migration_required" as const;
-  }
-  throw new Error(snapshotError.message ?? "Activity update snapshots did not save.");
+  return snapshots.length;
 }
 
 export const listScheduleCpmTemplates = createServerFn({ method: "GET" })
@@ -1284,6 +1240,7 @@ const createScheduleUpdateInput = z.object({
   schedule_money_recovery: z.number().min(0).default(0),
   money_notes: z.string().max(4000).default(""),
   notes: z.string().max(4000).default(""),
+  replace_existing: z.boolean().default(false),
   milestone_forecasts: z
     .array(
       z.object({
@@ -1309,63 +1266,101 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       .single();
     if (projectError) throw new Error(projectError.message);
 
-    const { data: last } = await context.supabase
+    const dataDate = data.data_date ?? data.update_date ?? new Date().toISOString().slice(0, 10);
+
+    // One update per data date: a second save on the same data date amends the
+    // existing update (after the client confirms), never silently duplicates.
+    const { data: existingForDataDate, error: existingError } = await context.supabase
+      .from("schedule_updates")
+      .select("id, update_number")
+      .eq("project_id", data.projectId)
+      .eq("data_date", dataDate)
+      .order("update_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existingError) throw new Error(existingError.message);
+
+    const writeMode = resolveScheduleUpdateWriteMode({
+      existingUpdateNumber: (existingForDataDate?.update_number as number | undefined) ?? null,
+      replaceExisting: data.replace_existing,
+    });
+    if (writeMode === "duplicate_blocked") {
+      return {
+        ok: false as const,
+        duplicate: {
+          update_number: existingForDataDate?.update_number as number,
+          data_date: dataDate,
+        },
+      };
+    }
+
+    const previousUpdateQuery = context.supabase
       .from("schedule_updates")
       .select("update_number, forecast_completion_date")
       .eq("project_id", data.projectId)
       .order("update_number", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    const { data: previousUpdate } =
+      writeMode === "amend"
+        ? await previousUpdateQuery
+            .lt("update_number", existingForDataDate?.update_number as number)
+            .maybeSingle()
+        : await previousUpdateQuery.maybeSingle();
 
     const baseline = (project.baseline_completion_date as string | null) ?? null;
-    const previousCompletion =
-      (last?.forecast_completion_date as string | null) ??
-      (project.forecast_completion_date as string | null) ??
-      null;
-    const updateNumber = ((last?.update_number as number | undefined) ?? 0) + 1;
-    const varianceWeeks =
-      computeScheduleVarianceWeeks(baseline, data.forecast_completion_date) ?? 0;
-    const movementWeeks =
-      computeScheduleVarianceWeeks(previousCompletion, data.forecast_completion_date) ?? 0;
-    const dataDate = data.data_date ?? data.update_date ?? new Date().toISOString().slice(0, 10);
-
-    const baseUpdatePayload: TablesInsert<"schedule_updates"> = {
-      project_id: data.projectId,
-      update_number: updateNumber,
-      update_date: dataDate,
-      baseline_completion_date: baseline,
-      forecast_completion_date: data.forecast_completion_date,
-      variance_weeks: varianceWeeks,
-      movement_weeks: movementWeeks,
+    const updateNumber =
+      writeMode === "amend"
+        ? (existingForDataDate?.update_number as number)
+        : ((previousUpdate?.update_number as number | undefined) ?? 0) + 1;
+    const updatePayload = buildScheduleUpdateRecord({
+      projectId: data.projectId,
+      updateNumber,
+      dataDate,
+      baselineCompletionDate: baseline,
+      previousCompletionDate:
+        (previousUpdate?.forecast_completion_date as string | null) ??
+        (project.forecast_completion_date as string | null) ??
+        null,
+      forecastCompletionDate: data.forecast_completion_date,
+      scheduleMoneyExposure: data.schedule_money_exposure,
+      scheduleMoneyRecovery: data.schedule_money_recovery,
+      moneyNotes: data.money_notes,
       notes: data.notes,
-    };
-    const extendedUpdatePayload = {
-      ...baseUpdatePayload,
-      data_date: dataDate,
-      schedule_money_exposure: data.schedule_money_exposure,
-      schedule_money_recovery: data.schedule_money_recovery,
-      money_notes: data.money_notes,
-    } as ScheduleUpdateInsert;
+    }) as ScheduleUpdateInsert;
+    const varianceWeeks = updatePayload.variance_weeks ?? 0;
 
-    let { data: update, error: insertError } = await context.supabase
-      .from("schedule_updates")
-      .insert(extendedUpdatePayload)
-      .select("*")
-      .single();
-    if (
-      insertError &&
-      (isMissingRestColumn(insertError, "data_date") ||
-        isMissingRestColumn(insertError, "schedule_money_exposure") ||
-        isMissingRestColumn(insertError, "schedule_money_recovery") ||
-        isMissingRestColumn(insertError, "money_notes"))
-    ) {
-      ({ data: update, error: insertError } = await context.supabase
+    let update: Record<string, unknown> | null = null;
+    if (writeMode === "amend") {
+      const existingId = existingForDataDate?.id as string;
+      const { data: amended, error: amendError } = await context.supabase
         .from("schedule_updates")
-        .insert(baseUpdatePayload)
+        .update(updatePayload)
+        .eq("id", existingId)
+        .eq("project_id", data.projectId)
         .select("*")
-        .single());
+        .single();
+      if (amendError) throw new Error(amendError.message);
+      update = amended as Record<string, unknown>;
+      // The amended update re-snapshots below; drop the superseded rows first.
+      const { error: milestoneCleanupError } = await context.supabase
+        .from("schedule_milestone_updates")
+        .delete()
+        .eq("schedule_update_id", existingId);
+      if (milestoneCleanupError) throw new Error(milestoneCleanupError.message);
+      const { error: activityCleanupError } = await context.supabase
+        .from("schedule_activity_updates")
+        .delete()
+        .eq("schedule_update_id", existingId);
+      if (activityCleanupError) throw new Error(activityCleanupError.message);
+    } else {
+      const { data: inserted, error: insertError } = await context.supabase
+        .from("schedule_updates")
+        .insert(updatePayload)
+        .select("*")
+        .single();
+      if (insertError) throw new Error(insertError.message);
+      update = inserted as Record<string, unknown>;
     }
-    if (insertError) throw new Error(insertError.message);
     if (!update) throw new Error("Schedule update did not save.");
 
     const { error: projectUpdateError } = await context.supabase
@@ -1400,31 +1395,23 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       .select("*")
       .eq("project_id", data.projectId);
     if (milestoneError) throw new Error(milestoneError.message);
-    if ((milestones ?? []).length > 0) {
+    const milestoneSnapshots = buildMilestoneUpdateSnapshotRows(
+      (milestones ?? []) as unknown as MilestoneRow[],
+      {
+        projectId: data.projectId,
+        scheduleUpdateId: update.id as string,
+        updateNumber,
+        dataDate,
+      },
+    );
+    if (milestoneSnapshots.length > 0) {
       const { error: snapshotError } = await context.supabase
         .from("schedule_milestone_updates")
-        .insert(
-          (milestones ?? []).map((m) => {
-            const row = m as Record<string, unknown>;
-            const baselineDate = (row.baseline_date as string | null) ?? null;
-            const forecastDate = (row.forecast_date as string | null) ?? null;
-            return {
-              project_id: data.projectId,
-              milestone_id: row.id as string,
-              schedule_update_id: update.id as string,
-              update_number: updateNumber,
-              baseline_date: baselineDate,
-              forecast_date: forecastDate,
-              variance_weeks: computeScheduleVarianceWeeks(baselineDate, forecastDate) ?? 0,
-              status: str(row.status, "on_track"),
-              notes: str(row.delay_reason),
-            };
-          }),
-        );
+        .insert(milestoneSnapshots);
       if (snapshotError) throw new Error(snapshotError.message);
     }
 
-    await snapshotScheduleActivityUpdates(
+    const activitySnapshotCount = await snapshotScheduleActivityUpdates(
       context.supabase,
       data.projectId,
       update.id as string,
@@ -1432,7 +1419,57 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       dataDate,
     );
 
-    return { ok: true, update: normalizeScheduleUpdate(update as Record<string, unknown>) };
+    return {
+      ok: true as const,
+      amended: writeMode === "amend",
+      activitySnapshotCount,
+      milestoneSnapshotCount: milestoneSnapshots.length,
+      update: normalizeScheduleUpdate(update as Record<string, unknown>),
+    };
+  });
+
+const annotateScheduleUpdateInput = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  notes: z.string().max(4000).optional(),
+  schedule_money_exposure: z.number().min(0).optional(),
+  schedule_money_recovery: z.number().min(0).optional(),
+  money_notes: z.string().max(4000).optional(),
+});
+
+// The IOR Schedule tab consumes the latest CPM update: it annotates the saved
+// record with narrative and money fields; it never authors a competing update.
+export const annotateScheduleUpdate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof annotateScheduleUpdateInput>) =>
+    annotateScheduleUpdateInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { id, projectId } = data;
+    const cleanPatch: TablesUpdate<"schedule_updates"> = {};
+    if (data.notes !== undefined) cleanPatch.notes = data.notes;
+    if (data.schedule_money_exposure !== undefined) {
+      cleanPatch.schedule_money_exposure = data.schedule_money_exposure;
+    }
+    if (data.schedule_money_recovery !== undefined) {
+      cleanPatch.schedule_money_recovery = data.schedule_money_recovery;
+    }
+    if (data.money_notes !== undefined) cleanPatch.money_notes = data.money_notes;
+    if (Object.keys(cleanPatch).length === 0) {
+      throw new Error("Nothing to save on this schedule update.");
+    }
+    const { data: update, error } = await context.supabase
+      .from("schedule_updates")
+      .update(cleanPatch)
+      .eq("id", id)
+      .eq("project_id", projectId)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return {
+      ok: true as const,
+      update: normalizeScheduleUpdate(update as Record<string, unknown>),
+    };
   });
 
 // ---------- MILESTONES ----------

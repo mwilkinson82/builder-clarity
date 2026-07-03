@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { GitBranch, Gauge, Check } from "lucide-react";
+import { Gauge } from "lucide-react";
 import { toast } from "sonner";
 import {
   listSchedule,
@@ -24,16 +24,24 @@ import {
   updateScheduleRisk,
   deleteScheduleRisk,
   createScheduleUpdate,
+  annotateScheduleUpdate,
   type ScheduleRiskKind,
   type MilestoneRow,
   type ScheduleRiskRow,
+  type ScheduleUpdateRow,
 } from "@/lib/schedule.functions";
 import { createExposure, updateProjectFinancials, type ProjectRow } from "@/lib/projects.functions";
 import { fmtUSD } from "@/lib/format";
 import { computeScheduleVarianceWeeks } from "@/lib/ior";
 import { buildConstructLineCpmModel } from "@/lib/constructline-cpm";
 import {
-  type CpmMilestoneForecast,
+  selectCpmForecastStatus,
+  selectLatestScheduleUpdate,
+  selectSavedScheduleForecast,
+  selectSavedScheduleMovementWeeks,
+  selectSavedScheduleVarianceWeeks,
+} from "@/lib/schedule-selectors";
+import {
   EMPTY_ACTIVITIES,
   EMPTY_ACTIVITY_UPDATES,
   EMPTY_DELAY_FRAGMENTS,
@@ -45,9 +53,9 @@ import {
   RISK_META,
   moneyTone,
   shortDate,
+  todayIsoDate,
   varianceLabel,
   varianceTone,
-  weeksBetween,
 } from "./scheduleShared";
 import { buildCpmScheduleUpdateDraft, buildDelayFragmentSummary } from "./scheduleUpdateDraft";
 import { ScheduleSnapshotTimeline } from "./ScheduleSnapshotTimeline";
@@ -73,17 +81,18 @@ export function ScheduleRisk({
   const updateRisk = useServerFn(updateScheduleRisk);
   const deleteRisk = useServerFn(deleteScheduleRisk);
   const createUpdate = useServerFn(createScheduleUpdate);
+  const annotateUpdate = useServerFn(annotateScheduleUpdate);
   const createExposureFn = useServerFn(createExposure);
   const updateFin = useServerFn(updateProjectFinancials);
-  const [completionUpdateDraft, setCompletionUpdateDraft] = useState(
+  const [manualCompletionDraft, setManualCompletionDraft] = useState(
     project.forecast_completion_date ?? "",
   );
-  const [dataDate, setDataDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [manualDataDate, setManualDataDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [scheduleMoneyExposure, setScheduleMoneyExposure] = useState(0);
   const [scheduleMoneyRecovery, setScheduleMoneyRecovery] = useState(0);
   const [moneyNotes, setMoneyNotes] = useState("");
   const [updateNotes, setUpdateNotes] = useState("");
-  const [cpmMilestoneForecasts, setCpmMilestoneForecasts] = useState<CpmMilestoneForecast[]>([]);
+  const [annotationSeedUpdateId, setAnnotationSeedUpdateId] = useState<string | null>(null);
   const [milestoneView, setMilestoneView] = useState<MilestoneView>("active");
 
   const { data, isLoading } = useQuery({
@@ -218,85 +227,127 @@ export function ScheduleRisk({
   const visibleMilestones = filterMilestones(milestones, milestoneView);
   const activeMilestoneCount = milestones.filter((m) => m.status !== "complete").length;
   const completedMilestoneCount = milestones.filter((m) => m.status === "complete").length;
-  const lastScheduleUpdate = updates[0] ?? null;
-  const lastMovementWeeks = lastScheduleUpdate
-    ? lastScheduleUpdate.movement_weeks
-    : weeksBetween(lastReviewForecast, project.forecast_completion_date);
-  const scheduleVariance = computeScheduleVarianceWeeks(
+  // The CPM workbench authors schedule updates. This tab consumes the latest
+  // saved update; with no CPM activities yet it keeps a manual create path.
+  const hasCpmActivities = activities.length > 0;
+  const latestUpdate = selectLatestScheduleUpdate(updates);
+  const savedForecast = selectSavedScheduleForecast(updates, project.forecast_completion_date);
+  const lastMovementWeeks = selectSavedScheduleMovementWeeks(updates, {
+    lastReviewForecast,
+    currentForecast: project.forecast_completion_date,
+  });
+  const scheduleVariance = selectSavedScheduleVarianceWeeks(
+    updates,
     project.baseline_completion_date,
-    completionUpdateDraft || project.forecast_completion_date,
+    hasCpmActivities
+      ? project.forecast_completion_date
+      : manualCompletionDraft || project.forecast_completion_date,
   );
+  const dataDateOfRecord = latestUpdate?.data_date ?? null;
   const scheduleCpmModel = useMemo(
     () =>
       buildConstructLineCpmModel(activities, {
-        dataDate,
+        dataDate: dataDateOfRecord ?? todayIsoDate(),
         nearCriticalFloat: 5,
       }),
-    [activities, dataDate],
+    [activities, dataDateOfRecord],
   );
   const delaySummary = useMemo(() => buildDelayFragmentSummary(delayFragments), [delayFragments]);
   const cpmScheduleDraft = useMemo(
     () =>
       buildCpmScheduleUpdateDraft({
-        dataDate,
+        dataDate: dataDateOfRecord ?? todayIsoDate(),
         delaySummary,
         milestones,
         model: scheduleCpmModel,
-        previousUpdate: lastScheduleUpdate,
+        previousUpdate: latestUpdate,
         project,
       }),
-    [dataDate, delaySummary, lastScheduleUpdate, milestones, project, scheduleCpmModel],
+    [dataDateOfRecord, delaySummary, latestUpdate, milestones, project, scheduleCpmModel],
   );
+  const cpmForecastStatus = selectCpmForecastStatus({
+    savedForecast,
+    liveCpmForecast: hasCpmActivities ? cpmScheduleDraft.forecast_completion_date : null,
+  });
+  const latestActivitySnapshotCount = latestUpdate
+    ? activityUpdates.filter((row) => row.update_number === latestUpdate.update_number).length
+    : 0;
   useEffect(() => {
-    setCompletionUpdateDraft(project.forecast_completion_date ?? "");
+    setManualCompletionDraft(project.forecast_completion_date ?? "");
   }, [project.forecast_completion_date]);
 
-  const applyCpmDraft = () => {
-    if (activities.length === 0) {
-      toast.warning("CPM schedule is empty", {
-        description: "Add activities before generating a schedule update.",
-      });
-      return;
-    }
-    setCompletionUpdateDraft(cpmScheduleDraft.forecast_completion_date);
-    setDataDate(cpmScheduleDraft.data_date);
-    setUpdateNotes(cpmScheduleDraft.notes);
-    setCpmMilestoneForecasts(cpmScheduleDraft.milestone_forecasts);
-    if (!moneyNotes.trim()) setMoneyNotes(cpmScheduleDraft.money_notes);
-    toast.success("CPM forecast staged", {
-      description:
-        cpmScheduleDraft.milestone_forecasts.length > 0
-          ? `${cpmScheduleDraft.milestone_forecasts.length} milestone forecast ${
-              cpmScheduleDraft.milestone_forecasts.length === 1 ? "change is" : "changes are"
-            } staged.`
-          : "Completion and narrative fields were drafted from the CPM schedule.",
-    });
-  };
+  // Seed the annotation fields from the latest saved update whenever a new
+  // update becomes the record (render-time state adjustment, not an effect).
+  if (hasCpmActivities && latestUpdate && annotationSeedUpdateId !== latestUpdate.id) {
+    setAnnotationSeedUpdateId(latestUpdate.id);
+    setUpdateNotes(latestUpdate.notes);
+    setMoneyNotes(latestUpdate.money_notes);
+    setScheduleMoneyExposure(latestUpdate.schedule_money_exposure);
+    setScheduleMoneyRecovery(latestUpdate.schedule_money_recovery);
+  }
 
-  const scheduleUpdate = useMutation({
-    mutationFn: () =>
+  const annotate = useMutation({
+    mutationFn: () => {
+      if (!latestUpdate) throw new Error("Save a CPM update in the workbench first.");
+      return annotateUpdate({
+        data: {
+          id: latestUpdate.id,
+          projectId,
+          notes: updateNotes,
+          schedule_money_exposure: scheduleMoneyExposure,
+          schedule_money_recovery: scheduleMoneyRecovery,
+          money_notes: moneyNotes,
+        },
+      });
+    },
+    onSuccess: async (result) => {
+      await Promise.all([invalidateSchedule(), invalidateProject()]);
+      toast.success("Schedule update saved", {
+        description: `Narrative and money fields were saved onto update #${result.update.update_number}.`,
+      });
+    },
+    onError: (error) => {
+      toast.error("Schedule update did not save", {
+        description: error instanceof Error ? error.message : "Refresh and try again.",
+      });
+    },
+  });
+
+  const manualUpdate = useMutation({
+    mutationFn: ({ replaceExisting = false }: { replaceExisting?: boolean }) =>
       createUpdate({
         data: {
           projectId,
-          forecast_completion_date: completionUpdateDraft,
-          data_date: dataDate,
-          update_date: dataDate,
+          forecast_completion_date: manualCompletionDraft,
+          data_date: manualDataDate,
+          update_date: manualDataDate,
           schedule_money_exposure: scheduleMoneyExposure,
           schedule_money_recovery: scheduleMoneyRecovery,
           money_notes: moneyNotes,
           notes: updateNotes,
-          milestone_forecasts: cpmMilestoneForecasts,
+          replace_existing: replaceExisting,
+          milestone_forecasts: [],
         },
       }),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      if (!result.ok) {
+        const shouldReplace =
+          typeof window !== "undefined" &&
+          window.confirm(
+            `Update #${result.duplicate.update_number} already covers ${shortDate(
+              result.duplicate.data_date,
+            )} — replace it?`,
+          );
+        if (shouldReplace) manualUpdate.mutate({ replaceExisting: true });
+        return;
+      }
       setUpdateNotes("");
       setMoneyNotes("");
-      setCpmMilestoneForecasts([]);
       setScheduleMoneyExposure(0);
       setScheduleMoneyRecovery(0);
       await Promise.all([invalidateSchedule(), invalidateProject()]);
       toast.success("Schedule update saved", {
-        description: "The data-date snapshot was added to the schedule update history.",
+        description: "The manual data-date update was added to the schedule update history.",
       });
     },
     onError: (error) => {
@@ -314,8 +365,9 @@ export function ScheduleRisk({
         <div className="mb-4">
           <h3 className="font-serif text-2xl text-foreground">Baseline vs schedule updates</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            Create the committed baseline, then save dated updates with a data date. Each update is
-            a snapshot in time and can carry schedule-related dollars.
+            {hasCpmActivities
+              ? "The CPM workbench authors every schedule update: set the data date, work the needs-update queue, save the snapshot. This tab reviews the saved record and adds the schedule narrative and money."
+              : "No CPM activities yet, so schedule updates are recorded manually here. The CPM workbench takes over authoring the moment activities exist."}
           </p>
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
@@ -330,93 +382,98 @@ export function ScheduleRisk({
               })
             }
           />
-          <DateField
-            label="Current completion update"
-            value={completionUpdateDraft}
-            accent
-            onCommit={(v) => setCompletionUpdateDraft(v ?? "")}
-          />
+          {hasCpmActivities ? (
+            <ScheduleCompletionOfRecordCard value={savedForecast} update={latestUpdate} />
+          ) : (
+            <DateField
+              label="Manual completion update"
+              value={manualCompletionDraft}
+              accent
+              onCommit={(v) => setManualCompletionDraft(v ?? "")}
+            />
+          )}
           <ScheduleVarianceCard value={scheduleVariance} />
           <ScheduleDeltaCard value={lastMovementWeeks} />
         </div>
-        <div className="mt-4 rounded-md border border-hairline bg-surface p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                <Gauge className="h-3.5 w-3.5" />
-                CPM schedule update assistant
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                <span className="rounded border border-hairline bg-card px-2 py-1">
-                  1 Review CPM signal
-                </span>
-                <span className="rounded border border-hairline bg-card px-2 py-1">
-                  2 Use CPM forecast
-                </span>
-                <span className="rounded border border-hairline bg-card px-2 py-1">
-                  3 Save schedule update
-                </span>
-              </div>
-              <div className="mt-2 grid gap-3 text-sm md:grid-cols-5">
-                <ScheduleIntelligenceMetric
-                  label="CPM forecast"
-                  value={shortDate(cpmScheduleDraft.forecast_completion_date)}
-                />
-                <ScheduleIntelligenceMetric
-                  label="CPM variance"
-                  value={varianceLabel(cpmScheduleDraft.variance_weeks)}
-                  tone={varianceTone(cpmScheduleDraft.variance_weeks)}
-                />
-                <ScheduleIntelligenceMetric
-                  label="Critical basis"
-                  value={scheduleCpmModel.criticalPathReliable ? "Reliable" : "Needs logic cleanup"}
-                  tone={scheduleCpmModel.criticalPathReliable ? "text-success" : "text-warning"}
-                />
-                <ScheduleIntelligenceMetric
-                  label="Milestone matches"
-                  value={String(cpmScheduleDraft.milestone_forecasts.length)}
-                  tone={
-                    cpmScheduleDraft.milestone_forecasts.length > 0
-                      ? "text-foreground"
-                      : "text-muted-foreground"
-                  }
-                />
-                <ScheduleIntelligenceMetric
-                  label="Delay impacts"
-                  value={`${delaySummary.openCount}/${delaySummary.totalCount}`}
-                  tone={delaySummary.openDays > 0 ? "text-danger" : "text-muted-foreground"}
-                />
-              </div>
-              <div className="mt-3 max-w-5xl text-xs text-muted-foreground">
-                {cpmScheduleDraft.preview}
+        {hasCpmActivities && (
+          <div className="mt-4 rounded-md border border-hairline bg-surface p-4">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              <Gauge className="h-3.5 w-3.5" />
+              Latest CPM schedule update
+            </div>
+            {latestUpdate ? (
+              <>
+                <div className="mt-2 grid gap-3 text-sm md:grid-cols-5">
+                  <ScheduleIntelligenceMetric
+                    label={`Update #${latestUpdate.update_number}`}
+                    value={`Data date ${shortDate(latestUpdate.data_date)}`}
+                  />
+                  <ScheduleIntelligenceMetric
+                    label="Completion forecast"
+                    value={shortDate(latestUpdate.forecast_completion_date)}
+                  />
+                  <ScheduleIntelligenceMetric
+                    label="Baseline variance"
+                    value={varianceLabel(latestUpdate.variance_weeks)}
+                    tone={varianceTone(latestUpdate.variance_weeks)}
+                  />
+                  <ScheduleIntelligenceMetric
+                    label="Movement vs prior"
+                    value={varianceLabel(latestUpdate.movement_weeks)}
+                    tone={varianceTone(latestUpdate.movement_weeks)}
+                  />
+                  <ScheduleIntelligenceMetric
+                    label="Activity snapshots"
+                    value={String(latestActivitySnapshotCount)}
+                    tone={
+                      latestActivitySnapshotCount > 0 ? "text-foreground" : "text-muted-foreground"
+                    }
+                  />
+                </div>
+                {latestUpdate.notes ? (
+                  <div className="mt-3 max-w-5xl text-xs text-muted-foreground">
+                    {latestUpdate.notes}
+                  </div>
+                ) : null}
+                {cpmForecastStatus.isUnsaved && (
+                  <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs font-medium text-foreground">
+                    Unsaved forecast: the live CPM schedule now points to{" "}
+                    {shortDate(cpmForecastStatus.unsavedForecast)}. Save a new snapshot in the CPM
+                    workbench to make it the schedule update of record.
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">
+                No CPM update saved yet. In the CPM workbench, set the data date, work the
+                needs-update queue, and save the snapshot — that saved snapshot becomes schedule
+                update #1.
+              </p>
+            )}
+          </div>
+        )}
+        <div className="mt-4 grid gap-3 md:grid-cols-4 md:items-end">
+          {hasCpmActivities ? (
+            <div className="space-y-1.5">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Data date
+              </Label>
+              <div className="flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm tabular text-foreground">
+                {latestUpdate ? shortDate(latestUpdate.data_date) : "Set in the CPM workbench"}
               </div>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2 lg:shrink-0"
-              disabled={activities.length === 0}
-              onClick={applyCpmDraft}
-            >
-              <GitBranch className="h-4 w-4" />
-              Use CPM forecast
-            </Button>
-          </div>
-          {cpmMilestoneForecasts.length > 0 && (
-            <div className="mt-3 rounded border border-accent/25 bg-accent/10 px-3 py-2 text-xs font-medium text-foreground">
-              CPM draft staged. Review the fields below, then save the schedule update.{" "}
-              {cpmMilestoneForecasts.length} milestone forecast{" "}
-              {cpmMilestoneForecasts.length === 1 ? "change is" : "changes are"} included.
+          ) : (
+            <div className="space-y-1.5">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Data date
+              </Label>
+              <Input
+                type="date"
+                value={manualDataDate}
+                onChange={(e) => setManualDataDate(e.target.value)}
+              />
             </div>
           )}
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-4 md:items-end">
-          <div className="space-y-1.5">
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Data date
-            </Label>
-            <Input type="date" value={dataDate} onChange={(e) => setDataDate(e.target.value)} />
-          </div>
           <div className="space-y-1.5">
             <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
               Money exposure in update
@@ -453,23 +510,27 @@ export function ScheduleRisk({
               placeholder="What dollar impact belongs to this update?"
             />
           </div>
-          <div className="flex flex-col gap-2">
+          {hasCpmActivities ? (
             <Button
               type="button"
-              variant="outline"
-              disabled={activities.length === 0}
-              onClick={applyCpmDraft}
+              disabled={!latestUpdate || annotate.isPending}
+              onClick={() => annotate.mutate()}
             >
-              Use CPM forecast
+              {annotate.isPending
+                ? "Saving..."
+                : latestUpdate
+                  ? `Save onto update #${latestUpdate.update_number}`
+                  : "Save a CPM update first"}
             </Button>
+          ) : (
             <Button
               type="button"
-              disabled={!completionUpdateDraft || scheduleUpdate.isPending}
-              onClick={() => scheduleUpdate.mutate()}
+              disabled={!manualCompletionDraft || manualUpdate.isPending}
+              onClick={() => manualUpdate.mutate({})}
             >
-              {scheduleUpdate.isPending ? "Saving..." : "Save schedule update"}
+              {manualUpdate.isPending ? "Saving..." : "Save manual schedule update"}
             </Button>
-          </div>
+          )}
         </div>
       </section>
 
@@ -579,6 +640,25 @@ export function MilestoneViewSelect({
         <SelectItem value="all">All</SelectItem>
       </SelectContent>
     </Select>
+  );
+}
+
+function ScheduleCompletionOfRecordCard({
+  value,
+  update,
+}: {
+  value: string | null;
+  update: ScheduleUpdateRow | null;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {update ? `Completion of record · update #${update.update_number}` : "Completion of record"}
+      </Label>
+      <div className="flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm tabular text-foreground">
+        {value ? shortDate(value) : "No update saved yet"}
+      </div>
+    </div>
   );
 }
 

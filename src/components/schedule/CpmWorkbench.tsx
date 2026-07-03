@@ -660,7 +660,13 @@ export function CpmActivityPlanner({
     setActivityOrder("wbs");
   };
   const dataDateUpdate = useMutation({
-    mutationFn: (nextDataDate: string) => {
+    mutationFn: ({
+      nextDataDate,
+      replaceExisting = false,
+    }: {
+      nextDataDate: string;
+      replaceExisting?: boolean;
+    }) => {
       const workbenchDraft = buildCpmScheduleUpdateDraft({
         dataDate: nextDataDate,
         delaySummary,
@@ -679,22 +685,45 @@ export function CpmActivityPlanner({
           schedule_money_recovery: 0,
           money_notes: workbenchDraft.money_notes,
           notes: workbenchDraft.notes,
+          replace_existing: replaceExisting,
           milestone_forecasts: workbenchDraft.milestone_forecasts,
         },
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (result, variables) => {
+      if (!result.ok) {
+        // One update per data date: confirm before amending, never duplicate.
+        const shouldReplace =
+          typeof window !== "undefined" &&
+          window.confirm(
+            `Update #${result.duplicate.update_number} already covers ${shortDate(
+              result.duplicate.data_date,
+            )} — replace its snapshot?`,
+          );
+        if (shouldReplace) {
+          dataDateUpdate.mutate({ nextDataDate: variables.nextDataDate, replaceExisting: true });
+        }
+        return;
+      }
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["schedule", project.id] }),
         qc.invalidateQueries({ queryKey: ["project", project.id] }),
         qc.invalidateQueries({ queryKey: ["projects"] }),
       ]);
-      toast.success("Data date saved", {
-        description: "The CPM data-date snapshot was added to the schedule update history.",
-      });
+      const snapshotSummary = `${result.activitySnapshotCount} activity and ${result.milestoneSnapshotCount} milestone snapshots were recorded.`;
+      toast.success(
+        result.amended
+          ? `Schedule update #${result.update.update_number} replaced`
+          : `Schedule update #${result.update.update_number} saved`,
+        {
+          description: result.amended
+            ? `The ${shortDate(result.update.data_date)} update now carries this snapshot. ${snapshotSummary}`
+            : `The data-date snapshot was added to the schedule update history. ${snapshotSummary}`,
+        },
+      );
     },
     onError: (error) => {
-      toast.error("Data date did not save", {
+      toast.error("Schedule update did not save", {
         description: error instanceof Error ? error.message : "Refresh and try again.",
       });
     },
@@ -884,7 +913,7 @@ export function CpmActivityPlanner({
       return;
     }
     setReadinessWarningAcceptedFor(null);
-    dataDateUpdate.mutate(dataDateDraft);
+    dataDateUpdate.mutate({ nextDataDate: dataDateDraft });
   };
   const confirmDeleteActivity = (activity: ScheduleActivityRow) => {
     const label = activity.activity_id
