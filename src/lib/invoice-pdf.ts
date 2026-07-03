@@ -7,10 +7,20 @@ import type {
 } from "@/lib/projects.functions";
 import { drawPdfBrand, embedPdfLogo } from "@/lib/pdf-branding";
 
+export interface InvoicePdfRemittance {
+  bankName: string;
+  routingNumber: string;
+  accountNumber: string;
+  wireInstructions: string;
+  memo: string;
+}
+
 export interface InvoicePdfInput {
   project: ProjectRow;
   invoice: BillingInvoiceRow;
   linkedPayApp?: BillingApplicationRow;
+  /** Direct bank transfer details, included when enabled for this invoice. */
+  remittance?: InvoicePdfRemittance | null;
   generatedAt?: Date;
 }
 
@@ -216,6 +226,7 @@ export async function generateInvoicePdf({
   project,
   invoice,
   linkedPayApp,
+  remittance,
   generatedAt = new Date(),
 }: InvoicePdfInput) {
   const doc = await PDFDocument.create();
@@ -318,6 +329,57 @@ export async function generateInvoicePdf({
     : "Direct invoice";
   drawWrapped(ctx, source, M, PAGE_W - M * 2, { font: sansBold, size: 11, lineHeight: 15 });
   ctx.y -= 6;
+
+  if (remittance && openBalance > 0) {
+    // The direct bank rail, formatted like it belongs on a requisition:
+    // labeled remittance rows inside a bordered panel, no processor branding.
+    drawSectionTitle(ctx, "How to pay - direct bank transfer");
+    const rows: Array<[string, string]> = [
+      ["Bank", remittance.bankName],
+      ["Routing number", remittance.routingNumber],
+      ["Account number", remittance.accountNumber],
+      ["Payment reference", remittance.memo],
+    ].filter(([, value]) => Boolean(value)) as Array<[string, string]>;
+    const rowHeight = 20;
+    const panelPad = 12;
+    const panelHeight = rows.length * rowHeight + panelPad * 2;
+    ensure(ctx, panelHeight + 10);
+    ctx.page.drawRectangle({
+      x: M,
+      y: ctx.y - panelHeight + 12,
+      width: PAGE_W - M * 2,
+      height: panelHeight,
+      color: SURFACE,
+      borderColor: HAIR,
+      borderWidth: 0.5,
+    });
+    let rowY = ctx.y - panelPad + 6;
+    for (const [label, value] of rows) {
+      drawText(ctx, label.toUpperCase(), M + panelPad, rowY, {
+        font: sansBold,
+        size: 7,
+        color: MUTED,
+      });
+      drawText(ctx, value, M + 170, rowY, { font: sansBold, size: 10 });
+      rowY -= rowHeight;
+    }
+    ctx.y -= panelHeight - 4;
+    if (remittance.wireInstructions) {
+      drawWrapped(ctx, remittance.wireInstructions, M, PAGE_W - M * 2, {
+        size: 9,
+        lineHeight: 12,
+        color: MUTED,
+      });
+    }
+    drawWrapped(
+      ctx,
+      "Include the payment reference so your payment is applied to this invoice.",
+      M,
+      PAGE_W - M * 2,
+      { size: 8, lineHeight: 11, color: MUTED },
+    );
+    ctx.y -= 6;
+  }
 
   if (invoice.notes) {
     drawSectionTitle(ctx, "Notes");

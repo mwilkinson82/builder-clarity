@@ -44,6 +44,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { InvoicePaymentMethodToggles } from "@/components/billing/InvoicePaymentMethodToggles";
+import {
+  getInvoiceRemittance,
+  getPaymentMethodContext,
+  type PaymentMethodContext,
+} from "@/lib/payments.functions";
+import { dollarsToCents, isOverRecording } from "@/lib/payments-domain";
 import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/schedule";
@@ -2415,6 +2422,7 @@ type PaymentDraft = {
   payment_method: string;
   processor: string;
   processor_payment_id: string;
+  reference: string;
   notes: string;
 };
 
@@ -2511,6 +2519,12 @@ function BillingWorkspace({
   onEnableInvoicePayment: (invoice: BillingInvoiceRow) => void;
   enablingInvoicePaymentId: string | null;
 }) {
+  const loadPaymentMethodContext = useServerFn(getPaymentMethodContext);
+  const { data: paymentMethodContext } = useQuery({
+    queryKey: ["payment-method-context", project.id],
+    queryFn: () => loadPaymentMethodContext({ data: { projectId: project.id } }),
+    staleTime: 60_000,
+  });
   const pendingCOs = changeOrders.filter((co) => co.status === "Pending");
   const weightedPending = pendingCOs.reduce(
     (sum, co) => sum + co.contract_amount * (co.probability / 100),
@@ -2649,6 +2663,16 @@ function BillingWorkspace({
       status,
       client_visible: status !== "draft",
       notes: app?.notes ?? "",
+      // Seed the toggles from the company defaults so what the contractor
+      // sees in the dialog is exactly what gets saved; {} would also inherit
+      // at render time, but an explicit copy survives later default changes.
+      enabled_payment_methods: paymentMethodContext
+        ? {
+            direct_bank: paymentMethodContext.defaultPaymentMethods.direct_bank,
+            card: paymentMethodContext.defaultPaymentMethods.card,
+            ach_debit: paymentMethodContext.defaultPaymentMethods.ach_debit,
+          }
+        : {},
     };
   };
   const [payAppOpen, setPayAppOpen] = useState(false);
@@ -3286,6 +3310,14 @@ function BillingWorkspace({
                       />
                       Visible in client portal when billing access is enabled
                     </label>
+                    <InvoicePaymentMethodToggles
+                      value={invoiceDraft.enabled_payment_methods}
+                      invoiceTotal={invoiceDraft.total_due}
+                      context={paymentMethodContext}
+                      onChange={(enabled_payment_methods) =>
+                        setInvoiceDraft({ ...invoiceDraft, enabled_payment_methods })
+                      }
+                    />
                     <div className="space-y-1.5">
                       <Label>Notes</Label>
                       <Textarea
@@ -3389,6 +3421,7 @@ function BillingWorkspace({
                           : ""
                       }
                       savingPayment={savingPayment}
+                      paymentMethodContext={paymentMethodContext}
                       onPatch={(patch) => onUpdateInvoice(invoice.id, patch)}
                       onDelete={() => onDeleteInvoice(invoice.id)}
                       onRecordPayment={onRecordPayment}
@@ -3931,6 +3964,7 @@ function BillingInvoiceRowEditor({
   invoiceRecipientsLoading,
   invoiceRecipientsError,
   savingPayment,
+  paymentMethodContext,
   onPatch,
   onDelete,
   onRecordPayment,
@@ -3944,12 +3978,14 @@ function BillingInvoiceRowEditor({
   invoiceRecipientsLoading?: boolean;
   invoiceRecipientsError?: string;
   savingPayment?: boolean;
+  paymentMethodContext?: PaymentMethodContext;
   onPatch: (patch: Partial<BillingInvoiceRow>) => void;
   onDelete: () => void;
   onRecordPayment: (input: PaymentDraft) => void;
   onEnablePayment: () => void;
   enablingPayment?: boolean;
 }) {
+  const fetchInvoiceRemittance = useServerFn(getInvoiceRemittance);
   const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
   const aging = invoiceAgingStatus(invoice, openBalance);
   const invoiceLabel = billingDocumentLabel(invoice.invoice_number, invoice.title, "Invoice");
@@ -3995,14 +4031,19 @@ function BillingInvoiceRowEditor({
     processor_fee: 0,
     overwatch_fee: 0,
     paid_at: today,
-    payment_method: "manual",
+    payment_method: "check",
     processor: "manual",
     processor_payment_id: "",
+    reference: "",
     notes: "",
   });
   const netPayout = Math.max(
     0,
     paymentDraft.amount - paymentDraft.processor_fee - paymentDraft.overwatch_fee,
+  );
+  const overRecording = isOverRecording(
+    dollarsToCents(openBalance),
+    dollarsToCents(paymentDraft.amount),
   );
   const sendBlockingMessage =
     invoice.status === "void"
@@ -4020,9 +4061,10 @@ function BillingInvoiceRowEditor({
       processor_fee: 0,
       overwatch_fee: 0,
       paid_at: today,
-      payment_method: "manual",
+      payment_method: "check",
       processor: "manual",
       processor_payment_id: "",
+      reference: "",
       notes: "",
     });
     setPaymentOpen(true);
@@ -4036,7 +4078,12 @@ function BillingInvoiceRowEditor({
   const downloadInvoice = async () => {
     setInvoiceAction("pdf");
     try {
-      const bytes = await generateInvoicePdf({ project, invoice, linkedPayApp });
+      // Remittance fetch is best-effort: no bank details (or no read access)
+      // just means the PDF omits the direct-bank block.
+      const remittance = await fetchInvoiceRemittance({
+        data: { invoiceId: invoice.id },
+      }).catch(() => null);
+      const bytes = await generateInvoicePdf({ project, invoice, linkedPayApp, remittance });
       downloadPdfBytes(bytes, invoiceFilename(project, invoice));
       toast.success("Invoice PDF downloaded");
     } catch (error) {
@@ -4241,6 +4288,13 @@ function BillingInvoiceRowEditor({
                   )}
                 </div>
 
+                <InvoicePaymentMethodToggles
+                  value={invoice.enabled_payment_methods}
+                  invoiceTotal={invoice.total_due}
+                  context={paymentMethodContext}
+                  onChange={(enabled_payment_methods) => onPatch({ enabled_payment_methods })}
+                />
+
                 <div className="rounded-md border border-hairline bg-surface p-4 text-sm text-muted-foreground">
                   Confirming will queue the invoice email and mark the invoice visible to the
                   client. It will not enable online payment unless Stripe Connect is already
@@ -4340,27 +4394,45 @@ function BillingInvoiceRowEditor({
                   </div>
                   <div className="space-y-1.5">
                     <Label>Method</Label>
-                    <Input
+                    <Select
                       value={paymentDraft.payment_method}
-                      onChange={(e) =>
-                        setPaymentDraft({ ...paymentDraft, payment_method: e.target.value })
+                      onValueChange={(payment_method) =>
+                        setPaymentDraft({ ...paymentDraft, payment_method })
                       }
-                    />
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="wire">Wire</SelectItem>
+                        <SelectItem value="ach">ACH</SelectItem>
+                        <SelectItem value="check">Check</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Processor ref</Label>
+                    <Label>Reference</Label>
                     <Input
-                      value={paymentDraft.processor_payment_id}
-                      placeholder="Check #, ACH ref, Stripe intent"
+                      value={paymentDraft.reference}
+                      placeholder="Check #, wire confirmation, ACH trace"
                       onChange={(e) =>
                         setPaymentDraft({
                           ...paymentDraft,
+                          reference: e.target.value,
                           processor_payment_id: e.target.value,
                         })
                       }
                     />
                   </div>
                 </div>
+                {overRecording ? (
+                  <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+                    This records {fmtUSD(paymentDraft.amount)} against a remaining balance of{" "}
+                    {fmtUSD(openBalance)}. Double-check the amount — you can still save if this is
+                    an intentional overpayment or deposit.
+                  </div>
+                ) : null}
                 <div className="rounded-md border border-hairline bg-surface p-3">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     Net payout

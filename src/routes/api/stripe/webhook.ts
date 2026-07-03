@@ -7,6 +7,7 @@ import {
   RouteError,
   verifyStripeWebhookPayload,
 } from "@/lib/stripe.server";
+import { checkoutSessionOutcome, planCheckoutCompletion } from "@/lib/payments-domain";
 
 type StripeObject = Record<string, unknown> & {
   id?: string;
@@ -39,6 +40,7 @@ type DynamicQueryResult<T = Record<string, unknown>> = {
 };
 
 type DynamicQuery = PromiseLike<DynamicQueryResult> & {
+  delete(): DynamicQuery;
   eq(column: string, value: unknown): DynamicQuery;
   insert(values: unknown): DynamicQuery;
   maybeSingle(): DynamicQuery;
@@ -55,6 +57,53 @@ const CONNECT_PERSISTENCE_COLUMNS = [
   "stripe_connect_status",
   "payment_processor_ready",
 ] as const;
+
+const LEDGER_PHASE1_COLUMNS = ["amount_cents", "currency", "reference", "organization_id"] as const;
+
+function isMissingRelationError(error: DynamicQueryError | null) {
+  const message = (error?.message ?? "").toLowerCase();
+  return (
+    error?.code === "42P01" ||
+    error?.code === "PGRST205" ||
+    message.includes("does not exist") ||
+    message.includes("could not find the table")
+  );
+}
+
+/**
+ * Event-id idempotency: claim the event before processing by inserting into
+ * stripe_webhook_events. A duplicate delivery loses the insert (PK conflict)
+ * and the whole webhook no-ops with a 2xx so Stripe stops retrying. Returns
+ * false when this delivery is a duplicate. Pre-migration (table missing) we
+ * process without the guard — same behavior as before this phase.
+ */
+async function claimWebhookEvent(eventId: string, eventType: string): Promise<boolean> {
+  const admin = createSupabaseAdminClient();
+  const { error } = await dynamicTable(admin, "stripe_webhook_events").insert({
+    event_id: eventId,
+    event_type: eventType,
+  });
+  if (!error) return true;
+  if (error.code === "23505" || (error.message ?? "").toLowerCase().includes("duplicate")) {
+    return false;
+  }
+  if (isMissingRelationError(error)) return true;
+  throw new Error(error.message);
+}
+
+/**
+ * Processing failed after the claim: release it so Stripe's retry is not
+ * swallowed as a duplicate.
+ */
+async function releaseWebhookEvent(eventId: string) {
+  try {
+    const admin = createSupabaseAdminClient();
+    await dynamicTable(admin, "stripe_webhook_events").delete().eq("event_id", eventId);
+  } catch {
+    // Best-effort: an orphaned claim only suppresses a retry of a failed
+    // event; the failure already returned non-2xx and is visible in Stripe.
+  }
+}
 
 function sessionMetadata(object: StripeObject) {
   return object.metadata ?? {};
@@ -91,12 +140,55 @@ function stripeConnectSchemaNotReady(error: { message?: string } | null) {
 async function handleCheckoutCompleted(object: StripeObject) {
   const metadata = sessionMetadata(object);
   if (metadata.kind === "client_invoice") {
-    await markInvoicePaid(object);
+    // Cards complete with payment_status "paid" and book immediately. ACH
+    // (us_bank_account) completes "unpaid" — authorization only — and books
+    // on checkout.session.async_payment_succeeded once funds settle.
+    if (checkoutSessionOutcome(str(object.payment_status)) === "book") {
+      await markInvoicePaid(object);
+    } else {
+      await markInvoiceProcessing(object);
+    }
     return;
   }
   if (metadata.kind === "subscription") {
     await markSubscriptionCheckoutComplete(object);
   }
+}
+
+async function handleCheckoutAsyncSucceeded(object: StripeObject) {
+  const metadata = sessionMetadata(object);
+  if (metadata.kind !== "client_invoice") return;
+  await markInvoicePaid(object);
+}
+
+// Async payment (ACH debit) settled later: bank confirmation still pending.
+async function markInvoiceProcessing(object: StripeObject) {
+  const metadata = sessionMetadata(object);
+  if (!metadata.invoice_id) return;
+  const admin = createSupabaseAdminClient();
+  const { error } = await dynamicTable(admin, "billing_invoices")
+    .update({
+      online_payment_status: "pending",
+    })
+    .eq("id", metadata.invoice_id)
+    .eq("stripe_checkout_session_id", str(object.id));
+  if (error) throw new Error(error.message);
+}
+
+// Async payment failed after checkout completed (e.g. ACH returned:
+// insufficient funds, closed account). No payment was ever booked for the
+// session, so only the invoice's online payment state flips.
+async function markInvoiceAsyncFailed(object: StripeObject) {
+  const metadata = sessionMetadata(object);
+  if (metadata.kind !== "client_invoice" || !metadata.invoice_id) return;
+  const admin = createSupabaseAdminClient();
+  const { error } = await dynamicTable(admin, "billing_invoices")
+    .update({
+      online_payment_status: "failed",
+    })
+    .eq("id", metadata.invoice_id)
+    .eq("stripe_checkout_session_id", str(object.id));
+  if (error) throw new Error(error.message);
 }
 
 async function handleCheckoutExpired(object: StripeObject) {
@@ -138,14 +230,10 @@ async function markInvoicePaid(object: StripeObject) {
 
   const sessionId = str(object.id);
   const paymentIntentId = str(object.payment_intent);
-  const chargeAmount = num(object.amount_total) / 100;
-  const amount =
-    chargeAmount > 0
-      ? chargeAmount
-      : Math.max(0, num(invoice.total_due) - num(invoice.paid_amount));
-  const overwatchFee = Math.max(0, num(metadata.overwatch_fee_amount_cents) / 100);
-  const netPayout = Math.max(0, amount - overwatchFee);
 
+  // Second idempotency layer under the event-id guard: the same checkout
+  // session never produces two payment records even if Stripe emits distinct
+  // events that both resolve to a completion.
   const { data: existingPayment, error: existingError } = await dynamicTable(
     admin,
     "payment_ledger",
@@ -155,35 +243,58 @@ async function markInvoicePaid(object: StripeObject) {
     .maybeSingle();
   if (existingError) throw new Error(existingError.message);
 
-  if (!existingPayment) {
-    const { error: insertError } = await dynamicTable(admin, "payment_ledger").insert({
-      project_id: invoice.project_id,
-      invoice_id: invoice.id,
-      billing_application_id: invoice.billing_application_id,
-      amount,
-      processor_fee: 0,
-      overwatch_fee: overwatchFee,
-      net_payout: netPayout,
-      payment_method: "stripe_checkout",
-      processor: "stripe",
-      processor_payment_id: paymentIntentId || sessionId,
-      status: "succeeded",
-      paid_at: new Date().toISOString(),
-      notes: "Stripe Checkout payment completed.",
-      stripe_checkout_session_id: sessionId,
-      stripe_payment_intent_id: paymentIntentId,
-    });
-    if (insertError) throw new Error(insertError.message);
-  }
+  // All money math in integer cents (payments-domain owns the rules: the
+  // surcharge covers fees and never counts as progress against the invoice).
+  const plan = planCheckoutCompletion(
+    {
+      amountTotalCents: Math.round(num(object.amount_total)),
+      surchargeCents: Math.round(num(metadata.surcharge_cents)),
+      overwatchFeeCents: Math.round(num(metadata.overwatch_fee_amount_cents)),
+      occurredAtIso: new Date().toISOString(),
+      alreadyRecorded: Boolean(existingPayment),
+    },
+    {
+      totalDueCents: Math.round(num(invoice.total_due) * 100),
+      paidCents: Math.round(num(invoice.paid_amount) * 100),
+    },
+  );
+  if (!plan.payment || !plan.invoicePatch) return;
 
-  const paidAmount = num(invoice.paid_amount) + amount;
-  const status = paidAmount >= num(invoice.total_due) ? "paid" : "partially_paid";
-  const paidAt = status === "paid" ? new Date().toISOString() : null;
+  const insertPayload: Record<string, unknown> = {
+    project_id: invoice.project_id,
+    invoice_id: invoice.id,
+    billing_application_id: invoice.billing_application_id,
+    amount: plan.payment.amountCents / 100,
+    amount_cents: plan.payment.amountCents,
+    currency: "usd",
+    reference: paymentIntentId || sessionId,
+    organization_id: metadata.organization_id || null,
+    processor_fee: 0,
+    overwatch_fee: plan.payment.overwatchFeeCents / 100,
+    net_payout: plan.payment.netPayoutCents / 100,
+    payment_method: "stripe_checkout",
+    processor: "stripe",
+    processor_payment_id: paymentIntentId || sessionId,
+    status: plan.payment.state,
+    paid_at: new Date().toISOString(),
+    notes: "Stripe Checkout payment completed.",
+    stripe_checkout_session_id: sessionId,
+    stripe_payment_intent_id: paymentIntentId,
+  };
+  let { error: insertError } = await dynamicTable(admin, "payment_ledger").insert(insertPayload);
+  if (insertError && isMissingAnySupabaseColumn(insertError, LEDGER_PHASE1_COLUMNS)) {
+    for (const column of LEDGER_PHASE1_COLUMNS) delete insertPayload[column];
+    ({ error: insertError } = await dynamicTable(admin, "payment_ledger").insert(insertPayload));
+  }
+  if (insertError) throw new Error(insertError.message);
+
+  const paidAmount = plan.invoicePatch.paidCents / 100;
+  const status = plan.invoicePatch.status;
   const { error: updateInvoiceError } = await dynamicTable(admin, "billing_invoices")
     .update({
       paid_amount: paidAmount,
       status,
-      paid_at: paidAt,
+      paid_at: plan.invoicePatch.paidAtIso,
       online_payment_status: "paid",
       stripe_payment_intent_id: paymentIntentId,
     })
@@ -312,6 +423,7 @@ export const Route = createFileRoute("/api/stripe/webhook")({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        let claimedEventId = "";
         try {
           const rawBody = await request.text();
           const event = await verifyStripeWebhookPayload(
@@ -320,9 +432,22 @@ export const Route = createFileRoute("/api/stripe/webhook")({
           );
           const object = (event.data?.object ?? {}) as StripeObject;
 
+          // Idempotency: processed event ids are stored; duplicates no-op
+          // with a 2xx so Stripe stops retrying a delivery we already took.
+          if (event.id && !(await claimWebhookEvent(event.id, event.type))) {
+            return jsonOk({ received: true, duplicate: true, eventId: event.id });
+          }
+          claimedEventId = event.id ?? "";
+
           switch (event.type) {
             case "checkout.session.completed":
               await handleCheckoutCompleted(object);
+              break;
+            case "checkout.session.async_payment_succeeded":
+              await handleCheckoutAsyncSucceeded(object);
+              break;
+            case "checkout.session.async_payment_failed":
+              await markInvoiceAsyncFailed(object);
               break;
             case "checkout.session.expired":
               await handleCheckoutExpired(object);
@@ -347,6 +472,9 @@ export const Route = createFileRoute("/api/stripe/webhook")({
 
           return jsonOk({ received: true, eventId: event.id, eventType: event.type });
         } catch (error) {
+          // Failures return non-2xx (jsonError) so Stripe retries; release
+          // the claim so the retry is not swallowed as a duplicate.
+          if (claimedEventId) await releaseWebhookEvent(claimedEventId);
           return jsonError(error);
         }
       },

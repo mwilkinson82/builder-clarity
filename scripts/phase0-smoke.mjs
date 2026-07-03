@@ -972,10 +972,14 @@ await expectContains(
     /payment_intent_data\[metadata\]\[invoice_id\]/,
     /stripe_connect_not_ready/,
     /payment_processor_ready/,
-    /payment_intent_data\[transfer_data\]\[destination\]/,
+    // Payments Phase 1: sessions became DIRECT charges created on the
+    // connected account (Stripe-Account header) per the spec and Stripe's
+    // Connect docs, replacing the destination-charge transfer_data pin.
+    /stripe_connect_account_id/,
+    /Stripe-Account header/,
     /payment_intent_data\[application_fee_amount\]/,
   ],
-  "invoice checkout route creates guarded Connect payment sessions and records payment link state",
+  "invoice checkout route creates guarded direct-charge sessions on the connected account and records payment link state",
 );
 
 await expectContains(
@@ -1012,6 +1016,134 @@ await expectContains(
     /details_submitted/,
   ],
   "Stripe webhook route records invoice, payment ledger, refund, and subscription outcomes",
+);
+
+// ---------------- Payments Phase 1: direct remittance + Stripe tiers ----------------
+
+await expectFile("src/lib/payments-domain.ts", "payments domain module (pure money logic)");
+await expectFile("src/lib/payments.functions.ts", "company payment profile server functions");
+await expectFile("src/components/billing/GettingPaidSection.tsx", "Getting paid settings section");
+await expectFile("src/components/billing/HowToPayBlock.tsx", "client-facing How to pay block");
+await expectFile(
+  "src/components/billing/InvoicePaymentMethodToggles.tsx",
+  "per-invoice payment method toggles",
+);
+await expectFile("src/components/billing/StripeConnectNudge.tsx", "billing dashboard Stripe nudge");
+await expectFile("scripts/billing-payments-smoke.ts", "billing payments unit suite");
+await expectFile("docs/phases/STRIPEPHASE1.md", "Payments Phase 1 spec");
+
+await expectContains(
+  "src/lib/payments-domain.ts",
+  [
+    /initialPaymentState/,
+    /canTransitionPayment/,
+    /invoicePaymentTotals/,
+    /isOverRecording/,
+    /methodAvailability/,
+    /resolveEnabledMethods/,
+    /renderRemittanceMemo/,
+    /maskAccountTail/,
+    /estimatedCardFeeCents/,
+    /planCheckoutCompletion/,
+    /DEFAULT_STRIPE_AMOUNT_THRESHOLD_CENTS/,
+    /2_500_000/,
+  ],
+  "payments domain keeps the state machine, cents math, availability matrix, and $25k guardrail pure and testable",
+);
+
+await expectContains(
+  "src/lib/payments.functions.ts",
+  [
+    /organization_payment_profiles/,
+    /billing\.manage/,
+    /company\.manage_settings/,
+    /getCompanyPaymentProfile/,
+    /revealCompanyPaymentProfile/,
+    /saveCompanyPaymentProfile/,
+    /getInvoiceRemittance/,
+    /getPaymentMethodContext/,
+  ],
+  "payment profile server functions gate on billing/settings capabilities and keep bank numbers masked by default",
+);
+
+await expectContains(
+  "src/components/billing/GettingPaidSection.tsx",
+  [
+    /Getting paid/,
+    /Stripe verifies new businesses/,
+    /Reveal saved numbers/,
+    /Direct bank transfer details/,
+    /Ready for card & bank-debit payments/,
+    /Verification in progress/,
+    /Not connected/,
+  ],
+  "Getting paid section carries remittance entry, masked reveal, honest Connect states, and the founder's expectation copy",
+);
+
+await expectContains(
+  "src/routes/api/stripe/webhook.ts",
+  [
+    /stripe_webhook_events/,
+    /claimWebhookEvent/,
+    /releaseWebhookEvent/,
+    /duplicate: true/,
+    /planCheckoutCompletion/,
+    /surcharge_cents/,
+    // ACH debits settle asynchronously: completed-but-unpaid sessions wait
+    // for async_payment_succeeded before any payment is booked.
+    /checkout\.session\.async_payment_succeeded/,
+    /checkout\.session\.async_payment_failed/,
+    /checkoutSessionOutcome/,
+  ],
+  "Stripe webhook stores processed event ids, no-ops duplicates with 2xx, books payments through the domain plan, and waits out async ACH settlement",
+);
+
+await expectContains(
+  "src/lib/stripe.server.ts",
+  [
+    /STRIPE_CONNECT_WEBHOOK_SECRET/,
+    /STRIPE_WEBHOOK_TOLERANCE_SECONDS/,
+    /Stripe-Account/,
+  ],
+  "Stripe server helper verifies both endpoint scopes' signing secrets, enforces replay tolerance, and supports direct charges",
+);
+
+await expectContains(
+  "src/routes/api/stripe/checkout/invoice.ts",
+  [
+    /payment_method_types/,
+    /us_bank_account/,
+    /can_view_client_billing/,
+    /payment_method_not_available/,
+    /Card processing fee \(estimated\)/,
+    /resolveEnabledMethods/,
+    /methodAvailability/,
+  ],
+  "invoice checkout honors per-invoice method toggles and the amount guardrail, and lets billing-visible clients pay",
+);
+
+await expectContains(
+  "src/routes/_authenticated/client.projects.$projectId.tsx",
+  [/HowToPayBlock/, /startInvoiceCheckout/, /invoicePaymentOptions/],
+  "client portal renders the How to pay block and starts Stripe checkout server-side",
+);
+
+await expectContains(
+  "src/routes/_authenticated/billing.tsx",
+  [/StripeConnectNudge/],
+  "billing dashboard nudges early Stripe connection while none is connected",
+);
+
+await expectContains(
+  "src/lib/invoice-pdf.ts",
+  [/How to pay - direct bank transfer/, /InvoicePdfRemittance/, /Payment reference/i],
+  "invoice PDF carries the direct bank remittance block when enabled",
+);
+
+await expectContains(
+  "package.json",
+  [/"test:billing":/],
+  "billing payments unit suite is wired into the gate",
 );
 
 await expectContains(
@@ -1093,7 +1225,9 @@ await expectContains(
     /Download packet/,
     /billingInvoices/,
     /Invoice total/,
-    /Pay invoice online/,
+    // Payments Phase 1: the payment CTA moved from an inline "Pay invoice
+    // online" link into the HowToPayBlock component (remittance + Stripe).
+    /HowToPayBlock/,
     /Billing shared with client/,
     /Daily reports shared with client/,
   ],
@@ -1832,6 +1966,25 @@ expectSql(
     /Contractor Circle users working/i,
   ],
   "Stripe commercial readiness migration stages subscription and invoice payment fields",
+);
+
+expectSql(
+  sql,
+  [
+    /create table if not exists public\.organization_payment_profiles/i,
+    /remittance_memo_template/i,
+    /stripe_amount_threshold_cents bigint not null default 2500000/i,
+    /card_fee_pass_through/i,
+    /alter table public\.organization_payment_profiles enable row level security/i,
+    /has_org_capability\(organization_id, 'billing\.manage'\)/i,
+    /has_org_capability\(organization_id, 'company\.manage_settings'\)/i,
+    /alter table public\.payment_ledger[\s\S]*amount_cents bigint not null default 0/i,
+    /add column if not exists reference text not null default ''/i,
+    /enabled_payment_methods jsonb not null default '\{\}'::jsonb/i,
+    /create table if not exists public\.stripe_webhook_events/i,
+    /event_id text primary key/i,
+  ],
+  "Payments Phase 1 migrations stage the payment profile, integer-cents ledger, per-invoice method toggles, and webhook idempotency",
 );
 
 expectSql(

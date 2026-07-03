@@ -459,6 +459,7 @@ function normalizePaymentLedger(row: Record<string, unknown>): PaymentLedgerRow 
     status: str(row.status, "succeeded") as PaymentLedgerRow["status"],
     paid_at: str(row.paid_at),
     notes: str(row.notes),
+    reference: str(row.reference),
     created_by: (row.created_by as string | null) ?? null,
     created_at: str(row.created_at),
     updated_at: str(row.updated_at),
@@ -492,6 +493,10 @@ function normalizeBillingInvoice(row: Record<string, unknown>): BillingInvoiceRo
     sent_at: (row.sent_at as string | null) ?? null,
     paid_at: (row.paid_at as string | null) ?? null,
     notes: str(row.notes),
+    enabled_payment_methods:
+      row.enabled_payment_methods && typeof row.enabled_payment_methods === "object"
+        ? (row.enabled_payment_methods as Record<string, boolean>)
+        : {},
     payment_events: [],
     created_at: str(row.created_at),
     updated_at: str(row.updated_at),
@@ -761,6 +766,111 @@ export const setChangeOrderClientVisibility = createServerFn({ method: "POST" })
     return { changeOrder: normalizeChangeOrder(saved as Record<string, unknown>) };
   });
 
+export interface ClientInvoiceRemittance {
+  bankName: string;
+  routingNumber: string;
+  accountNumber: string;
+  wireInstructions: string;
+  memo: string;
+}
+
+export interface ClientInvoicePaymentOptions {
+  invoiceId: string;
+  /** Direct bank transfer details, present when enabled for this invoice. */
+  remittance: ClientInvoiceRemittance | null;
+  /** Stripe methods the client can start right now (guardrail applied). */
+  card: boolean;
+  achDebit: boolean;
+}
+
+/**
+ * Per-invoice "How to pay" data for the client portal. Runs with the admin
+ * client because portal clients cannot (and must not) read
+ * organization_payment_profiles or organizations directly: exposure is scoped
+ * here to exactly the invoices the client already passed RLS for, and only
+ * when the contractor turned the method on for that invoice.
+ */
+async function buildClientPaymentOptions(
+  invoices: BillingInvoiceRow[],
+  organizationId: string | null,
+): Promise<ClientInvoicePaymentOptions[]> {
+  if (!organizationId || invoices.length === 0) return [];
+
+  let admin: unknown;
+  let domain: typeof import("@/lib/payments-domain");
+  try {
+    // Dynamic imports keep server-only credentials out of the client bundle.
+    const stripeServer = await import("@/lib/stripe.server");
+    domain = await import("@/lib/payments-domain");
+    admin = stripeServer.createSupabaseAdminClient();
+  } catch {
+    // Admin credentials not configured: portal falls back to legacy
+    // payment_url buttons only.
+    return [];
+  }
+
+  const from = (relation: string) => (admin as SupabaseLike).from(relation);
+
+  const [profileRes, orgRes] = await Promise.all([
+    from("organization_payment_profiles")
+      .select(
+        "bank_name,routing_number,account_number,wire_instructions,remittance_memo_template,default_payment_methods,stripe_amount_threshold_cents",
+      )
+      .eq("organization_id", organizationId)
+      .maybeSingle(),
+    from("organizations")
+      .select("stripe_connect_account_id,stripe_connect_status,payment_processor_ready")
+      .eq("id", organizationId)
+      .maybeSingle(),
+  ]);
+  // Pre-migration or missing rows: no profile, no direct-bank block.
+  const profile = profileRes.error ? null : (profileRes.data as Record<string, unknown> | null);
+  const org = orgRes.error ? null : (orgRes.data as Record<string, unknown> | null);
+
+  const hasBankDetails = Boolean(
+    profile && profile.bank_name && profile.routing_number && profile.account_number,
+  );
+  const stripeReady = domain.stripeConnectReady({
+    accountId: str(org?.stripe_connect_account_id),
+    connectStatus: str(org?.stripe_connect_status, "not_connected"),
+    processorReady: bool(org?.payment_processor_ready),
+  });
+  const thresholdCents = num(profile?.stripe_amount_threshold_cents);
+
+  return invoices
+    .filter((invoice) => invoice.status !== "void" && invoice.status !== "draft")
+    .map((invoice) => {
+      const enabled = domain.resolveEnabledMethods(
+        invoice.enabled_payment_methods,
+        profile?.default_payment_methods ?? null,
+      );
+      const availability = domain.methodAvailability({
+        hasPaymentProfile: hasBankDetails,
+        stripeReady,
+        enabled,
+        invoiceTotalCents: domain.dollarsToCents(invoice.total_due),
+        thresholdCents,
+      });
+      return {
+        invoiceId: invoice.id,
+        remittance: availability.direct_bank.available
+          ? {
+              bankName: str(profile?.bank_name),
+              routingNumber: str(profile?.routing_number),
+              accountNumber: str(profile?.account_number),
+              wireInstructions: str(profile?.wire_instructions),
+              memo: domain.renderRemittanceMemo(
+                str(profile?.remittance_memo_template),
+                invoice.invoice_number,
+              ),
+            }
+          : null,
+        card: availability.card.available,
+        achDebit: availability.ach_debit.available,
+      };
+    });
+}
+
 export const getClientPortalProject = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { projectId: string }) =>
@@ -939,6 +1049,16 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
       }
     }
 
+    const clientInvoices = billingInvoicesRes.error
+      ? []
+      : rows(billingInvoicesRes.data).map((row) => normalizeBillingInvoice(row));
+    const invoicePaymentOptions = canViewBilling
+      ? await buildClientPaymentOptions(
+          clientInvoices,
+          str((projectRes.data as Record<string, unknown>)?.organization_id) || null,
+        )
+      : [];
+
     return {
       project: normalizeClientProject(projectRes.data as Record<string, unknown>),
       changeOrders: rows(changeOrdersRes.data).map((row) => normalizeChangeOrder(row)),
@@ -950,15 +1070,11 @@ export const getClientPortalProject = createServerFn({ method: "GET" })
           line_items: lineItemsByApplication.get(app.id) ?? [],
         }),
       ),
-      billingInvoices: billingInvoicesRes.error
-        ? []
-        : rows(billingInvoicesRes.data).map((row) => {
-            const invoice = normalizeBillingInvoice(row);
-            return {
-              ...invoice,
-              payment_events: paymentsByInvoice.get(invoice.id) ?? [],
-            };
-          }),
+      billingInvoices: clientInvoices.map((invoice) => ({
+        ...invoice,
+        payment_events: paymentsByInvoice.get(invoice.id) ?? [],
+      })),
+      invoicePaymentOptions,
       dailyReports: rows(dailyReportsRes.data).map((row) => normalizeDailyReport(row)),
       portalPermissions: {
         canViewChangeOrders,

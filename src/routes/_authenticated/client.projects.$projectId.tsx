@@ -27,6 +27,8 @@ import {
   type ClientPortalDailyReport,
   type ClientPortalDailyReportAttachment,
 } from "@/lib/client-portal.functions";
+import type { ClientInvoicePaymentOptions } from "@/lib/client-portal.functions";
+import { HowToPayBlock } from "@/components/billing/HowToPayBlock";
 import type { BillingInvoiceRow } from "@/lib/projects.functions";
 import { downloadPdfBytes, generateDailyReportPacketPdf } from "@/lib/daily-report-packet-pdf";
 import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
@@ -91,6 +93,7 @@ function ClientProjectPage() {
   const [notesByCo, setNotesByCo] = useState<Record<string, string>>({});
   const [exportingDailyPacket, setExportingDailyPacket] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const [checkoutPendingId, setCheckoutPendingId] = useState<string | null>(null);
 
   const projectQuery = useQuery({
     queryKey: ["client-portal-project", projectId],
@@ -251,6 +254,7 @@ function ClientProjectPage() {
     approvals,
     billingApplications,
     billingInvoices,
+    invoicePaymentOptions,
     dailyReports,
     portalPermissions,
   } = projectQuery.data;
@@ -266,6 +270,48 @@ function ClientProjectPage() {
         (app: ClientPortalBillingApplication) => app.id === selectedInvoice.billing_application_id,
       )
     : undefined;
+  const selectedInvoicePaymentOptions = selectedInvoice
+    ? (invoicePaymentOptions ?? []).find(
+        (options: ClientInvoicePaymentOptions) => options.invoiceId === selectedInvoice.id,
+      )
+    : undefined;
+
+  const startInvoiceCheckout = async (invoiceId: string, method: "card" | "ach_debit") => {
+    setCheckoutPendingId(invoiceId);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error("Sign in again before paying online.");
+      const response = await fetch("/api/stripe/checkout/invoice", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          invoiceId,
+          method,
+          successPath: `/client/projects/${project.id}?payment=success`,
+          cancelPath: `/client/projects/${project.id}?payment=cancelled`,
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        checkoutUrl?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.ok || !payload.checkoutUrl) {
+        throw new Error(payload.error || "Online payment did not open.");
+      }
+      window.location.assign(payload.checkoutUrl);
+    } catch (error) {
+      toast.error("Online payment did not open", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    } finally {
+      setCheckoutPendingId(null);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -511,6 +557,9 @@ function ClientProjectPage() {
                       <ClientInvoiceBackupPanel
                         invoice={selectedInvoice}
                         linkedPayApp={selectedInvoicePayApp}
+                        paymentOptions={selectedInvoicePaymentOptions}
+                        payPending={checkoutPendingId === selectedInvoice.id}
+                        onPayOnline={(method) => startInvoiceCheckout(selectedInvoice.id, method)}
                       />
                     ) : null}
                   </div>
@@ -705,12 +754,22 @@ function ClientInvoiceReviewCard({
 function ClientInvoiceBackupPanel({
   invoice,
   linkedPayApp,
+  paymentOptions,
+  payPending,
+  onPayOnline,
 }: {
   invoice: BillingInvoiceRow;
   linkedPayApp?: ClientPortalBillingApplication;
+  paymentOptions?: ClientInvoicePaymentOptions;
+  payPending?: boolean;
+  onPayOnline?: (method: "card" | "ach_debit") => void;
 }) {
   const open = invoiceOpenBalance(invoice);
-  const canPayOnline = Boolean(invoice.payment_enabled && invoice.payment_url && open > 0);
+  const hasAnyPayOption = Boolean(
+    paymentOptions && (paymentOptions.remittance || paymentOptions.card || paymentOptions.achDebit),
+  );
+  const legacyPaymentUrl =
+    invoice.payment_enabled && invoice.payment_url ? invoice.payment_url : "";
   return (
     <article className="rounded-md border border-hairline bg-background p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -725,24 +784,16 @@ function ClientInvoiceBackupPanel({
             Review the invoice, linked pay application, and continuation detail before paying.
           </p>
         </div>
-        {canPayOnline ? (
-          <Button asChild className="gap-1.5 whitespace-nowrap">
-            <a href={invoice.payment_url ?? ""} target="_blank" rel="noreferrer">
-              <CreditCard className="h-3.5 w-3.5" />
-              Pay invoice online
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          </Button>
-        ) : open > 0 ? (
-          <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
-            Online payment setup is pending. The project team can send a payment link or record a
-            manual payment.
-          </div>
-        ) : (
+        {open <= 0 ? (
           <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
             This invoice has no open balance.
           </div>
-        )}
+        ) : !hasAnyPayOption && !legacyPaymentUrl ? (
+          <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+            Payment instructions are on their way. The project team can share bank details or enable
+            online payment.
+          </div>
+        ) : null}
       </div>
 
       <dl className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -751,6 +802,14 @@ function ClientInvoiceBackupPanel({
         <ClientMetric label="Open" value={fmtUSD(open)} />
         <ClientMetric label="Status" value={clientStatusLabel(invoice.status)} />
       </dl>
+
+      <HowToPayBlock
+        options={paymentOptions}
+        openBalance={open}
+        legacyPaymentUrl={legacyPaymentUrl}
+        onPayOnline={(method) => onPayOnline?.(method)}
+        payPending={Boolean(payPending)}
+      />
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <div className="rounded-md border border-hairline bg-muted/20 p-3 text-sm">
