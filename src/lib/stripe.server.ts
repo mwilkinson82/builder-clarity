@@ -95,12 +95,23 @@ export function getAppOrigin(request?: Request) {
   }
 }
 
-export function requireStripeSecretKey() {
-  const key = process.env.STRIPE_SECRET_KEY || "";
+export type StripeMode = "test" | "live";
+
+/**
+ * Resolve the outbound Stripe secret key for the given mode. Prefers the
+ * explicit `_TEST` / `_LIVE` variant, then falls back to the legacy
+ * `STRIPE_SECRET_KEY` for backward compatibility while both live side by
+ * side. Callers pass the mode read from `organizations.stripe_mode`.
+ */
+export function requireStripeSecretKey(mode: StripeMode = "test") {
+  const modeKey = mode === "live" ? process.env.STRIPE_SECRET_KEY_LIVE : process.env.STRIPE_SECRET_KEY_TEST;
+  const key = modeKey || process.env.STRIPE_SECRET_KEY || "";
   if (!key) {
     throw new RouteError(
       "stripe_not_configured",
-      "Stripe is not configured yet. Add STRIPE_SECRET_KEY before enabling paid checkout.",
+      mode === "live"
+        ? "Live Stripe is not configured yet. Add STRIPE_SECRET_KEY_LIVE before switching this company to live mode."
+        : "Sandbox Stripe is not configured yet. Add STRIPE_SECRET_KEY_TEST before creating a Checkout session.",
       503,
     );
   }
@@ -108,11 +119,11 @@ export function requireStripeSecretKey() {
 }
 
 export function requireStripeWebhookSecret() {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET || "";
+  const secret = process.env.STRIPE_WEBHOOK_SECRET || process.env.STRIPE_WEBHOOK_SECRET_TEST || "";
   if (!secret) {
     throw new RouteError(
       "stripe_webhook_not_configured",
-      "Stripe webhook verification is not configured yet. Add STRIPE_WEBHOOK_SECRET before enabling webhooks.",
+      "Stripe webhook verification is not configured yet. Add STRIPE_WEBHOOK_SECRET_TEST before enabling webhooks.",
       503,
     );
   }
@@ -122,12 +133,18 @@ export function requireStripeWebhookSecret() {
 /**
  * Every Stripe webhook endpoint has its own signing secret, and platform
  * ("Your account") vs Connect ("Connected accounts") scopes are separate
- * endpoints even at the same URL. Direct charges + account.updated arrive on
- * the Connect endpoint; subscription events arrive on the platform endpoint.
- * Verification therefore accepts a signature from any configured secret.
+ * endpoints. On top of that we run test + live side by side so sandbox
+ * events keep flowing after go-live. Verification accepts a signature from
+ * any configured secret; missing ones are silently skipped so a project can
+ * run in test-only or live-only without spurious 400s.
  */
 function configuredStripeWebhookSecrets(): string[] {
   const secrets = [
+    process.env.STRIPE_WEBHOOK_SECRET_TEST || "",
+    process.env.STRIPE_WEBHOOK_SECRET_LIVE || "",
+    process.env.STRIPE_CONNECT_WEBHOOK_SECRET_TEST || "",
+    process.env.STRIPE_CONNECT_WEBHOOK_SECRET_LIVE || "",
+    // Legacy names — kept for backward compatibility during migration.
     process.env.STRIPE_WEBHOOK_SECRET || "",
     process.env.STRIPE_CONNECT_WEBHOOK_SECRET || "",
   ].filter(Boolean);
@@ -135,7 +152,43 @@ function configuredStripeWebhookSecrets(): string[] {
     // Preserves the pre-existing 503 + error copy for the unconfigured case.
     requireStripeWebhookSecret();
   }
-  return secrets;
+  // De-dupe so the same secret isn't tried twice when legacy + _TEST both point at the same value.
+  return Array.from(new Set(secrets));
+}
+
+/**
+ * Read `organizations.stripe_mode` for outbound Stripe calls. Falls back to
+ * `test` if the column is missing (pre-migration) or the row is not found,
+ * so a misconfigured lookup never accidentally uses live keys.
+ */
+export async function getOrganizationStripeMode(
+  supabase: unknown,
+  organizationId: string,
+): Promise<StripeMode> {
+  try {
+    const client = supabase as {
+      from(table: string): {
+        select(cols: string): {
+          eq(col: string, val: string): {
+            maybeSingle(): Promise<{
+              data: { stripe_mode?: string } | null;
+              error: { message?: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+    const { data, error } = await client
+      .from("organizations")
+      .select("stripe_mode")
+      .eq("id", organizationId)
+      .maybeSingle();
+    if (error) return "test";
+    const raw = data?.stripe_mode;
+    return raw === "live" ? "live" : "test";
+  } catch {
+    return "test";
+  }
 }
 
 function requireSupabaseConfig() {
@@ -265,8 +318,9 @@ export async function stripePost<T>(
   // Connected account id for direct charges: per Stripe's Connect docs the
   // request is made AS the connected account via the Stripe-Account header.
   stripeAccount?: string,
+  mode: StripeMode = "test",
 ): Promise<T> {
-  const secretKey = requireStripeSecretKey();
+  const secretKey = requireStripeSecretKey(mode);
   const response = await fetch(`https://api.stripe.com/v1/${path.replace(/^\//, "")}`, {
     method: "POST",
     headers: {
@@ -297,8 +351,8 @@ export async function stripePost<T>(
   return payload as T;
 }
 
-export async function stripeGet<T>(path: string): Promise<T> {
-  const secretKey = requireStripeSecretKey();
+export async function stripeGet<T>(path: string, mode: StripeMode = "test"): Promise<T> {
+  const secretKey = requireStripeSecretKey(mode);
   const response = await fetch(`https://api.stripe.com/v1/${path.replace(/^\//, "")}`, {
     method: "GET",
     headers: {
@@ -324,6 +378,7 @@ export async function stripeGet<T>(path: string): Promise<T> {
 
   return payload as T;
 }
+
 
 function timingSafeEqual(a: string, b: string) {
   if (a.length !== b.length) return false;
