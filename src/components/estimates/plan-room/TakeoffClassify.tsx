@@ -29,6 +29,7 @@ export function LinkOrCreatePicker({
   onCreateFromLabel,
   pending = false,
   compact = false,
+  fillHeight = false,
 }: {
   lineItems: EstimateLineItemRow[];
   takeoffUnit: string;
@@ -38,6 +39,9 @@ export function LinkOrCreatePicker({
   onCreateFromLabel: (label: string) => void;
   pending?: boolean;
   compact?: boolean;
+  // Fill the parent flex column: the results list takes the remaining height
+  // and scrolls internally while the search input stays pinned.
+  fillHeight?: boolean;
 }) {
   const searchLibraryFn = useServerFn(searchCostLibrary);
   const [query, setQuery] = useState(defaultQuery);
@@ -66,8 +70,11 @@ export function LinkOrCreatePicker({
   const libraryItems = libraryQuery.data?.items ?? [];
 
   return (
-    <div className="space-y-2" data-testid="link-or-create-picker">
-      <div className="relative">
+    <div
+      className={fillHeight ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-2"}
+      data-testid="link-or-create-picker"
+    >
+      <div className="relative shrink-0">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           value={query}
@@ -78,7 +85,13 @@ export function LinkOrCreatePicker({
           data-testid="link-or-create-search"
         />
       </div>
-      <div className="max-h-56 space-y-1 overflow-y-auto">
+      <div
+        className={
+          fillHeight
+            ? "min-h-0 flex-1 space-y-1 overflow-y-auto"
+            : "max-h-56 space-y-1 overflow-y-auto"
+        }
+      >
         {matchingRows.length > 0 && (
           <>
             <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -209,7 +222,7 @@ export function TakeoffFinishPopover({
 
   return (
     <div
-      className="w-80 rounded-lg border border-hairline bg-card p-3 shadow-2xl"
+      className="flex max-h-[60vh] w-80 flex-col rounded-lg border border-hairline bg-card p-3 shadow-2xl"
       data-testid="takeoff-finish-popover"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -218,7 +231,7 @@ export function TakeoffFinishPopover({
         }
       }}
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex shrink-0 items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-medium">
             {formatQty(measurement.quantity, measurement.unit)} measured
@@ -242,7 +255,7 @@ export function TakeoffFinishPopover({
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
-      <div className="mt-2 grid grid-cols-[1fr_88px] gap-2">
+      <div className="mt-2 grid shrink-0 grid-cols-[1fr_88px] gap-2">
         <div className="space-y-1">
           <Label className="text-xs">Label</Label>
           <Input
@@ -271,7 +284,7 @@ export function TakeoffFinishPopover({
           />
         </div>
       </div>
-      <div className="mt-2" ref={pickerRef}>
+      <div className="mt-2 flex min-h-0 flex-1 flex-col" ref={pickerRef}>
         <LinkOrCreatePicker
           lineItems={lineItems}
           takeoffUnit={measurement.unit}
@@ -281,12 +294,13 @@ export function TakeoffFinishPopover({
           onCreateFromLabel={onCreateFromLabel}
           pending={pending}
           compact
+          fillHeight
         />
       </div>
       <Button
         type="button"
         size="sm"
-        className="mt-2 w-full"
+        className="mt-2 w-full shrink-0"
         onClick={() => {
           commitDetails();
           onDismiss();

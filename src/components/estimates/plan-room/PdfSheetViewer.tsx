@@ -5,13 +5,13 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
-  RefObject,
   WheelEvent as ReactWheelEvent,
 } from "react";
 import { ExternalLink, Hand, Map as MapIcon, Target, ZoomIn, ZoomOut } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
@@ -354,6 +354,7 @@ export function PlanCanvas({
   onAbandonDraft,
   finishPopover,
   finishPopoverAnchor,
+  onFinishPopoverDismiss,
   tool,
   viewSize,
   onViewSizeChange,
@@ -391,10 +392,12 @@ export function PlanCanvas({
   onFinishRun?: () => void;
   // Abandons the in-progress run entirely (Esc).
   onAbandonDraft?: () => void;
-  // Post-finish classification popover, anchored near the final markup point
-  // and clamped inside the visible stage.
+  // Post-finish classification popover, anchored near the final markup point.
+  // Portaled to the document root (above every floating panel) with Radix
+  // collision handling so it always fits fully on screen.
   finishPopover?: ReactNode;
   finishPopoverAnchor?: Point | null;
+  onFinishPopoverDismiss?: () => void;
   tool: ToolMode;
   viewSize: ViewSize;
   onViewSizeChange: (size: ViewSize) => void;
@@ -1203,16 +1206,6 @@ export function PlanCanvas({
         isCockpitMode ? "min-h-0 flex-1 p-0" : "p-4",
       )}
     >
-      {finishPopover && finishPopoverAnchor && (
-        <FinishPopoverOverlay
-          anchor={finishPopoverAnchor}
-          rootRef={rootRef}
-          svgRef={svgRef}
-          viewportFrame={viewportFrame}
-        >
-          {finishPopover}
-        </FinishPopoverOverlay>
-      )}
       {!isCockpitMode &&
         renderPlanControlBar(
           "mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-hairline bg-surface px-3 py-2",
@@ -1459,6 +1452,33 @@ export function PlanCanvas({
               )}
               <ZoomWindowShape draft={zoomWindowDraft} viewSize={viewSize} />
             </svg>
+            {finishPopover && finishPopoverAnchor && (
+              <Popover open modal={false}>
+                <PopoverAnchor asChild>
+                  <span
+                    className="pointer-events-none absolute h-px w-px"
+                    style={{
+                      left: `${finishPopoverAnchor.x * 100}%`,
+                      top: `${finishPopoverAnchor.y * 100}%`,
+                    }}
+                    data-testid="takeoff-popover-anchor"
+                  />
+                </PopoverAnchor>
+                <PopoverContent
+                  side="right"
+                  align="start"
+                  sideOffset={12}
+                  collisionPadding={12}
+                  className="z-[80] w-auto rounded-none border-0 bg-transparent p-0 shadow-none"
+                  onEscapeKeyDown={() => onFinishPopoverDismiss?.()}
+                  onInteractOutside={() => onFinishPopoverDismiss?.()}
+                  onOpenAutoFocus={(event) => event.preventDefault()}
+                  data-testid="takeoff-popover-overlay"
+                >
+                  {finishPopover}
+                </PopoverContent>
+              </Popover>
+            )}
           </div>
         </div>
         <PlanMiniMap
@@ -1743,48 +1763,5 @@ function SamplePlanBackground({
         Overwatch sample plan sheet
       </text>
     </svg>
-  );
-}
-
-// Positions the post-finish classification popover near the takeoff's final
-// point, clamped inside the visible stage so it never leaves the viewport.
-// viewportFrame changes on scroll/zoom/resize keep it re-anchored.
-function FinishPopoverOverlay({
-  anchor,
-  rootRef,
-  svgRef,
-  viewportFrame,
-  children,
-}: {
-  anchor: Point;
-  rootRef: RefObject<HTMLDivElement | null>;
-  svgRef: RefObject<SVGSVGElement | null>;
-  viewportFrame: ViewportFrame;
-  children: ReactNode;
-}) {
-  void viewportFrame;
-  const root = rootRef.current;
-  const svg = svgRef.current;
-  if (!root || !svg) return null;
-  const rootRect = root.getBoundingClientRect();
-  const svgRect = svg.getBoundingClientRect();
-  if (rootRect.width <= 0 || svgRect.width <= 0) return null;
-  const POPOVER_WIDTH = 328;
-  const POPOVER_HEIGHT = 340;
-  const margin = 8;
-  const rawLeft = svgRect.left - rootRect.left + anchor.x * svgRect.width + 14;
-  const rawTop = svgRect.top - rootRect.top + anchor.y * svgRect.height + 14;
-  const left = Math.min(
-    Math.max(margin, rawLeft),
-    Math.max(margin, rootRect.width - POPOVER_WIDTH - margin),
-  );
-  const top = Math.min(
-    Math.max(margin, rawTop),
-    Math.max(margin, rootRect.height - POPOVER_HEIGHT - margin),
-  );
-  return (
-    <div className="absolute z-40" style={{ left, top }} data-testid="takeoff-popover-overlay">
-      {children}
-    </div>
   );
 }
