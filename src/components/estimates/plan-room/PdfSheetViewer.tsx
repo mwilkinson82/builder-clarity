@@ -435,7 +435,14 @@ export function PlanCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const [signedUrl, setSignedUrl] = useState("");
-  const [renderError, setRenderError] = useState("");
+  // Signed URLs expire mid-session. Any fetch failure first requests a fresh
+  // URL and retries once automatically (bumping the nonce); only a second
+  // failure surfaces — and then only as the contractor-language retry notice.
+  // Raw error strings (they can carry the full signed URL and token) never
+  // reach the canvas.
+  const [renderFailed, setRenderFailed] = useState(false);
+  const [signedUrlNonce, setSignedUrlNonce] = useState(0);
+  const fetchAttemptRef = useRef(0);
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
   const [isZoomWindowMode, setIsZoomWindowMode] = useState(false);
@@ -481,10 +488,15 @@ export function PlanCanvas({
   const pdfDetailOption = PDF_DETAIL_OPTION_BY_MODE[pdfDetailMode];
   const pdfDetailMultiplier = pdfDetailOption.multiplier;
 
+  // Fresh drawing file, fresh retry budget.
+  useEffect(() => {
+    fetchAttemptRef.current = 0;
+  }, [planSet?.file_path, sheet?.id]);
+
   useEffect(() => {
     let active = true;
     setSignedUrl("");
-    setRenderError("");
+    setRenderFailed(false);
     setRenderQuality(null);
     if (!planSet?.file_path) return;
     if (isDirectPlanFileUrl(planSet.file_path)) {
@@ -496,13 +508,21 @@ export function PlanCanvas({
       .createSignedUrl(planSet.file_path, 60 * 30)
       .then(({ data, error }) => {
         if (!active) return;
-        if (error) setRenderError(error.message);
-        else setSignedUrl(data?.signedUrl ?? "");
+        if (error || !data?.signedUrl) {
+          if (fetchAttemptRef.current < 1) {
+            fetchAttemptRef.current += 1;
+            setSignedUrlNonce((nonce) => nonce + 1);
+          } else {
+            setRenderFailed(true);
+          }
+          return;
+        }
+        setSignedUrl(data.signedUrl);
       });
     return () => {
       active = false;
     };
-  }, [planSet?.file_path]);
+  }, [planSet?.file_path, signedUrlNonce]);
 
   useEffect(() => {
     if (planSet?.sample_key === "harbor-residence" || !planSet?.file_path) {
@@ -562,9 +582,16 @@ export function PlanCanvas({
           viewport: renderViewport,
         });
         await renderTask.promise;
+        if (!cancelled) fetchAttemptRef.current = 0;
       } catch (error) {
-        if (!cancelled && !isPdfRenderCancelled(error)) {
-          setRenderError(error instanceof Error ? error.message : "PDF page did not render.");
+        if (cancelled || isPdfRenderCancelled(error)) return;
+        // Most mid-session failures are an expired signed URL: request a
+        // fresh one and retry once before surfacing anything.
+        if (fetchAttemptRef.current < 1) {
+          fetchAttemptRef.current += 1;
+          setSignedUrlNonce((nonce) => nonce + 1);
+        } else {
+          setRenderFailed(true);
         }
       }
     };
@@ -585,6 +612,12 @@ export function PlanCanvas({
     signedUrl,
     zoom,
   ]);
+
+  const retryPlanRender = () => {
+    fetchAttemptRef.current = 0;
+    setRenderFailed(false);
+    setSignedUrlNonce((nonce) => nonce + 1);
+  };
 
   useEffect(() => {
     setZoom(1);
@@ -1361,11 +1394,7 @@ export function PlanCanvas({
               </div>
             )}
 
-            {renderError && (
-              <div className="absolute inset-x-8 top-8 z-10 rounded-md border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
-                {renderError}
-              </div>
-            )}
+            {renderFailed && <PlanRenderRetryNotice onRetry={retryPlanRender} />}
 
             <svg
               ref={svgRef}
@@ -1550,6 +1579,25 @@ function ZoomWindowShape({
   );
 }
 
+// The only thing a failed drawing fetch is allowed to put on the canvas.
+// Raw fetch errors carry the full signed storage URL and token — those never
+// render. pointer-events-auto keeps the button clickable inside the
+// revision overlay's pointer-events-none wrapper.
+function PlanRenderRetryNotice({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="absolute inset-x-8 top-8 z-10 flex justify-center">
+      <button
+        type="button"
+        className="pointer-events-auto rounded-md border border-hairline bg-card px-4 py-2 text-sm font-medium shadow-lg transition hover:bg-surface"
+        onClick={onRetry}
+        data-testid="plan-render-retry"
+      >
+        This drawing needs to reload — click to retry
+      </button>
+    </div>
+  );
+}
+
 function PlanSheetOverlayLayer({
   planSet,
   sheet,
@@ -1564,12 +1612,20 @@ function PlanSheetOverlayLayer({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const [signedUrl, setSignedUrl] = useState("");
-  const [renderError, setRenderError] = useState("");
+  // Same expired-signed-URL story as the main canvas: refresh and retry once
+  // automatically, then show only the contractor-language retry notice.
+  const [renderFailed, setRenderFailed] = useState(false);
+  const [signedUrlNonce, setSignedUrlNonce] = useState(0);
+  const fetchAttemptRef = useRef(0);
+
+  useEffect(() => {
+    fetchAttemptRef.current = 0;
+  }, [planSet.file_path, sheet.id]);
 
   useEffect(() => {
     let active = true;
     setSignedUrl("");
-    setRenderError("");
+    setRenderFailed(false);
     if (!planSet.file_path) return;
     if (isDirectPlanFileUrl(planSet.file_path)) {
       setSignedUrl(directPlanFileUrl(planSet.file_path));
@@ -1580,13 +1636,21 @@ function PlanSheetOverlayLayer({
       .createSignedUrl(planSet.file_path, 60 * 30)
       .then(({ data, error }) => {
         if (!active) return;
-        if (error) setRenderError(error.message);
-        else setSignedUrl(data?.signedUrl ?? "");
+        if (error || !data?.signedUrl) {
+          if (fetchAttemptRef.current < 1) {
+            fetchAttemptRef.current += 1;
+            setSignedUrlNonce((nonce) => nonce + 1);
+          } else {
+            setRenderFailed(true);
+          }
+          return;
+        }
+        setSignedUrl(data.signedUrl);
       });
     return () => {
       active = false;
     };
-  }, [planSet.file_path]);
+  }, [planSet.file_path, signedUrlNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1622,11 +1686,14 @@ function PlanSheetOverlayLayer({
           viewport: scaled,
         });
         await renderTask.promise;
+        if (!cancelled) fetchAttemptRef.current = 0;
       } catch (error) {
-        if (!cancelled && !isPdfRenderCancelled(error)) {
-          setRenderError(
-            error instanceof Error ? error.message : "Revision overlay did not render.",
-          );
+        if (cancelled || isPdfRenderCancelled(error)) return;
+        if (fetchAttemptRef.current < 1) {
+          fetchAttemptRef.current += 1;
+          setSignedUrlNonce((nonce) => nonce + 1);
+        } else {
+          setRenderFailed(true);
         }
       }
     };
@@ -1637,6 +1704,12 @@ function PlanSheetOverlayLayer({
     };
   }, [planSet.file_mime_type, sheet.page_number, signedUrl, viewSize.height, viewSize.width, zoom]);
 
+  const retryOverlayRender = () => {
+    fetchAttemptRef.current = 0;
+    setRenderFailed(false);
+    setSignedUrlNonce((nonce) => nonce + 1);
+  };
+
   if (planSet.sample_key === "harbor-residence" || !planSet.file_path) {
     return <SamplePlanBackground sheet={sheet} viewSize={viewSize} overlay />;
   }
@@ -1645,11 +1718,7 @@ function PlanSheetOverlayLayer({
     return (
       <>
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full bg-white" />
-        {renderError && (
-          <div className="absolute inset-x-8 top-8 rounded-md border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
-            {renderError}
-          </div>
-        )}
+        {renderFailed && <PlanRenderRetryNotice onRetry={retryOverlayRender} />}
       </>
     );
   }
