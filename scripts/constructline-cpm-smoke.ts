@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -28,7 +28,15 @@ import {
 } from "../src/lib/constructline-wbs.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const readProjectFile = (filePath: string) => readFileSync(resolve(rootDir, filePath), "utf8");
+const readProjectFile = (filePath: string) => {
+  const target = resolve(rootDir, filePath);
+  if (!statSync(target).isDirectory()) return readFileSync(target, "utf8");
+  return readdirSync(target)
+    .filter((entry) => entry.endsWith(".ts") || entry.endsWith(".tsx"))
+    .sort()
+    .map((entry) => readFileSync(resolve(target, entry), "utf8"))
+    .join("\n");
+};
 const withScheduleActivityStatus = <
   T extends {
     start_date: string | null;
@@ -809,8 +817,9 @@ assert.deepEqual(
   ["03 - Concrete / Southwest corner", "03 - Concrete / Northwest corner"],
 );
 
-const scheduleRiskSource = readProjectFile("src/components/outcome/ScheduleRisk.tsx");
+const scheduleRiskSource = readProjectFile("src/components/schedule");
 const scheduleStatusSource = readProjectFile("src/lib/schedule-status.ts");
+const scheduleUpdateQueueSource = readProjectFile("src/lib/schedule-update-queue.ts");
 const scheduleRouteSource = readProjectFile(
   "src/routes/_authenticated/projects.$projectId.schedule.tsx",
 );
@@ -883,10 +892,8 @@ for (const requiredScheduleRiskText of [
   "Nest under",
   "Drop here to make top-level WBS",
   "Custom WBS / child area path",
-  "Use activity WBS fields for now",
-  "Activity-path WBS mode is active",
   "Schedule update history",
-  "Activity snapshots will appear on the next saved CPM update.",
+  "No activity snapshots were recorded with this update.",
   "ACTIVITY_UPDATE_SNAPSHOT_COLUMNS",
   "buildActivityUpdateSnapshotSummaries",
   "groupActivityUpdateSnapshots",
@@ -1070,7 +1077,6 @@ for (const requiredScheduleRiskText of [
   "needs actual",
   "ACTIVITY_UPDATE_SNAPSHOT_COLUMNS",
   "64px minmax(170px,1.15fr) 54px 82px 82px 82px 58px 82px 64px 78px 58px minmax(170px,1fr)",
-  "if (!hasActualStartBasis) return false",
   "remaining duration not required",
   "updates = EMPTY_SCHEDULE_UPDATES",
   "const workbenchDraft = buildCpmScheduleUpdateDraft",
@@ -1079,14 +1085,11 @@ for (const requiredScheduleRiskText of [
   "Save current CPM as template",
   "Use template",
   "BROWSER_CPM_TEMPLATE_STORAGE_KEY",
-  "saveBrowserTemplate",
   "buildBrowserCpmTemplateWbsSections",
   "normalizeBrowserCpmTemplateWbsSections",
   "saved WBS paths and logic ties",
   "templateSave",
   "templateImport",
-  "Private browser templates are active",
-  "Template saved in this browser",
   "Send to Risk Tally",
   "createActivityExposureFn",
   "activityRiskCreate",
@@ -1155,7 +1158,7 @@ assert.match(
 );
 
 assert.match(
-  scheduleRiskSource,
+  scheduleUpdateQueueSource,
   /function shouldFlagMissingRemainingDuration\(activity: ScheduleActivityRow\) \{[\s\S]*?isConstructLineMilestoneActivity\(activity\)[\s\S]*?const hasActualStartBasis = hasScheduleActivityActualStartBasis\(activity\)[\s\S]*?!hasActualStartBasis[\s\S]*?activity\.remaining_duration_days == null[\s\S]*?!activity\.forecast_finish_date/s,
   "Missing remaining duration should only be flagged after actual start and when no current expected finish exists.",
 );
@@ -1228,7 +1231,6 @@ for (const requiredScheduleRouteText of [
   "Critical delayed decisions",
   "Procurement risks",
   "Trade performance risks",
-  "Use Notes / Constraint for the delay narrative",
   'workspaceMode="full"',
   "activityCreate.mutateAsync(activity)",
   "onSuccess: async",
@@ -1240,10 +1242,7 @@ for (const requiredScheduleRouteText of [
   "activityUpdates={activityUpdates}",
   "activity snapshots",
   "The baseline row, WBS, notes, and logic can still save normally. Reopen the activity and save the status update fields after the schedule refresh completes.",
-  "Save it with the typed WBS path",
   "formatWbsMutationError",
-  "Activity WBS paths still control the visible grid.",
-  "try the WBS manager again",
 ]) {
   assert.ok(
     scheduleRouteSource.includes(requiredScheduleRouteText),
@@ -1263,14 +1262,9 @@ for (const requiredScheduleFunctionText of [
   "saveCurrentScheduleAsCpmTemplate",
   "importScheduleCpmTemplate",
   "schedule_cpm_templates",
-  "path_fallback",
-  "ensureScheduleWbsPathLabel",
-  "syncPathBasedWbsSectionNamesForPathChange",
   "path: str(row.path, name)",
   "scheduleWbsTemplatePayload(section, wbsPathMap.get(section.id) ?? section.name)",
   "section.path || section.name",
-  '.select("parent_id")',
-  "wbsNestedColumnsMissing",
   "snapshotScheduleActivityUpdates",
   "schedule_activity_updates",
   "normalizeScheduleActivityUpdate",
@@ -1280,10 +1274,7 @@ for (const requiredScheduleFunctionText of [
   "total_float_days",
   "is_out_of_sequence",
   "is_open_finish",
-  "getActivityUpdateSnapshotRemainingDurationDays",
-  "hasActivityActualStartBasisForSnapshot",
-  "if (!hasActivityActualStartBasisForSnapshot(task.activity)) return 0",
-  "remaining_duration_days: getActivityUpdateSnapshotRemainingDurationDays(task)",
+  "buildActivityUpdateSnapshotRows(activities, {",
   "const { wbs_section_id: requestedWbsSectionId, ...activityFields } = rest;",
   "insertScheduleActivityRowWithSchemaFallback(",
   "basePayload as Record<string, unknown>",
@@ -1309,6 +1300,39 @@ for (const requiredScheduleFunctionText of [
   assert.ok(
     scheduleFunctionsSource.includes(requiredScheduleFunctionText),
     `Schedule functions are missing required WBS persistence contract: ${requiredScheduleFunctionText}`,
+  );
+}
+
+for (const requiredScheduleUpdateQueueText of [
+  "export function taskIsInDataDateUpdateWindow",
+  "export function taskNeedsUpdateQueueAction",
+  "if (activity.percent_complete >= 100 || activity.actual_finish_date) return false;",
+  "if (hasScheduleActivityStarted(activity)) return true;",
+  "plannedStartMs <= referenceMs",
+  "if (!hasActualStartBasis) return false",
+  "taskNeedsStatusUpdateBasis(task) || task.isLate || task.isOutOfSequence",
+]) {
+  assert.ok(
+    scheduleUpdateQueueSource.includes(requiredScheduleUpdateQueueText),
+    `Schedule update queue is missing required contract: ${requiredScheduleUpdateQueueText}`,
+  );
+}
+
+const scheduleUpdateSpineSource = readProjectFile("src/lib/schedule-update-spine.ts");
+for (const requiredScheduleUpdateSpineText of [
+  "export function resolveScheduleUpdateWriteMode",
+  'return replaceExisting ? "amend" : "duplicate_blocked";',
+  "export function buildScheduleUpdateRecord",
+  "export function buildActivityUpdateSnapshotRows",
+  "export function buildMilestoneUpdateSnapshotRows",
+  "getActivityUpdateSnapshotRemainingDurationDays",
+  "hasActivityActualStartBasisForSnapshot",
+  "if (!hasActivityActualStartBasisForSnapshot(task.activity)) return 0",
+  "remaining_duration_days: getActivityUpdateSnapshotRemainingDurationDays(task)",
+]) {
+  assert.ok(
+    scheduleUpdateSpineSource.includes(requiredScheduleUpdateSpineText),
+    `Schedule update spine is missing required contract: ${requiredScheduleUpdateSpineText}`,
   );
 }
 

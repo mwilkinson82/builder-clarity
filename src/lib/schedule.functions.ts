@@ -14,11 +14,15 @@ import {
   getHarborDemoCpmActivityRows,
 } from "@/lib/projects.functions";
 import {
-  buildConstructLineCpmModel,
   buildReciprocalActivityLogicPatches,
-  type ConstructLineCpmTask,
   type ConstructLineStatusBasis,
 } from "@/lib/constructline-cpm";
+import {
+  buildActivityUpdateSnapshotRows,
+  buildMilestoneUpdateSnapshotRows,
+  buildScheduleUpdateRecord,
+  resolveScheduleUpdateWriteMode,
+} from "@/lib/schedule-update-spine";
 
 export type MilestoneStatus = "on_track" | "at_risk" | "delayed" | "complete";
 export type ScheduleRiskKind = "procurement" | "trade_performance" | "critical_decision";
@@ -129,7 +133,7 @@ export interface ScheduleCpmTemplateRow {
   updated_at: string;
 }
 
-export type ScheduleWbsPersistence = "ready" | "path_fallback" | "migration_required";
+export type ScheduleWbsPersistence = "ready";
 
 export interface ScheduleRiskRow {
   id: string;
@@ -551,17 +555,6 @@ const normalizeScheduleActivity = (r: Record<string, unknown>): ScheduleActivity
   };
 };
 
-function hasActivityActualStartBasisForSnapshot(activity: ScheduleActivityRow) {
-  return Boolean(activity.actual_start_date) || Boolean(activity.actual_finish_date);
-}
-
-function getActivityUpdateSnapshotRemainingDurationDays(task: ConstructLineCpmTask) {
-  if (task.isMilestone) return 0;
-  if (task.activity.actual_finish_date || task.activity.percent_complete >= 100) return 0;
-  if (!hasActivityActualStartBasisForSnapshot(task.activity)) return 0;
-  return Math.max(0, Math.round(task.remainingDurationDays));
-}
-
 const normalizeScheduleWbsSection = (r: Record<string, unknown>): ScheduleWbsSectionRow => ({
   id: r.id as string,
   project_id: r.project_id as string,
@@ -628,21 +621,6 @@ const scheduleWbsParentFilter = <TQuery extends ScheduleWbsParentFilterQuery<TQu
   query: TQuery,
   parentId: string | null,
 ) => (parentId ? query.eq("parent_id", parentId) : query.is("parent_id", null));
-
-async function getScheduleWbsPersistenceMode(
-  supabase: ScheduleSupabaseClient,
-  projectId: string,
-): Promise<ScheduleWbsPersistence> {
-  const { error } = await supabase
-    .from("schedule_wbs_sections")
-    .select("parent_id")
-    .eq("project_id", projectId)
-    .limit(1);
-  if (!error) return "ready";
-  if (isMissingRestRelation(error, "schedule_wbs_sections")) return "migration_required";
-  if (isMissingRestColumn(error, "parent_id")) return "path_fallback";
-  throw new Error(error.message);
-}
 
 const buildDerivedWbsSectionsFromActivityDivisions = (
   projectId: string,
@@ -776,7 +754,7 @@ export const listSchedule = createServerFn({ method: "GET" })
     z.object({ projectId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const [mRes, rRes, aRes, wRes, wNestedRes, dRes] = await Promise.all([
+    const [mRes, rRes, aRes, wRes, dRes] = await Promise.all([
       context.supabase
         .from("schedule_milestones")
         .select("*")
@@ -800,11 +778,6 @@ export const listSchedule = createServerFn({ method: "GET" })
         .order("sort_order")
         .order("name"),
       context.supabase
-        .from("schedule_wbs_sections")
-        .select("parent_id")
-        .eq("project_id", data.projectId)
-        .limit(1),
-      context.supabase
         .from("schedule_delay_fragments")
         .select("*")
         .eq("project_id", data.projectId)
@@ -822,7 +795,8 @@ export const listSchedule = createServerFn({ method: "GET" })
         .select("*")
         .eq("project_id", data.projectId)
         .order("update_number", { ascending: false }),
-      dynamicTable(context.supabase, "schedule_activity_updates")
+      context.supabase
+        .from("schedule_activity_updates")
         .select("*")
         .eq("project_id", data.projectId)
         .order("update_number", { ascending: false })
@@ -830,47 +804,16 @@ export const listSchedule = createServerFn({ method: "GET" })
     ]);
     if (mRes.error) throw new Error(mRes.error.message);
     if (rRes.error) throw new Error(rRes.error.message);
-    const activitiesMissing =
-      aRes.error &&
-      (aRes.error.message.includes("schedule_activities") ||
-        aRes.error.message.includes("schema cache"));
-    const updatesMissing =
-      uRes.error &&
-      (uRes.error.message.includes("schedule_updates") ||
-        uRes.error.message.includes("schema cache"));
-    const milestoneUpdatesMissing =
-      muRes.error &&
-      (muRes.error.message.includes("schedule_milestone_updates") ||
-        muRes.error.message.includes("schema cache"));
-    const activityUpdatesMissing =
-      auRes.error &&
-      (isMissingRestRelation(auRes.error, "schedule_activity_updates") ||
-        auRes.error.message?.includes("schema cache"));
-    const wbsSectionsMissing =
-      wRes.error &&
-      (wRes.error.message.includes("schedule_wbs_sections") ||
-        wRes.error.message.includes("schema cache"));
-    const wbsNestedColumnsMissing =
-      !wbsSectionsMissing && wNestedRes.error && isMissingRestColumn(wNestedRes.error, "parent_id");
-    const delayFragmentsMissing =
-      dRes.error &&
-      (dRes.error.message.includes("schedule_delay_fragments") ||
-        dRes.error.message.includes("schema cache"));
-    if (aRes.error && !activitiesMissing) throw new Error(aRes.error.message);
-    if (wRes.error && !wbsSectionsMissing) throw new Error(wRes.error.message);
-    if (wNestedRes.error && !wbsSectionsMissing && !wbsNestedColumnsMissing) {
-      throw new Error(wNestedRes.error.message);
-    }
-    if (dRes.error && !delayFragmentsMissing) throw new Error(dRes.error.message);
-    if (uRes.error && !updatesMissing) throw new Error(uRes.error.message);
-    if (muRes.error && !milestoneUpdatesMissing) throw new Error(muRes.error.message);
-    if (auRes.error && !activityUpdatesMissing) throw new Error(auRes.error.message);
+    if (aRes.error) throw new Error(aRes.error.message);
+    if (wRes.error) throw new Error(wRes.error.message);
+    if (dRes.error) throw new Error(dRes.error.message);
+    if (uRes.error) throw new Error(uRes.error.message);
+    if (muRes.error) throw new Error(muRes.error.message);
+    if (auRes.error) throw new Error(auRes.error.message);
 
-    let activityRows = activitiesMissing
-      ? []
-      : ((aRes.data ?? []) as unknown as Array<Record<string, unknown>>);
+    let activityRows = (aRes.data ?? []) as unknown as Array<Record<string, unknown>>;
     const hasHarborDemoCpmRows = activityRows.some((row) => row.activity_id === "01-010");
-    if (!activitiesMissing && !hasHarborDemoCpmRows) {
+    if (!hasHarborDemoCpmRows) {
       const ensureResult = await ensureHarborDemoCpmActivitiesForProject(
         context.supabase,
         data.projectId,
@@ -899,10 +842,8 @@ export const listSchedule = createServerFn({ method: "GET" })
       data.projectId,
       uniqueActivityDivisions,
     );
-    let persistedWbsRows = wbsSectionsMissing
-      ? []
-      : ((wRes.data ?? []) as unknown as Array<Record<string, unknown>>);
-    if (!wbsSectionsMissing && persistedWbsRows.length === 0 && derivedWbsSections.length > 0) {
+    let persistedWbsRows = (wRes.data ?? []) as unknown as Array<Record<string, unknown>>;
+    if (persistedWbsRows.length === 0 && derivedWbsSections.length > 0) {
       for (const division of uniqueActivityDivisions) {
         await ensureScheduleWbsPath(context.supabase, data.projectId, division);
       }
@@ -917,7 +858,7 @@ export const listSchedule = createServerFn({ method: "GET" })
       }
     }
     const wbsSectionRows =
-      wbsSectionsMissing || persistedWbsRows.length === 0
+      persistedWbsRows.length === 0
         ? derivedWbsSections
         : persistedWbsRows.map((r) => normalizeScheduleWbsSection(r));
 
@@ -946,38 +887,23 @@ export const listSchedule = createServerFn({ method: "GET" })
     }
     return {
       milestones: (mRes.data ?? []) as unknown as MilestoneRow[],
-      activities: activitiesMissing ? [] : activityRows.map((r) => normalizeScheduleActivity(r)),
+      activities: activityRows.map((r) => normalizeScheduleActivity(r)),
       wbsSections: wbsSectionRows,
-      wbsPersistence: wbsSectionsMissing
-        ? "migration_required"
-        : wbsNestedColumnsMissing
-          ? "path_fallback"
-          : "ready",
-      delayFragments: delayFragmentsMissing
-        ? []
-        : (dRes.data ?? []).map((r) =>
-            normalizeScheduleDelayFragment(r as unknown as Record<string, unknown>),
-          ),
-      delayFragmentPersistence: delayFragmentsMissing ? "migration_required" : "ready",
+      delayFragments: (dRes.data ?? []).map((r) =>
+        normalizeScheduleDelayFragment(r as unknown as Record<string, unknown>),
+      ),
       risks,
-      updates: updatesMissing
-        ? []
-        : (uRes.data ?? []).map((r) => normalizeScheduleUpdate(r as Record<string, unknown>)),
-      milestoneUpdates: milestoneUpdatesMissing
-        ? []
-        : (muRes.data ?? []).map((r) => normalizeMilestoneUpdate(r as Record<string, unknown>)),
-      activityUpdates: activityUpdatesMissing
-        ? []
-        : (auRes.data ?? []).map((r) =>
-            normalizeScheduleActivityUpdate(r as Record<string, unknown>),
-          ),
+      updates: (uRes.data ?? []).map((r) => normalizeScheduleUpdate(r as Record<string, unknown>)),
+      milestoneUpdates: (muRes.data ?? []).map((r) =>
+        normalizeMilestoneUpdate(r as Record<string, unknown>),
+      ),
+      activityUpdates: (auRes.data ?? []).map((r) =>
+        normalizeScheduleActivityUpdate(r as Record<string, unknown>),
+      ),
     };
   });
 
 // ---------- CPM TEMPLATES ----------
-const templateLibraryUnavailableMessage =
-  "Use browser templates for this workspace. The live schedule still works, and reusable CPM templates can be saved privately in this browser.";
-
 const scheduleActivityTemplatePayload = (activity: ScheduleActivityRow): Record<string, Json> => ({
   activity_id: activity.activity_id,
   name: activity.name,
@@ -1081,58 +1007,21 @@ async function snapshotScheduleActivityUpdates(
   const activities = (activityRows ?? []).map((row) =>
     normalizeScheduleActivity(row as Record<string, unknown>),
   );
-  if (activities.length === 0) return "no_activities" as const;
+  const snapshots = buildActivityUpdateSnapshotRows(activities, {
+    projectId,
+    scheduleUpdateId,
+    updateNumber,
+    dataDate,
+  });
+  if (snapshots.length === 0) return 0;
 
-  const cpmModel = buildConstructLineCpmModel(activities, { dataDate });
-  const snapshots = cpmModel.tasks.map((task) => ({
-    project_id: projectId,
-    schedule_update_id: scheduleUpdateId,
-    schedule_activity_id: task.activity.id,
-    update_number: updateNumber,
-    data_date: dataDate,
-    activity_id: task.activity.activity_id,
-    name: task.activity.name,
-    division: task.activity.division,
-    wbs_section_id: task.activity.wbs_section_id,
-    baseline_start_date: task.baselineStartDate || task.activity.baseline_start_date,
-    baseline_finish_date: task.baselineFinishDate || task.activity.baseline_finish_date,
-    current_start_date: task.statusStartDate || task.activity.forecast_start_date,
-    current_finish_date: task.statusFinishDate || task.activity.forecast_finish_date,
-    actual_start_date: task.activity.actual_start_date,
-    actual_finish_date: task.activity.actual_finish_date,
-    planned_duration_days: Math.max(0, Math.round(task.durationDays)),
-    remaining_duration_days: getActivityUpdateSnapshotRemainingDurationDays(task),
-    status_basis: task.statusBasis,
-    percent_complete: task.activity.percent_complete,
-    total_float_days: Math.round(task.totalFloat),
-    free_float_days: Math.round(task.freeFloat),
-    slippage_days: Math.round(task.slippageDays),
-    is_critical: task.isCritical,
-    is_near_critical: task.isNearCritical,
-    is_late: task.isLate,
-    is_out_of_sequence: task.isOutOfSequence,
-    is_open_start: task.isOpenStart,
-    is_open_finish: task.isOpenFinish,
-    is_milestone: task.isMilestone,
-    predecessor_activity_ids: task.activity.predecessor_activity_ids,
-    successor_activity_ids: task.activity.successor_activity_ids,
-    notes: task.activity.notes,
-  }));
-
-  let { error: snapshotError } = await dynamicTable(supabase, "schedule_activity_updates").insert(
-    snapshots,
-  );
-  if (snapshotError && isMissingRestColumn(snapshotError, "status_basis")) {
-    const legacySnapshots = snapshots.map(({ status_basis, ...snapshot }) => snapshot);
-    ({ error: snapshotError } = await dynamicTable(supabase, "schedule_activity_updates").insert(
-      legacySnapshots,
-    ));
+  const { error: snapshotError } = await supabase
+    .from("schedule_activity_updates")
+    .insert(snapshots);
+  if (snapshotError) {
+    throw new Error(snapshotError.message ?? "Activity update snapshots did not save.");
   }
-  if (!snapshotError) return "saved" as const;
-  if (isMissingRestRelation(snapshotError, "schedule_activity_updates")) {
-    return "migration_required" as const;
-  }
-  throw new Error(snapshotError.message ?? "Activity update snapshots did not save.");
+  return snapshots.length;
 }
 
 export const listScheduleCpmTemplates = createServerFn({ method: "GET" })
@@ -1141,17 +1030,16 @@ export const listScheduleCpmTemplates = createServerFn({ method: "GET" })
     z.object({ projectId: z.string().uuid().optional() }).parse(input ?? {}),
   )
   .handler(async ({ context }) => {
-    const { data, error } = await dynamicTable(context.supabase, "schedule_cpm_templates")
+    const { data, error } = await context.supabase
+      .from("schedule_cpm_templates")
       .select("id,project_id,name,description,activity_count,created_at,updated_at")
       .order("updated_at", { ascending: false })
       .limit(50);
-    if (isMissingRestRelation(error, "schedule_cpm_templates")) {
-      return { templates: [], persistence: "migration_required" as const };
-    }
     if (error) throw new Error(error.message ?? "CPM template library did not load.");
     return {
-      templates: ((data ?? []) as Record<string, unknown>[]).map(normalizeScheduleCpmTemplate),
-      persistence: "ready" as const,
+      templates: ((data ?? []) as unknown as Record<string, unknown>[]).map(
+        normalizeScheduleCpmTemplate,
+      ),
     };
   });
 
@@ -1182,9 +1070,7 @@ export const saveCurrentScheduleAsCpmTemplate = createServerFn({ method: "POST" 
         .order("name"),
     ]);
     if (activitiesRes.error) throw new Error(activitiesRes.error.message);
-    if (wbsRes.error && !isMissingRestRelation(wbsRes.error, "schedule_wbs_sections")) {
-      throw new Error(wbsRes.error.message);
-    }
+    if (wbsRes.error) throw new Error(wbsRes.error.message);
     const activities = ((activitiesRes.data ?? []) as unknown as Record<string, unknown>[])
       .map(normalizeScheduleActivity)
       .map(scheduleActivityTemplatePayload);
@@ -1195,7 +1081,8 @@ export const saveCurrentScheduleAsCpmTemplate = createServerFn({ method: "POST" 
     const wbsSections = persistedWbsSections.map((section) =>
       scheduleWbsTemplatePayload(section, wbsPathMap.get(section.id) ?? section.name),
     );
-    const { data: inserted, error } = await dynamicTable(context.supabase, "schedule_cpm_templates")
+    const { data: inserted, error } = await context.supabase
+      .from("schedule_cpm_templates")
       .insert({
         project_id: data.projectId,
         name: data.name.trim(),
@@ -1206,9 +1093,6 @@ export const saveCurrentScheduleAsCpmTemplate = createServerFn({ method: "POST" 
       })
       .select("id")
       .single();
-    if (isMissingRestRelation(error, "schedule_cpm_templates")) {
-      throw new Error(templateLibraryUnavailableMessage);
-    }
     if (error) throw new Error(error.message ?? "CPM template did not save.");
     return { ok: true, id: str(inserted?.id) };
   });
@@ -1219,13 +1103,11 @@ export const importScheduleCpmTemplate = createServerFn({ method: "POST" })
     z.object({ projectId: z.string().uuid(), templateId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
-    const templateRes = await dynamicTable(context.supabase, "schedule_cpm_templates")
+    const templateRes = await context.supabase
+      .from("schedule_cpm_templates")
       .select("*")
       .eq("id", data.templateId)
       .maybeSingle();
-    if (isMissingRestRelation(templateRes.error, "schedule_cpm_templates")) {
-      throw new Error(templateLibraryUnavailableMessage);
-    }
     if (templateRes.error)
       throw new Error(templateRes.error.message ?? "CPM template did not load.");
     if (!templateRes.data) throw new Error("CPM template was not found.");
@@ -1284,6 +1166,7 @@ const createScheduleUpdateInput = z.object({
   schedule_money_recovery: z.number().min(0).default(0),
   money_notes: z.string().max(4000).default(""),
   notes: z.string().max(4000).default(""),
+  replace_existing: z.boolean().default(false),
   milestone_forecasts: z
     .array(
       z.object({
@@ -1309,63 +1192,101 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       .single();
     if (projectError) throw new Error(projectError.message);
 
-    const { data: last } = await context.supabase
+    const dataDate = data.data_date ?? data.update_date ?? new Date().toISOString().slice(0, 10);
+
+    // One update per data date: a second save on the same data date amends the
+    // existing update (after the client confirms), never silently duplicates.
+    const { data: existingForDataDate, error: existingError } = await context.supabase
+      .from("schedule_updates")
+      .select("id, update_number")
+      .eq("project_id", data.projectId)
+      .eq("data_date", dataDate)
+      .order("update_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existingError) throw new Error(existingError.message);
+
+    const writeMode = resolveScheduleUpdateWriteMode({
+      existingUpdateNumber: (existingForDataDate?.update_number as number | undefined) ?? null,
+      replaceExisting: data.replace_existing,
+    });
+    if (writeMode === "duplicate_blocked") {
+      return {
+        ok: false as const,
+        duplicate: {
+          update_number: existingForDataDate?.update_number as number,
+          data_date: dataDate,
+        },
+      };
+    }
+
+    const previousUpdateQuery = context.supabase
       .from("schedule_updates")
       .select("update_number, forecast_completion_date")
       .eq("project_id", data.projectId)
       .order("update_number", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    const { data: previousUpdate } =
+      writeMode === "amend"
+        ? await previousUpdateQuery
+            .lt("update_number", existingForDataDate?.update_number as number)
+            .maybeSingle()
+        : await previousUpdateQuery.maybeSingle();
 
     const baseline = (project.baseline_completion_date as string | null) ?? null;
-    const previousCompletion =
-      (last?.forecast_completion_date as string | null) ??
-      (project.forecast_completion_date as string | null) ??
-      null;
-    const updateNumber = ((last?.update_number as number | undefined) ?? 0) + 1;
-    const varianceWeeks =
-      computeScheduleVarianceWeeks(baseline, data.forecast_completion_date) ?? 0;
-    const movementWeeks =
-      computeScheduleVarianceWeeks(previousCompletion, data.forecast_completion_date) ?? 0;
-    const dataDate = data.data_date ?? data.update_date ?? new Date().toISOString().slice(0, 10);
-
-    const baseUpdatePayload: TablesInsert<"schedule_updates"> = {
-      project_id: data.projectId,
-      update_number: updateNumber,
-      update_date: dataDate,
-      baseline_completion_date: baseline,
-      forecast_completion_date: data.forecast_completion_date,
-      variance_weeks: varianceWeeks,
-      movement_weeks: movementWeeks,
+    const updateNumber =
+      writeMode === "amend"
+        ? (existingForDataDate?.update_number as number)
+        : ((previousUpdate?.update_number as number | undefined) ?? 0) + 1;
+    const updatePayload = buildScheduleUpdateRecord({
+      projectId: data.projectId,
+      updateNumber,
+      dataDate,
+      baselineCompletionDate: baseline,
+      previousCompletionDate:
+        (previousUpdate?.forecast_completion_date as string | null) ??
+        (project.forecast_completion_date as string | null) ??
+        null,
+      forecastCompletionDate: data.forecast_completion_date,
+      scheduleMoneyExposure: data.schedule_money_exposure,
+      scheduleMoneyRecovery: data.schedule_money_recovery,
+      moneyNotes: data.money_notes,
       notes: data.notes,
-    };
-    const extendedUpdatePayload = {
-      ...baseUpdatePayload,
-      data_date: dataDate,
-      schedule_money_exposure: data.schedule_money_exposure,
-      schedule_money_recovery: data.schedule_money_recovery,
-      money_notes: data.money_notes,
-    } as ScheduleUpdateInsert;
+    }) as ScheduleUpdateInsert;
+    const varianceWeeks = updatePayload.variance_weeks ?? 0;
 
-    let { data: update, error: insertError } = await context.supabase
-      .from("schedule_updates")
-      .insert(extendedUpdatePayload)
-      .select("*")
-      .single();
-    if (
-      insertError &&
-      (isMissingRestColumn(insertError, "data_date") ||
-        isMissingRestColumn(insertError, "schedule_money_exposure") ||
-        isMissingRestColumn(insertError, "schedule_money_recovery") ||
-        isMissingRestColumn(insertError, "money_notes"))
-    ) {
-      ({ data: update, error: insertError } = await context.supabase
+    let update: Record<string, unknown> | null = null;
+    if (writeMode === "amend") {
+      const existingId = existingForDataDate?.id as string;
+      const { data: amended, error: amendError } = await context.supabase
         .from("schedule_updates")
-        .insert(baseUpdatePayload)
+        .update(updatePayload)
+        .eq("id", existingId)
+        .eq("project_id", data.projectId)
         .select("*")
-        .single());
+        .single();
+      if (amendError) throw new Error(amendError.message);
+      update = amended as Record<string, unknown>;
+      // The amended update re-snapshots below; drop the superseded rows first.
+      const { error: milestoneCleanupError } = await context.supabase
+        .from("schedule_milestone_updates")
+        .delete()
+        .eq("schedule_update_id", existingId);
+      if (milestoneCleanupError) throw new Error(milestoneCleanupError.message);
+      const { error: activityCleanupError } = await context.supabase
+        .from("schedule_activity_updates")
+        .delete()
+        .eq("schedule_update_id", existingId);
+      if (activityCleanupError) throw new Error(activityCleanupError.message);
+    } else {
+      const { data: inserted, error: insertError } = await context.supabase
+        .from("schedule_updates")
+        .insert(updatePayload)
+        .select("*")
+        .single();
+      if (insertError) throw new Error(insertError.message);
+      update = inserted as Record<string, unknown>;
     }
-    if (insertError) throw new Error(insertError.message);
     if (!update) throw new Error("Schedule update did not save.");
 
     const { error: projectUpdateError } = await context.supabase
@@ -1400,31 +1321,23 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       .select("*")
       .eq("project_id", data.projectId);
     if (milestoneError) throw new Error(milestoneError.message);
-    if ((milestones ?? []).length > 0) {
+    const milestoneSnapshots = buildMilestoneUpdateSnapshotRows(
+      (milestones ?? []) as unknown as MilestoneRow[],
+      {
+        projectId: data.projectId,
+        scheduleUpdateId: update.id as string,
+        updateNumber,
+        dataDate,
+      },
+    );
+    if (milestoneSnapshots.length > 0) {
       const { error: snapshotError } = await context.supabase
         .from("schedule_milestone_updates")
-        .insert(
-          (milestones ?? []).map((m) => {
-            const row = m as Record<string, unknown>;
-            const baselineDate = (row.baseline_date as string | null) ?? null;
-            const forecastDate = (row.forecast_date as string | null) ?? null;
-            return {
-              project_id: data.projectId,
-              milestone_id: row.id as string,
-              schedule_update_id: update.id as string,
-              update_number: updateNumber,
-              baseline_date: baselineDate,
-              forecast_date: forecastDate,
-              variance_weeks: computeScheduleVarianceWeeks(baselineDate, forecastDate) ?? 0,
-              status: str(row.status, "on_track"),
-              notes: str(row.delay_reason),
-            };
-          }),
-        );
+        .insert(milestoneSnapshots);
       if (snapshotError) throw new Error(snapshotError.message);
     }
 
-    await snapshotScheduleActivityUpdates(
+    const activitySnapshotCount = await snapshotScheduleActivityUpdates(
       context.supabase,
       data.projectId,
       update.id as string,
@@ -1432,7 +1345,57 @@ export const createScheduleUpdate = createServerFn({ method: "POST" })
       dataDate,
     );
 
-    return { ok: true, update: normalizeScheduleUpdate(update as Record<string, unknown>) };
+    return {
+      ok: true as const,
+      amended: writeMode === "amend",
+      activitySnapshotCount,
+      milestoneSnapshotCount: milestoneSnapshots.length,
+      update: normalizeScheduleUpdate(update as Record<string, unknown>),
+    };
+  });
+
+const annotateScheduleUpdateInput = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  notes: z.string().max(4000).optional(),
+  schedule_money_exposure: z.number().min(0).optional(),
+  schedule_money_recovery: z.number().min(0).optional(),
+  money_notes: z.string().max(4000).optional(),
+});
+
+// The IOR Schedule tab consumes the latest CPM update: it annotates the saved
+// record with narrative and money fields; it never authors a competing update.
+export const annotateScheduleUpdate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof annotateScheduleUpdateInput>) =>
+    annotateScheduleUpdateInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { id, projectId } = data;
+    const cleanPatch: TablesUpdate<"schedule_updates"> = {};
+    if (data.notes !== undefined) cleanPatch.notes = data.notes;
+    if (data.schedule_money_exposure !== undefined) {
+      cleanPatch.schedule_money_exposure = data.schedule_money_exposure;
+    }
+    if (data.schedule_money_recovery !== undefined) {
+      cleanPatch.schedule_money_recovery = data.schedule_money_recovery;
+    }
+    if (data.money_notes !== undefined) cleanPatch.money_notes = data.money_notes;
+    if (Object.keys(cleanPatch).length === 0) {
+      throw new Error("Nothing to save on this schedule update.");
+    }
+    const { data: update, error } = await context.supabase
+      .from("schedule_updates")
+      .update(cleanPatch)
+      .eq("id", id)
+      .eq("project_id", projectId)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return {
+      ok: true as const,
+      update: normalizeScheduleUpdate(update as Record<string, unknown>),
+    };
   });
 
 // ---------- MILESTONES ----------
@@ -1645,43 +1608,19 @@ async function ensureScheduleWbsSection(
     .eq("project_id", projectId)
     .eq("name", sectionName);
   existingQuery = scheduleWbsParentFilter(existingQuery, parentId);
-  let existing = await existingQuery.maybeSingle();
-  if (existing.error && isMissingRestColumn(existing.error, "parent_id")) {
-    existing = await supabase
-      .from("schedule_wbs_sections")
-      .select("id")
-      .eq("project_id", projectId)
-      .eq("name", sectionName)
-      .maybeSingle();
-  }
-  if (existing.error && !isMissingRestColumn(existing.error, "schedule_wbs_sections")) {
-    const message = (existing.error.message ?? "").toLowerCase();
-    if (!message.includes("schedule_wbs_sections") && !message.includes("schema cache")) {
-      throw new Error(existing.error.message);
-    }
-  }
-  if (existing.data?.id || existing.error) return (existing.data?.id as string | undefined) ?? null;
+  const existing = await existingQuery.maybeSingle();
+  if (existing.error) throw new Error(existing.error.message);
+  if (existing.data?.id) return existing.data.id as string;
 
   let lastQuery = supabase
     .from("schedule_wbs_sections")
     .select("sort_order")
     .eq("project_id", projectId);
   lastQuery = scheduleWbsParentFilter(lastQuery, parentId);
-  let { data: last, error: lastError } = await lastQuery
+  const { data: last, error: lastError } = await lastQuery
     .order("sort_order", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (lastError && isMissingRestColumn(lastError, "parent_id")) {
-    const fallbackLast = await supabase
-      .from("schedule_wbs_sections")
-      .select("sort_order")
-      .eq("project_id", projectId)
-      .order("sort_order", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    last = fallbackLast.data;
-    lastError = fallbackLast.error;
-  }
   if (lastError) throw new Error(lastError.message);
 
   const payload = {
@@ -1691,66 +1630,9 @@ async function ensureScheduleWbsSection(
     code: "",
     sort_order: ((last as { sort_order?: number } | null)?.sort_order ?? 0) + 10,
   } as ScheduleWbsSectionInsert;
-  let { data: inserted, error: insertError } = await supabase
-    .from("schedule_wbs_sections")
-    .insert(payload)
-    .select("id")
-    .single();
-  if (
-    insertError &&
-    (isMissingRestColumn(insertError, "parent_id") || isMissingRestColumn(insertError, "code"))
-  ) {
-    const fallback = await supabase
-      .from("schedule_wbs_sections")
-      .insert({
-        project_id: projectId,
-        name: sectionName,
-        sort_order: payload.sort_order,
-      })
-      .select("id")
-      .single();
-    inserted = fallback.data;
-    insertError = fallback.error;
-  }
-  if (insertError) {
-    const message = (insertError.message ?? "").toLowerCase();
-    if (!message.includes("duplicate")) throw new Error(insertError.message);
-  }
-  return ((inserted as Record<string, unknown> | null)?.id as string | undefined) ?? null;
-}
-
-async function ensureScheduleWbsPathLabel(
-  supabase: ScheduleSupabaseClient,
-  projectId: string,
-  value: string,
-) {
-  const sectionName = joinScheduleWbsPath(splitScheduleWbsPath(value));
-  const existing = await supabase
-    .from("schedule_wbs_sections")
-    .select("id")
-    .eq("project_id", projectId)
-    .eq("name", sectionName)
-    .maybeSingle();
-  if (isMissingRestRelation(existing.error, "schedule_wbs_sections")) return null;
-  if (existing.error) throw new Error(existing.error.message);
-  if (existing.data?.id) return existing.data.id as string;
-
-  const { data: last, error: lastError } = await supabase
-    .from("schedule_wbs_sections")
-    .select("sort_order")
-    .eq("project_id", projectId)
-    .order("sort_order", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (lastError) throw new Error(lastError.message);
-
   const { data: inserted, error: insertError } = await supabase
     .from("schedule_wbs_sections")
-    .insert({
-      project_id: projectId,
-      name: sectionName,
-      sort_order: ((last as { sort_order?: number } | null)?.sort_order ?? 0) + 10,
-    })
+    .insert(payload)
     .select("id")
     .single();
   if (insertError) {
@@ -1765,94 +1647,11 @@ async function ensureScheduleWbsPath(
   projectId: string,
   value: string,
 ) {
-  const mode = await getScheduleWbsPersistenceMode(supabase, projectId);
-  if (mode === "migration_required") return null;
-  if (mode === "path_fallback") {
-    let sectionId: string | null = null;
-    const parts = splitScheduleWbsPath(value);
-    for (let depth = 1; depth <= parts.length; depth += 1) {
-      sectionId = await ensureScheduleWbsPathLabel(
-        supabase,
-        projectId,
-        joinScheduleWbsPath(parts.slice(0, depth)),
-      );
-    }
-    return sectionId;
-  }
-
   let parentId: string | null = null;
   for (const segment of splitScheduleWbsPath(value)) {
     parentId = await ensureScheduleWbsSection(supabase, projectId, segment, parentId);
   }
   return parentId;
-}
-
-function replaceScheduleWbsPath(value: string, oldPath: string, newPath: string) {
-  const normalizedValue = joinScheduleWbsPath(splitScheduleWbsPath(value));
-  const normalizedOldPath = joinScheduleWbsPath(splitScheduleWbsPath(oldPath));
-  const normalizedNewPath = joinScheduleWbsPath(splitScheduleWbsPath(newPath));
-  if (normalizedValue === normalizedOldPath) return normalizedNewPath;
-  if (normalizedValue.startsWith(`${normalizedOldPath}${WBS_PATH_SEPARATOR}`)) {
-    return `${normalizedNewPath}${normalizedValue.slice(normalizedOldPath.length)}`;
-  }
-  return value;
-}
-
-async function getPersistedScheduleWbsSections(
-  supabase: ScheduleSupabaseClient,
-  projectId: string,
-) {
-  const { data, error } = await supabase
-    .from("schedule_wbs_sections")
-    .select("*")
-    .eq("project_id", projectId);
-  if (error) throw new Error(error.message);
-  return ((data ?? []) as unknown as Array<Record<string, unknown>>).map((row) =>
-    normalizeScheduleWbsSection(row),
-  );
-}
-
-async function getScheduleWbsPathContext(
-  supabase: ScheduleSupabaseClient,
-  projectId: string,
-  sectionId: string,
-) {
-  const sections = await getPersistedScheduleWbsSections(supabase, projectId);
-  const section = sections.find((item) => item.id === sectionId);
-  if (!section) throw new Error("Choose a WBS section from this project.");
-  const pathMap = buildWbsSectionPathMap(sections);
-  return {
-    sections,
-    section,
-    pathMap,
-    path: joinScheduleWbsPath(splitScheduleWbsPath(pathMap.get(section.id) ?? section.name)),
-  };
-}
-
-async function syncPathBasedWbsSectionNamesForPathChange(
-  supabase: ScheduleSupabaseClient,
-  projectId: string,
-  oldPath: string,
-  newPath: string,
-) {
-  const sections = await getPersistedScheduleWbsSections(supabase, projectId);
-  const payload: ScheduleWbsSectionInsert[] = [];
-  sections.forEach((section) => {
-    const nextName = replaceScheduleWbsPath(section.name, oldPath, newPath);
-    if (nextName === section.name) return;
-    payload.push({
-      id: section.id,
-      project_id: projectId,
-      name: nextName,
-      code: section.code,
-      sort_order: section.sort_order,
-    });
-  });
-  if (payload.length === 0) return;
-  const { error } = await supabase
-    .from("schedule_wbs_sections")
-    .upsert(payload, { onConflict: "id" });
-  if (error) throw new Error(error.message);
 }
 
 async function syncReciprocalScheduleActivityLogic(
@@ -1903,26 +1702,6 @@ export const createScheduleWbsSection = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const mode = await getScheduleWbsPersistenceMode(context.supabase, data.projectId);
-    if (mode === "migration_required") {
-      throw new Error(
-        "Use activity WBS fields for now. The grid still groups by each activity WBS path.",
-      );
-    }
-    if (mode === "path_fallback") {
-      let sectionPath = data.name;
-      if (data.parentId) {
-        const parentContext = await getScheduleWbsPathContext(
-          context.supabase,
-          data.projectId,
-          data.parentId,
-        );
-        sectionPath = joinScheduleWbsPath([...splitScheduleWbsPath(parentContext.path), data.name]);
-      }
-      await ensureScheduleWbsPath(context.supabase, data.projectId, sectionPath);
-      return { ok: true };
-    }
-
     await ensureScheduleWbsSection(
       context.supabase,
       data.projectId,
@@ -1947,24 +1726,6 @@ export const renameScheduleWbsSection = createServerFn({ method: "POST" })
     const sectionRecord = section as unknown as Record<string, unknown>;
     const oldName = str(sectionRecord.name, "General");
     const projectId = sectionRecord.project_id as string;
-    const mode = await getScheduleWbsPersistenceMode(context.supabase, projectId);
-    if (mode === "path_fallback") {
-      const pathContext = await getScheduleWbsPathContext(context.supabase, projectId, data.id);
-      const oldPath = pathContext.path;
-      const parentPath = joinScheduleWbsPath(splitScheduleWbsPath(oldPath).slice(0, -1));
-      const newPath =
-        splitScheduleWbsPath(oldPath).length > 1
-          ? joinScheduleWbsPath([...splitScheduleWbsPath(parentPath), data.name])
-          : data.name;
-      await syncPathBasedWbsSectionNamesForPathChange(
-        context.supabase,
-        projectId,
-        oldPath,
-        newPath,
-      );
-      await syncActivityDivisionsForWbsPathChange(context.supabase, projectId, oldPath, newPath);
-      return { ok: true };
-    }
 
     const { error: updateError } = await context.supabase
       .from("schedule_wbs_sections")
@@ -2011,7 +1772,6 @@ export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
     const section = normalizeScheduleWbsSection(sectionRow as unknown as Record<string, unknown>);
     if ((section.parent_id ?? null) === nextParentId) return { ok: true };
 
-    const mode = await getScheduleWbsPersistenceMode(context.supabase, section.project_id);
     const { data: allRows, error: allRowsError } = await context.supabase
       .from("schedule_wbs_sections")
       .select("*")
@@ -2021,57 +1781,6 @@ export const moveScheduleWbsSectionParent = createServerFn({ method: "POST" })
       normalizeScheduleWbsSection(row),
     );
     const previousPaths = buildWbsSectionPathMap(sections);
-    if (mode === "path_fallback") {
-      const oldPath = joinScheduleWbsPath(
-        splitScheduleWbsPath(previousPaths.get(section.id) ?? section.name),
-      );
-      const oldPathParts = splitScheduleWbsPath(oldPath);
-      const title = oldPathParts[oldPathParts.length - 1] ?? section.name;
-      const nextParentPath = nextParentId
-        ? joinScheduleWbsPath(splitScheduleWbsPath(previousPaths.get(nextParentId) ?? ""))
-        : null;
-      if (nextParentId && !previousPaths.has(nextParentId)) {
-        throw new Error("Choose a WBS parent from this project.");
-      }
-      if (
-        nextParentPath &&
-        (nextParentPath === oldPath || nextParentPath.startsWith(`${oldPath}${WBS_PATH_SEPARATOR}`))
-      ) {
-        throw new Error("A WBS section cannot be moved under one of its child sections.");
-      }
-      const newPath = nextParentPath
-        ? joinScheduleWbsPath([...splitScheduleWbsPath(nextParentPath), title])
-        : title;
-      const siblingRows = sections.filter((item) => {
-        if (item.id === section.id) return false;
-        const path = joinScheduleWbsPath(
-          splitScheduleWbsPath(previousPaths.get(item.id) ?? item.name),
-        );
-        const parentPath = splitScheduleWbsPath(path).slice(0, -1);
-        const normalizedParentPath = parentPath.length ? joinScheduleWbsPath(parentPath) : null;
-        return normalizedParentPath === nextParentPath;
-      });
-      const sortOrder = Math.max(0, ...siblingRows.map((item) => item.sort_order)) + 10;
-      await syncPathBasedWbsSectionNamesForPathChange(
-        context.supabase,
-        section.project_id,
-        oldPath,
-        newPath,
-      );
-      const { error: sortOrderError } = await context.supabase
-        .from("schedule_wbs_sections")
-        .update({ sort_order: sortOrder })
-        .eq("id", section.id)
-        .eq("project_id", section.project_id);
-      if (sortOrderError) throw new Error(sortOrderError.message);
-      await syncActivityDivisionsForWbsPathChange(
-        context.supabase,
-        section.project_id,
-        oldPath,
-        newPath,
-      );
-      return { ok: true };
-    }
 
     if (nextParentId) {
       const parent = sections.find((item) => item.id === nextParentId);
@@ -2150,24 +1859,13 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
       throw new Error(reorderRpc.error.message ?? "WBS order did not save.");
     }
 
-    let canPersistParentId = true;
     let siblingQuery = context.supabase
       .from("schedule_wbs_sections")
       .select("id,parent_id,sort_order,name")
       .eq("project_id", data.projectId)
       .in("id", data.orderedIds);
     siblingQuery = scheduleWbsParentFilter(siblingQuery, parentId);
-    let { data: siblingRows, error: siblingError } = await siblingQuery;
-    if (siblingError && isMissingRestColumn(siblingError, "parent_id")) {
-      canPersistParentId = false;
-      const fallback = await context.supabase
-        .from("schedule_wbs_sections")
-        .select("id,sort_order,name")
-        .eq("project_id", data.projectId)
-        .in("id", data.orderedIds);
-      siblingRows = fallback.data as typeof siblingRows;
-      siblingError = fallback.error;
-    }
+    const { data: siblingRows, error: siblingError } = await siblingQuery;
     if (siblingError) throw new Error(siblingError.message);
     if ((siblingRows ?? []).length !== data.orderedIds.length) {
       throw new Error("WBS order can only be saved for sections under the same parent.");
@@ -2196,7 +1894,7 @@ export const reorderScheduleWbsSections = createServerFn({ method: "POST" })
         project_id: data.projectId,
         name: row.name,
         sort_order: row.sort_order,
-        ...(canPersistParentId ? { parent_id: parentId } : {}),
+        parent_id: parentId,
       };
       return item;
     });
@@ -2341,9 +2039,7 @@ export const createScheduleActivity = createServerFn({ method: "POST" })
         .from("schedule_activities")
         .update({ wbs_section_id: wbsSectionId })
         .eq("id", createdActivity.id);
-      if (wbsLinkError && !isMissingRestColumn(wbsLinkError, "wbs_section_id")) {
-        throw new Error(wbsLinkError.message);
-      }
+      if (wbsLinkError) throw new Error(wbsLinkError.message);
     }
     await syncReciprocalScheduleActivityLogic(
       context.supabase,
@@ -2409,9 +2105,7 @@ export const updateScheduleActivity = createServerFn({ method: "POST" })
         .from("schedule_activities")
         .update({ wbs_section_id: wbsSectionId })
         .eq("id", data.id);
-      if (wbsLinkError && !isMissingRestColumn(wbsLinkError, "wbs_section_id")) {
-        throw new Error(wbsLinkError.message);
-      }
+      if (wbsLinkError) throw new Error(wbsLinkError.message);
     }
 
     if (shouldSyncLogic) {

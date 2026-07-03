@@ -17,7 +17,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/outcome/ScheduleRisk";
+import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/schedule";
+import { selectCanonicalLogicTieCount, selectLatestScheduleUpdate } from "@/lib/schedule-selectors";
 import { buildWbsSectionPathMap, replaceWbsPathInDivision } from "@/lib/constructline-wbs";
 import { getProject, type ProjectRow } from "@/lib/projects.functions";
 import {
@@ -75,15 +76,6 @@ const WBS_ORDER_SAVE_DEBOUNCE_MS = 75;
 
 function formatDelayFragmentError(error: unknown) {
   const message = error instanceof Error ? error.message : "";
-  const lowerMessage = message.toLowerCase();
-  if (
-    lowerMessage.includes("schedule_delay_fragments") ||
-    lowerMessage.includes("schema cache") ||
-    lowerMessage.includes("could not find the table") ||
-    lowerMessage.includes("does not exist")
-  ) {
-    return "Use Notes / Constraint for the delay narrative on this activity. CPM activity details still save normally.";
-  }
   return message || "Refresh and try again.";
 }
 
@@ -102,33 +94,12 @@ function formatActivityMutationError(error: unknown) {
   ) {
     return "The baseline row, WBS, notes, and logic can still save normally. Reopen the activity and save the status update fields after the schedule refresh completes.";
   }
-  if (
-    lowerMessage.includes("wbs_section_id") ||
-    lowerMessage.includes("schema cache") ||
-    lowerMessage.includes("schedule_activities")
-  ) {
-    return "The row could not attach to that WBS area yet. Save it with the typed WBS path or Milestones division, then attach the area after the schedule refresh completes.";
-  }
   return message || "Refresh and try again.";
 }
 
 function formatWbsMutationError(error: unknown) {
   const message = error instanceof Error ? error.message : "";
-  const lowerMessage = message.toLowerCase();
-  if (
-    lowerMessage.includes("schedule_wbs_sections") ||
-    lowerMessage.includes("wbs") ||
-    lowerMessage.includes("parent_id") ||
-    lowerMessage.includes("schema cache") ||
-    lowerMessage.includes("could not find the function") ||
-    lowerMessage.includes("does not exist")
-  ) {
-    return "Activity WBS paths still control the visible grid. Keep grouping rows through each activity WBS field, then try the WBS manager again after the schedule refresh completes.";
-  }
-  return (
-    message ||
-    "The WBS change did not save. Keep grouping rows through the activity WBS field and try the WBS manager again."
-  );
+  return message || "The WBS change did not save. Refresh and try again.";
 }
 
 function getNextWbsSortOrder(
@@ -250,25 +221,11 @@ function ScheduleWorkspacePage() {
     () => (scheduleQuery.data?.delayFragments ?? []) as ScheduleDelayFragmentRow[],
     [scheduleQuery.data?.delayFragments],
   );
-  const wbsPersistence =
-    scheduleQuery.data?.wbsPersistence === "migration_required"
-      ? "migration_required"
-      : scheduleQuery.data?.wbsPersistence === "path_fallback"
-        ? "path_fallback"
-        : "ready";
-  const delayFragmentPersistence =
-    scheduleQuery.data?.delayFragmentPersistence === "migration_required"
-      ? "migration_required"
-      : "ready";
-  const latestUpdate = updates[0] ?? null;
+  const latestUpdate = selectLatestScheduleUpdate(updates);
   const shellSummary = useMemo<ScheduleWorkspaceShellSummary>(
     () => ({
       activityCount: activities.length,
-      logicTieCount: activities.reduce(
-        (sum, activity) =>
-          sum + activity.predecessor_activity_ids.length + activity.successor_activity_ids.length,
-        0,
-      ),
+      logicTieCount: selectCanonicalLogicTieCount(activities),
       latestDataDate: latestUpdate?.data_date ?? null,
       activeMilestoneCount: milestones.filter((milestone) => milestone.status !== "complete")
         .length,
@@ -658,9 +615,7 @@ function ScheduleWorkspacePage() {
         workspaceMode="full"
         activities={activities}
         wbsSections={wbsSections}
-        wbsPersistence={wbsPersistence}
         delayFragments={delayFragments}
-        delayFragmentPersistence={delayFragmentPersistence}
         milestones={milestones}
         updates={updates}
         project={project}

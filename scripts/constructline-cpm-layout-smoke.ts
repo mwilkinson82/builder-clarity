@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const readProjectFile = (filePath: string) => readFileSync(resolve(rootDir, filePath), "utf8");
+const readProjectFile = (filePath: string) => {
+  const target = resolve(rootDir, filePath);
+  if (!statSync(target).isDirectory()) return readFileSync(target, "utf8");
+  return readdirSync(target)
+    .filter((entry) => entry.endsWith(".ts") || entry.endsWith(".tsx"))
+    .sort()
+    .map((entry) => readFileSync(resolve(target, entry), "utf8"))
+    .join("\n");
+};
 
-const scheduleRiskSource = readProjectFile("src/components/outcome/ScheduleRisk.tsx");
+const scheduleRiskSource = readProjectFile("src/components/schedule");
 const scheduleRouteSource = readProjectFile(
   "src/routes/_authenticated/projects.$projectId.schedule.tsx",
 );

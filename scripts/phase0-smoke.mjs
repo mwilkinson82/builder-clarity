@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
@@ -27,7 +27,17 @@ function warn(name, detail = "") {
 }
 
 async function read(relPath) {
-  return readFile(path.join(root, relPath), "utf8");
+  const target = path.join(root, relPath);
+  const stats = await stat(target);
+  if (!stats.isDirectory()) return readFile(target, "utf8");
+  const entries = await readdir(target);
+  const sources = await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".ts") || entry.endsWith(".tsx"))
+      .sort()
+      .map((entry) => readFile(path.join(target, entry), "utf8")),
+  );
+  return sources.join("\n");
 }
 
 async function expectFile(relPath, label = relPath) {
@@ -914,7 +924,7 @@ await expectContains(
 );
 
 await expectContains(
-  "src/components/outcome/ScheduleRisk.tsx",
+  "src/components/schedule",
   [
     /createScheduleUpdate/,
     /createScheduleRisk/,
