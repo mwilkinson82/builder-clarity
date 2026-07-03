@@ -598,6 +598,49 @@ export function extractSheetIdentity({
   return { sheetNumber: chosen.value, sheetName };
 }
 
+// --- Default current sheet ----------------------------------------------------
+// The Harbor demo sample set uses this mime type. On load, the current sheet
+// must never default to a sample when the contractor has real drawings: the
+// sample hides PDF-only actions (Detect) and reads as "where are my plans?".
+
+export const SAMPLE_PLAN_SET_MIME = "sample/overwatch";
+
+export function defaultPlanRoomSheetId({
+  lastViewedSheetId,
+  planSets,
+  sheets,
+}: {
+  lastViewedSheetId: string | null;
+  // In UI order: the workspace lists plan sets most recently updated first.
+  planSets: Array<{ id: string; file_mime_type: string }>;
+  sheets: Array<{ id: string; plan_set_id: string; sort_order: number }>;
+}): string | null {
+  if (lastViewedSheetId && sheets.some((sheet) => sheet.id === lastViewedSheetId)) {
+    return lastViewedSheetId;
+  }
+  const firstSheetOfSet = (planSetId: string) =>
+    sheets
+      .filter((sheet) => sheet.plan_set_id === planSetId)
+      .sort((a, b) => a.sort_order - b.sort_order)[0] ?? null;
+  const firstSheetMatching = (setMatches: (set: { file_mime_type: string }) => boolean) => {
+    for (const planSet of planSets) {
+      if (!setMatches(planSet)) continue;
+      const sheet = firstSheetOfSet(planSet.id);
+      if (sheet) return sheet.id;
+    }
+    return null;
+  };
+  return (
+    // A real uploaded PDF set beats everything else...
+    firstSheetMatching((set) => set.file_mime_type === "application/pdf") ??
+    // ...then any real (non-sample) set, e.g. uploaded images...
+    firstSheetMatching((set) => set.file_mime_type !== SAMPLE_PLAN_SET_MIME) ??
+    // ...then whatever exists.
+    sheets[0]?.id ??
+    null
+  );
+}
+
 // --- Cross-sheet extraction --------------------------------------------------
 // Project-block fields (owner LLC, site address, project name) repeat in the
 // same title region on sheet after sheet, while a real sheet title is unique

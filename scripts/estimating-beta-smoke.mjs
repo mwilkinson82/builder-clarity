@@ -15,6 +15,7 @@ import {
   buildProjectFieldTexts,
   calculateTakeoffQuantity,
   decimalFeetHint,
+  defaultPlanRoomSheetId,
   groupUnlinkedTakeoffs,
   normalizeTakeoffLabel,
   suggestTakeoffMatches,
@@ -503,6 +504,50 @@ assert.equal(
   matches.some((match) => match.measurement_id === "m3"),
   false,
 );
+
+// --- Default current sheet (Phase 4 Task 2) ---
+// Never land on the sample set when real drawings exist. Last-viewed wins
+// when it still exists; else the first sheet of the first real PDF set; else
+// any non-sample set; else whatever exists.
+const defaultSheetFixture = {
+  planSets: [
+    { id: "set-sample", file_mime_type: "sample/overwatch" },
+    { id: "set-image", file_mime_type: "image/png" },
+    { id: "set-pdf", file_mime_type: "application/pdf" },
+  ],
+  sheets: [
+    { id: "sample-1", plan_set_id: "set-sample", sort_order: 1 },
+    { id: "image-1", plan_set_id: "set-image", sort_order: 1 },
+    { id: "pdf-2", plan_set_id: "set-pdf", sort_order: 2 },
+    { id: "pdf-1", plan_set_id: "set-pdf", sort_order: 1 },
+  ],
+};
+assert.equal(
+  defaultPlanRoomSheetId({ lastViewedSheetId: "pdf-2", ...defaultSheetFixture }),
+  "pdf-2",
+);
+assert.equal(
+  defaultPlanRoomSheetId({ lastViewedSheetId: "gone", ...defaultSheetFixture }),
+  "pdf-1",
+);
+assert.equal(defaultPlanRoomSheetId({ lastViewedSheetId: null, ...defaultSheetFixture }), "pdf-1");
+assert.equal(
+  defaultPlanRoomSheetId({
+    lastViewedSheetId: null,
+    planSets: defaultSheetFixture.planSets.filter((set) => set.id !== "set-pdf"),
+    sheets: defaultSheetFixture.sheets.filter((sheet) => sheet.plan_set_id !== "set-pdf"),
+  }),
+  "image-1",
+);
+assert.equal(
+  defaultPlanRoomSheetId({
+    lastViewedSheetId: null,
+    planSets: [{ id: "set-sample", file_mime_type: "sample/overwatch" }],
+    sheets: [{ id: "sample-1", plan_set_id: "set-sample", sort_order: 1 }],
+  }),
+  "sample-1",
+);
+assert.equal(defaultPlanRoomSheetId({ lastViewedSheetId: null, planSets: [], sheets: [] }), null);
 
 // --- Takeoff undo/redo stack (Phase 4 Task 0) ---
 const undoSnapshot = (overrides = {}) => ({

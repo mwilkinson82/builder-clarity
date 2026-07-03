@@ -63,6 +63,7 @@ import {
   type TakeoffToolType,
 } from "@/lib/plan-room.functions";
 import {
+  defaultPlanRoomSheetId,
   distancePx,
   groupUnlinkedTakeoffs,
   parseFeetInches,
@@ -127,6 +128,7 @@ import {
   measurementMatchesTakeoffLayers,
   planSetStatusLabel,
   readCockpitPanelLayoutStorage,
+  readLastViewedSheetStorage,
   safeReportFileName,
   searchMatches,
   sheetDisplayName,
@@ -136,6 +138,7 @@ import {
   unitFor,
   unitLongName,
   writeCockpitPanelLayoutStorage,
+  writeLastViewedSheetStorage,
   type CockpitPanelInteraction,
   type CockpitPanelKey,
   type CockpitPanelLayout,
@@ -472,9 +475,25 @@ export function PlanRoomWorkspace({
     [activeDraftPoints, currentSheet, draftUnit, tool, viewSize],
   );
 
+  // Default current sheet: last-viewed for this estimate when it still
+  // exists, else the first sheet of the first real PDF set (never the sample
+  // set — it hides PDF-only actions like Detect), else whatever exists.
   useEffect(() => {
-    if (!selectedSheetId && sheets[0]) setSelectedSheetId(sheets[0].id);
-  }, [selectedSheetId, sheets]);
+    if (selectedSheetId || sheets.length === 0) return;
+    const sheetId = defaultPlanRoomSheetId({
+      lastViewedSheetId: readLastViewedSheetStorage(estimate.id),
+      planSets,
+      sheets,
+    });
+    if (sheetId) setSelectedSheetId(sheetId);
+  }, [estimate.id, planSets, selectedSheetId, sheets]);
+
+  // Persist only once a sheet is actually selected — never the implicit
+  // sheets[0] fallback that renders before the defaulting effect runs.
+  useEffect(() => {
+    if (!selectedSheetId || !currentSheet) return;
+    writeLastViewedSheetStorage(estimate.id, currentSheet.id);
+  }, [currentSheet, estimate.id, selectedSheetId]);
 
   useEffect(() => {
     if (!focusLineItemId || focusLineAppliedRef.current) return;
