@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   canTransitionPayment,
   centsToDollars,
+  checkoutSessionOutcome,
   DEFAULT_STRIPE_AMOUNT_THRESHOLD_CENTS,
   dollarsToCents,
   estimatedCardFeeCents,
@@ -217,6 +218,13 @@ assert.equal(maskAccountTail(""), "");
 assert.equal(estimatedCardFeeCents(1000000), 29030); // $10,000 -> $290.30
 assert.equal(estimatedCardFeeCents(0), 0);
 assert.equal(estimatedCardFeeCents(-5), 0);
+
+// --- ACH is asynchronous: completed-but-unpaid sessions must NOT book --------
+
+assert.equal(checkoutSessionOutcome("paid"), "book"); // cards settle at completion
+assert.equal(checkoutSessionOutcome("no_payment_required"), "book");
+assert.equal(checkoutSessionOutcome("unpaid"), "await_async"); // ACH: wait for async_payment_succeeded
+assert.equal(checkoutSessionOutcome(""), "await_async"); // unknown = never book early
 
 // --- Webhook idempotency: same event twice = one record ----------------------
 

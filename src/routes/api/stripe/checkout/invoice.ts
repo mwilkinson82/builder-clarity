@@ -339,11 +339,6 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
             "payment_intent_data[metadata][billing_application_id]",
             invoiceRecord.billing_application_id,
           );
-          appendStripeForm(
-            form,
-            "payment_intent_data[transfer_data][destination]",
-            orgPayment.stripe_connect_account_id,
-          );
           if (feeCents > 0) {
             appendStripeForm(form, "payment_intent_data[application_fee_amount]", feeCents);
             appendStripeForm(
@@ -353,10 +348,17 @@ export const Route = createFileRoute("/api/stripe/checkout/invoice")({
             );
           }
 
+          // Direct charge per the spec and Stripe's Connect docs: the session
+          // is created ON the connected account (Stripe-Account header), so
+          // the contractor is the merchant of record, funds settle to their
+          // balance, and refund/dispute liability sits with them — not the
+          // platform. The platform fee, when configured, rides along as
+          // payment_intent_data[application_fee_amount].
           const session = await stripePost<StripeCheckoutSession>(
             "checkout/sessions",
             form,
             `invoice-checkout:${invoiceRecord.id}:${openBalance}:${stripeMethods.join("+")}:${surchargeCents}`,
+            orgPayment.stripe_connect_account_id,
           );
 
           const now = new Date().toISOString();

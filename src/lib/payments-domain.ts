@@ -239,6 +239,16 @@ export function estimatedCardFeeCents(baseCents: number): number {
 // Stripe webhook -> payment record planning
 // ---------------------------------------------------------------------------
 
+// ACH debits are asynchronous (up to 4 business days): for them,
+// checkout.session.completed is only authorization — payment_status arrives
+// as "unpaid" and the money lands later via
+// checkout.session.async_payment_succeeded (or _failed). Booking must wait.
+export function checkoutSessionOutcome(paymentStatus: string): "book" | "await_async" {
+  return paymentStatus === "paid" || paymentStatus === "no_payment_required"
+    ? "book"
+    : "await_async";
+}
+
 export interface CheckoutCompletionInput {
   amountTotalCents: number;
   surchargeCents: number;

@@ -7,7 +7,7 @@ import {
   RouteError,
   verifyStripeWebhookPayload,
 } from "@/lib/stripe.server";
-import { planCheckoutCompletion } from "@/lib/payments-domain";
+import { checkoutSessionOutcome, planCheckoutCompletion } from "@/lib/payments-domain";
 
 type StripeObject = Record<string, unknown> & {
   id?: string;
@@ -140,12 +140,55 @@ function stripeConnectSchemaNotReady(error: { message?: string } | null) {
 async function handleCheckoutCompleted(object: StripeObject) {
   const metadata = sessionMetadata(object);
   if (metadata.kind === "client_invoice") {
-    await markInvoicePaid(object);
+    // Cards complete with payment_status "paid" and book immediately. ACH
+    // (us_bank_account) completes "unpaid" — authorization only — and books
+    // on checkout.session.async_payment_succeeded once funds settle.
+    if (checkoutSessionOutcome(str(object.payment_status)) === "book") {
+      await markInvoicePaid(object);
+    } else {
+      await markInvoiceProcessing(object);
+    }
     return;
   }
   if (metadata.kind === "subscription") {
     await markSubscriptionCheckoutComplete(object);
   }
+}
+
+async function handleCheckoutAsyncSucceeded(object: StripeObject) {
+  const metadata = sessionMetadata(object);
+  if (metadata.kind !== "client_invoice") return;
+  await markInvoicePaid(object);
+}
+
+// Async payment (ACH debit) settled later: bank confirmation still pending.
+async function markInvoiceProcessing(object: StripeObject) {
+  const metadata = sessionMetadata(object);
+  if (!metadata.invoice_id) return;
+  const admin = createSupabaseAdminClient();
+  const { error } = await dynamicTable(admin, "billing_invoices")
+    .update({
+      online_payment_status: "pending",
+    })
+    .eq("id", metadata.invoice_id)
+    .eq("stripe_checkout_session_id", str(object.id));
+  if (error) throw new Error(error.message);
+}
+
+// Async payment failed after checkout completed (e.g. ACH returned:
+// insufficient funds, closed account). No payment was ever booked for the
+// session, so only the invoice's online payment state flips.
+async function markInvoiceAsyncFailed(object: StripeObject) {
+  const metadata = sessionMetadata(object);
+  if (metadata.kind !== "client_invoice" || !metadata.invoice_id) return;
+  const admin = createSupabaseAdminClient();
+  const { error } = await dynamicTable(admin, "billing_invoices")
+    .update({
+      online_payment_status: "failed",
+    })
+    .eq("id", metadata.invoice_id)
+    .eq("stripe_checkout_session_id", str(object.id));
+  if (error) throw new Error(error.message);
 }
 
 async function handleCheckoutExpired(object: StripeObject) {
@@ -399,6 +442,12 @@ export const Route = createFileRoute("/api/stripe/webhook")({
           switch (event.type) {
             case "checkout.session.completed":
               await handleCheckoutCompleted(object);
+              break;
+            case "checkout.session.async_payment_succeeded":
+              await handleCheckoutAsyncSucceeded(object);
+              break;
+            case "checkout.session.async_payment_failed":
+              await markInvoiceAsyncFailed(object);
               break;
             case "checkout.session.expired":
               await handleCheckoutExpired(object);

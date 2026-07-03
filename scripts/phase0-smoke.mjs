@@ -972,10 +972,14 @@ await expectContains(
     /payment_intent_data\[metadata\]\[invoice_id\]/,
     /stripe_connect_not_ready/,
     /payment_processor_ready/,
-    /payment_intent_data\[transfer_data\]\[destination\]/,
+    // Payments Phase 1: sessions became DIRECT charges created on the
+    // connected account (Stripe-Account header) per the spec and Stripe's
+    // Connect docs, replacing the destination-charge transfer_data pin.
+    /stripe_connect_account_id/,
+    /Stripe-Account header/,
     /payment_intent_data\[application_fee_amount\]/,
   ],
-  "invoice checkout route creates guarded Connect payment sessions and records payment link state",
+  "invoice checkout route creates guarded direct-charge sessions on the connected account and records payment link state",
 );
 
 await expectContains(
@@ -1085,8 +1089,23 @@ await expectContains(
     /duplicate: true/,
     /planCheckoutCompletion/,
     /surcharge_cents/,
+    // ACH debits settle asynchronously: completed-but-unpaid sessions wait
+    // for async_payment_succeeded before any payment is booked.
+    /checkout\.session\.async_payment_succeeded/,
+    /checkout\.session\.async_payment_failed/,
+    /checkoutSessionOutcome/,
   ],
-  "Stripe webhook stores processed event ids, no-ops duplicates with 2xx, and books payments through the domain plan",
+  "Stripe webhook stores processed event ids, no-ops duplicates with 2xx, books payments through the domain plan, and waits out async ACH settlement",
+);
+
+await expectContains(
+  "src/lib/stripe.server.ts",
+  [
+    /STRIPE_CONNECT_WEBHOOK_SECRET/,
+    /STRIPE_WEBHOOK_TOLERANCE_SECONDS/,
+    /Stripe-Account/,
+  ],
+  "Stripe server helper verifies both endpoint scopes' signing secrets, enforces replay tolerance, and supports direct charges",
 );
 
 await expectContains(

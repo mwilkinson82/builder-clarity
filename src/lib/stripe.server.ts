@@ -119,6 +119,25 @@ export function requireStripeWebhookSecret() {
   return secret;
 }
 
+/**
+ * Every Stripe webhook endpoint has its own signing secret, and platform
+ * ("Your account") vs Connect ("Connected accounts") scopes are separate
+ * endpoints even at the same URL. Direct charges + account.updated arrive on
+ * the Connect endpoint; subscription events arrive on the platform endpoint.
+ * Verification therefore accepts a signature from any configured secret.
+ */
+function configuredStripeWebhookSecrets(): string[] {
+  const secrets = [
+    process.env.STRIPE_WEBHOOK_SECRET || "",
+    process.env.STRIPE_CONNECT_WEBHOOK_SECRET || "",
+  ].filter(Boolean);
+  if (secrets.length === 0) {
+    // Preserves the pre-existing 503 + error copy for the unconfigured case.
+    requireStripeWebhookSecret();
+  }
+  return secrets;
+}
+
 function requireSupabaseConfig() {
   const url = readServerEnv("SUPABASE_URL");
   const publishableKey = readServerEnv("SUPABASE_PUBLISHABLE_KEY");
@@ -243,6 +262,9 @@ export async function stripePost<T>(
   path: string,
   form: URLSearchParams,
   idempotencyKey?: string,
+  // Connected account id for direct charges: per Stripe's Connect docs the
+  // request is made AS the connected account via the Stripe-Account header.
+  stripeAccount?: string,
 ): Promise<T> {
   const secretKey = requireStripeSecretKey();
   const response = await fetch(`https://api.stripe.com/v1/${path.replace(/^\//, "")}`, {
@@ -252,6 +274,7 @@ export async function stripePost<T>(
       "Content-Type": "application/x-www-form-urlencoded",
       "Stripe-Version": STRIPE_API_VERSION,
       ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+      ...(stripeAccount ? { "Stripe-Account": stripeAccount } : {}),
     },
     body: form,
   });
@@ -326,8 +349,12 @@ async function hmacSha256Hex(secret: string, payload: string) {
     .join("");
 }
 
+// Stripe's documented replay-attack defense: reject events whose signature
+// timestamp is outside this tolerance. Docs recommend 5 minutes; never 0.
+export const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 300;
+
 export async function verifyStripeWebhookPayload(rawBody: string, signatureHeader: string | null) {
-  const webhookSecret = requireStripeWebhookSecret();
+  const webhookSecrets = configuredStripeWebhookSecrets();
   if (!signatureHeader) {
     throw new RouteError("stripe_signature_missing", "Missing Stripe-Signature header.", 400);
   }
@@ -339,14 +366,36 @@ export async function verifyStripeWebhookPayload(rawBody: string, signatureHeade
     return acc;
   }, {});
 
+  // Only the v1 scheme is trusted (ignoring v0 prevents downgrade attacks).
   const timestamp = parts.t?.[0];
   const signatures = parts.v1 ?? [];
   if (!timestamp || signatures.length === 0) {
     throw new RouteError("stripe_signature_invalid", "Invalid Stripe-Signature header.", 400);
   }
 
-  const expected = await hmacSha256Hex(webhookSecret, `${timestamp}.${rawBody}`);
-  const matched = signatures.some((signature) => timingSafeEqual(signature, expected));
+  const timestampSeconds = Number(timestamp);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (
+    !Number.isFinite(timestampSeconds) ||
+    Math.abs(nowSeconds - timestampSeconds) > STRIPE_WEBHOOK_TOLERANCE_SECONDS
+  ) {
+    throw new RouteError(
+      "stripe_signature_invalid",
+      "Stripe webhook signature timestamp is outside the allowed tolerance.",
+      400,
+    );
+  }
+
+  // Any configured secret may sign (platform vs Connect endpoints, and
+  // Stripe signs with every active secret during rotation).
+  let matched = false;
+  for (const secret of webhookSecrets) {
+    const expected = await hmacSha256Hex(secret, `${timestamp}.${rawBody}`);
+    if (signatures.some((signature) => timingSafeEqual(signature, expected))) {
+      matched = true;
+      break;
+    }
+  }
   if (!matched) {
     throw new RouteError(
       "stripe_signature_invalid",
@@ -358,6 +407,7 @@ export async function verifyStripeWebhookPayload(rawBody: string, signatureHeade
   return JSON.parse(rawBody) as {
     id: string;
     type: string;
+    account?: string;
     data?: { object?: Record<string, unknown> };
   };
 }
