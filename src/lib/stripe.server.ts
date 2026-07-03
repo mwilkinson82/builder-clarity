@@ -162,11 +162,23 @@ function configuredStripeWebhookSecrets(): string[] {
  * so a misconfigured lookup never accidentally uses live keys.
  */
 export async function getOrganizationStripeMode(
-  supabase: { from(table: string): { select(cols: string): { eq(col: string, val: string): { maybeSingle(): PromiseLike<{ data: { stripe_mode?: string } | null; error: { message?: string; code?: string } | null }> } } } },
+  supabase: unknown,
   organizationId: string,
 ): Promise<StripeMode> {
   try {
-    const { data, error } = await supabase
+    const client = supabase as {
+      from(table: string): {
+        select(cols: string): {
+          eq(col: string, val: string): {
+            maybeSingle(): Promise<{
+              data: { stripe_mode?: string } | null;
+              error: { message?: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+    const { data, error } = await client
       .from("organizations")
       .select("stripe_mode")
       .eq("id", organizationId)
