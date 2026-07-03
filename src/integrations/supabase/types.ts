@@ -56,6 +56,51 @@ export type Database = {
         }
         Relationships: []
       }
+      beta_feedback: {
+        Row: {
+          context: Json
+          created_at: string
+          created_by: string
+          id: string
+          message: string
+          organization_id: string
+          route: string
+        }
+        Insert: {
+          context?: Json
+          created_at?: string
+          created_by: string
+          id?: string
+          message?: string
+          organization_id: string
+          route?: string
+        }
+        Update: {
+          context?: Json
+          created_at?: string
+          created_by?: string
+          id?: string
+          message?: string
+          organization_id?: string
+          route?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "beta_feedback_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "beta_feedback_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       billing_application_events: {
         Row: {
           amount: number
@@ -1414,6 +1459,7 @@ export type Database = {
           sheet_name: string
           sheet_number: string
           sort_order: number
+          thumbnail_path: string
           updated_at: string
           width_px: number
         }
@@ -1432,6 +1478,7 @@ export type Database = {
           sheet_name?: string
           sheet_number?: string
           sort_order?: number
+          thumbnail_path?: string
           updated_at?: string
           width_px?: number
         }
@@ -1450,6 +1497,7 @@ export type Database = {
           sheet_name?: string
           sheet_number?: string
           sort_order?: number
+          thumbnail_path?: string
           updated_at?: string
           width_px?: number
         }
