@@ -894,7 +894,7 @@ for (const requiredScheduleRiskText of [
   "Use activity WBS fields for now",
   "Activity-path WBS mode is active",
   "Schedule update history",
-  "Activity snapshots will appear on the next saved CPM update.",
+  "No activity snapshots were recorded with this update.",
   "ACTIVITY_UPDATE_SNAPSHOT_COLUMNS",
   "buildActivityUpdateSnapshotSummaries",
   "groupActivityUpdateSnapshots",

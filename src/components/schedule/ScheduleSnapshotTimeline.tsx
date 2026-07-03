@@ -9,6 +9,12 @@ import { type ProjectRow } from "@/lib/projects.functions";
 import { fmtUSD } from "@/lib/format";
 import { computeScheduleVarianceWeeks } from "@/lib/ior";
 import {
+  selectCanonicalLogicTieCount,
+  selectLatestScheduleUpdate,
+  selectSavedScheduleForecast,
+  selectSavedScheduleVarianceWeeks,
+} from "@/lib/schedule-selectors";
+import {
   DAY_MS,
   type MilestoneView,
   STATUS_LABEL,
@@ -37,7 +43,8 @@ export function ScheduleSnapshotTimeline({
   milestoneView: MilestoneView;
   onMilestoneViewChange: (value: MilestoneView) => void;
 }) {
-  const latestUpdate = updates[0] ?? null;
+  const latestUpdate = selectLatestScheduleUpdate(updates);
+  const savedForecast = selectSavedScheduleForecast(updates, project.forecast_completion_date);
   const visibleMilestones = filterMilestones(milestones, milestoneView);
   const activeMilestoneCount = milestones.filter((m) => m.status !== "complete").length;
   const completedMilestoneCount = milestones.filter((m) => m.status === "complete").length;
@@ -46,17 +53,18 @@ export function ScheduleSnapshotTimeline({
   ).length;
   const dateValues = [
     project.baseline_completion_date,
-    project.forecast_completion_date,
+    savedForecast,
     ...updates.flatMap((update) => [update.data_date, update.forecast_completion_date]),
     ...milestones.flatMap((milestone) => [milestone.baseline_date, milestone.forecast_date]),
   ];
   const bounds = getTimelineBounds(dateValues);
   const completionBaseline = timelinePosition(project.baseline_completion_date, bounds);
-  const currentCompletion = timelinePosition(project.forecast_completion_date, bounds);
+  const currentCompletion = timelinePosition(savedForecast, bounds);
   const dataDatePosition = timelinePosition(latestUpdate?.data_date, bounds);
   const recentUpdates = updates.slice(0, 6).reverse();
   const completionVariance =
-    computeScheduleVarianceWeeks(
+    selectSavedScheduleVarianceWeeks(
+      updates,
       project.baseline_completion_date,
       project.forecast_completion_date,
     ) ?? 0;
@@ -113,7 +121,7 @@ export function ScheduleSnapshotTimeline({
               <div className="font-semibold text-foreground">Project completion path</div>
               <div className="text-muted-foreground">
                 Baseline {shortDate(project.baseline_completion_date)} · Current update{" "}
-                {shortDate(project.forecast_completion_date)}
+                {shortDate(savedForecast)}
               </div>
             </div>
             <div className={`font-semibold tabular ${varianceTone(completionVariance)}`}>
@@ -258,6 +266,7 @@ function ScheduleWorkspaceLaunch({
     (activity) =>
       activity.predecessor_activity_ids.length > 0 || activity.successor_activity_ids.length > 0,
   ).length;
+  const logicTieCount = selectCanonicalLogicTieCount(activities);
   const activeMilestones = milestones.filter((milestone) => milestone.status !== "complete").length;
   const workspacePanels = [
     "Full CPM activity table + Gantt",
@@ -318,9 +327,9 @@ function ScheduleWorkspaceLaunch({
         />
         <ScheduleWorkbenchStat
           label="Logic ties"
-          value={String(activitiesWithLogic)}
-          sub="pred / succ"
-          tone={activitiesWithLogic > 0 ? "success" : "warning"}
+          value={String(logicTieCount)}
+          sub={`${activitiesWithLogic} linked activities`}
+          tone={logicTieCount > 0 ? "success" : "warning"}
         />
         <ScheduleWorkbenchStat
           label="Milestones"

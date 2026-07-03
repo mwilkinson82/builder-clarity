@@ -97,6 +97,7 @@ import {
   readStoredGridDayPx,
   writeStoredGridLayout,
 } from "./scheduleGridLayout";
+import { selectCanonicalLogicTieCount } from "@/lib/schedule-selectors";
 import {
   compareScheduleActivitiesByStart,
   describeScheduleGridView,
@@ -885,9 +886,9 @@ export function CpmActivityPlanner({
       activity.forecast_start_date ||
       activity.forecast_finish_date,
   ).length;
-  const printedLogicTieCount = displayedCpmModel.tasks.reduce(
-    (total, task) => total + task.predecessorKeys.length,
-    0,
+  const logicTieCount = selectCanonicalLogicTieCount(sortedActivities);
+  const printedLogicTieCount = selectCanonicalLogicTieCount(
+    displayedCpmModel.tasks.map((task) => task.activity),
   );
   const isDataDateDirty = dataDateDraft !== (latestDataDate ?? "");
   const scheduleReportTitle = getScheduleReportTitle(scheduleView);
@@ -1115,8 +1116,8 @@ export function CpmActivityPlanner({
               </span>
               {showLogicLines && (
                 <span>
-                  {displayedCpmModel.tasks.length} activities · {printedLogicTieCount} logic ties
-                  shown
+                  {displayedCpmModel.tasks.length} activities · {printedLogicTieCount} logic ties in
+                  view shown
                 </span>
               )}
               {delaySummary.openCount > 0 && (
@@ -1389,9 +1390,9 @@ export function CpmActivityPlanner({
           />
           <ScheduleWorkbenchStat
             label="Logic ties"
-            value={String(activitiesWithLogic)}
-            sub="pred / succ"
-            tone={activitiesWithLogic > 0 ? "success" : "warning"}
+            value={String(logicTieCount)}
+            sub={`${activitiesWithLogic} linked activities`}
+            tone={logicTieCount > 0 ? "success" : "warning"}
           />
           <ScheduleWorkbenchStat
             label="Dated"

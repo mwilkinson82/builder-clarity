@@ -506,7 +506,7 @@ export function ActivityScheduleMatrix({
               {showLogicLines && (
                 <span className="inline-flex items-center gap-1 font-semibold text-foreground">
                   <GitBranch className="h-3.5 w-3.5" />
-                  {logicLines.length} ties shown
+                  {logicLines.length} ties drawn in view
                 </span>
               )}
               {!isPrintMode && (

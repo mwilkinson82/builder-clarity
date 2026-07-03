@@ -104,7 +104,7 @@ export function ScheduleUpdateLedger({
                 <div className="text-xs text-muted-foreground">
                   {activitySummary
                     ? `${activitySummary.activityCount} activity snapshots · ${activitySummary.criticalCount} critical · ${activitySummary.lateCount + activitySummary.outOfSequenceCount} late/out-of-sequence`
-                    : "Activity snapshots will appear on the next saved CPM update."}
+                    : "No activity snapshots were recorded with this update."}
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   {milestoneCountByUpdate[update.update_number] ?? 0} milestone snapshots

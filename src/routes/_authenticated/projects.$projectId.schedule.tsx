@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/schedule";
+import { selectCanonicalLogicTieCount, selectLatestScheduleUpdate } from "@/lib/schedule-selectors";
 import { buildWbsSectionPathMap, replaceWbsPathInDivision } from "@/lib/constructline-wbs";
 import { getProject, type ProjectRow } from "@/lib/projects.functions";
 import {
@@ -260,15 +261,11 @@ function ScheduleWorkspacePage() {
     scheduleQuery.data?.delayFragmentPersistence === "migration_required"
       ? "migration_required"
       : "ready";
-  const latestUpdate = updates[0] ?? null;
+  const latestUpdate = selectLatestScheduleUpdate(updates);
   const shellSummary = useMemo<ScheduleWorkspaceShellSummary>(
     () => ({
       activityCount: activities.length,
-      logicTieCount: activities.reduce(
-        (sum, activity) =>
-          sum + activity.predecessor_activity_ids.length + activity.successor_activity_ids.length,
-        0,
-      ),
+      logicTieCount: selectCanonicalLogicTieCount(activities),
       latestDataDate: latestUpdate?.data_date ?? null,
       activeMilestoneCount: milestones.filter((milestone) => milestone.status !== "complete")
         .length,
