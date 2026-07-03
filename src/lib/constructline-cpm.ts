@@ -82,6 +82,10 @@ export interface ConstructLineCpmModel {
   nearCriticalCount: number;
   criticalPathReliable: boolean;
   criticalPathReliabilityNote: string;
+  // True while most of the network has no logic ties (a fresh import). Dates
+  // shown in that state are as-typed, never a CPM result.
+  isSubstantiallyUntied: boolean;
+  untiedActivityCount: number;
   openStartCount: number;
   openFinishCount: number;
   unanchoredOpenFinishCount: number;
@@ -550,21 +554,28 @@ export function buildConstructLineCpmModel(
   const openFinishTasks = modelTasks.filter((task) => task.isOpenFinish);
   const openFinishCount = openFinishTasks.length;
   const unanchoredOpenFinishCount = openFinishTasks.filter((task) => !task.isMilestone).length;
+  const missingDateCount = modelTasks.filter((task) => task.hasMissingDates).length;
+  const missingLogicCount = modelTasks.filter(
+    (task) => task.predecessorKeys.length === 0 && task.successorKeys.length === 0,
+  ).length;
+  const untiedActivityCount = modelTasks.filter(isUntiedConstructLineTask).length;
+  const nonMilestoneTaskCount = modelTasks.filter((task) => !task.isMilestone).length;
+  const isSubstantiallyUntied =
+    untiedActivityCount >= 2 && untiedActivityCount * 2 >= nonMilestoneTaskCount;
   const criticalPathReliabilityIssues = buildCriticalPathReliabilityIssues({
     topoOk: topo.ok,
     diagnosticsCount: diagnostics.length,
     openStartCount,
     openFinishCount,
     unanchoredOpenFinishCount,
+    untiedActivityCount,
+    nonMilestoneTaskCount,
+    isSubstantiallyUntied,
   });
   const criticalPathReliable = modelTasks.length > 0 && criticalPathReliabilityIssues.length === 0;
   const criticalPathReliabilityNote = criticalPathReliable
     ? "Forward and backward pass complete."
     : criticalPathReliabilityIssues.join(" ");
-  const missingDateCount = modelTasks.filter((task) => task.hasMissingDates).length;
-  const missingLogicCount = modelTasks.filter(
-    (task) => task.predecessorKeys.length === 0 && task.successorKeys.length === 0,
-  ).length;
   const lateCount = modelTasks.filter((task) => task.isLate).length;
   const outOfSequenceCount = modelTasks.filter((task) => task.isOutOfSequence).length;
   const visualFinishDates = modelTasks
@@ -601,6 +612,8 @@ export function buildConstructLineCpmModel(
     nearCriticalCount,
     criticalPathReliable,
     criticalPathReliabilityNote,
+    isSubstantiallyUntied,
+    untiedActivityCount,
     openStartCount,
     openFinishCount,
     unanchoredOpenFinishCount,
@@ -649,6 +662,16 @@ export function isConstructLineMilestoneActivity(
     notes.includes("created from interim milestone") ||
     (name.includes("milestone") && activityId.startsWith("m"))
   );
+}
+
+// Canonical "no logic" membership: zero resolved predecessors AND zero
+// resolved successors, excluding milestones (they are designated start/finish
+// anchors, not work that needs sequencing). The no-logic grid view, the
+// post-import runway banner, and the untied counts all use this predicate.
+export function isUntiedConstructLineTask(
+  task: Pick<ConstructLineCpmTask, "predecessorKeys" | "successorKeys" | "isMilestone">,
+) {
+  return !task.isMilestone && task.predecessorKeys.length === 0 && task.successorKeys.length === 0;
 }
 
 export function offsetFromTimelineStart(value: string, timelineStartDate: string) {
@@ -1049,14 +1072,25 @@ function buildCriticalPathReliabilityIssues({
   openStartCount,
   openFinishCount,
   unanchoredOpenFinishCount,
+  untiedActivityCount,
+  nonMilestoneTaskCount,
+  isSubstantiallyUntied,
 }: {
   topoOk: boolean;
   diagnosticsCount: number;
   openStartCount: number;
   openFinishCount: number;
   unanchoredOpenFinishCount: number;
+  untiedActivityCount: number;
+  nonMilestoneTaskCount: number;
+  isSubstantiallyUntied: boolean;
 }) {
   const issues: string[] = [];
+  if (isSubstantiallyUntied) {
+    issues.push(
+      `${untiedActivityCount} of ${nonMilestoneTaskCount} activities have no logic ties — dates shown are as-entered, not a CPM result. Tag predecessors to activate CPM.`,
+    );
+  }
   if (!topoOk) issues.push("Logic cycle blocks a reliable backward pass.");
   if (diagnosticsCount > 0) issues.push("Missing dependency references must be resolved.");
   if (openStartCount > 1)
