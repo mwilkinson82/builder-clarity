@@ -767,6 +767,9 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
     const canManageSettings =
       currentMember?.status === "active" &&
       hasCapability(currentMember.capabilities, "company.manage_settings");
+    const canManageBilling =
+      currentMember?.status === "active" &&
+      hasCapability(currentMember.capabilities, "billing.manage");
 
     const superAdminRes = await context.supabase.rpc("is_super_admin");
     const isSuperAdmin = !superAdminRes.error && Boolean(superAdminRes.data);
@@ -840,6 +843,7 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       currentUserCapabilities: currentMember?.capabilities ?? {},
       canManageTeam,
       canManageSettings,
+      canManageBilling,
       isSuperAdmin,
       usage: {
         projects: projectIds.length,

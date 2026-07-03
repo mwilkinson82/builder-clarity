@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { normalizeBillingNumberLabel } from "@/lib/billing-labels";
+import { dollarsToCents } from "@/lib/payments-domain";
 import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 import {
   HARBOR_DEMO_CLIENT,
@@ -315,6 +316,12 @@ export interface BillingInvoiceRow {
   sent_at: string | null;
   paid_at: string | null;
   notes: string;
+  /**
+   * Per-invoice payment method toggles (direct_bank/card/ach_debit/
+   * allow_stripe_over_threshold). {} inherits the company defaults; resolve
+   * with resolveEnabledMethods from payments-domain.
+   */
+  enabled_payment_methods: Record<string, boolean>;
   payment_events: PaymentLedgerRow[];
   created_at: string;
   updated_at: string;
@@ -339,6 +346,8 @@ export interface PaymentLedgerRow {
   status: PaymentStatus;
   paid_at: string;
   notes: string;
+  /** Check number, wire confirmation, or ACH trace the contractor recorded. */
+  reference: string;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -908,6 +917,7 @@ const normalizePaymentLedger = (row: Record<string, unknown>): PaymentLedgerRow 
   status: str(row.status, "succeeded") as PaymentStatus,
   paid_at: str(row.paid_at, new Date().toISOString()),
   notes: str(row.notes),
+  reference: str(row.reference),
   created_by: (row.created_by as string | null) ?? null,
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
@@ -936,6 +946,10 @@ const normalizeBillingInvoice = (row: Record<string, unknown>): BillingInvoiceRo
   sent_at: (row.sent_at as string | null) ?? null,
   paid_at: (row.paid_at as string | null) ?? null,
   notes: str(row.notes),
+  enabled_payment_methods:
+    row.enabled_payment_methods && typeof row.enabled_payment_methods === "object"
+      ? (row.enabled_payment_methods as Record<string, boolean>)
+      : {},
   payment_events: [],
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
@@ -2488,6 +2502,15 @@ const billingInvoiceInput = z.object({
   status: z.enum(INVOICE_STATUSES).default("draft"),
   client_visible: z.boolean().default(false),
   notes: z.string().max(4000).default(""),
+  enabled_payment_methods: z
+    .object({
+      direct_bank: z.boolean(),
+      card: z.boolean(),
+      ach_debit: z.boolean(),
+      allow_stripe_over_threshold: z.boolean(),
+    })
+    .partial()
+    .optional(),
 });
 
 const paymentLedgerInput = z.object({
@@ -2499,8 +2522,22 @@ const paymentLedgerInput = z.object({
   payment_method: z.string().max(100).default("manual"),
   processor: z.string().max(100).default("manual"),
   processor_payment_id: z.string().max(200).default(""),
+  reference: z.string().max(200).default(""),
   notes: z.string().max(4000).default(""),
 });
+
+/**
+ * Payments Phase 1 columns land with this PR and are applied outside the
+ * repo; retry writes without them while the deploy is ahead of the database.
+ */
+function isMissingPaymentColumn(error: { code?: string; message?: string } | null): boolean {
+  const message = (error?.message ?? "").toLowerCase();
+  return (
+    error?.code === "PGRST204" ||
+    message.includes("could not find the") ||
+    message.includes("does not exist")
+  );
+}
 
 function isInvoiceSentStatus(status: InvoiceStatus) {
   return status !== "draft" && status !== "void";
@@ -2568,16 +2605,24 @@ export const createBillingInvoice = createServerFn({ method: "POST" })
         );
       }
     }
-    const { data: created, error } = await dynamicTable(context.supabase, "billing_invoices")
-      .insert({
-        project_id: projectId,
-        ...invoicePayload,
-        invoice_number: invoiceNumber,
-        sent_at: sentAt,
-        paid_at: paidAt,
-      })
+    const insertPayload: Record<string, unknown> = {
+      project_id: projectId,
+      ...invoicePayload,
+      invoice_number: invoiceNumber,
+      sent_at: sentAt,
+      paid_at: paidAt,
+    };
+    let { data: created, error } = await dynamicTable(context.supabase, "billing_invoices")
+      .insert(insertPayload)
       .select("*")
       .single();
+    if (error && "enabled_payment_methods" in insertPayload && isMissingPaymentColumn(error)) {
+      delete insertPayload.enabled_payment_methods;
+      ({ data: created, error } = await dynamicTable(context.supabase, "billing_invoices")
+        .insert(insertPayload)
+        .select("*")
+        .single());
+    }
     if (error) throw new Error(error.message);
     return {
       ok: true,
@@ -2616,11 +2661,19 @@ export const updateBillingInvoice = createServerFn({ method: "POST" })
       patch.paid_at = new Date().toISOString();
     }
 
-    const { data: updated, error } = await dynamicTable(context.supabase, "billing_invoices")
+    let { data: updated, error } = await dynamicTable(context.supabase, "billing_invoices")
       .update(patch)
       .eq("id", data.id)
       .select("*")
       .single();
+    if (error && "enabled_payment_methods" in patch && isMissingPaymentColumn(error)) {
+      delete patch.enabled_payment_methods;
+      ({ data: updated, error } = await dynamicTable(context.supabase, "billing_invoices")
+        .update(patch)
+        .eq("id", data.id)
+        .select("*")
+        .single());
+    }
     if (error) throw new Error(error.message);
     return {
       ok: true,
@@ -2658,21 +2711,48 @@ export const recordInvoicePayment = createServerFn({ method: "POST" })
     const processorFee = data.processor_fee ?? 0;
     const overwatchFee = data.overwatch_fee ?? 0;
     const netPayout = Math.max(0, data.amount - processorFee - overwatchFee);
-    const { error: insertError } = await dynamicTable(context.supabase, "payment_ledger").insert({
+
+    const { data: paymentProject } = await dynamicTable(context.supabase, "projects")
+      .select("organization_id")
+      .eq("id", projectId)
+      .maybeSingle();
+    const organizationId =
+      ((paymentProject as Record<string, unknown> | null)?.organization_id as string | null) ??
+      null;
+
+    // Manual records enter the payment state machine at 'succeeded': an
+    // authorized user is attesting money that already arrived.
+    const insertPayload: Record<string, unknown> = {
       project_id: projectId,
       invoice_id: data.invoiceId,
       billing_application_id: billingApplicationId,
       amount: data.amount,
+      amount_cents: dollarsToCents(data.amount),
+      currency: "usd",
+      organization_id: organizationId,
       processor_fee: processorFee,
       overwatch_fee: overwatchFee,
       net_payout: netPayout,
       payment_method: data.payment_method,
       processor: data.processor,
       processor_payment_id: data.processor_payment_id,
+      reference: data.reference,
       status: "succeeded",
       paid_at: data.paid_at ? new Date(data.paid_at).toISOString() : new Date().toISOString(),
       notes: data.notes,
-    });
+    };
+    let { error: insertError } = await dynamicTable(context.supabase, "payment_ledger").insert(
+      insertPayload,
+    );
+    if (insertError && isMissingPaymentColumn(insertError)) {
+      delete insertPayload.amount_cents;
+      delete insertPayload.currency;
+      delete insertPayload.organization_id;
+      delete insertPayload.reference;
+      ({ error: insertError } = await dynamicTable(context.supabase, "payment_ledger").insert(
+        insertPayload,
+      ));
+    }
     if (insertError) throw new Error(insertError.message);
 
     const { data: payments, error: paymentsError } = await dynamicTable(
