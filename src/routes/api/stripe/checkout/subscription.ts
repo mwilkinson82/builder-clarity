@@ -122,11 +122,15 @@ export const Route = createFileRoute("/api/stripe/checkout/subscription")({
             appendStripeForm(form, "customer_email", orgRecord.billing_email || context.user.email);
           }
 
+          const stripeMode = await getOrganizationStripeMode(context.admin, orgRecord.id);
           const session = await stripePost<StripeCheckoutSession>(
             "checkout/sessions",
             form,
             `subscription-checkout:${orgRecord.id}:${priceId}`,
+            undefined,
+            stripeMode,
           );
+
 
           const { error: updateError } = await dynamicTable(context.admin, "organizations")
             .update({
