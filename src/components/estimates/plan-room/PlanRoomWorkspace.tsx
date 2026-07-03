@@ -163,6 +163,7 @@ import { SyncConflictDialog, TakeoffWorksheet, type SyncConflictState } from "./
 import { LinkOrCreatePicker, TakeoffFinishPopover } from "./TakeoffClassify";
 import { CockpitFloatingPanelHeader, SheetSidebar } from "./SheetSidebar";
 import { ReadinessPanel } from "./ReadinessPanel";
+import { FlagIssueButton } from "../FlagIssueButton";
 
 interface PlanRoomWorkspaceProps {
   estimate: EstimateRow;
@@ -1917,6 +1918,14 @@ export function PlanRoomWorkspace({
   const currentSheetTitle = currentSheet
     ? `${currentSheet.sheet_number} ${currentSheet.sheet_name}`.trim()
     : "No sheet selected";
+  // Automatic context for "Flag an issue": which estimate, sheet, and tool
+  // the contractor was on when they hit the problem.
+  const flagIssueContext = () => ({
+    estimate_id: estimate.id,
+    sheet_id: currentSheet?.id ?? null,
+    sheet_number: currentSheet?.sheet_number ?? null,
+    active_tool: tool,
+  });
   const openSheet = (sheetId: string) => {
     setSelectedSheetId(sheetId);
     setPendingPoints([]);
@@ -2352,6 +2361,7 @@ export function PlanRoomWorkspace({
       >
         <Minimize2 className="h-3.5 w-3.5" />
       </Button>
+      <FlagIssueButton compact getContext={flagIssueContext} />
       <input
         ref={fileInputRef}
         type="file"
@@ -2422,6 +2432,7 @@ export function PlanRoomWorkspace({
                 <Badge variant={linkedCount === measurements.length ? "secondary" : "outline"}>
                   {linkedCount}/{measurements.length} linked
                 </Badge>
+                <FlagIssueButton getContext={flagIssueContext} />
                 <Button
                   size="sm"
                   variant="outline"

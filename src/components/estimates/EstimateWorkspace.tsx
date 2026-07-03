@@ -91,6 +91,7 @@ import type { EstimateRegion } from "@/lib/estimate-seed-data";
 import { fmtUSD } from "@/lib/format";
 import { parseCsv, parsePaste, parseXlsx } from "@/lib/sov-import";
 import { Textarea } from "@/components/ui/textarea";
+import { FlagIssueButton } from "@/components/estimates/FlagIssueButton";
 
 type EstimatePatch = Partial<
   Pick<
@@ -651,6 +652,13 @@ export function EstimateWorkspace({
                   </SelectContent>
                 </Select>
               )}
+              <FlagIssueButton
+                getContext={() => ({
+                  estimate_id: estimate.id,
+                  estimate_status: estimate.status,
+                  is_master_sheet: isMasterSheet,
+                })}
+              />
               <Button variant="outline" size="sm" className="gap-1.5" asChild>
                 <Link to="/estimates/$estimateId/plan-room" params={{ estimateId: estimate.id }}>
                   <PencilRuler className="h-3.5 w-3.5" /> Plan Room
