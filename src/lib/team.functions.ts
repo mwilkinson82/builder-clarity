@@ -3,6 +3,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
+import {
+  ALL_CAPABILITY_KEYS,
+  ROLE_PRESETS,
+  hasCapability,
+  normalizeCapabilities,
+  seedCapabilitiesForRole,
+  type CapabilityKey,
+  type CapabilitySet,
+} from "@/lib/capabilities";
 
 const ACCOUNT_ROLES = [
   "owner",
@@ -85,6 +94,12 @@ export interface TeamMember {
   full_name: string;
   role: AccountRole;
   status: MemberStatus;
+  /**
+   * Effective capability flags. Read from the membership row once the Phase 2
+   * capabilities migration is applied; until then, derived from the role via
+   * the same behavior-preserving mapping the migration seeds.
+   */
+  capabilities: CapabilitySet;
   created_at: string;
 }
 
@@ -93,6 +108,7 @@ export interface TeamInvite {
   email: string;
   role: AccountRole;
   status: InviteStatus;
+  capabilities: CapabilitySet;
   expires_at: string;
   created_at: string;
 }
@@ -319,6 +335,52 @@ async function requireCanManageOrganization(context: TeamServerContext, organiza
   });
   if (error) throw new Error(error.message);
   if (!canManage) throw new Error("You do not have permission to manage this Overwatch company.");
+}
+
+/**
+ * Effective capabilities for a membership row: explicit flags when the Phase 2
+ * migration has populated them, otherwise the role's behavior-preserving seed
+ * mapping (identical to what the migration writes), so gating works the same
+ * before and after the migration is applied.
+ */
+function effectiveCapabilities(row: { role: AccountRole; capabilities?: unknown }): CapabilitySet {
+  const explicit = normalizeCapabilities(row.capabilities);
+  if (Object.keys(explicit).length > 0) return explicit;
+  return seedCapabilitiesForRole(row.role);
+}
+
+function isMissingRestFunction(
+  error: { code?: string; message?: string } | null,
+  fn: string,
+): boolean {
+  const message = (error?.message ?? "").toLowerCase();
+  return error?.code === "PGRST202" || message.includes(`function ${fn.toLowerCase()}`);
+}
+
+/**
+ * Capability check via public.has_org_capability. Falls back to can_manage_org
+ * when the RPC does not exist yet (deploy landed before the Phase 2 migration
+ * was applied), which matches pre-migration behavior for both company.*
+ * capabilities.
+ */
+async function requireOrgCapability(
+  context: TeamServerContext,
+  organizationId: string,
+  capability: CapabilityKey,
+  message: string,
+) {
+  const { data: allowed, error } = await context.supabase.rpc("has_org_capability", {
+    p_org_id: organizationId,
+    p_capability: capability,
+  });
+  if (error) {
+    if (isMissingRestFunction(error, "has_org_capability")) {
+      await requireCanManageOrganization(context, organizationId);
+      return;
+    }
+    throw new Error(error.message);
+  }
+  if (!allowed) throw new Error(message);
 }
 
 async function requireCanManageProject(context: TeamServerContext, projectId: string) {
@@ -595,7 +657,7 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
         .order("created_at", { ascending: true }),
       context.supabase
         .from("organization_invites")
-        .select("id,email,role,status,expires_at,created_at")
+        .select("*")
         .eq("organization_id", organizationId)
         .eq("status", "pending")
         .order("created_at", { ascending: false }),
@@ -679,14 +741,21 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
 
     const members: TeamMember[] = memberRows.map((m) => {
       const profile = profilesById.get(m.user_id as string);
+      const role = str(m.role, "member") as AccountRole;
       return {
         id: m.id as string,
         organization_id: m.organization_id as string,
         user_id: m.user_id as string,
         email: profile?.email || str(m.invited_email),
         full_name: profile?.full_name || "",
-        role: str(m.role, "member") as AccountRole,
+        role,
         status: str(m.status, "active") as MemberStatus,
+        // Cast: the generated row types predate the Phase 2 capabilities
+        // column; regenerate after the migration is applied.
+        capabilities: effectiveCapabilities({
+          role,
+          capabilities: (m as Record<string, unknown>).capabilities,
+        }),
         created_at: str(m.created_at),
       };
     });
@@ -694,7 +763,13 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
     const currentMember = members.find((member) => member.user_id === context.userId);
     const canManageTeam =
       currentMember?.status === "active" &&
-      ["owner", "admin", "executive"].includes(currentMember.role);
+      hasCapability(currentMember.capabilities, "company.manage_team");
+    const canManageSettings =
+      currentMember?.status === "active" &&
+      hasCapability(currentMember.capabilities, "company.manage_settings");
+
+    const superAdminRes = await context.supabase.rpc("is_super_admin");
+    const isSuperAdmin = !superAdminRes.error && Boolean(superAdminRes.data);
 
     const projectMembers: TeamProjectMember[] = projectMemberRows.map((m) => {
       const profile = profilesById.get(m.user_id as string);
@@ -711,14 +786,21 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       };
     });
 
-    const invites: TeamInvite[] = (invitesRes.data ?? []).map((i) => ({
-      id: i.id as string,
-      email: str(i.email),
-      role: str(i.role, "project_manager") as AccountRole,
-      status: str(i.status, "pending") as InviteStatus,
-      expires_at: str(i.expires_at),
-      created_at: str(i.created_at),
-    }));
+    const invites: TeamInvite[] = (invitesRes.data ?? []).map((i) => {
+      const role = str(i.role, "project_manager") as AccountRole;
+      const explicit = normalizeCapabilities((i as Record<string, unknown>).capabilities);
+      return {
+        id: i.id as string,
+        email: str(i.email),
+        role,
+        status: str(i.status, "pending") as InviteStatus,
+        // Legacy invites without explicit flags land on the role PRESET when
+        // accepted (ensure_user_account applies the same fallback).
+        capabilities: Object.keys(explicit).length > 0 ? explicit : { ...ROLE_PRESETS[role] },
+        expires_at: str(i.expires_at),
+        created_at: str(i.created_at),
+      };
+    });
     const clientContacts: TeamClientContact[] = (contactsRes.data ?? []).map((contact) =>
       normalizeTeamClientContact(contact as Record<string, unknown>),
     );
@@ -755,7 +837,10 @@ export const getTeamWorkspace = createServerFn({ method: "GET" })
       clientContacts,
       clientProjectAccess,
       currentUserRole: currentMember?.role ?? null,
+      currentUserCapabilities: currentMember?.capabilities ?? {},
       canManageTeam,
+      canManageSettings,
+      isSuperAdmin,
       usage: {
         projects: projectIds.length,
         activeSeats: members.filter((m) => m.status === "active").length,
@@ -823,7 +908,12 @@ export const updateOrganization = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const organizationId = await ensureCurrentOrganization(context);
-    await requireCanManageOrganization(context, organizationId);
+    await requireOrgCapability(
+      context,
+      organizationId,
+      "company.manage_settings",
+      "You do not have permission to change this company's settings.",
+    );
 
     const cleanSlug = data.slug
       .trim()
@@ -900,9 +990,12 @@ export const updateOrganization = createServerFn({ method: "POST" })
     return { organization: normalizeOrganization(updated as unknown as Record<string, unknown>) };
   });
 
+const capabilitiesInput = z.record(z.string(), z.boolean());
+
 const teamInviteInput = z.object({
   email: z.string().email().max(254),
   role: z.enum(ACCOUNT_ROLES).default("project_manager"),
+  capabilities: capabilitiesInput.optional(),
 });
 
 export const createTeamInvite = createServerFn({ method: "POST" })
@@ -911,7 +1004,15 @@ export const createTeamInvite = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const inviteEmail = data.email.trim().toLowerCase();
     const organizationId = await ensureCurrentOrganization(context);
-    await requireCanManageOrganization(context, organizationId);
+    await requireOrgCapability(
+      context,
+      organizationId,
+      "company.manage_team",
+      "You do not have permission to invite people to this Overwatch company.",
+    );
+    const inviteCapabilities = data.capabilities
+      ? normalizeCapabilities(data.capabilities)
+      : { ...ROLE_PRESETS[data.role] };
 
     const { data: organization, error: orgError } = await context.supabase
       .from("organizations")
@@ -959,33 +1060,63 @@ export const createTeamInvite = createServerFn({ method: "POST" })
     if (existingError) throw new Error(existingError.message);
 
     if (existing?.id) {
-      const { data: updated, error: updateError } = await context.supabase
-        .from("organization_invites")
-        .update({
-          role: data.role,
-          invited_by: context.userId,
-          expires_at: new Date(Date.now() + 14 * 86400000).toISOString(),
-        })
+      const updatePayload: Record<string, unknown> = {
+        role: data.role,
+        capabilities: inviteCapabilities,
+        invited_by: context.userId,
+        expires_at: new Date(Date.now() + 14 * 86400000).toISOString(),
+      };
+      let updateRes = await dynamicTable(context.supabase, "organization_invites")
+        .update(updatePayload)
         .eq("id", existing.id)
-        .select("id,email,role,status,expires_at,created_at")
+        .select("*")
         .single();
-      if (updateError) throw new Error(updateError.message);
-      return { invite: updated as TeamInvite };
+      if (updateRes.error && isMissingRestColumn(updateRes.error, "capabilities")) {
+        // Deploy landed before the Phase 2 migration: keep invites working.
+        delete updatePayload.capabilities;
+        updateRes = await dynamicTable(context.supabase, "organization_invites")
+          .update(updatePayload)
+          .eq("id", existing.id)
+          .select("*")
+          .single();
+      }
+      if (updateRes.error) throw new Error(updateRes.error.message);
+      const updatedRow = updateRes.data as Record<string, unknown>;
+      return {
+        invite: {
+          ...(updatedRow as unknown as TeamInvite),
+          capabilities: normalizeCapabilities(updatedRow.capabilities),
+        },
+      };
     }
 
-    const { data: invite, error } = await context.supabase
-      .from("organization_invites")
-      .insert({
-        organization_id: organization.id,
-        email: inviteEmail,
-        role: data.role,
-        invited_by: context.userId,
-      })
-      .select("id,email,role,status,expires_at,created_at")
+    const insertPayload: Record<string, unknown> = {
+      organization_id: organization.id,
+      email: inviteEmail,
+      role: data.role,
+      capabilities: inviteCapabilities,
+      invited_by: context.userId,
+    };
+    let insertRes = await dynamicTable(context.supabase, "organization_invites")
+      .insert(insertPayload)
+      .select("*")
       .single();
-    if (error) throw new Error(error.message);
+    if (insertRes.error && isMissingRestColumn(insertRes.error, "capabilities")) {
+      delete insertPayload.capabilities;
+      insertRes = await dynamicTable(context.supabase, "organization_invites")
+        .insert(insertPayload)
+        .select("*")
+        .single();
+    }
+    if (insertRes.error) throw new Error(insertRes.error.message);
+    const insertedRow = insertRes.data as Record<string, unknown>;
 
-    return { invite: invite as TeamInvite };
+    return {
+      invite: {
+        ...(insertedRow as unknown as TeamInvite),
+        capabilities: normalizeCapabilities(insertedRow.capabilities),
+      },
+    };
   });
 
 const teamMemberUpdateInput = z
@@ -993,8 +1124,9 @@ const teamMemberUpdateInput = z
     membershipId: z.string().uuid(),
     role: z.enum(ACCOUNT_ROLES).optional(),
     status: z.enum(MEMBER_STATUSES).optional(),
+    capabilities: capabilitiesInput.optional(),
   })
-  .refine((v) => v.role || v.status, "Choose a role or status to update.");
+  .refine((v) => v.role || v.status || v.capabilities, "Choose a change to apply.");
 
 export const updateTeamMember = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -1003,11 +1135,16 @@ export const updateTeamMember = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const organizationId = await ensureCurrentOrganization(context);
-    await requireCanManageOrganization(context, organizationId);
+    await requireOrgCapability(
+      context,
+      organizationId,
+      "company.manage_team",
+      "You do not have permission to change company access.",
+    );
 
     const { data: membership, error: membershipError } = await context.supabase
       .from("organization_memberships")
-      .select("id,organization_id,user_id,role,status")
+      .select("*")
       .eq("id", data.membershipId)
       .single();
     if (membershipError) throw new Error(membershipError.message);
@@ -1015,21 +1152,69 @@ export const updateTeamMember = createServerFn({ method: "POST" })
       throw new Error("That company member does not belong to this Overwatch company.");
     }
 
+    const currentRole = str(membership.role, "member") as AccountRole;
+
+    // Nobody edits an owner's access. Owners hold the full capability set by
+    // definition; changing that means changing who the owner is, which is not
+    // a checkbox operation.
+    if (currentRole === "owner") {
+      throw new Error("Company owner access can't be edited.");
+    }
+
+    // Nobody removes their own team-management access — that path strands a
+    // company with no one able to manage it from the screen they just used.
+    if (membership.user_id === context.userId) {
+      const currentCaps = effectiveCapabilities({
+        role: currentRole,
+        capabilities: (membership as Record<string, unknown>).capabilities,
+      });
+      const nextCaps = data.capabilities
+        ? normalizeCapabilities(data.capabilities)
+        : data.role
+          ? ROLE_PRESETS[data.role]
+          : undefined;
+      if (
+        hasCapability(currentCaps, "company.manage_team") &&
+        nextCaps &&
+        !hasCapability(nextCaps, "company.manage_team")
+      ) {
+        throw new Error("You can't remove your own people-management access.");
+      }
+    }
+
     await assertNotLastOrgOwner(context, membership, data.role, data.status);
 
-    const changes: { role?: AccountRole; status?: MemberStatus } = {};
+    const changes: { role?: AccountRole; status?: MemberStatus; capabilities?: CapabilitySet } = {};
     if (data.role) changes.role = data.role;
     if (data.status) changes.status = data.status;
+    if (data.capabilities) {
+      changes.capabilities = normalizeCapabilities(data.capabilities);
+    } else if (data.role) {
+      // Choosing a preset fills the boxes: a role change without explicit
+      // flags applies that role's preset.
+      changes.capabilities = { ...ROLE_PRESETS[data.role] };
+    }
 
-    const { data: updated, error } = await context.supabase
-      .from("organization_memberships")
+    let updateRes = await dynamicTable(context.supabase, "organization_memberships")
       .update(changes)
       .eq("id", data.membershipId)
       .select("id,organization_id,user_id,role,status,created_at")
       .single();
-    if (error) throw new Error(error.message);
+    if (updateRes.error && isMissingRestColumn(updateRes.error, "capabilities")) {
+      // Deploy landed before the Phase 2 migration: apply the role/status
+      // part so the screen keeps working; capabilities arrive with the
+      // migration.
+      delete changes.capabilities;
+      if (!data.role && !data.status) throw new Error(updateRes.error.message);
+      updateRes = await dynamicTable(context.supabase, "organization_memberships")
+        .update(changes)
+        .eq("id", data.membershipId)
+        .select("id,organization_id,user_id,role,status,created_at")
+        .single();
+    }
+    if (updateRes.error) throw new Error(updateRes.error.message);
 
-    return { member: updated };
+    return { member: updateRes.data };
   });
 
 const inviteIdInput = z.object({

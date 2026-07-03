@@ -14,15 +14,19 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
-import { getOverwatchAdminWorkspace, type AdminActivitySession } from "@/lib/admin.functions";
-import { isOverwatchAdminEmail } from "@/lib/admin-access";
+import {
+  getIsSuperAdmin,
+  getOverwatchAdminWorkspace,
+  type AdminActivitySession,
+} from "@/lib/admin.functions";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   ssr: false,
   beforeLoad: async () => {
-    const { data, error } = await supabase.auth.getUser();
-    if (error || !isOverwatchAdminEmail(data.user?.email)) {
+    // One admin list: the server asks the database's is_super_admin() —
+    // no client-side email list (audit Finding 8).
+    const isSuperAdmin = await getIsSuperAdmin().catch(() => false);
+    if (!isSuperAdmin) {
       throw redirect({ to: "/" });
     }
   },
@@ -31,7 +35,7 @@ export const Route = createFileRoute("/_authenticated/admin")({
       { title: "Admin — Overwatch" },
       {
         name: "description",
-        content: "Marshall-only Overwatch administration workspace.",
+        content: "Overwatch super-admin workspace.",
       },
     ],
   }),
