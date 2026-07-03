@@ -26,9 +26,12 @@ import {
   matchSheetNumber,
   normalizeTakeoffUnit,
   parseFeetInches,
+  resolveTakeoffDrawPoint,
   snapLinearPoint,
+  snapToTakeoffVertex,
   statedScaleFeetPerPixel,
   takeoffUnitsCompatible,
+  GEOMETRY_SNAP_TOLERANCE_PX,
 } from "../src/lib/plan-room-math.ts";
 import {
   TAKEOFF_UNDO_DEPTH,
@@ -374,6 +377,154 @@ const shiftConstrained = snapLinearPoint({
 });
 assert.equal(shiftConstrained.snapped, true);
 assert.equal(shiftConstrained.angleDeg, 45);
+
+// --- Draw-point resolver (beta batch 1: ortho + geometry snapping) ----------
+const snapAnchor = { x: 0.2, y: 0.5 };
+
+// Ortho window: just inside ~3 degrees of level snaps to exactly 0.
+const insideOrtho = resolveTakeoffDrawPoint({
+  anchor: snapAnchor,
+  cursor: { x: 0.6, y: 0.5 + Math.tan((2.7 * Math.PI) / 180) * 0.4 },
+  viewSize: guideView,
+});
+assert.equal(insideOrtho.orthoSnapped, true);
+assert.equal(insideOrtho.angleDeg, 0);
+assert.ok(Math.abs(insideOrtho.point.y - 0.5) < 1e-9);
+
+// Just outside the window stays raw.
+const outsideOrtho = resolveTakeoffDrawPoint({
+  anchor: snapAnchor,
+  cursor: { x: 0.6, y: 0.5 + Math.tan((3.6 * Math.PI) / 180) * 0.4 },
+  viewSize: guideView,
+});
+assert.equal(outsideOrtho.orthoSnapped, false);
+assert.equal(outsideOrtho.geometrySnapped, false);
+
+// 45-degree and 90-degree windows snap to the exact increment.
+const near45 = resolveTakeoffDrawPoint({
+  anchor: snapAnchor,
+  cursor: { x: 0.4, y: 0.5 - Math.tan((43.2 * Math.PI) / 180) * 0.2 },
+  viewSize: guideView,
+});
+assert.equal(near45.orthoSnapped, true);
+assert.equal(near45.angleDeg, 45);
+const near90 = resolveTakeoffDrawPoint({
+  anchor: snapAnchor,
+  cursor: { x: 0.204, y: 0.3 },
+  viewSize: guideView,
+});
+assert.equal(near90.orthoSnapped, true);
+assert.equal(near90.angleDeg, 90);
+assert.ok(Math.abs(near90.point.x - snapAnchor.x) < 1e-9);
+
+// Alt bypasses every snap: raw cursor wins even with a vertex underneath.
+const altBypass = resolveTakeoffDrawPoint({
+  anchor: snapAnchor,
+  cursor: { x: 0.6, y: 0.501 },
+  viewSize: guideView,
+  candidates: [{ x: 0.6, y: 0.501 }],
+  altKey: true,
+});
+assert.equal(altBypass.orthoSnapped, false);
+assert.equal(altBypass.geometrySnapped, false);
+assert.deepEqual(altBypass.point, { x: 0.6, y: 0.501 });
+
+// Geometry snap: a committed vertex within the 8px screen tolerance grabs
+// the cursor; one outside does not.
+assert.equal(GEOMETRY_SNAP_TOLERANCE_PX, 8);
+const nearVertex = snapToTakeoffVertex({
+  cursor: { x: 0.6, y: 0.5 },
+  candidates: [{ x: 0.605, y: 0.501 }],
+  viewSize: guideView,
+});
+assert.deepEqual(nearVertex, { x: 0.605, y: 0.501 });
+const farVertex = snapToTakeoffVertex({
+  cursor: { x: 0.6, y: 0.5 },
+  candidates: [{ x: 0.61, y: 0.5 }],
+  viewSize: guideView,
+});
+assert.equal(farVertex, null);
+
+// The tolerance is screen pixels: zoom scales sheet distance on screen.
+const zoomedOut = snapToTakeoffVertex({
+  cursor: { x: 0.6, y: 0.5 },
+  candidates: [{ x: 0.605, y: 0.5 }],
+  viewSize: guideView,
+  zoom: 2,
+});
+assert.equal(zoomedOut, null);
+const zoomedIn = snapToTakeoffVertex({
+  cursor: { x: 0.6, y: 0.5 },
+  candidates: [{ x: 0.603, y: 0.5 }],
+  viewSize: guideView,
+  zoom: 2,
+});
+assert.deepEqual(zoomedIn, { x: 0.603, y: 0.5 });
+
+// Nearest of several candidates wins.
+const nearest = snapToTakeoffVertex({
+  cursor: { x: 0.6, y: 0.5 },
+  candidates: [
+    { x: 0.606, y: 0.5 },
+    { x: 0.602, y: 0.5 },
+    { x: 0.596, y: 0.503 },
+  ],
+  viewSize: guideView,
+});
+assert.deepEqual(nearest, { x: 0.602, y: 0.5 });
+
+// Resolution order: geometry snap beats ortho when both apply — the cursor
+// sits inside the level window AND within reach of a committed vertex; the
+// vertex wins even though it is off-angle.
+const geometryBeatsOrtho = resolveTakeoffDrawPoint({
+  anchor: snapAnchor,
+  cursor: { x: 0.6, y: 0.501 },
+  viewSize: guideView,
+  candidates: [{ x: 0.602, y: 0.503 }],
+});
+assert.equal(geometryBeatsOrtho.geometrySnapped, true);
+assert.equal(geometryBeatsOrtho.orthoSnapped, false);
+assert.deepEqual(geometryBeatsOrtho.point, { x: 0.602, y: 0.503 });
+
+// ... and Shift's hard constrain also loses to a nearby vertex (object
+// snaps override ortho, the CAD convention).
+const geometryBeatsShift = resolveTakeoffDrawPoint({
+  anchor: snapAnchor,
+  cursor: { x: 0.6, y: 0.501 },
+  viewSize: guideView,
+  candidates: [{ x: 0.602, y: 0.503 }],
+  shiftKey: true,
+});
+assert.equal(geometryBeatsShift.geometrySnapped, true);
+assert.deepEqual(geometryBeatsShift.point, { x: 0.602, y: 0.503 });
+
+// Shift alone still hard-constrains to the nearest 45.
+const shiftThroughResolver = resolveTakeoffDrawPoint({
+  anchor: snapAnchor,
+  cursor: { x: 0.4, y: 0.38 },
+  viewSize: guideView,
+  shiftKey: true,
+});
+assert.equal(shiftThroughResolver.orthoSnapped, true);
+assert.equal(shiftThroughResolver.angleDeg, 45);
+
+// First click of a run (no anchor yet): geometry snap still applies so a
+// new run can start exactly where a prior one ended; no anchor, no ortho.
+const firstClick = resolveTakeoffDrawPoint({
+  anchor: null,
+  cursor: { x: 0.6, y: 0.5 },
+  viewSize: guideView,
+  candidates: [{ x: 0.604, y: 0.502 }],
+});
+assert.equal(firstClick.geometrySnapped, true);
+assert.deepEqual(firstClick.point, { x: 0.604, y: 0.502 });
+const firstClickNoVertex = resolveTakeoffDrawPoint({
+  anchor: null,
+  cursor: { x: 0.6, y: 0.5 },
+  viewSize: guideView,
+});
+assert.equal(firstClickNoVertex.orthoSnapped, false);
+assert.deepEqual(firstClickNoVertex.point, { x: 0.6, y: 0.5 });
 
 // --- Sheet-number pattern matcher (Phase 2.5 sheet identity) ---
 for (const token of ["A-101", "A1.1", "E-201", "M-1.1", "FP-102", "A-700", "AD-3", "LV-101"]) {
