@@ -44,6 +44,15 @@ export const STAGE_PILL_CLASS: Record<PipelineStage, string> = {
 export type PipelineViewMode = "kanban" | "list";
 export type PipelineSortMode = "last_activity_at" | "bid_due_date" | "estimated_contract";
 
+// In-memory sample opportunities (shown while the CRM is empty) share this
+// fixed id prefix; they are not database rows, so destructive actions on
+// them are handled locally instead of on the server.
+export const DEMO_OPPORTUNITY_ID_PREFIX = "00000000-0000-4000-8000-00000000010";
+
+export function isDemoOpportunityId(id: string) {
+  return id.startsWith(DEMO_OPPORTUNITY_ID_PREFIX);
+}
+
 export function initials(value: string) {
   const parts = value.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
