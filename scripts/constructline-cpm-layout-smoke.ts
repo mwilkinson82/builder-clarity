@@ -81,6 +81,11 @@ for (const requiredMatrixLayoutText of [
   "getTableColumnMinWidth",
   "getTableColumnMaxWidth",
   "resizeTableColumnWidthsToTarget",
+  "readTableColumnWidths(layoutStorageKey, isFocusMode)",
+  "readStoredGridDayPx",
+  "estimateActivityNameLines",
+  "getActivityMatrixTaskRowHeight",
+  '<div className="mt-0.5 flex flex-wrap gap-1">',
   "window.localStorage.setItem",
   "resetGridLayout",
   "Reset grid",
@@ -153,6 +158,20 @@ assertMatches(
   /style=\{\{ width: tableWidth, gridTemplateColumns: tableColumns \}\}/,
   "CPM table header must use the same width and columns contract as activity rows.",
 );
+
+// Print 11x17 contract: the printed report always carries logic lines and
+// baseline bars regardless of the on-screen toggles.
+assertMatches(
+  scheduleRiskSource,
+  /showLogicLines\s+showBaselineBars\s+isPrintMode/,
+  "The print-mode matrix must force logic lines and baseline bars on.",
+);
+assertIncludes(stylesSource, "size: 17in 11in;", "Print output must target 11x17 landscape.");
+assertIncludes(
+  stylesSource,
+  ".constructline-schedule-page main > :not(.constructline-cpm-print-shell)",
+  "Printing must hide everything except the CPM print shell.",
+);
 assertMatches(
   scheduleRiskSource,
   /id: "activity",[\s\S]*?label: "Activity description",[\s\S]*?align: "left",/,
@@ -189,7 +208,8 @@ assertMatches(
 for (const requiredModalLayoutText of [
   "sm:w-[min(calc(100vw-2rem),80rem)] sm:max-w-[80rem]",
   "overflow-y-auto overflow-x-hidden",
-  "xl:grid-cols-[130px_minmax(0,1.4fr)_minmax(0,1fr)_145px_145px_105px]",
+  "xl:grid-cols-[150px_minmax(0,1.6fr)_minmax(0,1fr)]",
+  "xl:grid-cols-[145px_145px_150px_145px_145px_105px]",
   "constructline-task-name break-words",
   "Update basis",
   "saved update basis",
@@ -197,7 +217,12 @@ for (const requiredModalLayoutText of [
   "Predecessors - work before this activity",
   "Successors - work after this activity",
   "Dependency readout",
-  "Status update",
+  "ActivityRelationshipRows",
+  "d lag",
+  "Baseline plan",
+  "Current update",
+  "Save & next update row",
+  "disabled={!updateQueueContext || !draft.name.trim() || saving}",
   "Baseline start",
   "Remaining duration",
   "Expected finish",

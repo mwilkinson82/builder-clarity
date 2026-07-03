@@ -1056,12 +1056,10 @@ export function CpmActivityPlanner({
                 {shortDate(displayedCpmModel.timelineStartDate)} to{" "}
                 {shortDate(displayedCpmModel.timelineFinishDate)}
               </span>
-              {showLogicLines && (
-                <span>
-                  {displayedCpmModel.tasks.length} activities · {printedLogicTieCount} logic ties in
-                  view shown
-                </span>
-              )}
+              <span>
+                {displayedCpmModel.tasks.length} activities · {printedLogicTieCount} logic ties in
+                view
+              </span>
               {delaySummary.openCount > 0 && (
                 <span>
                   {delaySummary.openCount} open delay impact
@@ -1120,6 +1118,8 @@ export function CpmActivityPlanner({
             period
           </span>
         </div>
+        {/* The printed report always carries logic lines and baseline bars,
+            regardless of the on-screen toggles — that context is the point. */}
         <ActivityScheduleMatrix
           model={displayedCpmModel}
           delayFragments={delayFragments}
@@ -1128,8 +1128,8 @@ export function CpmActivityPlanner({
           viewSummary={scheduleViewSummary}
           emptyTitle="No activities match this schedule view."
           emptyDescription="Switch back to All activities or choose a broader view."
-          showLogicLines={showLogicLines}
-          showBaselineBars={showBaselineBars}
+          showLogicLines
+          showBaselineBars
           isPrintMode
           onOpenActivity={() => undefined}
           onDeleteActivity={() => undefined}

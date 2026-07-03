@@ -745,7 +745,7 @@ function ScheduleWorkspaceHeaderStats({ summary }: { summary: ScheduleWorkspaceS
       />
       <ScheduleWorkspaceHeaderStat
         icon={CalendarDays}
-        label="Data date"
+        label="Last update"
         value={summary.latestDataDate ? formatDate(summary.latestDataDate) : "Not set"}
       />
       <ScheduleWorkspaceHeaderStat

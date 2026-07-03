@@ -13,7 +13,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Trash2, AlertTriangle, Diamond } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type ScheduleActivityRow, type ScheduleDelayFragmentRow } from "@/lib/schedule.functions";
-import { isConstructLineMilestoneActivity } from "@/lib/constructline-cpm";
+import {
+  isConstructLineMilestoneActivity,
+  parseConstructLineDependencyToken,
+} from "@/lib/constructline-cpm";
 import {
   type DelayFragmentCreateInput,
   type DelayFragmentPatchInput,
@@ -56,8 +59,50 @@ import {
 import { getDateDurationDays } from "./ScheduleSnapshotTimeline";
 import { ScheduleWorkbenchStat } from "./CpmWorkbenchPanels";
 import { ActivityDivisionInput, LabeledField } from "./WbsManager";
-import { ActivityDependencyPicker, ActivityIdPills } from "./ScheduleActivityRegister";
+import { ActivityDependencyPicker } from "./ScheduleActivityRegister";
 import { ActivityDelayFragmentPanel } from "./ScheduleDelayFragments";
+
+// One relationship per line: type, target, lag — scannable at a glance.
+function ActivityRelationshipRows({
+  tokens,
+  activities,
+  emptyLabel,
+}: {
+  tokens: string[];
+  activities: ScheduleActivityRow[];
+  emptyLabel: string;
+}) {
+  if (tokens.length === 0) {
+    return <div className="mt-1 text-sm font-semibold text-muted-foreground">{emptyLabel}</div>;
+  }
+  return (
+    <div className="mt-1 grid min-w-0 gap-1">
+      {tokens.map((token) => {
+        const link = parseConstructLineDependencyToken(token);
+        const target = activities.find(
+          (candidate) => candidate.activity_id.trim() === link.activityId,
+        );
+        return (
+          <div
+            key={token}
+            className="flex min-w-0 items-center gap-2 rounded border border-hairline bg-surface px-2 py-1 text-xs"
+          >
+            <span className="w-8 shrink-0 font-semibold tabular text-foreground">
+              {link.relationshipType}
+            </span>
+            <span className="min-w-0 flex-1 truncate">
+              <span className="font-semibold tabular text-foreground">{link.activityId}</span>
+              {target ? <span className="text-muted-foreground"> · {target.name}</span> : null}
+            </span>
+            <span className="shrink-0 tabular text-muted-foreground">
+              {link.lagDays === 0 ? "0d lag" : `${link.lagDays > 0 ? "+" : ""}${link.lagDays}d lag`}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export function ActivityDetailDialog({
   activity,
@@ -207,9 +252,11 @@ export function ActivityDetailDialog({
     delayAdjustedDraft.remaining_duration_days === draft.remaining_duration_days;
   const updateImpact = useMemo(() => buildActivityUpdateImpact(draft, dataDate), [draft, dataDate]);
   const saving = isSaving || isSubmitting;
-  const saveAndContinueLabel = updateQueueContext?.nextActivity
+  const saveAndContinueLabel = !updateQueueContext
     ? "Save & next update row"
-    : "Save & close queue";
+    : updateQueueContext.nextActivity
+      ? "Save & next update row"
+      : "Save & close queue";
   const currentActivityBlockedIds = useMemo(
     () =>
       Array.from(
@@ -377,8 +424,8 @@ export function ActivityDetailDialog({
                   Activity setup
                 </div>
                 <div className="mt-1 text-sm text-muted-foreground">
-                  Edit the row identity, parent / child WBS path, baseline dates, status update,
-                  progress, and milestone status.
+                  Edit the row identity and parent / child WBS path. The baseline plan and current
+                  update each have their own section below.
                 </div>
               </div>
               <Button
@@ -393,7 +440,7 @@ export function ActivityDetailDialog({
                 Milestone
               </Button>
             </div>
-            <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[130px_minmax(0,1.4fr)_minmax(0,1fr)_145px_145px_105px]">
+            <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[150px_minmax(0,1.6fr)_minmax(0,1fr)]">
               <LabeledField label="Activity ID">
                 <Input
                   value={draft.activity_id}
@@ -416,41 +463,41 @@ export function ActivityDetailDialog({
                   listId={`activity-${activity.id}-wbs-divisions`}
                 />
               </LabeledField>
-              <LabeledField label="Baseline start">
-                <Input
-                  type="date"
-                  value={draft.baseline_start_date}
-                  onChange={(e) => setDraft(updateDraftBaselineStartDate(draft, e.target.value))}
-                  className="h-10 min-w-0"
-                />
-              </LabeledField>
-              <LabeledField label="Baseline finish">
-                <Input
-                  type="date"
-                  value={draft.baseline_finish_date}
-                  onChange={(e) => setDraft(updateDraftBaselineFinishDate(draft, e.target.value))}
-                  className="h-10 min-w-0"
-                />
-              </LabeledField>
-              <LabeledField label="% done">
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={draft.percent_complete}
-                  onChange={(e) =>
-                    setDraft(updateDraftPercentComplete(draft, e.target.value, dataDate))
-                  }
-                  className="h-10 min-w-0 tabular"
-                />
-              </LabeledField>
+            </div>
+
+            <div className="mt-4 rounded-md border border-hairline bg-card p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Baseline plan
+              </div>
+              <div className="mt-1 text-sm text-muted-foreground">
+                The committed plan. Baseline dates stay fixed — schedule variance is measured
+                against them.
+              </div>
+              <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[145px_145px]">
+                <LabeledField label="Baseline start">
+                  <Input
+                    type="date"
+                    value={draft.baseline_start_date}
+                    onChange={(e) => setDraft(updateDraftBaselineStartDate(draft, e.target.value))}
+                    className="h-10 min-w-0"
+                  />
+                </LabeledField>
+                <LabeledField label="Baseline finish">
+                  <Input
+                    type="date"
+                    value={draft.baseline_finish_date}
+                    onChange={(e) => setDraft(updateDraftBaselineFinishDate(draft, e.target.value))}
+                    className="h-10 min-w-0"
+                  />
+                </LabeledField>
+              </div>
             </div>
 
             <div className="mt-4 rounded-md border border-hairline bg-card p-3">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Status update
+                    Current update
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">
                     {isMilestone
@@ -466,7 +513,7 @@ export function ActivityDetailDialog({
                   Data date {dataDate ? shortDate(dataDate) : "not set"}
                 </div>
               </div>
-              <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[145px_145px_150px_145px_145px]">
+              <div className="mt-3 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[145px_145px_150px_145px_145px_105px]">
                 <LabeledField label="Actual start">
                   <Input
                     type="date"
@@ -531,6 +578,18 @@ export function ActivityDetailDialog({
                       setDraft(updateDraftForecastFinishDate(draft, e.target.value, dataDate))
                     }
                     className="h-10 min-w-0"
+                  />
+                </LabeledField>
+                <LabeledField label="% done">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={draft.percent_complete}
+                    onChange={(e) =>
+                      setDraft(updateDraftPercentComplete(draft, e.target.value, dataDate))
+                    }
+                    className="h-10 min-w-0 tabular"
                   />
                 </LabeledField>
               </div>
@@ -649,15 +708,17 @@ export function ActivityDetailDialog({
                 <div className="mt-2 grid min-w-0 gap-3 sm:grid-cols-2">
                   <div className="min-w-0">
                     <div className="text-xs font-semibold text-muted-foreground">Predecessors</div>
-                    <ActivityIdPills
-                      ids={parseActivityTokens(draft.predecessor_activity_ids)}
+                    <ActivityRelationshipRows
+                      tokens={parseActivityTokens(draft.predecessor_activity_ids)}
+                      activities={activities}
                       emptyLabel="No predecessor logic"
                     />
                   </div>
                   <div className="min-w-0">
                     <div className="text-xs font-semibold text-muted-foreground">Successors</div>
-                    <ActivityIdPills
-                      ids={parseActivityTokens(draft.successor_activity_ids)}
+                    <ActivityRelationshipRows
+                      tokens={parseActivityTokens(draft.successor_activity_ids)}
+                      activities={activities}
                       emptyLabel="No successor logic"
                     />
                   </div>
@@ -704,6 +765,8 @@ export function ActivityDetailDialog({
             <Trash2 className="h-4 w-4" />
             Delete activity
           </Button>
+          {/* Fixed order, fixed emphasis: Send to Risk Tally, Close, Save & next
+              (present but disabled outside the queue), Save activity (always primary). */}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button
               type="button"
@@ -720,21 +783,22 @@ export function ActivityDetailDialog({
             </Button>
             <Button
               type="button"
-              variant={updateQueueContext ? "outline" : "default"}
+              variant="outline"
+              title={
+                updateQueueContext ? undefined : "Available while working the needs-update queue."
+              }
+              onClick={() => void saveActivity("queue")}
+              disabled={!updateQueueContext || !draft.name.trim() || saving}
+            >
+              {saving ? "Saving..." : saveAndContinueLabel}
+            </Button>
+            <Button
+              type="button"
               onClick={() => void saveActivity()}
               disabled={!draft.name.trim() || saving}
             >
               {saving ? "Saving..." : "Save activity"}
             </Button>
-            {updateQueueContext && (
-              <Button
-                type="button"
-                onClick={() => void saveActivity("queue")}
-                disabled={!draft.name.trim() || saving}
-              >
-                {saving ? "Saving..." : saveAndContinueLabel}
-              </Button>
-            )}
           </div>
         </DialogFooter>
       </DialogContent>

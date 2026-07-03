@@ -377,13 +377,11 @@ export function CpmDataDateControl({
   embedded?: boolean;
 }) {
   const isDirty = value !== (savedValue ?? "");
-  const hasReadinessWarning = isDirty && readinessWarningCount > 0;
-  const hasSameDateReadinessWarning = !isDirty && readinessWarningCount > 0;
-  const saveButtonLabel = isSaving
-    ? "Saving..."
-    : (hasReadinessWarning || hasSameDateReadinessWarning) && !isReadinessWarningArmed
-      ? "Review gaps"
-      : "Save snapshot";
+  const hasReadinessWarning = readinessWarningCount > 0;
+  // The button always says what it does. Status gaps live in the helper text
+  // and tint the button amber until the first click arms the acknowledgement.
+  const isUnacknowledgedWarning = hasReadinessWarning && !isReadinessWarningArmed;
+  const saveButtonLabel = isSaving ? "Saving..." : "Save snapshot";
   return (
     <div
       className={cn(
@@ -410,7 +408,11 @@ export function CpmDataDateControl({
         type="button"
         size="sm"
         variant={isDirty ? "default" : "outline"}
-        className="h-8 gap-1.5 whitespace-nowrap px-2.5"
+        className={cn(
+          "h-8 gap-1.5 whitespace-nowrap px-2.5",
+          isUnacknowledgedWarning &&
+            "border-warning/50 bg-warning/15 text-warning hover:bg-warning/25 hover:text-warning",
+        )}
         disabled={!value || isSaving}
         onClick={onSave}
       >
@@ -420,10 +422,10 @@ export function CpmDataDateControl({
       <div className="basis-full text-[11px] text-muted-foreground sm:basis-auto">
         {isReadinessWarningArmed
           ? "Status gaps acknowledged. Click Save snapshot to save anyway."
-          : hasReadinessWarning || hasSameDateReadinessWarning
+          : hasReadinessWarning
             ? `${readinessWarningCount} open ${
                 readinessWarningCount === 1 ? "row needs" : "rows need"
-              } status before this snapshot is clean.`
+              } status first — Save snapshot opens the queue, then saves on the second click.`
             : isDirty
               ? "Unsaved data date is driving the CPM view. Save the snapshot after status review."
               : savedValue
