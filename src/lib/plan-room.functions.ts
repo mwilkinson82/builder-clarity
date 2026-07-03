@@ -10,6 +10,7 @@ import {
 import {
   disciplineForSheetNumber,
   normalizeTakeoffUnit,
+  SAMPLE_PLAN_SET_MIME,
   takeoffUnitsCompatible,
 } from "@/lib/plan-room-math";
 import type { Json } from "@/integrations/supabase/types";
@@ -644,6 +645,31 @@ export const getPlanRoom = createServerFn({ method: "GET" })
       ),
       schema_ready: true,
       schema_message: "",
+    };
+  });
+
+// Lightweight check for the estimate workspace's first-run launcher: how many
+// real (non-sample) drawing sets this estimate has, without loading sheets or
+// measurements and without triggering the Harbor demo seeding.
+export const getEstimatePlanSetSummary = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { estimate_id: string }) =>
+    z.object({ estimate_id: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    await loadEstimate(context, data.estimate_id);
+    const result = await dynamicTable(context.supabase, "estimate_plan_sets")
+      .select("id,file_mime_type")
+      .eq("estimate_id", data.estimate_id);
+    if (isMissingPlanRoomSchemaError(result.error)) {
+      return { real_plan_set_count: 0, schema_ready: false };
+    }
+    if (result.error) throw new Error(result.error.message);
+    const rows = (result.data ?? []) as Record<string, unknown>[];
+    return {
+      real_plan_set_count: rows.filter((row) => str(row.file_mime_type) !== SAMPLE_PLAN_SET_MIME)
+        .length,
+      schema_ready: true,
     };
   });
 

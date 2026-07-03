@@ -11,8 +11,11 @@ import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 export const Route = createFileRoute("/_authenticated/estimates/$estimateId/plan-room")({
   ssr: false,
   // ?line=<estimate line id> focuses that line's takeoff (sheet + measurement).
-  validateSearch: (search: Record<string, unknown>): { line?: string } =>
-    typeof search.line === "string" && search.line ? { line: search.line } : {},
+  // ?upload=true opens the drawing upload flow directly (first-run launcher).
+  validateSearch: (search: Record<string, unknown>): { line?: string; upload?: boolean } => ({
+    ...(typeof search.line === "string" && search.line ? { line: search.line } : {}),
+    ...(search.upload === true || search.upload === "true" ? { upload: true } : {}),
+  }),
   head: () => ({
     meta: [
       { title: "Plan Room — Overwatch" },
@@ -27,7 +30,7 @@ export const Route = createFileRoute("/_authenticated/estimates/$estimateId/plan
 
 function PlanRoomPage() {
   const { estimateId } = Route.useParams();
-  const { line: focusLineItemId } = Route.useSearch();
+  const { line: focusLineItemId, upload: autoOpenUpload } = Route.useSearch();
   const loadEstimate = useServerFn(getEstimate);
   const loadPlanRoom = useServerFn(getPlanRoom);
   const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
@@ -96,6 +99,7 @@ function PlanRoomPage() {
       schemaMessage={planRoomQuery.data.schema_message}
       companyName={companyQuery.data?.name || "Company"}
       focusLineItemId={focusLineItemId}
+      autoOpenUpload={Boolean(autoOpenUpload)}
     />
   );
 }

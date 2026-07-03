@@ -67,6 +67,7 @@ import {
   distancePx,
   groupUnlinkedTakeoffs,
   parseFeetInches,
+  SAMPLE_PLAN_SET_MIME,
   statedScaleFeetPerPixel,
   suggestTakeoffMatches,
   takeoffUnitsCompatible,
@@ -177,6 +178,9 @@ interface PlanRoomWorkspaceProps {
   // Estimate line to focus on load: selects its first takeoff measurement
   // and that measurement's sheet (used by the estimate grid takeoff badge).
   focusLineItemId?: string;
+  // First-run launcher handoff: open the drawing upload flow on arrival when
+  // the estimate has no real drawing set yet.
+  autoOpenUpload?: boolean;
 }
 
 export function PlanRoomWorkspace({
@@ -189,10 +193,12 @@ export function PlanRoomWorkspace({
   schemaReady = true,
   schemaMessage = "",
   focusLineItemId = "",
+  autoOpenUpload = false,
 }: PlanRoomWorkspaceProps) {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const focusLineAppliedRef = useRef(false);
+  const autoUploadTriggeredRef = useRef(false);
   const thumbBackfillRef = useRef<Set<string>>(new Set());
   const pendingPointsRef = useRef<Point[]>([]);
   const mainRef = useRef<HTMLElement | null>(null);
@@ -1926,6 +1932,22 @@ export function PlanRoomWorkspace({
     sheet_number: currentSheet?.sheet_number ?? null,
     active_tool: tool,
   });
+
+  // First-run launcher handoff (?upload=true): open the file picker on
+  // arrival, once, and only while the estimate still has no real drawing set.
+  // If the browser swallows the programmatic click, the Upload Plans button
+  // is the visible fallback.
+  useEffect(() => {
+    if (!autoOpenUpload || autoUploadTriggeredRef.current) return;
+    if (!backendReady || uploading || createSetMutation.isPending) return;
+    autoUploadTriggeredRef.current = true;
+    const hasRealPlanSet = planSets.some(
+      (planSet) => planSet.file_mime_type !== SAMPLE_PLAN_SET_MIME,
+    );
+    if (hasRealPlanSet) return;
+    fileInputRef.current?.click();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenUpload, backendReady, planSets, uploading]);
   const openSheet = (sheetId: string) => {
     setSelectedSheetId(sheetId);
     setPendingPoints([]);

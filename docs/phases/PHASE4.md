@@ -71,10 +71,33 @@ Founders can't watch every session. Lightweight in-app capture:
 - No email/notification wiring in this phase — rows in the table are enough;
   they get read directly from the database.
 
-## Task 5 — Validate and ship
+## Task 5 — First-run launcher: three doors instead of an empty spreadsheet
+
+The current empty-estimate state is a blank grid with one sentence of muted
+copy. Beta contractors will read a blank grid as "type rows here" — the Excel
+reflex this product replaces. Replace the empty state (no line items AND no
+plan sets on the estimate) with three large action cards occupying the grid
+area:
+
+1. **Take off from your drawings** — "Upload the plans, measure, and rows
+   build themselves." Navigates to the Plan Room; if the estimate has no plan
+   set, opens the upload flow directly.
+2. **Start from your master sheet** — "Import your company pricing, then tune
+   it for this job." Opens the existing Import Master Sheet flow.
+3. **Build it by hand** — "Add rows and price from your Cost Library." Adds
+   the first row and focuses it.
+
+Rules: cards render only while the estimate has zero line items and zero plan
+sets; the moment either exists, the normal grid/empty-row UI returns and the
+cards never reappear for that estimate. Keep the existing one-line triad copy
+beneath the cards as reinforcement. Cards are keyboard-reachable and use
+contractor language exactly as written above. No new routes, no modal.
+
+## Task 6 — Validate and ship
 
 Full gate + `test:estimating` + new unit tests (undo stack inverse ops,
 frequency filter, consultant-layout fixtures). Dev-server QA: undo/redo across
-all three tools, worksheet classification, feedback submit. PR titled
-`Estimating Phase 4: beta hardening`, migration listed for pre-merge
+all three tools, worksheet classification, feedback submit. Browser QA additionally covers: the three-door launcher on a fresh estimate,
+each door landing correctly, and cards disappearing after first content. PR
+titled `Estimating Phase 4: beta hardening`, migration listed for pre-merge
 application per protocol.
