@@ -39,7 +39,6 @@ type DelayFragmentDraft = {
 export function ActivityDelayFragmentPanel({
   activity,
   delayFragments,
-  persistence,
   isSaving,
   onAddDelayFragment,
   onPatchDelayFragment,
@@ -47,7 +46,6 @@ export function ActivityDelayFragmentPanel({
 }: {
   activity: ScheduleActivityRow;
   delayFragments: ScheduleDelayFragmentRow[];
-  persistence: "ready" | "migration_required";
   isSaving: boolean;
   onAddDelayFragment: (fragment: DelayFragmentCreateInput) => Promise<void>;
   onPatchDelayFragment: (id: string, patch: DelayFragmentPatchInput) => Promise<void>;
@@ -84,7 +82,7 @@ export function ActivityDelayFragmentPanel({
 
   const addFragment = async () => {
     const title = draft.title.trim();
-    if (!title || persistence === "migration_required") return;
+    if (!title) return;
     await onAddDelayFragment({
       schedule_activity_id: activity.id,
       activity_id: activity.activity_id,
@@ -141,138 +139,129 @@ export function ActivityDelayFragmentPanel({
         activity expected finish or remaining duration is updated.
       </div>
 
-      {persistence === "migration_required" ? (
-        <div className="mt-3 rounded border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
-          Use Notes / Constraint for the delay narrative on this activity. Activity details and CPM
-          logic still save normally.
-        </div>
-      ) : (
-        <>
-          <div className="mt-3 grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1fr)_96px_150px_140px_140px]">
-            <LabeledField label="Fragment title">
-              <Input
-                value={draft.title}
-                onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-                className="h-9 min-w-0"
-                placeholder="Window delivery slipped"
-                disabled={isSaving}
-              />
-            </LabeledField>
-            <LabeledField label="Days">
-              <Input
-                type="number"
-                min={0}
-                max={365}
-                value={draft.delay_days}
-                onChange={(event) => setDraft({ ...draft, delay_days: event.target.value })}
-                className="h-9 min-w-0 tabular"
-                disabled={isSaving}
-              />
-            </LabeledField>
-            <LabeledField label="Source">
-              <Select
-                value={draft.source}
-                onValueChange={(source) =>
-                  setDraft({ ...draft, source: source as ScheduleDelayFragmentRow["source"] })
-                }
-                disabled={isSaving}
-              >
-                <SelectTrigger className="h-9 min-w-0">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(
-                    Object.keys(DELAY_FRAGMENT_SOURCE_LABEL) as ScheduleDelayFragmentRow["source"][]
-                  ).map((source) => (
-                    <SelectItem key={source} value={source}>
-                      {DELAY_FRAGMENT_SOURCE_LABEL[source]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </LabeledField>
-            <LabeledField label="Status">
-              <Select
-                value={draft.status}
-                onValueChange={(status) =>
-                  setDraft({ ...draft, status: status as ScheduleDelayFragmentRow["status"] })
-                }
-                disabled={isSaving}
-              >
-                <SelectTrigger className="h-9 min-w-0">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(
-                    Object.keys(DELAY_FRAGMENT_STATUS_LABEL) as ScheduleDelayFragmentRow["status"][]
-                  ).map((status) => (
-                    <SelectItem key={status} value={status}>
-                      {DELAY_FRAGMENT_STATUS_LABEL[status]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </LabeledField>
-            <LabeledField label="Identified">
-              <Input
-                type="date"
-                value={draft.identified_on}
-                onChange={(event) => setDraft({ ...draft, identified_on: event.target.value })}
-                className="h-9 min-w-0"
-                disabled={isSaving}
-              />
-            </LabeledField>
-          </div>
+      <div className="mt-3 grid min-w-0 gap-2 xl:grid-cols-[minmax(0,1fr)_96px_150px_140px_140px]">
+        <LabeledField label="Fragment title">
+          <Input
+            value={draft.title}
+            onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+            className="h-9 min-w-0"
+            placeholder="Window delivery slipped"
+            disabled={isSaving}
+          />
+        </LabeledField>
+        <LabeledField label="Days">
+          <Input
+            type="number"
+            min={0}
+            max={365}
+            value={draft.delay_days}
+            onChange={(event) => setDraft({ ...draft, delay_days: event.target.value })}
+            className="h-9 min-w-0 tabular"
+            disabled={isSaving}
+          />
+        </LabeledField>
+        <LabeledField label="Source">
+          <Select
+            value={draft.source}
+            onValueChange={(source) =>
+              setDraft({ ...draft, source: source as ScheduleDelayFragmentRow["source"] })
+            }
+            disabled={isSaving}
+          >
+            <SelectTrigger className="h-9 min-w-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(
+                Object.keys(DELAY_FRAGMENT_SOURCE_LABEL) as ScheduleDelayFragmentRow["source"][]
+              ).map((source) => (
+                <SelectItem key={source} value={source}>
+                  {DELAY_FRAGMENT_SOURCE_LABEL[source]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </LabeledField>
+        <LabeledField label="Status">
+          <Select
+            value={draft.status}
+            onValueChange={(status) =>
+              setDraft({ ...draft, status: status as ScheduleDelayFragmentRow["status"] })
+            }
+            disabled={isSaving}
+          >
+            <SelectTrigger className="h-9 min-w-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(
+                Object.keys(DELAY_FRAGMENT_STATUS_LABEL) as ScheduleDelayFragmentRow["status"][]
+              ).map((status) => (
+                <SelectItem key={status} value={status}>
+                  {DELAY_FRAGMENT_STATUS_LABEL[status]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </LabeledField>
+        <LabeledField label="Identified">
+          <Input
+            type="date"
+            value={draft.identified_on}
+            onChange={(event) => setDraft({ ...draft, identified_on: event.target.value })}
+            className="h-9 min-w-0"
+            disabled={isSaving}
+          />
+        </LabeledField>
+      </div>
 
-          <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_220px_auto] lg:items-end">
-            <LabeledField label="Reason / impact">
-              <Textarea
-                value={draft.reason}
-                onChange={(event) => setDraft({ ...draft, reason: event.target.value })}
-                className="min-h-16 min-w-0 resize-y"
-                placeholder="What happened, who owns it, and what path it affects."
-                disabled={isSaving}
-              />
-            </LabeledField>
-            <LabeledField label="Owner">
-              <Input
-                value={draft.owner}
-                onChange={(event) => setDraft({ ...draft, owner: event.target.value })}
-                className="h-9 min-w-0"
-                placeholder="PM / trade / client"
-                disabled={isSaving}
-              />
-            </LabeledField>
-            <Button
-              type="button"
-              className="h-9 gap-2"
-              disabled={!draft.title.trim() || isSaving}
-              onClick={() => void addFragment()}
-            >
-              <Plus className="h-4 w-4" />
-              Add delay
-            </Button>
-          </div>
+      <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_220px_auto] lg:items-end">
+        <LabeledField label="Reason / impact">
+          <Textarea
+            value={draft.reason}
+            onChange={(event) => setDraft({ ...draft, reason: event.target.value })}
+            className="min-h-16 min-w-0 resize-y"
+            placeholder="What happened, who owns it, and what path it affects."
+            disabled={isSaving}
+          />
+        </LabeledField>
+        <LabeledField label="Owner">
+          <Input
+            value={draft.owner}
+            onChange={(event) => setDraft({ ...draft, owner: event.target.value })}
+            className="h-9 min-w-0"
+            placeholder="PM / trade / client"
+            disabled={isSaving}
+          />
+        </LabeledField>
+        <Button
+          type="button"
+          className="h-9 gap-2"
+          disabled={!draft.title.trim() || isSaving}
+          onClick={() => void addFragment()}
+        >
+          <Plus className="h-4 w-4" />
+          Add delay
+        </Button>
+      </div>
 
-          <div className="mt-3 grid gap-2">
-            {linkedFragments.length === 0 ? (
-              <div className="rounded border border-dashed border-hairline bg-surface/70 px-3 py-3 text-sm text-muted-foreground">
-                No delay impacts tied to this activity.
-              </div>
-            ) : (
-              linkedFragments.map((fragment) => (
-                <DelayFragmentRow
-                  key={fragment.id}
-                  fragment={fragment}
-                  isSaving={isSaving}
-                  onPatchDelayFragment={onPatchDelayFragment}
-                  onDeleteDelayFragment={onDeleteDelayFragment}
-                />
-              ))
-            )}
+      <div className="mt-3 grid gap-2">
+        {linkedFragments.length === 0 ? (
+          <div className="rounded border border-dashed border-hairline bg-surface/70 px-3 py-3 text-sm text-muted-foreground">
+            No delay impacts tied to this activity.
           </div>
-        </>
-      )}
+        ) : (
+          linkedFragments.map((fragment) => (
+            <DelayFragmentRow
+              key={fragment.id}
+              fragment={fragment}
+              isSaving={isSaving}
+              onPatchDelayFragment={onPatchDelayFragment}
+              onDeleteDelayFragment={onDeleteDelayFragment}
+            />
+          ))
+        )}
+      </div>
     </div>
   );
 }

@@ -290,10 +290,11 @@ function taskMatchesScheduleGridView(
 
   if (view === "active") return isActive || hasStartedButIncomplete;
   if (view === "update_queue") {
+    // Mirrors the needs-update queue exactly: rows in the data-date update
+    // window that still need action. Complete and future rows never appear.
     return (
-      taskIntersectsDateWindow(task, referenceDate, referenceDate) ||
-      (taskIsInDataDateUpdateWindow(task, referenceDate) &&
-        (taskNeedsStatusUpdateBasis(task) || task.isLate || task.isOutOfSequence))
+      taskIsInDataDateUpdateWindow(task, referenceDate) &&
+      (taskNeedsStatusUpdateBasis(task) || task.isLate || task.isOutOfSequence)
     );
   }
   const lookaheadDays = SCHEDULE_LOOKAHEAD_DAYS[view];

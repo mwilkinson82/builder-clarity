@@ -5,15 +5,13 @@ import {
   type ConstructLineCpmTask,
 } from "@/lib/constructline-cpm";
 import {
-  DAY_MS,
   type ScheduleQualityQueueItem,
   type ScheduleUpdateReadinessItem,
   type ScheduleUpdateReadinessSummary,
   shortDate,
   todayIsoDate,
 } from "./scheduleShared";
-import { taskIntersectsDateWindow } from "./scheduleGridModel";
-import { isoDateFromMs, parseDateMs } from "./ScheduleSnapshotTimeline";
+import { parseDateMs } from "./ScheduleSnapshotTimeline";
 
 export function buildScheduleQualityQueue(
   model: ConstructLineCpmModel,
@@ -281,15 +279,17 @@ export function formatUpdateReadinessQueueLine(item: ScheduleUpdateReadinessItem
   }d · TF ${item.task.totalFloat}d`;
 }
 
+// The needs-update queue contains only rows genuinely needing action for the
+// current data date: started-but-not-finished work spanning the data date, or
+// rows planned to have started by the data date with no actual start recorded.
+// Complete activities and future-window rows never appear.
 export function taskIsInDataDateUpdateWindow(task: ConstructLineCpmTask, referenceDate: string) {
-  const percent = Math.max(0, Math.min(100, task.activity.percent_complete));
-  const referenceMs = parseDateMs(referenceDate) ?? parseDateMs(todayIsoDate()) ?? Date.now();
-  const lookaheadFinish = isoDateFromMs(referenceMs + 14 * DAY_MS);
-  return (
-    task.isLate ||
-    task.isOutOfSequence ||
-    task.isCritical ||
-    percent > 0 ||
-    taskIntersectsDateWindow(task, referenceDate, lookaheadFinish)
+  const activity = task.activity;
+  if (activity.percent_complete >= 100 || activity.actual_finish_date) return false;
+  if (hasScheduleActivityStarted(activity)) return true;
+  const referenceMs = parseDateMs(referenceDate) ?? parseDateMs(todayIsoDate());
+  const plannedStartMs = parseDateMs(
+    activity.forecast_start_date ?? activity.start_date ?? activity.baseline_start_date,
   );
+  return referenceMs != null && plannedStartMs != null && plannedStartMs <= referenceMs;
 }

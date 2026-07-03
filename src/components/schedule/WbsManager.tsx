@@ -44,15 +44,11 @@ export function WbsManagerDialog({
   onMoveDivisionParent,
   onMoveDivision,
   onReorderDivisions,
-  isPersistenceReady,
-  isPathFallback,
 }: {
   open: boolean;
   divisions: WbsDivisionRow[];
   isSaving: boolean;
   isSavingOrder: boolean;
-  isPersistenceReady: boolean;
-  isPathFallback: boolean;
   onOpenChange: (open: boolean) => void;
   onAddDivision: (division: string, parentId?: string | null) => void;
   onRenameDivision: (fromDivision: string, toDivision: string) => Promise<void>;
@@ -70,7 +66,6 @@ export function WbsManagerDialog({
   const [dropParentTargetId, setDropParentTargetId] = useState<string | null>(null);
   const newDivisionInputRef = useRef<HTMLInputElement | null>(null);
   const wasOpenRef = useRef(false);
-  const isLocked = !isPersistenceReady;
   const selectedParentRow =
     newDivisionParentId === "root"
       ? null
@@ -100,21 +95,19 @@ export function WbsManagerDialog({
   }, [divisions, open]);
 
   const addDivision = () => {
-    if (isLocked) return;
     const division = cleanWbsDivisionInput(newDivision);
     if (!division) return;
     onAddDivision(division, newDivisionParentId === "root" ? null : newDivisionParentId);
     setNewDivision("");
   };
   const startChildDivision = (row: WbsDivisionRow) => {
-    if (!row.id || isLocked) return;
+    if (!row.id) return;
     setNewDivisionParentId(row.id);
     setNewDivision("");
     window.requestAnimationFrame(() => newDivisionInputRef.current?.focus());
   };
 
   const renameDivision = async (division: string) => {
-    if (isLocked) return;
     const nextDivision = cleanWbsDivisionInput(draftNames[division]);
     if (!nextDivision || nextDivision === division) return;
     setSavingDivision(division);
@@ -125,7 +118,6 @@ export function WbsManagerDialog({
     }
   };
   const moveDivisionParent = async (division: string, parentId: string | null) => {
-    if (isLocked) return;
     setMovingParentDivision(division);
     try {
       await onMoveDivisionParent(division, parentId);
@@ -134,7 +126,7 @@ export function WbsManagerDialog({
     }
   };
   const reorderDivision = (targetDivision: string) => {
-    if (isLocked || !draggingDivision || draggingDivision === targetDivision) return;
+    if (!draggingDivision || draggingDivision === targetDivision) return;
     const draggingRow = divisions.find((row) => row.division === draggingDivision);
     const targetRow = divisions.find((row) => row.division === targetDivision);
     if (!draggingRow?.id || !targetRow?.id || !isSameWbsParent(draggingRow, targetRow)) return;
@@ -188,7 +180,7 @@ export function WbsManagerDialog({
         )}
         style={{ marginLeft: `${Math.min(depth, 4) * 18}px` }}
         onDragOver={(event) => {
-          if (!canDropIntoParent(parentId) || isSaving || isLocked) return;
+          if (!canDropIntoParent(parentId) || isSaving) return;
           event.preventDefault();
           event.stopPropagation();
           event.dataTransfer.dropEffect = "move";
@@ -233,7 +225,7 @@ export function WbsManagerDialog({
           isActive && "border-foreground/50 bg-card shadow-sm",
         )}
         onDragOver={(event) => {
-          if (isSaving || isLocked || !canDropIntoParent(row.id)) return;
+          if (isSaving || !canDropIntoParent(row.id)) return;
           event.preventDefault();
           event.stopPropagation();
           event.dataTransfer.dropEffect = "move";
@@ -325,7 +317,6 @@ export function WbsManagerDialog({
                 !draggingDivision ||
                 draggingDivision === row.division ||
                 isSaving ||
-                isLocked ||
                 !canPersistRow
               )
                 return;
@@ -372,11 +363,11 @@ export function WbsManagerDialog({
           >
             <button
               type="button"
-              draggable={!isSaving && !isLocked && canPersistRow}
+              draggable={!isSaving && canPersistRow}
               className="flex h-9 w-9 cursor-grab items-center justify-center rounded border border-hairline bg-surface text-muted-foreground transition hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50 xl:self-center"
               aria-label={`Drag ${row.division} to reorder WBS`}
               title="Drag onto another row to reorder. Use the Nest target to make it a child area."
-              disabled={isSaving || isLocked || !canPersistRow}
+              disabled={isSaving || !canPersistRow}
               onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("text/plain", row.division);
@@ -404,7 +395,7 @@ export function WbsManagerDialog({
                   }))
                 }
                 className="h-9 min-w-0"
-                disabled={isRowSaving || isLocked}
+                disabled={isRowSaving}
               />
               <div className="mt-1 text-[11px] leading-4 text-muted-foreground">
                 {row.parentPath ? `Path: ${row.division}` : "Top-level schedule WBS"}
@@ -413,7 +404,7 @@ export function WbsManagerDialog({
             <LabeledField label="Parent WBS">
               <Select
                 value={selectedParentId ?? "root"}
-                disabled={!canPersistRow || isRowSaving || isLocked}
+                disabled={!canPersistRow || isRowSaving}
                 onValueChange={(value) => {
                   void moveDivisionParent(row.division, value === "root" ? null : value);
                 }}
@@ -457,7 +448,7 @@ export function WbsManagerDialog({
                   type="button"
                   variant="outline"
                   className="h-9 whitespace-nowrap"
-                  disabled={!canPersistRow || isSaving || isLocked}
+                  disabled={!canPersistRow || isSaving}
                   onClick={() => startChildDivision(row)}
                 >
                   <Plus className="mr-1 h-3.5 w-3.5" />
@@ -467,7 +458,7 @@ export function WbsManagerDialog({
                   type="button"
                   variant={selectedParentRow?.id === row.id ? "default" : "outline"}
                   className="h-9 whitespace-nowrap"
-                  disabled={!canPersistRow || isSaving || isLocked}
+                  disabled={!canPersistRow || isSaving}
                   onClick={() => setNewDivisionParentId(row.id ?? "root")}
                 >
                   Use as parent
@@ -476,9 +467,7 @@ export function WbsManagerDialog({
                   type="button"
                   variant="outline"
                   className="h-9 whitespace-nowrap"
-                  disabled={
-                    !canPersistRow || !cleanDraftName || !hasNameChange || isRowSaving || isLocked
-                  }
+                  disabled={!canPersistRow || !cleanDraftName || !hasNameChange || isRowSaving}
                   onClick={() => renameDivision(row.division)}
                 >
                   {savingDivision === row.division ? "Saving..." : "Save title"}
@@ -488,7 +477,7 @@ export function WbsManagerDialog({
                   variant="outline"
                   size="icon"
                   className="h-9 w-9"
-                  disabled={!canMoveUp || isSaving || isLocked}
+                  disabled={!canMoveUp || isSaving}
                   onClick={() => onMoveDivision(row.division, -1)}
                   aria-label={`Move ${row.division} up`}
                 >
@@ -499,7 +488,7 @@ export function WbsManagerDialog({
                   variant="outline"
                   size="icon"
                   className="h-9 w-9"
-                  disabled={!canMoveDown || isSaving || isLocked}
+                  disabled={!canMoveDown || isSaving}
                   onClick={() => onMoveDivision(row.division, 1)}
                   aria-label={`Move ${row.division} down`}
                 >
@@ -531,20 +520,6 @@ export function WbsManagerDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
-          {isLocked && (
-            <div className="rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
-              This project is using activity WBS paths for grouping. Existing paths still display as
-              WBS groups, and activity-level WBS edits can still adjust the schedule structure.
-            </div>
-          )}
-          {isPathFallback && !isLocked && (
-            <div className="rounded-md border border-hairline bg-card px-4 py-3 text-sm text-muted-foreground">
-              Activity-path WBS mode is active. Parent and child areas save as schedule paths, so
-              Concrete / Northwest corner, campus zones, rooms, trades, or subcontractor sequences
-              can be grouped immediately.
-            </div>
-          )}
-
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(240px,0.55fr)]">
             <div className="rounded-md border border-hairline bg-card px-4 py-3">
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -597,13 +572,13 @@ export function WbsManagerDialog({
                     }}
                     placeholder={selectedParentRow ? "Northwest corner" : "Concrete"}
                     className="h-10 min-w-0"
-                    disabled={isSaving || isLocked}
+                    disabled={isSaving}
                   />
                 </LabeledField>
                 <Button
                   type="button"
                   className="h-10 gap-2"
-                  disabled={!newDivision.trim() || isSaving || isLocked}
+                  disabled={!newDivision.trim() || isSaving}
                   onClick={addDivision}
                 >
                   <Plus className="h-4 w-4" />
@@ -614,7 +589,7 @@ export function WbsManagerDialog({
                 <Select
                   value={newDivisionParentId}
                   onValueChange={setNewDivisionParentId}
-                  disabled={isSaving || isLocked}
+                  disabled={isSaving}
                 >
                   <SelectTrigger className="h-10 min-w-0 bg-card">
                     <SelectValue />
@@ -645,7 +620,7 @@ export function WbsManagerDialog({
                   variant="outline"
                   className="h-9 whitespace-nowrap"
                   onClick={() => setNewDivisionParentId("root")}
-                  disabled={isSaving || isLocked}
+                  disabled={isSaving}
                 >
                   Add at top level
                 </Button>
@@ -673,9 +648,7 @@ export function WbsManagerDialog({
           <div className="text-xs text-muted-foreground">
             {isSavingOrder
               ? "Order already changed in the grid; final save is confirming in the background."
-              : isLocked
-                ? "This project is grouped by the WBS field on each activity."
-                : "Drag rows to reorder. Drop onto a parent to build child areas such as Concrete / Northwest corner."}
+              : "Drag rows to reorder. Drop onto a parent to build child areas such as Concrete / Northwest corner."}
           </div>
           <Button type="button" onClick={() => onOpenChange(false)} disabled={isSaving}>
             Done

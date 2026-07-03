@@ -68,7 +68,6 @@ export function CpmGridToolbar({
   templates,
   selectedTemplateId,
   onSelectedTemplateChange,
-  templatePersistence,
   isTemplateLoading,
   isSavingTemplate,
   isApplyingTemplate,
@@ -109,7 +108,6 @@ export function CpmGridToolbar({
   templates: Array<ScheduleCpmTemplateRow | BrowserCpmTemplate>;
   selectedTemplateId: string;
   onSelectedTemplateChange: (value: string) => void;
-  templatePersistence: "ready" | "migration_required";
   isTemplateLoading: boolean;
   isSavingTemplate: boolean;
   isApplyingTemplate: boolean;
@@ -319,12 +317,6 @@ export function CpmGridToolbar({
             <Plus className="h-4 w-4" />
             {isApplyingTemplate ? "Applying..." : "Use template"}
           </Button>
-          {templatePersistence === "migration_required" && (
-            <span className="text-xs text-muted-foreground">
-              Private browser templates are active. Templates saved here stay in this browser and
-              can be reused on other projects opened here.
-            </span>
-          )}
         </CpmToolbarGroup>
       )}
     </div>

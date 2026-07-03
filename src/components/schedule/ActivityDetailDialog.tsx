@@ -66,7 +66,6 @@ export function ActivityDetailDialog({
   updateQueueContext,
   divisionOptions,
   delayFragments,
-  delayFragmentPersistence,
   isSaving,
   isSavingDelayFragment,
   onClose,
@@ -85,7 +84,6 @@ export function ActivityDetailDialog({
   updateQueueContext: ScheduleUpdateQueueDialogContext | null;
   divisionOptions: string[];
   delayFragments: ScheduleDelayFragmentRow[];
-  delayFragmentPersistence: "ready" | "migration_required";
   isSaving: boolean;
   isSavingDelayFragment: boolean;
   onClose: () => void;
@@ -509,6 +507,11 @@ export function ActivityDetailDialog({
                     disabled={isMilestone || !draftHasActualStartBasis}
                     className="h-10 min-w-0 tabular"
                   />
+                  {!isMilestone && !draftHasActualStartBasis && (
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      Record an actual start first — remaining duration applies to in-progress work.
+                    </p>
+                  )}
                 </LabeledField>
                 <LabeledField label="Current start">
                   <Input
@@ -676,7 +679,6 @@ export function ActivityDetailDialog({
             <ActivityDelayFragmentPanel
               activity={activity}
               delayFragments={delayFragments}
-              persistence={delayFragmentPersistence}
               isSaving={isSavingDelayFragment}
               onAddDelayFragment={onAddDelayFragment}
               onPatchDelayFragment={onPatchDelayFragment}

@@ -25,7 +25,6 @@ import {
   type MilestoneRow,
   type ScheduleActivityRow,
   type ScheduleDelayFragmentRow,
-  type ScheduleWbsPersistence,
   type ScheduleWbsSectionRow,
   type ScheduleUpdateRow,
 } from "@/lib/schedule.functions";
@@ -128,9 +127,7 @@ export function CpmActivityPlanner({
   workspaceMode = "full",
   activities,
   wbsSections,
-  wbsPersistence = "ready",
   delayFragments,
-  delayFragmentPersistence = "ready",
   milestones,
   updates = EMPTY_SCHEDULE_UPDATES,
   project,
@@ -155,9 +152,7 @@ export function CpmActivityPlanner({
   workspaceMode?: "embedded" | "full";
   activities: ScheduleActivityRow[];
   wbsSections: ScheduleWbsSectionRow[];
-  wbsPersistence?: ScheduleWbsPersistence;
   delayFragments: ScheduleDelayFragmentRow[];
-  delayFragmentPersistence?: "ready" | "migration_required";
   milestones: MilestoneRow[];
   updates?: ScheduleUpdateRow[];
   project: ProjectRow;
@@ -239,14 +234,6 @@ export function CpmActivityPlanner({
     () => wbsDivisionRows.map((row) => row.division),
     [wbsDivisionRows],
   );
-  const isWbsMigrationRequired = wbsPersistence === "migration_required";
-  const isWbsPathFallback = wbsPersistence === "path_fallback";
-  const showWbsMigrationPending = () => {
-    toast.error("Use activity WBS fields for now", {
-      description:
-        "The grid still groups by each activity WBS path. Edit an activity WBS to adjust the visible schedule structure.",
-    });
-  };
   useEffect(() => {
     if (lastCpmGridLayoutStorageKeyRef.current === cpmGridLayoutStorageKey) return;
     pendingCpmGridLayoutStorageKeyRef.current = cpmGridLayoutStorageKey;
@@ -376,7 +363,6 @@ export function CpmActivityPlanner({
     queryFn: () => listTemplatesFn({ data: { projectId: project.id } }),
     staleTime: 30_000,
   });
-  const templatePersistence = templateQuery.data?.persistence ?? "ready";
   const cpmTemplates = useMemo(
     () => [...(templateQuery.data?.templates ?? EMPTY_CPM_TEMPLATES), ...browserTemplates],
     [browserTemplates, templateQuery.data?.templates],
@@ -557,10 +543,6 @@ export function CpmActivityPlanner({
     scrollActivityDraftIntoView(draftFormRef);
   };
   const addWbsDivision = (divisionName: string, parentId: string | null = null) => {
-    if (isWbsMigrationRequired) {
-      showWbsMigrationPending();
-      return;
-    }
     const division = cleanWbsDivisionInput(divisionName);
     if (!division) return;
     const parentRow = parentId ? wbsDivisionRows.find((row) => row.id === parentId) : null;
@@ -577,10 +559,6 @@ export function CpmActivityPlanner({
     void onAddWbsSection(division, parentId);
   };
   const renameWbsDivision = async (fromDivision: string, toDivision: string) => {
-    if (isWbsMigrationRequired) {
-      showWbsMigrationPending();
-      return;
-    }
     const nextDivision = cleanWbsDivisionInput(toDivision);
     if (!nextDivision || nextDivision === fromDivision) return;
     const row = wbsDivisionRows.find((item) => item.division === fromDivision);
@@ -602,13 +580,8 @@ export function CpmActivityPlanner({
     await onRenameWbsSection(row.id, nextDivision);
   };
   const moveWbsDivisionParent = async (division: string, parentId: string | null) => {
-    if (isWbsMigrationRequired) {
-      showWbsMigrationPending();
-      return;
-    }
     const row = wbsDivisionRows.find((item) => item.division === division);
-    const alreadyInTargetParent =
-      (row?.parentId ?? null) === parentId && (!isWbsPathFallback || !row?.parentPath);
+    const alreadyInTargetParent = (row?.parentId ?? null) === parentId;
     if (!row?.id || alreadyInTargetParent) return;
     const parentRow = parentId ? wbsDivisionRows.find((item) => item.id === parentId) : null;
     const nextPath = parentRow
@@ -629,10 +602,6 @@ export function CpmActivityPlanner({
     await onMoveWbsSectionParent(row.id, parentId);
   };
   const moveWbsDivision = (division: string, direction: -1 | 1) => {
-    if (isWbsMigrationRequired) {
-      showWbsMigrationPending();
-      return;
-    }
     const orderedRows = moveWbsDivisionInOrder(wbsDivisionRows, division, direction);
     const orderedIds = orderedRows.map((row) => row.id).filter((id): id is string => Boolean(id));
     if (orderedIds.length > 0) {
@@ -644,10 +613,6 @@ export function CpmActivityPlanner({
     setActivityOrder("wbs");
   };
   const reorderWbsDivisions = (orderedDivisions: string[]) => {
-    if (isWbsMigrationRequired) {
-      showWbsMigrationPending();
-      return;
-    }
     const orderedRows = orderedDivisions
       .map((division) => wbsDivisionRows.find((row) => row.division === division))
       .filter((row): row is WbsDivisionRow => Boolean(row?.id));
@@ -729,25 +694,6 @@ export function CpmActivityPlanner({
       });
     },
   });
-  const saveBrowserTemplate = () => {
-    const template = buildBrowserCpmTemplate(
-      project,
-      templateName.trim() || `${project.name} CPM`,
-      sortedActivities,
-      wbsSections,
-    );
-    const nextTemplates = [
-      template,
-      ...browserTemplates.filter((item) => item.name !== template.name),
-    ].slice(0, 25);
-    writeBrowserCpmTemplates(nextTemplates);
-    setBrowserTemplates(nextTemplates);
-    setSelectedTemplateId(template.id);
-    toast.success("CPM template saved", {
-      description:
-        "Template saved in this browser and available from the template picker on other projects opened here.",
-    });
-  };
   const templateSave = useMutation({
     mutationFn: () =>
       saveTemplateFn({
@@ -810,10 +756,6 @@ export function CpmActivityPlanner({
   };
   const saveCpmTemplate = () => {
     if (!templateName.trim()) return;
-    if (templatePersistence === "migration_required") {
-      saveBrowserTemplate();
-      return;
-    }
     templateSave.mutate();
   };
   const applySelectedCpmTemplate = () => {
@@ -1228,21 +1170,6 @@ export function CpmActivityPlanner({
           </div>
         )}
 
-        {isWbsMigrationRequired && (
-          <div className="mt-4 rounded-md border border-warning/25 bg-warning/10 px-4 py-3 text-sm text-warning">
-            This project is using activity WBS paths for grouping. Schedule sections remain visible,
-            and activity-level WBS edits still control where each row appears.
-          </div>
-        )}
-
-        {!isFullWorkspace && isWbsPathFallback && (
-          <div className="mt-4 rounded-md border border-hairline bg-card px-4 py-3 text-sm text-muted-foreground">
-            Activity-path WBS mode is active. Parent and child areas save as readable paths such as
-            Concrete / Northwest corner, so the CPM grid can group location, room, area, trade, or
-            subcontractor sequences.
-          </div>
-        )}
-
         <ActivityScheduleMatrix
           matrixId="cpm-grid"
           model={displayedCpmModel}
@@ -1286,7 +1213,6 @@ export function CpmActivityPlanner({
               templates={cpmTemplates}
               selectedTemplateId={selectedTemplateId}
               onSelectedTemplateChange={setSelectedTemplateId}
-              templatePersistence={templatePersistence}
               isTemplateLoading={templateQuery.isLoading}
               isSavingTemplate={templateSave.isPending}
               isApplyingTemplate={templateImport.isPending || isSeedingActivities}
@@ -1571,7 +1497,6 @@ export function CpmActivityPlanner({
           onDelete={() => confirmDeleteActivity(selectedActivity)}
           divisionOptions={knownWbsDivisions}
           delayFragments={delayFragments}
-          delayFragmentPersistence={delayFragmentPersistence}
           isSavingDelayFragment={isSavingDelayFragment}
           onAddDelayFragment={onAddDelayFragment}
           onPatchDelayFragment={onPatchDelayFragment}
@@ -1592,8 +1517,6 @@ export function CpmActivityPlanner({
         onMoveDivision={moveWbsDivision}
         onReorderDivisions={reorderWbsDivisions}
         isSavingOrder={isSavingWbsOrder}
-        isPersistenceReady={!isWbsMigrationRequired}
-        isPathFallback={isWbsPathFallback}
       />
     </>
   );
