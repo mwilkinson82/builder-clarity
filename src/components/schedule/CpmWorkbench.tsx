@@ -7,13 +7,15 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Plus,
   ClipboardList,
-  Printer,
   GitBranch,
   Gauge,
   Layers,
   Minimize2,
   Diamond,
   ListTree,
+  Printer,
+  Upload,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -120,9 +122,13 @@ import {
 import { ActivityDivisionInput, LabeledField, WbsManagerDialog } from "./WbsManager";
 import { ActivityScheduleMatrix } from "./ScheduleGridMatrix";
 import { CpmPrintSheet } from "./CpmPrintSheet";
+import { ScheduleImportWizard, type ScheduleImportWizardMode } from "./ScheduleImportWizard";
+import { type SovScheduleLine } from "@/lib/schedule-import";
 import { StackingMiniMap } from "./ScheduleGridRows";
 import { ActivityDependencyPicker } from "./ScheduleActivityRegister";
 import { ActivityDetailDialog } from "./ActivityDetailDialog";
+
+const EMPTY_SOV_LINES: SovScheduleLine[] = [];
 
 export function CpmActivityPlanner({
   workspaceMode = "full",
@@ -133,6 +139,7 @@ export function CpmActivityPlanner({
   updates = EMPTY_SCHEDULE_UPDATES,
   project,
   latestDataDate,
+  sovLines = EMPTY_SOV_LINES,
   onAddActivity,
   onSeedActivities,
   isSeedingActivities,
@@ -158,6 +165,7 @@ export function CpmActivityPlanner({
   updates?: ScheduleUpdateRow[];
   project: ProjectRow;
   latestDataDate: string | null;
+  sovLines?: SovScheduleLine[];
   onAddActivity: (activity: ActivityCreateInput) => Promise<unknown> | unknown;
   onSeedActivities: (activities: ActivityCreateInput[]) => void;
   isSeedingActivities: boolean;
@@ -201,6 +209,8 @@ export function CpmActivityPlanner({
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [browserTemplates, setBrowserTemplates] = useState<BrowserCpmTemplate[]>([]);
   const [isWbsManagerOpen, setIsWbsManagerOpen] = useState(false);
+  const [importWizardMode, setImportWizardMode] = useState<ScheduleImportWizardMode | null>(null);
+  const [importRunwayCount, setImportRunwayCount] = useState<number | null>(null);
   const [isFocusOpen, setIsFocusOpen] = useState(false);
   const [readinessWarningAcceptedFor, setReadinessWarningAcceptedFor] = useState<string | null>(
     null,
@@ -839,9 +849,12 @@ export function CpmActivityPlanner({
   const isRecoveryReport = scheduleView === "recovery";
   const printReportLabel = isCriticalPathReport ? "Critical Path Report" : scheduleReportTitle;
   const contractorName = project.organization_name || "Overwatch";
-  const criticalBasisLabel = displayedCpmModel.criticalPathReliable
-    ? "Critical basis valid"
-    : "Critical basis provisional";
+  // Never present untied dates as a CPM result — printed reports included.
+  const criticalBasisLabel = displayedCpmModel.isSubstantiallyUntied
+    ? "Critical basis untied — logic not tagged"
+    : displayedCpmModel.criticalPathReliable
+      ? "Critical basis valid"
+      : "Critical basis provisional";
   const isReadinessSaveWarningArmed =
     updateReadiness.needsStatusCount > 0 && readinessWarningAcceptedFor === dataDateDraft;
   const saveDataDate = () => {
@@ -859,6 +872,46 @@ export function CpmActivityPlanner({
     setReadinessWarningAcceptedFor(null);
     dataDateUpdate.mutate({ nextDataDate: dataDateDraft });
   };
+  const handleImportRows = (rows: ActivityCreateInput[]) => {
+    onSeedActivities(rows);
+    setImportWizardMode(null);
+    setImportRunwayCount(rows.length);
+  };
+  const untiedActivityCount = baseCpmModel.untiedActivityCount;
+  const showImportRunwayBanner = importRunwayCount != null && untiedActivityCount > 0;
+  const importRunwayBanner = showImportRunwayBanner ? (
+    <div className="mb-3 flex flex-col gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between print:hidden">
+      <div className="min-w-0 text-foreground">
+        <span className="font-semibold">
+          {importRunwayCount} {importRunwayCount === 1 ? "activity" : "activities"} imported ·{" "}
+          {logicTieCount} logic {logicTieCount === 1 ? "tie" : "ties"}
+        </span>{" "}
+        — tag predecessors to activate CPM. {untiedActivityCount}{" "}
+        {untiedActivityCount === 1 ? "activity still has" : "activities still have"} no logic.
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8"
+          onClick={() => setScheduleView("no_logic")}
+        >
+          Show activities without logic
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0"
+          aria-label="Dismiss import banner"
+          onClick={() => setImportRunwayCount(null)}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  ) : null;
   const confirmDeleteActivity = (activity: ScheduleActivityRow) => {
     const label = activity.activity_id
       ? `${activity.activity_id} - ${activity.name}`
@@ -1064,6 +1117,8 @@ export function CpmActivityPlanner({
           </div>
         )}
 
+        {importRunwayBanner}
+
         <ActivityScheduleMatrix
           matrixId="cpm-grid"
           model={displayedCpmModel}
@@ -1089,6 +1144,8 @@ export function CpmActivityPlanner({
               onSeedActivities={() => onSeedActivities(milestoneSeedRows)}
               canSeedActivities={milestoneSeedRows.length > 0}
               isSeedingActivities={isSeedingActivities}
+              onImportSchedule={() => setImportWizardMode("file")}
+              onBuildFromSov={() => setImportWizardMode("sov")}
               onPrint={() => typeof window !== "undefined" && window.print()}
               onToggleActivityDraft={toggleActivityDraft}
               isActivityDraftOpen={showDraft}
@@ -1118,12 +1175,16 @@ export function CpmActivityPlanner({
           emptyTitle={
             scheduleView === "all"
               ? "No CPM activities yet."
-              : "No activities match this schedule view."
+              : scheduleView === "no_logic"
+                ? "Every activity is tied into the network."
+                : "No activities match this schedule view."
           }
           emptyDescription={
             scheduleView === "all"
-              ? "Add the first activity to start building the working schedule."
-              : "Switch back to All activities or choose a broader view."
+              ? "Add the first activity, import a schedule you already have, or build one from the SOV."
+              : scheduleView === "no_logic"
+                ? "Nothing here still needs logic. Switch back to All activities."
+                : "Switch back to All activities or choose a broader view."
           }
           dayPx={dayPx}
           onDayPxChange={setDayPx}
@@ -1307,6 +1368,19 @@ export function CpmActivityPlanner({
               </Button>
               <Button
                 type="button"
+                variant="outline"
+                className="gap-2"
+                disabled={isSeedingActivities}
+                onClick={() => {
+                  setIsFocusOpen(false);
+                  setImportWizardMode("file");
+                }}
+              >
+                <Upload className="h-4 w-4" />
+                Import schedule
+              </Button>
+              <Button
+                type="button"
                 variant={activityDraftMode === "activity" ? "default" : "outline"}
                 className="gap-2"
                 onClick={toggleActivityDraft}
@@ -1356,12 +1430,16 @@ export function CpmActivityPlanner({
             emptyTitle={
               scheduleView === "all"
                 ? "No CPM activities yet."
-                : "No activities match this schedule view."
+                : scheduleView === "no_logic"
+                  ? "Every activity is tied into the network."
+                  : "No activities match this schedule view."
             }
             emptyDescription={
               scheduleView === "all"
-                ? "Add the first activity to start building the working schedule."
-                : "Switch back to All activities or choose a broader view."
+                ? "Add the first activity, import a schedule you already have, or build one from the SOV."
+                : scheduleView === "no_logic"
+                  ? "Nothing here still needs logic. Switch back to All activities."
+                  : "Switch back to All activities or choose a broader view."
             }
             showLogicLines={showLogicLines}
             showBaselineBars={showBaselineBars}
@@ -1399,6 +1477,20 @@ export function CpmActivityPlanner({
           onSendToRiskTally={(activity) => activityRiskCreate.mutateAsync(activity)}
         />
       )}
+
+      <ScheduleImportWizard
+        open={importWizardMode !== null}
+        mode={importWizardMode ?? "file"}
+        onOpenChange={(open) => {
+          if (!open) setImportWizardMode(null);
+        }}
+        activities={sortedActivities}
+        sovLines={sovLines}
+        projectId={project.id}
+        anchorDate={effectiveDataDate ?? todayIsoDate()}
+        isImporting={isSeedingActivities}
+        onImport={handleImportRows}
+      />
 
       <WbsManagerDialog
         open={isWbsManagerOpen}

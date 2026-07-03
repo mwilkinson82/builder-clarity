@@ -36,11 +36,18 @@ export function CpmNetworkBasisStrip({
   const openFinishTasks = model.tasks.filter((task) => task.isOpenFinish);
   const negativeFloatCount = model.tasks.filter((task) => task.totalFloat < 0).length;
   const basisTone = model.criticalPathReliable ? "success" : "warning";
+  // Honesty over optimism: a mostly-untied network (fresh import) never reads
+  // Reliable, and says so in words a PM can act on.
+  const basisValue = model.isSubstantiallyUntied
+    ? "Untied — logic needed"
+    : model.criticalPathReliable
+      ? "Reliable"
+      : "Provisional";
   return (
     <div className="constructline-cpm-basis-strip flex flex-wrap gap-1.5 text-[11px]">
       <CpmBasisPill
         label="CPM basis"
-        value={model.criticalPathReliable ? "Reliable" : "Provisional"}
+        value={basisValue}
         tone={basisTone}
         title={model.criticalPathReliabilityNote}
         icon={

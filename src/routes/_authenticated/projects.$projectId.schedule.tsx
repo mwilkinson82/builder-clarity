@@ -21,6 +21,7 @@ import { CpmActivityPlanner, type ActivityCreateInput } from "@/components/sched
 import { selectCanonicalLogicTieCount, selectLatestScheduleUpdate } from "@/lib/schedule-selectors";
 import { buildWbsSectionPathMap, replaceWbsPathInDivision } from "@/lib/constructline-wbs";
 import { getProject, type ProjectRow } from "@/lib/projects.functions";
+import { type SovScheduleLine } from "@/lib/schedule-import";
 import {
   createScheduleDelayFragment,
   createScheduleActivity,
@@ -191,6 +192,12 @@ function ScheduleWorkspacePage() {
   });
 
   const project = projectQuery.data?.project as ProjectRow | undefined;
+  // SOV lines for Build-from-SOV: the project query already carries the cost
+  // buckets, so the schedule page reads them without an extra fetch.
+  const sovLines = useMemo(
+    () => (projectQuery.data?.buckets ?? []) as SovScheduleLine[],
+    [projectQuery.data?.buckets],
+  );
   const activities = useMemo(
     () => (scheduleQuery.data?.activities ?? []) as ScheduleActivityRow[],
     [scheduleQuery.data?.activities],
@@ -620,6 +627,7 @@ function ScheduleWorkspacePage() {
         updates={updates}
         project={project}
         latestDataDate={latestUpdate?.data_date ?? null}
+        sovLines={sovLines}
         onAddActivity={(activity) => activityCreate.mutateAsync(activity)}
         onSeedActivities={(items) => activitySeed.mutate(items)}
         isSeedingActivities={activitySeed.isPending}
