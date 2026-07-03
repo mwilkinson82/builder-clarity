@@ -4,6 +4,7 @@ import {
   MousePointer2,
   PencilRuler,
   Plus,
+  Redo2,
   Ruler,
   ShieldCheck,
   Square,
@@ -39,6 +40,10 @@ export function TakeoffTools({
   clearDraftPoints,
   createMeasurementMutation,
   updateSheetMutation,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
 }: {
   compact?: boolean;
   tool: ToolMode;
@@ -53,6 +58,12 @@ export function TakeoffTools({
   clearDraftPoints: () => void;
   createMeasurementMutation: { isPending: boolean };
   updateSheetMutation: { isPending: boolean };
+  // Per-sheet takeoff undo/redo (Phase 4 Task 0). Buttons always render with
+  // disabled states so the affordance is discoverable before the first edit.
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }) {
   return (
     <>
@@ -133,6 +144,34 @@ export function TakeoffTools({
             <span className={cn(compact && "hidden 2xl:inline")}>Clear Points</span>
           </Button>
         </>
+      )}
+      {onUndo && (
+        <Button
+          size="sm"
+          variant="outline"
+          className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+          title="Undo the last takeoff change on this sheet (Ctrl/Cmd+Z)"
+          onClick={onUndo}
+          disabled={!backendReady || !canUndo}
+          data-testid="takeoff-undo"
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+          <span className={cn(compact && "hidden 2xl:inline")}>Undo</span>
+        </Button>
+      )}
+      {onRedo && (
+        <Button
+          size="sm"
+          variant="outline"
+          className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+          title="Redo the last undone takeoff change (Shift+Ctrl/Cmd+Z)"
+          onClick={onRedo}
+          disabled={!backendReady || !canRedo}
+          data-testid="takeoff-redo"
+        >
+          <Redo2 className="h-3.5 w-3.5" />
+          <span className={cn(compact && "hidden 2xl:inline")}>Redo</span>
+        </Button>
       )}
     </>
   );

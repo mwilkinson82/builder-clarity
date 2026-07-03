@@ -55,9 +55,10 @@ import {
   type ZoomWindowDraft,
 } from "./planRoomShared";
 import {
-  extractSheetIdentity,
+  extractSheetIdentities,
   snapLinearPoint,
   statedScaleFeetPerPixel,
+  type SheetIdentityPage,
 } from "@/lib/plan-room-math";
 import { DraftShape, LinearAngleGuide, MeasurementShape, TakeoffDraftHud } from "./TakeoffTools";
 import { PlanMiniMap } from "./SheetSidebar";
@@ -283,6 +284,10 @@ export async function processPlanSetSheets({
   const documentSource = "url" in source ? await pdfDocumentSourceFor(source.url) : source;
   const pdf = await pdfjs.getDocument(documentSource).promise;
   const results: ProcessedSheetPage[] = [];
+  // Identity extraction is two-pass: collect every page's text first so the
+  // cross-sheet frequency filter can spot repeated project-block fields, then
+  // extract identities with those fields excluded from title candidates.
+  const identityPages: Array<{ resultIndex: number; page: SheetIdentityPage }> = [];
   for (const sheet of sheets) {
     const result: ProcessedSheetPage = {
       sheet_id: sheet.id,
@@ -314,13 +319,10 @@ export async function processPlanSetSheets({
               Math.abs((item.transform as number[])[1] ?? 0) >
               Math.abs((item.transform as number[])[0] ?? 0),
           }));
-        const identity = extractSheetIdentity({
-          items,
-          pageWidth: viewport.width,
-          pageHeight: viewport.height,
+        identityPages.push({
+          resultIndex: results.length,
+          page: { items, pageWidth: viewport.width, pageHeight: viewport.height },
         });
-        result.sheet_number = identity.sheetNumber;
-        result.sheet_name = identity.sheetName;
       }
       if (renderThumbnails) {
         result.thumbnail = await renderPageThumbnail(page);
@@ -332,6 +334,13 @@ export async function processPlanSetSheets({
     if (throttleMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, throttleMs));
     }
+  }
+  if (identityPages.length > 0) {
+    const identities = extractSheetIdentities(identityPages.map((entry) => entry.page));
+    identityPages.forEach((entry, index) => {
+      results[entry.resultIndex].sheet_number = identities[index].sheetNumber;
+      results[entry.resultIndex].sheet_name = identities[index].sheetName;
+    });
   }
   return results;
 }
@@ -746,7 +755,9 @@ export function PlanCanvas({
       fitToWidth();
       return;
     }
-    if (event.key.toLowerCase() === "z") {
+    // Bare Z toggles zoom-window mode. Cmd/Ctrl+Z is takeoff undo — let it
+    // bubble to the workspace's window-level handler untouched.
+    if (event.key.toLowerCase() === "z" && !event.metaKey && !event.ctrlKey) {
       event.preventDefault();
       setIsZoomWindowMode((current) => !current);
       setZoomWindowDraft(null);

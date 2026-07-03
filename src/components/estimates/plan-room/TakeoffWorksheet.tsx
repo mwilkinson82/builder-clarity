@@ -408,16 +408,19 @@ export function TakeoffWorksheet({
                         Open
                       </Button>
                       <Button
+                        type="button"
                         variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        title="Delete takeoff"
+                        size="sm"
+                        className="h-8 gap-1 px-2 text-xs"
+                        title="Delete this takeoff"
                         onClick={(event) => {
                           event.stopPropagation();
                           deleteMeasurementMutation.mutate(measurement.id);
                         }}
+                        data-testid="takeoff-row-delete"
                       >
-                        <Trash2 className="h-4 w-4 text-danger" />
+                        <Trash2 className="h-3.5 w-3.5 text-danger" />
+                        Delete
                       </Button>
                     </div>
                   </div>
@@ -446,26 +449,32 @@ export function TakeoffWorksheet({
                         </Button>
                       </div>
                     ) : (
-                      <LinkOrCreatePicker
-                        lineItems={lineItems}
-                        takeoffUnit={measurement.unit}
-                        onPickRow={(lineId) => linkMeasurement(measurement.id, lineId)}
-                        onPickLibraryItem={(item) =>
-                          classifyMeasurement(measurement.id, {
-                            type: "library",
-                            library_item_id: item.id,
-                          })
-                        }
-                        onCreateFromLabel={(label) =>
-                          classifyMeasurement(measurement.id, {
-                            type: "label",
-                            description: label,
-                            unit: measurement.unit,
-                          })
-                        }
-                        pending={classifyPending}
-                        compact
-                      />
+                      // The same unified picker as the finish popover and the
+                      // inspector — dismissing the popover always leaves this
+                      // obvious second chance to classify.
+                      <div className="space-y-1.5" data-testid="takeoff-row-classify">
+                        <p className="text-xs font-medium">What is this measurement?</p>
+                        <LinkOrCreatePicker
+                          lineItems={lineItems}
+                          takeoffUnit={measurement.unit}
+                          onPickRow={(lineId) => linkMeasurement(measurement.id, lineId)}
+                          onPickLibraryItem={(item) =>
+                            classifyMeasurement(measurement.id, {
+                              type: "library",
+                              library_item_id: item.id,
+                            })
+                          }
+                          onCreateFromLabel={(label) =>
+                            classifyMeasurement(measurement.id, {
+                              type: "label",
+                              description: label,
+                              unit: measurement.unit,
+                            })
+                          }
+                          pending={classifyPending}
+                          compact
+                        />
+                      </div>
                     )}
                     {linkedLine && !takeoffUnitsCompatible(measurement.unit, linkedLine.unit) && (
                       <p

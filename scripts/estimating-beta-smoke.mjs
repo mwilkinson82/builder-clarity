@@ -12,12 +12,15 @@ import {
 import { analyzeSovIntake, applyMapping, guessColumnMap } from "../src/lib/sov-import.ts";
 import { ESTIMATE_REGIONS, ESTIMATE_SEED_LIBRARY_ITEMS } from "../src/lib/estimate-seed-data.ts";
 import {
+  buildProjectFieldTexts,
   calculateTakeoffQuantity,
   decimalFeetHint,
+  defaultPlanRoomSheetId,
   groupUnlinkedTakeoffs,
   normalizeTakeoffLabel,
   suggestTakeoffMatches,
   disciplineForSheetNumber,
+  extractSheetIdentities,
   extractSheetIdentity,
   formatFeetInches,
   matchSheetNumber,
@@ -27,6 +30,20 @@ import {
   statedScaleFeetPerPixel,
   takeoffUnitsCompatible,
 } from "../src/lib/plan-room-math.ts";
+import {
+  TAKEOFF_UNDO_DEPTH,
+  commitRedo,
+  commitUndo,
+  dropRedo,
+  dropUndo,
+  emptyTakeoffUndoStack,
+  peekRedoCommand,
+  peekUndoCommand,
+  pushTakeoffCommand,
+  redoOperationFor,
+  remapTakeoffMeasurementId,
+  undoOperationFor,
+} from "../src/lib/takeoff-undo.ts";
 
 const parseDelimited = (text, delimiter) =>
   text
@@ -488,6 +505,150 @@ assert.equal(
   false,
 );
 
+// --- Default current sheet (Phase 4 Task 2) ---
+// Never land on the sample set when real drawings exist. Last-viewed wins
+// when it still exists; else the first sheet of the first real PDF set; else
+// any non-sample set; else whatever exists.
+const defaultSheetFixture = {
+  planSets: [
+    { id: "set-sample", file_mime_type: "sample/overwatch" },
+    { id: "set-image", file_mime_type: "image/png" },
+    { id: "set-pdf", file_mime_type: "application/pdf" },
+  ],
+  sheets: [
+    { id: "sample-1", plan_set_id: "set-sample", sort_order: 1 },
+    { id: "image-1", plan_set_id: "set-image", sort_order: 1 },
+    { id: "pdf-2", plan_set_id: "set-pdf", sort_order: 2 },
+    { id: "pdf-1", plan_set_id: "set-pdf", sort_order: 1 },
+  ],
+};
+assert.equal(
+  defaultPlanRoomSheetId({ lastViewedSheetId: "pdf-2", ...defaultSheetFixture }),
+  "pdf-2",
+);
+assert.equal(
+  defaultPlanRoomSheetId({ lastViewedSheetId: "gone", ...defaultSheetFixture }),
+  "pdf-1",
+);
+assert.equal(defaultPlanRoomSheetId({ lastViewedSheetId: null, ...defaultSheetFixture }), "pdf-1");
+assert.equal(
+  defaultPlanRoomSheetId({
+    lastViewedSheetId: null,
+    planSets: defaultSheetFixture.planSets.filter((set) => set.id !== "set-pdf"),
+    sheets: defaultSheetFixture.sheets.filter((sheet) => sheet.plan_set_id !== "set-pdf"),
+  }),
+  "image-1",
+);
+assert.equal(
+  defaultPlanRoomSheetId({
+    lastViewedSheetId: null,
+    planSets: [{ id: "set-sample", file_mime_type: "sample/overwatch" }],
+    sheets: [{ id: "sample-1", plan_set_id: "set-sample", sort_order: 1 }],
+  }),
+  "sample-1",
+);
+assert.equal(defaultPlanRoomSheetId({ lastViewedSheetId: null, planSets: [], sheets: [] }), null);
+
+// --- Takeoff undo/redo stack (Phase 4 Task 0) ---
+const undoSnapshot = (overrides = {}) => ({
+  estimate_id: "est-1",
+  plan_sheet_id: "sheet-1",
+  estimate_line_item_id: null,
+  library_item_id: null,
+  tool_type: "linear",
+  label: "Wall run",
+  unit: "LF",
+  quantity: 42,
+  waste_pct: 0,
+  color: "#1b7a6e",
+  geometry: { points: [] },
+  notes: "",
+  ...overrides,
+});
+
+// Inverse ops per command kind.
+const createCommand = { kind: "create", measurementId: "m1", snapshot: undoSnapshot() };
+const deleteCommand = { kind: "delete", measurementId: "m2", snapshot: undoSnapshot() };
+const updateCommand = {
+  kind: "update",
+  measurementId: "m3",
+  before: { label: "Wall run", waste_pct: 0 },
+  after: { label: "North wall", waste_pct: 10 },
+};
+assert.deepEqual(undoOperationFor(createCommand), { type: "delete", measurementId: "m1" });
+assert.deepEqual(undoOperationFor(deleteCommand), {
+  type: "create",
+  snapshot: deleteCommand.snapshot,
+  replacesId: "m2",
+});
+assert.deepEqual(undoOperationFor(updateCommand), {
+  type: "update",
+  measurementId: "m3",
+  patch: { label: "Wall run", waste_pct: 0 },
+});
+assert.deepEqual(redoOperationFor(createCommand), {
+  type: "create",
+  snapshot: createCommand.snapshot,
+  replacesId: "m1",
+});
+assert.deepEqual(redoOperationFor(deleteCommand), { type: "delete", measurementId: "m2" });
+assert.deepEqual(redoOperationFor(updateCommand), {
+  type: "update",
+  measurementId: "m3",
+  patch: { label: "North wall", waste_pct: 10 },
+});
+
+// Depth limit: the oldest entries fall off at 50.
+let undoStack = emptyTakeoffUndoStack();
+for (let index = 0; index < 55; index += 1) {
+  undoStack = pushTakeoffCommand(undoStack, {
+    kind: "update",
+    measurementId: `m${index}`,
+    before: { waste_pct: index },
+    after: { waste_pct: index + 1 },
+  });
+}
+assert.equal(TAKEOFF_UNDO_DEPTH, 50);
+assert.equal(undoStack.undo.length, 50);
+assert.equal(undoStack.undo[0].measurementId, "m5");
+assert.equal(peekUndoCommand(undoStack).measurementId, "m54");
+assert.equal(peekRedoCommand(undoStack), null);
+
+// Undo moves the entry to redo; a new command clears the redo branch.
+undoStack = commitUndo(undoStack);
+assert.equal(undoStack.undo.length, 49);
+assert.equal(undoStack.redo.length, 1);
+assert.equal(peekRedoCommand(undoStack).measurementId, "m54");
+undoStack = commitRedo(undoStack);
+assert.equal(undoStack.undo.length, 50);
+assert.equal(undoStack.redo.length, 0);
+undoStack = commitUndo(undoStack);
+undoStack = pushTakeoffCommand(undoStack, createCommand);
+assert.equal(undoStack.redo.length, 0);
+assert.equal(peekUndoCommand(undoStack).measurementId, "m1");
+
+// A failed inverse mutation drops the entry outright — the stack must never
+// disagree with the server.
+const droppedStack = dropUndo(undoStack);
+assert.equal(droppedStack.undo.length, undoStack.undo.length - 1);
+assert.equal(droppedStack.redo.length, 0);
+const redoDropStack = dropRedo(commitUndo(undoStack));
+assert.equal(redoDropStack.redo.length, 0);
+
+// Recreates mint a new server id; every remaining entry follows it.
+let remapStack = emptyTakeoffUndoStack();
+remapStack = pushTakeoffCommand(remapStack, { ...deleteCommand, measurementId: "old-id" });
+remapStack = pushTakeoffCommand(remapStack, {
+  kind: "update",
+  measurementId: "old-id",
+  before: { waste_pct: 0 },
+  after: { waste_pct: 5 },
+});
+remapStack = commitUndo(remapStack);
+remapStack = remapTakeoffMeasurementId(remapStack, "old-id", "new-id");
+assert.equal(remapStack.undo[0].measurementId, "new-id");
+assert.equal(remapStack.redo[0].measurementId, "new-id");
+
 const slab = ESTIMATE_SEED_LIBRARY_ITEMS.find((item) => item.external_id === "slab-4in");
 assert.ok(slab);
 assert.equal(slab.csi_division, "03");
@@ -598,6 +759,105 @@ const rotatedStripIdentity = extractSheetIdentity({
 });
 assert.equal(rotatedStripIdentity.sheetNumber, "S-201");
 assert.equal(rotatedStripIdentity.sheetName, "FOUNDATION PLAN");
+
+// --- Extraction v3: consultant layouts (Phase 4 Task 1) ---
+// Consultant title blocks run a wider full-right-edge strip than the
+// architectural sheets. The number sits in a boxed cell mid-strip (outside
+// the old bottom-right band) and often splits into separate glyph runs.
+const consultantStripIdentity = extractSheetIdentity({
+  items: [
+    { text: "GENERAL STRUCTURAL NOTES", x: 700, y: 1500, height: 12 }, // page body
+    { text: "NBS 365M LLC", x: 2160, y: 1500, height: 11 },
+    { text: "MIAMI GARDENS, FL", x: 2160, y: 1460, height: 10 },
+    { text: "FOUNDATION PLAN", x: 2160, y: 860, height: 14 },
+    { text: "SHEET NO.", x: 2150, y: 760, height: 8 },
+    { text: "S", x: 2150, y: 700, height: 24 }, // boxed cell, split glyph runs
+    { text: "-", x: 2180, y: 700, height: 24 },
+    { text: "201", x: 2200, y: 700, height: 24 },
+    { text: "DRAWN: JT", x: 2160, y: 500, height: 8 },
+  ],
+  ...CARWASH_PAGE,
+});
+assert.equal(consultantStripIdentity.sheetNumber, "S-201");
+assert.equal(consultantStripIdentity.sheetName, "FOUNDATION PLAN");
+
+// Consultant bottom band: taller than the architectural strip, number in a
+// boxed cell at bottom-center (outside the band and the right strip), split
+// into three runs ("M" + "-" + "1.1").
+const consultantBottomBandIdentity = extractSheetIdentity({
+  items: [
+    { text: "MECHANICAL SCHEDULES", x: 900, y: 1000, height: 12 }, // page body
+    { text: "MECHANICAL FLOOR PLAN", x: 1200, y: 280, height: 14 },
+    { text: 'SCALE: 1/8" = 1\'-0"', x: 1200, y: 240, height: 8 },
+    { text: "M", x: 1560, y: 260, height: 22 },
+    { text: "-", x: 1585, y: 260, height: 22 },
+    { text: "1.1", x: 1600, y: 260, height: 22 },
+    { text: "PROJECT NO. 2214", x: 2000, y: 260, height: 8 },
+  ],
+  ...CARWASH_PAGE,
+});
+assert.equal(consultantBottomBandIdentity.sheetNumber, "M-1.1");
+assert.equal(consultantBottomBandIdentity.sheetName, "MECHANICAL FLOOR PLAN");
+
+// --- Extraction v3: cross-sheet frequency filter (Phase 4 Task 1) ---
+// Project-block fields (owner LLC, city) sit closer to the number cell than
+// the real title, so per-sheet extraction alone picks them. They repeat in
+// the same region on every sheet; the set-level pass drops them.
+const projectFieldItems = (y) => [
+  { text: "NBS 365M LLC", x: 2330, y: y + 180, height: 13 },
+  { text: "MIAMI GARDENS, FL", x: 2330, y: y + 150, height: 11 },
+];
+const consultantPage = (number, title, extra = []) => ({
+  items: [
+    ...projectFieldItems(120),
+    { text: title, x: 2330, y: 700, height: 13 },
+    { text: number, x: 2400, y: 120, height: 26 },
+    ...extra,
+  ],
+  ...CARWASH_PAGE,
+});
+const frequencySet = [
+  consultantPage("S-201", "FOUNDATION PLAN"),
+  consultantPage("S-202", "FRAMING PLAN"),
+  consultantPage("M-101", "MECHANICAL FLOOR PLAN"),
+  consultantPage("P-301", "PLUMBING RISER DIAGRAM"),
+  // Two sheets legitimately share a title; two repeats stay under the 3+
+  // project-field threshold and both keep their name.
+  consultantPage("A-501", "ROOF DETAILS"),
+  consultantPage("A-502", "ROOF DETAILS"),
+];
+// Without the set-level filter, the LLC line outscores the real title.
+const contaminated = extractSheetIdentity(frequencySet[0]);
+assert.equal(contaminated.sheetNumber, "S-201");
+assert.equal(contaminated.sheetName.includes("NBS 365M LLC"), true);
+// The set-level pass drops the repeated project fields on every sheet.
+const filteredIdentities = extractSheetIdentities(frequencySet);
+assert.deepEqual(
+  filteredIdentities.map((identity) => identity.sheetNumber),
+  ["S-201", "S-202", "M-101", "P-301", "A-501", "A-502"],
+);
+assert.deepEqual(
+  filteredIdentities.map((identity) => identity.sheetName),
+  [
+    "FOUNDATION PLAN",
+    "FRAMING PLAN",
+    "MECHANICAL FLOOR PLAN",
+    "PLUMBING RISER DIAGRAM",
+    "ROOF DETAILS",
+    "ROOF DETAILS",
+  ],
+);
+for (const identity of filteredIdentities) {
+  assert.equal(identity.sheetName.includes("NBS"), false);
+  assert.equal(identity.sheetName.includes("MIAMI"), false);
+}
+// buildProjectFieldTexts exposes the raw rule for direct checks: 3+ sheets in
+// the same region marks a project field; 2 does not.
+const projectFields = buildProjectFieldTexts(frequencySet);
+assert.equal(projectFields.has("NBS 365M LLC"), true);
+assert.equal(projectFields.has("MIAMI GARDENS, FL"), true);
+assert.equal(projectFields.has("ROOF DETAILS"), false);
+assert.equal(projectFields.has("FOUNDATION PLAN"), false);
 
 console.log(
   [

@@ -89,8 +89,15 @@ import {
 import { downloadPdfBytes, generateEstimatePdf } from "@/lib/estimate-pdf";
 import type { EstimateRegion } from "@/lib/estimate-seed-data";
 import { fmtUSD } from "@/lib/format";
+import { getEstimatePlanSetSummary } from "@/lib/plan-room.functions";
 import { parseCsv, parsePaste, parseXlsx } from "@/lib/sov-import";
 import { Textarea } from "@/components/ui/textarea";
+import { FlagIssueButton } from "@/components/estimates/FlagIssueButton";
+import {
+  EstimateFirstRunLauncher,
+  readFirstRunLauncherDone,
+  writeFirstRunLauncherDone,
+} from "@/components/estimates/EstimateFirstRunLauncher";
 
 type EstimatePatch = Partial<
   Pick<
@@ -485,6 +492,28 @@ export function EstimateWorkspace({
     [estimate, orderedLines],
   );
 
+  // First-run launcher (Phase 4 Task 5): only while the estimate has zero
+  // line items AND zero real plan sets, and only until either ever exists.
+  const loadPlanSetSummaryFn = useServerFn(getEstimatePlanSetSummary);
+  const firstRunDone = readFirstRunLauncherDone(estimate.id);
+  const planSetSummaryQuery = useQuery({
+    queryKey: ["estimate-plan-set-summary", estimate.id],
+    queryFn: () => loadPlanSetSummaryFn({ data: { estimate_id: estimate.id } }),
+    enabled: !isMasterSheet && orderedLines.length === 0 && !firstRunDone,
+  });
+  const realPlanSetCount = planSetSummaryQuery.data?.real_plan_set_count ?? null;
+  const showFirstRunLauncher =
+    !isMasterSheet && !firstRunDone && orderedLines.length === 0 && realPlanSetCount === 0;
+
+  // The moment the estimate has any content, the cards are gone for good —
+  // even if every row is later deleted.
+  useEffect(() => {
+    if (isMasterSheet) return;
+    if (orderedLines.length > 0 || (realPlanSetCount ?? 0) > 0) {
+      writeFirstRunLauncherDone(estimate.id);
+    }
+  }, [estimate.id, isMasterSheet, orderedLines.length, realPlanSetCount]);
+
   const updateEstimatePatch = (patch: UpdateEstimatePayload["patch"]) =>
     updateEstimateMutation.mutate({ id: estimate.id, patch });
 
@@ -651,6 +680,13 @@ export function EstimateWorkspace({
                   </SelectContent>
                 </Select>
               )}
+              <FlagIssueButton
+                getContext={() => ({
+                  estimate_id: estimate.id,
+                  estimate_status: estimate.status,
+                  is_master_sheet: isMasterSheet,
+                })}
+              />
               <Button variant="outline" size="sm" className="gap-1.5" asChild>
                 <Link to="/estimates/$estimateId/plan-room" params={{ estimateId: estimate.id }}>
                   <PencilRuler className="h-3.5 w-3.5" /> Plan Room
@@ -773,70 +809,85 @@ export function EstimateWorkspace({
               </DropdownMenu>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <Table data-estimate-grid className="min-w-[1720px] table-fixed">
-              <TableHeader>
-                <TableRow className="bg-surface [&>th]:whitespace-nowrap">
-                  <TableHead className="w-[44px]" />
-                  <TableHead className="w-[58px]">#</TableHead>
-                  <TableHead className="w-[120px]">Cost Code</TableHead>
-                  <TableHead className="w-[140px]">Group</TableHead>
-                  <TableHead className="w-[360px]">Description</TableHead>
-                  <TableHead className="w-[86px]">Unit</TableHead>
-                  <TableHead className="w-[128px] text-right">Qty</TableHead>
-                  <TableHead className="w-[150px] text-right">Mat $/Unit</TableHead>
-                  <TableHead className="w-[150px] text-right">Labor $/Unit</TableHead>
-                  <TableHead className="w-[145px] text-right">Mat Ext</TableHead>
-                  <TableHead className="w-[145px] text-right">Labor Ext</TableHead>
-                  <TableHead className="w-[145px] text-right">Total</TableHead>
-                  <TableHead className="w-[56px]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {orderedLines.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={13}
-                      className="py-12 text-center text-sm text-muted-foreground"
-                      data-testid="estimate-grid-empty"
-                    >
-                      Measure it in the Plan Room, price it from your Cost Library, or import your
-                      master sheet — start wherever you like.
-                    </TableCell>
+          {showFirstRunLauncher ? (
+            <EstimateFirstRunLauncher
+              onTakeoff={() =>
+                navigate({
+                  to: "/estimates/$estimateId/plan-room",
+                  params: { estimateId: estimate.id },
+                  search: { upload: true },
+                })
+              }
+              onImportMasterSheet={() => setImportOpen(true)}
+              onBuildByHand={() => addBlankRows(1)}
+              disabled={createLinesMutation.isPending}
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <Table data-estimate-grid className="min-w-[1720px] table-fixed">
+                <TableHeader>
+                  <TableRow className="bg-surface [&>th]:whitespace-nowrap">
+                    <TableHead className="w-[44px]" />
+                    <TableHead className="w-[58px]">#</TableHead>
+                    <TableHead className="w-[120px]">Cost Code</TableHead>
+                    <TableHead className="w-[140px]">Group</TableHead>
+                    <TableHead className="w-[360px]">Description</TableHead>
+                    <TableHead className="w-[86px]">Unit</TableHead>
+                    <TableHead className="w-[128px] text-right">Qty</TableHead>
+                    <TableHead className="w-[150px] text-right">Mat $/Unit</TableHead>
+                    <TableHead className="w-[150px] text-right">Labor $/Unit</TableHead>
+                    <TableHead className="w-[145px] text-right">Mat Ext</TableHead>
+                    <TableHead className="w-[145px] text-right">Labor Ext</TableHead>
+                    <TableHead className="w-[145px] text-right">Total</TableHead>
+                    <TableHead className="w-[56px]" />
                   </TableRow>
-                ) : (
-                  orderedLines.map((line, index) => (
-                    <EstimateLineRow
-                      key={line.id}
-                      estimate={estimate}
-                      line={line}
-                      index={index}
-                      onUpdate={(patch) => updateLineMutation.mutate({ id: line.id, patch })}
-                      onDelete={() => deleteLineMutation.mutate(line.id)}
-                      onDragStart={() => setDraggingId(line.id)}
-                      onDrop={() => onDropRow(line.id)}
-                      onCreateNextRow={(colIndex) => {
-                        addBlankRows(1, colIndex);
-                      }}
-                    />
-                  ))
-                )}
-                <TableRow className="bg-surface font-medium">
-                  <TableCell colSpan={9}>Subtotal</TableCell>
-                  <TableCell className="text-right tabular">
-                    {fmtUSD(liveTotals.material_cents / 100)}
-                  </TableCell>
-                  <TableCell className="text-right tabular">
-                    {fmtUSD(liveTotals.labor_cents / 100)}
-                  </TableCell>
-                  <TableCell className="text-right tabular">
-                    {fmtUSD(liveTotals.direct_cents / 100)}
-                  </TableCell>
-                  <TableCell />
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
+                </TableHeader>
+                <TableBody>
+                  {orderedLines.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={13}
+                        className="py-12 text-center text-sm text-muted-foreground"
+                        data-testid="estimate-grid-empty"
+                      >
+                        Measure it in the Plan Room, price it from your Cost Library, or import your
+                        master sheet — start wherever you like.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    orderedLines.map((line, index) => (
+                      <EstimateLineRow
+                        key={line.id}
+                        estimate={estimate}
+                        line={line}
+                        index={index}
+                        onUpdate={(patch) => updateLineMutation.mutate({ id: line.id, patch })}
+                        onDelete={() => deleteLineMutation.mutate(line.id)}
+                        onDragStart={() => setDraggingId(line.id)}
+                        onDrop={() => onDropRow(line.id)}
+                        onCreateNextRow={(colIndex) => {
+                          addBlankRows(1, colIndex);
+                        }}
+                      />
+                    ))
+                  )}
+                  <TableRow className="bg-surface font-medium">
+                    <TableCell colSpan={9}>Subtotal</TableCell>
+                    <TableCell className="text-right tabular">
+                      {fmtUSD(liveTotals.material_cents / 100)}
+                    </TableCell>
+                    <TableCell className="text-right tabular">
+                      {fmtUSD(liveTotals.labor_cents / 100)}
+                    </TableCell>
+                    <TableCell className="text-right tabular">
+                      {fmtUSD(liveTotals.direct_cents / 100)}
+                    </TableCell>
+                    <TableCell />
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </section>
 
         <EstimateSummaryPanel

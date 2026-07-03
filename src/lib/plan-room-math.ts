@@ -239,11 +239,50 @@ const TITLE_BLOCK_FIELD_LABELS =
   /^(scale|date|drawn|checked|approved|designed|reviewed|project\s*(no|number)?|job\s*(no|number)?|sheet\s*(no|number)?|rev(ision)?s?|of|as\s+noted|as\s+shown|issued?|plot\s*(date|by)|drawing\s*(no|number)|dwg|file\s*(no|name)?|copyright|key\s*plan|seal|stamp|phone|fax|e-?mail|consultants?)\b/i;
 
 // Candidate regions, as fractions of the page. The union of the three covers
-// the places real title blocks live.
+// the places real title blocks live. Consultant sets (structural/MEP/plumbing)
+// run wider right-edge strips and taller bottom bands than architectural
+// sheets, so those two regions are sized for the consultant layouts.
 const TITLE_REGION_BAND_X = 0.72; // bottom-right band: right 28% ...
 const TITLE_REGION_BAND_Y = 0.32; // ... x bottom 32% (the original region)
-const TITLE_REGION_RIGHT_STRIP_X = 0.86; // right-edge vertical strip, full height
-const TITLE_REGION_BOTTOM_STRIP_Y = 0.14; // bottom strip, full width
+const TITLE_REGION_RIGHT_STRIP_X = 0.82; // right-edge vertical strip, full height
+const TITLE_REGION_BOTTOM_STRIP_Y = 0.18; // bottom strip, full width
+
+const TITLE_REGION_KEYS = ["band", "right-strip", "bottom-strip"] as const;
+type TitleRegionKey = (typeof TITLE_REGION_KEYS)[number];
+
+function itemInTitleRegion(
+  item: { x: number; y: number },
+  pageWidth: number,
+  pageHeight: number,
+): boolean {
+  return (
+    (item.x >= pageWidth * TITLE_REGION_BAND_X && item.y <= pageHeight * TITLE_REGION_BAND_Y) ||
+    item.x >= pageWidth * TITLE_REGION_RIGHT_STRIP_X ||
+    item.y <= pageHeight * TITLE_REGION_BOTTOM_STRIP_Y
+  );
+}
+
+// Which candidate regions a clustered line touches. Project-block fields
+// repeat "in the same region" across a set, so the cross-sheet frequency
+// filter counts occurrences per (region, text) pair.
+function lineTitleRegions(
+  line: { xMax: number; yMin: number },
+  pageWidth: number,
+  pageHeight: number,
+): TitleRegionKey[] {
+  const regions: TitleRegionKey[] = [];
+  if (
+    line.xMax >= pageWidth * TITLE_REGION_BAND_X &&
+    line.yMin <= pageHeight * TITLE_REGION_BAND_Y
+  ) {
+    regions.push("band");
+  }
+  if (line.xMax >= pageWidth * TITLE_REGION_RIGHT_STRIP_X) regions.push("right-strip");
+  if (line.yMin <= pageHeight * TITLE_REGION_BOTTOM_STRIP_Y) regions.push("bottom-strip");
+  return regions;
+}
+
+const normalizeTitleText = (text: string) => text.replace(/\s+/g, " ").trim().toUpperCase();
 
 const DEFAULT_TEXT_ITEM_HEIGHT = 8;
 // Rough advance of a text run when pdfjs gives no width: chars x height x 0.55.
@@ -404,6 +443,24 @@ function collectSheetNumberCandidates(lines: ExtractedLine[]): SheetNumberCandid
         });
       }
     }
+    // Consultant boxed number cells often emit three glyph runs ("S" + "-" +
+    // "201"); join adjacent triples under the same field-label guard.
+    for (let index = 2; index < line.items.length; index += 1) {
+      const first = line.items[index - 2];
+      const second = line.items[index - 1];
+      const third = line.items[index];
+      if (/^(rev|no)[-–—.]?$/i.test(first.text)) continue;
+      const value = matchSheetNumber(`${first.text}${second.text}${third.text}`);
+      if (value) {
+        candidates.push({
+          value,
+          x: first.x,
+          y: Math.min(first.y, second.y, third.y),
+          height: Math.max(first.height, second.height, third.height),
+          line,
+        });
+      }
+    }
     if (line.items.length >= 3) {
       const value = matchSheetNumber(line.text.replace(/\s+/g, ""));
       if (value) {
@@ -440,17 +497,19 @@ export function extractSheetIdentity({
   items,
   pageWidth,
   pageHeight,
+  projectFieldTexts,
 }: {
   items: SheetTextItem[];
   pageWidth: number;
   pageHeight: number;
+  // Normalized text that repeats in the same title region across the set
+  // (owner, address, project name). Never a sheet title. See
+  // buildProjectFieldTexts.
+  projectFieldTexts?: Set<string>;
 }): { sheetNumber: string | null; sheetName: string | null } {
   if (pageWidth <= 0 || pageHeight <= 0) return { sheetNumber: null, sheetName: null };
   const nonEmpty = items.filter((item) => item.text.trim().length > 0);
-  const inTitleRegion = (item: SheetTextItem) =>
-    (item.x >= pageWidth * TITLE_REGION_BAND_X && item.y <= pageHeight * TITLE_REGION_BAND_Y) ||
-    item.x >= pageWidth * TITLE_REGION_RIGHT_STRIP_X ||
-    item.y <= pageHeight * TITLE_REGION_BOTTOM_STRIP_Y;
+  const inTitleRegion = (item: SheetTextItem) => itemInTitleRegion(item, pageWidth, pageHeight);
   const regionItems = nonEmpty.filter(inTitleRegion);
   if (regionItems.length === 0) return { sheetNumber: null, sheetName: null };
   const lines = clusterTextLines(regionItems);
@@ -477,10 +536,9 @@ export function extractSheetIdentity({
   // regions is a detail caption, not a sheet name ("DOOR JAMB AT GWB
   // PARTITION" repeats under its detail view mid-page).
   const outsideTexts = new Set<string>();
-  const normalizeForDedupe = (text: string) => text.replace(/\s+/g, " ").trim().toUpperCase();
   for (const line of clusterTextLines(nonEmpty.filter((item) => !inTitleRegion(item)))) {
-    outsideTexts.add(normalizeForDedupe(line.text));
-    for (const item of line.items) outsideTexts.add(normalizeForDedupe(item.text));
+    outsideTexts.add(normalizeTitleText(line.text));
+    for (const item of line.items) outsideTexts.add(normalizeTitleText(item.text));
   }
 
   // Sheet name: the best multi-word line adjacent to the chosen number —
@@ -492,7 +550,8 @@ export function extractSheetIdentity({
     if (TITLE_BLOCK_FIELD_LABELS.test(line.text)) return false;
     if (!/[A-Za-z]{3,}/.test(line.text)) return false;
     if (line.text.split(/\s+/).length < 2 && line.text.length < 6) return false;
-    if (outsideTexts.has(normalizeForDedupe(line.text))) return false;
+    if (outsideTexts.has(normalizeTitleText(line.text))) return false;
+    if (projectFieldTexts?.has(normalizeTitleText(line.text))) return false;
     if (line.yMax < chosen.y - chosen.height * 2.5) return false; // beneath the number
     if (intervalDistance(chosen.y, line.yMin, line.yMax) > pageHeight * 0.5) return false;
     if (intervalDistance(chosen.x, line.xMin, line.xMax) > pageWidth * 0.45) return false;
@@ -537,6 +596,103 @@ export function extractSheetIdentity({
   }
 
   return { sheetNumber: chosen.value, sheetName };
+}
+
+// --- Default current sheet ----------------------------------------------------
+// The Harbor demo sample set uses this mime type. On load, the current sheet
+// must never default to a sample when the contractor has real drawings: the
+// sample hides PDF-only actions (Detect) and reads as "where are my plans?".
+
+export const SAMPLE_PLAN_SET_MIME = "sample/overwatch";
+
+export function defaultPlanRoomSheetId({
+  lastViewedSheetId,
+  planSets,
+  sheets,
+}: {
+  lastViewedSheetId: string | null;
+  // In UI order: the workspace lists plan sets most recently updated first.
+  planSets: Array<{ id: string; file_mime_type: string }>;
+  sheets: Array<{ id: string; plan_set_id: string; sort_order: number }>;
+}): string | null {
+  if (lastViewedSheetId && sheets.some((sheet) => sheet.id === lastViewedSheetId)) {
+    return lastViewedSheetId;
+  }
+  const firstSheetOfSet = (planSetId: string) =>
+    sheets
+      .filter((sheet) => sheet.plan_set_id === planSetId)
+      .sort((a, b) => a.sort_order - b.sort_order)[0] ?? null;
+  const firstSheetMatching = (setMatches: (set: { file_mime_type: string }) => boolean) => {
+    for (const planSet of planSets) {
+      if (!setMatches(planSet)) continue;
+      const sheet = firstSheetOfSet(planSet.id);
+      if (sheet) return sheet.id;
+    }
+    return null;
+  };
+  return (
+    // A real uploaded PDF set beats everything else...
+    firstSheetMatching((set) => set.file_mime_type === "application/pdf") ??
+    // ...then any real (non-sample) set, e.g. uploaded images...
+    firstSheetMatching((set) => set.file_mime_type !== SAMPLE_PLAN_SET_MIME) ??
+    // ...then whatever exists.
+    sheets[0]?.id ??
+    null
+  );
+}
+
+// --- Cross-sheet extraction --------------------------------------------------
+// Project-block fields (owner LLC, site address, project name) repeat in the
+// same title region on sheet after sheet, while a real sheet title is unique
+// to its page. Any candidate line whose normalized text shows up in the same
+// region on PROJECT_FIELD_MIN_SHEETS or more sheets is a project field and
+// never offered as a title.
+
+export type SheetIdentityPage = {
+  items: SheetTextItem[];
+  pageWidth: number;
+  pageHeight: number;
+};
+
+export const PROJECT_FIELD_MIN_SHEETS = 3;
+
+export function buildProjectFieldTexts(
+  pages: SheetIdentityPage[],
+  minSheets = PROJECT_FIELD_MIN_SHEETS,
+): Set<string> {
+  const pageCountByKey = new Map<string, number>();
+  for (const page of pages) {
+    if (page.pageWidth <= 0 || page.pageHeight <= 0) continue;
+    const keys = new Set<string>();
+    const regionItems = page.items.filter(
+      (item) =>
+        item.text.trim().length > 0 && itemInTitleRegion(item, page.pageWidth, page.pageHeight),
+    );
+    for (const line of clusterTextLines(regionItems)) {
+      const text = normalizeTitleText(line.text);
+      if (!text) continue;
+      for (const region of lineTitleRegions(line, page.pageWidth, page.pageHeight)) {
+        keys.add(`${region}|${text}`);
+      }
+    }
+    for (const key of keys) {
+      pageCountByKey.set(key, (pageCountByKey.get(key) ?? 0) + 1);
+    }
+  }
+  const projectFields = new Set<string>();
+  for (const [key, count] of pageCountByKey) {
+    if (count >= minSheets) projectFields.add(key.slice(key.indexOf("|") + 1));
+  }
+  return projectFields;
+}
+
+// Set-level extraction: one frequency pass over every page, then per-page
+// identity with the shared project fields filtered out of title candidates.
+export function extractSheetIdentities(
+  pages: SheetIdentityPage[],
+): Array<{ sheetNumber: string | null; sheetName: string | null }> {
+  const projectFieldTexts = buildProjectFieldTexts(pages);
+  return pages.map((page) => extractSheetIdentity({ ...page, projectFieldTexts }));
 }
 
 // --- Decimal-feet trap -------------------------------------------------------

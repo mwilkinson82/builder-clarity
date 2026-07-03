@@ -262,6 +262,35 @@ export const clearCockpitPanelLayoutStorage = () => {
   }
 };
 
+// Last-viewed sheet per estimate, so reopening the Plan Room lands where the
+// contractor left off. Same storage-blocked fallback story as the panel
+// layouts: an in-memory copy keeps the session working.
+const LAST_VIEWED_SHEET_STORAGE_PREFIX = "overwatch.plan-room.last-sheet.v1.";
+const lastViewedSheetMemoryStore = new Map<string, string>();
+
+export const readLastViewedSheetStorage = (estimateId: string): string | null => {
+  if (typeof window === "undefined") return lastViewedSheetMemoryStore.get(estimateId) ?? null;
+  try {
+    return (
+      window.localStorage.getItem(`${LAST_VIEWED_SHEET_STORAGE_PREFIX}${estimateId}`) ??
+      lastViewedSheetMemoryStore.get(estimateId) ??
+      null
+    );
+  } catch {
+    return lastViewedSheetMemoryStore.get(estimateId) ?? null;
+  }
+};
+
+export const writeLastViewedSheetStorage = (estimateId: string, sheetId: string) => {
+  lastViewedSheetMemoryStore.set(estimateId, sheetId);
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`${LAST_VIEWED_SHEET_STORAGE_PREFIX}${estimateId}`, sheetId);
+  } catch {
+    // Storage is blocked; the in-memory copy above keeps the session working.
+  }
+};
+
 export const cockpitPanelLayoutsEqual = (a: CockpitPanelLayout, b: CockpitPanelLayout) =>
   a.anchor === b.anchor &&
   a.x === b.x &&
