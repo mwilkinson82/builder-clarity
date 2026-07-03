@@ -9,21 +9,19 @@ import { type ProjectRow } from "@/lib/projects.functions";
 import { computeScheduleVarianceWeeks } from "@/lib/ior";
 import { type ConstructLineCpmModel, type ConstructLineCpmTask } from "@/lib/constructline-cpm";
 import {
-  type CpmMilestoneForecast,
-  type CpmScheduleUpdateDraft,
   DAY_MS,
-  type DelayFragmentSummary,
-  shortDate,
-  varianceLabel,
-} from "./scheduleShared";
-import {
   getActivityBaselineFinish,
   getActivityBaselineStart,
   getActivityForecastFinish,
   getActivityForecastStart,
   isoDateFromMs,
   parseDateMs,
-} from "./ScheduleSnapshotTimeline";
+  shortDate,
+  type CpmMilestoneForecast,
+  type CpmScheduleUpdateDraft,
+  type DelayFragmentSummary,
+  varianceLabel,
+} from "./scheduleShared";
 
 export function buildCpmScheduleUpdateDraft({
   dataDate,

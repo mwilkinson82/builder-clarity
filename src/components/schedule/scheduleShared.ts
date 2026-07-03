@@ -404,3 +404,47 @@ export function shortPrintDate(value?: string | null) {
   if (!year || !month || !day) return value;
   return `${month}/${day}/${year.slice(2)}`;
 }
+
+export function parseDateMs(value?: string | null) {
+  if (!value) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return Date.UTC(year, month - 1, day);
+}
+
+export function isoDateFromMs(ms: number) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+export function getActivityBaselineStart(activity: ScheduleActivityRow) {
+  return activity.baseline_start_date ?? activity.start_date;
+}
+
+export function getActivityBaselineFinish(activity: ScheduleActivityRow) {
+  return activity.baseline_finish_date ?? activity.finish_date;
+}
+
+export function getActivityForecastStart(activity: ScheduleActivityRow) {
+  return (
+    activity.actual_start_date ??
+    activity.forecast_start_date ??
+    activity.start_date ??
+    activity.baseline_start_date
+  );
+}
+
+export function getActivityForecastFinish(activity: ScheduleActivityRow) {
+  return (
+    activity.actual_finish_date ??
+    activity.forecast_finish_date ??
+    activity.finish_date ??
+    activity.baseline_finish_date
+  );
+}
+
+export function getDateDurationDays(startDate?: string | null, finishDate?: string | null) {
+  const start = parseDateMs(startDate);
+  const finish = parseDateMs(finishDate);
+  if (start == null || finish == null) return null;
+  return Math.max(1, Math.round((finish - start) / DAY_MS) + 1);
+}

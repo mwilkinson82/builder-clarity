@@ -17,7 +17,9 @@ import {
   SCHEDULE_LOOKAHEAD_DAYS,
   type ScheduleActivityOrder,
   type ScheduleGridView,
+  isoDateFromMs,
   naturalScheduleCompare,
+  parseDateMs,
   shortDate,
   todayIsoDate,
 } from "./scheduleShared";
@@ -33,7 +35,7 @@ import {
   taskNeedsStatusUpdateBasis,
   taskNeedsUpdateQueueAction,
 } from "@/lib/schedule-update-queue";
-import { isoDateFromMs, parseDateMs } from "./ScheduleSnapshotTimeline";
+
 
 export function getDelayPeriodLabel(days: number, width: number, isPrintMode: boolean) {
   if (days <= 0 || width <= 0) return null;
@@ -218,7 +220,7 @@ export function getActivityMatrixTaskRowHeight(
   const estimatedFlagRows = flagCount === 0 ? 0 : Math.ceil(flagCount / flagsPerRow);
 
   if (isPrintMode) {
-    return Math.min(84, Math.max(31, 22 + estimatedNameLines * 7 + estimatedFlagRows * 8));
+    return Math.min(84, Math.max(28, 20 + estimatedNameLines * 7 + estimatedFlagRows * 8));
   }
 
   return Math.min(220, Math.max(72, 44 + estimatedNameLines * 16 + estimatedFlagRows * 21));
@@ -229,7 +231,13 @@ function estimateActivityNameLines(
   isPrintMode: boolean,
   activityColumnWidth: number,
 ) {
-  const charsPerLine = Math.max(isPrintMode ? 18 : 16, Math.floor(activityColumnWidth / 7));
+  // Print renders at 6.4px type — a character is ~3.5px wide, not the ~7px of
+  // the on-screen grid. Estimating with the screen divisor doubled the line
+  // count and padded every print row with dead whitespace.
+  const charsPerLine = Math.max(
+    isPrintMode ? 30 : 16,
+    Math.floor(activityColumnWidth / (isPrintMode ? 3.8 : 7)),
+  );
   const maxLines = isPrintMode ? 6 : 5;
   return Math.max(1, Math.min(maxLines, Math.ceil(name.length / charsPerLine)));
 }
