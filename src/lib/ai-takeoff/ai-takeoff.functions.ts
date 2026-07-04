@@ -3,12 +3,13 @@
 // records from model output — proposals go back to the client for human
 // review. Credits are charged up front and refunded automatically when an
 // operation fails (compensating credit_ledger entry).
+// Shared Supabase/storage plumbing lives in ai-takeoff-server-shared.ts;
+// the diagnostics reader lives in ai-scan-diagnostics.functions.ts.
 
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
-  AI_COUNT_SCAN_CREDITS_PER_SHEET,
   computeApiCostCents,
   creditBalance,
   DEFAULT_MAX_SHEETS_PER_SCAN,
@@ -27,79 +28,20 @@ import {
   type AiCountCandidate,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
 import { tileLocalToSheetPoint, type DetectionTileFrame } from "@/lib/ai-takeoff/coord-transforms";
-
-type DynamicSupabaseError = { code?: string; message: string };
-type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
-type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
-  select(columns?: string): DynamicSupabaseQuery;
-  insert(values: unknown): DynamicSupabaseQuery;
-  update(values: unknown): DynamicSupabaseQuery;
-  eq(column: string, value: unknown): DynamicSupabaseQuery;
-  is(column: string, value: null): DynamicSupabaseQuery;
-  in(column: string, values: readonly string[]): DynamicSupabaseQuery;
-  single(): Promise<DynamicSupabaseResult>;
-  maybeSingle(): Promise<DynamicSupabaseResult>;
-};
-
-const dynamicTable = (supabase: unknown, relation: string) =>
-  (supabase as { from(table: string): DynamicSupabaseQuery }).from(relation);
-
-const str = (value: unknown, fallback = "") => (value == null ? fallback : String(value));
-const num = (value: unknown, fallback = 0) => {
-  const next = Number(value);
-  return Number.isFinite(next) ? next : fallback;
-};
-
-function isMissingCreditsSchema(error: DynamicSupabaseError | null | undefined) {
-  const message = error?.message?.toLowerCase() ?? "";
-  return (
-    error?.code === "42P01" ||
-    error?.code === "PGRST205" ||
-    ((message.includes("does not exist") || message.includes("schema cache")) &&
-      (message.includes("credit_ledger") || message.includes("ai_operations")))
-  );
-}
-
-const CREDITS_SCHEMA_PENDING_MESSAGE =
-  "AI credits are still being set up for this workspace. Try again after the latest database migration is applied.";
-
-export interface AiOperationRow {
-  id: string;
-  organization_id: string;
-  created_by: string | null;
-  operation_type: string;
-  estimate_id: string | null;
-  sheet_ids: string[];
-  sheets_completed: number;
-  model_used: string;
-  input_tokens: number;
-  output_tokens: number;
-  api_cost_cents: number;
-  credits_charged: number;
-  status: "pending" | "succeeded" | "failed";
-  error: string;
-  created_at: string;
-  updated_at: string;
-}
-
-const normalizeOperation = (row: Record<string, unknown>): AiOperationRow => ({
-  id: str(row.id),
-  organization_id: str(row.organization_id),
-  created_by: (row.created_by as string | null) ?? null,
-  operation_type: str(row.operation_type, "ai_count_scan"),
-  estimate_id: (row.estimate_id as string | null) ?? null,
-  sheet_ids: Array.isArray(row.sheet_ids) ? row.sheet_ids.map((id) => str(id)) : [],
-  sheets_completed: Math.max(0, Math.round(num(row.sheets_completed))),
-  model_used: str(row.model_used),
-  input_tokens: Math.max(0, Math.round(num(row.input_tokens))),
-  output_tokens: Math.max(0, Math.round(num(row.output_tokens))),
-  api_cost_cents: Math.max(0, Math.round(num(row.api_cost_cents))),
-  credits_charged: Math.max(0, Math.round(num(row.credits_charged))),
-  status: (str(row.status, "pending") as AiOperationRow["status"]) || "pending",
-  error: str(row.error),
-  created_at: str(row.created_at),
-  updated_at: str(row.updated_at),
-});
+import {
+  base64ToBytes,
+  CREDITS_SCHEMA_PENDING_MESSAGE,
+  diagnosticsFolder,
+  dynamicTable,
+  isMissingCreditsSchema,
+  normalizeOperation,
+  pruneOldDiagnostics,
+  str,
+  uploadDiagnostic,
+  type AiOperationRow,
+  type DynamicSupabaseError,
+  type DynamicSupabaseResult,
+} from "@/lib/ai-takeoff/ai-takeoff-server-shared";
 
 function maxSheetsPerScan(): number {
   const raw = Number(process.env.AI_SCAN_MAX_SHEETS);
@@ -116,95 +58,6 @@ function minProposalConfidence(): number {
 function maxProposalsPerSheet(): number {
   const raw = Number(process.env.AI_MAX_PROPOSALS_PER_SHEET);
   return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MAX_PROPOSALS_PER_SHEET;
-}
-
-// --- Scan diagnostics (AITAKEOFF2 Task 4) ---
-// Transient artifacts in the existing plan-room bucket, one folder per
-// operation: the exemplar image actually sent, every tile with its
-// sheet-space frame, the raw model response, and the mapped positions.
-// Uploads are strictly best-effort — diagnostics must never fail a scan.
-
-const AI_DIAGNOSTICS_BUCKET = "plan-room";
-const AI_DIAGNOSTICS_PREFIX = "ai-diagnostics";
-const AI_DIAGNOSTICS_RETENTION_MS = 24 * 60 * 60 * 1000;
-
-type StorageClient = {
-  storage: {
-    from(bucket: string): {
-      upload(
-        path: string,
-        body: Uint8Array,
-        options?: { contentType?: string; upsert?: boolean },
-      ): Promise<{ error: { message: string } | null }>;
-      list(
-        path: string,
-        options?: { limit?: number },
-      ): Promise<{
-        data: Array<{ name: string; created_at?: string }> | null;
-        error: { message: string } | null;
-      }>;
-      remove(paths: string[]): Promise<{ error: { message: string } | null }>;
-      download(path: string): Promise<{ data: Blob | null; error: { message: string } | null }>;
-      createSignedUrl(
-        path: string,
-        expiresIn: number,
-      ): Promise<{ data: { signedUrl: string } | null; error: { message: string } | null }>;
-    };
-  };
-};
-
-function diagnosticsFolder(organizationId: string, operationId: string) {
-  return `${AI_DIAGNOSTICS_PREFIX}/${organizationId}/${operationId}`;
-}
-
-// atob/TextEncoder are Node globals too; keeps this file off Buffer typings.
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-async function uploadDiagnostic(
-  admin: unknown,
-  path: string,
-  body: Uint8Array,
-  contentType: string,
-) {
-  try {
-    await (admin as StorageClient).storage
-      .from(AI_DIAGNOSTICS_BUCKET)
-      .upload(path, body, { contentType, upsert: true });
-  } catch {
-    // Best-effort only.
-  }
-}
-
-/** 24h cleanup: drop whole diagnostic folders whose files are all stale. */
-async function pruneOldDiagnostics(admin: unknown, organizationId: string) {
-  try {
-    const storage = (admin as StorageClient).storage.from(AI_DIAGNOSTICS_BUCKET);
-    const orgPrefix = `${AI_DIAGNOSTICS_PREFIX}/${organizationId}`;
-    const { data: folders } = await storage.list(orgPrefix, { limit: 12 });
-    if (!folders) return;
-    const cutoff = Date.now() - AI_DIAGNOSTICS_RETENTION_MS;
-    for (const folder of folders) {
-      if (!folder.name) continue;
-      const folderPath = `${orgPrefix}/${folder.name}`;
-      const { data: files } = await storage.list(folderPath, { limit: 100 });
-      if (!files || files.length === 0) continue;
-      const allStale = files.every((file) => {
-        const created = Date.parse(file.created_at ?? "");
-        return Number.isFinite(created) && created < cutoff;
-      });
-      if (!allStale) continue;
-      await storage.remove(files.map((file) => `${folderPath}/${file.name}`));
-    }
-  } catch {
-    // Best-effort only.
-  }
 }
 
 async function loadOwnedPendingOperation(
@@ -633,155 +486,4 @@ export const failAiCountScan = createServerFn({ method: "POST" })
       data.reason.trim() || "Scan cancelled before it finished.",
     );
     return { ok: true };
-  });
-
-const diagnosticsInput = z.object({
-  operation_id: z.string().uuid(),
-});
-
-export interface AiScanDiagnosticsTile {
-  sheetId: string;
-  tileIndex: number;
-  imageUrl: string | null;
-  rect: { left: number; top: number; width: number; height: number } | null;
-  frame: DetectionTileFrame | null;
-  exemplarDescription: string;
-  rawResponse: string;
-  mappedCandidates: AiCountCandidate[];
-  usage: { inputTokens: number; outputTokens: number } | null;
-}
-
-export interface AiScanDiagnostics {
-  operation: {
-    id: string;
-    status: string;
-    modelUsed: string;
-    exemplarDescription: string;
-    sheetIds: string[];
-    sheetsCompleted: number;
-    creditsCharged: number;
-    apiCostCents: number;
-    inputTokens: number;
-    outputTokens: number;
-    createdAt: string;
-    error: string;
-  };
-  exemplarUrl: string | null;
-  tiles: AiScanDiagnosticsTile[];
-  diagnosticsAvailable: boolean;
-}
-
-/**
- * Scan diagnostics (AITAKEOFF2 Task 4) — the founder's microscope. Super
- * admin only: shows the exemplar crop actually sent to the model, every tile
- * with its sheet-space origin, the raw model responses, and the mapped
- * positions. Images are transient (24h prune on the next scan).
- */
-export const getAiScanDiagnostics = createServerFn({ method: "GET" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input: z.input<typeof diagnosticsInput>) => diagnosticsInput.parse(input))
-  .handler(async ({ data, context }): Promise<AiScanDiagnostics> => {
-    const { data: isSuper, error: superError } = await (
-      context.supabase as unknown as { rpc(fn: string): Promise<DynamicSupabaseResult<boolean>> }
-    ).rpc("is_super_admin");
-    if (superError) throw new Error(superError.message);
-    if (!isSuper) {
-      throw new Error("Scan diagnostics are only available to the platform super admin.");
-    }
-
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: operationRow, error: operationError } = await dynamicTable(
-      supabaseAdmin,
-      "ai_operations",
-    )
-      .select("*")
-      .eq("id", data.operation_id)
-      .maybeSingle();
-    if (operationError) {
-      if (isMissingCreditsSchema(operationError)) throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
-      throw new Error(operationError.message);
-    }
-    if (!operationRow) throw new Error("That AI operation was not found.");
-    const operation = normalizeOperation(operationRow as Record<string, unknown>);
-    const exemplarDescription = str((operationRow as Record<string, unknown>).exemplar_description);
-
-    const summary: AiScanDiagnostics["operation"] = {
-      id: operation.id,
-      status: operation.status,
-      modelUsed: operation.model_used,
-      exemplarDescription,
-      sheetIds: operation.sheet_ids,
-      sheetsCompleted: operation.sheets_completed,
-      creditsCharged: operation.credits_charged,
-      apiCostCents: operation.api_cost_cents,
-      inputTokens: operation.input_tokens,
-      outputTokens: operation.output_tokens,
-      createdAt: operation.created_at,
-      error: operation.error,
-    };
-
-    const storage = (supabaseAdmin as unknown as StorageClient).storage.from(AI_DIAGNOSTICS_BUCKET);
-    const folder = diagnosticsFolder(operation.organization_id, operation.id);
-    const { data: files } = await storage.list(folder, { limit: 200 });
-    if (!files || files.length === 0) {
-      return { operation: summary, exemplarUrl: null, tiles: [], diagnosticsAvailable: false };
-    }
-
-    const signedUrlFor = async (name: string) => {
-      const { data: signed } = await storage.createSignedUrl(`${folder}/${name}`, 3600);
-      return signed?.signedUrl ?? null;
-    };
-
-    const fileNames = new Set(files.map((file) => file.name));
-    const exemplarUrl = fileNames.has("exemplar.png") ? await signedUrlFor("exemplar.png") : null;
-
-    const tiles: AiScanDiagnosticsTile[] = [];
-    for (const file of files) {
-      if (!file.name.endsWith(".json")) continue;
-      let meta: Record<string, unknown> = {};
-      try {
-        const { data: blob } = await storage.download(`${folder}/${file.name}`);
-        if (blob) meta = JSON.parse(await blob.text()) as Record<string, unknown>;
-      } catch {
-        // A corrupt diagnostic file still gets a row so the gap is visible.
-      }
-      const imageName = file.name.replace(/\.json$/, ".png");
-      const rect = (meta.rect ?? null) as AiScanDiagnosticsTile["rect"];
-      const frame = (meta.frame ?? null) as DetectionTileFrame | null;
-      const mapped = Array.isArray(meta.mappedCandidates)
-        ? (meta.mappedCandidates as AiCountCandidate[])
-        : [];
-      tiles.push({
-        sheetId: str(meta.sheetId),
-        tileIndex: Math.max(0, Math.round(num(meta.tileIndex))),
-        imageUrl: fileNames.has(imageName) ? await signedUrlFor(imageName) : null,
-        rect,
-        frame,
-        exemplarDescription: str(meta.exemplarDescription),
-        rawResponse: str(meta.rawResponse),
-        mappedCandidates: mapped,
-        usage:
-          meta.usage && typeof meta.usage === "object"
-            ? {
-                inputTokens: Math.max(
-                  0,
-                  Math.round(num((meta.usage as Record<string, unknown>).inputTokens)),
-                ),
-                outputTokens: Math.max(
-                  0,
-                  Math.round(num((meta.usage as Record<string, unknown>).outputTokens)),
-                ),
-              }
-            : null,
-      });
-    }
-
-    const sheetOrder = new Map(operation.sheet_ids.map((id, index) => [id, index]));
-    tiles.sort((a, b) => {
-      const sheetSort = (sheetOrder.get(a.sheetId) ?? 999) - (sheetOrder.get(b.sheetId) ?? 999);
-      if (sheetSort !== 0) return sheetSort;
-      return a.tileIndex - b.tileIndex;
-    });
-
-    return { operation: summary, exemplarUrl, tiles, diagnosticsAvailable: true };
   });

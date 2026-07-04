@@ -21,7 +21,7 @@ import { Label } from "@/components/ui/label";
 import {
   getAiScanDiagnostics,
   type AiScanDiagnostics as AiScanDiagnosticsData,
-} from "@/lib/ai-takeoff/ai-takeoff.functions";
+} from "@/lib/ai-takeoff/ai-scan-diagnostics.functions";
 
 export function AiScanDiagnosticsDialog({
   open,
