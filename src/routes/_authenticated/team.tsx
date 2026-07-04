@@ -538,6 +538,46 @@ function TeamPage() {
     },
   });
 
+  // Billing contact lives in Getting Paid but writes through the same
+  // updateOrganization call as the company record. The validator blanks any
+  // omitted field, so send the full organization payload from server truth.
+  const billingContactMutation = useMutation({
+    mutationFn: (next: { name: string; email: string }) => {
+      if (!team) throw new Error("Company workspace is still loading.");
+      const organization = team.organization;
+      return saveOrganization({
+        data: {
+          name: organization.name,
+          slug: organization.slug,
+          legal_name: organization.legal_name,
+          website_url: normalizeWebsiteInput(organization.website_url),
+          office_phone: organization.office_phone,
+          address_line1: organization.address_line1,
+          address_line2: organization.address_line2,
+          city: organization.city,
+          state: organization.state,
+          postal_code: organization.postal_code,
+          country: organization.country,
+          license_number: organization.license_number,
+          tax_identifier: organization.tax_identifier,
+          logo_url: organization.logo_url,
+          logo_path: organization.logo_path,
+          billing_contact_name: next.name,
+          billing_email: next.email,
+        },
+      });
+    },
+    onSuccess: async () => {
+      await refreshWorkspace();
+      toast.success("Billing contact saved");
+    },
+    onError: (error) => {
+      toast.error("Billing contact did not save", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    },
+  });
+
   const inviteMutation = useMutation({
     mutationFn: async () => {
       const email = inviteEmail.trim().toLowerCase();
@@ -783,6 +823,18 @@ function TeamPage() {
     clientPermissionSavingKey === `${accessId}:${field}`;
   // One admin list: the workspace payload asks the database's is_super_admin().
   const canOpenOverwatchAdmin = Boolean(team?.isSuperAdmin);
+  const subscriptionReady = Boolean(
+    team?.organization.stripe_customer_id && team?.organization.stripe_subscription_id,
+  );
+  const subscriptionNote = subscriptionReady
+    ? `Overwatch subscription: connected${
+        team?.organization.subscription_current_period_end
+          ? ` through ${shortDate(team.organization.subscription_current_period_end)}`
+          : ""
+      }. Client invoice payments run separately from the subscription.`
+    : team?.organization.stripe_price_id
+      ? "Overwatch subscription: price staged — ready for Stripe Checkout Sessions once live plan prices are connected. Client invoice payments run separately from the subscription."
+      : "Overwatch subscription: not connected. Ready for Stripe Checkout Sessions once live plan prices are connected; client invoice payments run separately from the subscription.";
   const memberSummary = useMemo(() => {
     if (!team) {
       return { active: 0, disabled: 0, owners: 0 };
@@ -1528,17 +1580,9 @@ function TeamPage() {
                 billingStatus={team.organization.billing_status}
                 grantActive={team.organization.contractor_circle_grant}
                 usage={usage}
-                billingEmail={team.organization.billing_email}
-                stripeCustomerId={team.organization.stripe_customer_id}
-                stripeSubscriptionId={team.organization.stripe_subscription_id}
-                stripePriceId={team.organization.stripe_price_id}
-                stripeConnectStatus={team.organization.stripe_connect_status}
-                paymentProcessorReady={team.organization.payment_processor_ready}
                 subscriptionCurrentPeriodEnd={team.organization.subscription_current_period_end}
                 subscriptionCancelAtPeriodEnd={team.organization.subscription_cancel_at_period_end}
-                canManageTeam={team.canManageTeam}
-                onStartStripeConnect={() => stripeConnectMutation.mutate()}
-                stripeConnectPending={stripeConnectMutation.isPending}
+                showPaymentsLink={Boolean(team.canManageSettings || team.canManageBilling)}
               />
             )}
 
@@ -1551,6 +1595,12 @@ function TeamPage() {
               }}
               onConnectStripe={() => stripeConnectMutation.mutate()}
               stripeConnectPending={stripeConnectMutation.isPending}
+              subscriptionNote={subscriptionNote}
+              billingContactName={team.organization.billing_contact_name}
+              billingContactEmail={team.organization.billing_email}
+              canEditBillingContact={Boolean(team.canManageSettings)}
+              onSaveBillingContact={(next) => billingContactMutation.mutate(next)}
+              billingContactSaving={billingContactMutation.isPending}
             />
 
             <section
@@ -1938,7 +1988,7 @@ function TeamPage() {
                   </div>
                   <div className="grid gap-4 rounded-md border border-hairline bg-surface p-3">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      License and billing
+                      License and tax
                     </div>
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-1.5">
@@ -1959,31 +2009,6 @@ function TeamPage() {
                           onChange={(event) =>
                             setOrgForm({ ...orgForm, tax_identifier: event.target.value })
                           }
-                        />
-                      </div>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label>Billing contact</Label>
-                        <Input
-                          value={orgForm.billing_contact_name}
-                          disabled={!team.canManageSettings}
-                          onChange={(event) =>
-                            setOrgForm({ ...orgForm, billing_contact_name: event.target.value })
-                          }
-                          placeholder="Owner or accounting contact"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Billing email</Label>
-                        <Input
-                          type="email"
-                          value={orgForm.billing_email}
-                          disabled={!team.canManageSettings}
-                          onChange={(event) =>
-                            setOrgForm({ ...orgForm, billing_email: event.target.value })
-                          }
-                          placeholder="billing@company.com"
                         />
                       </div>
                     </div>
@@ -2078,87 +2103,20 @@ function PlanReadinessPanel({
   billingStatus,
   grantActive,
   usage,
-  billingEmail,
-  stripeCustomerId,
-  stripeSubscriptionId,
-  stripePriceId,
-  stripeConnectStatus,
-  paymentProcessorReady,
   subscriptionCurrentPeriodEnd,
   subscriptionCancelAtPeriodEnd,
-  canManageTeam,
-  onStartStripeConnect,
-  stripeConnectPending,
+  showPaymentsLink,
 }: {
   planCode: string;
   billingStatus: string;
   grantActive: boolean;
   usage: TeamUsageSnapshot;
-  billingEmail: string;
-  stripeCustomerId: string;
-  stripeSubscriptionId: string;
-  stripePriceId: string;
-  stripeConnectStatus: string;
-  paymentProcessorReady: boolean;
   subscriptionCurrentPeriodEnd: string;
   subscriptionCancelAtPeriodEnd: boolean;
-  canManageTeam: boolean;
-  onStartStripeConnect: () => void;
-  stripeConnectPending: boolean;
+  showPaymentsLink: boolean;
 }) {
   const planLabel = formatPlanCode(planCode);
   const billingLabel = formatBillingStatus(billingStatus);
-  const subscriptionReady = Boolean(stripeCustomerId && stripeSubscriptionId);
-  const connectReady = paymentProcessorReady || stripeConnectStatus === "active";
-  const checkoutConfigured = Boolean(stripePriceId);
-  const connectInProgress =
-    stripeConnectStatus === "pending" ||
-    stripeConnectStatus === "onboarding_started" ||
-    stripeConnectStatus === "pending_review";
-  const connectButtonLabel = connectReady
-    ? "Stripe connected"
-    : connectInProgress
-      ? "Continue Stripe setup"
-      : "Connect Stripe";
-  const commerceRows = [
-    {
-      label: "Overwatch subscription",
-      value: subscriptionReady
-        ? "Connected"
-        : checkoutConfigured
-          ? "Price staged"
-          : "Not connected",
-      detail: subscriptionReady
-        ? `Stripe customer and subscription are recorded${
-            subscriptionCurrentPeriodEnd
-              ? ` through ${shortDate(subscriptionCurrentPeriodEnd)}`
-              : ""
-          }.`
-        : "Ready for Stripe Checkout Sessions once live plan prices are connected.",
-      tone: subscriptionReady ? "default" : "warning",
-    },
-    {
-      label: "Client invoice payments",
-      value: connectReady ? "Online ready" : "Manual only",
-      detail: connectReady
-        ? "Client invoices can use hosted payment links through the Overwatch payment rail when enabled per invoice."
-        : "PDF and email stay available. Online payment links stay hidden until Stripe Connect is ready.",
-      tone: connectReady ? "default" : "warning",
-    },
-    {
-      label: "Billing contact",
-      value: billingEmail || "Not set",
-      detail: billingEmail
-        ? "This is the account email for subscription and payment notices."
-        : "Add a billing email before moving this company out of the Contractor Circle grant.",
-      tone: billingEmail ? "default" : "warning",
-    },
-  ] satisfies {
-    label: string;
-    value: string;
-    detail: string;
-    tone: UsageTone;
-  }[];
   const rows = [
     {
       label: "Seats",
@@ -2208,7 +2166,7 @@ function PlanReadinessPanel({
             icon={<Gauge className="h-4 w-4" />}
             eyebrow="Plan and payment readiness"
             title="Commercial setup"
-            description="Where this company stands on plan limits, billing, and the rails client money moves on."
+            description="Where this company stands on plan limits and billing status."
           />
           <div className="mt-5 grid gap-3 text-sm">
             <PlanFact label="Plan" value={planLabel} />
@@ -2239,47 +2197,17 @@ function PlanReadinessPanel({
               ? "Contractor Circle grant keeps this company working. Current trial assumptions are 10 projects, 10 seats, 10GB storage, and 1,000 monthly daily logs until paid plans are finalized."
               : "Plan limits can enforce seats, jobs, reports, and storage once billing is active."}
           </div>
-          <div className="mt-4 grid gap-2">
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              <CreditCard className="h-3.5 w-3.5" />
-              Payment readiness
-            </div>
-            {commerceRows.map((row) => (
-              <CommerceReadinessItem key={row.label} {...row} />
-            ))}
-          </div>
-          <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-sm font-medium text-foreground">Contractor payout account</div>
-                <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  Connect the contractor&apos;s Stripe account before client invoices can include
-                  online payment links.
-                </div>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                className="gap-1.5 sm:shrink-0"
-                variant={connectReady ? "outline" : "default"}
-                disabled={!canManageTeam || connectReady || stripeConnectPending}
-                onClick={onStartStripeConnect}
+          {showPaymentsLink && (
+            <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
+              <a
+                href="#getting-paid"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-accent transition hover:text-accent/80"
               >
                 <CreditCard className="h-3.5 w-3.5" />
-                {stripeConnectPending ? "Opening..." : connectButtonLabel}
-              </Button>
+                Payments are managed in Getting Paid →
+              </a>
             </div>
-            {!canManageTeam && (
-              <div className="mt-2 text-xs text-muted-foreground">
-                Ask an owner or admin to connect Stripe for this company.
-              </div>
-            )}
-          </div>
-          <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-            Overwatch subscriptions and client invoice payments are separate. Client payments should
-            run through a platform payment flow so Overwatch can collect an application fee before
-            the contractor payout, subject to final Stripe Connect and compliance setup.
-          </div>
+          )}
           <div className="mt-4 rounded-md border border-hairline bg-surface px-4 py-3">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               Highest pressure
@@ -2313,39 +2241,6 @@ function PlanFact({ label, value }: { label: string; value: string }) {
         {label}
       </div>
       <div className="text-right font-medium text-foreground">{value}</div>
-    </div>
-  );
-}
-
-function CommerceReadinessItem({
-  label,
-  value,
-  detail,
-  tone,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  tone: UsageTone;
-}) {
-  const toneClass =
-    tone === "danger"
-      ? "border-danger/30 bg-danger/10 text-danger"
-      : tone === "warning"
-        ? "border-warning/30 bg-warning/10 text-warning"
-        : "border-success/25 bg-success/10 text-success";
-  const Icon = tone === "default" ? CheckCircle2 : AlertTriangle;
-
-  return (
-    <div className={`rounded-md border px-3 py-2 text-sm ${toneClass}`}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Icon className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate font-medium">{label}</span>
-        </div>
-        <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.08em]">{value}</span>
-      </div>
-      <div className="mt-1 pl-5 text-xs leading-snug opacity-85">{detail}</div>
     </div>
   );
 }

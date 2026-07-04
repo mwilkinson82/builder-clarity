@@ -727,12 +727,10 @@ await expectContains(
     /PlanReadinessPanel/,
     /Plan and payment readiness/,
     /Commercial setup/,
-    /Payment readiness/,
+    /Payments are managed in Getting Paid/,
     /Overwatch subscription/,
-    /Client invoice payments/,
-    /Billing contact/,
+    /billingContactMutation/,
     /stripeConnectMutation/,
-    /Connect Stripe/,
     /stripe\/connect\/account-link/,
     /stripe=return/,
     /Checkout Sessions/,
@@ -752,6 +750,12 @@ await expectNotContains(
   "src/routes/_authenticated/team.tsx",
   [/data-testid="company-live-activity"/, /CompanyActivityPanel/, /TeamActivitySession/],
   "company workspace does not expose the live activity roster",
+);
+
+await expectNotContains(
+  "src/routes/_authenticated/team.tsx",
+  [/Payment readiness/, /Contractor payout account/, /CommerceReadinessItem/],
+  "legacy payment readiness panel stays consolidated into the Getting Paid section",
 );
 
 await expectContains(
@@ -1076,8 +1080,13 @@ await expectContains(
     /Ready for card & bank-debit payments/,
     /Verification in progress/,
     /Not connected/,
+    /Connect Stripe/,
+    /Billing contact/,
+    /Save billing contact/,
+    /subscriptionNote/,
+    /id="getting-paid"/,
   ],
-  "Getting paid section carries remittance entry, masked reveal, honest Connect states, and the founder's expectation copy",
+  "Getting paid section is the single payments home: remittance entry, masked reveal, honest Connect states, billing contact, and the founder's expectation copy",
 );
 
 await expectContains(
@@ -1100,11 +1109,7 @@ await expectContains(
 
 await expectContains(
   "src/lib/stripe.server.ts",
-  [
-    /STRIPE_CONNECT_WEBHOOK_SECRET/,
-    /STRIPE_WEBHOOK_TOLERANCE_SECONDS/,
-    /Stripe-Account/,
-  ],
+  [/STRIPE_CONNECT_WEBHOOK_SECRET/, /STRIPE_WEBHOOK_TOLERANCE_SECONDS/, /Stripe-Account/],
   "Stripe server helper verifies both endpoint scopes' signing secrets, enforces replay tolerance, and supports direct charges",
 );
 
