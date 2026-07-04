@@ -55,18 +55,22 @@ const clean = (value?: string | number | null) =>
     .replace(/[^\x20-\x7e]/g, "")
     .trim();
 
+// Continuation-sheet money shows exact cents — the AIA rollup is where
+// fractional-cent drift would hide behind whole-dollar rounding.
 const money = (cents: number) =>
   (cents / 100).toLocaleString("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 
 const dollars = (value: number) =>
   value.toLocaleString("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 
 const dateText = (value?: string | null) => {

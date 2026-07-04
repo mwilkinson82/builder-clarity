@@ -32,7 +32,9 @@ import { HowToPayBlock } from "@/components/billing/HowToPayBlock";
 import type { BillingInvoiceRow } from "@/lib/projects.functions";
 import { downloadPdfBytes, generateDailyReportPacketPdf } from "@/lib/daily-report-packet-pdf";
 import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
+import { fmtUSDCents } from "@/lib/billing-format";
 import { fmtUSD } from "@/lib/format";
+import { centsToDollars, dollarsToCents, sumDollarsToCents } from "@/lib/payments-domain";
 
 const DAILY_REPORT_BUCKET = "daily-reports";
 
@@ -128,26 +130,28 @@ function ClientProjectPage() {
     const dailyReports = projectQuery.data?.dailyReports ?? [];
     const billingApplications = projectQuery.data?.billingApplications ?? [];
     const billingInvoices = projectQuery.data?.billingInvoices ?? [];
-    const totalBilled = billingApplications.reduce(
-      (total: number, app: ClientPortalBillingApplication) => total + app.amount_billed,
-      0,
+    // Billing totals sum in integer cents so the client never sees a
+    // float-drifted number (cents-exact derivation, BILLINGBATCH1).
+    const totalBilledCents = sumDollarsToCents(
+      billingApplications.map((app: ClientPortalBillingApplication) => app.amount_billed),
     );
-    const paidToDate = billingApplications.reduce(
-      (total: number, app: ClientPortalBillingApplication) => total + app.paid_to_date,
-      0,
+    const paidToDateCents = sumDollarsToCents(
+      billingApplications.map((app: ClientPortalBillingApplication) => app.paid_to_date),
     );
-    const retainage = billingApplications.reduce(
-      (total: number, app: ClientPortalBillingApplication) => total + app.retainage,
-      0,
+    const retainageCents = sumDollarsToCents(
+      billingApplications.map((app: ClientPortalBillingApplication) => app.retainage),
     );
-    const invoiceDue = billingInvoices.reduce(
-      (total: number, invoice: BillingInvoiceRow) => total + invoice.total_due,
-      0,
+    const invoiceDueCents = sumDollarsToCents(
+      billingInvoices.map((invoice: BillingInvoiceRow) => invoice.total_due),
     );
-    const invoicePaid = billingInvoices.reduce(
-      (total: number, invoice: BillingInvoiceRow) => total + invoice.paid_amount,
-      0,
+    const invoicePaidCents = sumDollarsToCents(
+      billingInvoices.map((invoice: BillingInvoiceRow) => invoice.paid_amount),
     );
+    const totalBilled = centsToDollars(totalBilledCents);
+    const paidToDate = centsToDollars(paidToDateCents);
+    const retainage = centsToDollars(retainageCents);
+    const invoiceDue = centsToDollars(invoiceDueCents);
+    const invoicePaid = centsToDollars(invoicePaidCents);
     return {
       visible: changeOrders.length,
       amount: changeOrders.reduce(
@@ -163,10 +167,12 @@ function ClientProjectPage() {
       totalBilled,
       paidToDate,
       retainage,
-      openReceivable: Math.max(0, totalBilled - paidToDate - retainage),
+      openReceivable: centsToDollars(
+        Math.max(0, totalBilledCents - paidToDateCents - retainageCents),
+      ),
       invoiceDue,
       invoicePaid,
-      invoiceOpen: Math.max(0, invoiceDue - invoicePaid),
+      invoiceOpen: centsToDollars(Math.max(0, invoiceDueCents - invoicePaidCents)),
     };
   }, [
     projectQuery.data?.billingApplications,
@@ -513,20 +519,20 @@ function ClientProjectPage() {
                 <dl className="grid gap-3 md:grid-cols-4">
                   <ClientMetric
                     label={billingInvoices.length > 0 ? "Invoice total" : "Billed to date"}
-                    value={fmtUSD(
+                    value={fmtUSDCents(
                       billingInvoices.length > 0 ? totals.invoiceDue : totals.totalBilled,
                     )}
                   />
                   <ClientMetric
                     label="Paid to date"
-                    value={fmtUSD(
+                    value={fmtUSDCents(
                       billingInvoices.length > 0 ? totals.invoicePaid : totals.paidToDate,
                     )}
                   />
-                  <ClientMetric label="Retainage" value={fmtUSD(totals.retainage)} />
+                  <ClientMetric label="Retainage" value={fmtUSDCents(totals.retainage)} />
                   <ClientMetric
                     label="Open balance"
-                    value={fmtUSD(
+                    value={fmtUSDCents(
                       billingInvoices.length > 0 ? totals.invoiceOpen : totals.openReceivable,
                     )}
                   />
@@ -652,15 +658,24 @@ function formatOptionalClientDate(value?: string | null) {
 }
 
 function invoiceOpenBalance(invoice: BillingInvoiceRow) {
-  return Math.max(0, invoice.total_due - invoice.paid_amount);
+  return centsToDollars(
+    Math.max(0, dollarsToCents(invoice.total_due) - dollarsToCents(invoice.paid_amount)),
+  );
 }
 
 function payAppOpenBalance(app: ClientPortalBillingApplication) {
-  return Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
+  return centsToDollars(
+    Math.max(
+      0,
+      dollarsToCents(app.amount_billed) -
+        dollarsToCents(app.paid_to_date) -
+        dollarsToCents(app.retainage),
+    ),
+  );
 }
 
 function fmtCents(value: number) {
-  return fmtUSD(value / 100);
+  return fmtUSDCents(value / 100);
 }
 
 function ClientInvoiceReviewCard({
@@ -721,7 +736,7 @@ function ClientInvoiceReviewCard({
           >
             Due
           </div>
-          <div className="mt-1 text-sm tabular">{fmtUSD(invoice.total_due)}</div>
+          <div className="mt-1 text-sm tabular">{fmtUSDCents(invoice.total_due)}</div>
         </div>
         <div>
           <div
@@ -729,7 +744,7 @@ function ClientInvoiceReviewCard({
           >
             Open
           </div>
-          <div className="mt-1 text-sm font-medium tabular">{fmtUSD(open)}</div>
+          <div className="mt-1 text-sm font-medium tabular">{fmtUSDCents(open)}</div>
         </div>
         <div>
           <div
@@ -797,9 +812,9 @@ function ClientInvoiceBackupPanel({
       </div>
 
       <dl className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <ClientMetric label="Invoice total" value={fmtUSD(invoice.total_due)} />
-        <ClientMetric label="Paid" value={fmtUSD(invoice.paid_amount)} />
-        <ClientMetric label="Open" value={fmtUSD(open)} />
+        <ClientMetric label="Invoice total" value={fmtUSDCents(invoice.total_due)} />
+        <ClientMetric label="Paid" value={fmtUSDCents(invoice.paid_amount)} />
+        <ClientMetric label="Open" value={fmtUSDCents(open)} />
         <ClientMetric label="Status" value={clientStatusLabel(invoice.status)} />
       </dl>
 
@@ -860,10 +875,10 @@ function ClientInvoiceBackupPanel({
             </span>
           </div>
           <dl className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <ClientMetric label="Billed" value={fmtUSD(linkedPayApp.amount_billed)} />
-            <ClientMetric label="Paid" value={fmtUSD(linkedPayApp.paid_to_date)} />
-            <ClientMetric label="Retainage" value={fmtUSD(linkedPayApp.retainage)} />
-            <ClientMetric label="Open" value={fmtUSD(payAppOpenBalance(linkedPayApp))} />
+            <ClientMetric label="Billed" value={fmtUSDCents(linkedPayApp.amount_billed)} />
+            <ClientMetric label="Paid" value={fmtUSDCents(linkedPayApp.paid_to_date)} />
+            <ClientMetric label="Retainage" value={fmtUSDCents(linkedPayApp.retainage)} />
+            <ClientMetric label="Open" value={fmtUSDCents(payAppOpenBalance(linkedPayApp))} />
           </dl>
           <div className="mt-4 text-sm text-muted-foreground">
             Submitted {formatOptionalClientDate(linkedPayApp.submitted_date)} · Due{" "}
@@ -956,9 +971,9 @@ function ClientPayApplicationCard({ app }: { app: ClientPortalBillingApplication
         </span>
       </div>
       <dl className="mt-4 grid gap-2 sm:grid-cols-2">
-        <ClientMiniMetric label="Billed" value={fmtUSD(app.amount_billed)} />
-        <ClientMiniMetric label="Open" value={fmtUSD(payAppOpenBalance(app))} />
-        <ClientMiniMetric label="Retainage" value={fmtUSD(app.retainage)} />
+        <ClientMiniMetric label="Billed" value={fmtUSDCents(app.amount_billed)} />
+        <ClientMiniMetric label="Open" value={fmtUSDCents(payAppOpenBalance(app))} />
+        <ClientMiniMetric label="Retainage" value={fmtUSDCents(app.retainage)} />
         <ClientMiniMetric label="Due" value={formatOptionalClientDate(app.due_date)} />
       </dl>
       {latestEvent ? (

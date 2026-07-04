@@ -8,13 +8,19 @@ import {
   estimatedCardFeeCents,
   initialPaymentState,
   invoicePaymentTotals,
+  invoiceTotalDueDollars,
   isOverRecording,
+  lineWorkForPercentCents,
   maskAccountTail,
   methodAvailability,
+  percentOfCents,
+  percentOfDollars,
   planCheckoutCompletion,
+  quantizeDollars,
   renderRemittanceMemo,
   resolveEnabledMethods,
   stripeConnectReady,
+  sumDollarsToCents,
   type EnabledPaymentMethods,
 } from "../src/lib/payments-domain.ts";
 
@@ -297,5 +303,95 @@ const withFee = planCheckoutCompletion(
   { totalDueCents: 1000000, paidCents: 0 },
 );
 assert.equal(withFee.payment?.netPayoutCents, 995000);
+
+// --- Cents-exact derivation (BILLINGBATCH1 Task 0: the penny bug) ------------
+
+// Percent at the line rounds in cents, never floats.
+assert.equal(percentOfCents(2_120_250_00, 90), 1_908_225_00);
+assert.equal(percentOfCents(100001, 33.33), 33330); // 33330.3333 rounds at the line
+assert.equal(percentOfDollars(2_120_250, 90), 1_908_225);
+assert.equal(percentOfDollars(Number.NaN, 90), 0);
+
+// quantizeDollars snaps float drift to exact cents.
+assert.equal(quantizeDollars(1908224.9999999998), 1908225);
+// A genuinely fractional percent-complete product snaps to its exact cent.
+assert.equal(quantizeDollars(2833666.67 * (67.34 / 100)), 1908191.14);
+
+// Sums run in integer cents, rounding each item first.
+assert.equal(sumDollarsToCents([0.1, 0.2]), 30);
+assert.equal(sumDollarsToCents([285.55, 285.55]), 57110);
+
+// Regression, live case's shape (invoice 2601-001): scheduled values x percent
+// complete across many lines must sum to the intended whole-dollar total —
+// exactly, with === and no epsilon.
+const LIVE_CASE_LINES = Array.from({ length: 100 }, () => ({
+  scheduledCents: 21_202_50, // $21,202.50 per SOV line, $2,120,250.00 contract
+  percentComplete: 90,
+}));
+const liveCaseTotalCents = LIVE_CASE_LINES.reduce(
+  (sum, line) => sum + percentOfCents(line.scheduledCents, line.percentComplete),
+  0,
+);
+assert.equal(liveCaseTotalCents, 1_908_225_00);
+assert.equal(centsToDollars(liveCaseTotalCents), 1_908_225.0);
+
+// Round at each LINE first: summing unrounded float line values and rounding
+// once at the end lands on a DIFFERENT total. The line-first cents result is
+// the intended one; the float pipeline is the drift this batch removes.
+const DRIFT_LINES = Array.from({ length: 3 }, () => ({ scheduled: 1000.01, pct: 33.33 }));
+const lineFirstCents = DRIFT_LINES.reduce(
+  (sum, line) => sum + percentOfCents(dollarsToCents(line.scheduled), line.pct),
+  0,
+);
+const floatRoundOnceCents = dollarsToCents(
+  DRIFT_LINES.reduce((sum, line) => sum + line.scheduled * (line.pct / 100), 0),
+);
+assert.equal(lineFirstCents, 99990); // $999.90: each line rounds down at the line
+assert.equal(floatRoundOnceCents, 99991); // the drifted total a float rollup stores
+assert.notEqual(lineFirstCents, floatRoundOnceCents);
+
+// SOV line percent entry -> this-period work, all in cents.
+assert.equal(
+  lineWorkForPercentCents({
+    contractCents: 2_120_250_00,
+    targetPercent: 90,
+    previousCents: 1_060_125_00, // 50% previously certified
+    storedCents: 0,
+  }),
+  848_100_00, // 90% earned less previous, exact
+);
+assert.equal(
+  lineWorkForPercentCents({
+    contractCents: 100000,
+    targetPercent: 10,
+    previousCents: 20000,
+    storedCents: 0,
+  }),
+  0, // already past the target: floors at zero, never negative
+);
+assert.equal(
+  lineWorkForPercentCents({
+    contractCents: 100000,
+    targetPercent: 50,
+    previousCents: 10000,
+    storedCents: 5000,
+  }),
+  35000, // stored materials count toward the completed target
+);
+
+// Invoice totals derive from the pay app in cents: subtotal less retainage
+// plus released retainage — the exact live-case shape, exact result.
+assert.equal(
+  invoiceTotalDueDollars({ subtotal: 2_120_250, retainage: 212_025, retainageReleased: 0 }),
+  1_908_225,
+);
+assert.equal(
+  invoiceTotalDueDollars({ subtotal: 1000.01, retainage: 100.01, retainageReleased: 0.01 }),
+  900.01,
+);
+assert.equal(
+  invoiceTotalDueDollars({ subtotal: 100, retainage: 250, retainageReleased: 0 }),
+  0, // floors at zero
+);
 
 console.log("billing payments smoke: all assertions passed");

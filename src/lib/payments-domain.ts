@@ -58,6 +58,69 @@ export function centsToDollars(cents: number): number {
   return Math.round(cents) / 100;
 }
 
+// ---------------------------------------------------------------------------
+// Cents-exact derivation math (SOV -> pay application -> invoice)
+// ---------------------------------------------------------------------------
+// Fractional-cent drift from float-dollar percent math reached a stored
+// invoice total (live case: invoice 2601-001, $1,908,224.99 instead of
+// $1,908,225.00). Every derivation must round at each LINE, sum in integer
+// cents, and only convert back to dollars at the edge.
+
+// Percent applied to a cents base, rounded at the line.
+export function percentOfCents(baseCents: number, percent: number): number {
+  if (!Number.isFinite(baseCents) || !Number.isFinite(percent)) return 0;
+  return Math.round((baseCents * percent) / 100);
+}
+
+// Percent applied to a decimal-dollar value; returns exact-cent dollars.
+export function percentOfDollars(value: number, percent: number): number {
+  return centsToDollars(percentOfCents(dollarsToCents(value), percent));
+}
+
+// Snap a decimal-dollar value (possibly carrying float drift) to exact cents.
+export function quantizeDollars(value: number): number {
+  return centsToDollars(dollarsToCents(value));
+}
+
+// Sum decimal-dollar values as integer cents: round each item, then add.
+export function sumDollarsToCents(values: readonly number[]): number {
+  return values.reduce((sum, value) => sum + dollarsToCents(value), 0);
+}
+
+// SOV line percent entry: "complete to date" percent -> this-period work, in
+// cents. Rounds the earned value at the line before subtracting prior
+// progress and stored materials.
+export function lineWorkForPercentCents(input: {
+  contractCents: number;
+  targetPercent: number;
+  previousCents: number;
+  storedCents: number;
+}): number {
+  return Math.max(
+    0,
+    percentOfCents(input.contractCents, input.targetPercent) -
+      Math.round(input.previousCents) -
+      Math.round(input.storedCents),
+  );
+}
+
+// Invoice money derived from a pay application: subtotal less retainage plus
+// released retainage, computed in cents. Returns exact-cent dollars.
+export function invoiceTotalDueDollars(input: {
+  subtotal: number;
+  retainage: number;
+  retainageReleased: number;
+}): number {
+  return centsToDollars(
+    Math.max(
+      0,
+      dollarsToCents(input.subtotal) -
+        dollarsToCents(input.retainage) +
+        dollarsToCents(input.retainageReleased),
+    ),
+  );
+}
+
 export interface PaymentAmountRecord {
   amountCents: number;
   state: PaymentState;

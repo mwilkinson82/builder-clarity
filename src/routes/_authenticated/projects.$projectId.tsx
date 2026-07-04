@@ -50,7 +50,18 @@ import {
   getPaymentMethodContext,
   type PaymentMethodContext,
 } from "@/lib/payments.functions";
-import { dollarsToCents, isOverRecording } from "@/lib/payments-domain";
+import {
+  centsToDollars,
+  dollarsToCents,
+  invoiceTotalDueDollars,
+  isOverRecording,
+  methodAvailability,
+  percentOfDollars,
+  quantizeDollars,
+  resolveEnabledMethods,
+  sumDollarsToCents,
+} from "@/lib/payments-domain";
+import { fmtUSDCents } from "@/lib/billing-format";
 import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/schedule";
@@ -237,15 +248,6 @@ function projectNavIconClass({ compact, active }: { compact: boolean; active?: b
     active ? "text-accent-foreground drop-shadow-sm" : "text-current group-hover:text-accent",
   );
 }
-
-type InvoiceCheckoutPayload = {
-  ok?: boolean;
-  code?: string;
-  error?: string;
-  checkoutUrl?: string;
-  sessionId?: string;
-  invoiceId?: string;
-};
 
 function isBillingStatus(value: unknown): value is BillingApplicationRow["status"] {
   return typeof value === "string" && BILLING_STATUS_VALUES.includes(value as never);
@@ -814,73 +816,6 @@ function ProjectPage() {
       });
     },
   });
-  const [checkoutInvoiceId, setCheckoutInvoiceId] = useState<string | null>(null);
-  const invoiceCheckout = useMutation({
-    mutationFn: async (invoice: BillingInvoiceRow) => {
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      const accessToken = sessionData.session?.access_token;
-      if (sessionError || !accessToken) {
-        throw new Error("Your session expired. Sign in again before enabling online payment.");
-      }
-
-      const response = await fetch("/api/stripe/checkout/invoice", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          invoiceId: invoice.id,
-          successPath: `/projects/${projectId}?tab=billing&payment=success&invoice=${invoice.id}`,
-          cancelPath: `/projects/${projectId}?tab=billing&payment=cancelled&invoice=${invoice.id}`,
-        }),
-      });
-
-      const payload = (await response.json().catch(() => ({}))) as InvoiceCheckoutPayload;
-      if (!response.ok || !payload.ok) {
-        const error = new Error(
-          payload.error || `Online payment link failed with status ${response.status}.`,
-        ) as Error & { code?: string; status?: number };
-        error.code = payload.code;
-        error.status = response.status;
-        throw error;
-      }
-      return payload;
-    },
-    onMutate: (invoice) => setCheckoutInvoiceId(invoice.id),
-    onSuccess: (payload) => {
-      toast.success("Payment link ready", {
-        description: payload.checkoutUrl
-          ? "Stripe Checkout is enabled for this invoice. The client portal can now show the pay button."
-          : "Online payment is enabled for this invoice.",
-      });
-      invalidate();
-    },
-    onError: (err) => {
-      const error = err as Error & { code?: string };
-      if (error.code === "stripe_not_configured") {
-        toast.error("Stripe is not connected yet", {
-          description:
-            "Invoice PDFs and email still work. Connect Stripe in company settings before enabling live checkout.",
-        });
-        return;
-      }
-      if (
-        error.code === "stripe_connect_not_ready" ||
-        error.code === "payment_processor_not_configured"
-      ) {
-        toast.error("Company payments are not ready", {
-          description:
-            "Finish the payment setup in Your Company before enabling online payment links for client invoices.",
-        });
-        return;
-      }
-      toast.error("Payment link did not save", {
-        description: error.message || "Try again after checking the invoice and Stripe setup.",
-      });
-    },
-    onSettled: () => setCheckoutInvoiceId(null),
-  });
   const listScheduleFn = useServerFn(listSchedule);
   const { data: scheduleData } = useQuery({
     queryKey: ["schedule", projectId],
@@ -1355,17 +1290,6 @@ function ProjectPage() {
         });
       },
     });
-  };
-
-  const handleEnableInvoicePayment = (invoice: BillingInvoiceRow) => {
-    const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
-    if (openBalance <= 0) {
-      toast.info("Invoice is already paid", {
-        description: "There is no open balance to collect online.",
-      });
-      return;
-    }
-    invoiceCheckout.mutate(invoice);
   };
 
   const handleDeleteExposure = (id: string) => {
@@ -2054,8 +1978,6 @@ function ProjectPage() {
                 onUpdateInvoice={handleUpdateInvoice}
                 onDeleteInvoice={handleDeleteInvoice}
                 onRecordPayment={handleRecordPayment}
-                onEnableInvoicePayment={handleEnableInvoicePayment}
-                enablingInvoicePaymentId={checkoutInvoiceId}
               />
             </TabsContent>
 
@@ -2338,7 +2260,9 @@ async function enqueueInvoiceEmail(input: {
     throw new Error("Your session expired. Sign in again before sending invoice email.");
   }
 
-  const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
+  const openBalance = centsToDollars(
+    Math.max(0, dollarsToCents(invoice.total_due) - dollarsToCents(invoice.paid_amount)),
+  );
   const response = await fetch("/lovable/email/transactional/send", {
     method: "POST",
     headers: {
@@ -2358,12 +2282,15 @@ async function enqueueInvoiceEmail(input: {
           invoice.title || linkedPayApp?.application_number || "",
         ),
         invoiceStatus: invoiceStatusLabel(invoice.status),
-        totalDue: fmtUSD(invoice.total_due),
-        paidAmount: fmtUSD(invoice.paid_amount),
-        openBalance: fmtUSD(openBalance),
+        totalDue: fmtUSDCents(invoice.total_due),
+        paidAmount: fmtUSDCents(invoice.paid_amount),
+        openBalance: fmtUSDCents(openBalance),
         dueDate: invoice.due_date,
         portalUrl: invoicePortalUrl(project.id),
-        paymentUrl: invoice.payment_enabled ? invoice.payment_url : "",
+        // Stored checkout links are a pre-Phase-1 vestige (Stripe sessions
+        // expire within a day); the client pays through the portal, which
+        // creates a fresh session from the live connect status and toggles.
+        paymentUrl: "",
         notes:
           invoice.notes ||
           linkedPayApp?.notes ||
@@ -2456,8 +2383,6 @@ function BillingWorkspace({
   onUpdateInvoice,
   onDeleteInvoice,
   onRecordPayment,
-  onEnableInvoicePayment,
-  enablingInvoicePaymentId,
 }: {
   project: ProjectRow;
   rollup: Rollup;
@@ -2516,8 +2441,6 @@ function BillingWorkspace({
   onUpdateInvoice: (id: string, patch: Partial<BillingInvoiceRow>) => void;
   onDeleteInvoice: (id: string) => void;
   onRecordPayment: (input: PaymentDraft) => void;
-  onEnableInvoicePayment: (invoice: BillingInvoiceRow) => void;
-  enablingInvoicePaymentId: string | null;
 }) {
   const loadPaymentMethodContext = useServerFn(getPaymentMethodContext);
   const { data: paymentMethodContext } = useQuery({
@@ -2531,30 +2454,62 @@ function BillingWorkspace({
     0,
   );
   const holds = rollup.exposureHolds + rollup.contingencyHold;
-  const totalBilled = billingApplications.reduce((sum, app) => sum + app.amount_billed, 0);
-  const paidToDate = billingApplications.reduce((sum, app) => sum + app.paid_to_date, 0);
+  // Money rollups run in integer cents (round each row, sum, convert once):
+  // float-dollar summation here is how fractional-cent drift reached a stored
+  // invoice total during founder QA (invoice 2601-001).
+  const totalBilledCents = sumDollarsToCents(billingApplications.map((app) => app.amount_billed));
+  const totalBilled = centsToDollars(totalBilledCents);
+  const paidToDate = centsToDollars(
+    sumDollarsToCents(billingApplications.map((app) => app.paid_to_date)),
+  );
   const defaultRetainagePct = project.default_retainage_pct ?? 10;
-  const percentCompleteEarned = rollup.forecastedFinalContract * (project.percent_complete / 100);
-  const ledgerEarnedToDate = billingApplications.reduce(
-    (sum, app) => sum + Math.max(app.amount_billed, app.paid_to_date),
-    0,
+  const percentCompleteEarned = percentOfDollars(
+    rollup.forecastedFinalContract,
+    project.percent_complete,
+  );
+  const ledgerEarnedToDate = centsToDollars(
+    sumDollarsToCents(
+      billingApplications.map((app) => Math.max(app.amount_billed, app.paid_to_date)),
+    ),
   );
   const earnedToDate =
     billingApplications.length > 0
       ? Math.max(percentCompleteEarned, ledgerEarnedToDate)
       : percentCompleteEarned;
-  const unbilledEarnedToDate = Math.max(0, earnedToDate - totalBilled);
-  const contractRemaining = Math.max(0, rollup.forecastedFinalContract - totalBilled);
-  const retainage = billingApplications.reduce((sum, app) => sum + app.retainage, 0);
-  const openReceivable = billingApplications.reduce(
-    (sum, app) => sum + Math.max(0, app.amount_billed - app.paid_to_date - app.retainage),
-    0,
+  const unbilledEarnedToDate = centsToDollars(
+    Math.max(0, dollarsToCents(earnedToDate) - totalBilledCents),
   );
-  const invoiceTotalDue = billingInvoices.reduce((sum, invoice) => sum + invoice.total_due, 0);
-  const invoicePaid = billingInvoices.reduce((sum, invoice) => sum + invoice.paid_amount, 0);
-  const invoiceOpenBalance = billingInvoices.reduce(
-    (sum, invoice) => sum + Math.max(0, invoice.total_due - invoice.paid_amount),
-    0,
+  const contractRemaining = centsToDollars(
+    Math.max(0, dollarsToCents(rollup.forecastedFinalContract) - totalBilledCents),
+  );
+  const retainage = centsToDollars(
+    sumDollarsToCents(billingApplications.map((app) => app.retainage)),
+  );
+  const openReceivable = centsToDollars(
+    billingApplications.reduce(
+      (sum, app) =>
+        sum +
+        Math.max(
+          0,
+          dollarsToCents(app.amount_billed) -
+            dollarsToCents(app.paid_to_date) -
+            dollarsToCents(app.retainage),
+        ),
+      0,
+    ),
+  );
+  const invoiceTotalDue = centsToDollars(
+    sumDollarsToCents(billingInvoices.map((invoice) => invoice.total_due)),
+  );
+  const invoicePaid = centsToDollars(
+    sumDollarsToCents(billingInvoices.map((invoice) => invoice.paid_amount)),
+  );
+  const invoiceOpenBalance = centsToDollars(
+    billingInvoices.reduce(
+      (sum, invoice) =>
+        sum + Math.max(0, dollarsToCents(invoice.total_due) - dollarsToCents(invoice.paid_amount)),
+      0,
+    ),
   );
   const clientVisibleInvoices = billingInvoices.filter((invoice) => invoice.client_visible).length;
   const today = new Date().toISOString().slice(0, 10);
@@ -2576,16 +2531,36 @@ function BillingWorkspace({
         .map((access: ProjectClientAccessRow) => [access.email.trim().toLowerCase(), access]),
     ).values(),
   );
+  // Online-pay readiness is derived from the LIVE Stripe Connect status plus
+  // the per-invoice method toggles — never from stored per-invoice payment
+  // links, which went stale an hour after Connect activated in founder QA.
+  const invoiceOnlinePayReady = (invoice: BillingInvoiceRow) => {
+    if (!paymentMethodContext?.stripeReady) return false;
+    const availability = methodAvailability({
+      hasPaymentProfile: paymentMethodContext.hasPaymentProfile,
+      stripeReady: paymentMethodContext.stripeReady,
+      enabled: resolveEnabledMethods(
+        invoice.enabled_payment_methods,
+        paymentMethodContext.defaultPaymentMethods,
+      ),
+      invoiceTotalCents: dollarsToCents(invoice.total_due),
+      thresholdCents: paymentMethodContext.stripeAmountThresholdCents,
+    });
+    return availability.card.available || availability.ach_debit.available;
+  };
   const onlinePayReadyInvoices = billingInvoices.filter(
     (invoice) =>
-      invoice.payment_enabled &&
-      invoice.payment_url &&
       invoice.status !== "void" &&
-      invoice.total_due > invoice.paid_amount,
+      invoice.client_visible &&
+      invoice.total_due > invoice.paid_amount &&
+      invoiceOnlinePayReady(invoice),
   );
-  const onlinePayReadyBalance = onlinePayReadyInvoices.reduce(
-    (sum, invoice) => sum + Math.max(0, invoice.total_due - invoice.paid_amount),
-    0,
+  const onlinePayReadyBalance = centsToDollars(
+    onlinePayReadyInvoices.reduce(
+      (sum, invoice) =>
+        sum + Math.max(0, dollarsToCents(invoice.total_due) - dollarsToCents(invoice.paid_amount)),
+      0,
+    ),
   );
   const recipientStatus = clientPortalQuery.isLoading
     ? "Loading"
@@ -2597,9 +2572,15 @@ function BillingWorkspace({
       ? "Create an invoice from an application or direct billing item before sharing with the client."
       : invoiceRecipients.length === 0
         ? "Turn Billing On for at least one client seat in Client Portal before emailing invoices."
-        : onlinePayReadyInvoices.length === 0
-          ? "PDF and email are ready. Online pay links unlock after Stripe Connect is finished in Your Company."
-          : `${onlinePayReadyInvoices.length} invoice${onlinePayReadyInvoices.length === 1 ? "" : "s"} can be paid online by the client.`;
+        : !paymentMethodContext
+          ? "PDF and email are ready. Checking online payment status..."
+          : !paymentMethodContext.stripeReady
+            ? paymentMethodContext.stripeConnectStatus === "pending"
+              ? "PDF and email are ready. Stripe is verifying the company account — card and bank debit unlock when verification finishes in Getting Paid."
+              : "PDF and email are ready. Connect Stripe in Getting Paid (Your Company) to let clients pay by card or bank debit."
+            : onlinePayReadyInvoices.length === 0
+              ? "Online payments are live. No open client-visible invoice has card or bank debit turned on — use the payment-method toggles in the Send flow."
+              : `${onlinePayReadyInvoices.length} invoice${onlinePayReadyInvoices.length === 1 ? "" : "s"} can be paid online by the client.`;
   const activeBillingInvoices = billingInvoices.filter((invoice) => invoice.status !== "void");
   const getActiveInvoiceForPayApp = (payAppId: string) =>
     activeBillingInvoices.find((invoice) => invoice.billing_application_id === payAppId);
@@ -2621,7 +2602,7 @@ function BillingWorkspace({
       change_order_amount: rollup.approvedCOContract,
       amount_billed: unbilledEarnedToDate,
       paid_to_date: 0,
-      retainage: unbilledEarnedToDate * (defaultRetainagePct / 100),
+      retainage: percentOfDollars(unbilledEarnedToDate, defaultRetainagePct),
       has_line_detail: false,
       total_retainage_held: 0,
       retainage_released_this_period: 0,
@@ -2637,11 +2618,19 @@ function BillingWorkspace({
       app?.invoice_number ||
         (project.job_number ? `${project.job_number}-${sourceNumber}` : `INV-${sourceNumber}`),
     );
-    const subtotal = app?.amount_billed ?? unbilledEarnedToDate;
-    const invoiceRetainage = app?.retainage ?? subtotal * (defaultRetainagePct / 100);
-    const retainageReleased = app?.retainage_released_this_period ?? 0;
-    const paidAmount = app?.paid_to_date ?? 0;
-    const totalDue = Math.max(0, subtotal - invoiceRetainage + retainageReleased);
+    // Invoice money inherits pay-app values quantized to exact cents; the
+    // total derives in cents so a stored total can never carry float drift.
+    const subtotal = quantizeDollars(app?.amount_billed ?? unbilledEarnedToDate);
+    const invoiceRetainage = quantizeDollars(
+      app?.retainage ?? percentOfDollars(subtotal, defaultRetainagePct),
+    );
+    const retainageReleased = quantizeDollars(app?.retainage_released_this_period ?? 0);
+    const paidAmount = quantizeDollars(app?.paid_to_date ?? 0);
+    const totalDue = invoiceTotalDueDollars({
+      subtotal,
+      retainage: invoiceRetainage,
+      retainageReleased,
+    });
     const status: BillingInvoiceRow["status"] =
       paidAmount >= totalDue && totalDue > 0
         ? "paid"
@@ -2683,9 +2672,13 @@ function BillingWorkspace({
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(() => buildInvoiceDraft());
   const [invoiceError, setInvoiceError] = useState("");
-  const draftOpenReceivable = Math.max(
-    0,
-    draft.amount_billed - draft.paid_to_date - draft.retainage,
+  const draftOpenReceivable = centsToDollars(
+    Math.max(
+      0,
+      dollarsToCents(draft.amount_billed) -
+        dollarsToCents(draft.paid_to_date) -
+        dollarsToCents(draft.retainage),
+    ),
   );
   const selectedPayAppInvoice = invoiceDraft.billing_application_id
     ? getActiveInvoiceForPayApp(invoiceDraft.billing_application_id)
@@ -2718,7 +2711,7 @@ function BillingWorkspace({
     const nextPct = parseBillingPercent(value);
     setDraft((current) => ({
       ...current,
-      retainage: current.amount_billed * (nextPct / 100),
+      retainage: percentOfDollars(current.amount_billed, nextPct),
     }));
   };
 
@@ -2727,7 +2720,9 @@ function BillingWorkspace({
     setDraftRetainagePct(formatBillingPercentInput(normalizedRetainagePct));
     onCreate({
       ...draft,
-      retainage: draft.amount_billed * (normalizedRetainagePct / 100),
+      amount_billed: quantizeDollars(draft.amount_billed),
+      paid_to_date: quantizeDollars(draft.paid_to_date),
+      retainage: percentOfDollars(draft.amount_billed, normalizedRetainagePct),
     });
     setPayAppOpen(false);
   };
@@ -2918,8 +2913,10 @@ function BillingWorkspace({
                           setDraft({
                             ...draft,
                             amount_billed,
-                            retainage:
-                              amount_billed * (parseBillingPercent(draftRetainagePct) / 100),
+                            retainage: percentOfDollars(
+                              amount_billed,
+                              parseBillingPercent(draftRetainagePct),
+                            ),
                           })
                         }
                         align="right"
@@ -2963,13 +2960,13 @@ function BillingWorkspace({
                         Retainage withheld
                       </div>
                       <div className="mt-2 text-xl font-medium tabular text-foreground">
-                        {fmtUSD(draft.retainage)}
+                        {fmtUSDCents(draft.retainage)}
                       </div>
                       <div className="mt-3 border-t border-hairline pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                         Open A/R
                       </div>
                       <div className="mt-2 text-xl font-medium tabular text-foreground">
-                        {fmtUSD(draftOpenReceivable)}
+                        {fmtUSDCents(draftOpenReceivable)}
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
                         Application amount less payments received and retainage held.
@@ -2989,13 +2986,16 @@ function BillingWorkspace({
             </Dialog>
           </div>
           <div className="mt-5 grid gap-3 md:grid-cols-4 xl:grid-cols-7">
-            <SovMetric label="Forecasted contract" value={fmtUSD(rollup.forecastedFinalContract)} />
-            <SovMetric label="Earned to date" value={fmtUSD(earnedToDate)} />
-            <SovMetric label="Billed to date" value={fmtUSD(totalBilled)} />
-            <SovMetric label="Remaining to bill" value={fmtUSD(contractRemaining)} />
-            <SovMetric label="Paid to date" value={fmtUSD(paidToDate)} />
-            <SovMetric label="Open A/R" value={fmtUSD(openReceivable)} />
-            <SovMetric label="Retainage" value={fmtUSD(retainage)} />
+            <SovMetric
+              label="Forecasted contract"
+              value={fmtUSDCents(rollup.forecastedFinalContract)}
+            />
+            <SovMetric label="Earned to date" value={fmtUSDCents(earnedToDate)} />
+            <SovMetric label="Billed to date" value={fmtUSDCents(totalBilled)} />
+            <SovMetric label="Remaining to bill" value={fmtUSDCents(contractRemaining)} />
+            <SovMetric label="Paid to date" value={fmtUSDCents(paidToDate)} />
+            <SovMetric label="Open A/R" value={fmtUSDCents(openReceivable)} />
+            <SovMetric label="Retainage" value={fmtUSDCents(retainage)} />
           </div>
           <p className="mt-3 text-xs text-muted-foreground">
             Remaining to bill is forecasted contract less billed to date. Open A/R is billed less
@@ -3050,12 +3050,12 @@ function BillingWorkspace({
                 Billing position
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                <SovMetric label="Unbilled earned" value={fmtUSD(unbilledEarnedToDate)} />
-                <SovMetric label="Remaining to bill" value={fmtUSD(contractRemaining)} />
-                <SovMetric label="Holds" value={fmtUSD(holds)} />
-                <SovMetric label="Open A/R" value={fmtUSD(openReceivable)} />
-                <SovMetric label="Retainage" value={fmtUSD(retainage)} />
-                <SovMetric label="Pending CO likely" value={fmtUSD(weightedPending)} />
+                <SovMetric label="Unbilled earned" value={fmtUSDCents(unbilledEarnedToDate)} />
+                <SovMetric label="Remaining to bill" value={fmtUSDCents(contractRemaining)} />
+                <SovMetric label="Holds" value={fmtUSDCents(holds)} />
+                <SovMetric label="Open A/R" value={fmtUSDCents(openReceivable)} />
+                <SovMetric label="Retainage" value={fmtUSDCents(retainage)} />
+                <SovMetric label="Pending CO likely" value={fmtUSDCents(weightedPending)} />
               </div>
             </div>
             <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
@@ -3067,9 +3067,9 @@ function BillingWorkspace({
                 <SovMetric label="Invoices" value={String(billingInvoices.length)} />
                 <SovMetric label="Client-visible" value={String(clientVisibleInvoices)} />
                 <SovMetric label="Billing recipients" value={recipientStatus} />
-                <SovMetric label="Online links" value={String(onlinePayReadyInvoices.length)} />
-                <SovMetric label="Online balance" value={fmtUSD(onlinePayReadyBalance)} />
-                <SovMetric label="Invoice open" value={fmtUSD(invoiceOpenBalance)} />
+                <SovMetric label="Payable online" value={String(onlinePayReadyInvoices.length)} />
+                <SovMetric label="Payable balance" value={fmtUSDCents(onlinePayReadyBalance)} />
+                <SovMetric label="Invoice open" value={fmtUSDCents(invoiceOpenBalance)} />
               </div>
             </div>
           </div>
@@ -3259,7 +3259,11 @@ function BillingWorkspace({
                             setInvoiceDraft({
                               ...invoiceDraft,
                               subtotal,
-                              total_due: Math.max(0, subtotal - invoiceDraft.retainage),
+                              total_due: invoiceTotalDueDollars({
+                                subtotal,
+                                retainage: invoiceDraft.retainage,
+                                retainageReleased: 0,
+                              }),
                             })
                           }
                           align="right"
@@ -3273,7 +3277,11 @@ function BillingWorkspace({
                             setInvoiceDraft({
                               ...invoiceDraft,
                               retainage,
-                              total_due: Math.max(0, invoiceDraft.subtotal - retainage),
+                              total_due: invoiceTotalDueDollars({
+                                subtotal: invoiceDraft.subtotal,
+                                retainage,
+                                retainageReleased: 0,
+                              }),
                             })
                           }
                           align="right"
@@ -3351,9 +3359,9 @@ function BillingWorkspace({
             </div>
 
             <div className="mb-4 grid gap-3 md:grid-cols-5">
-              <SovMetric label="Invoice total due" value={fmtUSD(invoiceTotalDue)} />
-              <SovMetric label="Invoice paid" value={fmtUSD(invoicePaid)} />
-              <SovMetric label="Invoice open" value={fmtUSD(invoiceOpenBalance)} />
+              <SovMetric label="Invoice total due" value={fmtUSDCents(invoiceTotalDue)} />
+              <SovMetric label="Invoice paid" value={fmtUSDCents(invoicePaid)} />
+              <SovMetric label="Invoice open" value={fmtUSDCents(invoiceOpenBalance)} />
               <SovMetric label="Client-visible" value={String(clientVisibleInvoices)} />
               <SovMetric label="Billing recipients" value={recipientStatus} />
             </div>
@@ -3368,10 +3376,10 @@ function BillingWorkspace({
                     {billingReadinessMessage}
                   </p>
                 </div>
-                <div className="grid w-full min-w-0 gap-2 sm:grid-cols-3 lg:max-w-[460px]">
+                <div className="grid w-full min-w-0 gap-2 sm:grid-cols-2 lg:max-w-[320px]">
                   <div className="rounded-md border border-hairline bg-card px-3 py-2">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Online links
+                      Payable online
                     </div>
                     <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">
                       {onlinePayReadyInvoices.length}
@@ -3379,19 +3387,12 @@ function BillingWorkspace({
                   </div>
                   <div className="rounded-md border border-hairline bg-card px-3 py-2">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Online balance
+                      Payable balance
                     </div>
                     <div className="pt-2 text-lg font-medium tabular leading-none text-foreground">
-                      {fmtUSD(onlinePayReadyBalance)}
+                      {fmtUSDCents(onlinePayReadyBalance)}
                     </div>
                   </div>
-                  <Button
-                    asChild
-                    variant="outline"
-                    className="h-full min-h-[58px] min-w-0 justify-center px-3 text-center text-xs leading-tight whitespace-normal sm:text-sm"
-                  >
-                    <Link to="/team">Finish payment setup</Link>
-                  </Button>
                 </div>
               </div>
             </div>
@@ -3425,8 +3426,6 @@ function BillingWorkspace({
                       onPatch={(patch) => onUpdateInvoice(invoice.id, patch)}
                       onDelete={() => onDeleteInvoice(invoice.id)}
                       onRecordPayment={onRecordPayment}
-                      onEnablePayment={() => onEnableInvoicePayment(invoice)}
-                      enablingPayment={enablingInvoicePaymentId === invoice.id}
                     />
                   );
                 })
@@ -3448,7 +3447,7 @@ function BillingWorkspace({
                 </p>
               </div>
               <div className="text-sm tabular text-muted-foreground">
-                Raw {fmtUSD(rollup.pendingCOContract)} · likely {fmtUSD(weightedPending)}
+                Raw {fmtUSDCents(rollup.pendingCOContract)} · likely {fmtUSDCents(weightedPending)}
               </div>
             </div>
             <div className="mt-4 grid gap-3 lg:grid-cols-3">
@@ -3489,13 +3488,13 @@ function BillingWorkspace({
                           <div className="text-xs text-muted-foreground">{co.description}</div>
                         </td>
                         <td className="px-3 py-2 text-right tabular">
-                          {fmtUSD(co.contract_amount)}
+                          {fmtUSDCents(co.contract_amount)}
                         </td>
                         <td className="px-3 py-2 text-right tabular text-muted-foreground">
                           {co.probability}%
                         </td>
                         <td className="px-3 py-2 text-right tabular">
-                          {fmtUSD(co.contract_amount * (co.probability / 100))}
+                          {fmtUSDCents(percentOfDollars(co.contract_amount, co.probability))}
                         </td>
                       </tr>
                     ))}
@@ -3520,8 +3519,8 @@ function BillingWorkspace({
                 </p>
               </div>
               <div className="text-sm tabular text-muted-foreground">
-                Remaining to bill {fmtUSD(contractRemaining)} · Open A/R {fmtUSD(openReceivable)} ·
-                Holds {fmtUSD(holds)}
+                Remaining to bill {fmtUSDCents(contractRemaining)} · Open A/R{" "}
+                {fmtUSDCents(openReceivable)} · Holds {fmtUSDCents(holds)}
               </div>
             </div>
             <div className="space-y-3">
@@ -3588,7 +3587,7 @@ function formatBillingPercentInput(value: number) {
 
 function billingEventLabel(event: BillingApplicationEventRow) {
   if (event.event_type === "created") return `Created as ${event.to_status || "draft"}`;
-  if (event.event_type === "payment_update") return `Payment updated ${fmtUSD(event.amount)}`;
+  if (event.event_type === "payment_update") return `Payment updated ${fmtUSDCents(event.amount)}`;
   if (event.from_status && event.to_status) {
     return `${event.from_status} to ${event.to_status}`;
   }
@@ -3782,7 +3781,14 @@ function BillingApplicationRowEditor({
   onCreateInvoice: () => void;
   onDelete: () => void;
 }) {
-  const openReceivable = Math.max(0, app.amount_billed - app.paid_to_date - app.retainage);
+  const openReceivable = centsToDollars(
+    Math.max(
+      0,
+      dollarsToCents(app.amount_billed) -
+        dollarsToCents(app.paid_to_date) -
+        dollarsToCents(app.retainage),
+    ),
+  );
   const events = app.status_events.slice(0, 3);
   const appLabel = billingDocumentLabel(app.application_number, app.invoice_number);
   const invoiceLabel = normalizeBillingNumberLabel(app.invoice_number);
@@ -3925,7 +3931,7 @@ function BillingApplicationRowEditor({
         </div>
       </div>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <LedgerDetail label="Open A/R" value={fmtUSD(openReceivable)} />
+        <LedgerDetail label="Open A/R" value={fmtUSDCents(openReceivable)} />
         <LedgerDetail
           label="A/R aging"
           value={
@@ -3968,8 +3974,6 @@ function BillingInvoiceRowEditor({
   onPatch,
   onDelete,
   onRecordPayment,
-  onEnablePayment,
-  enablingPayment,
 }: {
   project: ProjectRow;
   invoice: BillingInvoiceRow;
@@ -3982,45 +3986,54 @@ function BillingInvoiceRowEditor({
   onPatch: (patch: Partial<BillingInvoiceRow>) => void;
   onDelete: () => void;
   onRecordPayment: (input: PaymentDraft) => void;
-  onEnablePayment: () => void;
-  enablingPayment?: boolean;
 }) {
   const fetchInvoiceRemittance = useServerFn(getInvoiceRemittance);
-  const openBalance = Math.max(0, invoice.total_due - invoice.paid_amount);
+  const openBalance = centsToDollars(
+    Math.max(0, dollarsToCents(invoice.total_due) - dollarsToCents(invoice.paid_amount)),
+  );
   const aging = invoiceAgingStatus(invoice, openBalance);
   const invoiceLabel = billingDocumentLabel(invoice.invoice_number, invoice.title, "Invoice");
   const invoiceTitle = normalizeBillingNumberLabel(invoice.title);
   const sourceLabel = linkedPayApp
     ? billingDocumentLabel(linkedPayApp.application_number, linkedPayApp.invoice_number)
     : "Direct invoice";
-  const paymentLinkReady = Boolean(
-    invoice.payment_enabled && invoice.payment_url && openBalance > 0,
+  // Readiness comes from the live Stripe Connect status plus this invoice's
+  // method toggles — never from stored per-invoice payment links.
+  const onlinePayAvailability = paymentMethodContext
+    ? methodAvailability({
+        hasPaymentProfile: paymentMethodContext.hasPaymentProfile,
+        stripeReady: paymentMethodContext.stripeReady,
+        enabled: resolveEnabledMethods(
+          invoice.enabled_payment_methods,
+          paymentMethodContext.defaultPaymentMethods,
+        ),
+        invoiceTotalCents: dollarsToCents(invoice.total_due),
+        thresholdCents: paymentMethodContext.stripeAmountThresholdCents,
+      })
+    : null;
+  const onlinePayAvailable = Boolean(
+    onlinePayAvailability &&
+    (onlinePayAvailability.card.available || onlinePayAvailability.ach_debit.available),
   );
-  const onlinePaymentLabel = invoice.online_payment_status.replace("_", " ");
   const paymentReadiness =
     invoice.status === "void"
       ? { label: "Void invoice", className: "border-hairline bg-surface text-muted-foreground" }
       : openBalance <= 0
         ? { label: "No open balance", className: "border-success/30 bg-success/10 text-success" }
-        : paymentLinkReady
+        : !invoice.client_visible
           ? {
-              label: "Client can pay online",
-              className: "border-success/30 bg-success/10 text-success",
+              label: "Hidden from client",
+              className: "border-hairline bg-surface text-muted-foreground",
             }
-          : invoice.payment_enabled
+          : onlinePayAvailable
             ? {
-                label: `Online payment ${onlinePaymentLabel || "pending"}`,
-                className: "border-warning/30 bg-warning/10 text-warning",
+                label: "Client can pay online",
+                className: "border-success/30 bg-success/10 text-success",
               }
-            : !invoice.client_visible
-              ? {
-                  label: "Hidden from client",
-                  className: "border-hairline bg-surface text-muted-foreground",
-                }
-              : {
-                  label: "Manual/email only",
-                  className: "border-warning/30 bg-warning/10 text-warning",
-                };
+            : {
+                label: "Manual/email only",
+                className: "border-warning/30 bg-warning/10 text-warning",
+              };
   const today = new Date().toISOString().slice(0, 10);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
@@ -4037,9 +4050,13 @@ function BillingInvoiceRowEditor({
     reference: "",
     notes: "",
   });
-  const netPayout = Math.max(
-    0,
-    paymentDraft.amount - paymentDraft.processor_fee - paymentDraft.overwatch_fee,
+  const netPayout = centsToDollars(
+    Math.max(
+      0,
+      dollarsToCents(paymentDraft.amount) -
+        dollarsToCents(paymentDraft.processor_fee) -
+        dollarsToCents(paymentDraft.overwatch_fee),
+    ),
   );
   const overRecording = isOverRecording(
     dollarsToCents(openBalance),
@@ -4250,7 +4267,7 @@ function BillingInvoiceRowEditor({
                   </div>
                   <div className="mt-1 font-medium text-foreground">{invoiceLabel}</div>
                   <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                    <LedgerDetail label="Open" value={fmtUSD(openBalance)} />
+                    <LedgerDetail label="Open" value={fmtUSDCents(openBalance)} />
                     <LedgerDetail label="Due" value={formatBillingDate(invoice.due_date)} />
                     <LedgerDetail
                       label="Client"
@@ -4320,23 +4337,6 @@ function BillingInvoiceRowEditor({
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <Button
-            type="button"
-            size="sm"
-            variant={paymentLinkReady ? "default" : "outline"}
-            className="h-8 gap-1.5"
-            onClick={() => {
-              if (paymentLinkReady) {
-                window.open(invoice.payment_url, "_blank", "noopener,noreferrer");
-                return;
-              }
-              onEnablePayment();
-            }}
-            disabled={enablingPayment || invoice.status === "void" || openBalance <= 0}
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            {paymentLinkReady ? "Open link" : enablingPayment ? "Enabling..." : "Enable online pay"}
-          </Button>
           <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
             <DialogTrigger asChild>
               <Button size="sm" variant="outline" className="h-8" onClick={openPaymentDialog}>
@@ -4428,16 +4428,16 @@ function BillingInvoiceRowEditor({
                 </div>
                 {overRecording ? (
                   <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
-                    This records {fmtUSD(paymentDraft.amount)} against a remaining balance of{" "}
-                    {fmtUSD(openBalance)}. Double-check the amount — you can still save if this is
-                    an intentional overpayment or deposit.
+                    This records {fmtUSDCents(paymentDraft.amount)} against a remaining balance of{" "}
+                    {fmtUSDCents(openBalance)}. Double-check the amount — you can still save if this
+                    is an intentional overpayment or deposit.
                   </div>
                 ) : null}
                 <div className="rounded-md border border-hairline bg-surface p-3">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     Net payout
                   </div>
-                  <div className="mt-1 text-2xl font-medium tabular">{fmtUSD(netPayout)}</div>
+                  <div className="mt-1 text-2xl font-medium tabular">{fmtUSDCents(netPayout)}</div>
                 </div>
                 <div className="space-y-1.5">
                   <Label>Notes</Label>
@@ -4475,11 +4475,11 @@ function BillingInvoiceRowEditor({
             className="h-8 w-full"
           />
           <div className="text-right text-xs text-muted-foreground">
-            Subtotal {fmtUSD(invoice.subtotal)}
+            Subtotal {fmtUSDCents(invoice.subtotal)}
           </div>
         </div>
-        <LedgerDetail label="Paid" value={fmtUSD(invoice.paid_amount)} />
-        <LedgerDetail label="Open" value={fmtUSD(openBalance)} />
+        <LedgerDetail label="Paid" value={fmtUSDCents(invoice.paid_amount)} />
+        <LedgerDetail label="Open" value={fmtUSDCents(openBalance)} />
         <LedgerDetail
           label="A/R aging"
           value={
@@ -4536,7 +4536,7 @@ function BillingInvoiceRowEditor({
 
       {invoice.payment_events.length > 0 ? (
         <div className="mt-3 text-[11px] text-muted-foreground">
-          Last payment {fmtUSD(invoice.payment_events[0].amount)} ·{" "}
+          Last payment {fmtUSDCents(invoice.payment_events[0].amount)} ·{" "}
           {formatShortDateTime(invoice.payment_events[0].paid_at)}
         </div>
       ) : null}
