@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
 import { listPortfolioBilling, type PortfolioBillingProject } from "@/lib/billing.functions";
+import { ReceivablesCockpit } from "@/components/billing/ReceivablesCockpit";
 import { StripeConnectNudge } from "@/components/billing/StripeConnectNudge";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { fmtPct } from "@/lib/format";
@@ -95,6 +96,9 @@ function BillingPortfolioPage() {
         ) : totals ? (
           <>
             <StripeConnectNudge />
+            {/* Workspace A: the biller's home is the receivables cockpit
+                (GETTINGPAID1); the WIP portfolio view stays below it. */}
+            <ReceivablesCockpit />
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
               <BillingSummaryTile
                 icon={<BriefcaseBusiness className="h-4 w-4" />}

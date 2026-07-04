@@ -45,6 +45,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { InvoicePaymentMethodToggles } from "@/components/billing/InvoicePaymentMethodToggles";
+import { ReceivablesCockpit } from "@/components/billing/ReceivablesCockpit";
 import {
   getInvoiceRemittance,
   getPaymentMethodContext,
@@ -141,6 +142,7 @@ import {
   type BillingApplicationRow,
   type BillingApplicationEventRow,
   type BillingInvoiceRow,
+  type BillingOutputFormat,
   type PaymentLedgerRow,
   type ExposureRow,
   type InspectionRow,
@@ -336,6 +338,7 @@ function makeLocalBillingApplication(
     total_retainage_held: input.total_retainage_held,
     retainage_released_this_period: input.retainage_released_this_period,
     status: input.status,
+    output_format: input.output_format,
     notes: input.notes,
     sort_order: input.sort_order,
     status_events: [
@@ -399,6 +402,7 @@ function normalizeStoredBillingApplication(
     total_retainage_held: billingNumber(record.total_retainage_held),
     retainage_released_this_period: billingNumber(record.retainage_released_this_period),
     status: isBillingStatus(record.status) ? record.status : "draft",
+    output_format: billingString(record.output_format) === "aia_g702" ? "aia_g702" : "invoice",
     notes: billingString(record.notes),
     sort_order: billingNumber(record.sort_order),
     status_events: Array.isArray(record.status_events)
@@ -2665,6 +2669,7 @@ function BillingWorkspace({
       total_retainage_held: 0,
       retainage_released_this_period: 0,
       status: "draft",
+      output_format: "invoice",
       notes: "",
       sort_order: billingApplications.length + 1,
     };
@@ -2917,7 +2922,33 @@ function BillingWorkspace({
                       </Select>
                     </div>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Output document</Label>
+                      <Select
+                        value={draft.output_format}
+                        onValueChange={(output_format) =>
+                          setDraft({
+                            ...draft,
+                            output_format: output_format as BillingOutputFormat,
+                          })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="invoice">Client invoice</SelectItem>
+                          <SelectItem value="aia_g702">
+                            AIA G702/G703 (formal pay application)
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Pick AIA when the owner or lender requires the formal application and
+                        continuation sheet. Everything else stays the same.
+                      </p>
+                    </div>
                     <div className="space-y-1.5">
                       <Label>Billing period</Label>
                       <Input
@@ -3102,6 +3133,8 @@ function BillingWorkspace({
         </div>
 
         <TabsContent value="billing" className="mt-0 space-y-4">
+          {/* Per-project receivables view (GETTINGPAID1 Task 0). */}
+          <ReceivablesCockpit projectId={project.id} showProjectColumn={false} />
           <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
             <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
               <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
@@ -4228,6 +4261,9 @@ function BillingInvoiceRowEditor({
       onPatch({
         client_visible: true,
         status: invoice.status === "draft" ? "sent" : invoice.status,
+        // Send tracking (GETTINGPAID1): the cockpit's status chain shows
+        // when the invoice went out and to whom.
+        sent_recipients: invoiceRecipients.map((recipient) => recipient.email),
       });
       setSendOpen(false);
 

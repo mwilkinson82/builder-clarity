@@ -28,6 +28,20 @@ import {
   type EnabledPaymentMethods,
 } from "../src/lib/payments-domain.ts";
 import { applySovBucketPatch, sovLineForecast, sovTotals } from "../src/lib/sov-rollup.ts";
+import {
+  computeG702Face,
+  computeG703Rows,
+  computeG703Totals,
+  computePreviousCertificatesCents,
+} from "../src/lib/aia-math.ts";
+import {
+  agingBucketTotals,
+  appendCollectionsNote,
+  collectionsFlag,
+  daysOverdue,
+  daysUntilDue,
+  receivableAgingBucket,
+} from "../src/lib/receivables.ts";
 
 // --- Payment state machine -------------------------------------------------
 
@@ -582,5 +596,156 @@ assert.equal(dollarsToCents(sovAfter.variance), 2499990);
 const lineForecast = sovLineForecast(sovPatched[1]);
 assert.equal(lineForecast.fac, 40000.3);
 assert.equal(lineForecast.variance, 9999.9);
+
+// --- Receivables aging math (GETTINGPAID1 Task 0) -----------------------------
+
+// Day counts are calendar-exact across month boundaries.
+assert.equal(daysUntilDue("2026-07-08", "2026-07-03"), 5);
+assert.equal(daysUntilDue("2026-07-03", "2026-07-03"), 0);
+assert.equal(daysUntilDue("2026-06-18", "2026-07-03"), -15);
+assert.equal(daysOverdue("2026-06-18", "2026-07-03"), 15);
+assert.equal(daysOverdue("2026-05-31", "2026-07-01"), 31); // across two month ends
+assert.equal(daysOverdue("2026-01-31", "2026-03-02"), 30); // February in between
+assert.equal(daysOverdue("2025-12-31", "2026-03-31"), 90); // quarter across new year
+assert.equal(daysUntilDue(null, "2026-07-03"), null);
+assert.equal(daysOverdue(null, "2026-07-03"), 0);
+// Full ISO timestamps age by their calendar date.
+assert.equal(daysOverdue("2026-06-30T15:30:00.000Z", "2026-07-03"), 3);
+
+// Bucket boundaries: 0 current, 1-30, 31-60, 61-90, then 90+.
+assert.equal(receivableAgingBucket(0), "current");
+assert.equal(receivableAgingBucket(1), "days_1_30");
+assert.equal(receivableAgingBucket(30), "days_1_30");
+assert.equal(receivableAgingBucket(31), "days_31_60");
+assert.equal(receivableAgingBucket(60), "days_31_60");
+assert.equal(receivableAgingBucket(61), "days_61_90");
+assert.equal(receivableAgingBucket(90), "days_61_90");
+assert.equal(receivableAgingBucket(91), "days_90_plus");
+assert.equal(receivableAgingBucket(365), "days_90_plus");
+
+// Collections cue: flags AT the threshold, founder default 15 days.
+assert.equal(collectionsFlag(14), false);
+assert.equal(collectionsFlag(15), true);
+assert.equal(collectionsFlag(16), true);
+assert.equal(collectionsFlag(5, 5), true);
+assert.equal(collectionsFlag(4, 5), false);
+assert.equal(collectionsFlag(15, 0), true); // bad threshold falls back to 15
+
+// Collections log: newest first, date-stamped, plain text.
+const logOnce = appendCollectionsNote("", "Called, promised payment Friday", "2026-07-12");
+assert.equal(logOnce, "2026-07-12 — Called, promised payment Friday");
+const logTwice = appendCollectionsNote(logOnce, "Emailed lien warning", "2026-07-20T09:00:00Z");
+assert.equal(logTwice.split("\n")[0], "2026-07-20 — Emailed lien warning");
+assert.equal(logTwice.split("\n")[1], logOnce);
+assert.equal(appendCollectionsNote(logOnce, "   ", "2026-07-21"), logOnce); // blank = no-op
+
+// Bucket totals sum open balances in integer cents.
+const agingTotals = agingBucketTotals(
+  [
+    { due_date: "2026-07-10", total_due: 1000.01, paid_amount: 0 }, // current
+    { due_date: "2026-06-30", total_due: 500.55, paid_amount: 250.55 }, // 3 days: 1-30
+    { due_date: "2026-05-15", total_due: 2000.1, paid_amount: 0 }, // 49 days: 31-60
+    { due_date: "2026-03-01", total_due: 300, paid_amount: 300 }, // paid: excluded
+    { due_date: "2026-01-01", total_due: 990.33, paid_amount: 0.33 }, // 183 days: 90+
+  ],
+  "2026-07-03",
+);
+assert.equal(agingTotals.find((b) => b.bucket === "current")?.openBalance, 1000.01);
+assert.equal(agingTotals.find((b) => b.bucket === "days_1_30")?.openBalance, 250);
+assert.equal(agingTotals.find((b) => b.bucket === "days_31_60")?.openBalance, 2000.1);
+assert.equal(agingTotals.find((b) => b.bucket === "days_61_90")?.count, 0);
+assert.equal(agingTotals.find((b) => b.bucket === "days_90_plus")?.openBalance, 990);
+
+// --- G703 column arithmetic + G702 reconciliation (GETTINGPAID1 Task 1) ------
+
+const AIA_LINES = [
+  {
+    cost_code: "03-100",
+    description: "Concrete foundations",
+    scheduled_value_cents: 63_607_50, // odd cents on purpose
+    change_order_value_cents: 4_500_000,
+    work_completed_previous_cents: 2_000_000,
+    materials_stored_previous_cents: 100_000,
+    work_completed_this_period_cents: 1_500_000,
+    materials_stored_this_period_cents: 250_000,
+    work_completed_to_date_cents: 3_500_000,
+    materials_stored_to_date_cents: 350_000,
+    total_completed_and_stored_cents: 3_850_000,
+    balance_to_finish_cents: 63_607_50 + 4_500_000 - 3_850_000,
+    retainage_pct: 10,
+    retainage_held_cents: 385_000,
+    retainage_released_cents: 0,
+  },
+  {
+    cost_code: "09-200",
+    description: "Finishes",
+    scheduled_value_cents: 2_000_001, // $20,000.01
+    change_order_value_cents: 0,
+    work_completed_previous_cents: 500_000,
+    materials_stored_previous_cents: 0,
+    work_completed_this_period_cents: 333_333,
+    materials_stored_this_period_cents: 66_667,
+    work_completed_to_date_cents: 833_333,
+    materials_stored_to_date_cents: 66_667,
+    total_completed_and_stored_cents: 900_000,
+    balance_to_finish_cents: 2_000_001 - 900_000,
+    retainage_pct: 5,
+    retainage_held_cents: 45_000,
+    retainage_released_cents: 20_000,
+  },
+];
+const g703Rows = computeG703Rows(AIA_LINES);
+const g703Totals = computeG703Totals(g703Rows);
+
+// Column arithmetic per row: C = scheduled + CO, G = D+E+F, I = C - G.
+assert.equal(g703Rows[0].scheduledValueCents, 63_607_50 + 4_500_000);
+assert.equal(
+  g703Rows[0].fromPreviousCents + g703Rows[0].thisPeriodCents + g703Rows[0].storedMaterialCents,
+  g703Rows[0].totalCompletedStoredCents,
+);
+assert.equal(
+  g703Rows[1].scheduledValueCents - g703Rows[1].totalCompletedStoredCents,
+  g703Rows[1].balanceToFinishCents,
+);
+
+// Retainage split rounds at the line: 5a on completed work, 5b on stored
+// material, releases consuming the completed-work side first.
+assert.equal(g703Rows[0].retainageCompletedWorkCents, 350_000); // 10% of 3.5M
+assert.equal(g703Rows[0].retainageStoredMaterialCents, 35_000); // 10% of 350k
+assert.equal(g703Rows[1].retainageCompletedWorkCents, 41_667 - 20_000); // 5% of 833,333 -> 41,667 less release
+assert.equal(g703Rows[1].retainageStoredMaterialCents, 3_333); // 5% of 66,667 rounds at the line
+
+// Totals row reconciles to the G702 face, penny-exact.
+const g702 = computeG702Face({
+  originalContractSumCents: AIA_LINES.reduce((s, l) => s + l.scheduled_value_cents, 0),
+  netChangeByChangeOrdersCents: AIA_LINES.reduce((s, l) => s + l.change_order_value_cents, 0),
+  totals: g703Totals,
+  previousCertificatesCents: computePreviousCertificatesCents(AIA_LINES),
+});
+assert.equal(g702.contractSumToDateCents, g703Totals.scheduledValueCents); // line 3 = column C total
+assert.equal(g702.totalCompletedStoredCents, g703Totals.totalCompletedStoredCents); // line 4 = column G total
+assert.equal(
+  g702.totalRetainageCents,
+  g702.retainageCompletedWorkCents + g702.retainageStoredMaterialCents,
+); // line 5 = 5a + 5b
+assert.equal(
+  g702.totalEarnedLessRetainageCents,
+  g702.totalCompletedStoredCents - g702.totalRetainageCents,
+); // line 6 = 4 - 5
+assert.equal(
+  g702.currentPaymentDueCents,
+  g702.totalEarnedLessRetainageCents - g702.previousCertificatesCents,
+); // line 8 = 6 - 7
+assert.equal(
+  g702.balanceToFinishInclRetainageCents,
+  g702.contractSumToDateCents - g702.totalEarnedLessRetainageCents,
+); // line 9 = 3 - 6
+// Balance column total also reconciles: I total = C total - G total.
+assert.equal(
+  g703Totals.balanceToFinishCents,
+  g703Totals.scheduledValueCents - g703Totals.totalCompletedStoredCents,
+);
+// Line 7: previous completed/stored less retainage held on it, per line.
+assert.equal(g702.previousCertificatesCents, 2_100_000 - 210_000 + (500_000 - 25_000));
 
 console.log("billing payments smoke: all assertions passed");

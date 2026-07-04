@@ -1109,3 +1109,62 @@ export const recordClientChangeOrderDecision = createServerFn({ method: "POST" }
     if (error) throw new Error(error.message);
     return { ok: true, approvalId: approvalId as string };
   });
+
+/**
+ * Lightweight viewed signal (GETTINGPAID1): when a CLIENT portal user opens
+ * an invoice detail, stamp it server-side. Not an email pixel — the portal
+ * open is the event. Internal team views are never recorded, so "viewed"
+ * on the cockpit always means the client saw it. Best-effort by design: it
+ * silently no-ops until the tracking migration is applied.
+ */
+export const recordInvoicePortalView = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { invoiceId: string }) =>
+    z.object({ invoiceId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const invoiceRes = await db(context)
+      .from("billing_invoices")
+      .select("id,project_id,client_visible")
+      .eq("id", data.invoiceId)
+      .maybeSingle();
+    if (invoiceRes.error || !invoiceRes.data) return { ok: true, recorded: false };
+    const invoice = invoiceRes.data as Record<string, unknown>;
+    if (!bool(invoice.client_visible)) return { ok: true, recorded: false };
+
+    const projectId = String(invoice.project_id);
+    const [clientBillingRes, internalRes] = await Promise.all([
+      db(context).rpc("can_view_client_billing", { p_project_id: projectId }),
+      db(context).rpc("can_read_project", { p_project_id: projectId }),
+    ]);
+    // Only genuine client views count; the team opening its own invoice is
+    // not a "client viewed it" signal.
+    if (clientBillingRes.error || !clientBillingRes.data) return { ok: true, recorded: false };
+    if (!internalRes.error && internalRes.data) return { ok: true, recorded: false };
+
+    try {
+      const stripeServer = await import("@/lib/stripe.server");
+      const admin = stripeServer.createSupabaseAdminClient() as unknown as SupabaseLike;
+      const currentRes = await admin
+        .from("billing_invoices")
+        .select("first_viewed_at,view_count")
+        .eq("id", data.invoiceId)
+        .maybeSingle();
+      if (currentRes.error) return { ok: true, recorded: false };
+      const current = (currentRes.data ?? {}) as Record<string, unknown>;
+      const nowIso = new Date().toISOString();
+      const updateRes = await admin
+        .from("billing_invoices")
+        .update({
+          first_viewed_at: (current.first_viewed_at as string | null) ?? nowIso,
+          last_viewed_at: nowIso,
+          view_count: num(current.view_count) + 1,
+        })
+        .eq("id", data.invoiceId);
+      return { ok: true, recorded: !updateRes.error };
+    } catch {
+      // Admin credentials or tracking columns unavailable: the viewed signal
+      // simply stays off — never break the portal for it.
+      return { ok: true, recorded: false };
+    }
+  });

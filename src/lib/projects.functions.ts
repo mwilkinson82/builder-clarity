@@ -273,10 +273,18 @@ export interface BillingApplicationRow {
   total_retainage_held: number;
   retainage_released_this_period: number;
   status: BillingStatus;
+  /**
+   * What the application produces: a client invoice (default) or a formal
+   * AIA G702/G703 package. Companies that never pick AIA never see AIA
+   * affordances beyond this choice (GETTINGPAID1).
+   */
+  output_format: BillingOutputFormat;
   notes: string;
   sort_order: number;
   status_events: BillingApplicationEventRow[];
 }
+
+export type BillingOutputFormat = "invoice" | "aia_g702";
 
 export interface BillingApplicationEventRow {
   id: string;
@@ -319,6 +327,13 @@ export interface BillingInvoiceRow {
   online_payment_status: OnlinePaymentStatus;
   payment_link_sent_at: string | null;
   sent_at: string | null;
+  /** Emails the invoice was last sent to (send/view tracking, GETTINGPAID1). */
+  sent_recipients: string[];
+  first_viewed_at: string | null;
+  last_viewed_at: string | null;
+  view_count: number;
+  /** Append-only plain-text collections activity log. */
+  collections_log: string;
   paid_at: string | null;
   notes: string;
   /**
@@ -883,6 +898,7 @@ const normalizeBillingApplication = (b: Record<string, unknown>): BillingApplica
   total_retainage_held: num(b.total_retainage_held),
   retainage_released_this_period: num(b.retainage_released_this_period),
   status: str(b.status, "draft") as BillingStatus,
+  output_format: str(b.output_format, "invoice") === "aia_g702" ? "aia_g702" : "invoice",
   notes: str(b.notes),
   sort_order: num(b.sort_order),
   status_events: [],
@@ -949,6 +965,13 @@ const normalizeBillingInvoice = (row: Record<string, unknown>): BillingInvoiceRo
   online_payment_status: str(row.online_payment_status, "not_enabled") as OnlinePaymentStatus,
   payment_link_sent_at: (row.payment_link_sent_at as string | null) ?? null,
   sent_at: (row.sent_at as string | null) ?? null,
+  sent_recipients: Array.isArray(row.sent_recipients)
+    ? (row.sent_recipients as unknown[]).map((entry) => str(entry)).filter(Boolean)
+    : [],
+  first_viewed_at: (row.first_viewed_at as string | null) ?? null,
+  last_viewed_at: (row.last_viewed_at as string | null) ?? null,
+  view_count: num(row.view_count),
+  collections_log: str(row.collections_log),
   paid_at: (row.paid_at as string | null) ?? null,
   notes: str(row.notes),
   enabled_payment_methods:
@@ -2337,6 +2360,7 @@ const billingApplicationInput = z.object({
   paid_to_date: z.number().min(0).default(0),
   retainage: z.number().min(0).default(0),
   status: z.enum(BILLING_STATUSES).default("draft"),
+  output_format: z.enum(["invoice", "aia_g702"]).default("invoice"),
   notes: z.string().max(2000).default(""),
   sort_order: z.number().int().optional(),
 });
@@ -2391,15 +2415,25 @@ export const createBillingApplication = createServerFn({ method: "POST" })
       .limit(1)
       .maybeSingle();
     const sort_order = rest.sort_order ?? ((last?.sort_order as number | undefined) ?? 0) + 1;
-    const { data: created, error } = await context.supabase
+    const insertPayload: Record<string, unknown> = {
+      project_id: projectId,
+      ...billingPayload,
+      sort_order,
+    };
+    let { data: created, error } = await context.supabase
       .from("billing_applications")
-      .insert({
-        project_id: projectId,
-        ...billingPayload,
-        sort_order,
-      })
+      .insert(insertPayload as never)
       .select("*")
       .single();
+    if (error && "output_format" in insertPayload && isMissingPaymentColumn(error)) {
+      // GETTINGPAID1 migration not applied yet: retry without the new column.
+      delete insertPayload.output_format;
+      ({ data: created, error } = await context.supabase
+        .from("billing_applications")
+        .insert(insertPayload as never)
+        .select("*")
+        .single());
+    }
     if (error) throw new Error(error.message);
     const createdRow = normalizeBillingApplication(created as Record<string, unknown>);
     await recordBillingApplicationEvent(context.supabase, {
@@ -2438,10 +2472,18 @@ export const updateBillingApplication = createServerFn({ method: "POST" })
     if (beforeError) throw new Error(beforeError.message);
     if (!before) throw new Error("Pay app not found.");
 
-    const { error } = await context.supabase
+    let { error } = await context.supabase
       .from("billing_applications")
       .update(normalizedPatch)
       .eq("id", data.id);
+    if (error && "output_format" in normalizedPatch && isMissingPaymentColumn(error)) {
+      // GETTINGPAID1 migration not applied yet: retry without the new column.
+      delete normalizedPatch.output_format;
+      ({ error } = await context.supabase
+        .from("billing_applications")
+        .update(normalizedPatch)
+        .eq("id", data.id));
+    }
     if (error) throw new Error(error.message);
 
     const previousStatus = str(before.status, "draft");
@@ -2506,6 +2548,8 @@ const billingInvoiceInput = z.object({
   paid_amount: z.number().min(0).default(0),
   status: z.enum(INVOICE_STATUSES).default("draft"),
   client_visible: z.boolean().default(false),
+  sent_recipients: z.array(z.string().max(254)).max(50).optional(),
+  collections_log: z.string().max(20000).optional(),
   notes: z.string().max(4000).default(""),
   enabled_payment_methods: z
     .object({
@@ -2530,6 +2574,15 @@ const paymentLedgerInput = z.object({
   reference: z.string().max(200).default(""),
   notes: z.string().max(4000).default(""),
 });
+
+// Columns that may be ahead of the database (Payments Phase 1 +
+// GETTINGPAID1 tracking); writes retry without them while the deploy is
+// ahead of the migration.
+const OPTIONAL_INVOICE_COLUMNS = [
+  "enabled_payment_methods",
+  "sent_recipients",
+  "collections_log",
+] as const;
 
 /**
  * Payments Phase 1 columns land with this PR and are applied outside the
@@ -2629,8 +2682,12 @@ export const createBillingInvoice = createServerFn({ method: "POST" })
       .insert(insertPayload)
       .select("*")
       .single();
-    if (error && "enabled_payment_methods" in insertPayload && isMissingPaymentColumn(error)) {
-      delete insertPayload.enabled_payment_methods;
+    if (
+      error &&
+      isMissingPaymentColumn(error) &&
+      OPTIONAL_INVOICE_COLUMNS.some((column) => column in insertPayload)
+    ) {
+      for (const column of OPTIONAL_INVOICE_COLUMNS) delete insertPayload[column];
       ({ data: created, error } = await dynamicTable(context.supabase, "billing_invoices")
         .insert(insertPayload)
         .select("*")
@@ -2684,8 +2741,12 @@ export const updateBillingInvoice = createServerFn({ method: "POST" })
       .eq("id", data.id)
       .select("*")
       .single();
-    if (error && "enabled_payment_methods" in patch && isMissingPaymentColumn(error)) {
-      delete patch.enabled_payment_methods;
+    if (
+      error &&
+      isMissingPaymentColumn(error) &&
+      OPTIONAL_INVOICE_COLUMNS.some((column) => column in patch)
+    ) {
+      for (const column of OPTIONAL_INVOICE_COLUMNS) delete patch[column];
       ({ data: updated, error } = await dynamicTable(context.supabase, "billing_invoices")
         .update(patch)
         .eq("id", data.id)

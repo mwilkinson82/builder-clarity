@@ -365,16 +365,20 @@ export function BillingLineItemsPanel({
           >
             <Wand2 className="h-3.5 w-3.5" /> Pull SOV + approved COs
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="gap-1.5"
-            disabled={pdfBusy || selectedLines.length === 0}
-            onClick={downloadAiaPdf}
-          >
-            <Download className="h-3.5 w-3.5" /> Download AIA package
-          </Button>
+          {/* AIA affordances appear only when the application was built as
+              AIA G702/G703 — companies that never pick AIA never see them. */}
+          {selectedPayApp?.output_format === "aia_g702" ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              disabled={pdfBusy || selectedLines.length === 0}
+              onClick={downloadAiaPdf}
+            >
+              <Download className="h-3.5 w-3.5" /> Download AIA G702/G703
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
