@@ -37,6 +37,8 @@ export interface AiScanDiagnosticsTile {
   exemplarDescription: string;
   rawResponse: string;
   mappedCandidates: AiCountCandidate[];
+  /** Candidates dropped because the estimator already marked that symbol. */
+  suppressedNearExisting: AiCountCandidate[];
   usage: { inputTokens: number; outputTokens: number } | null;
   /** Token-implied perceived megapixels — a resize regression flags here. */
   tokenCheck: TileTokenCheck | null;
@@ -220,6 +222,9 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
           rawResponse: str(meta?.rawResponse),
           mappedCandidates: Array.isArray(meta?.mappedCandidates)
             ? (meta.mappedCandidates as AiCountCandidate[])
+            : [],
+          suppressedNearExisting: Array.isArray(meta?.suppressedNearExisting)
+            ? (meta.suppressedNearExisting as AiCountCandidate[])
             : [],
           usage: parseUsage(meta?.usage),
           tokenCheck: (meta?.tokenCheck ?? null) as TileTokenCheck | null,

@@ -449,16 +449,29 @@ export function snapToInkCentroid(
   return best ? { x: best.x, y: best.y } : null;
 }
 
-// --- Token-implied resize check (AITAKEOFF3 Task 3) ---
-// Vision input costs roughly (width × height) / 750 tokens. A call whose
-// TOTAL input tokens (tile + exemplar + prompt) come in below the tile's own
-// share means the API downscaled the tile before the model saw it — the
-// exact regression Task 0 killed, kept visible at a glance in diagnostics.
+// --- Token-implied resize check (AITAKEOFF3 Task 3, isolated in AITAKEOFF4
+// Task 2) ---
+// Vision input costs roughly (width × height) / 750 tokens. The exemplar
+// image and the prompt text ride along in every call, so the TILE's own
+// perceived size is inputTokens minus those — converting the raw total made
+// every healthy tile read oversized and drowned the signal. A tile whose
+// isolated share comes in well below its own cost means the API downscaled
+// it before the model saw it — the exact regression Task 0 killed.
+
+/** Fixed allowance for the instruction text riding along with the images. */
+export const PROMPT_TOKEN_ALLOWANCE = 350;
+/** Tile-implied tokens below this fraction of the expected cost flag. */
+export const TILE_TOKEN_RESIZE_SLACK = 0.85;
 
 export interface TileTokenCheck {
   inputTokens: number;
   expectedTileTokens: number;
-  tokenImpliedMegapixels: number;
+  exemplarTokens: number;
+  promptAllowance: number;
+  /** Input tokens attributable to the tile alone. */
+  tileImpliedTokens: number;
+  /** The tile's perceived size, isolated from exemplar + prompt. */
+  tileImpliedMegapixels: number;
   tileMegapixels: number;
   suspectedResize: boolean;
 }
@@ -467,16 +480,29 @@ export function tileTokenCheck(
   inputTokens: number,
   tileWidthPx: number,
   tileHeightPx: number,
+  exemplarWidthPx = 0,
+  exemplarHeightPx = 0,
 ): TileTokenCheck {
   const tilePixels = Math.max(0, tileWidthPx) * Math.max(0, tileHeightPx);
   const expectedTileTokens = Math.round(tilePixels / 750);
+  const exemplarTokens = Math.round(
+    (Math.max(0, exemplarWidthPx) * Math.max(0, exemplarHeightPx)) / 750,
+  );
+  const tileImpliedTokens = Math.max(
+    0,
+    Math.round(inputTokens - exemplarTokens - PROMPT_TOKEN_ALLOWANCE),
+  );
   const round2 = (value: number) => Math.round(value * 100) / 100;
   return {
     inputTokens,
     expectedTileTokens,
-    tokenImpliedMegapixels: round2((Math.max(0, inputTokens) * 750) / 1_000_000),
+    exemplarTokens,
+    promptAllowance: PROMPT_TOKEN_ALLOWANCE,
+    tileImpliedTokens,
+    tileImpliedMegapixels: round2((tileImpliedTokens * 750) / 1_000_000),
     tileMegapixels: round2(tilePixels / 1_000_000),
-    suspectedResize: inputTokens > 0 && inputTokens < expectedTileTokens,
+    suspectedResize:
+      inputTokens > 0 && tileImpliedTokens < expectedTileTokens * TILE_TOKEN_RESIZE_SLACK,
   };
 }
 

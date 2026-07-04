@@ -742,26 +742,42 @@ assert.equal(
 
 // --- Token-implied resize check (AITAKEOFF3 Task 3) ---
 
-const oldWorldTokens = tileTokenCheck(2377, 1400, 1400);
+const oldWorldTokens = tileTokenCheck(2377, 1400, 1400, 640, 640);
 assert.equal(
   oldWorldTokens.expectedTileTokens,
   2613,
   "a full 1400px tile alone costs ~2613 input tokens",
 );
+assert.equal(oldWorldTokens.exemplarTokens, 546, "a 640px exemplar costs ~546 tokens");
+assert.equal(
+  oldWorldTokens.tileImpliedTokens,
+  2377 - 546 - 350,
+  "the tile's own share subtracts the exemplar and the prompt allowance",
+);
 assert.ok(
   oldWorldTokens.suspectedResize,
   "RESIZE CHECK: the real A-100 numbers (2377 tokens on a 1400px tile) flag at a glance",
 );
-const newWorldTokens = tileTokenCheck(2244, 1024, 1024);
+const newWorldTokens = tileTokenCheck(2244, 1024, 1024, 640, 640);
 assert.ok(
   !newWorldTokens.suspectedResize,
-  "a 1024px tile plus exemplar/prompt overhead never flags",
+  "a healthy 1024px tile with exemplar + prompt subtracted reads ok",
+);
+assert.equal(
+  newWorldTokens.tileImpliedMegapixels,
+  1.01,
+  "the ISOLATED tile-implied megapixels sit next to the tile's true size",
 );
 assert.equal(newWorldTokens.tileMegapixels, 1.05, "tile megapixels recorded for the glance check");
 assert.equal(
-  tileTokenCheck(0, 1024, 1024).suspectedResize,
+  tileTokenCheck(0, 1024, 1024, 640, 640).suspectedResize,
   false,
   "zero reported tokens never flags",
+);
+assert.equal(
+  tileTokenCheck(2027 + 350, 1400, 1400).suspectedResize,
+  true,
+  "exemplar dims defaulting to zero still catches genuine under-coverage",
 );
 
 // --- Panel availability states ---

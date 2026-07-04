@@ -266,6 +266,11 @@ const tileScanInput = z.object({
     media_type: z.enum(["image/png", "image/webp", "image/jpeg"]),
     // Region-rendered crop (~640px long side) is bigger than Phase A's.
     base64: z.string().min(1).max(2_500_000),
+    // Pixel dimensions of the exemplar crop (AITAKEOFF4 Task 2): lets the
+    // token check subtract the exemplar's share and isolate the tile's own
+    // perceived megapixels.
+    width_px: z.number().int().min(1).max(4000).optional(),
+    height_px: z.number().int().min(1).max(4000).optional(),
   }),
   tile: z.object({
     index: z.number().int().min(0).max(500),
@@ -325,6 +330,7 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
     const { callAnthropicVision } = await import("@/lib/ai-takeoff/anthropic.server");
 
     let candidates: AiCountCandidate[] = [];
+    let suppressedNearExisting: AiCountCandidate[] = [];
     let usage = { inputTokens: 0, outputTokens: 0 };
     let exemplarDescription = "";
     let rawResponseText = "";
@@ -350,7 +356,13 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
         ...tileLocalToSheetPoint(frame, center.x, center.y),
         confidence: COARSE_CANDIDATE_CONFIDENCE,
       }));
-      candidates = excludeNearExistingPoints(dedupeCandidates(mapped), data.existing_points);
+      const deduped = dedupeCandidates(mapped);
+      candidates = excludeNearExistingPoints(deduped, data.existing_points);
+      // Candidates sitting on already-counted symbols are suppressed, not
+      // lost: diagnostics labels them so "8 found" plus 4 hand-marked brushes
+      // reads as intended behavior, not missed symbols (AITAKEOFF4 Task 2).
+      const kept = new Set(candidates);
+      suppressedNearExisting = deduped.filter((candidate) => !kept.has(candidate));
     } catch (error) {
       const message = error instanceof Error ? error.message : "The AI model call failed.";
       await markOperationFailed(supabaseAdmin, operation, message);
@@ -406,10 +418,18 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
           exemplarDescription,
           rawResponse: rawResponseText.slice(0, 20000),
           mappedCandidates: candidates,
+          suppressedNearExisting,
           usage,
-          // Token-implied perceived megapixels (AITAKEOFF3 Task 3): a future
-          // silent resize shows up here as suspectedResize at a glance.
-          tokenCheck: tileTokenCheck(usage.inputTokens, data.tile.width, data.tile.height),
+          // Token-implied perceived megapixels (AITAKEOFF3 Task 3, isolated
+          // from exemplar + prompt in AITAKEOFF4 Task 2): a future silent
+          // resize shows up here as suspectedResize at a glance.
+          tokenCheck: tileTokenCheck(
+            usage.inputTokens,
+            data.tile.width,
+            data.tile.height,
+            data.exemplar.width_px ?? 0,
+            data.exemplar.height_px ?? 0,
+          ),
           createdAt: new Date().toISOString(),
         }),
       ),
