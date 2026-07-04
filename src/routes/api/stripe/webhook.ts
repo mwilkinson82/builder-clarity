@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  applyInvoiceLedgerReconcile,
   createSupabaseAdminClient,
   isMissingAnySupabaseColumn,
   jsonError,
@@ -7,7 +8,11 @@ import {
   RouteError,
   verifyStripeWebhookPayload,
 } from "@/lib/stripe.server";
-import { checkoutSessionOutcome, planCheckoutCompletion } from "@/lib/payments-domain";
+import {
+  checkoutSessionOutcome,
+  planChargeRefund,
+  planCheckoutCompletion,
+} from "@/lib/payments-domain";
 
 type StripeObject = Record<string, unknown> & {
   id?: string;
@@ -398,34 +403,62 @@ async function markInvoiceFailed(object: StripeObject) {
   if (error) throw new Error(error.message);
 }
 
+// Refunds reverse the invoice, not just the ledger row (live bug: invoice
+// 2601-3 stayed "paid" after a full refund). The ledger row is patched per
+// the refund plan, then the invoice + linked pay app are recomputed from the
+// ledger's succeeded-minus-refunded truth — the same reconcile path the
+// founder can trigger on demand.
 async function markChargeRefunded(object: StripeObject) {
   const paymentIntentId = str(object.payment_intent);
   if (!paymentIntentId) return;
 
   const admin = createSupabaseAdminClient();
   const { data: payment, error: paymentError } = await dynamicTable(admin, "payment_ledger")
-    .select("id,invoice_id")
+    .select("id,invoice_id,amount,amount_cents,status,notes")
     .eq("stripe_payment_intent_id", paymentIntentId)
     .maybeSingle();
   if (paymentError) throw new Error(paymentError.message);
   if (!payment) return;
 
+  const bookedCents =
+    num(payment.amount_cents) > 0
+      ? Math.round(num(payment.amount_cents))
+      : Math.round(num(payment.amount) * 100);
+  const plan = planChargeRefund({
+    bookedCents,
+    chargeAmountCents: Math.round(num(object.amount)),
+    amountRefundedCents: Math.round(num(object.amount_refunded)),
+    fullyRefunded: Boolean(object.refunded),
+  });
+
+  const fullyReversed = plan.ledgerStatus === "refunded";
+  const refundNote = fullyReversed
+    ? "Stripe charge refunded."
+    : `Stripe charge partially refunded: $${(plan.reversalCents / 100).toFixed(2)} of $${(
+        bookedCents / 100
+      ).toFixed(2)} reversed.`;
   const { error: updatePaymentError } = await dynamicTable(admin, "payment_ledger")
     .update({
-      status: "refunded",
+      status: plan.ledgerStatus,
+      amount: plan.ledgerAmountCents / 100,
+      amount_cents: plan.ledgerAmountCents,
       stripe_charge_id: str(object.id),
       receipt_url: str(object.receipt_url),
-      notes: "Stripe charge refunded.",
+      notes: [str(payment.notes), refundNote].filter(Boolean).join("\n"),
     })
     .eq("id", payment.id);
   if (updatePaymentError) throw new Error(updatePaymentError.message);
 
-  const { error: updateInvoiceError } = await dynamicTable(admin, "billing_invoices")
-    .update({
-      online_payment_status: "refunded",
-    })
-    .eq("id", payment.invoice_id);
-  if (updateInvoiceError) throw new Error(updateInvoiceError.message);
+  await applyInvoiceLedgerReconcile(admin, payment.invoice_id as string);
+
+  if (fullyReversed) {
+    const { error: updateInvoiceError } = await dynamicTable(admin, "billing_invoices")
+      .update({
+        online_payment_status: "refunded",
+      })
+      .eq("id", payment.invoice_id);
+    if (updateInvoiceError) throw new Error(updateInvoiceError.message);
+  }
 }
 
 async function markSubscriptionCheckoutComplete(object: StripeObject) {

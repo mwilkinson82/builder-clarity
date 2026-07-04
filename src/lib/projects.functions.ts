@@ -2832,6 +2832,43 @@ export const recordInvoicePayment = createServerFn({ method: "POST" })
     return { ok: true, paidAmount, status: nextStatus };
   });
 
+/**
+ * Recompute an invoice's paid_amount/status from the payment ledger
+ * (succeeded rows minus refunds are the truth). The honest correction path
+ * for invoices whose stored money drifted from the ledger — e.g. a refund
+ * processed before refund reversal shipped (live case: invoice 2601-3).
+ * Same code path the refund webhook uses; never manual SQL.
+ */
+export const reconcileInvoicePayments = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { invoiceId: string }) =>
+    z.object({ invoiceId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { data: invoice, error: invoiceError } = await dynamicTable(
+      context.supabase,
+      "billing_invoices",
+    )
+      .select("id,project_id")
+      .eq("id", data.invoiceId)
+      .single();
+    if (invoiceError) throw new Error(invoiceError.message);
+    if (!invoice) throw new Error("Invoice not found.");
+
+    const { data: canManage, error: accessError } = await context.supabase.rpc(
+      "can_manage_project",
+      { p_project_id: invoice.project_id as string },
+    );
+    if (accessError) throw new Error(accessError.message);
+    if (!canManage) throw new Error("You do not have permission to manage this project.");
+
+    // Dynamic import keeps the server-only Stripe module out of the client
+    // bundle; the reconcile itself runs with the caller's RLS-scoped client.
+    const { applyInvoiceLedgerReconcile } = await import("@/lib/stripe.server");
+    const result = await applyInvoiceLedgerReconcile(context.supabase, data.invoiceId);
+    return { ok: true, ...result };
+  });
+
 // ---------------- REVIEWS ----------------
 
 const submitReviewInput = z.object({

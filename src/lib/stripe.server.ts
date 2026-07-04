@@ -104,7 +104,8 @@ export type StripeMode = "test" | "live";
  * side. Callers pass the mode read from `organizations.stripe_mode`.
  */
 export function requireStripeSecretKey(mode: StripeMode = "test") {
-  const modeKey = mode === "live" ? process.env.STRIPE_SECRET_KEY_LIVE : process.env.STRIPE_SECRET_KEY_TEST;
+  const modeKey =
+    mode === "live" ? process.env.STRIPE_SECRET_KEY_LIVE : process.env.STRIPE_SECRET_KEY_TEST;
   const key = modeKey || process.env.STRIPE_SECRET_KEY || "";
   if (!key) {
     throw new RouteError(
@@ -169,7 +170,10 @@ export async function getOrganizationStripeMode(
     const client = supabase as {
       from(table: string): {
         select(cols: string): {
-          eq(col: string, val: string): {
+          eq(
+            col: string,
+            val: string,
+          ): {
             maybeSingle(): Promise<{
               data: { stripe_mode?: string } | null;
               error: { message?: string } | null;
@@ -351,13 +355,20 @@ export async function stripePost<T>(
   return payload as T;
 }
 
-export async function stripeGet<T>(path: string, mode: StripeMode = "test"): Promise<T> {
+export async function stripeGet<T>(
+  path: string,
+  mode: StripeMode = "test",
+  // Connected account id: reads run AS the connected account via the
+  // Stripe-Account header (same pattern as stripePost direct charges).
+  stripeAccount?: string,
+): Promise<T> {
   const secretKey = requireStripeSecretKey(mode);
   const response = await fetch(`https://api.stripe.com/v1/${path.replace(/^\//, "")}`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${secretKey}`,
       "Stripe-Version": STRIPE_API_VERSION,
+      ...(stripeAccount ? { "Stripe-Account": stripeAccount } : {}),
     },
   });
 
@@ -379,6 +390,120 @@ export async function stripeGet<T>(path: string, mode: StripeMode = "test"): Pro
   return payload as T;
 }
 
+// ---------------------------------------------------------------------------
+// Invoice <- ledger reconciliation (BILLINGBATCH2 Task 0)
+// ---------------------------------------------------------------------------
+
+type ReconcileQueryResult<T = unknown> = { data: T | null; error: { message: string } | null };
+type ReconcileQuery = PromiseLike<ReconcileQueryResult> & {
+  select(columns?: string): ReconcileQuery;
+  update(values: unknown): ReconcileQuery;
+  eq(column: string, value: unknown): ReconcileQuery;
+  single(): ReconcileQuery;
+};
+type ReconcileClient = { from(relation: string): ReconcileQuery };
+
+export interface InvoiceReconcileResult {
+  invoiceId: string;
+  paidAmount: number;
+  status: string;
+  countedPayments: number;
+}
+
+/**
+ * Recompute an invoice's paid_amount/status/paid_at from the payment ledger
+ * (succeeded rows count, refunded/failed/void/pending count zero) and write
+ * it back, including the linked pay application. THE code path for refund
+ * reversal and for correcting a drifted invoice — the webhook and the
+ * on-demand action both land here, so there is never a reason for manual
+ * SQL. Works with either the admin client (webhook) or an RLS-scoped user
+ * client (founder-triggered action).
+ */
+export async function applyInvoiceLedgerReconcile(
+  client: unknown,
+  invoiceId: string,
+): Promise<InvoiceReconcileResult> {
+  const domain = await import("@/lib/payments-domain");
+  const from = (relation: string) => (client as ReconcileClient).from(relation);
+
+  const { data: invoice, error: invoiceError } = await from("billing_invoices")
+    .select("id,billing_application_id,total_due,paid_amount,status,paid_at")
+    .eq("id", invoiceId)
+    .single();
+  if (invoiceError || !invoice) {
+    throw new Error(invoiceError?.message || "Invoice not found.");
+  }
+  const invoiceRow = invoice as Record<string, unknown>;
+
+  const { data: ledger, error: ledgerError } = await from("payment_ledger")
+    .select("amount,amount_cents,status")
+    .eq("invoice_id", invoiceId);
+  if (ledgerError) throw new Error(ledgerError.message);
+  const rows = ((ledger ?? []) as Record<string, unknown>[]).map((row) => ({
+    // Pre-Phase-1 rows may have amount_cents 0 with a decimal amount; the
+    // decimal is authoritative for them.
+    amountCents:
+      Number(row.amount_cents) > 0
+        ? Math.round(Number(row.amount_cents))
+        : domain.dollarsToCents(Number(row.amount ?? 0)),
+    status: String(row.status ?? "succeeded") as import("@/lib/payments-domain").PaymentState,
+  }));
+
+  const patch = domain.reconcileInvoiceFromLedger({
+    totalDueCents: domain.dollarsToCents(Number(invoiceRow.total_due ?? 0)),
+    currentStatus: String(invoiceRow.status ?? "sent"),
+    currentPaidAtIso: (invoiceRow.paid_at as string | null) ?? null,
+    rows,
+    nowIso: new Date().toISOString(),
+  });
+  const paidAmount = domain.centsToDollars(patch.paidCents);
+
+  const { error: updateError } = await from("billing_invoices")
+    .update({
+      paid_amount: paidAmount,
+      status: patch.status,
+      paid_at: patch.paidAtIso,
+    })
+    .eq("id", invoiceId);
+  if (updateError) throw new Error(updateError.message);
+
+  const billingApplicationId = (invoiceRow.billing_application_id as string | null) ?? null;
+  if (billingApplicationId) {
+    const { error: payAppError } = await from("billing_applications")
+      .update({
+        paid_to_date: paidAmount,
+        status: patch.status === "paid" ? "paid" : patch.paidCents > 0 ? "partial" : "submitted",
+      })
+      .eq("id", billingApplicationId);
+    if (payAppError) throw new Error(payAppError.message);
+  }
+
+  return {
+    invoiceId,
+    paidAmount,
+    status: patch.status,
+    countedPayments: rows.filter((row) => row.status === "succeeded").length,
+  };
+}
+
+/**
+ * Expire an open Stripe Checkout session (client backed out of paying).
+ * Stripe rejects expiry of completed sessions — the caller treats that as
+ * "do not clear the lock" because the payment may have gone through.
+ */
+export async function expireStripeCheckoutSession(
+  sessionId: string,
+  stripeAccount: string,
+  mode: StripeMode = "test",
+) {
+  return stripePost<StripeCheckoutSession>(
+    `checkout/sessions/${sessionId}/expire`,
+    new URLSearchParams(),
+    undefined,
+    stripeAccount,
+    mode,
+  );
+}
 
 function timingSafeEqual(a: string, b: string) {
   if (a.length !== b.length) return false;

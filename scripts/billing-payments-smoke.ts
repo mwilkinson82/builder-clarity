@@ -13,16 +13,21 @@ import {
   lineWorkForPercentCents,
   maskAccountTail,
   methodAvailability,
+  PENDING_LOCK_MAX_AGE_HOURS,
+  pendingPaymentLock,
   percentOfCents,
   percentOfDollars,
+  planChargeRefund,
   planCheckoutCompletion,
   quantizeDollars,
+  reconcileInvoiceFromLedger,
   renderRemittanceMemo,
   resolveEnabledMethods,
   stripeConnectReady,
   sumDollarsToCents,
   type EnabledPaymentMethods,
 } from "../src/lib/payments-domain.ts";
+import { applySovBucketPatch, sovLineForecast, sovTotals } from "../src/lib/sov-rollup.ts";
 
 // --- Payment state machine -------------------------------------------------
 
@@ -393,5 +398,189 @@ assert.equal(
   invoiceTotalDueDollars({ subtotal: 100, retainage: 250, retainageReleased: 0 }),
   0, // floors at zero
 );
+
+// --- Refund reversal (BILLINGBATCH2 Task 0: live bug, invoice 2601-3) --------
+
+// Full refund: the row stops counting (status flips, amount kept for audit).
+const fullRefund = planChargeRefund({
+  bookedCents: 100000, // $1,000 booked (the 2601-3 shape)
+  chargeAmountCents: 100000,
+  amountRefundedCents: 100000,
+  fullyRefunded: true,
+});
+assert.equal(fullRefund.ledgerStatus, "refunded");
+assert.equal(fullRefund.ledgerAmountCents, 100000);
+assert.equal(fullRefund.reversalCents, 100000);
+
+// Partial refund: row stays succeeded, counted amount drops by the refund.
+const partialRefund = planChargeRefund({
+  bookedCents: 100000,
+  chargeAmountCents: 100000,
+  amountRefundedCents: 40000,
+  fullyRefunded: false,
+});
+assert.equal(partialRefund.ledgerStatus, "succeeded");
+assert.equal(partialRefund.ledgerAmountCents, 60000);
+assert.equal(partialRefund.reversalCents, 40000);
+
+// Second partial refund arrives with the CUMULATIVE amount_refunded; the
+// already-reduced row lands on the same remaining value.
+const secondPartial = planChargeRefund({
+  bookedCents: 60000,
+  chargeAmountCents: 100000,
+  amountRefundedCents: 70000,
+  fullyRefunded: false,
+});
+assert.equal(secondPartial.ledgerStatus, "succeeded");
+assert.equal(secondPartial.ledgerAmountCents, 30000);
+
+// Surcharged charge: refunds consume the surcharge last, so refunding only
+// the surcharge reverses no invoice progress.
+const surchargeOnlyRefund = planChargeRefund({
+  bookedCents: 1000000,
+  chargeAmountCents: 1029030, // base + estimated card fee
+  amountRefundedCents: 29030,
+  fullyRefunded: false,
+});
+assert.equal(surchargeOnlyRefund.ledgerStatus, "succeeded");
+assert.equal(surchargeOnlyRefund.ledgerAmountCents, 1000000);
+assert.equal(surchargeOnlyRefund.reversalCents, 0);
+
+// Refunds beyond the surcharge start reversing invoice progress.
+const deepRefund = planChargeRefund({
+  bookedCents: 1000000,
+  chargeAmountCents: 1029030,
+  amountRefundedCents: 529030,
+  fullyRefunded: false,
+});
+assert.equal(deepRefund.ledgerAmountCents, 500000);
+assert.equal(deepRefund.reversalCents, 500000);
+
+// --- Reconcile-from-ledger math (paid_amount/status from the truth) ----------
+
+// The 2601-3 correction: fully refunded ledger, invoice must reopen to sent.
+const refundedReconcile = reconcileInvoiceFromLedger({
+  totalDueCents: 100000,
+  currentStatus: "paid",
+  currentPaidAtIso: "2026-07-03T18:00:00.000Z",
+  rows: [{ amountCents: 100000, status: "refunded" }],
+  nowIso: "2026-07-03T22:00:00.000Z",
+});
+assert.equal(refundedReconcile.paidCents, 0);
+assert.equal(refundedReconcile.status, "sent");
+assert.equal(refundedReconcile.paidAtIso, null);
+
+// Partial refund leaves a partially paid invoice.
+const partialReconcile = reconcileInvoiceFromLedger({
+  totalDueCents: 100000,
+  currentStatus: "paid",
+  currentPaidAtIso: "2026-07-03T18:00:00.000Z",
+  rows: [{ amountCents: 60000, status: "succeeded" }],
+  nowIso: "2026-07-03T22:00:00.000Z",
+});
+assert.equal(partialReconcile.paidCents, 60000);
+assert.equal(partialReconcile.status, "partially_paid");
+
+// Fully paid ledger keeps the invoice paid and preserves the original paid_at.
+const paidReconcile = reconcileInvoiceFromLedger({
+  totalDueCents: 100000,
+  currentStatus: "partially_paid",
+  currentPaidAtIso: "2026-07-01T12:00:00.000Z",
+  rows: [
+    { amountCents: 60000, status: "succeeded" },
+    { amountCents: 40000, status: "succeeded" },
+    { amountCents: 25000, status: "failed" }, // never money
+    { amountCents: 10000, status: "pending" }, // not money yet
+  ],
+  nowIso: "2026-07-03T22:00:00.000Z",
+});
+assert.equal(paidReconcile.paidCents, 100000);
+assert.equal(paidReconcile.status, "paid");
+assert.equal(paidReconcile.paidAtIso, "2026-07-01T12:00:00.000Z");
+
+// Reconcile never resurrects a void invoice and never sends a draft.
+assert.equal(
+  reconcileInvoiceFromLedger({
+    totalDueCents: 100000,
+    currentStatus: "void",
+    currentPaidAtIso: null,
+    rows: [{ amountCents: 100000, status: "succeeded" }],
+    nowIso: "2026-07-03T22:00:00.000Z",
+  }).status,
+  "void",
+);
+assert.equal(
+  reconcileInvoiceFromLedger({
+    totalDueCents: 100000,
+    currentStatus: "draft",
+    currentPaidAtIso: null,
+    rows: [],
+    nowIso: "2026-07-03T22:00:00.000Z",
+  }).status,
+  "draft",
+);
+
+// --- Pending-payment lock (Task 1: the $708K double-collection class) --------
+
+const LOCK_NOW = "2026-07-03T22:00:00.000Z";
+const lockBase = {
+  onlinePaymentStatus: "pending",
+  checkoutSessionId: "cs_test_123",
+  paymentLinkSentAtIso: "2026-07-03T20:00:00.000Z",
+  openBalanceCents: 70800000, // the live incident's $708K
+  nowIso: LOCK_NOW,
+};
+const lockedState = pendingPaymentLock(lockBase);
+assert.equal(lockedState.locked, true);
+assert.equal(lockedState.startedAtIso, "2026-07-03T20:00:00.000Z");
+
+// checkout.session.expired clears the lock (status leaves "pending").
+assert.equal(pendingPaymentLock({ ...lockBase, onlinePaymentStatus: "expired" }).locked, false);
+assert.equal(pendingPaymentLock({ ...lockBase, onlinePaymentStatus: "failed" }).locked, false);
+assert.equal(pendingPaymentLock({ ...lockBase, onlinePaymentStatus: "paid" }).locked, false);
+// No session, no lock; no open balance, nothing to protect.
+assert.equal(pendingPaymentLock({ ...lockBase, checkoutSessionId: "" }).locked, false);
+assert.equal(pendingPaymentLock({ ...lockBase, openBalanceCents: 0 }).locked, false);
+// Stale pendings self-heal: a session older than its possible lifetime never
+// locks an invoice forever (missed expiry webhook, pre-webhook rows).
+assert.equal(
+  pendingPaymentLock({
+    ...lockBase,
+    paymentLinkSentAtIso: new Date(
+      Date.parse(LOCK_NOW) - (PENDING_LOCK_MAX_AGE_HOURS + 1) * 3_600_000,
+    ).toISOString(),
+  }).locked,
+  false,
+);
+assert.equal(pendingPaymentLock({ ...lockBase, paymentLinkSentAtIso: null }).locked, false);
+
+// --- SOV rollup recompute (Task 3: visible saves, honest rollups) ------------
+
+const SOV_BUCKETS = [
+  { id: "a", original_budget: 100000.1, actual_to_date: 25000.05, ftc: 60000.05 },
+  { id: "b", original_budget: 50000.2, actual_to_date: 10000.1, ftc: 45000.2 },
+];
+const sovBefore = sovTotals(SOV_BUCKETS);
+assert.equal(sovBefore.budget, 150000.3);
+assert.equal(sovBefore.actual, 35000.15);
+assert.equal(sovBefore.ftc, 105000.25);
+assert.equal(sovBefore.fac, 140000.4); // exact-cent, never 140000.39999999998
+assert.equal(sovBefore.variance, 9999.9);
+
+// A committed cell edit patches the list; every rollup recomputes from it.
+const sovPatched = applySovBucketPatch(SOV_BUCKETS, "b", { ftc: 30000.2 });
+assert.notEqual(sovPatched, SOV_BUCKETS); // new array, so React re-renders
+assert.equal(sovPatched[1].ftc, 30000.2);
+assert.equal(sovPatched[0], SOV_BUCKETS[0]); // untouched rows keep identity
+const sovAfter = sovTotals(sovPatched);
+assert.equal(sovAfter.ftc, 90000.25);
+assert.equal(sovAfter.fac, 125000.4);
+assert.equal(sovAfter.variance, 24999.9);
+// The float trap shape: sums stay exact-cent, never 24999.899999999998.
+assert.equal(dollarsToCents(sovAfter.variance), 2499990);
+
+const lineForecast = sovLineForecast(sovPatched[1]);
+assert.equal(lineForecast.fac, 40000.3);
+assert.equal(lineForecast.variance, 9999.9);
 
 console.log("billing payments smoke: all assertions passed");
