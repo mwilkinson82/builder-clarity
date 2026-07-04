@@ -498,6 +498,11 @@ function normalizeBillingInvoice(row: Record<string, unknown>): BillingInvoiceRo
         ? (row.enabled_payment_methods as Record<string, boolean>)
         : {},
     payment_events: [],
+    sent_recipients: Array.isArray(row.sent_recipients) ? (row.sent_recipients as string[]) : [],
+    first_viewed_at: (row.first_viewed_at as string | null) ?? null,
+    last_viewed_at: (row.last_viewed_at as string | null) ?? null,
+    view_count: num(row.view_count),
+    collections_log: str(row.collections_log),
     created_at: str(row.created_at),
     updated_at: str(row.updated_at),
   };
