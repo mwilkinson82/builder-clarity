@@ -124,6 +124,9 @@ function AdminPage() {
               Marshall-only admin
             </div>
             <h1 className="mt-1 font-serif text-3xl text-foreground">Overwatch Admin</h1>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Who is inside Overwatch right now, across every company on this install.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <Button asChild variant="outline" size="sm">

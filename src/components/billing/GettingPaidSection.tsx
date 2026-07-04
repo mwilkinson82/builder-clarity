@@ -38,6 +38,14 @@ interface GettingPaidSectionProps {
   stripe: GettingPaidStripeState;
   onConnectStripe: () => void;
   stripeConnectPending: boolean;
+  /** One quiet line about Overwatch subscription readiness — composed by the caller. */
+  subscriptionNote: string;
+  billingContactName: string;
+  billingContactEmail: string;
+  /** Billing contact writes through updateOrganization, which needs company.manage_settings. */
+  canEditBillingContact: boolean;
+  onSaveBillingContact: (next: { name: string; email: string }) => void;
+  billingContactSaving: boolean;
 }
 
 interface ProfileFormState {
@@ -83,6 +91,12 @@ export function GettingPaidSection({
   stripe,
   onConnectStripe,
   stripeConnectPending,
+  subscriptionNote,
+  billingContactName,
+  billingContactEmail,
+  canEditBillingContact,
+  onSaveBillingContact,
+  billingContactSaving,
 }: GettingPaidSectionProps) {
   const queryClient = useQueryClient();
   const fetchProfile = useServerFn(getCompanyPaymentProfile);
@@ -98,10 +112,19 @@ export function GettingPaidSection({
 
   const [form, setForm] = useState<ProfileFormState | null>(null);
   const [revealed, setRevealed] = useState(false);
+  const [contactForm, setContactForm] = useState({
+    name: billingContactName,
+    email: billingContactEmail,
+  });
 
   useEffect(() => {
     if (profile && form === null) setForm(formFromProfile(profile));
   }, [profile, form]);
+
+  // Re-sync after a save round-trips through the workspace refetch.
+  useEffect(() => {
+    setContactForm({ name: billingContactName, email: billingContactEmail });
+  }, [billingContactName, billingContactEmail]);
 
   const saveMutation = useMutation({
     mutationFn: async (state: ProfileFormState) => {
@@ -175,15 +198,20 @@ export function GettingPaidSection({
 
   return (
     <section
+      id="getting-paid"
       data-testid="getting-paid-section"
-      className="rounded-lg border border-hairline bg-card p-5 shadow-card"
+      className="scroll-mt-6 rounded-lg border border-hairline bg-card p-5 shadow-card"
     >
-      <div className="flex items-center gap-2">
-        <Banknote className="h-4 w-4" />
-        <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Getting paid</p>
-          <h2 className="text-base font-semibold">How clients pay this company</h2>
+      <div>
+        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <Banknote className="h-4 w-4" />
+          Getting paid
         </div>
+        <h2 className="mt-1 font-serif text-2xl text-foreground">How clients pay this company</h2>
+        <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          Your direct bank details print on invoices. Stripe adds card and bank-debit options for
+          smaller payments when you turn them on.
+        </p>
       </div>
 
       {profile?.schemaMissing && (
@@ -195,7 +223,7 @@ export function GettingPaidSection({
 
       <div className="mt-5 grid gap-6 lg:grid-cols-2">
         {/* Tier 0: direct remittance details — the rail that never depends on Stripe. */}
-        <div className="space-y-4">
+        <div className="space-y-4 rounded-md border border-hairline bg-surface p-4">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Landmark className="h-4 w-4" />
             Direct bank transfer details
@@ -298,12 +326,12 @@ export function GettingPaidSection({
         </div>
 
         {/* Tier 1: Stripe Connect status + company-level payment defaults. */}
-        <div className="space-y-4">
+        <div className="space-y-4 rounded-md border border-hairline bg-surface p-4">
           <div className="flex items-center gap-2 text-sm font-medium">
             <CreditCard className="h-4 w-4" />
             Online payments (Stripe)
           </div>
-          <div className="rounded-md border border-hairline bg-surface p-4">
+          <div className="rounded-md border border-hairline bg-card p-4">
             <div className="flex items-center gap-2">
               {stripeReady ? (
                 <CheckCircle2 className="h-4 w-4 text-success" />
@@ -328,6 +356,7 @@ export function GettingPaidSection({
                     : "Connect Stripe"}
               </Button>
             )}
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{subscriptionNote}</p>
           </div>
 
           <div className="space-y-3">
@@ -406,6 +435,60 @@ export function GettingPaidSection({
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="mt-5 rounded-md border border-hairline bg-surface p-4">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <ShieldCheck className="h-4 w-4" />
+          Billing contact
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Where subscription and payment notices for this company go.
+        </p>
+        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+          <div className="space-y-1.5">
+            <Label htmlFor="getting-paid-billing-contact">Billing contact</Label>
+            <Input
+              id="getting-paid-billing-contact"
+              value={contactForm.name}
+              placeholder="Owner or accounting contact"
+              disabled={!canEditBillingContact || billingContactSaving}
+              onChange={(event) =>
+                setContactForm((current) => ({ ...current, name: event.target.value }))
+              }
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="getting-paid-billing-email">Billing email</Label>
+            <Input
+              id="getting-paid-billing-email"
+              type="email"
+              value={contactForm.email}
+              placeholder="billing@company.com"
+              disabled={!canEditBillingContact || billingContactSaving}
+              onChange={(event) =>
+                setContactForm((current) => ({ ...current, email: event.target.value }))
+              }
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={
+              !canEditBillingContact ||
+              billingContactSaving ||
+              (contactForm.name === billingContactName && contactForm.email === billingContactEmail)
+            }
+            onClick={() => onSaveBillingContact(contactForm)}
+          >
+            {billingContactSaving ? "Saving…" : "Save billing contact"}
+          </Button>
+        </div>
+        {!canEditBillingContact && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Only people who can manage company settings can change the billing contact.
+          </p>
+        )}
       </div>
 
       <div className="mt-5 flex justify-end">
