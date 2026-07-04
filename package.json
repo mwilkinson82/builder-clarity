@@ -11,7 +11,7 @@
     "smoke:phase0": "node scripts/phase0-smoke.mjs",
     "smoke:phase0:live": "node scripts/phase0-smoke.mjs --live",
     "test:estimating": "node --experimental-strip-types scripts/estimating-beta-smoke.mjs",
-    "test:ai": "node --experimental-strip-types scripts/ai-takeoff-credits-smoke.ts",
+    "test:ai": "node --experimental-strip-types scripts/ai-takeoff-credits-smoke.ts && vitest run",
     "test:cpm": "node --experimental-strip-types scripts/constructline-cpm-smoke.ts",
     "test:crm": "node --experimental-strip-types scripts/crm-pipeline-smoke.ts",
     "test:billing": "node --experimental-strip-types scripts/billing-payments-smoke.ts",
@@ -101,11 +101,13 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
+    "happy-dom": "^20.10.6",
     "nitro": "3.0.260603-beta",
     "prettier": "^3.7.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
-    "vite": "7.3.2"
+    "vite": "7.3.2",
+    "vitest": "^4.1.9"
   },
   "pnpm": {
     "overrides": {
