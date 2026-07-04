@@ -5,7 +5,6 @@
 // markers. Proposals are session-scoped on purpose — the ai_operations row is
 // the durable record.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -17,11 +16,22 @@ import {
   scanSheetTileForAiCounts,
   verifyAiCountCandidate,
 } from "@/lib/ai-takeoff/ai-takeoff.functions";
-import { getCreditSummary, type CreditSummary } from "@/lib/credits/credits.functions";
+import { listPriorSheetRejections } from "@/lib/ai-takeoff/ai-scan-diagnostics.functions";
+import {
+  buildNegativeReferences,
+  buildPositiveReferences,
+  exemplarFromMeasurement,
+  harvestPositivePoints,
+  type AiExemplar,
+} from "./aiReferenceHarvest";
+import { useAiCredits } from "./useAiCredits";
 import {
   appendAcceptedPoint,
   capProposalsPerSheet,
   dedupeCandidates,
+  dedupeRadiusForFootprint,
+  DETECTION_LONG_EDGE_PX,
+  overlapForFootprintPx,
   sortProposalsForReview,
   type AiCountCandidate,
   type AiCountProposal,
@@ -45,19 +55,8 @@ import {
 import { geometryFromPoints, geometryPoints, type ViewSize } from "./planRoomShared";
 
 export type AiAssistPhase = "idle" | "scanning" | "review";
+export type { AiExemplar } from "./aiReferenceHarvest";
 export type AiScanScope = "sheet" | "all";
-
-export interface AiExemplar {
-  measurementId: string;
-  sheetId: string;
-  label: string;
-  unit: string;
-  color: string;
-  wastePct: number;
-  estimateLineItemId: string | null;
-  libraryItemId: string | null;
-  point: SheetPoint;
-}
 
 export interface AiScanProgress {
   sheetsDone: number;
@@ -70,6 +69,11 @@ export interface AiScanProgress {
    * on a zoomed crop; null while stage A is still tiling the sheet.
    */
   verifying: { done: number; total: number } | null;
+  /**
+   * The teaching loop (AITAKEOFF5): how many harvested accepted matches and
+   * rejections ride along as references for the current sheet.
+   */
+  references: { extraPositives: number; negatives: number } | null;
   /**
    * Echo check (AITAKEOFF2): the model's own one-line description of the
    * exemplar it received — "Looking for: circular brush with radial spokes".
@@ -89,23 +93,6 @@ export interface UseAiAssistArgs {
   onTakeoffsChanged: () => void;
 }
 
-function exemplarFromMeasurement(measurement: TakeoffMeasurementRow): AiExemplar | null {
-  if (measurement.tool_type !== "count") return null;
-  const points = geometryPoints(measurement.geometry);
-  if (points.length === 0) return null;
-  return {
-    measurementId: measurement.id,
-    sheetId: measurement.plan_sheet_id,
-    label: measurement.label,
-    unit: measurement.unit || "EA",
-    color: measurement.color,
-    wastePct: measurement.waste_pct,
-    estimateLineItemId: measurement.estimate_line_item_id,
-    libraryItemId: measurement.library_item_id,
-    point: points[0],
-  };
-}
-
 export function useAiAssist({
   estimateId,
   sheets,
@@ -116,13 +103,12 @@ export function useAiAssist({
   openSheet,
   onTakeoffsChanged,
 }: UseAiAssistArgs) {
-  const queryClient = useQueryClient();
   const beginScanFn = useServerFn(beginAiCountScan);
   const scanTileFn = useServerFn(scanSheetTileForAiCounts);
   const verifyCandidateFn = useServerFn(verifyAiCountCandidate);
+  const priorRejectionsFn = useServerFn(listPriorSheetRejections);
   const completeScanFn = useServerFn(completeAiCountScan);
   const failScanFn = useServerFn(failAiCountScan);
-  const getCreditSummaryFn = useServerFn(getCreditSummary);
   const createMeasurementFn = useServerFn(createTakeoffMeasurement);
   const updateMeasurementFn = useServerFn(updateTakeoffMeasurement);
 
@@ -135,7 +121,6 @@ export function useAiAssist({
   const [scanError, setScanError] = useState("");
   const [proposals, setProposals] = useState<AiCountProposal[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
-  const [isPurchasing, setIsPurchasing] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
   // Survives scan completion so the diagnostics view can open on it.
   const [lastOperationId, setLastOperationId] = useState<string | null>(null);
@@ -143,18 +128,12 @@ export function useAiAssist({
   const operationIdRef = useRef<string | null>(null);
   // AI measurement created per sheet during this review (id + points so far).
   const aiMeasurementsRef = useRef(new Map<string, { id: string; points: SheetPoint[] }>());
+  // Rejections the user made this session, keyed by sheet + exemplar label —
+  // they become negative references on the next scan (AITAKEOFF5 Task 1).
+  const sessionRejectionsRef = useRef(new Map<string, SheetPoint[]>());
 
-  const creditSummaryQuery = useQuery({
-    queryKey: ["credit-summary"],
-    queryFn: async () => (await getCreditSummaryFn()) as CreditSummary,
-    enabled: open,
-    staleTime: 30_000,
-  });
-  const creditSummary = creditSummaryQuery.data ?? null;
-  const refreshCredits = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: ["credit-summary"] }),
-    [queryClient],
-  );
+  const credits = useAiCredits(open);
+  const { refreshCredits } = credits;
 
   const sheetById = useMemo(() => new Map(sheets.map((sheet) => [sheet.id, sheet])), [sheets]);
   const planSetById = useMemo(
@@ -270,6 +249,7 @@ export function useAiAssist({
       currentSheetLabel: "",
       found: 0,
       verifying: null,
+      references: null,
       exemplarDescription: "",
     });
 
@@ -298,11 +278,32 @@ export function useAiAssist({
       // Clean region render straight from the PDF around the marker — the
       // human's marker dot lives on the SVG overlay and can never leak in
       // (AITAKEOFF2 Task 0). ~4 sheet-inches square at ~640px.
+      const exemplarSheetUrl = await signedUrlFor(exemplarSheet.plan_set_id);
       const exemplarImage = await renderExemplarCrop(
-        await signedUrlFor(exemplarSheet.plan_set_id),
+        exemplarSheetUrl,
         exemplarSheet.page_number,
         exemplar.point,
       );
+      // The teaching loop (AITAKEOFF5 Task 1): other same-label markers on
+      // the exemplar's sheet — accepted AI counts and hand-placed alike —
+      // become additional positive references (capped at 3 total).
+      const harvestPoints = harvestPositivePoints({
+        measurements,
+        exemplar: {
+          measurementId: exemplar.measurementId,
+          sheetId: exemplar.sheetId,
+          label: exemplar.label,
+          estimateLineItemId: exemplar.estimateLineItemId,
+          libraryItemId: exemplar.libraryItemId,
+          point: exemplar.point,
+        },
+      });
+      const positives = await buildPositiveReferences({
+        primary: exemplarImage,
+        exemplarSheetSignedUrl: exemplarSheetUrl,
+        exemplarSheetPageNumber: exemplarSheet.page_number,
+        harvestPoints,
+      });
 
       const found: AiCountProposal[] = [];
       let sheetsDone = 0;
@@ -315,6 +316,7 @@ export function useAiAssist({
           currentSheetLabel: sheetLabel,
           found: found.length,
           verifying: null,
+          references: null,
           exemplarDescription: echo,
         });
 
@@ -322,8 +324,47 @@ export function useAiAssist({
           await signedUrlFor(sheet.plan_set_id),
           sheet.page_number,
         );
-        const tiles = sliceDetectionTiles(raster);
+        // Exemplar-derived geometry (AITAKEOFF5 Task 0): the symbol footprint
+        // sizes the tile overlap (whole symbol always fits ≥1 tile) and the
+        // dedupe/exclusion radius (seam duplicates + already-marked symbols
+        // collapse at symbol scale, not at a fixed 0.008).
+        const pageLongEdgePt = Math.max(raster.pageSize.widthPt, raster.pageSize.heightPt);
+        const footprintRasterPx =
+          exemplarImage.footprintPt !== null && pageLongEdgePt > 0
+            ? exemplarImage.footprintPt * (DETECTION_LONG_EDGE_PX / pageLongEdgePt)
+            : null;
+        const tileOverlapPx = overlapForFootprintPx(footprintRasterPx);
+        const dedupeRadius = dedupeRadiusForFootprint(
+          footprintRasterPx,
+          Math.max(raster.widthPx, raster.heightPx),
+        );
+        const tiles = sliceDetectionTiles(raster, tileOverlapPx);
         const existingPoints = existingCountPointsForSheet(sheet.id);
+        // Negative references (AITAKEOFF5 Task 1): this session's rejections
+        // for this sheet + exemplar first; otherwise the previous scan's
+        // stage-B rejections (from diagnostics). Never manufactured.
+        const rejectionKey = `${sheet.id}|${exemplar.label.trim().toLowerCase()}`;
+        let rejectedPoints = sessionRejectionsRef.current.get(rejectionKey) ?? [];
+        if (rejectedPoints.length === 0) {
+          try {
+            const prior = await priorRejectionsFn({
+              data: {
+                estimate_id: estimateId,
+                sheet_id: sheet.id,
+                exemplar_label: exemplar.label,
+              },
+            });
+            rejectedPoints = prior.points;
+          } catch {
+            rejectedPoints = [];
+          }
+        }
+        const negatives = buildNegativeReferences(raster, rejectedPoints);
+        const references = { label: exemplar.label, positives, negatives };
+        const progressReferences = {
+          extraPositives: positives.length - 1,
+          negatives: negatives.length,
+        };
         // Stage A (AITAKEOFF3 Task 1): coarse, recall-biased candidates in
         // sheet space. Leads only — nothing here becomes a ghost.
         const sheetCoarse: AiCountCandidate[] = [];
@@ -337,13 +378,7 @@ export function useAiAssist({
               sheet_id: sheet.id,
               sheet_width_px: raster.widthPx,
               sheet_height_px: raster.heightPx,
-              exemplar: {
-                label: exemplar.label,
-                media_type: exemplarImage.mediaType,
-                base64: exemplarImage.base64,
-                width_px: exemplarImage.widthPx,
-                height_px: exemplarImage.heightPx,
-              },
+              references,
               tile: {
                 index: tile.rect.index,
                 left: tile.rect.left,
@@ -356,6 +391,7 @@ export function useAiAssist({
               },
               is_last_tile_of_sheet: index === tiles.length - 1,
               existing_points: existingPoints,
+              dedupe_radius_normalized: dedupeRadius,
             },
           });
           if (!echo && result.exemplarDescription) {
@@ -368,6 +404,7 @@ export function useAiAssist({
             currentSheetLabel: sheetLabel,
             found: found.length,
             verifying: null,
+            references: progressReferences,
             exemplarDescription: echo,
           });
         }
@@ -378,7 +415,7 @@ export function useAiAssist({
         // spend anything. Each survivor is judged on a zoomed crop; only a
         // verified match becomes a ghost, positioned by the stage-B center.
         const toVerify = capProposalsPerSheet(
-          dedupeCandidates(sheetCoarse),
+          dedupeCandidates(sheetCoarse, dedupeRadius),
           begin.maxProposalsPerSheet,
         );
         for (let index = 0; index < toVerify.length; index += 1) {
@@ -389,6 +426,7 @@ export function useAiAssist({
             currentSheetLabel: sheetLabel,
             found: found.length,
             verifying: { done: index, total: toVerify.length },
+            references: progressReferences,
             exemplarDescription: echo,
           });
           const candidate = toVerify[index];
@@ -399,11 +437,7 @@ export function useAiAssist({
               sheet_id: sheet.id,
               candidate_index: index,
               candidate: { x: candidate.x, y: candidate.y },
-              exemplar: {
-                label: exemplar.label,
-                media_type: exemplarImage.mediaType,
-                base64: exemplarImage.base64,
-              },
+              references,
               window: {
                 left: window.rect.left,
                 top: window.rect.top,
@@ -432,6 +466,7 @@ export function useAiAssist({
             currentSheetLabel: sheetLabel,
             found: found.length,
             verifying: { done: index + 1, total: toVerify.length },
+            references: progressReferences,
             exemplarDescription: echo,
           });
         }
@@ -481,6 +516,8 @@ export function useAiAssist({
     isSheetScannable,
     phase,
     planSetById,
+    measurements,
+    priorRejectionsFn,
     refreshCredits,
     scanTileFn,
     sheetById,
@@ -639,6 +676,13 @@ export function useAiAssist({
 
   const rejectActiveProposal = useCallback(() => {
     if (!activeProposal || isAccepting) return;
+    // Remember what was rejected: it teaches the next scan what NOT to find.
+    if (exemplar) {
+      const key = `${activeProposal.sheetId}|${exemplar.label.trim().toLowerCase()}`;
+      const rejected = sessionRejectionsRef.current.get(key) ?? [];
+      rejected.unshift({ x: activeProposal.x, y: activeProposal.y });
+      sessionRejectionsRef.current.set(key, rejected.slice(0, 10));
+    }
     const index = proposals.findIndex((p) => p.id === activeProposal.id);
     const updated = proposals.map((p) =>
       p.id === activeProposal.id ? { ...p, status: "rejected" as const } : p,
@@ -647,7 +691,14 @@ export function useAiAssist({
     if (!advanceToNextPending(index, updated)) {
       setTimeout(() => endReviewWithProposals(updated), 0);
     }
-  }, [activeProposal, advanceToNextPending, endReviewWithProposals, isAccepting, proposals]);
+  }, [
+    activeProposal,
+    advanceToNextPending,
+    endReviewWithProposals,
+    exemplar,
+    isAccepting,
+    proposals,
+  ]);
 
   /** "Accept all remaining" — deliberately behind the per-item flow. */
   const acceptAllRemaining = useCallback(async () => {
@@ -692,52 +743,6 @@ export function useAiAssist({
     [proposals],
   );
 
-  const purchasePack = useCallback(async (packId: string) => {
-    setIsPurchasing(true);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) throw new Error("Sign in again before buying credits.");
-      const response = await fetch("/api/stripe/checkout/credits", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          packId,
-          successPath: `${window.location.pathname}?credits=success`,
-          cancelPath: `${window.location.pathname}?credits=cancelled`,
-        }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        ok?: boolean;
-        checkoutUrl?: string;
-        error?: string;
-      };
-      if (!response.ok || !payload.checkoutUrl) {
-        throw new Error(payload.error || "Checkout could not start. Try again.");
-      }
-      window.location.href = payload.checkoutUrl;
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Checkout could not start.");
-      setIsPurchasing(false);
-    }
-  }, []);
-
-  // Returning from Stripe with ?credits=success refreshes the balance.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("credits") === "success") {
-      refreshCredits();
-      toast.success("Credit purchase complete — your balance updates as soon as Stripe confirms.");
-      params.delete("credits");
-      const next = params.toString();
-      window.history.replaceState({}, "", `${window.location.pathname}${next ? `?${next}` : ""}`);
-    }
-  }, [refreshCredits]);
-
   const ghostsForSheet = useCallback(
     (sheetId: string | null) =>
       sheetId && phase === "review"
@@ -759,8 +764,8 @@ export function useAiAssist({
     setScope,
     targetSheetCount: targetSheets.length,
     quoteCredits,
-    creditSummary,
-    creditSummaryLoading: creditSummaryQuery.isLoading,
+    creditSummary: credits.creditSummary,
+    creditSummaryLoading: credits.creditSummaryLoading,
     scanProgress,
     scanError,
     runScan,
@@ -776,8 +781,8 @@ export function useAiAssist({
     selectProposal,
     endReview,
     isAccepting,
-    purchasePack,
-    isPurchasing,
+    purchasePack: credits.purchasePack,
+    isPurchasing: credits.isPurchasing,
     handleMeasurementSelected,
     ghostsForSheet,
     lastOperationId,

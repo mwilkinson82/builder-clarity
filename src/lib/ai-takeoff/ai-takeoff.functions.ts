@@ -20,13 +20,17 @@ import {
   buildScanInstruction,
   buildVerifyInstruction,
   COARSE_CANDIDATE_CONFIDENCE,
+  DEDUPE_RADIUS_NORMALIZED,
   dedupeCandidates,
   DEFAULT_MAX_PROPOSALS_PER_SHEET,
   DEFAULT_MIN_PROPOSAL_CONFIDENCE,
   excludeNearExistingPoints,
+  imageTokenEstimate,
   inkMaskFromBase64,
   parseScanResponse,
   parseVerifyResponse,
+  REFERENCE_MAX_NEGATIVES,
+  REFERENCE_MAX_POSITIVES,
   snapToInkCentroid,
   tileTokenCheck,
   VERIFIED_PROPOSAL_CONFIDENCE,
@@ -255,23 +259,55 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
     };
   });
 
+// Reference set (AITAKEOFF5 Task 1): positives teach what the symbol IS
+// (picked exemplar first), negatives what it is NOT (crops of rejected
+// candidates). Both stages receive the same references.
+const referenceImageSchema = z.object({
+  media_type: z.enum(["image/png", "image/webp", "image/jpeg"]),
+  base64: z.string().min(1).max(2_500_000),
+  width_px: z.number().int().min(1).max(4000),
+  height_px: z.number().int().min(1).max(4000),
+});
+const referencesSchema = z.object({
+  label: z.string().max(240).default(""),
+  positives: z.array(referenceImageSchema).min(1).max(REFERENCE_MAX_POSITIVES),
+  negatives: z.array(referenceImageSchema).max(REFERENCE_MAX_NEGATIVES).default([]),
+});
+type ReferenceImages = z.output<typeof referencesSchema>;
+
+const referenceImagesFor = (references: ReferenceImages) =>
+  [...references.positives, ...references.negatives].map((image) => ({
+    mediaType: image.media_type,
+    base64: image.base64,
+  }));
+
+const referenceTokensFor = (references: ReferenceImages) =>
+  [...references.positives, ...references.negatives].reduce(
+    (sum, image) => sum + imageTokenEstimate(image.width_px, image.height_px),
+    0,
+  );
+
+/** Per-call composition record for tile/verify diagnostics JSON. */
+const referenceComposition = (references: ReferenceImages) => ({
+  positives: references.positives.map((image) => ({
+    widthPx: image.width_px,
+    heightPx: image.height_px,
+    estTokens: imageTokenEstimate(image.width_px, image.height_px),
+  })),
+  negatives: references.negatives.map((image) => ({
+    widthPx: image.width_px,
+    heightPx: image.height_px,
+    estTokens: imageTokenEstimate(image.width_px, image.height_px),
+  })),
+});
+
 const tileScanInput = z.object({
   operation_id: z.string().uuid(),
   sheet_id: z.string().uuid(),
   // Detection raster dimensions of the whole sheet, in pixels.
   sheet_width_px: z.number().int().min(1).max(20000),
   sheet_height_px: z.number().int().min(1).max(20000),
-  exemplar: z.object({
-    label: z.string().max(240).default(""),
-    media_type: z.enum(["image/png", "image/webp", "image/jpeg"]),
-    // Region-rendered crop (~640px long side) is bigger than Phase A's.
-    base64: z.string().min(1).max(2_500_000),
-    // Pixel dimensions of the exemplar crop (AITAKEOFF4 Task 2): lets the
-    // token check subtract the exemplar's share and isolate the tile's own
-    // perceived megapixels.
-    width_px: z.number().int().min(1).max(4000).optional(),
-    height_px: z.number().int().min(1).max(4000).optional(),
-  }),
+  references: referencesSchema,
   tile: z.object({
     index: z.number().int().min(0).max(500),
     left: z.number().int().min(0).max(20000),
@@ -297,6 +333,11 @@ const tileScanInput = z.object({
     .array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }))
     .max(20000)
     .default([]),
+  // Footprint-derived dedupe/exclusion radius (AITAKEOFF5 Task 0): the
+  // client measures the exemplar's ink footprint and scales the radius so
+  // same-symbol duplicates and already-marked symbols collapse at symbol
+  // scale. Defaults to the fixed floor for older clients.
+  dedupe_radius_normalized: z.number().min(0.001).max(0.1).default(DEDUPE_RADIUS_NORMALIZED),
 });
 
 function isMissingExemplarDescriptionColumn(error: DynamicSupabaseError | null | undefined) {
@@ -337,9 +378,13 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
     try {
       const result = await callAnthropicVision({
         model: operation.model_used,
-        instruction: buildScanInstruction({ label: data.exemplar.label }),
+        instruction: buildScanInstruction({
+          label: data.references.label,
+          positiveCount: data.references.positives.length,
+          negativeCount: data.references.negatives.length,
+        }),
         images: [
-          { mediaType: data.exemplar.media_type, base64: data.exemplar.base64 },
+          ...referenceImagesFor(data.references),
           { mediaType: data.tile.media_type, base64: data.tile.base64 },
         ],
       });
@@ -356,8 +401,12 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
         ...tileLocalToSheetPoint(frame, center.x, center.y),
         confidence: COARSE_CANDIDATE_CONFIDENCE,
       }));
-      const deduped = dedupeCandidates(mapped);
-      candidates = excludeNearExistingPoints(deduped, data.existing_points);
+      const deduped = dedupeCandidates(mapped, data.dedupe_radius_normalized);
+      candidates = excludeNearExistingPoints(
+        deduped,
+        data.existing_points,
+        data.dedupe_radius_normalized,
+      );
       // Candidates sitting on already-counted symbols are suppressed, not
       // lost: diagnostics labels them so "8 found" plus 4 hand-marked brushes
       // reads as intended behavior, not missed symbols (AITAKEOFF4 Task 2).
@@ -389,9 +438,29 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
       await uploadDiagnostic(
         supabaseAdmin,
         `${folder}/exemplar.png`,
-        base64ToBytes(data.exemplar.base64),
-        data.exemplar.media_type,
+        base64ToBytes(data.references.positives[0].base64),
+        data.references.positives[0].media_type,
       );
+    }
+    // The full reference set can differ per sheet (negatives are per-sheet
+    // crops); keep one copy of each per sheet for manual inspection.
+    if (data.tile.index === 0) {
+      for (const [index, image] of data.references.positives.slice(1).entries()) {
+        await uploadDiagnostic(
+          supabaseAdmin,
+          `${folder}/refpos-${data.sheet_id}-${index + 1}.png`,
+          base64ToBytes(image.base64),
+          image.media_type,
+        );
+      }
+      for (const [index, image] of data.references.negatives.entries()) {
+        await uploadDiagnostic(
+          supabaseAdmin,
+          `${folder}/refneg-${data.sheet_id}-${index}.png`,
+          base64ToBytes(image.base64),
+          image.media_type,
+        );
+      }
     }
     await uploadDiagnostic(
       supabaseAdmin,
@@ -420,15 +489,17 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
           mappedCandidates: candidates,
           suppressedNearExisting,
           usage,
+          // Per-call composition (AITAKEOFF5 Task 1): what reference images
+          // rode along, with their token estimates.
+          references: referenceComposition(data.references),
           // Token-implied perceived megapixels (AITAKEOFF3 Task 3, isolated
-          // from exemplar + prompt in AITAKEOFF4 Task 2): a future silent
-          // resize shows up here as suspectedResize at a glance.
+          // from references + prompt): a future silent resize shows up here
+          // as suspectedResize at a glance.
           tokenCheck: tileTokenCheck(
             usage.inputTokens,
             data.tile.width,
             data.tile.height,
-            data.exemplar.width_px ?? 0,
-            data.exemplar.height_px ?? 0,
+            referenceTokensFor(data.references),
           ),
           createdAt: new Date().toISOString(),
         }),
@@ -470,11 +541,7 @@ const verifyCandidateInput = z.object({
   // the verdict confirms a match without a usable center, and the diagnostic
   // record of what stage B was asked about.
   candidate: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }),
-  exemplar: z.object({
-    label: z.string().max(240).default(""),
-    media_type: z.enum(["image/png", "image/webp", "image/jpeg"]),
-    base64: z.string().min(1).max(2_500_000),
-  }),
+  references: referencesSchema,
   // The verification window: a small crop of the detection raster around the
   // candidate, upscaled client-side. The frame carries the WINDOW's
   // sheet-space origin/scale — the normalized verdict center maps through it
@@ -525,6 +592,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
     const { callAnthropicVision } = await import("@/lib/ai-takeoff/anthropic.server");
 
     let match = false;
+    let observed = "";
     let point: { x: number; y: number } | null = null;
     let centerRefined = false;
     // Window-local centers (AITAKEOFF4 Task 1): the raw stage-B center and
@@ -537,9 +605,13 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
     try {
       const result = await callAnthropicVision({
         model: operation.model_used,
-        instruction: buildVerifyInstruction({ label: data.exemplar.label }),
+        instruction: buildVerifyInstruction({
+          label: data.references.label,
+          positiveCount: data.references.positives.length,
+          negativeCount: data.references.negatives.length,
+        }),
         images: [
-          { mediaType: data.exemplar.media_type, base64: data.exemplar.base64 },
+          ...referenceImagesFor(data.references),
           { mediaType: data.window.media_type, base64: data.window.base64 },
         ],
         maxTokens: 300,
@@ -547,6 +619,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
       usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens };
       rawResponseText = result.text;
       const verdict = parseVerifyResponse(result.text, data.window.width, data.window.height);
+      observed = verdict.observed;
       // The stage-derived confidence is what the floor gates on now.
       match = verdict.match && VERIFIED_PROPOSAL_CONFIDENCE >= minProposalConfidence();
       if (match) {
@@ -597,6 +670,10 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
           sheetId: data.sheet_id,
           candidateIndex: data.candidate_index,
           candidate: data.candidate,
+          // The exemplar label keys "same sheet + exemplar" lookups for
+          // negative harvesting on later scans (AITAKEOFF5 Task 1).
+          exemplarLabel: data.references.label,
+          references: referenceComposition(data.references),
           window: {
             left: data.window.left,
             top: data.window.top,
@@ -605,6 +682,9 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
           },
           frame: data.window.frame,
           match,
+          // Describe-then-decide (AITAKEOFF5 Task 2): the model's own account
+          // of what the crop shows — read this when a false positive slips.
+          observed,
           centerRefined,
           rawCenterPx,
           snappedCenterPx,

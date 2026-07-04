@@ -17,6 +17,8 @@ export type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   eq(column: string, value: unknown): DynamicSupabaseQuery;
   is(column: string, value: null): DynamicSupabaseQuery;
   in(column: string, values: readonly string[]): DynamicSupabaseQuery;
+  order(column: string, options?: { ascending?: boolean }): DynamicSupabaseQuery;
+  limit(count: number): DynamicSupabaseQuery;
   single(): Promise<DynamicSupabaseResult>;
   maybeSingle(): Promise<DynamicSupabaseResult>;
 };

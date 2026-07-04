@@ -12,8 +12,10 @@
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   DETECTION_LONG_EDGE_PX,
+  DETECTION_TILE_OVERLAP_PX,
   inkMaskFromRgba,
   inkMaskToBase64,
+  measureInkFootprintPx,
   planDetectionTiles,
   VERIFY_IMAGE_PX,
   verifyWindowRect,
@@ -104,6 +106,12 @@ export interface DetectionExemplarImage {
   mediaType: "image/png";
   widthPx: number;
   heightPx: number;
+  /**
+   * The symbol's measured ink footprint under the marker, in PDF points
+   * (AITAKEOFF5 Task 0) — drives tile overlap and dedupe radius per sheet.
+   * Null when nothing measurable sits under the marker.
+   */
+  footprintPt: number | null;
 }
 
 /** Render one PDF page at detection resolution (long edge ~3800px). */
@@ -120,8 +128,11 @@ export async function renderDetectionSheet(
 }
 
 /** Slice the detection raster into overlapping tiles, each with its frame. */
-export function sliceDetectionTiles(raster: DetectionSheetRaster): DetectionTileImage[] {
-  return planDetectionTiles(raster.widthPx, raster.heightPx).map((rect) => {
+export function sliceDetectionTiles(
+  raster: DetectionSheetRaster,
+  overlapPx: number = DETECTION_TILE_OVERLAP_PX,
+): DetectionTileImage[] {
+  return planDetectionTiles(raster.widthPx, raster.heightPx, undefined, overlapPx).map((rect) => {
     const region = document.createElement("canvas");
     region.width = Math.max(1, Math.round(rect.width));
     region.height = Math.max(1, Math.round(rect.height));
@@ -178,6 +189,7 @@ export interface DetectionVerifyWindowImage {
 export function renderVerifyWindow(
   raster: DetectionSheetRaster,
   candidate: SheetPoint,
+  options: { upscale?: boolean } = {},
 ): DetectionVerifyWindowImage {
   const rect = verifyWindowRect(
     { x: candidate.x * raster.widthPx, y: candidate.y * raster.heightPx },
@@ -185,7 +197,9 @@ export function renderVerifyWindow(
     raster.heightPx,
   );
   const canvas = document.createElement("canvas");
-  const scale = VERIFY_IMAGE_PX / Math.max(rect.width, rect.height);
+  // Negative reference crops skip the 3x upscale (AITAKEOFF5 Task 1): they
+  // only show what the wrong symbol looks like, at ~a tenth of the tokens.
+  const scale = (options.upscale ?? true) ? VERIFY_IMAGE_PX / Math.max(rect.width, rect.height) : 1;
   canvas.width = Math.max(1, Math.round(rect.width * scale));
   canvas.height = Math.max(1, Math.round(rect.height * scale));
   const context = canvas.getContext("2d");
@@ -241,10 +255,25 @@ export async function renderExemplarCrop(
     offsetY: plan.offsetY,
   });
   const canvas = await renderToCanvas(page, plan.widthPx, plan.heightPx, viewport);
+  // Measure the symbol's ink footprint under the marker (AITAKEOFF5 Task 0):
+  // crop px → PDF points through the crop's own render scale, so each
+  // sheet's detection raster can size its tile overlap from it.
+  let footprintPt: number | null = null;
+  const cropContext = canvas.getContext("2d");
+  if (cropContext && plan.scale > 0) {
+    const cropPixels = cropContext.getImageData(0, 0, canvas.width, canvas.height);
+    const cropMask = inkMaskFromRgba(cropPixels.data, canvas.width, canvas.height);
+    const footprintCropPx = measureInkFootprintPx(cropMask, {
+      x: plan.markerInCropPx.px,
+      y: plan.markerInCropPx.py,
+    });
+    footprintPt = footprintCropPx !== null ? footprintCropPx / plan.scale : null;
+  }
   return {
     base64: canvasToBase64Png(canvas),
     mediaType: "image/png",
     widthPx: canvas.width,
     heightPx: canvas.height,
+    footprintPt,
   };
 }

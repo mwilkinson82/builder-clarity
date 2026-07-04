@@ -28,6 +28,83 @@ const diagnosticsInput = z.object({
   operation_id: z.string().uuid(),
 });
 
+const priorRejectionsInput = z.object({
+  estimate_id: z.string().uuid(),
+  sheet_id: z.string().uuid(),
+  exemplar_label: z.string().max(240).default(""),
+});
+
+/**
+ * Stage-B rejections from the most recent succeeded scan of this sheet with
+ * the same exemplar label (AITAKEOFF5 Task 1) — the negative-reference
+ * source when the session has no fresh rejections yet. Strictly best-effort:
+ * any miss returns an empty list, never an error. Diagnostics are ~24h
+ * transient, so this naturally only reaches recent scans.
+ */
+export const listPriorSheetRejections = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof priorRejectionsInput>) =>
+    priorRejectionsInput.parse(input),
+  )
+  .handler(async ({ data, context }): Promise<{ points: Array<{ x: number; y: number }> }> => {
+    const label = data.exemplar_label.trim();
+    if (!label) return { points: [] };
+    try {
+      // The user-scoped client proves estimate access through RLS.
+      const { data: estimate, error } = await dynamicTable(context.supabase, "estimates")
+        .select("id,organization_id")
+        .eq("id", data.estimate_id)
+        .maybeSingle();
+      if (error || !estimate) return { points: [] };
+      const organizationId = str((estimate as Record<string, unknown>).organization_id);
+
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const { data: operations } = (await dynamicTable(supabaseAdmin, "ai_operations")
+        .select("id,sheet_ids,created_at")
+        .eq("estimate_id", data.estimate_id)
+        .eq("status", "succeeded")
+        .order("created_at", { ascending: false })
+        .limit(10)) as DynamicSupabaseResult<
+        Array<{ id: string; sheet_ids: string[]; created_at: string }>
+      >;
+      const previous = (operations ?? []).find(
+        (operation) =>
+          Array.isArray(operation.sheet_ids) && operation.sheet_ids.includes(data.sheet_id),
+      );
+      if (!previous) return { points: [] };
+
+      const storage = (supabaseAdmin as unknown as StorageClient).storage.from(
+        AI_DIAGNOSTICS_BUCKET,
+      );
+      const folder = diagnosticsFolder(organizationId, previous.id);
+      const { data: files } = await storage.list(folder, { limit: 1000 });
+      const verifyFiles = (files ?? [])
+        .map((file) => file.name)
+        .filter((name) => name.startsWith(`verify-${data.sheet_id}-`) && name.endsWith(".json"))
+        .slice(0, 30);
+      const points: Array<{ x: number; y: number }> = [];
+      for (const name of verifyFiles) {
+        if (points.length >= 8) break;
+        try {
+          const { data: blob } = await storage.download(`${folder}/${name}`);
+          if (!blob) continue;
+          const meta = JSON.parse(await blob.text()) as Record<string, unknown>;
+          if (meta.match !== false) continue;
+          if (str(meta.exemplarLabel).trim().toLowerCase() !== label.toLowerCase()) continue;
+          const candidate = meta.candidate as Record<string, unknown> | null;
+          const x = Number(candidate?.x);
+          const y = Number(candidate?.y);
+          if (Number.isFinite(x) && Number.isFinite(y)) points.push({ x, y });
+        } catch {
+          // Skip unreadable artifacts.
+        }
+      }
+      return { points };
+    } catch {
+      return { points: [] };
+    }
+  });
+
 export interface AiScanDiagnosticsTile {
   sheetId: string;
   tileIndex: number;
@@ -55,6 +132,8 @@ export interface AiScanVerification {
   window: { left: number; top: number; width: number; height: number } | null;
   frame: DetectionTileFrame | null;
   match: boolean;
+  /** The model's describe-then-decide sentence (AITAKEOFF5 Task 2). */
+  observed: string;
   centerRefined: boolean;
   /** Stage-B center in window pixels, before the ink-centroid snap. */
   rawCenterPx: { x: number; y: number } | null;
@@ -239,6 +318,7 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
           window: (meta?.window ?? null) as AiScanVerification["window"],
           frame: (meta?.frame ?? null) as DetectionTileFrame | null,
           match: meta?.match === true,
+          observed: str(meta?.observed),
           centerRefined: meta?.centerRefined === true,
           rawCenterPx: parsePoint(meta?.rawCenterPx),
           snappedCenterPx: parsePoint(meta?.snappedCenterPx),

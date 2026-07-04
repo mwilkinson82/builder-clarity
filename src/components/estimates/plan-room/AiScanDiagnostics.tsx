@@ -235,6 +235,11 @@ function VerificationCard({ verification }: { verification: AiScanVerification }
         </Badge>
         <Badge variant="outline">candidate {verification.candidateIndex}</Badge>
         <span>sheet {verification.sheetId.slice(0, 8)}…</span>
+        {verification.observed && (
+          <span className="basis-full" data-testid="ai-diagnostics-observed">
+            model saw: “{verification.observed}”
+          </span>
+        )}
         {verification.metadataMissing && <Badge variant="destructive">metadata missing</Badge>}
         {verification.window && (
           <span>
