@@ -592,6 +592,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
     const { callAnthropicVision } = await import("@/lib/ai-takeoff/anthropic.server");
 
     let match = false;
+    let observed = "";
     let point: { x: number; y: number } | null = null;
     let centerRefined = false;
     // Window-local centers (AITAKEOFF4 Task 1): the raw stage-B center and
@@ -618,6 +619,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
       usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens };
       rawResponseText = result.text;
       const verdict = parseVerifyResponse(result.text, data.window.width, data.window.height);
+      observed = verdict.observed;
       // The stage-derived confidence is what the floor gates on now.
       match = verdict.match && VERIFIED_PROPOSAL_CONFIDENCE >= minProposalConfidence();
       if (match) {
@@ -680,6 +682,9 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
           },
           frame: data.window.frame,
           match,
+          // Describe-then-decide (AITAKEOFF5 Task 2): the model's own account
+          // of what the crop shows — read this when a false positive slips.
+          observed,
           centerRefined,
           rawCenterPx,
           snappedCenterPx,

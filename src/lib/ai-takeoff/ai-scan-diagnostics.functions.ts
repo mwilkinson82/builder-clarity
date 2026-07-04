@@ -132,6 +132,8 @@ export interface AiScanVerification {
   window: { left: number; top: number; width: number; height: number } | null;
   frame: DetectionTileFrame | null;
   match: boolean;
+  /** The model's describe-then-decide sentence (AITAKEOFF5 Task 2). */
+  observed: string;
   centerRefined: boolean;
   /** Stage-B center in window pixels, before the ink-centroid snap. */
   rawCenterPx: { x: number; y: number } | null;
@@ -316,6 +318,7 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
           window: (meta?.window ?? null) as AiScanVerification["window"],
           frame: (meta?.frame ?? null) as DetectionTileFrame | null,
           match: meta?.match === true,
+          observed: str(meta?.observed),
           centerRefined: meta?.centerRefined === true,
           rawCenterPx: parsePoint(meta?.rawCenterPx),
           snappedCenterPx: parsePoint(meta?.snappedCenterPx),

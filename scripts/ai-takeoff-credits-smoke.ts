@@ -642,6 +642,16 @@ assert.match(
   "verify framing covers multiple positives",
 );
 assert.match(referencedVerify, /Image 3 shows .*REJECTED/, "verify framing covers negatives");
+assert.match(
+  verifyInstruction,
+  /"observed" FIRST/,
+  "describe-then-decide: the observation comes before the verdict",
+);
+assert.match(
+  verifyInstruction,
+  /fans, impellers, gears, sprinkler heads, air registers/,
+  "radial look-alikes are named as non-matches",
+);
 assert.match(verifyInstruction, /Brush wheel/, "verify instruction names the exemplar label");
 assert.match(verifyInstruction, /"match"/, "verdict is a boolean match");
 assert.match(
@@ -649,7 +659,11 @@ assert.match(
   /partially inside the crop/,
   "partial symbols at the crop edge are rejections",
 );
-assert.match(verifyInstruction, /DIFFERENT symbol type/, "decoy symbol types are rejections");
+assert.match(
+  verifyInstruction,
+  /same symbol TYPE as the positive references/,
+  "decoy symbol types are rejections — match requires the observed type",
+);
 assert.match(
   verifyInstruction,
   /normalized 0-1000/,
@@ -668,34 +682,40 @@ assert.deepEqual(
   "the stage-B center converts against the WINDOW size (smaller denominator)",
 );
 assert.deepEqual(
-  parseVerifyResponse('{"match": false}', 256, 256),
-  { match: false, center: null },
-  "a false verdict is a rejection",
+  parseVerifyResponse('{"observed": "an air register grille", "match": false}', 256, 256),
+  { observed: "an air register grille", match: false, center: null },
+  "a false verdict is a rejection that still carries what the model saw",
 );
 assert.deepEqual(
   parseVerifyResponse('{"match": "yes", "center": {"x": 500, "y": 250}}', 256, 256),
-  { match: false, center: null },
+  { observed: "", match: false, center: null },
   "anything but a literal true fails closed",
 );
 assert.deepEqual(
   parseVerifyResponse("the crop looks similar to the exemplar", 256, 256),
-  { match: false, center: null },
+  { observed: "", match: false, center: null },
   "prose fails closed",
 );
 assert.deepEqual(
-  parseVerifyResponse('{"match": true, "center": {', 256, 256),
-  { match: false, center: null },
+  parseVerifyResponse('{"observed": "something", "match": true, "center": {', 256, 256),
+  { observed: "", match: false, center: null },
   "malformed JSON fails closed",
 );
 assert.deepEqual(
   parseVerifyResponse('{"match": true}', 256, 256),
-  { match: true, center: null },
+  { observed: "", match: true, center: null },
   "a confirmed match without a center still verifies — caller falls back to the candidate point",
 );
 assert.deepEqual(
   parseVerifyResponse('{"match": true, "center": {"x": 1400, "y": 3}}', 256, 256),
-  { match: true, center: null },
+  { observed: "", match: true, center: null },
   "an out-of-range center degrades to the fallback, never a fake position",
+);
+assert.equal(
+  parseVerifyResponse(`{"observed": "${"x".repeat(500)}", "match": false}`, 256, 256).observed
+    .length,
+  300,
+  "observed sentences cap at 300 characters",
 );
 
 // --- Ink-centroid snap (AITAKEOFF4 Task 1) ---
@@ -1360,6 +1380,7 @@ for (const candidate of toVerify2) {
   const perturbation = circleHit ? SNAP_PERTURBATIONS[circleIndex] : { dx: 0, dy: 0 };
   const verdictText = circleHit
     ? JSON.stringify({
+        observed: "a solid filled circle symbol matching the exemplars",
         match: true,
         center: {
           x: round1(
@@ -1370,7 +1391,12 @@ for (const candidate of toVerify2) {
           ),
         },
       })
-    : JSON.stringify({ match: false });
+    : JSON.stringify({
+        observed: decoyHit
+          ? "a solid filled square fixture, not a circular symbol"
+          : "blank drawing paper with no symbol",
+        match: false,
+      });
   const verdict2 = parseVerifyResponse(verdictText, rect.width, rect.height);
   // The snap mask travels exactly as it does on the wire: RGBA from the
   // raster window -> bit-packed mask -> base64 -> decoded server-side.
@@ -1398,6 +1424,12 @@ for (const candidate of toVerify2) {
     const finalCenter = snapped2 ?? verdict2.center;
     verified2.push(tileLocalToSheetPoint(windowFrame2, finalCenter.x, finalCenter.y));
   } else {
+    // Describe-then-decide (AITAKEOFF5 Task 2): every rejection carries the
+    // model's account of what the crop actually shows.
+    assert.ok(
+      verdict2.observed.length > 0,
+      "the rejection cites what was observed instead of the symbol",
+    );
     // Rejected candidates never snap; the hallucination's window must also
     // have no blob at all — its mask is blank around the center.
     if (

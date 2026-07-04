@@ -277,17 +277,18 @@ export function buildVerifyInstruction(input: {
     positiveLine,
     ...(negativeLine ? [negativeLine] : []),
     "The final image is a small zoomed-in crop of a drawing, taken around one possible occurrence of that symbol.",
-    "Question: does the final image contain the same symbol type, roughly centered?",
+    "First describe what is ACTUALLY at the center of the final image; only then judge whether it matches.",
     "",
     "Respond with ONLY this JSON object — no prose, no code fences:",
-    '{"match": true or false, "center": {"x": <0-1000>, "y": <0-1000>}}',
+    '{"observed": "<one sentence: what is actually at the center of the final image>", "match": true or false, "center": {"x": <0-1000>, "y": <0-1000>}}',
     "",
     "Hard rules:",
-    '- "match" is false if the symbol is absent, only partially inside the crop, or a DIFFERENT symbol type. Same shape, same construction only.',
+    '- Write "observed" FIRST, from the final image alone, before deciding the match.',
+    '- "match" is true ONLY if the observed object is the same symbol TYPE as the positive references — same shape, same construction.',
+    "- Radial or starburst look-alikes — fans, impellers, gears, sprinkler heads, air registers — are NOT matches.",
     '- If it looks like one of the REJECTED reference symbols, "match" is false.',
-    "- Plain text labels, dimension marks, hatching, and title-block art are never a match.",
-    '- "center" is the center of the matched symbol, normalized 0-1000 relative to the FINAL image (0 is its left/top edge, 1000 its right/bottom edge). Decimals are allowed. Never answer in pixels.',
-    '- Omit "center" when "match" is false.',
+    "- Symbols only partially inside the crop are false. Plain text labels, dimension marks, hatching, and title-block art are never a match.",
+    '- "center" is the center of the matched symbol, normalized 0-1000 relative to the FINAL image (0 is its left/top edge, 1000 its right/bottom edge). Decimals are allowed. Never answer in pixels. Omit "center" when "match" is false.',
   ].join("\n");
 }
 
@@ -296,8 +297,12 @@ export function buildVerifyInstruction(input: {
  * rejection — malformed JSON, prose, hedging all fail closed. A confirmed
  * match whose center is missing or out of range still verifies with
  * `center: null`; the caller falls back to the stage-A candidate point.
+ * `observed` (AITAKEOFF5 Task 2) is the model's describe-then-decide
+ * sentence — the debugging surface when a false positive slips through.
  */
 export interface ParsedVerifyResponse {
+  /** What the model says is actually in the crop ("" when absent). */
+  observed: string;
   match: boolean;
   /** Verified symbol center in window-local pixels, when the model gave one. */
   center: { x: number; y: number } | null;
@@ -308,7 +313,7 @@ export function parseVerifyResponse(
   windowWidthPx: number,
   windowHeightPx: number,
 ): ParsedVerifyResponse {
-  const rejected: ParsedVerifyResponse = { match: false, center: null };
+  const rejected: ParsedVerifyResponse = { observed: "", match: false, center: null };
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) return rejected;
@@ -320,7 +325,8 @@ export function parseVerifyResponse(
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return rejected;
   const raw = parsed as Record<string, unknown>;
-  if (raw.match !== true) return rejected;
+  const observed = typeof raw.observed === "string" ? raw.observed.trim().slice(0, 300) : "";
+  if (raw.match !== true) return { ...rejected, observed };
   const center =
     raw.center && typeof raw.center === "object" && !Array.isArray(raw.center)
       ? (raw.center as Record<string, unknown>)
@@ -335,9 +341,10 @@ export function parseVerifyResponse(
     y < 0 ||
     y > NORMALIZED_COORD_MAX
   ) {
-    return { match: true, center: null };
+    return { observed, match: true, center: null };
   }
   return {
+    observed,
     match: true,
     center: {
       x: normalizedToTileLocalPx(x, windowWidthPx),
