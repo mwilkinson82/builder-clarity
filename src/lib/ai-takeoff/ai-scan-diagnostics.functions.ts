@@ -54,6 +54,10 @@ export interface AiScanVerification {
   frame: DetectionTileFrame | null;
   match: boolean;
   centerRefined: boolean;
+  /** Stage-B center in window pixels, before the ink-centroid snap. */
+  rawCenterPx: { x: number; y: number } | null;
+  /** Ink-centroid snap result in window pixels (null = fallback used). */
+  snappedCenterPx: { x: number; y: number } | null;
   mappedPoint: { x: number; y: number } | null;
   rawResponse: string;
   usage: { inputTokens: number; outputTokens: number } | null;
@@ -231,6 +235,8 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
           frame: (meta?.frame ?? null) as DetectionTileFrame | null,
           match: meta?.match === true,
           centerRefined: meta?.centerRefined === true,
+          rawCenterPx: parsePoint(meta?.rawCenterPx),
+          snappedCenterPx: parsePoint(meta?.snappedCenterPx),
           mappedPoint: parsePoint(meta?.mappedPoint),
           rawResponse: str(meta?.rawResponse),
           usage: parseUsage(meta?.usage),

@@ -289,6 +289,166 @@ export function parseVerifyResponse(
   };
 }
 
+// --- Ink-centroid snap (AITAKEOFF4 Task 1) ---
+// Verified ghosts land on-symbol but off-center: after a match, the final
+// point snaps deterministically — no extra model call — to the centroid of
+// the connected dark-pixel blob nearest the stage-B center. Conservative on
+// purpose: anything that doesn't look like an isolated symbol (too small =
+// dust, too large = fused linework) falls back to the stage-B center.
+
+/** A pixel this dark (simple RGB average) counts as ink on white paper. */
+export const INK_LUMINANCE_THRESHOLD = 160;
+/** Only blobs with a pixel within this radius of the center are considered. */
+export const SNAP_SEARCH_RADIUS_PX = 40;
+/** A blob spanning more than this on either axis is linework, not a symbol. */
+export const SNAP_MAX_COMPONENT_EDGE_PX = 160;
+/** Blobs smaller than this are dust/noise, never a symbol. */
+export const SNAP_MIN_COMPONENT_PIXELS = 12;
+
+/** Bit-packed dark-pixel mask of a verification window (row-major). */
+export interface InkMask {
+  width: number;
+  height: number;
+  bits: Uint8Array;
+}
+
+/** Threshold raw RGBA pixels (canvas ImageData layout) into an ink mask. */
+export function inkMaskFromRgba(
+  rgba: Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+  threshold: number = INK_LUMINANCE_THRESHOLD,
+): InkMask {
+  const pixelCount = Math.max(0, width) * Math.max(0, height);
+  const bits = new Uint8Array(Math.ceil(pixelCount / 8));
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * 4;
+    const luminance = (rgba[offset] + rgba[offset + 1] + rgba[offset + 2]) / 3;
+    if (luminance < threshold) bits[index >> 3] |= 1 << (index & 7);
+  }
+  return { width, height, bits };
+}
+
+export function inkMaskGet(mask: InkMask, x: number, y: number): boolean {
+  if (x < 0 || y < 0 || x >= mask.width || y >= mask.height) return false;
+  const index = y * mask.width + x;
+  return (mask.bits[index >> 3] & (1 << (index & 7))) !== 0;
+}
+
+/** Transport encoding: bits only — width/height travel beside it. */
+export function inkMaskToBase64(mask: InkMask): string {
+  let binary = "";
+  const CHUNK = 8192;
+  for (let offset = 0; offset < mask.bits.length; offset += CHUNK) {
+    binary += String.fromCharCode(...mask.bits.subarray(offset, offset + CHUNK));
+  }
+  return btoa(binary);
+}
+
+export function inkMaskFromBase64(base64: string, width: number, height: number): InkMask | null {
+  const expectedBytes = Math.ceil((Math.max(0, width) * Math.max(0, height)) / 8);
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    return null;
+  }
+  if (binary.length !== expectedBytes) return null;
+  const bits = new Uint8Array(expectedBytes);
+  for (let index = 0; index < expectedBytes; index += 1) {
+    bits[index] = binary.charCodeAt(index);
+  }
+  return { width, height, bits };
+}
+
+/**
+ * Snap a stage-B center onto the symbol it verified: centroid of the
+ * connected dark-pixel component nearest the center, searched within
+ * SNAP_SEARCH_RADIUS_PX. The component itself may extend past the radius —
+ * the centroid is over the WHOLE blob. Returns null (caller keeps the
+ * stage-B center) when nothing within the radius looks like a symbol.
+ */
+export function snapToInkCentroid(
+  mask: InkMask,
+  center: { x: number; y: number },
+  options: {
+    searchRadiusPx?: number;
+    maxComponentEdgePx?: number;
+    minComponentPixels?: number;
+  } = {},
+): { x: number; y: number } | null {
+  const radius = options.searchRadiusPx ?? SNAP_SEARCH_RADIUS_PX;
+  const maxEdge = options.maxComponentEdgePx ?? SNAP_MAX_COMPONENT_EDGE_PX;
+  const minPixels = options.minComponentPixels ?? SNAP_MIN_COMPONENT_PIXELS;
+  const { width, height } = mask;
+  if (width <= 0 || height <= 0) return null;
+
+  const visited = new Uint8Array(width * height);
+  let best: { distance: number; x: number; y: number } | null = null;
+
+  const x0 = Math.max(0, Math.floor(center.x - radius));
+  const x1 = Math.min(width - 1, Math.ceil(center.x + radius));
+  const y0 = Math.max(0, Math.floor(center.y - radius));
+  const y1 = Math.min(height - 1, Math.ceil(center.y + radius));
+
+  for (let seedY = y0; seedY <= y1; seedY += 1) {
+    for (let seedX = x0; seedX <= x1; seedX += 1) {
+      if (visited[seedY * width + seedX]) continue;
+      if (Math.hypot(seedX - center.x, seedY - center.y) > radius) continue;
+      if (!inkMaskGet(mask, seedX, seedY)) continue;
+      // Flood-fill this component (4-connected) across the whole mask.
+      let sumX = 0;
+      let sumY = 0;
+      let count = 0;
+      let minX = seedX;
+      let maxX = seedX;
+      let minY = seedY;
+      let maxY = seedY;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      const stack: number[] = [seedY * width + seedX];
+      visited[seedY * width + seedX] = 1;
+      while (stack.length > 0) {
+        const index = stack.pop()!;
+        const px = index % width;
+        const py = (index - px) / width;
+        sumX += px;
+        sumY += py;
+        count += 1;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+        const distance = Math.hypot(px - center.x, py - center.y);
+        if (distance < nearestDistance) nearestDistance = distance;
+        const neighbors = [
+          px > 0 ? index - 1 : -1,
+          px < width - 1 ? index + 1 : -1,
+          py > 0 ? index - width : -1,
+          py < height - 1 ? index + width : -1,
+        ];
+        for (const neighbor of neighbors) {
+          if (neighbor < 0 || visited[neighbor]) continue;
+          const nx = neighbor % width;
+          const ny = (neighbor - nx) / width;
+          if (!inkMaskGet(mask, nx, ny)) continue;
+          visited[neighbor] = 1;
+          stack.push(neighbor);
+        }
+      }
+      if (count < minPixels) continue;
+      if (maxX - minX > maxEdge || maxY - minY > maxEdge) continue;
+      if (nearestDistance > radius) continue;
+      if (!best || nearestDistance < best.distance) {
+        // +0.5: a pixel at index (x, y) is CENTERED at (x+0.5, y+0.5) in the
+        // continuous window coordinates the frame transform expects — without
+        // it every snap lands a systematic half pixel up-left.
+        best = { distance: nearestDistance, x: sumX / count + 0.5, y: sumY / count + 0.5 };
+      }
+    }
+  }
+  return best ? { x: best.x, y: best.y } : null;
+}
+
 // --- Token-implied resize check (AITAKEOFF3 Task 3) ---
 // Vision input costs roughly (width × height) / 750 tokens. A call whose
 // TOTAL input tokens (tile + exemplar + prompt) come in below the tile's own

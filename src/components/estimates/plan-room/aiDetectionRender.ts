@@ -12,6 +12,8 @@
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   DETECTION_LONG_EDGE_PX,
+  inkMaskFromRgba,
+  inkMaskToBase64,
   planDetectionTiles,
   VERIFY_IMAGE_PX,
   verifyWindowRect,
@@ -157,6 +159,12 @@ export interface DetectionVerifyWindowImage {
   /** Size of the upscaled image actually sent to the model. */
   widthPx: number;
   heightPx: number;
+  /**
+   * Bit-packed dark-pixel mask of the window at WINDOW resolution
+   * (AITAKEOFF4 Task 1): the server snaps the verdict center to the nearest
+   * ink blob's centroid without ever decoding the PNG.
+   */
+  inkMaskBase64: string;
 }
 
 /**
@@ -197,6 +205,12 @@ export function renderVerifyWindow(
     canvas.width,
     canvas.height,
   );
+  // The snap mask reads the UNSCALED window straight off the raster — same
+  // pixel basis as the window frame, so a snapped center maps through it.
+  const rasterContext = raster.canvas.getContext("2d");
+  if (!rasterContext) throw new Error("This browser could not prepare the sheet for scanning.");
+  const windowPixels = rasterContext.getImageData(rect.left, rect.top, rect.width, rect.height);
+  const inkMask = inkMaskFromRgba(windowPixels.data, rect.width, rect.height);
   return {
     rect,
     frame: tileFrameFor(rect, raster.widthPx, raster.heightPx),
@@ -204,6 +218,7 @@ export function renderVerifyWindow(
     mediaType: "image/png",
     widthPx: canvas.width,
     heightPx: canvas.height,
+    inkMaskBase64: inkMaskToBase64(inkMask),
   };
 }
 

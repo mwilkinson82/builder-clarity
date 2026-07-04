@@ -42,8 +42,15 @@ import {
   DETECTION_TILE_OVERLAP_PX,
   DETECTION_TILE_PX,
   excludeNearExistingPoints,
+  INK_LUMINANCE_THRESHOLD,
+  inkMaskFromBase64,
+  inkMaskFromRgba,
+  inkMaskGet,
+  inkMaskToBase64,
   LOW_CONFIDENCE_THRESHOLD,
   NORMALIZED_COORD_MAX,
+  SNAP_SEARCH_RADIUS_PX,
+  snapToInkCentroid,
   normalizedToTileLocalPx,
   parseScanResponse,
   parseVerifyResponse,
@@ -656,6 +663,83 @@ assert.deepEqual(
   "an out-of-range center degrades to the fallback, never a fake position",
 );
 
+// --- Ink-centroid snap (AITAKEOFF4 Task 1) ---
+
+// Synthetic RGBA painter: white canvas, paint dark rectangles.
+function paintRgba(width: number, height: number, rects: Array<[number, number, number, number]>) {
+  const rgba = new Uint8Array(width * height * 4).fill(255);
+  for (const [rx, ry, rw, rh] of rects) {
+    for (let y = ry; y < ry + rh; y += 1) {
+      for (let x = rx; x < rx + rw; x += 1) {
+        const offset = (y * width + x) * 4;
+        rgba[offset] = 0;
+        rgba[offset + 1] = 0;
+        rgba[offset + 2] = 0;
+      }
+    }
+  }
+  return rgba;
+}
+
+assert.ok(INK_LUMINANCE_THRESHOLD > 0 && INK_LUMINANCE_THRESHOLD < 255, "threshold is sane");
+assert.equal(SNAP_SEARCH_RADIUS_PX, 40, "snap searches a small radius around the stage-B center");
+
+// Mask round trip: RGBA -> mask -> base64 -> mask.
+const maskSource = paintRgba(64, 64, [[20, 24, 9, 9]]);
+const mask = inkMaskFromRgba(maskSource, 64, 64);
+assert.equal(inkMaskGet(mask, 24, 28), true, "painted pixels read as ink");
+assert.equal(inkMaskGet(mask, 5, 5), false, "paper reads as blank");
+assert.equal(inkMaskGet(mask, -1, 5), false, "out-of-bounds reads as blank, never throws");
+const maskWire = inkMaskFromBase64(inkMaskToBase64(mask), 64, 64);
+assert.ok(maskWire, "the wire encoding decodes");
+assert.deepEqual(Array.from(maskWire!.bits), Array.from(mask.bits), "bits survive the wire");
+assert.equal(inkMaskFromBase64("%%%not-base64%%%", 64, 64), null, "garbage base64 fails closed");
+assert.equal(
+  inkMaskFromBase64(inkMaskToBase64(mask), 128, 128),
+  null,
+  "a mask that does not match the declared window size fails closed",
+);
+
+// Snap semantics: nearest blob's centroid wins; dust and linework never do.
+// The 9x9 blob painted at [20,24] covers [20,29)x[24,33): its continuous
+// centroid is (24.5, 28.5) — pixel centers, not pixel indices.
+const blobCentroid = { x: 24.5, y: 28.5 };
+const snapMask = inkMaskFromRgba(
+  paintRgba(256, 256, [
+    [20, 24, 9, 9], // the symbol
+    [50, 50, 2, 2], // dust: below SNAP_MIN_COMPONENT_PIXELS
+    [0, 200, 256, 3], // wall-to-wall linework: bounding box far over the cap
+  ]),
+  256,
+  256,
+);
+const snapped = snapToInkCentroid(snapMask, { x: 30, y: 20 });
+assert.ok(snapped, "a blob near the center snaps");
+assert.ok(
+  Math.hypot(snapped!.x - blobCentroid.x, snapped!.y - blobCentroid.y) < 0.6,
+  "the snap lands on the blob's centroid",
+);
+assert.equal(
+  snapToInkCentroid(snapMask, { x: 70, y: 60 }),
+  null,
+  "dust alone within the radius is never a snap target",
+);
+assert.equal(
+  snapToInkCentroid(snapMask, { x: 70, y: 190 }),
+  null,
+  "oversized linework next to the center is never a snap target",
+);
+assert.equal(
+  snapToInkCentroid(inkMaskFromRgba(paintRgba(256, 256, []), 256, 256), { x: 128, y: 128 }),
+  null,
+  "a blank window has nothing to snap to",
+);
+assert.equal(
+  snapToInkCentroid(snapMask, { x: 110, y: 20 }),
+  null,
+  "a blob outside the search radius stays out of reach",
+);
+
 // --- Token-implied resize check (AITAKEOFF3 Task 3) ---
 
 const oldWorldTokens = tileTokenCheck(2377, 1400, 1400);
@@ -1090,15 +1174,24 @@ assert.equal(
 );
 
 // Stage B: real windows, pixel-sampled; mock verdicts confirm circles only.
+// Each circle's mocked verdict center is perturbed by up to 15px (AITAKEOFF4
+// Task 1): the deterministic ink-centroid snap must recover the true center.
+const SNAP_PERTURBATIONS = [
+  { dx: 12, dy: -9 },
+  { dx: -15, dy: 4 },
+  { dx: 7, dy: 14 },
+];
 const verified2: Array<{ x: number; y: number }> = [];
 let rejected2 = 0;
+let snapRecoveries = 0;
 for (const candidate of toVerify2) {
   const centerPx = { x: candidate.x * rasterWidthPx, y: candidate.y * rasterHeightPx };
   const rect = verifyWindowRect(centerPx, rasterWidthPx, rasterHeightPx);
   const windowFrame2 = tileFrameFor(rect, rasterWidthPx, rasterHeightPx);
-  const circleHit = circleRasterPx.find(
+  const circleIndex = circleRasterPx.findIndex(
     (spot) => Math.hypot(spot.px - centerPx.x, spot.py - centerPx.y) < 5,
   );
+  const circleHit = circleIndex >= 0 ? circleRasterPx[circleIndex] : undefined;
   const decoyHit = Math.hypot(decoyRasterPx.px - centerPx.x, decoyRasterPx.py - centerPx.y) < 5;
   if (circleHit || decoyHit) {
     // The window the model judges really contains the symbol's ink.
@@ -1118,22 +1211,66 @@ for (const candidate of toVerify2) {
       "the hallucination window is empty paper",
     );
   }
+  const perturbation = circleHit ? SNAP_PERTURBATIONS[circleIndex] : { dx: 0, dy: 0 };
   const verdictText = circleHit
     ? JSON.stringify({
         match: true,
         center: {
-          x: round1(tileLocalPxToNormalized(circleHit.px - rect.left, rect.width)),
-          y: round1(tileLocalPxToNormalized(circleHit.py - rect.top, rect.height)),
+          x: round1(
+            tileLocalPxToNormalized(circleHit.px - rect.left + perturbation.dx, rect.width),
+          ),
+          y: round1(
+            tileLocalPxToNormalized(circleHit.py - rect.top + perturbation.dy, rect.height),
+          ),
         },
       })
     : JSON.stringify({ match: false });
   const verdict2 = parseVerifyResponse(verdictText, rect.width, rect.height);
+  // The snap mask travels exactly as it does on the wire: RGBA from the
+  // raster window -> bit-packed mask -> base64 -> decoded server-side.
+  const windowImage = raster2.getImageData(rect.left, rect.top, rect.width, rect.height);
+  const wireMask = inkMaskFromBase64(
+    inkMaskToBase64(inkMaskFromRgba(windowImage.data, rect.width, rect.height)),
+    rect.width,
+    rect.height,
+  );
+  assert.ok(wireMask, "the window's ink mask survives the wire encoding");
   if (verdict2.match && verdict2.center) {
-    verified2.push(tileLocalToSheetPoint(windowFrame2, verdict2.center.x, verdict2.center.y));
+    const snapped2 = snapToInkCentroid(wireMask!, verdict2.center);
+    if (circleHit) {
+      assert.ok(snapped2, "SNAP PROOF: the glyph's ink blob is found from a perturbed center");
+      const correction = Math.hypot(
+        snapped2!.x - verdict2.center.x,
+        snapped2!.y - verdict2.center.y,
+      );
+      assert.ok(
+        correction > Math.hypot(perturbation.dx, perturbation.dy) - 2,
+        `the snap actually corrected the perturbation (moved ${correction.toFixed(1)}px)`,
+      );
+      snapRecoveries += 1;
+    }
+    const finalCenter = snapped2 ?? verdict2.center;
+    verified2.push(tileLocalToSheetPoint(windowFrame2, finalCenter.x, finalCenter.y));
   } else {
+    // Rejected candidates never snap; the hallucination's window must also
+    // have no blob at all — its mask is blank around the center.
+    if (
+      !circleHit &&
+      Math.hypot(decoyRasterPx.px - centerPx.x, decoyRasterPx.py - centerPx.y) >= 5
+    ) {
+      assert.equal(
+        snapToInkCentroid(wireMask!, {
+          x: centerPx.x - rect.left,
+          y: centerPx.y - rect.top,
+        }),
+        null,
+        "the hallucination window has no ink blob to snap to",
+      );
+    }
     rejected2 += 1;
   }
 }
+assert.equal(snapRecoveries, 3, "every circle went through the perturbed-center snap path");
 assert.equal(verified2.length, 3, "TWO-STAGE PROOF: exactly the three true symbols verify");
 assert.equal(rejected2, 2, "TWO-STAGE PROOF: the decoy and the hallucination die in stage B");
 

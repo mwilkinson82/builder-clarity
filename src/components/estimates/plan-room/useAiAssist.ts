@@ -410,6 +410,7 @@ export function useAiAssist({
                 frame: window.frame,
                 media_type: window.mediaType,
                 base64: window.base64,
+                ink_mask_base64: window.inkMaskBase64,
               },
             },
           });

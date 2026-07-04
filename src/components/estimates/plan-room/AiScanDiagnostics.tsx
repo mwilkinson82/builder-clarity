@@ -182,17 +182,35 @@ function TileCard({
 }
 
 function VerificationCard({ verification }: { verification: AiScanVerification }) {
-  const markers: ImageMarker[] =
-    verification.mappedPoint && verification.frame && verification.window
-      ? ([
-          markerFor(
-            verification.mappedPoint,
-            verification.frame,
-            verification.window,
-            verification.match ? MARKER_ACCEPTED : MARKER_REJECTED,
-          ),
-        ].filter(Boolean) as ImageMarker[])
-      : [];
+  const markers: ImageMarker[] = [];
+  if (verification.mappedPoint && verification.frame && verification.window) {
+    const finalMarker = markerFor(
+      verification.mappedPoint,
+      verification.frame,
+      verification.window,
+      verification.match ? MARKER_ACCEPTED : MARKER_REJECTED,
+    );
+    if (finalMarker) markers.push(finalMarker);
+  }
+  // The pre-snap stage-B center in amber: raw vs final IS the correction
+  // vector, visible on the crop itself (AITAKEOFF4 Task 1).
+  if (verification.rawCenterPx && verification.snappedCenterPx && verification.window) {
+    const { width, height } = verification.window;
+    if (width > 0 && height > 0) {
+      markers.push({
+        leftPct: (verification.rawCenterPx.x / width) * 100,
+        topPct: (verification.rawCenterPx.y / height) * 100,
+        color: MARKER_UNVERIFIED,
+      });
+    }
+  }
+  const snapDeltaPx =
+    verification.rawCenterPx && verification.snappedCenterPx
+      ? Math.hypot(
+          verification.snappedCenterPx.x - verification.rawCenterPx.x,
+          verification.snappedCenterPx.y - verification.rawCenterPx.y,
+        )
+      : null;
 
   return (
     <div
@@ -217,6 +235,14 @@ function VerificationCard({ verification }: { verification: AiScanVerification }
         )}
         {verification.match && !verification.centerRefined && (
           <span>center fallback: stage-A point</span>
+        )}
+        {snapDeltaPx !== null && (
+          <span data-testid="ai-diagnostics-snap-delta">
+            snap moved the center {snapDeltaPx.toFixed(1)}px
+          </span>
+        )}
+        {verification.match && verification.rawCenterPx && !verification.snappedCenterPx && (
+          <span>no ink blob to snap to — stage-B center kept</span>
         )}
         {verification.usage && (
           <span>
