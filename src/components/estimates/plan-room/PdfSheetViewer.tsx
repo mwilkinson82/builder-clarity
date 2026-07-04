@@ -1553,8 +1553,11 @@ export function PlanCanvas({
       )}
 
       {aiPanel && (
-        <div className="pointer-events-none absolute right-3 top-14 z-40 flex justify-end">
-          <div className="pointer-events-auto">{aiPanel}</div>
+        // Full-canvas positioning context: the panel drags anywhere over the
+        // canvas and clamps itself to this box (AITAKEOFF2 Task 3). The
+        // wrapper ignores pointer events; the panel re-enables its own.
+        <div className="pointer-events-none absolute inset-0 z-40 [&>*]:pointer-events-auto">
+          {aiPanel}
         </div>
       )}
       {aiReviewBar && (

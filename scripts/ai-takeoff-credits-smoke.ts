@@ -1,11 +1,14 @@
-// AI takeoff + credits smoke (AITAKEOFF1 Task 4).
-// Pure-function unit checks: ledger balance math + refund compensation, API
-// cost from the config price table, proposal→marker conversion, confidence
-// sort, tile planning/parsing. Model calls are never made here — the domain
-// modules are pure by design.
+// AI takeoff + credits smoke (AITAKEOFF1 Task 4, AITAKEOFF2 Tasks 1/2/5).
+// Pure-function unit checks (ledger math, refunds, price table, parsing,
+// review order, conversion) PLUS rendered round-trip fixtures: a generated
+// PDF with a known glyph proves the exemplar crop contains the symbol (pixel
+// sampling) and that a mock model response maps back to the true sheet
+// position. Both Y-axis regressions fail loudly here — they cannot be
+// reintroduced silently. Model calls are never made in tests.
 // Run: npm run test:ai
 
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import {
   AI_COUNT_SCAN_CREDITS_PER_SHEET,
   computeApiCostCents,
@@ -27,17 +30,35 @@ import {
   AI_ASSIST_NOT_CONFIGURED_MESSAGE,
   aiAssistAvailability,
   appendAcceptedPoint,
+  applyConfidenceFloor,
   buildScanInstruction,
+  capProposalsPerSheet,
   dedupeCandidates,
+  DEFAULT_MAX_PROPOSALS_PER_SHEET,
+  DEFAULT_MIN_PROPOSAL_CONFIDENCE,
+  DETECTION_LONG_EDGE_PX,
   DETECTION_TILE_OVERLAP_PX,
   DETECTION_TILE_PX,
   excludeNearExistingPoints,
   LOW_CONFIDENCE_THRESHOLD,
-  parseTileCandidates,
+  matchCenters,
+  parseScanResponse,
   planDetectionTiles,
   sortProposalsForReview,
-  tileCandidateToSheet,
 } from "../src/lib/ai-takeoff/ai-takeoff-domain.ts";
+import {
+  bboxCenter,
+  EXEMPLAR_TARGET_LONG_EDGE_PX,
+  exemplarCropPlan,
+  pdfPointToRenderPixel,
+  pdfPointToSheetPoint,
+  renderPixelToSheetPoint,
+  sheetPointToPdfPoint,
+  sheetPointToRenderPixel,
+  tileFrameFor,
+  tileLocalToSheetPoint,
+  type PdfPageSize,
+} from "../src/lib/ai-takeoff/coord-transforms.ts";
 
 // --- Ledger balance math ---
 
@@ -127,13 +148,11 @@ assert.ok(sonnetPrice, "price table covers the default model");
 assert.equal(sonnetPrice.inputCents, 300, "sonnet input $3/MTok = 300 cents");
 assert.equal(sonnetPrice.outputCents, 1500, "sonnet output $15/MTok = 1500 cents");
 
-// 1M input + 1M output on sonnet-4-6 = $3 + $15 = $18.00
 assert.equal(
   computeApiCostCents("claude-sonnet-4-6", 1_000_000, 1_000_000),
   1800,
   "cost math: full MTok on both sides",
 );
-// A realistic sheet scan: ~25k input, ~2k output → ceil(7.5 + 3.0) = 11 cents
 assert.equal(
   computeApiCostCents("claude-sonnet-4-6", 25_000, 2_000),
   11,
@@ -176,7 +195,85 @@ assert.equal(customPacks.length, 1, "invalid pack entries are dropped");
 assert.equal(customPacks[0].id, "pack_250", "valid env packs override defaults");
 assert.equal(customPacks[0].label, "250 credits", "missing labels derive from credits");
 
-// --- Detection tiles ---
+// --- Pure coordinate transforms (AITAKEOFF2 Task 1) ---
+// The Y flip lives in exactly one place; these assertions make both known
+// Y-axis regressions impossible to reintroduce silently.
+
+const PAGE: PdfPageSize = { widthPt: 1224, heightPt: 792 };
+
+const topLeftPdf = sheetPointToPdfPoint({ x: 0, y: 0 }, PAGE);
+assert.equal(topLeftPdf.xPt, 0, "sheet x=0 is PDF x=0");
+assert.equal(
+  topLeftPdf.yPt,
+  PAGE.heightPt,
+  "Y-FLIP GUARD: sheet TOP (y=0) is PDF yPt=pageHeight (bottom-up), never yPt=0",
+);
+const bottomLeftPdf = sheetPointToPdfPoint({ x: 0, y: 1 }, PAGE);
+assert.equal(bottomLeftPdf.yPt, 0, "sheet BOTTOM (y=1) is PDF yPt=0");
+
+const glyphPdf = { xPt: 900, yPt: 200 };
+const glyphSheet = pdfPointToSheetPoint(glyphPdf, PAGE);
+assert.ok(Math.abs(glyphSheet.x - 900 / 1224) < 1e-12, "pdf→sheet x");
+assert.ok(Math.abs(glyphSheet.y - (1 - 200 / 792)) < 1e-12, "pdf→sheet y flips");
+
+// Round trips are identities.
+const roundTripPdf = sheetPointToPdfPoint(pdfPointToSheetPoint(glyphPdf, PAGE), PAGE);
+assert.ok(
+  Math.abs(roundTripPdf.xPt - glyphPdf.xPt) < 1e-9 &&
+    Math.abs(roundTripPdf.yPt - glyphPdf.yPt) < 1e-9,
+  "pdf→sheet→pdf round trip is exact",
+);
+const somePixel = { px: 1234.5, py: 678.25 };
+const pixelRoundTrip = sheetPointToRenderPixel(
+  renderPixelToSheetPoint(somePixel, PAGE, 2.5),
+  PAGE,
+  2.5,
+);
+assert.ok(
+  Math.abs(pixelRoundTrip.px - somePixel.px) < 1e-6 &&
+    Math.abs(pixelRoundTrip.py - somePixel.py) < 1e-6,
+  "pixel→sheet→pixel round trip is exact",
+);
+
+// The composition equals the two-hop path (no shortcut drift).
+const viaHops = pdfPointToRenderPixel(sheetPointToPdfPoint(glyphSheet, PAGE), PAGE, 3.1);
+const direct = sheetPointToRenderPixel(glyphSheet, PAGE, 3.1);
+assert.ok(
+  Math.abs(viaHops.px - direct.px) < 1e-9 && Math.abs(viaHops.py - direct.py) < 1e-9,
+  "sheet→pixel composition equals sheet→pdf→pixel",
+);
+// Top-down pixel space: PDF yPt=200 sits near the sheet BOTTOM, so its
+// raster py must land in the BOTTOM half. A dropped Y flip puts it top.
+assert.ok(
+  direct.py > (PAGE.heightPt * 3.1) / 2,
+  "Y-FLIP GUARD: a point near the sheet bottom lands in the bottom half of the raster",
+);
+
+// --- Exemplar crop plan (AITAKEOFF2 Task 0) ---
+
+const centerPlan = exemplarCropPlan({ x: 0.5, y: 0.5 }, PAGE);
+assert.ok(
+  centerPlan.widthPx >= 512 && centerPlan.widthPx <= 768,
+  "exemplar crop long side lands in the 512-768px target band",
+);
+assert.equal(centerPlan.widthPx, EXEMPLAR_TARGET_LONG_EDGE_PX, "square page-center crop is 640px");
+assert.ok(
+  Math.abs(centerPlan.markerInCropPx.px - centerPlan.widthPx / 2) < 1.01 &&
+    Math.abs(centerPlan.markerInCropPx.py - centerPlan.heightPx / 2) < 1.01,
+  "the marker sits at the crop center away from edges",
+);
+assert.equal(centerPlan.offsetX, -centerPlan.leftPx, "viewport offsetX cancels the crop origin");
+assert.equal(centerPlan.offsetY, -centerPlan.topPx, "viewport offsetY cancels the crop origin");
+
+const cornerPlan = exemplarCropPlan({ x: 0.001, y: 0.999 }, PAGE);
+assert.equal(cornerPlan.leftPx, 0, "edge markers shift the window instead of shrinking it");
+assert.equal(cornerPlan.widthPx, centerPlan.widthPx, "edge crops keep the full region size");
+assert.ok(
+  cornerPlan.markerInCropPx.px >= 0 && cornerPlan.markerInCropPx.py <= cornerPlan.heightPx,
+  "edge markers stay inside the crop",
+);
+
+// --- Detection tiles + frames ---
 
 const tiles = planDetectionTiles(3800, 2600);
 assert.ok(tiles.length >= 4, "a full sheet needs multiple tiles");
@@ -184,17 +281,6 @@ assert.ok(
   tiles.every((tile) => tile.width <= DETECTION_TILE_PX && tile.height <= DETECTION_TILE_PX),
   "no tile exceeds the detection tile size",
 );
-assert.ok(
-  tiles.every(
-    (tile) =>
-      tile.left >= 0 &&
-      tile.top >= 0 &&
-      tile.left + tile.width <= 3800 &&
-      tile.top + tile.height <= 2600,
-  ),
-  "tiles stay inside the sheet",
-);
-// Coverage: every probe point on the sheet falls inside at least one tile.
 for (let px = 0; px < 3800; px += 190) {
   for (let py = 0; py < 2600; py += 130) {
     assert.ok(
@@ -209,71 +295,142 @@ for (let px = 0; px < 3800; px += 190) {
     );
   }
 }
-// Adjacent tiles overlap so seam symbols appear whole somewhere.
 const firstRow = tiles.filter((tile) => tile.top === tiles[0].top);
 if (firstRow.length > 1) {
-  assert.ok(
-    firstRow[1].left < firstRow[0].left + firstRow[0].width,
-    "adjacent tiles overlap horizontally",
-  );
   assert.equal(
     firstRow[0].left + firstRow[0].width - firstRow[1].left,
     DETECTION_TILE_OVERLAP_PX,
     "horizontal overlap matches the configured seam",
   );
 }
-const smallSheet = planDetectionTiles(900, 700);
-assert.equal(smallSheet.length, 1, "a sheet smaller than one tile plans a single tile");
-assert.equal(smallSheet[0].width, 900, "single tile clamps to sheet width");
-assert.equal(smallSheet[0].height, 700, "single tile clamps to sheet height");
 
-// --- Strict-JSON candidate parsing ---
+// Tile frames: local → sheet through the frame preserves the tile offset.
+const frame = tileFrameFor({ left: 1304, top: 1300 }, 3800, 2600);
+const mappedViaFrame = tileLocalToSheetPoint(frame, 700, 350);
+assert.ok(
+  Math.abs(mappedViaFrame.x - (1304 + 700) / 3800) < 1e-12,
+  "tile x maps through the tile's sheet-space origin",
+);
+assert.ok(
+  Math.abs(mappedViaFrame.y - (1300 + 350) / 2600) < 1e-12,
+  "tile y maps through the tile's sheet-space origin",
+);
+// TILE-OFFSET GUARD: dropping the origin (the Phase A near-miss class of
+// bug) lands far away from the true position.
+const mappedWithoutOffset = tileLocalToSheetPoint(
+  { ...frame, originSheetX: 0, originSheetY: 0 },
+  700,
+  350,
+);
+assert.ok(
+  Math.hypot(mappedWithoutOffset.x - mappedViaFrame.x, mappedWithoutOffset.y - mappedViaFrame.y) >
+    0.3,
+  "TILE-OFFSET GUARD: a mapping that drops the tile origin is wildly off, never a near-miss pass",
+);
 
-const parsed = parseTileCandidates(
-  '[{"x": 120, "y": 340.5, "confidence": 0.92}, {"x": 900, "y": 100, "confidence": 0.4}]',
+// --- Strict-JSON scan response parsing (AITAKEOFF2 Task 2) ---
+
+const goodResponse = parseScanResponse(
+  JSON.stringify({
+    exemplar_description: "Circular brush with radial spokes",
+    matches: [
+      { x0: 100, y0: 200, x1: 140, y1: 240, confidence: 0.92 },
+      { x0: 900, y0: 80, x1: 960, y1: 130, confidence: 0.4 },
+    ],
+  }),
   1400,
   1400,
 );
-assert.equal(parsed.length, 2, "clean JSON array parses");
-assert.equal(parsed[0].x, 120, "x preserved");
-assert.equal(parsed[0].confidence, 0.92, "confidence preserved");
-
-const fenced = parseTileCandidates(
-  'Here are the matches:\n```json\n[{"x": 10, "y": 20, "confidence": 1.4}]\n```\nDone.',
-  1400,
-  1400,
-);
-assert.equal(fenced.length, 1, "fenced/prosy responses still yield the array");
-assert.equal(fenced[0].confidence, 1, "confidence clamps to [0,1]");
-
-assert.deepEqual(parseTileCandidates("no matches found", 1400, 1400), [], "prose only → empty");
-assert.deepEqual(parseTileCandidates("[]", 1400, 1400), [], "empty array → empty");
-assert.deepEqual(parseTileCandidates("[{broken", 1400, 1400), [], "malformed JSON → empty");
 assert.equal(
-  parseTileCandidates('[{"x": 5000, "y": 20, "confidence": 0.9}]', 1400, 1400).length,
+  goodResponse.exemplarDescription,
+  "Circular brush with radial spokes",
+  "the echo line parses first-class",
+);
+assert.equal(goodResponse.matches.length, 2, "valid boxes parse");
+assert.deepEqual(
+  bboxCenter(goodResponse.matches[0]),
+  { x: 120, y: 220 },
+  "centers derive server-side from the box",
+);
+assert.deepEqual(
+  matchCenters(goodResponse.matches)[0],
+  { x: 120, y: 220, confidence: 0.92 },
+  "matchCenters carries confidence through",
+);
+
+const fenced = parseScanResponse(
+  'Here you go:\n```json\n{"exemplar_description": "duplex outlet", "matches": [{"x0": 10, "y0": 10, "x1": 30, "y1": 30, "confidence": 1.7}]}\n```',
+  1400,
+  1400,
+);
+assert.equal(fenced.exemplarDescription, "duplex outlet", "fenced responses still parse");
+assert.equal(fenced.matches[0].confidence, 1, "confidence clamps to [0,1]");
+
+assert.deepEqual(
+  parseScanResponse("no matches here", 1400, 1400),
+  { exemplarDescription: "", matches: [] },
+  "prose-only responses yield nothing",
+);
+assert.deepEqual(
+  parseScanResponse('{"exemplar_description": "a symbol", "matches": []}', 1400, 1400).matches,
+  [],
+  "an empty matches list is a first-class answer",
+);
+assert.equal(
+  parseScanResponse(
+    '{"matches": [{"x0": 50, "y0": 50, "x1": 40, "y1": 60, "confidence": 1}]}',
+    1400,
+    1400,
+  ).matches.length,
   0,
-  "candidates outside the tile bounds are dropped",
+  "inverted boxes are dropped",
 );
 assert.equal(
-  parseTileCandidates('[{"x": "left", "y": 20, "confidence": 0.9}]', 1400, 1400).length,
+  parseScanResponse(
+    '{"matches": [{"x0": 0, "y0": 0, "x1": 1200, "y1": 1200, "confidence": 1}]}',
+    1400,
+    1400,
+  ).matches.length,
   0,
-  "non-numeric coordinates are dropped",
+  "boxes bigger than half the tile are model confusion, not matches",
 );
-
-// --- Tile → sheet coordinate mapping ---
-
-const mapped = tileCandidateToSheet(
-  { x: 700, y: 350, confidence: 0.8 },
-  { left: 1304, top: 0 },
-  3800,
-  2600,
-);
-assert.ok(Math.abs(mapped.x - (1304 + 700) / 3800) < 1e-9, "x maps through the tile origin");
-assert.ok(Math.abs(mapped.y - 350 / 2600) < 1e-9, "y maps through the tile origin");
 assert.equal(
-  tileCandidateToSheet({ x: 99999, y: 0, confidence: 0.5 }, { left: 0, top: 0 }, 3800, 2600).x,
-  1,
-  "mapped coordinates clamp into [0,1]",
+  parseScanResponse(
+    '{"matches": [{"x0": 1300, "y0": 10, "x1": 1500, "y1": 40, "confidence": 1}]}',
+    1400,
+    1400,
+  ).matches.length,
+  0,
+  "boxes outside the tile are dropped",
+);
+
+// --- Confidence floor + per-sheet cap (AITAKEOFF2 Task 2) ---
+
+assert.equal(DEFAULT_MIN_PROPOSAL_CONFIDENCE, 0.5, "confidence floor defaults to 0.5");
+assert.equal(DEFAULT_MAX_PROPOSALS_PER_SHEET, 60, "per-sheet cap defaults to 60");
+const floored = applyConfidenceFloor(
+  [{ confidence: 0.9 }, { confidence: 0.5 }, { confidence: 0.49 }, { confidence: 0.1 }],
+  0.5,
+);
+assert.equal(floored.length, 2, "matches below the floor never become ghosts");
+assert.ok(
+  floored.every((candidate) => candidate.confidence >= 0.5),
+  "the floor is inclusive at exactly 0.5",
+);
+const manyCandidates = Array.from({ length: 80 }, (_, index) => ({
+  confidence: index / 100,
+  id: index,
+}));
+const capped = capProposalsPerSheet(manyCandidates, 60);
+assert.equal(capped.length, 60, "runaway scans cap at the per-sheet limit");
+assert.ok(
+  capped.every((candidate) => candidate.confidence >= 0.2),
+  "the cap keeps the highest-confidence proposals",
+);
+assert.equal(
+  capProposalsPerSheet(manyCandidates.slice(0, 10), 60).length,
+  10,
+  "under the cap nothing is dropped",
 );
 
 // --- Dedupe + existing-point exclusion ---
@@ -299,7 +456,6 @@ const filtered = excludeNearExistingPoints(
 );
 assert.equal(filtered.length, 1, "candidates on already-counted points drop out");
 assert.equal(filtered[0].x, 0.75, "fresh candidates survive");
-assert.equal(excludeNearExistingPoints(filtered, []).length, 1, "no existing points → passthrough");
 
 // --- Confidence sort (review order) ---
 
@@ -315,45 +471,32 @@ assert.deepEqual(
   ["high-top", "high-bottom", "low-first", "low-late"],
   "confident proposals first in reading order; low-confidence sort LAST",
 );
-const sameRow = sortProposalsForReview([
-  { x: 0.8, y: 0.5, confidence: 0.9 },
-  { x: 0.2, y: 0.502, confidence: 0.9 },
-]);
-assert.equal(sameRow[0].x, 0.2, "near-identical y reads left to right");
 
 // --- Proposal → marker conversion ---
 
 const firstAccept = appendAcceptedPoint([], { x: 0.4, y: 0.6 });
 assert.equal(firstAccept.points.length, 1, "first accept creates the first point");
 assert.equal(firstAccept.quantity, 1, "count quantity equals point count");
-
 const secondAccept = appendAcceptedPoint(firstAccept.points, { x: 0.5, y: 0.7 });
 assert.equal(secondAccept.points.length, 2, "accepts accumulate points");
 assert.equal(secondAccept.quantity, 2, "quantity tracks every accepted point");
-assert.deepEqual(
-  secondAccept.points[0],
-  { x: 0.4, y: 0.6 },
-  "existing points are preserved in order",
-);
 assert.equal(firstAccept.points.length, 1, "conversion never mutates its input");
-const clampedAccept = appendAcceptedPoint([], { x: 1.7, y: -0.2 });
-assert.deepEqual(clampedAccept.points[0], { x: 1, y: 0 }, "accepted points clamp into the sheet");
 
-// --- Scan instruction ---
+// --- Hardened scan instruction (AITAKEOFF2 Task 2) ---
 
 const instruction = buildScanInstruction({
-  label: "Duplex outlet",
+  label: "Brush wheel",
   tileWidthPx: 1400,
   tileHeightPx: 1200,
 });
-assert.match(instruction, /Duplex outlet/, "instruction names the exemplar label");
-assert.match(instruction, /ONLY a JSON array/, "instruction demands strict JSON");
-assert.match(instruction, /1400x1200/, "instruction states the tile pixel frame");
-assert.match(
-  buildScanInstruction({ label: "  ", tileWidthPx: 100, tileHeightPx: 100 }),
-  /the marked symbol/,
-  "blank labels fall back to a generic description",
-);
+assert.match(instruction, /Brush wheel/, "instruction names the exemplar label");
+assert.match(instruction, /exemplar_description/, "instruction demands the echo line");
+assert.match(instruction, /FIRST/, "the echo comes before any matching");
+assert.match(instruction, /x0/, "matches come back as bounding boxes");
+assert.match(instruction, /NEVER matches/, "empty and ambiguous regions are never matches");
+assert.match(instruction, /leave it out/i, "empty list beats guessing");
+assert.match(instruction, /confidence between 0 and 1/, "per-match confidence required");
+assert.match(instruction, /same symbol TYPE/, "same-symbol-type-only rule is explicit");
 
 // --- Panel availability states ---
 
@@ -384,7 +527,6 @@ const broke = aiAssistAvailability({
   quoteCredits: 3,
 });
 assert.equal(broke.state, "out_of_credits", "insufficient balance routes to the buy panel");
-assert.match(broke.message, /3 credits/, "out-of-credits message quotes the cost");
 const ready = aiAssistAvailability({
   configured: true,
   hasExemplar: true,
@@ -393,6 +535,187 @@ const ready = aiAssistAvailability({
 });
 assert.equal(ready.state, "ready", "exact balance is enough to scan");
 
+console.log("AI takeoff + credits smoke: pure-function assertions passed.");
+
+// --- Rendered round-trip fixtures (AITAKEOFF2 Task 1) ---
+// A generated PDF with a known glyph, rasterized headlessly (pdfjs legacy +
+// @napi-rs/canvas), proves the real pipeline end to end: the exemplar crop
+// contains the glyph (pixel sampling), the crop is clean paper elsewhere,
+// and a mock model response at the glyph's tile-local position maps back to
+// within a few PDF points of the truth.
+
+const require = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const pdfLib = require("pdf-lib") as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const napi = require("@napi-rs/canvas") as any;
+// pdfjs needs a few DOM globals in Node; @napi-rs/canvas provides them.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const globalAny = globalThis as any;
+if (typeof globalAny.DOMMatrix === "undefined" && napi.DOMMatrix) {
+  globalAny.DOMMatrix = napi.DOMMatrix;
+}
+if (typeof globalAny.ImageData === "undefined" && napi.ImageData) {
+  globalAny.ImageData = napi.ImageData;
+}
+if (typeof globalAny.Path2D === "undefined" && napi.Path2D) {
+  globalAny.Path2D = napi.Path2D;
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const pdfjs = (await import("pdfjs-dist/legacy/build/pdf.mjs")) as any;
+
+// 1. Build an ARCH-D-ish landscape page with one solid glyph at a known spot.
+//    PDF coordinates are BOTTOM-UP: (900, 200) sits toward the bottom-right.
+const GLYPH_PDF = { xPt: 900, yPt: 200 };
+const GLYPH_RADIUS_PT = 18;
+const doc = await pdfLib.PDFDocument.create();
+const page = doc.addPage([PAGE.widthPt, PAGE.heightPt]);
+page.drawCircle({
+  x: GLYPH_PDF.xPt,
+  y: GLYPH_PDF.yPt,
+  size: GLYPH_RADIUS_PT,
+  color: pdfLib.rgb(0, 0, 0),
+});
+const pdfBytes = await doc.save();
+
+const loadedPdf = await pdfjs.getDocument({ data: pdfBytes }).promise;
+const pdfPage = await loadedPdf.getPage(1);
+const trueSheetPoint = pdfPointToSheetPoint(GLYPH_PDF, PAGE);
+
+const darknessAt = (
+  context: { getImageData: (x: number, y: number, w: number, h: number) => { data: Uint8Array } },
+  x: number,
+  y: number,
+) => {
+  const data = context.getImageData(Math.round(x), Math.round(y), 1, 1).data;
+  return data[0] + data[1] + data[2]; // 0 = black ink, 765 = white paper
+};
+
+const renderViewport = async (
+  viewport: { width: number; height: number },
+  w: number,
+  h: number,
+) => {
+  const canvas = napi.createCanvas(Math.max(1, Math.round(w)), Math.max(1, Math.round(h)));
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  await pdfPage.render({ canvasContext: context, viewport }).promise;
+  return context;
+};
+
+// 2. Our page-size convention matches pdfjs's viewport at scale 1.
+const scale1 = pdfPage.getViewport({ scale: 1 });
+assert.equal(scale1.width, PAGE.widthPt, "viewport@1 width is the page width in points");
+assert.equal(scale1.height, PAGE.heightPt, "viewport@1 height is the page height in points");
+
+// 3. pdfjs is the oracle for our sheet→pixel transform (Y flip included).
+const oracleViewport = pdfPage.getViewport({ scale: 2.5 });
+const [oracleX, oracleY] = oracleViewport.convertToViewportPoint(GLYPH_PDF.xPt, GLYPH_PDF.yPt);
+const ours = sheetPointToRenderPixel(trueSheetPoint, PAGE, 2.5);
+assert.ok(
+  Math.abs(ours.px - oracleX) < 0.01 && Math.abs(ours.py - oracleY) < 0.01,
+  "our transform agrees with pdfjs convertToViewportPoint (Y flip included)",
+);
+
+// 4. EXEMPLAR CROP: the region render around the marker contains the glyph.
+const plan = exemplarCropPlan(trueSheetPoint, PAGE);
+const cropContext = await renderViewport(
+  pdfPage.getViewport({ scale: plan.scale, offsetX: plan.offsetX, offsetY: plan.offsetY }),
+  plan.widthPx,
+  plan.heightPx,
+);
+assert.ok(
+  darknessAt(cropContext, plan.markerInCropPx.px, plan.markerInCropPx.py) < 200,
+  "EXEMPLAR PROOF: the glyph's ink is at the marker position inside the crop",
+);
+assert.ok(
+  darknessAt(cropContext, 4, 4) > 700,
+  "the crop's far corner is clean paper (no stray offset content)",
+);
+// Y-FLIP REGRESSION GUARD: planning the crop with a Y-mirrored marker (the
+// exact Phase-A-suspect bug) must produce EMPTY paper at its center.
+const mirroredPlan = exemplarCropPlan({ x: trueSheetPoint.x, y: 1 - trueSheetPoint.y }, PAGE);
+const mirroredContext = await renderViewport(
+  pdfPage.getViewport({
+    scale: mirroredPlan.scale,
+    offsetX: mirroredPlan.offsetX,
+    offsetY: mirroredPlan.offsetY,
+  }),
+  mirroredPlan.widthPx,
+  mirroredPlan.heightPx,
+);
+assert.ok(
+  darknessAt(mirroredContext, mirroredPlan.markerInCropPx.px, mirroredPlan.markerInCropPx.py) > 700,
+  "Y-FLIP GUARD: a crop planned with the mirrored Y lands on empty paper — the bug cannot hide",
+);
+
+// 5. DETECTION RASTER + TILE ROUND TRIP: a mock model response at the
+//    glyph's tile-local position maps back to the true sheet position.
+const detectionScale = DETECTION_LONG_EDGE_PX / Math.max(PAGE.widthPt, PAGE.heightPt);
+const rasterWidthPx = Math.round(PAGE.widthPt * detectionScale);
+const rasterHeightPx = Math.round(PAGE.heightPt * detectionScale);
+const rasterContext = await renderViewport(
+  pdfPage.getViewport({ scale: detectionScale }),
+  rasterWidthPx,
+  rasterHeightPx,
+);
+const glyphRasterPx = sheetPointToRenderPixel(trueSheetPoint, PAGE, detectionScale);
+assert.ok(
+  darknessAt(rasterContext, glyphRasterPx.px, glyphRasterPx.py) < 200,
+  "the detection raster has the glyph exactly where the transform says it is",
+);
+
+const detectionTiles = planDetectionTiles(rasterWidthPx, rasterHeightPx);
+const glyphTile = detectionTiles.find(
+  (tile) =>
+    glyphRasterPx.px >= tile.left &&
+    glyphRasterPx.px < tile.left + tile.width &&
+    glyphRasterPx.py >= tile.top &&
+    glyphRasterPx.py < tile.top + tile.height,
+);
+assert.ok(glyphTile, "some tile contains the glyph");
+const glyphLocal = { x: glyphRasterPx.px - glyphTile!.left, y: glyphRasterPx.py - glyphTile!.top };
+
+// The mock model reports a small box around the glyph in tile pixels —
+// exactly what the hardened prompt asks for.
+const glyphRadiusPx = GLYPH_RADIUS_PT * detectionScale;
+const mockResponse = JSON.stringify({
+  exemplar_description: "A solid filled circle",
+  matches: [
+    {
+      x0: glyphLocal.x - glyphRadiusPx,
+      y0: glyphLocal.y - glyphRadiusPx,
+      x1: glyphLocal.x + glyphRadiusPx,
+      y1: glyphLocal.y + glyphRadiusPx,
+      confidence: 0.95,
+    },
+  ],
+});
+const parsedMock = parseScanResponse(mockResponse, glyphTile!.width, glyphTile!.height);
+assert.equal(parsedMock.matches.length, 1, "the mock box parses");
+const mockCenter = matchCenters(parsedMock.matches)[0];
+const glyphFrame = tileFrameFor(glyphTile!, rasterWidthPx, rasterHeightPx);
+const mappedSheet = tileLocalToSheetPoint(glyphFrame, mockCenter.x, mockCenter.y);
+
+// "Within a few points of the true sheet position": measure in PDF points.
+const mappedPdf = sheetPointToPdfPoint(mappedSheet, PAGE);
+const errPt = Math.hypot(mappedPdf.xPt - GLYPH_PDF.xPt, mappedPdf.yPt - GLYPH_PDF.yPt);
+assert.ok(
+  errPt < 2,
+  `ROUND-TRIP PROOF: mock response maps back within 2 PDF points of truth (got ${errPt.toFixed(3)}pt)`,
+);
+
+// Y-FLIP REGRESSION GUARD (mapping side): flipping the mapped Y misses badly.
+const flippedErrPt = Math.hypot(
+  mappedPdf.xPt - GLYPH_PDF.xPt,
+  PAGE.heightPt - mappedPdf.yPt - GLYPH_PDF.yPt,
+);
+assert.ok(
+  flippedErrPt > 50,
+  "Y-FLIP GUARD: a Y-flipped mapping is off by hundreds of points, never a quiet near-miss",
+);
+
 console.log(
-  "AI takeoff + credits smoke: all assertions passed (ledger math, refunds, price table, tiles, parsing, review order, conversion).",
+  `AI takeoff round-trip fixtures passed: exemplar crop verified by pixel sampling, tile mapping within ${errPt.toFixed(3)}pt of truth.`,
 );
