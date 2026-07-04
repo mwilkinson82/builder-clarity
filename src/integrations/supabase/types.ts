@@ -1990,7 +1990,6 @@ export type Database = {
           stripe_connect_account_id: string
           stripe_connect_status: string
           stripe_customer_id: string
-          stripe_mode: Database["public"]["Enums"]["stripe_mode"]
           stripe_price_id: string
           stripe_subscription_id: string
           subscription_cancel_at_period_end: boolean
@@ -2031,7 +2030,6 @@ export type Database = {
           stripe_connect_account_id?: string
           stripe_connect_status?: string
           stripe_customer_id?: string
-          stripe_mode?: Database["public"]["Enums"]["stripe_mode"]
           stripe_price_id?: string
           stripe_subscription_id?: string
           subscription_cancel_at_period_end?: boolean
@@ -2072,7 +2070,6 @@ export type Database = {
           stripe_connect_account_id?: string
           stripe_connect_status?: string
           stripe_customer_id?: string
-          stripe_mode?: Database["public"]["Enums"]["stripe_mode"]
           stripe_price_id?: string
           stripe_subscription_id?: string
           subscription_cancel_at_period_end?: boolean
@@ -4164,7 +4161,6 @@ export type Database = {
       project_member_role: "owner" | "manager" | "editor" | "viewer"
       project_phase: "Early" | "Middle" | "Late"
       response_path: "eliminate" | "recover" | "offset" | "accept"
-      stripe_mode: "test" | "live"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -4329,7 +4325,6 @@ export const Constants = {
       project_member_role: ["owner", "manager", "editor", "viewer"],
       project_phase: ["Early", "Middle", "Late"],
       response_path: ["eliminate", "recover", "offset", "accept"],
-      stripe_mode: ["test", "live"],
     },
   },
 } as const
