@@ -8,6 +8,7 @@ import {
   Redo2,
   Ruler,
   ShieldCheck,
+  Sparkles,
   Square,
   Undo2,
   XCircle,
@@ -45,6 +46,8 @@ export function TakeoffTools({
   canRedo = false,
   onUndo,
   onRedo,
+  onOpenAiAssist,
+  aiAssistOpen = false,
 }: {
   compact?: boolean;
   tool: ToolMode;
@@ -65,6 +68,10 @@ export function TakeoffTools({
   canRedo?: boolean;
   onUndo?: () => void;
   onRedo?: () => void;
+  // AI Assist (AITAKEOFF1): opens the count-scan panel — a panel entry, not a
+  // drawing tool, so it never changes the active ToolMode.
+  onOpenAiAssist?: () => void;
+  aiAssistOpen?: boolean;
 }) {
   return (
     <>
@@ -103,6 +110,21 @@ export function TakeoffTools({
           </Button>
         );
       })}
+      {onOpenAiAssist && (
+        <Button
+          type="button"
+          size="sm"
+          variant={aiAssistOpen ? "default" : "outline"}
+          className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+          title="AI Assist — count one symbol, let AI find the rest"
+          data-testid="takeoff-tool-ai-assist"
+          disabled={!backendReady}
+          onClick={onOpenAiAssist}
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          <span className={cn(compact && "hidden 2xl:inline")}>AI Assist</span>
+        </Button>
+      )}
       {draftCommand && draftCommand.actionLabel && (
         <Button
           size="sm"

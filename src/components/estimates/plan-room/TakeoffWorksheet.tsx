@@ -1,5 +1,15 @@
 import { useState } from "react";
-import { AlertTriangle, ClipboardList, Download, Link2, Rows3, Search, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  ClipboardList,
+  Download,
+  Link2,
+  Rows3,
+  Search,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -490,6 +500,17 @@ export function TakeoffWorksheet({
                           style={{ backgroundColor: measurement.color }}
                         />
                         <p className="truncate text-sm font-medium">{measurement.label}</p>
+                        {measurement.created_by_ai && (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 gap-1 border-amber-300 bg-amber-50 text-[10px] text-amber-900"
+                            title="Counted with AI Assist — every point was reviewed and accepted by hand."
+                            data-testid="takeoff-ai-chip"
+                          >
+                            <Sparkles className="h-2.5 w-2.5" />
+                            AI-assisted
+                          </Badge>
+                        )}
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {toolLabel(measurement.tool_type)} ·{" "}
