@@ -38,10 +38,13 @@ import {
   dedupeCandidates,
   DEFAULT_MAX_PROPOSALS_PER_SHEET,
   DEFAULT_MIN_PROPOSAL_CONFIDENCE,
+  dedupeRadiusForFootprint,
   DETECTION_LONG_EDGE_PX,
   DETECTION_TILE_OVERLAP_PX,
   DETECTION_TILE_PX,
   excludeNearExistingPoints,
+  measureInkFootprintPx,
+  overlapForFootprintPx,
   INK_LUMINANCE_THRESHOLD,
   inkMaskFromBase64,
   inkMaskFromRgba,
@@ -918,6 +921,22 @@ assert.ok(
   darknessAt(cropContext, 4, 4) > 700,
   "the crop's far corner is clean paper (no stray offset content)",
 );
+// FOOTPRINT MEASUREMENT (AITAKEOFF5 Task 0): the client measures the
+// symbol's ink footprint on the exemplar crop and converts crop px -> PDF
+// points -> per-sheet detection-raster px. The fixture glyph is a filled
+// 18pt-radius circle: 36pt across, ~80px in the crop, 90px on the raster.
+const cropImage = cropContext.getImageData(0, 0, plan.widthPx, plan.heightPx);
+const cropMask = inkMaskFromRgba(cropImage.data, plan.widthPx, plan.heightPx);
+const footprintCropPx = measureInkFootprintPx(cropMask, {
+  x: plan.markerInCropPx.px,
+  y: plan.markerInCropPx.py,
+});
+assert.ok(footprintCropPx, "the exemplar crop yields a measurable footprint");
+const footprintPt = footprintCropPx! / plan.scale;
+assert.ok(
+  Math.abs(footprintPt - 2 * GLYPH_RADIUS_PT) < 3,
+  `measured footprint is the glyph diameter in PDF points (got ${footprintPt.toFixed(1)}pt)`,
+);
 // Y-FLIP REGRESSION GUARD: planning the crop with a Y-mirrored marker (the
 // exact Phase-A-suspect bug) must produce EMPTY paper at its center.
 const mirroredPlan = exemplarCropPlan({ x: trueSheetPoint.x, y: 1 - trueSheetPoint.y }, PAGE);
@@ -1101,9 +1120,14 @@ console.log(
 // Fractional PDF positions on purpose: raster pixels land off-grid, so the
 // 0-1000 rounding actually quantizes and the tolerance assertion means it.
 const CIRCLES_PDF = [
-  { xPt: 380.3, yPt: 750.29 }, // raster ~(950.8, 499.3) — on a tile seam (dedupe)
-  { xPt: 1120.13, yPt: 230.17 }, // raster ~(2800.3, 1799.6) — covered by SIX tiles
+  { xPt: 380.3, yPt: 750.29 }, // raster ~(950.8, 499.3)
+  { xPt: 1120.13, yPt: 230.17 }, // raster ~(2800.3, 1799.6) — covered by many tiles
   { xPt: 200.37, yPt: 150.41 }, // raster ~(500.9, 1999.0)
+  // SEAM GLYPH (AITAKEOFF5 Task 0): center at raster x=1023 — one pixel
+  // inside tile 0's right edge, so the whole 90px glyph only fits inside a
+  // NEIGHBOR tile. The footprint-derived overlap must make that neighbor
+  // exist; footprint-scaled dedupe must collapse the double proposal.
+  { xPt: 409.2, yPt: 830 }, // raster (1023, 300)
 ];
 const DECOY_PDF = { xPt: 600, yPt: 550 }; // raster (1500, 1000)
 const doc2 = await pdfLib.PDFDocument.create();
@@ -1132,6 +1156,21 @@ const raster2 = await renderViewport(
   rasterHeightPx,
 );
 
+// Exemplar-derived tiling for this sheet (AITAKEOFF5 Task 0), exactly as the
+// client computes it: measured footprint (PDF pt) -> raster px -> overlap.
+const footprintRasterPx = footprintPt * detectionScale;
+const tileOverlap2 = overlapForFootprintPx(footprintRasterPx);
+assert.equal(tileOverlap2, 135, "the 90px fixture footprint sizes a 135px overlap");
+assert.ok(
+  tileOverlap2 >= 1.5 * footprintRasterPx - 1,
+  "the overlap covers 1.5x the symbol footprint",
+);
+const detectionTiles2 = planDetectionTiles(rasterWidthPx, rasterHeightPx, undefined, tileOverlap2);
+const dedupeRadius2 = dedupeRadiusForFootprint(
+  footprintRasterPx,
+  Math.max(rasterWidthPx, rasterHeightPx),
+);
+
 const circleRasterPx = CIRCLES_PDF.map((spot) => pdfPointToRenderPixel(spot, PAGE, detectionScale));
 const decoyRasterPx = pdfPointToRenderPixel(DECOY_PDF, PAGE, detectionScale);
 for (const [index, spot] of circleRasterPx.entries()) {
@@ -1150,9 +1189,40 @@ assert.ok(
 // Stage A: per tile, the mock lists every shape center inside the tile
 // (recall bias includes the decoy) plus the hallucination — then the REAL
 // parse/frame/map path turns them into sheet-space coarse candidates.
+// The whole-symbol guarantee the overlap provides: every planted glyph fits
+// entirely inside at least one tile (the seam glyph forces the interesting
+// case — it does NOT fit in the tile its center sits in).
+const glyphHalf = GLYPH_RADIUS_PT * detectionScale;
+for (const [index, spot] of circleRasterPx.entries()) {
+  assert.ok(
+    detectionTiles2.some(
+      (tile) =>
+        spot.px - glyphHalf >= tile.left &&
+        spot.px + glyphHalf <= tile.left + tile.width &&
+        spot.py - glyphHalf >= tile.top &&
+        spot.py + glyphHalf <= tile.top + tile.height,
+    ),
+    `OVERLAP GUARD: glyph ${index} fits whole in at least one tile`,
+  );
+}
+const seamGlyphPx = circleRasterPx[3];
+const seamHomeTile = detectionTiles2.find(
+  (tile) =>
+    seamGlyphPx.px >= tile.left &&
+    seamGlyphPx.px < tile.left + tile.width &&
+    seamGlyphPx.py >= tile.top &&
+    seamGlyphPx.py < tile.top + tile.height &&
+    tile.left === 0,
+);
+assert.ok(seamHomeTile, "the seam glyph's center sits in the left-edge tile");
+assert.ok(
+  seamGlyphPx.px + glyphHalf > seamHomeTile!.left + seamHomeTile!.width,
+  "SEAM CASE: the glyph spills past its home tile's right edge — only the overlap neighbor sees it whole",
+);
+
 const stageAShapes = [...circleRasterPx, decoyRasterPx, HALLUCINATION_RASTER];
 const coarse2: Array<{ x: number; y: number; confidence: number }> = [];
-for (const tile of detectionTiles) {
+for (const tile of detectionTiles2) {
   const entries = stageAShapes
     .filter(
       (spot) =>
@@ -1182,11 +1252,27 @@ assert.ok(
   coarse2.length > stageAShapes.length,
   "tile overlap produced duplicate coarse candidates (the seam did its job)",
 );
-const toVerify2 = capProposalsPerSheet(dedupeCandidates(coarse2), DEFAULT_MAX_PROPOSALS_PER_SHEET);
+const toVerify2 = capProposalsPerSheet(
+  dedupeCandidates(coarse2, dedupeRadius2),
+  DEFAULT_MAX_PROPOSALS_PER_SHEET,
+);
 assert.equal(
   toVerify2.length,
   stageAShapes.length,
   "cross-tile dedupe collapses seam duplicates before any verification is bought",
+);
+// The seam glyph specifically: proposed and surviving dedupe exactly ONCE —
+// not zero (recall hole), not two (seam double-proposal).
+assert.equal(
+  toVerify2.filter(
+    (candidate) =>
+      Math.hypot(
+        candidate.x * rasterWidthPx - seamGlyphPx.px,
+        candidate.y * rasterHeightPx - seamGlyphPx.py,
+      ) < 5,
+  ).length,
+  1,
+  "SEAM PROOF: the seam glyph is proposed exactly once",
 );
 
 // Stage B: real windows, pixel-sampled; mock verdicts confirm circles only.
@@ -1196,6 +1282,7 @@ const SNAP_PERTURBATIONS = [
   { dx: 12, dy: -9 },
   { dx: -15, dy: 4 },
   { dx: 7, dy: 14 },
+  { dx: -10, dy: -12 }, // the seam glyph gets perturbed too
 ];
 const verified2: Array<{ x: number; y: number }> = [];
 let rejected2 = 0;
@@ -1286,8 +1373,8 @@ for (const candidate of toVerify2) {
     rejected2 += 1;
   }
 }
-assert.equal(snapRecoveries, 3, "every circle went through the perturbed-center snap path");
-assert.equal(verified2.length, 3, "TWO-STAGE PROOF: exactly the three true symbols verify");
+assert.equal(snapRecoveries, 4, "every glyph went through the perturbed-center snap path");
+assert.equal(verified2.length, 4, "TWO-STAGE PROOF: exactly the four true symbols verify");
 assert.equal(rejected2, 2, "TWO-STAGE PROOF: the decoy and the hallucination die in stage B");
 
 const matchedCircles = new Set<number>();
@@ -1310,8 +1397,8 @@ for (const point of verified2) {
   matchedCircles.add(bestIndex);
   worstVerifiedErrPt = Math.max(worstVerifiedErrPt, bestErr);
 }
-assert.equal(matchedCircles.size, 3, "each verified point maps to a DISTINCT true symbol");
+assert.equal(matchedCircles.size, 4, "each verified point maps to a DISTINCT true symbol");
 
 console.log(
-  `AI takeoff two-stage fixture passed: 3 glyphs verified within ${worstVerifiedErrPt.toFixed(4)}pt, decoy and hallucination rejected in stage B.`,
+  `AI takeoff two-stage fixture passed: 4 glyphs (incl. seam) verified within ${worstVerifiedErrPt.toFixed(4)}pt, decoy and hallucination rejected in stage B.`,
 );

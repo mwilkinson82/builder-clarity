@@ -74,8 +74,38 @@ export const VERIFIED_PROPOSAL_CONFIDENCE = 0.9;
 export const VERIFY_WINDOW_PX = 256;
 export const VERIFY_IMAGE_PX = 768;
 // Two detections closer than this (normalized sheet distance) are the same
-// symbol; the higher-confidence one wins.
+// symbol; the higher-confidence one wins. This is the FLOOR — when the
+// exemplar's footprint is known, the radius scales with it (AITAKEOFF5
+// Task 0) so seam double-proposals and same-symbol duplicates collapse.
 export const DEDUPE_RADIUS_NORMALIZED = 0.008;
+// Tile overlap bounds (AITAKEOFF5 Task 0): overlap derives from the
+// exemplar's measured ink footprint so a whole symbol always fits inside at
+// least one tile — 128px overlap vs a ~130px brush was a coin flip at every
+// seam. 1024px tiles stand (the ≤1.15MP resize cap).
+export const MIN_TILE_OVERLAP_PX = 128;
+export const MAX_TILE_OVERLAP_PX = 384;
+
+/** Tile overlap for a symbol footprint (detection-raster px). */
+export function overlapForFootprintPx(footprintRasterPx: number | null): number {
+  if (!footprintRasterPx || !Number.isFinite(footprintRasterPx) || footprintRasterPx <= 0) {
+    return DETECTION_TILE_OVERLAP_PX;
+  }
+  return Math.min(
+    MAX_TILE_OVERLAP_PX,
+    Math.max(MIN_TILE_OVERLAP_PX, Math.ceil(1.5 * footprintRasterPx)),
+  );
+}
+
+/** Dedupe/exclusion radius scaled to the symbol footprint (sheet units). */
+export function dedupeRadiusForFootprint(
+  footprintRasterPx: number | null,
+  rasterLongEdgePx: number,
+): number {
+  if (!footprintRasterPx || footprintRasterPx <= 0 || rasterLongEdgePx <= 0) {
+    return DEDUPE_RADIUS_NORMALIZED;
+  }
+  return Math.max(DEDUPE_RADIUS_NORMALIZED, (0.75 * footprintRasterPx) / rasterLongEdgePx);
+}
 
 /**
  * Plan the tile grid covering a sheet rendered at detection resolution.
@@ -361,14 +391,25 @@ export function inkMaskFromBase64(base64: string, width: number, height: number)
   return { width, height, bits };
 }
 
+/** A connected dark-pixel blob near a probe point. */
+export interface InkComponent {
+  /** Continuous (pixel-center) centroid of the whole component. */
+  centroid: { x: number; y: number };
+  bboxWidthPx: number;
+  bboxHeightPx: number;
+  pixelCount: number;
+  /** Distance from the probe center to the component's nearest pixel. */
+  nearestDistance: number;
+}
+
 /**
- * Snap a stage-B center onto the symbol it verified: centroid of the
- * connected dark-pixel component nearest the center, searched within
- * SNAP_SEARCH_RADIUS_PX. The component itself may extend past the radius —
- * the centroid is over the WHOLE blob. Returns null (caller keeps the
- * stage-B center) when nothing within the radius looks like a symbol.
+ * The connected dark-pixel component nearest the center, searched within a
+ * radius. Components smaller than minComponentPixels (dust) or spanning more
+ * than maxComponentEdgePx (fused linework) are skipped and the next-nearest
+ * considered. The component itself may extend past the radius — centroid and
+ * bbox cover the WHOLE blob.
  */
-export function snapToInkCentroid(
+export function nearestInkComponent(
   mask: InkMask,
   center: { x: number; y: number },
   options: {
@@ -376,7 +417,7 @@ export function snapToInkCentroid(
     maxComponentEdgePx?: number;
     minComponentPixels?: number;
   } = {},
-): { x: number; y: number } | null {
+): InkComponent | null {
   const radius = options.searchRadiusPx ?? SNAP_SEARCH_RADIUS_PX;
   const maxEdge = options.maxComponentEdgePx ?? SNAP_MAX_COMPONENT_EDGE_PX;
   const minPixels = options.minComponentPixels ?? SNAP_MIN_COMPONENT_PIXELS;
@@ -384,7 +425,7 @@ export function snapToInkCentroid(
   if (width <= 0 || height <= 0) return null;
 
   const visited = new Uint8Array(width * height);
-  let best: { distance: number; x: number; y: number } | null = null;
+  let best: InkComponent | null = null;
 
   const x0 = Math.max(0, Math.floor(center.x - radius));
   const x1 = Math.min(width - 1, Math.ceil(center.x + radius));
@@ -438,15 +479,54 @@ export function snapToInkCentroid(
       if (count < minPixels) continue;
       if (maxX - minX > maxEdge || maxY - minY > maxEdge) continue;
       if (nearestDistance > radius) continue;
-      if (!best || nearestDistance < best.distance) {
+      if (!best || nearestDistance < best.nearestDistance) {
         // +0.5: a pixel at index (x, y) is CENTERED at (x+0.5, y+0.5) in the
         // continuous window coordinates the frame transform expects — without
-        // it every snap lands a systematic half pixel up-left.
-        best = { distance: nearestDistance, x: sumX / count + 0.5, y: sumY / count + 0.5 };
+        // it every centroid lands a systematic half pixel up-left.
+        best = {
+          centroid: { x: sumX / count + 0.5, y: sumY / count + 0.5 },
+          bboxWidthPx: maxX - minX + 1,
+          bboxHeightPx: maxY - minY + 1,
+          pixelCount: count,
+          nearestDistance,
+        };
       }
     }
   }
-  return best ? { x: best.x, y: best.y } : null;
+  return best;
+}
+
+/**
+ * Snap a stage-B center onto the symbol it verified: centroid of the
+ * connected dark-pixel component nearest the center. Returns null (caller
+ * keeps the stage-B center) when nothing nearby looks like a symbol.
+ */
+export function snapToInkCentroid(
+  mask: InkMask,
+  center: { x: number; y: number },
+  options: {
+    searchRadiusPx?: number;
+    maxComponentEdgePx?: number;
+    minComponentPixels?: number;
+  } = {},
+): { x: number; y: number } | null {
+  const component = nearestInkComponent(mask, center, options);
+  return component ? { x: component.centroid.x, y: component.centroid.y } : null;
+}
+
+/**
+ * Measure the exemplar symbol's ink footprint (longest bbox edge, mask px):
+ * the component under/nearest the marker, with the fused-linework cap
+ * lifted — oversized results are handled by the overlap clamp instead.
+ */
+export function measureInkFootprintPx(
+  mask: InkMask,
+  center: { x: number; y: number },
+): number | null {
+  const component = nearestInkComponent(mask, center, {
+    maxComponentEdgePx: Number.POSITIVE_INFINITY,
+  });
+  return component ? Math.max(component.bboxWidthPx, component.bboxHeightPx) : null;
 }
 
 // --- Token-implied resize check (AITAKEOFF3 Task 3, isolated in AITAKEOFF4

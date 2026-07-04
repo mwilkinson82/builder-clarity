@@ -22,6 +22,9 @@ import {
   appendAcceptedPoint,
   capProposalsPerSheet,
   dedupeCandidates,
+  dedupeRadiusForFootprint,
+  DETECTION_LONG_EDGE_PX,
+  overlapForFootprintPx,
   sortProposalsForReview,
   type AiCountCandidate,
   type AiCountProposal,
@@ -322,7 +325,21 @@ export function useAiAssist({
           await signedUrlFor(sheet.plan_set_id),
           sheet.page_number,
         );
-        const tiles = sliceDetectionTiles(raster);
+        // Exemplar-derived geometry (AITAKEOFF5 Task 0): the symbol footprint
+        // sizes the tile overlap (whole symbol always fits ≥1 tile) and the
+        // dedupe/exclusion radius (seam duplicates + already-marked symbols
+        // collapse at symbol scale, not at a fixed 0.008).
+        const pageLongEdgePt = Math.max(raster.pageSize.widthPt, raster.pageSize.heightPt);
+        const footprintRasterPx =
+          exemplarImage.footprintPt !== null && pageLongEdgePt > 0
+            ? exemplarImage.footprintPt * (DETECTION_LONG_EDGE_PX / pageLongEdgePt)
+            : null;
+        const tileOverlapPx = overlapForFootprintPx(footprintRasterPx);
+        const dedupeRadius = dedupeRadiusForFootprint(
+          footprintRasterPx,
+          Math.max(raster.widthPx, raster.heightPx),
+        );
+        const tiles = sliceDetectionTiles(raster, tileOverlapPx);
         const existingPoints = existingCountPointsForSheet(sheet.id);
         // Stage A (AITAKEOFF3 Task 1): coarse, recall-biased candidates in
         // sheet space. Leads only — nothing here becomes a ghost.
@@ -356,6 +373,7 @@ export function useAiAssist({
               },
               is_last_tile_of_sheet: index === tiles.length - 1,
               existing_points: existingPoints,
+              dedupe_radius_normalized: dedupeRadius,
             },
           });
           if (!echo && result.exemplarDescription) {
@@ -378,7 +396,7 @@ export function useAiAssist({
         // spend anything. Each survivor is judged on a zoomed crop; only a
         // verified match becomes a ghost, positioned by the stage-B center.
         const toVerify = capProposalsPerSheet(
-          dedupeCandidates(sheetCoarse),
+          dedupeCandidates(sheetCoarse, dedupeRadius),
           begin.maxProposalsPerSheet,
         );
         for (let index = 0; index < toVerify.length; index += 1) {

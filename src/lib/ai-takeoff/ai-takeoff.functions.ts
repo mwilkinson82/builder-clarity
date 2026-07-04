@@ -20,6 +20,7 @@ import {
   buildScanInstruction,
   buildVerifyInstruction,
   COARSE_CANDIDATE_CONFIDENCE,
+  DEDUPE_RADIUS_NORMALIZED,
   dedupeCandidates,
   DEFAULT_MAX_PROPOSALS_PER_SHEET,
   DEFAULT_MIN_PROPOSAL_CONFIDENCE,
@@ -297,6 +298,11 @@ const tileScanInput = z.object({
     .array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }))
     .max(20000)
     .default([]),
+  // Footprint-derived dedupe/exclusion radius (AITAKEOFF5 Task 0): the
+  // client measures the exemplar's ink footprint and scales the radius so
+  // same-symbol duplicates and already-marked symbols collapse at symbol
+  // scale. Defaults to the fixed floor for older clients.
+  dedupe_radius_normalized: z.number().min(0.001).max(0.1).default(DEDUPE_RADIUS_NORMALIZED),
 });
 
 function isMissingExemplarDescriptionColumn(error: DynamicSupabaseError | null | undefined) {
@@ -356,8 +362,12 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
         ...tileLocalToSheetPoint(frame, center.x, center.y),
         confidence: COARSE_CANDIDATE_CONFIDENCE,
       }));
-      const deduped = dedupeCandidates(mapped);
-      candidates = excludeNearExistingPoints(deduped, data.existing_points);
+      const deduped = dedupeCandidates(mapped, data.dedupe_radius_normalized);
+      candidates = excludeNearExistingPoints(
+        deduped,
+        data.existing_points,
+        data.dedupe_radius_normalized,
+      );
       // Candidates sitting on already-counted symbols are suppressed, not
       // lost: diagnostics labels them so "8 found" plus 4 hand-marked brushes
       // reads as intended behavior, not missed symbols (AITAKEOFF4 Task 2).
