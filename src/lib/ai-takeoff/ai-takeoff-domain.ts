@@ -7,7 +7,7 @@
 
 // Relative import on purpose: the smoke suite runs this module under plain
 // node --experimental-strip-types, which cannot resolve the @/ alias.
-import { bboxCenter, clamp01, type TileBoundingBox } from "./coord-transforms.ts";
+import { clamp01 } from "./coord-transforms.ts";
 
 export type SheetPoint = { x: number; y: number };
 
@@ -42,15 +42,37 @@ export interface AiCountProposal {
 // Detection raster: the sheet's long edge renders at this many pixels before
 // being sliced into tiles the model can actually read symbols on.
 export const DETECTION_LONG_EDGE_PX = 3800;
-export const DETECTION_TILE_PX = 1400;
-export const DETECTION_TILE_OVERLAP_PX = 96;
+// Tile size is bounded by what the vision API passes through UNRESIZED:
+// ≤ ~1.15 megapixels and ≤ 1568px on the long edge. The 1400px tiles of
+// AITAKEOFF2 (1.96 MP) were silently downscaled server-side to ~1072px,
+// making every pixel coordinate ambiguous between two bases (the proven
+// AITAKEOFF3 displacement bug). 1024×1024 = 1.05 MP stays under both caps.
+export const DETECTION_TILE_PX = 1024;
+export const DETECTION_TILE_OVERLAP_PX = 128;
+// Model coordinates are 0–1000 normalized relative to the image the model
+// actually sees — invariant to any server-side resize, so the coordinate
+// basis can never silently drift again.
+export const NORMALIZED_COORD_MAX = 1000;
 // Below this confidence a proposal gets the warning tint and sorts last.
 export const LOW_CONFIDENCE_THRESHOLD = 0.5;
-// Guardrails (AITAKEOFF2 Task 2): matches under the floor never become
-// ghosts; the per-sheet cap is the runaway brake. Both env-overridable
-// (AI_MIN_CONFIDENCE / AI_MAX_PROPOSALS_PER_SHEET) server-side.
+// Guardrails (AITAKEOFF2 Task 2, reshaped by AITAKEOFF3): the per-sheet cap
+// now brakes runaway stage-A candidate lists BEFORE they buy verification
+// calls; the confidence floor gates the stage-derived confidence, not the
+// model's self-reported numbers. Both env-overridable (AI_MIN_CONFIDENCE /
+// AI_MAX_PROPOSALS_PER_SHEET) server-side.
 export const DEFAULT_MIN_PROPOSAL_CONFIDENCE = 0.5;
 export const DEFAULT_MAX_PROPOSALS_PER_SHEET = 60;
+// Stage-derived confidences (AITAKEOFF3 Task 2): the model's self-reported
+// confidence proved non-discriminating on dense sheets, so proposals carry
+// values derived from which stage they passed instead. A coarse candidate is
+// a lead, not a match; only stage-B verification makes it a ghost.
+export const COARSE_CANDIDATE_CONFIDENCE = 0.5;
+export const VERIFIED_PROPOSAL_CONFIDENCE = 0.9;
+// Stage-B verification window: a small crop of the detection raster around
+// one candidate, upscaled so the model judges a zoomed symbol instead of
+// localizing on a dense sheet.
+export const VERIFY_WINDOW_PX = 256;
+export const VERIFY_IMAGE_PX = 768;
 // Two detections closer than this (normalized sheet distance) are the same
 // symbol; the higher-confidence one wins.
 export const DEDUPE_RADIUS_NORMALIZED = 0.008;
@@ -91,21 +113,37 @@ export function planDetectionTiles(
 }
 
 /**
- * Parsed scan response (AITAKEOFF2): the echo line comes first — the model
- * must describe the exemplar before matching — then matches as small
- * bounding boxes in tile pixels. Centers are derived server-side.
+ * Parsed stage-A scan response: the echo line comes first — the model must
+ * describe the exemplar before matching — then candidate centers, converted
+ * here to tile-local pixels. Stage A is recall-biased (AITAKEOFF3 Task 1):
+ * these are leads for stage-B verification, never ghosts by themselves.
  */
 export interface ParsedScanResponse {
   exemplarDescription: string;
-  matches: TileBoundingBox[];
+  candidates: Array<{ x: number; y: number }>;
+}
+
+/** 0–1000 normalized model coordinate → tile-local pixel (one conversion). */
+export function normalizedToTileLocalPx(value: number, tileEdgePx: number): number {
+  return (value / NORMALIZED_COORD_MAX) * tileEdgePx;
+}
+
+/** Tile-local pixel → 0–1000 normalized. Inverse of the above. */
+export function tileLocalPxToNormalized(value: number, tileEdgePx: number): number {
+  return tileEdgePx > 0 ? (value / tileEdgePx) * NORMALIZED_COORD_MAX : 0;
 }
 
 /**
- * Parse the model's strict-JSON scan object. The instruction demands a bare
- * JSON object, but responses are still untrusted text: tolerate code fences
- * and prose around the object, validate every box, and drop anything outside
- * the tile or degenerate (inverted/absurdly large boxes are model confusion,
- * not matches). A missing echo comes back as "" so callers can surface it.
+ * Parse the model's strict-JSON stage-A scan object. The instruction demands
+ * a bare JSON object, but responses are still untrusted text: tolerate code
+ * fences and prose around the object, validate every center, and drop
+ * anything outside the image. A missing echo comes back as "" so callers can
+ * surface it.
+ *
+ * Coordinates arrive 0–1000 normalized relative to whatever image the model
+ * saw (AITAKEOFF3 Task 0) and convert to tile-local pixels HERE, in exactly
+ * one place, before the tileLocalToSheetPoint path. A server-side resize
+ * changes nothing: normalized coordinates are invariant.
  */
 export function parseScanResponse(
   text: string,
@@ -114,7 +152,7 @@ export function parseScanResponse(
 ): ParsedScanResponse {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
-  const empty: ParsedScanResponse = { exemplarDescription: "", matches: [] };
+  const empty: ParsedScanResponse = { exemplarDescription: "", candidates: [] };
   if (start < 0 || end <= start) return empty;
   let parsed: unknown;
   try {
@@ -128,38 +166,158 @@ export function parseScanResponse(
     typeof raw.exemplar_description === "string"
       ? raw.exemplar_description.trim().slice(0, 500)
       : "";
-  const rawMatches = Array.isArray(raw.matches) ? raw.matches : [];
-  const matches: TileBoundingBox[] = [];
-  // A match box wider/taller than half the tile is not a symbol match.
-  const maxBoxEdge = Math.max(tileWidthPx, tileHeightPx) / 2;
-  for (const entry of rawMatches) {
+  const rawCandidates = Array.isArray(raw.candidates) ? raw.candidates : [];
+  const candidates: Array<{ x: number; y: number }> = [];
+  for (const entry of rawCandidates) {
     if (!entry || typeof entry !== "object") continue;
-    const box = entry as Record<string, unknown>;
-    const x0 = Number(box.x0);
-    const y0 = Number(box.y0);
-    const x1 = Number(box.x1);
-    const y1 = Number(box.y1);
-    const confidence = Number(box.confidence);
-    if (![x0, y0, x1, y1].every(Number.isFinite)) continue;
-    if (x1 <= x0 || y1 <= y0) continue;
-    if (x0 < 0 || y0 < 0 || x1 > tileWidthPx || y1 > tileHeightPx) continue;
-    if (x1 - x0 > maxBoxEdge || y1 - y0 > maxBoxEdge) continue;
-    matches.push({
-      x0,
-      y0,
-      x1,
-      y1,
-      confidence: Number.isFinite(confidence) ? clamp01(confidence) : 0,
+    const point = entry as Record<string, unknown>;
+    const x = Number(point.x);
+    const y = Number(point.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (x < 0 || x > NORMALIZED_COORD_MAX || y < 0 || y > NORMALIZED_COORD_MAX) continue;
+    candidates.push({
+      x: normalizedToTileLocalPx(x, tileWidthPx),
+      y: normalizedToTileLocalPx(y, tileHeightPx),
     });
   }
-  return { exemplarDescription, matches };
+  return { exemplarDescription, candidates };
 }
 
-/** Centers of parsed match boxes, in tile-local pixels. */
-export function matchCenters(
-  matches: TileBoundingBox[],
-): Array<{ x: number; y: number; confidence: number }> {
-  return matches.map((box) => ({ ...bboxCenter(box), confidence: box.confidence }));
+// --- Stage B: zoomed verification (AITAKEOFF3 Task 2) ---
+// Never ask the model for coordinates on a large image. Stage A collects
+// coarse candidates; each one gets a small window cropped from the detection
+// raster, upscaled, and judged on its own. The stage-B verdict is the real
+// confidence, and the final point re-derives through the window's frame —
+// same tested transform, smaller denominator, proportionally smaller error.
+
+/**
+ * The verification window around a candidate, on the detection raster:
+ * VERIFY_WINDOW_PX square, shifted (never shrunk) at sheet edges, exactly
+ * like the exemplar crop plan.
+ */
+export function verifyWindowRect(
+  centerPx: { x: number; y: number },
+  rasterWidthPx: number,
+  rasterHeightPx: number,
+  windowPx: number = VERIFY_WINDOW_PX,
+): { left: number; top: number; width: number; height: number } {
+  const rasterW = Math.max(1, Math.floor(rasterWidthPx));
+  const rasterH = Math.max(1, Math.floor(rasterHeightPx));
+  const width = Math.min(windowPx, rasterW);
+  const height = Math.min(windowPx, rasterH);
+  const clampRange = (value: number, min: number, max: number) =>
+    Math.min(max, Math.max(min, value));
+  return {
+    left: Math.round(clampRange(centerPx.x - width / 2, 0, rasterW - width)),
+    top: Math.round(clampRange(centerPx.y - height / 2, 0, rasterH - height)),
+    width,
+    height,
+  };
+}
+
+/** The stage-B instruction: judge one zoomed crop, hallucinations die here. */
+export function buildVerifyInstruction(input: { label: string }): string {
+  const label = input.label.trim() || "the marked symbol";
+  return [
+    `Image 1 is an exemplar: at its center is one plan symbol from a construction drawing, marked as "${label}". Surrounding linework is context, not the symbol.`,
+    "Image 2 is a small zoomed-in crop of a drawing, taken around one possible occurrence of that symbol.",
+    "Question: does image 2 contain the same symbol type, roughly centered?",
+    "",
+    "Respond with ONLY this JSON object — no prose, no code fences:",
+    '{"match": true or false, "center": {"x": <0-1000>, "y": <0-1000>}}',
+    "",
+    "Hard rules:",
+    '- "match" is false if the symbol is absent, only partially inside the crop, or a DIFFERENT symbol type. Same shape, same construction only.',
+    "- Plain text labels, dimension marks, hatching, and title-block art are never a match.",
+    '- "center" is the center of the matched symbol, normalized 0-1000 relative to image 2 (0 is its left/top edge, 1000 its right/bottom edge). Decimals are allowed. Never answer in pixels.',
+    '- Omit "center" when "match" is false.',
+  ].join("\n");
+}
+
+/**
+ * Parsed stage-B verdict. Anything but a literal `match: true` is a
+ * rejection — malformed JSON, prose, hedging all fail closed. A confirmed
+ * match whose center is missing or out of range still verifies with
+ * `center: null`; the caller falls back to the stage-A candidate point.
+ */
+export interface ParsedVerifyResponse {
+  match: boolean;
+  /** Verified symbol center in window-local pixels, when the model gave one. */
+  center: { x: number; y: number } | null;
+}
+
+export function parseVerifyResponse(
+  text: string,
+  windowWidthPx: number,
+  windowHeightPx: number,
+): ParsedVerifyResponse {
+  const rejected: ParsedVerifyResponse = { match: false, center: null };
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return rejected;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return rejected;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return rejected;
+  const raw = parsed as Record<string, unknown>;
+  if (raw.match !== true) return rejected;
+  const center =
+    raw.center && typeof raw.center === "object" && !Array.isArray(raw.center)
+      ? (raw.center as Record<string, unknown>)
+      : null;
+  const x = Number(center?.x);
+  const y = Number(center?.y);
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    x < 0 ||
+    x > NORMALIZED_COORD_MAX ||
+    y < 0 ||
+    y > NORMALIZED_COORD_MAX
+  ) {
+    return { match: true, center: null };
+  }
+  return {
+    match: true,
+    center: {
+      x: normalizedToTileLocalPx(x, windowWidthPx),
+      y: normalizedToTileLocalPx(y, windowHeightPx),
+    },
+  };
+}
+
+// --- Token-implied resize check (AITAKEOFF3 Task 3) ---
+// Vision input costs roughly (width × height) / 750 tokens. A call whose
+// TOTAL input tokens (tile + exemplar + prompt) come in below the tile's own
+// share means the API downscaled the tile before the model saw it — the
+// exact regression Task 0 killed, kept visible at a glance in diagnostics.
+
+export interface TileTokenCheck {
+  inputTokens: number;
+  expectedTileTokens: number;
+  tokenImpliedMegapixels: number;
+  tileMegapixels: number;
+  suspectedResize: boolean;
+}
+
+export function tileTokenCheck(
+  inputTokens: number,
+  tileWidthPx: number,
+  tileHeightPx: number,
+): TileTokenCheck {
+  const tilePixels = Math.max(0, tileWidthPx) * Math.max(0, tileHeightPx);
+  const expectedTileTokens = Math.round(tilePixels / 750);
+  const round2 = (value: number) => Math.round(value * 100) / 100;
+  return {
+    inputTokens,
+    expectedTileTokens,
+    tokenImpliedMegapixels: round2((Math.max(0, inputTokens) * 750) / 1_000_000),
+    tileMegapixels: round2(tilePixels / 1_000_000),
+    suspectedResize: inputTokens > 0 && inputTokens < expectedTileTokens,
+  };
 }
 
 /** Drop candidates under the confidence floor before they become ghosts. */
@@ -254,31 +412,33 @@ export function appendAcceptedPoint(
 }
 
 /**
- * The per-tile instruction (AITAKEOFF2 Task 2, hardened against eager
- * matching). The echo requirement comes first: the model must describe the
- * exemplar before it may match anything — a corrupted crop announces itself.
+ * The stage-A per-tile instruction. The echo requirement comes first: the
+ * model must describe the exemplar before it may match anything — a
+ * corrupted crop announces itself.
+ *
+ * AITAKEOFF3: recall over precision. The model classifies crops well but
+ * localizes poorly on dense sheets, so stage A only collects candidate
+ * centers — every one is re-judged on a zoomed crop in stage B, where
+ * hallucinations die. Coordinates are 0–1000 normalized relative to the
+ * image the model SEES and the prompt never declares pixel dimensions, so a
+ * server-side resize can never put the response in a different basis than
+ * the tile we sliced (Task 0).
  */
-export function buildScanInstruction(input: {
-  label: string;
-  tileWidthPx: number;
-  tileHeightPx: number;
-}): string {
+export function buildScanInstruction(input: { label: string }): string {
   const label = input.label.trim() || "the marked symbol";
   return [
     `The first image is a cropped region of a construction drawing. At its center is one plan symbol the estimator marked as "${label}". Surrounding linework is context, not the symbol.`,
-    `The second image is a ${input.tileWidthPx}x${input.tileHeightPx} pixel region of the same drawing set.`,
-    "Task: find occurrences of that SAME symbol type in the second image.",
+    "The second image is a region of the same drawing set.",
+    "Task: list EVERY location in the second image that might be the same symbol type. This is a coarse first pass — each location you list is verified afterward on a zoomed-in crop, so err toward including uncertain ones.",
     "",
     "Respond with ONLY this JSON object — no prose, no code fences:",
-    '{"exemplar_description": "<one line describing the symbol at the center of the first image>", "matches": [{"x0": <left px>, "y0": <top px>, "x1": <right px>, "y1": <bottom px>, "confidence": <0 to 1>}]}',
+    '{"exemplar_description": "<one line describing the symbol at the center of the first image>", "candidates": [{"x": <center x>, "y": <center y>}]}',
     "",
     "Hard rules:",
-    "- Write exemplar_description FIRST, from the first image alone, before looking for matches.",
-    "- A match must be the same symbol TYPE: same shape, same construction. Similar-looking but different symbols are not matches.",
-    "- Empty regions, ambiguous linework, text labels, dimension marks, and title-block art are NEVER matches.",
-    '- If you are not sure, leave it out. An empty "matches" list is a correct and expected answer.',
-    "- Each match is a SMALL bounding box tightly around one symbol, in pixel coordinates of the second image.",
-    "- Every match needs its own confidence between 0 and 1.",
+    "- Write exemplar_description FIRST, from the first image alone, before listing candidates.",
+    "- Each candidate is the CENTER of one possible occurrence, normalized 0-1000 relative to the second image: 0 is its left/top edge, 1000 is its right/bottom edge. Decimals are allowed. Never answer in pixels.",
+    "- Err toward including uncertain candidates — a later step rejects them safely. Plain text labels, dimension marks, and title-block art are still never candidates.",
+    '- An empty "candidates" list is a correct and expected answer when nothing resembles the symbol.',
   ].join("\n");
 }
 

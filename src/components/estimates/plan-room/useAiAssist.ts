@@ -15,13 +15,15 @@ import {
   completeAiCountScan,
   failAiCountScan,
   scanSheetTileForAiCounts,
+  verifyAiCountCandidate,
 } from "@/lib/ai-takeoff/ai-takeoff.functions";
 import { getCreditSummary, type CreditSummary } from "@/lib/credits/credits.functions";
 import {
   appendAcceptedPoint,
-  applyConfidenceFloor,
   capProposalsPerSheet,
+  dedupeCandidates,
   sortProposalsForReview,
+  type AiCountCandidate,
   type AiCountProposal,
   type SheetPoint,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
@@ -34,7 +36,12 @@ import {
   type PlanSheetRow,
   type TakeoffMeasurementRow,
 } from "@/lib/plan-room.functions";
-import { renderDetectionSheet, renderExemplarCrop, sliceDetectionTiles } from "./aiDetectionRender";
+import {
+  renderDetectionSheet,
+  renderExemplarCrop,
+  renderVerifyWindow,
+  sliceDetectionTiles,
+} from "./aiDetectionRender";
 import { geometryFromPoints, geometryPoints, type ViewSize } from "./planRoomShared";
 
 export type AiAssistPhase = "idle" | "scanning" | "review";
@@ -56,7 +63,13 @@ export interface AiScanProgress {
   sheetsDone: number;
   sheetsTotal: number;
   currentSheetLabel: string;
+  /** Confirmed matches so far — stage-B verified, never coarse candidates. */
   found: number;
+  /**
+   * Stage-B progress (AITAKEOFF3): each coarse candidate gets double-checked
+   * on a zoomed crop; null while stage A is still tiling the sheet.
+   */
+  verifying: { done: number; total: number } | null;
   /**
    * Echo check (AITAKEOFF2): the model's own one-line description of the
    * exemplar it received — "Looking for: circular brush with radial spokes".
@@ -106,6 +119,7 @@ export function useAiAssist({
   const queryClient = useQueryClient();
   const beginScanFn = useServerFn(beginAiCountScan);
   const scanTileFn = useServerFn(scanSheetTileForAiCounts);
+  const verifyCandidateFn = useServerFn(verifyAiCountCandidate);
   const completeScanFn = useServerFn(completeAiCountScan);
   const failScanFn = useServerFn(failAiCountScan);
   const getCreditSummaryFn = useServerFn(getCreditSummary);
@@ -255,6 +269,7 @@ export function useAiAssist({
       sheetsTotal: targetSheets.length,
       currentSheetLabel: "",
       found: 0,
+      verifying: null,
       exemplarDescription: "",
     });
 
@@ -299,6 +314,7 @@ export function useAiAssist({
           sheetsTotal: targetSheets.length,
           currentSheetLabel: sheetLabel,
           found: found.length,
+          verifying: null,
           exemplarDescription: echo,
         });
 
@@ -308,7 +324,9 @@ export function useAiAssist({
         );
         const tiles = sliceDetectionTiles(raster);
         const existingPoints = existingCountPointsForSheet(sheet.id);
-        const sheetCandidates: AiCountProposal[] = [];
+        // Stage A (AITAKEOFF3 Task 1): coarse, recall-biased candidates in
+        // sheet space. Leads only — nothing here becomes a ghost.
+        const sheetCoarse: AiCountCandidate[] = [];
 
         for (let index = 0; index < tiles.length; index += 1) {
           if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
@@ -341,13 +359,67 @@ export function useAiAssist({
           if (!echo && result.exemplarDescription) {
             echo = result.exemplarDescription;
           }
-          for (const candidate of result.candidates) {
-            sheetCandidates.push({
+          sheetCoarse.push(...result.candidates);
+          setScanProgress({
+            sheetsDone,
+            sheetsTotal: targetSheets.length,
+            currentSheetLabel: sheetLabel,
+            found: found.length,
+            verifying: null,
+            exemplarDescription: echo,
+          });
+        }
+
+        // Stage B (AITAKEOFF3 Task 2): dedupe across tile overlap in sheet
+        // space FIRST so seam duplicates never buy two verification calls,
+        // then the per-sheet cap brakes runaway candidate lists before they
+        // spend anything. Each survivor is judged on a zoomed crop; only a
+        // verified match becomes a ghost, positioned by the stage-B center.
+        const toVerify = capProposalsPerSheet(
+          dedupeCandidates(sheetCoarse),
+          begin.maxProposalsPerSheet,
+        );
+        for (let index = 0; index < toVerify.length; index += 1) {
+          if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
+          setScanProgress({
+            sheetsDone,
+            sheetsTotal: targetSheets.length,
+            currentSheetLabel: sheetLabel,
+            found: found.length,
+            verifying: { done: index, total: toVerify.length },
+            exemplarDescription: echo,
+          });
+          const candidate = toVerify[index];
+          const window = renderVerifyWindow(raster, candidate);
+          const verdict = await verifyCandidateFn({
+            data: {
+              operation_id: begin.operationId,
+              sheet_id: sheet.id,
+              candidate_index: index,
+              candidate: { x: candidate.x, y: candidate.y },
+              exemplar: {
+                label: exemplar.label,
+                media_type: exemplarImage.mediaType,
+                base64: exemplarImage.base64,
+              },
+              window: {
+                left: window.rect.left,
+                top: window.rect.top,
+                width: window.rect.width,
+                height: window.rect.height,
+                frame: window.frame,
+                media_type: window.mediaType,
+                base64: window.base64,
+              },
+            },
+          });
+          if (verdict.match && verdict.point) {
+            found.push({
               id: crypto.randomUUID(),
               sheetId: sheet.id,
-              x: candidate.x,
-              y: candidate.y,
-              confidence: candidate.confidence,
+              x: verdict.point.x,
+              y: verdict.point.y,
+              confidence: verdict.confidence,
               status: "pending",
             });
           }
@@ -355,19 +427,11 @@ export function useAiAssist({
             sheetsDone,
             sheetsTotal: targetSheets.length,
             currentSheetLabel: sheetLabel,
-            found: found.length + sheetCandidates.length,
+            found: found.length,
+            verifying: { done: index + 1, total: toVerify.length },
             exemplarDescription: echo,
           });
         }
-
-        // Guardrails before anything becomes a ghost (AITAKEOFF2 Task 2):
-        // the server already floors confidence; the cap is per sheet.
-        found.push(
-          ...capProposalsPerSheet(
-            applyConfidenceFloor(sheetCandidates, begin.minConfidence),
-            begin.maxProposalsPerSheet,
-          ),
-        );
         sheetsDone += 1;
       }
 
@@ -418,6 +482,7 @@ export function useAiAssist({
     scanTileFn,
     sheetById,
     targetSheets,
+    verifyCandidateFn,
   ]);
 
   const cancelScan = useCallback(() => {

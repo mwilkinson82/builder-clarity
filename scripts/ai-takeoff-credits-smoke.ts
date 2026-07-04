@@ -32,7 +32,9 @@ import {
   appendAcceptedPoint,
   applyConfidenceFloor,
   buildScanInstruction,
+  buildVerifyInstruction,
   capProposalsPerSheet,
+  COARSE_CANDIDATE_CONFIDENCE,
   dedupeCandidates,
   DEFAULT_MAX_PROPOSALS_PER_SHEET,
   DEFAULT_MIN_PROPOSAL_CONFIDENCE,
@@ -41,10 +43,18 @@ import {
   DETECTION_TILE_PX,
   excludeNearExistingPoints,
   LOW_CONFIDENCE_THRESHOLD,
-  matchCenters,
+  NORMALIZED_COORD_MAX,
+  normalizedToTileLocalPx,
   parseScanResponse,
+  parseVerifyResponse,
   planDetectionTiles,
   sortProposalsForReview,
+  tileLocalPxToNormalized,
+  tileTokenCheck,
+  VERIFIED_PROPOSAL_CONFIDENCE,
+  VERIFY_IMAGE_PX,
+  VERIFY_WINDOW_PX,
+  verifyWindowRect,
 } from "../src/lib/ai-takeoff/ai-takeoff-domain.ts";
 import {
   bboxCenter,
@@ -199,7 +209,10 @@ assert.equal(customPacks[0].label, "250 credits", "missing labels derive from cr
 // The Y flip lives in exactly one place; these assertions make both known
 // Y-axis regressions impossible to reintroduce silently.
 
-const PAGE: PdfPageSize = { widthPt: 1224, heightPt: 792 };
+// Page size chosen so the detection raster is exactly integral
+// (3800 x 2375 at scale 2.5): canvas rounding then contributes zero error
+// and the mapping assertions measure pure conversion quantization.
+const PAGE: PdfPageSize = { widthPt: 1520, heightPt: 950 };
 
 const topLeftPdf = sheetPointToPdfPoint({ x: 0, y: 0 }, PAGE);
 assert.equal(topLeftPdf.xPt, 0, "sheet x=0 is PDF x=0");
@@ -213,8 +226,8 @@ assert.equal(bottomLeftPdf.yPt, 0, "sheet BOTTOM (y=1) is PDF yPt=0");
 
 const glyphPdf = { xPt: 900, yPt: 200 };
 const glyphSheet = pdfPointToSheetPoint(glyphPdf, PAGE);
-assert.ok(Math.abs(glyphSheet.x - 900 / 1224) < 1e-12, "pdf→sheet x");
-assert.ok(Math.abs(glyphSheet.y - (1 - 200 / 792)) < 1e-12, "pdf→sheet y flips");
+assert.ok(Math.abs(glyphSheet.x - 900 / PAGE.widthPt) < 1e-12, "pdf→sheet x");
+assert.ok(Math.abs(glyphSheet.y - (1 - 200 / PAGE.heightPt)) < 1e-12, "pdf→sheet y flips");
 
 // Round trips are identities.
 const roundTripPdf = sheetPointToPdfPoint(pdfPointToSheetPoint(glyphPdf, PAGE), PAGE);
@@ -273,6 +286,46 @@ assert.ok(
   "edge markers stay inside the crop",
 );
 
+// --- Detection tile size vs the vision API's silent-resize thresholds ---
+// (AITAKEOFF3 Task 0: the proven basis bug — 1400px tiles were 1.96 MP and
+// got downscaled server-side, putting every pixel coordinate in a different
+// basis than the tile we sliced.)
+
+assert.ok(
+  (DETECTION_TILE_PX * DETECTION_TILE_PX) / 1_000_000 <= 1.15,
+  "RESIZE GUARD: a full tile stays under the API's ~1.15 MP downscale threshold",
+);
+assert.ok(DETECTION_TILE_PX <= 1568, "RESIZE GUARD: tile long edge stays under the 1568px cap");
+assert.ok(
+  DETECTION_TILE_OVERLAP_PX >= 96,
+  "tile overlap still covers a full exemplar symbol footprint",
+);
+
+// --- 0-1000 normalized coordinate conversion (both directions) ---
+
+assert.equal(NORMALIZED_COORD_MAX, 1000, "model coordinates are normalized 0-1000");
+assert.equal(
+  normalizedToTileLocalPx(500, 1024),
+  512,
+  "normalized center of a 1024px tile is 512px",
+);
+assert.equal(
+  tileLocalPxToNormalized(512, 1024),
+  500,
+  "pixel center of a 1024px tile is 500 normalized",
+);
+for (const value of [0, 1, 250.5, 999, 1000]) {
+  assert.ok(
+    Math.abs(tileLocalPxToNormalized(normalizedToTileLocalPx(value, 1024), 1024) - value) < 1e-9,
+    `normalized -> px -> normalized round trip is exact (${value})`,
+  );
+  assert.ok(
+    Math.abs(normalizedToTileLocalPx(tileLocalPxToNormalized(value, 777), 777) - value) < 1e-9,
+    `px -> normalized -> px round trip is exact (${value})`,
+  );
+}
+assert.equal(tileLocalPxToNormalized(10, 0), 0, "zero-size image normalizes to 0, never NaN");
+
 // --- Detection tiles + frames ---
 
 const tiles = planDetectionTiles(3800, 2600);
@@ -304,6 +357,13 @@ if (firstRow.length > 1) {
   );
 }
 
+// Bounding-box centers still derive in tile pixels (coord-transforms API).
+assert.deepEqual(
+  bboxCenter({ x0: 100, y0: 200, x1: 140, y1: 240 }),
+  { x: 120, y: 220 },
+  "bbox centers derive from the box",
+);
+
 // Tile frames: local → sheet through the frame preserves the tile offset.
 const frame = tileFrameFor({ left: 1304, top: 1300 }, 3800, 2600);
 const mappedViaFrame = tileLocalToSheetPoint(frame, 700, 350);
@@ -328,80 +388,74 @@ assert.ok(
   "TILE-OFFSET GUARD: a mapping that drops the tile origin is wildly off, never a near-miss pass",
 );
 
-// --- Strict-JSON scan response parsing (AITAKEOFF2 Task 2) ---
+// --- Strict-JSON stage-A scan response parsing (AITAKEOFF3 Task 1) ---
+// Stage A is recall-biased: candidate CENTERS only, no self-reported
+// confidence — stage-B verification is the filter now.
 
 const goodResponse = parseScanResponse(
   JSON.stringify({
     exemplar_description: "Circular brush with radial spokes",
-    matches: [
-      { x0: 100, y0: 200, x1: 140, y1: 240, confidence: 0.92 },
-      { x0: 900, y0: 80, x1: 960, y1: 130, confidence: 0.4 },
+    candidates: [
+      { x: 120, y: 220 },
+      { x: 930.5, y: 105 },
     ],
   }),
-  1400,
-  1400,
+  // A 1000px tile makes the 0-1000 normalized -> pixel conversion an
+  // identity, so the numbers below stay readable.
+  1000,
+  1000,
 );
 assert.equal(
   goodResponse.exemplarDescription,
   "Circular brush with radial spokes",
   "the echo line parses first-class",
 );
-assert.equal(goodResponse.matches.length, 2, "valid boxes parse");
+assert.equal(goodResponse.candidates.length, 2, "valid candidate centers parse");
 assert.deepEqual(
-  bboxCenter(goodResponse.matches[0]),
+  goodResponse.candidates[0],
   { x: 120, y: 220 },
-  "centers derive server-side from the box",
+  "candidate centers convert to tile-local pixels",
 );
+
+// The one normalized->pixel conversion: the same response against a 500px
+// tile lands at half the pixel positions — coordinates are resize-invariant.
+const scaledResponse = parseScanResponse('{"candidates": [{"x": 100, "y": 200}]}', 500, 500);
 assert.deepEqual(
-  matchCenters(goodResponse.matches)[0],
-  { x: 120, y: 220, confidence: 0.92 },
-  "matchCenters carries confidence through",
+  scaledResponse.candidates[0],
+  { x: 50, y: 100 },
+  "normalized coordinates convert against the ACTUAL tile size",
 );
 
 const fenced = parseScanResponse(
-  'Here you go:\n```json\n{"exemplar_description": "duplex outlet", "matches": [{"x0": 10, "y0": 10, "x1": 30, "y1": 30, "confidence": 1.7}]}\n```',
-  1400,
-  1400,
+  'Here you go:\n```json\n{"exemplar_description": "duplex outlet", "candidates": [{"x": 10, "y": 10}]}\n```',
+  1000,
+  1000,
 );
 assert.equal(fenced.exemplarDescription, "duplex outlet", "fenced responses still parse");
-assert.equal(fenced.matches[0].confidence, 1, "confidence clamps to [0,1]");
+assert.equal(fenced.candidates.length, 1, "fenced candidates parse");
 
 assert.deepEqual(
-  parseScanResponse("no matches here", 1400, 1400),
-  { exemplarDescription: "", matches: [] },
+  parseScanResponse("no matches here", 1000, 1000),
+  { exemplarDescription: "", candidates: [] },
   "prose-only responses yield nothing",
 );
 assert.deepEqual(
-  parseScanResponse('{"exemplar_description": "a symbol", "matches": []}', 1400, 1400).matches,
+  parseScanResponse('{"exemplar_description": "a symbol", "candidates": []}', 1000, 1000)
+    .candidates,
   [],
-  "an empty matches list is a first-class answer",
+  "an empty candidates list is a first-class answer",
 );
 assert.equal(
-  parseScanResponse(
-    '{"matches": [{"x0": 50, "y0": 50, "x1": 40, "y1": 60, "confidence": 1}]}',
-    1400,
-    1400,
-  ).matches.length,
+  parseScanResponse('{"candidates": [{"x": 1100, "y": 40}, {"x": -5, "y": 40}]}', 1000, 1000)
+    .candidates.length,
   0,
-  "inverted boxes are dropped",
+  "centers outside the 0-1000 basis are dropped",
 );
 assert.equal(
-  parseScanResponse(
-    '{"matches": [{"x0": 0, "y0": 0, "x1": 1200, "y1": 1200, "confidence": 1}]}',
-    1400,
-    1400,
-  ).matches.length,
+  parseScanResponse('{"candidates": [{"x": "left", "y": 40}, {"y": 12}, "spurious"]}', 1000, 1000)
+    .candidates.length,
   0,
-  "boxes bigger than half the tile are model confusion, not matches",
-);
-assert.equal(
-  parseScanResponse(
-    '{"matches": [{"x0": 1300, "y0": 10, "x1": 1500, "y1": 40, "confidence": 1}]}',
-    1400,
-    1400,
-  ).matches.length,
-  0,
-  "boxes outside the tile are dropped",
+  "non-numeric or shapeless candidates are dropped",
 );
 
 // --- Confidence floor + per-sheet cap (AITAKEOFF2 Task 2) ---
@@ -482,21 +536,149 @@ assert.equal(secondAccept.points.length, 2, "accepts accumulate points");
 assert.equal(secondAccept.quantity, 2, "quantity tracks every accepted point");
 assert.equal(firstAccept.points.length, 1, "conversion never mutates its input");
 
-// --- Hardened scan instruction (AITAKEOFF2 Task 2) ---
+// --- Stage-A scan instruction (recall-biased, AITAKEOFF3 Task 1) ---
 
-const instruction = buildScanInstruction({
-  label: "Brush wheel",
-  tileWidthPx: 1400,
-  tileHeightPx: 1200,
-});
+const instruction = buildScanInstruction({ label: "Brush wheel" });
 assert.match(instruction, /Brush wheel/, "instruction names the exemplar label");
 assert.match(instruction, /exemplar_description/, "instruction demands the echo line");
 assert.match(instruction, /FIRST/, "the echo comes before any matching");
-assert.match(instruction, /x0/, "matches come back as bounding boxes");
-assert.match(instruction, /NEVER matches/, "empty and ambiguous regions are never matches");
-assert.match(instruction, /leave it out/i, "empty list beats guessing");
-assert.match(instruction, /confidence between 0 and 1/, "per-match confidence required");
-assert.match(instruction, /same symbol TYPE/, "same-symbol-type-only rule is explicit");
+assert.match(instruction, /"candidates"/, "stage A returns candidate centers");
+assert.match(
+  instruction,
+  /err toward including uncertain/i,
+  "stage A is recall-biased — stage B is the filter",
+);
+assert.match(
+  instruction,
+  /normalized 0-1000/,
+  "coordinates are requested 0-1000 normalized — invariant to any resize",
+);
+assert.ok(
+  !/\d+\s*x\s*\d+\s*pixel/i.test(instruction),
+  "RESIZE GUARD: the prompt never declares pixel dimensions the model might not actually see",
+);
+assert.match(instruction, /never candidates/i, "text labels and title-block art stay excluded");
+assert.match(
+  instruction,
+  /empty "candidates" list is a correct/,
+  "an empty answer stays first-class",
+);
+
+// --- Stage-B verification (AITAKEOFF3 Task 2) ---
+
+assert.equal(VERIFY_WINDOW_PX, 256, "the verification window is a 256px crop");
+assert.equal(VERIFY_IMAGE_PX, 768, "the window upscales 3x before the model judges it");
+assert.ok(
+  VERIFIED_PROPOSAL_CONFIDENCE >= DEFAULT_MIN_PROPOSAL_CONFIDENCE,
+  "a verified ghost passes the default confidence floor",
+);
+assert.equal(
+  applyConfidenceFloor([{ confidence: VERIFIED_PROPOSAL_CONFIDENCE }]).length,
+  1,
+  "minProposalConfidence gates the stage-derived confidence, not model numbers",
+);
+assert.ok(
+  COARSE_CANDIDATE_CONFIDENCE < VERIFIED_PROPOSAL_CONFIDENCE,
+  "a coarse lead never outranks a verified ghost",
+);
+
+const centeredWindow = verifyWindowRect({ x: 1900, y: 1300 }, 3800, 2600);
+assert.deepEqual(
+  centeredWindow,
+  { left: 1772, top: 1172, width: 256, height: 256 },
+  "the verification window centers on the candidate",
+);
+assert.deepEqual(
+  verifyWindowRect({ x: 10, y: 2590 }, 3800, 2600),
+  { left: 0, top: 2344, width: 256, height: 256 },
+  "edge candidates shift the window instead of shrinking it",
+);
+assert.deepEqual(
+  verifyWindowRect({ x: 50, y: 50 }, 100, 80),
+  { left: 0, top: 0, width: 100, height: 80 },
+  "rasters smaller than the window clamp to the raster",
+);
+
+const verifyInstruction = buildVerifyInstruction({ label: "Brush wheel" });
+assert.match(verifyInstruction, /Brush wheel/, "verify instruction names the exemplar label");
+assert.match(verifyInstruction, /"match"/, "verdict is a boolean match");
+assert.match(
+  verifyInstruction,
+  /partially inside the crop/,
+  "partial symbols at the crop edge are rejections",
+);
+assert.match(verifyInstruction, /DIFFERENT symbol type/, "decoy symbol types are rejections");
+assert.match(
+  verifyInstruction,
+  /normalized 0-1000/,
+  "the stage-B center is normalized too — same resize-proof basis",
+);
+
+const confirmedVerdict = parseVerifyResponse(
+  '{"match": true, "center": {"x": 500, "y": 250}}',
+  256,
+  256,
+);
+assert.equal(confirmedVerdict.match, true, "a literal true verdict verifies");
+assert.deepEqual(
+  confirmedVerdict.center,
+  { x: 128, y: 64 },
+  "the stage-B center converts against the WINDOW size (smaller denominator)",
+);
+assert.deepEqual(
+  parseVerifyResponse('{"match": false}', 256, 256),
+  { match: false, center: null },
+  "a false verdict is a rejection",
+);
+assert.deepEqual(
+  parseVerifyResponse('{"match": "yes", "center": {"x": 500, "y": 250}}', 256, 256),
+  { match: false, center: null },
+  "anything but a literal true fails closed",
+);
+assert.deepEqual(
+  parseVerifyResponse("the crop looks similar to the exemplar", 256, 256),
+  { match: false, center: null },
+  "prose fails closed",
+);
+assert.deepEqual(
+  parseVerifyResponse('{"match": true, "center": {', 256, 256),
+  { match: false, center: null },
+  "malformed JSON fails closed",
+);
+assert.deepEqual(
+  parseVerifyResponse('{"match": true}', 256, 256),
+  { match: true, center: null },
+  "a confirmed match without a center still verifies — caller falls back to the candidate point",
+);
+assert.deepEqual(
+  parseVerifyResponse('{"match": true, "center": {"x": 1400, "y": 3}}', 256, 256),
+  { match: true, center: null },
+  "an out-of-range center degrades to the fallback, never a fake position",
+);
+
+// --- Token-implied resize check (AITAKEOFF3 Task 3) ---
+
+const oldWorldTokens = tileTokenCheck(2377, 1400, 1400);
+assert.equal(
+  oldWorldTokens.expectedTileTokens,
+  2613,
+  "a full 1400px tile alone costs ~2613 input tokens",
+);
+assert.ok(
+  oldWorldTokens.suspectedResize,
+  "RESIZE CHECK: the real A-100 numbers (2377 tokens on a 1400px tile) flag at a glance",
+);
+const newWorldTokens = tileTokenCheck(2244, 1024, 1024);
+assert.ok(
+  !newWorldTokens.suspectedResize,
+  "a 1024px tile plus exemplar/prompt overhead never flags",
+);
+assert.equal(newWorldTokens.tileMegapixels, 1.05, "tile megapixels recorded for the glance check");
+assert.equal(
+  tileTokenCheck(0, 1024, 1024).suspectedResize,
+  false,
+  "zero reported tokens never flags",
+);
 
 // --- Panel availability states ---
 
@@ -592,6 +774,8 @@ const darknessAt = (
 };
 
 const renderViewport = async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  page: any,
   viewport: { width: number; height: number },
   w: number,
   h: number,
@@ -600,7 +784,7 @@ const renderViewport = async (
   const context = canvas.getContext("2d");
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, canvas.width, canvas.height);
-  await pdfPage.render({ canvasContext: context, viewport }).promise;
+  await page.render({ canvasContext: context, viewport }).promise;
   return context;
 };
 
@@ -621,6 +805,7 @@ assert.ok(
 // 4. EXEMPLAR CROP: the region render around the marker contains the glyph.
 const plan = exemplarCropPlan(trueSheetPoint, PAGE);
 const cropContext = await renderViewport(
+  pdfPage,
   pdfPage.getViewport({ scale: plan.scale, offsetX: plan.offsetX, offsetY: plan.offsetY }),
   plan.widthPx,
   plan.heightPx,
@@ -637,6 +822,7 @@ assert.ok(
 // exact Phase-A-suspect bug) must produce EMPTY paper at its center.
 const mirroredPlan = exemplarCropPlan({ x: trueSheetPoint.x, y: 1 - trueSheetPoint.y }, PAGE);
 const mirroredContext = await renderViewport(
+  pdfPage,
   pdfPage.getViewport({
     scale: mirroredPlan.scale,
     offsetX: mirroredPlan.offsetX,
@@ -656,6 +842,7 @@ const detectionScale = DETECTION_LONG_EDGE_PX / Math.max(PAGE.widthPt, PAGE.heig
 const rasterWidthPx = Math.round(PAGE.widthPt * detectionScale);
 const rasterHeightPx = Math.round(PAGE.heightPt * detectionScale);
 const rasterContext = await renderViewport(
+  pdfPage,
   pdfPage.getViewport({ scale: detectionScale }),
   rasterWidthPx,
   rasterHeightPx,
@@ -667,43 +854,124 @@ assert.ok(
 );
 
 const detectionTiles = planDetectionTiles(rasterWidthPx, rasterHeightPx);
+// The seam overlap must make the WHOLE symbol visible in at least one tile —
+// a glyph clipped at a tile edge is exactly what the prompt tells the model
+// not to match, so the fixture (like the real pipeline) relies on the
+// overlapping neighbor.
+const glyphRadiusPx = GLYPH_RADIUS_PT * detectionScale;
 const glyphTile = detectionTiles.find(
   (tile) =>
-    glyphRasterPx.px >= tile.left &&
-    glyphRasterPx.px < tile.left + tile.width &&
-    glyphRasterPx.py >= tile.top &&
-    glyphRasterPx.py < tile.top + tile.height,
+    glyphRasterPx.px - glyphRadiusPx >= tile.left &&
+    glyphRasterPx.px + glyphRadiusPx <= tile.left + tile.width &&
+    glyphRasterPx.py - glyphRadiusPx >= tile.top &&
+    glyphRasterPx.py + glyphRadiusPx <= tile.top + tile.height,
 );
-assert.ok(glyphTile, "some tile contains the glyph");
+assert.ok(glyphTile, "OVERLAP GUARD: some tile contains the whole glyph, not a clipped sliver");
 const glyphLocal = { x: glyphRasterPx.px - glyphTile!.left, y: glyphRasterPx.py - glyphTile!.top };
 
-// The mock model reports a small box around the glyph in tile pixels —
-// exactly what the hardened prompt asks for.
-const glyphRadiusPx = GLYPH_RADIUS_PT * detectionScale;
+// The mock model reports the glyph's CENTER in 0-1000 normalized
+// coordinates of the tile — exactly what the AITAKEOFF3 stage-A prompt asks
+// for. One-decimal rounding simulates realistic model output precision.
+const round1 = (value: number) => Math.round(value * 10) / 10;
 const mockResponse = JSON.stringify({
   exemplar_description: "A solid filled circle",
-  matches: [
+  candidates: [
     {
-      x0: glyphLocal.x - glyphRadiusPx,
-      y0: glyphLocal.y - glyphRadiusPx,
-      x1: glyphLocal.x + glyphRadiusPx,
-      y1: glyphLocal.y + glyphRadiusPx,
-      confidence: 0.95,
+      x: round1(tileLocalPxToNormalized(glyphLocal.x, glyphTile!.width)),
+      y: round1(tileLocalPxToNormalized(glyphLocal.y, glyphTile!.height)),
     },
   ],
 });
 const parsedMock = parseScanResponse(mockResponse, glyphTile!.width, glyphTile!.height);
-assert.equal(parsedMock.matches.length, 1, "the mock box parses");
-const mockCenter = matchCenters(parsedMock.matches)[0];
+assert.equal(parsedMock.candidates.length, 1, "the mock candidate parses");
+const mockCenter = parsedMock.candidates[0];
 const glyphFrame = tileFrameFor(glyphTile!, rasterWidthPx, rasterHeightPx);
 const mappedSheet = tileLocalToSheetPoint(glyphFrame, mockCenter.x, mockCenter.y);
 
-// "Within a few points of the true sheet position": measure in PDF points.
+// Measure the miss in PDF points; the tolerance is the normalized-coordinate
+// quantization bound, nothing looser.
 const mappedPdf = sheetPointToPdfPoint(mappedSheet, PAGE);
 const errPt = Math.hypot(mappedPdf.xPt - GLYPH_PDF.xPt, mappedPdf.yPt - GLYPH_PDF.yPt);
 assert.ok(
-  errPt < 2,
-  `ROUND-TRIP PROOF: mock response maps back within 2 PDF points of truth (got ${errPt.toFixed(3)}pt)`,
+  errPt < 0.042,
+  `ROUND-TRIP PROOF: normalized mock response maps back within 0.042 PDF points of truth (got ${errPt.toFixed(4)}pt)`,
+);
+
+// DOWNSCALE-INVARIANCE REGRESSION (the point of normalized coordinates): a
+// silent server-side resize of the tile must not move the mapped point. The
+// model sees a 784px version of the 1024px tile and answers 0-1000 relative
+// to WHAT IT SEES; the mapping still lands on the glyph.
+const DOWNSCALED_TILE_PX = 784;
+const downscale = DOWNSCALED_TILE_PX / glyphTile!.width;
+const glyphOnDownscaled = { x: glyphLocal.x * downscale, y: glyphLocal.y * downscale };
+const downscaledResponse = JSON.stringify({
+  exemplar_description: "A solid filled circle",
+  candidates: [
+    {
+      x: round1(tileLocalPxToNormalized(glyphOnDownscaled.x, DOWNSCALED_TILE_PX)),
+      y: round1(tileLocalPxToNormalized(glyphOnDownscaled.y, DOWNSCALED_TILE_PX)),
+    },
+  ],
+});
+const parsedDownscaled = parseScanResponse(downscaledResponse, glyphTile!.width, glyphTile!.height);
+assert.equal(parsedDownscaled.candidates.length, 1, "the downscaled-image mock candidate parses");
+const downscaledCenter = parsedDownscaled.candidates[0];
+const downscaledSheet = tileLocalToSheetPoint(glyphFrame, downscaledCenter.x, downscaledCenter.y);
+const downscaledPdf = sheetPointToPdfPoint(downscaledSheet, PAGE);
+const downscaledErrPt = Math.hypot(
+  downscaledPdf.xPt - GLYPH_PDF.xPt,
+  downscaledPdf.yPt - GLYPH_PDF.yPt,
+);
+assert.ok(
+  downscaledErrPt < 0.06,
+  `DOWNSCALE GUARD: coordinates from a resized image still map onto the glyph (got ${downscaledErrPt.toFixed(4)}pt)`,
+);
+// The AITAKEOFF2 failure mode for contrast: treating the downscaled image's
+// PIXELS as tile-local pixels displaces the point toward the tile's
+// top-left by the resize factor — never a quiet near-miss.
+const wrongBasisSheet = tileLocalToSheetPoint(glyphFrame, glyphOnDownscaled.x, glyphOnDownscaled.y);
+const wrongBasisPdf = sheetPointToPdfPoint(wrongBasisSheet, PAGE);
+assert.ok(
+  Math.hypot(wrongBasisPdf.xPt - GLYPH_PDF.xPt, wrongBasisPdf.yPt - GLYPH_PDF.yPt) > 20,
+  "PIXEL-BASIS GUARD: the old pixel interpretation of a resized image misses by tens of points",
+);
+
+// 6. STAGE-B WINDOW PROOF: the verification window around the mapped
+//    candidate contains the glyph's ink, and a normalized verdict center
+//    maps back through the window's frame — the same tested transform with
+//    a 256px denominator, so the absolute error shrinks proportionally.
+const windowRect = verifyWindowRect(
+  { x: glyphRasterPx.px, y: glyphRasterPx.py },
+  rasterWidthPx,
+  rasterHeightPx,
+);
+assert.equal(windowRect.width, 256, "the window is the full 256px on a real sheet");
+const glyphInWindow = {
+  x: glyphRasterPx.px - windowRect.left,
+  y: glyphRasterPx.py - windowRect.top,
+};
+assert.ok(
+  darknessAt(rasterContext, windowRect.left + glyphInWindow.x, windowRect.top + glyphInWindow.y) <
+    200,
+  "STAGE-B PROOF: the verification window is centered on the glyph's ink",
+);
+const verifyMock = JSON.stringify({
+  match: true,
+  center: {
+    x: round1(tileLocalPxToNormalized(glyphInWindow.x, windowRect.width)),
+    y: round1(tileLocalPxToNormalized(glyphInWindow.y, windowRect.height)),
+  },
+});
+const verdict = parseVerifyResponse(verifyMock, windowRect.width, windowRect.height);
+assert.equal(verdict.match, true, "the glyph window verifies");
+assert.ok(verdict.center, "the verdict carries a usable center");
+const windowFrame = tileFrameFor(windowRect, rasterWidthPx, rasterHeightPx);
+const verifiedSheet = tileLocalToSheetPoint(windowFrame, verdict.center!.x, verdict.center!.y);
+const verifiedPdf = sheetPointToPdfPoint(verifiedSheet, PAGE);
+const verifiedErrPt = Math.hypot(verifiedPdf.xPt - GLYPH_PDF.xPt, verifiedPdf.yPt - GLYPH_PDF.yPt);
+assert.ok(
+  verifiedErrPt < 0.042,
+  `STAGE-B PROOF: the verdict center maps back within 0.042 PDF points of truth (got ${verifiedErrPt.toFixed(4)}pt)`,
 );
 
 // Y-FLIP REGRESSION GUARD (mapping side): flipping the mapped Y misses badly.
@@ -718,4 +986,179 @@ assert.ok(
 
 console.log(
   `AI takeoff round-trip fixtures passed: exemplar crop verified by pixel sampling, tile mapping within ${errPt.toFixed(3)}pt of truth.`,
+);
+
+// --- Two-stage fixture (AITAKEOFF3 Task 5): 3 glyphs + 1 decoy + 1 ghost ---
+// A second generated page: three circle glyphs at known spots, one filled
+// SQUARE decoy (same size, different symbol type), and one deliberate
+// hallucination on blank paper. Stage A mocks recall-biased candidate lists
+// per tile; everything else is the real pipeline — tiling, frames,
+// normalized parsing, cross-tile dedupe, the runaway cap, real verification
+// windows pixel-sampled from the raster, and verdict mapping. The decoy and
+// the hallucination MUST die in stage B; the three circles MUST verify
+// within the stage-B quantization tolerance.
+
+// Fractional PDF positions on purpose: raster pixels land off-grid, so the
+// 0-1000 rounding actually quantizes and the tolerance assertion means it.
+const CIRCLES_PDF = [
+  { xPt: 380.3, yPt: 750.29 }, // raster ~(950.8, 499.3) — on a tile seam (dedupe)
+  { xPt: 1120.13, yPt: 230.17 }, // raster ~(2800.3, 1799.6) — covered by SIX tiles
+  { xPt: 200.37, yPt: 150.41 }, // raster ~(500.9, 1999.0)
+];
+const DECOY_PDF = { xPt: 600, yPt: 550 }; // raster (1500, 1000)
+const doc2 = await pdfLib.PDFDocument.create();
+const page2 = doc2.addPage([PAGE.widthPt, PAGE.heightPt]);
+for (const spot of CIRCLES_PDF) {
+  page2.drawCircle({
+    x: spot.xPt,
+    y: spot.yPt,
+    size: GLYPH_RADIUS_PT,
+    color: pdfLib.rgb(0, 0, 0),
+  });
+}
+page2.drawRectangle({
+  x: DECOY_PDF.xPt - GLYPH_RADIUS_PT,
+  y: DECOY_PDF.yPt - GLYPH_RADIUS_PT,
+  width: GLYPH_RADIUS_PT * 2,
+  height: GLYPH_RADIUS_PT * 2,
+  color: pdfLib.rgb(0, 0, 0),
+});
+const loadedPdf2 = await pdfjs.getDocument({ data: await doc2.save() }).promise;
+const pdfPage2 = await loadedPdf2.getPage(1);
+const raster2 = await renderViewport(
+  pdfPage2,
+  pdfPage2.getViewport({ scale: detectionScale }),
+  rasterWidthPx,
+  rasterHeightPx,
+);
+
+const circleRasterPx = CIRCLES_PDF.map((spot) => pdfPointToRenderPixel(spot, PAGE, detectionScale));
+const decoyRasterPx = pdfPointToRenderPixel(DECOY_PDF, PAGE, detectionScale);
+for (const [index, spot] of circleRasterPx.entries()) {
+  assert.ok(darknessAt(raster2, spot.px, spot.py) < 200, `circle ${index} ink is where planned`);
+}
+assert.ok(
+  darknessAt(raster2, decoyRasterPx.px, decoyRasterPx.py) < 200,
+  "decoy ink is where planned",
+);
+const HALLUCINATION_RASTER = { px: 2200, py: 500 };
+assert.ok(
+  darknessAt(raster2, HALLUCINATION_RASTER.px, HALLUCINATION_RASTER.py) > 700,
+  "the planted hallucination spot is blank paper",
+);
+
+// Stage A: per tile, the mock lists every shape center inside the tile
+// (recall bias includes the decoy) plus the hallucination — then the REAL
+// parse/frame/map path turns them into sheet-space coarse candidates.
+const stageAShapes = [...circleRasterPx, decoyRasterPx, HALLUCINATION_RASTER];
+const coarse2: Array<{ x: number; y: number; confidence: number }> = [];
+for (const tile of detectionTiles) {
+  const entries = stageAShapes
+    .filter(
+      (spot) =>
+        spot.px >= tile.left &&
+        spot.px < tile.left + tile.width &&
+        spot.py >= tile.top &&
+        spot.py < tile.top + tile.height,
+    )
+    .map((spot) => ({
+      x: round1(tileLocalPxToNormalized(spot.px - tile.left, tile.width)),
+      y: round1(tileLocalPxToNormalized(spot.py - tile.top, tile.height)),
+    }));
+  const parsed2 = parseScanResponse(
+    JSON.stringify({ exemplar_description: "A solid filled circle", candidates: entries }),
+    tile.width,
+    tile.height,
+  );
+  const tileFrame = tileFrameFor(tile, rasterWidthPx, rasterHeightPx);
+  for (const candidate of parsed2.candidates) {
+    coarse2.push({
+      ...tileLocalToSheetPoint(tileFrame, candidate.x, candidate.y),
+      confidence: COARSE_CANDIDATE_CONFIDENCE,
+    });
+  }
+}
+assert.ok(
+  coarse2.length > stageAShapes.length,
+  "tile overlap produced duplicate coarse candidates (the seam did its job)",
+);
+const toVerify2 = capProposalsPerSheet(dedupeCandidates(coarse2), DEFAULT_MAX_PROPOSALS_PER_SHEET);
+assert.equal(
+  toVerify2.length,
+  stageAShapes.length,
+  "cross-tile dedupe collapses seam duplicates before any verification is bought",
+);
+
+// Stage B: real windows, pixel-sampled; mock verdicts confirm circles only.
+const verified2: Array<{ x: number; y: number }> = [];
+let rejected2 = 0;
+for (const candidate of toVerify2) {
+  const centerPx = { x: candidate.x * rasterWidthPx, y: candidate.y * rasterHeightPx };
+  const rect = verifyWindowRect(centerPx, rasterWidthPx, rasterHeightPx);
+  const windowFrame2 = tileFrameFor(rect, rasterWidthPx, rasterHeightPx);
+  const circleHit = circleRasterPx.find(
+    (spot) => Math.hypot(spot.px - centerPx.x, spot.py - centerPx.y) < 5,
+  );
+  const decoyHit = Math.hypot(decoyRasterPx.px - centerPx.x, decoyRasterPx.py - centerPx.y) < 5;
+  if (circleHit || decoyHit) {
+    // The window the model judges really contains the symbol's ink.
+    const inkSpot = circleHit ?? decoyRasterPx;
+    assert.ok(
+      inkSpot.px >= rect.left &&
+        inkSpot.px < rect.left + rect.width &&
+        inkSpot.py >= rect.top &&
+        inkSpot.py < rect.top + rect.height,
+      "the verification window contains the shape it was cut for",
+    );
+    assert.ok(darknessAt(raster2, inkSpot.px, inkSpot.py) < 200, "window target has ink");
+  } else {
+    // The hallucination window is blank — exactly what stage B rejects.
+    assert.ok(
+      darknessAt(raster2, centerPx.x, centerPx.y) > 700,
+      "the hallucination window is empty paper",
+    );
+  }
+  const verdictText = circleHit
+    ? JSON.stringify({
+        match: true,
+        center: {
+          x: round1(tileLocalPxToNormalized(circleHit.px - rect.left, rect.width)),
+          y: round1(tileLocalPxToNormalized(circleHit.py - rect.top, rect.height)),
+        },
+      })
+    : JSON.stringify({ match: false });
+  const verdict2 = parseVerifyResponse(verdictText, rect.width, rect.height);
+  if (verdict2.match && verdict2.center) {
+    verified2.push(tileLocalToSheetPoint(windowFrame2, verdict2.center.x, verdict2.center.y));
+  } else {
+    rejected2 += 1;
+  }
+}
+assert.equal(verified2.length, 3, "TWO-STAGE PROOF: exactly the three true symbols verify");
+assert.equal(rejected2, 2, "TWO-STAGE PROOF: the decoy and the hallucination die in stage B");
+
+const matchedCircles = new Set<number>();
+let worstVerifiedErrPt = 0;
+for (const point of verified2) {
+  const pdf = sheetPointToPdfPoint(point, PAGE);
+  let bestIndex = -1;
+  let bestErr = Number.POSITIVE_INFINITY;
+  for (const [index, truth] of CIRCLES_PDF.entries()) {
+    const err = Math.hypot(truth.xPt - pdf.xPt, truth.yPt - pdf.yPt);
+    if (err < bestErr) {
+      bestErr = err;
+      bestIndex = index;
+    }
+  }
+  assert.ok(
+    bestErr < 0.042,
+    `TWO-STAGE PROOF: verified point lands within 0.042pt of a true symbol (got ${bestErr.toFixed(4)}pt)`,
+  );
+  matchedCircles.add(bestIndex);
+  worstVerifiedErrPt = Math.max(worstVerifiedErrPt, bestErr);
+}
+assert.equal(matchedCircles.size, 3, "each verified point maps to a DISTINCT true symbol");
+
+console.log(
+  `AI takeoff two-stage fixture passed: 3 glyphs verified within ${worstVerifiedErrPt.toFixed(4)}pt, decoy and hallucination rejected in stage B.`,
 );
