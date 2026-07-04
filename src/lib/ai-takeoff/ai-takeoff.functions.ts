@@ -36,6 +36,11 @@ import {
   VERIFIED_PROPOSAL_CONFIDENCE,
   type AiCountCandidate,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
+import {
+  describeCandidateOrigin,
+  resolveProposalSource,
+  resolveTemplateMatchThreshold,
+} from "@/lib/ai-takeoff/template-match/template-match-domain";
 import { tileLocalToSheetPoint, type DetectionTileFrame } from "@/lib/ai-takeoff/coord-transforms";
 import {
   base64ToBytes,
@@ -256,6 +261,13 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
       maxSheets: cap,
       minConfidence: minProposalConfidence(),
       maxProposalsPerSheet: maxProposalsPerSheet(),
+      // Proposal engines (AITAKEOFF6 Task 1): which engine(s) feed stage B
+      // and the template matcher's recall-biased NCC floor — env-tunable
+      // server-side so the client never reads env directly.
+      proposalSource: resolveProposalSource(process.env.AI_PROPOSAL_SOURCE),
+      templateMatchThreshold: resolveTemplateMatchThreshold(
+        process.env.AI_TEMPLATE_MATCH_THRESHOLD,
+      ),
     };
   });
 
@@ -541,6 +553,17 @@ const verifyCandidateInput = z.object({
   // the verdict confirms a match without a usable center, and the diagnostic
   // record of what stage B was asked about.
   candidate: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }),
+  // Which proposal engine produced this candidate (AITAKEOFF6 Task 1), with
+  // the template sweep's metadata when it was the matcher — the two engines
+  // stay comparable on real sheets through the verify diagnostics.
+  candidate_origin: z
+    .object({
+      source: z.enum(["template", "model"]),
+      score: z.number().min(0).max(1).nullable().default(null),
+      rotation_deg: z.number().min(0).lt(360).nullable().default(null),
+      scale: z.number().gt(0).max(10).nullable().default(null),
+    })
+    .optional(),
   references: referencesSchema,
   // The verification window: a small crop of the detection raster around the
   // candidate, upscaled client-side. The frame carries the WINDOW's
@@ -654,6 +677,12 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
 
     // Per-candidate stage-B artifacts (AITAKEOFF3 Task 3): the crop actually
     // judged, the raw verdict, and the final mapped point. Best-effort only.
+    const origin = data.candidate_origin ?? {
+      source: "model" as const,
+      score: null,
+      rotation_deg: null,
+      scale: null,
+    };
     const folder = diagnosticsFolder(operation.organization_id, operation.id);
     const artifactName = `verify-${data.sheet_id}-${data.candidate_index}`;
     await uploadDiagnostic(
@@ -673,6 +702,15 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
           // The exemplar label keys "same sheet + exemplar" lookups for
           // negative harvesting on later scans (AITAKEOFF5 Task 1).
           exemplarLabel: data.references.label,
+          // Which engine proposed this candidate (AITAKEOFF6 Task 1):
+          // "template 0.78 @ 30°" vs "model" — comparable on real sheets.
+          candidateOrigin: origin,
+          originLabel: describeCandidateOrigin({
+            source: origin.source,
+            score: origin.score,
+            rotationDeg: origin.rotation_deg,
+            scale: origin.scale,
+          }),
           references: referenceComposition(data.references),
           window: {
             left: data.window.left,

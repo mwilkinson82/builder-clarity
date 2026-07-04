@@ -28,15 +28,24 @@ import { useAiCredits } from "./useAiCredits";
 import {
   appendAcceptedPoint,
   capProposalsPerSheet,
-  dedupeCandidates,
   dedupeRadiusForFootprint,
   DETECTION_LONG_EDGE_PX,
+  excludeNearExistingPoints,
   overlapForFootprintPx,
   sortProposalsForReview,
   type AiCountCandidate,
   type AiCountProposal,
   type SheetPoint,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
+import {
+  templateCropRect,
+  unionProposalCandidates,
+  type TemplateMatchCandidate,
+} from "@/lib/ai-takeoff/template-match/template-match-domain";
+import {
+  createTemplateMatchSession,
+  type TemplateMatchSession,
+} from "@/lib/ai-takeoff/template-match/template-match-client";
 import { DEFAULT_MAX_SHEETS_PER_SCAN, quoteScanCredits } from "@/lib/credits/credits-domain";
 import {
   createTakeoffMeasurement,
@@ -242,6 +251,9 @@ export function useAiAssist({
     aiMeasurementsRef.current = new Map();
     cancelRequestedRef.current = false;
     operationIdRef.current = null;
+    // The template-match worker session (AITAKEOFF6): one per scan so the
+    // opencv.js wasm compiles once; disposed in the finally below.
+    let templateSession: TemplateMatchSession | null = null;
     let echo = "";
     setScanProgress({
       sheetsDone: 0,
@@ -305,6 +317,51 @@ export function useAiAssist({
         harvestPoints,
       });
 
+      // Template engine prep (AITAKEOFF6 Task 1): the exemplar the user
+      // picked IS a template. Crop it once from the exemplar sheet's
+      // detection raster (footprint-sized, same scale matching runs at);
+      // the worker unions its hits with stage A on every sheet.
+      const proposalSource = begin.proposalSource ?? "both";
+      let templateImage: ImageData | null = null;
+      let exemplarRasterReuse: Awaited<ReturnType<typeof renderDetectionSheet>> | null = null;
+      if (proposalSource !== "model" && exemplarImage.footprintPt !== null) {
+        const exemplarRaster = await renderDetectionSheet(
+          exemplarSheetUrl,
+          exemplarSheet.page_number,
+        );
+        const exemplarLongEdgePt = Math.max(
+          exemplarRaster.pageSize.widthPt,
+          exemplarRaster.pageSize.heightPt,
+        );
+        const exemplarFootprintPx =
+          exemplarImage.footprintPt * (DETECTION_LONG_EDGE_PX / exemplarLongEdgePt);
+        const templateRect = templateCropRect(
+          {
+            x: exemplar.point.x * exemplarRaster.widthPx,
+            y: exemplar.point.y * exemplarRaster.heightPx,
+          },
+          exemplarFootprintPx,
+          exemplarRaster.widthPx,
+          exemplarRaster.heightPx,
+        );
+        templateImage =
+          exemplarRaster.canvas
+            .getContext("2d")
+            ?.getImageData(
+              templateRect.left,
+              templateRect.top,
+              templateRect.width,
+              templateRect.height,
+            ) ?? null;
+        exemplarRasterReuse = exemplarRaster;
+        if (templateImage) templateSession = createTemplateMatchSession();
+      }
+      if (proposalSource === "template" && !templateSession) {
+        throw new Error(
+          "Template matching needs a measurable symbol under the exemplar marker. Pick a marker centered on the symbol, or unset AI_PROPOSAL_SOURCE.",
+        );
+      }
+
       const found: AiCountProposal[] = [];
       let sheetsDone = 0;
       for (const sheet of targetSheets) {
@@ -320,10 +377,12 @@ export function useAiAssist({
           exemplarDescription: echo,
         });
 
-        const raster = await renderDetectionSheet(
-          await signedUrlFor(sheet.plan_set_id),
-          sheet.page_number,
-        );
+        // The exemplar's own sheet was already rendered for the template
+        // crop — render every other sheet fresh.
+        const raster =
+          exemplarRasterReuse && sheet.id === exemplar.sheetId
+            ? exemplarRasterReuse
+            : await renderDetectionSheet(await signedUrlFor(sheet.plan_set_id), sheet.page_number);
         // Exemplar-derived geometry (AITAKEOFF5 Task 0): the symbol footprint
         // sizes the tile overlap (whole symbol always fits ≥1 tile) and the
         // dedupe/exclusion radius (seam duplicates + already-marked symbols
@@ -338,7 +397,9 @@ export function useAiAssist({
           footprintRasterPx,
           Math.max(raster.widthPx, raster.heightPx),
         );
-        const tiles = sliceDetectionTiles(raster, tileOverlapPx);
+        // Template-only scans never slice tiles — stage A is skipped whole.
+        const tiles =
+          proposalSource === "template" ? [] : sliceDetectionTiles(raster, tileOverlapPx);
         const existingPoints = existingCountPointsForSheet(sheet.id);
         // Negative references (AITAKEOFF5 Task 1): this session's rejections
         // for this sheet + exemplar first; otherwise the previous scan's
@@ -365,8 +426,36 @@ export function useAiAssist({
           extraPositives: positives.length - 1,
           negatives: negatives.length,
         };
+        // Template engine (AITAKEOFF6 Task 1): NCC of the exemplar template
+        // against the WHOLE raster in the worker — deterministic, seam-free
+        // proposals. In "both" mode a matcher failure degrades to the model
+        // engine alone; in "template" mode it is the scan failure.
+        let templateHits: TemplateMatchCandidate[] = [];
+        if (templateSession && templateImage && footprintRasterPx) {
+          try {
+            const rasterPixels = raster.canvas
+              .getContext("2d")
+              ?.getImageData(0, 0, raster.widthPx, raster.heightPx);
+            if (!rasterPixels) throw new Error("The sheet could not be read for matching.");
+            const matched = await templateSession.match({
+              raster: rasterPixels,
+              template: templateImage,
+              options: {
+                threshold: begin.templateMatchThreshold ?? 0.55,
+                footprintPx: footprintRasterPx,
+              },
+            });
+            templateHits = matched.candidates;
+          } catch (error) {
+            if (proposalSource === "template") throw error;
+            templateHits = [];
+          }
+        }
+        if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
+
         // Stage A (AITAKEOFF3 Task 1): coarse, recall-biased candidates in
-        // sheet space. Leads only — nothing here becomes a ghost.
+        // sheet space. Leads only — nothing here becomes a ghost. Skipped
+        // entirely when the template engine is the sole proposal source.
         const sheetCoarse: AiCountCandidate[] = [];
 
         for (let index = 0; index < tiles.length; index += 1) {
@@ -409,15 +498,21 @@ export function useAiAssist({
           });
         }
 
-        // Stage B (AITAKEOFF3 Task 2): dedupe across tile overlap in sheet
-        // space FIRST so seam duplicates never buy two verification calls,
-        // then the per-sheet cap brakes runaway candidate lists before they
-        // spend anything. Each survivor is judged on a zoomed crop; only a
-        // verified match becomes a ghost, positioned by the stage-B center.
-        const toVerify = capProposalsPerSheet(
-          dedupeCandidates(sheetCoarse, dedupeRadius),
-          begin.maxProposalsPerSheet,
-        );
+        // Stage B (AITAKEOFF3 Task 2, union in AITAKEOFF6): both engines'
+        // candidates merge and dedupe by the footprint radius FIRST — a
+        // symbol both engines found never buys two verification calls —
+        // template hits ranking by NCC score for the per-sheet cap. The
+        // near-existing suppression the server applies to model candidates
+        // covers template hits here, same helper, same radius.
+        const unioned = unionProposalCandidates(templateHits, sheetCoarse, dedupeRadius);
+        const fresh = excludeNearExistingPoints(
+          unioned,
+          existingPoints,
+          dedupeRadius,
+          // excludeNearExistingPoints filters without mapping, so the union
+          // entries' engine metadata survives the narrower parameter type.
+        ) as typeof unioned;
+        const toVerify = capProposalsPerSheet(fresh, begin.maxProposalsPerSheet);
         for (let index = 0; index < toVerify.length; index += 1) {
           if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
           setScanProgress({
@@ -437,6 +532,17 @@ export function useAiAssist({
               sheet_id: sheet.id,
               candidate_index: index,
               candidate: { x: candidate.x, y: candidate.y },
+              // Which engine proposed it (AITAKEOFF6): rides into the verify
+              // diagnostics as "template 0.78 @ 30°" vs "model".
+              candidate_origin:
+                candidate.source === "template" && candidate.templateHit
+                  ? {
+                      source: "template" as const,
+                      score: Math.min(1, candidate.templateHit.score),
+                      rotation_deg: candidate.templateHit.rotationDeg,
+                      scale: candidate.templateHit.scale,
+                    }
+                  : { source: "model" as const, score: null, rotation_deg: null, scale: null },
               references,
               window: {
                 left: window.rect.left,
@@ -505,6 +611,9 @@ export function useAiAssist({
       setScanProgress(null);
       setPhase("idle");
       setScanError(message);
+    } finally {
+      // The worker (and its wasm heap) never outlives the scan.
+      templateSession?.dispose();
     }
   }, [
     beginScanFn,
