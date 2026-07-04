@@ -299,6 +299,149 @@ export function estimatedCardFeeCents(baseCents: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// Refund reversal (BILLINGBATCH2 Task 0 — live bug: invoice 2601-3)
+// ---------------------------------------------------------------------------
+
+export interface ChargeRefundInput {
+  // Cents the ledger row currently counts toward the invoice (base amount,
+  // surcharge excluded at booking time).
+  bookedCents: number;
+  // charge.amount — the gross charge including any surcharge.
+  chargeAmountCents: number;
+  // charge.amount_refunded — CUMULATIVE cents refunded so far.
+  amountRefundedCents: number;
+  // charge.refunded — true only when the charge is fully refunded.
+  fullyRefunded: boolean;
+}
+
+export interface ChargeRefundPlan {
+  // What the ledger row should become. Full refunds flip status and stop
+  // counting (amount preserved for audit); partial refunds stay succeeded
+  // with the counted amount reduced.
+  ledgerStatus: "succeeded" | "refunded";
+  ledgerAmountCents: number;
+  // Cents of invoice progress this event reverses (for messaging/tests; the
+  // invoice itself is recomputed from the ledger, never decremented blindly).
+  reversalCents: number;
+}
+
+// charge.refunded planning. Surcharge rule: refunds consume the surcharge
+// portion of the charge last, so a refund equal to the surcharge alone
+// reverses no invoice progress — the counted remainder is capped by what is
+// left of the gross charge.
+export function planChargeRefund(input: ChargeRefundInput): ChargeRefundPlan {
+  const booked = Math.max(0, Math.round(input.bookedCents));
+  const grossLeft = Math.max(
+    0,
+    Math.round(input.chargeAmountCents) - Math.round(input.amountRefundedCents),
+  );
+  const remaining = input.fullyRefunded ? 0 : Math.min(booked, grossLeft);
+  if (remaining <= 0) {
+    return { ledgerStatus: "refunded", ledgerAmountCents: booked, reversalCents: booked };
+  }
+  return {
+    ledgerStatus: "succeeded",
+    ledgerAmountCents: remaining,
+    reversalCents: booked - remaining,
+  };
+}
+
+export interface LedgerRowForReconcile {
+  amountCents: number;
+  status: PaymentState;
+}
+
+export interface InvoiceReconcileInput {
+  totalDueCents: number;
+  // Current invoice status; void and draft are preserved when no payments
+  // remain (reconcile never resurrects a void invoice or sends a draft).
+  currentStatus: string;
+  currentPaidAtIso: string | null;
+  rows: readonly LedgerRowForReconcile[];
+  nowIso: string;
+}
+
+export interface InvoiceReconcilePatch {
+  paidCents: number;
+  status: "paid" | "partially_paid" | "sent" | "draft" | "void";
+  paidAtIso: string | null;
+}
+
+// The ledger is the truth: only succeeded rows count (refunded/failed/void/
+// pending count zero). Recomputes what the invoice must say — used by the
+// refund webhook and by the on-demand reconcile action, so correcting a
+// drifted invoice always goes through this one code path.
+export function reconcileInvoiceFromLedger(input: InvoiceReconcileInput): InvoiceReconcilePatch {
+  const paidCents = input.rows.reduce(
+    (sum, row) => (row.status === "succeeded" ? sum + Math.round(row.amountCents) : sum),
+    0,
+  );
+  if (input.currentStatus === "void") {
+    return { paidCents, status: "void", paidAtIso: input.currentPaidAtIso };
+  }
+  const totalDueCents = Math.round(input.totalDueCents);
+  if (totalDueCents > 0 && paidCents >= totalDueCents) {
+    return {
+      paidCents,
+      status: "paid",
+      paidAtIso: input.currentPaidAtIso ?? input.nowIso,
+    };
+  }
+  if (paidCents > 0) {
+    return { paidCents, status: "partially_paid", paidAtIso: null };
+  }
+  // A balance reopened (or never closed): back to sent — unless the invoice
+  // never left draft.
+  return {
+    paidCents,
+    status: input.currentStatus === "draft" ? "draft" : "sent",
+    paidAtIso: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pending-payment lock (BILLINGBATCH2 Task 1 — the double-collection class)
+// ---------------------------------------------------------------------------
+
+// A Stripe checkout session outlives the click that created it. While one is
+// pending (created or ACH processing, neither resolved nor expired), every
+// pay surface must lock instead of collecting a second payment against the
+// same invoice. Stripe sessions expire after 24h; anything older than the
+// window is treated as stale so a missed expiry webhook can never lock an
+// invoice forever.
+export const PENDING_LOCK_MAX_AGE_HOURS = 25;
+
+export interface PendingPaymentLockInput {
+  onlinePaymentStatus: string;
+  checkoutSessionId: string;
+  paymentLinkSentAtIso: string | null;
+  openBalanceCents: number;
+  nowIso: string;
+}
+
+export interface PendingPaymentLockState {
+  locked: boolean;
+  startedAtIso: string | null;
+}
+
+export function pendingPaymentLock(input: PendingPaymentLockInput): PendingPaymentLockState {
+  if (input.onlinePaymentStatus !== "pending") return { locked: false, startedAtIso: null };
+  if (!input.checkoutSessionId) return { locked: false, startedAtIso: null };
+  if (input.openBalanceCents <= 0) return { locked: false, startedAtIso: null };
+  if (!input.paymentLinkSentAtIso) return { locked: false, startedAtIso: null };
+  const startedMs = Date.parse(input.paymentLinkSentAtIso);
+  const nowMs = Date.parse(input.nowIso);
+  if (!Number.isFinite(startedMs) || !Number.isFinite(nowMs)) {
+    return { locked: false, startedAtIso: null };
+  }
+  const ageHours = (nowMs - startedMs) / 3_600_000;
+  if (ageHours < 0 || ageHours > PENDING_LOCK_MAX_AGE_HOURS) {
+    return { locked: false, startedAtIso: null };
+  }
+  return { locked: true, startedAtIso: input.paymentLinkSentAtIso };
+}
+
+// ---------------------------------------------------------------------------
 // Stripe webhook -> payment record planning
 // ---------------------------------------------------------------------------
 

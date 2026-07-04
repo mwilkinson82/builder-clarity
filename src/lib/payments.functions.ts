@@ -404,6 +404,241 @@ export const getInvoiceRemittance = createServerFn({ method: "GET" })
   });
 
 /**
+ * The client backed out of a Stripe Checkout page. Expire the open session
+ * so the pending-payment lock clears immediately instead of holding the pay
+ * buttons hostage for the session's 24h lifetime. If Stripe refuses (the
+ * session already completed), the lock stays — the payment may have gone
+ * through and the webhook is the authority.
+ */
+export const expireInvoiceCheckout = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { invoiceId: string }) =>
+    z.object({ invoiceId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as PaymentsServerContext;
+    // RLS-scoped read is the access gate: contractors see project invoices,
+    // portal clients see client-visible ones. No row, no action.
+    const { data: invoice, error: invoiceError } = await dynamicTable(
+      ctx.supabase,
+      "billing_invoices",
+    )
+      .select("id,project_id,online_payment_status,stripe_checkout_session_id")
+      .eq("id", data.invoiceId)
+      .maybeSingle();
+    if (invoiceError) throw new Error(invoiceError.message);
+    if (!invoice) throw new Error("Invoice not found.");
+    const invoiceRow = invoice as Record<string, unknown>;
+
+    const sessionId = String(invoiceRow.stripe_checkout_session_id ?? "");
+    if (String(invoiceRow.online_payment_status ?? "") !== "pending" || !sessionId) {
+      return { ok: true, cleared: false, reason: "no_pending_session" };
+    }
+
+    const stripeServer = await import("@/lib/stripe.server");
+    const admin = stripeServer.createSupabaseAdminClient();
+    const { data: project, error: projectError } = await dynamicTable(admin, "projects")
+      .select("organization_id")
+      .eq("id", invoiceRow.project_id as string)
+      .maybeSingle();
+    if (projectError) throw new Error(projectError.message);
+    const organizationId =
+      ((project as Record<string, unknown> | null)?.organization_id as string | null) ?? null;
+    if (!organizationId) return { ok: true, cleared: false, reason: "no_organization" };
+
+    const org = await loadOrganizationStripe(admin, organizationId);
+    if (!org.stripe_connect_account_id) {
+      return { ok: true, cleared: false, reason: "not_connected" };
+    }
+    const mode = await stripeServer.getOrganizationStripeMode(admin, organizationId);
+
+    try {
+      await stripeServer.expireStripeCheckoutSession(
+        sessionId,
+        org.stripe_connect_account_id,
+        mode,
+      );
+    } catch {
+      // Session is not open (completed, or already expired). Completed means
+      // money may be moving: never clear the lock here — the webhook decides.
+      return { ok: true, cleared: false, reason: "session_not_open" };
+    }
+
+    const { error: updateError } = await dynamicTable(admin, "billing_invoices")
+      .update({ online_payment_status: "expired" })
+      .eq("id", data.invoiceId)
+      .eq("stripe_checkout_session_id", sessionId);
+    if (updateError) throw new Error(updateError.message);
+    return { ok: true, cleared: true };
+  });
+
+type StripeChargeLite = {
+  id: string;
+  amount: number;
+  amount_refunded: number;
+  currency: string;
+  status: string;
+  paid: boolean;
+  refunded: boolean;
+  created: number;
+  description: string | null;
+  payment_intent: string | null;
+  receipt_url: string | null;
+  payment_method_details?: { type?: string } | null;
+};
+
+export interface UnmatchedStripePayment {
+  stripeChargeId: string;
+  stripePaymentIntentId: string;
+  amount: number;
+  amountCents: number;
+  currency: string;
+  paidAtIso: string;
+  description: string;
+  paymentMethodType: string;
+  receiptUrl: string;
+}
+
+export interface ReconcileInvoiceOption {
+  id: string;
+  label: string;
+  projectName: string;
+  openBalance: number;
+}
+
+/**
+ * On-demand sweep (BILLINGBATCH2 Task 2): list recent succeeded payments on
+ * the org's connected Stripe account and flag any with no ledger row —
+ * orphans like a payment that settled before webhooks were wired up. Read
+ * only; booking goes through the existing manual-record path with the Stripe
+ * id as reference (which is also what makes a booked orphan match next time).
+ */
+export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const ctx = context as unknown as PaymentsServerContext;
+    const organizationId = await ensureCurrentOrganization(ctx);
+    await requireBillingOrSettingsCapability(ctx, organizationId);
+
+    const stripeServer = await import("@/lib/stripe.server");
+    const admin = stripeServer.createSupabaseAdminClient();
+    const org = await loadOrganizationStripe(admin, organizationId);
+    if (!org.stripe_connect_account_id) {
+      return {
+        ready: false as const,
+        reason: "Stripe is not connected yet. Connect Stripe before checking for payments.",
+        checkedCount: 0,
+        payments: [] as UnmatchedStripePayment[],
+        openInvoices: [] as ReconcileInvoiceOption[],
+      };
+    }
+    const mode = await stripeServer.getOrganizationStripeMode(admin, organizationId);
+
+    const chargePage = await stripeServer.stripeGet<{ data: StripeChargeLite[] }>(
+      "charges?limit=100",
+      mode,
+      org.stripe_connect_account_id,
+    );
+    const settled = (chargePage.data ?? []).filter(
+      (charge) =>
+        charge.status === "succeeded" &&
+        charge.paid &&
+        !charge.refunded &&
+        charge.amount_refunded < charge.amount,
+    );
+
+    // A charge is "matched" when any ledger row carries its payment intent or
+    // charge id — webhook bookings store the intent id, manual bookings from
+    // this sweep store it as reference/processor id.
+    const intentIds = settled.map((charge) => charge.payment_intent ?? "").filter(Boolean);
+    const chargeIds = settled.map((charge) => charge.id);
+    const candidateIds = Array.from(new Set([...intentIds, ...chargeIds]));
+    const matched = new Set<string>();
+    for (const column of ["stripe_payment_intent_id", "processor_payment_id", "reference"]) {
+      if (candidateIds.length === 0) break;
+      const { data: rows, error } = await dynamicTable(admin, "payment_ledger")
+        .select(column)
+        .in(column, candidateIds);
+      if (error) {
+        if (!isMissingRelation(error)) throw new Error(error.message);
+        continue;
+      }
+      ((rows ?? []) as Record<string, unknown>[]).forEach((row) => {
+        const value = String(row[column] ?? "");
+        if (value) matched.add(value);
+      });
+    }
+
+    const payments: UnmatchedStripePayment[] = settled
+      .filter(
+        (charge) =>
+          !matched.has(charge.id) && !(charge.payment_intent && matched.has(charge.payment_intent)),
+      )
+      .map((charge) => ({
+        stripeChargeId: charge.id,
+        stripePaymentIntentId: charge.payment_intent ?? "",
+        amount: charge.amount / 100,
+        amountCents: charge.amount,
+        currency: (charge.currency || "usd").toUpperCase(),
+        paidAtIso: charge.created > 0 ? new Date(charge.created * 1000).toISOString() : "",
+        description: charge.description ?? "",
+        paymentMethodType: charge.payment_method_details?.type ?? "",
+        receiptUrl: charge.receipt_url ?? "",
+      }));
+
+    // Open invoices across the company, so an orphan can be booked where it
+    // belongs without leaving Getting Paid.
+    const { data: projectRows, error: projectsError } = await dynamicTable(admin, "projects")
+      .select("id,name")
+      .eq("organization_id", organizationId)
+      .is("archived_at", null);
+    if (projectsError) throw new Error(projectsError.message);
+    const projects = (projectRows ?? []) as Array<{ id: string; name: string }>;
+    const projectNames = new Map(projects.map((project) => [project.id, project.name]));
+    let openInvoices: ReconcileInvoiceOption[] = [];
+    if (projects.length > 0) {
+      const { data: invoiceRows, error: invoicesError } = await dynamicTable(
+        admin,
+        "billing_invoices",
+      )
+        .select("id,project_id,invoice_number,title,total_due,paid_amount,status")
+        .in(
+          "project_id",
+          projects.map((project) => project.id),
+        );
+      if (invoicesError) throw new Error(invoicesError.message);
+      openInvoices = ((invoiceRows ?? []) as Record<string, unknown>[])
+        .filter(
+          (row) =>
+            String(row.status ?? "") !== "void" &&
+            dollarsToCents(Number(row.total_due ?? 0)) >
+              dollarsToCents(Number(row.paid_amount ?? 0)),
+        )
+        .map((row) => ({
+          id: String(row.id),
+          label: String(row.invoice_number || row.title || "Invoice"),
+          projectName: projectNames.get(String(row.project_id)) ?? "Project",
+          openBalance:
+            (dollarsToCents(Number(row.total_due ?? 0)) -
+              dollarsToCents(Number(row.paid_amount ?? 0))) /
+            100,
+        }))
+        .sort(
+          (a, b) => a.projectName.localeCompare(b.projectName) || a.label.localeCompare(b.label),
+        );
+    }
+
+    return {
+      ready: true as const,
+      reason: "",
+      mode,
+      checkedCount: settled.length,
+      payments,
+      openInvoices,
+    };
+  });
+
+/**
  * Method availability inputs for the invoice create/send/edit form and the
  * billing dashboard nudge. Reads are RLS-scoped: members without profile read
  * access see hasPaymentProfile=false, which only ever hides options, never

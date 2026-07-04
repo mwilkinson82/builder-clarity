@@ -56,12 +56,14 @@ import {
   invoiceTotalDueDollars,
   isOverRecording,
   methodAvailability,
+  pendingPaymentLock,
   percentOfDollars,
   quantizeDollars,
   resolveEnabledMethods,
   sumDollarsToCents,
 } from "@/lib/payments-domain";
 import { fmtUSDCents } from "@/lib/billing-format";
+import { applySovBucketPatch } from "@/lib/sov-rollup";
 import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/schedule";
@@ -131,6 +133,7 @@ import {
   deleteBillingInvoice,
   archiveProject,
   deleteProject,
+  reconcileInvoicePayments,
   recordInvoicePayment,
   type ProjectRow,
   type ReviewRow,
@@ -516,6 +519,7 @@ function ProjectPage() {
   const updateInvoiceFn = useServerFn(updateBillingInvoice);
   const deleteInvoiceFn = useServerFn(deleteBillingInvoice);
   const recordPaymentFn = useServerFn(recordInvoicePayment);
+  const reconcileInvoiceFn = useServerFn(reconcileInvoicePayments);
   const loadBillingWorkspaceFn = useServerFn(getBillingWorkspace);
   const generateBillingLinesFn = useServerFn(generateBillingLineItems);
   const updateBillingLineFn = useServerFn(updateBillingLineItem);
@@ -657,7 +661,38 @@ function ProjectPage() {
       });
     },
   });
-  const bucketUpdate = useServerMutation<Record<string, unknown>>(updateBucketFn as never);
+  // SOV cell commits patch the cached bucket list immediately (group headers,
+  // summary cards, and the footer recompute from it), then the settled
+  // invalidate pulls the server truth including the IOR-facing rollup. The
+  // cancelQueries guard keeps an in-flight refetch from clobbering the
+  // optimistic value mid-edit.
+  const bucketUpdate = useMutation({
+    mutationFn: (input: { id: string; patch: Record<string, unknown> }) =>
+      updateBucketFn({ data: input as never }),
+    onMutate: async ({ id, patch }) => {
+      await qc.cancelQueries({ queryKey: ["project", projectId] });
+      const previous = qc.getQueryData(["project", projectId]);
+      qc.setQueryData(["project", projectId], (current: unknown) => {
+        if (!current || typeof current !== "object") return current;
+        const record = current as { buckets?: BucketRow[] };
+        if (!Array.isArray(record.buckets)) return current;
+        return {
+          ...(current as Record<string, unknown>),
+          buckets: applySovBucketPatch(record.buckets, id, patch as Partial<BucketRow>),
+        };
+      });
+      return { previous };
+    },
+    onError: (err, _input, mutateContext) => {
+      if (mutateContext?.previous) {
+        qc.setQueryData(["project", projectId], mutateContext.previous);
+      }
+      toast.error("SOV line did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+    onSettled: () => invalidate(),
+  });
   const bucketCreate = useServerMutation<Record<string, unknown>>(createBucketFn as never);
   const bucketDelete = useServerMutation<{ id: string }>(deleteBucketFn);
   const reviewSubmit = useServerMutation<Record<string, unknown>>(submitReviewFn as never);
@@ -701,6 +736,23 @@ function ProjectPage() {
   const invoiceUpdate = useServerMutation<Record<string, unknown>>(updateInvoiceFn as never);
   const invoiceDelete = useServerMutation<{ id: string }>(deleteInvoiceFn);
   const paymentRecord = useServerMutation<Record<string, unknown>>(recordPaymentFn as never);
+  const [reconcilingInvoiceId, setReconcilingInvoiceId] = useState<string | null>(null);
+  const invoiceReconcile = useMutation({
+    mutationFn: (invoiceId: string) => reconcileInvoiceFn({ data: { invoiceId } }),
+    onMutate: (invoiceId) => setReconcilingInvoiceId(invoiceId),
+    onSuccess: (result) => {
+      invalidate();
+      toast.success("Invoice reconciled from payments", {
+        description: `Paid amount is now ${fmtUSDCents(result.paidAmount)} across ${result.countedPayments} counted payment${result.countedPayments === 1 ? "" : "s"} · status ${result.status.replace("_", " ")}.`,
+      });
+    },
+    onError: (err) => {
+      toast.error("Reconcile did not run", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+    onSettled: () => setReconcilingInvoiceId(null),
+  });
   const billingWorkspaceQuery = useQuery({
     queryKey: ["billing-workspace", projectId],
     queryFn: () => loadBillingWorkspaceFn({ data: { projectId } }),
@@ -1926,7 +1978,7 @@ function ProjectPage() {
               </div>
               <CostBucketsTable
                 buckets={buckets}
-                onUpdate={(id, patch) => bucketUpdate.mutate({ id, patch })}
+                onUpdate={(id, patch) => bucketUpdate.mutateAsync({ id, patch })}
                 onCreate={(input) => bucketCreate.mutate({ projectId, ...input })}
                 onDelete={(id) => bucketDelete.mutate({ id })}
               />
@@ -1978,6 +2030,8 @@ function ProjectPage() {
                 onUpdateInvoice={handleUpdateInvoice}
                 onDeleteInvoice={handleDeleteInvoice}
                 onRecordPayment={handleRecordPayment}
+                onReconcileInvoice={(invoiceId) => invoiceReconcile.mutate(invoiceId)}
+                reconcilingInvoiceId={reconcilingInvoiceId}
               />
             </TabsContent>
 
@@ -2383,6 +2437,8 @@ function BillingWorkspace({
   onUpdateInvoice,
   onDeleteInvoice,
   onRecordPayment,
+  onReconcileInvoice,
+  reconcilingInvoiceId,
 }: {
   project: ProjectRow;
   rollup: Rollup;
@@ -2441,6 +2497,8 @@ function BillingWorkspace({
   onUpdateInvoice: (id: string, patch: Partial<BillingInvoiceRow>) => void;
   onDeleteInvoice: (id: string) => void;
   onRecordPayment: (input: PaymentDraft) => void;
+  onReconcileInvoice: (invoiceId: string) => void;
+  reconcilingInvoiceId: string | null;
 }) {
   const loadPaymentMethodContext = useServerFn(getPaymentMethodContext);
   const { data: paymentMethodContext } = useQuery({
@@ -3426,6 +3484,8 @@ function BillingWorkspace({
                       onPatch={(patch) => onUpdateInvoice(invoice.id, patch)}
                       onDelete={() => onDeleteInvoice(invoice.id)}
                       onRecordPayment={onRecordPayment}
+                      onReconcile={() => onReconcileInvoice(invoice.id)}
+                      reconciling={reconcilingInvoiceId === invoice.id}
                     />
                   );
                 })
@@ -3974,6 +4034,8 @@ function BillingInvoiceRowEditor({
   onPatch,
   onDelete,
   onRecordPayment,
+  onReconcile,
+  reconciling,
 }: {
   project: ProjectRow;
   invoice: BillingInvoiceRow;
@@ -3986,6 +4048,8 @@ function BillingInvoiceRowEditor({
   onPatch: (patch: Partial<BillingInvoiceRow>) => void;
   onDelete: () => void;
   onRecordPayment: (input: PaymentDraft) => void;
+  onReconcile: () => void;
+  reconciling?: boolean;
 }) {
   const fetchInvoiceRemittance = useServerFn(getInvoiceRemittance);
   const openBalance = centsToDollars(
@@ -4015,25 +4079,39 @@ function BillingInvoiceRowEditor({
     onlinePayAvailability &&
     (onlinePayAvailability.card.available || onlinePayAvailability.ach_debit.available),
   );
+  // Same pending state the client sees: while a Stripe payment is in flight,
+  // this invoice must read as "processing", not as collectible.
+  const pendingLock = pendingPaymentLock({
+    onlinePaymentStatus: invoice.online_payment_status,
+    checkoutSessionId: invoice.stripe_checkout_session_id,
+    paymentLinkSentAtIso: invoice.payment_link_sent_at,
+    openBalanceCents: dollarsToCents(openBalance),
+    nowIso: new Date().toISOString(),
+  });
   const paymentReadiness =
     invoice.status === "void"
       ? { label: "Void invoice", className: "border-hairline bg-surface text-muted-foreground" }
       : openBalance <= 0
         ? { label: "No open balance", className: "border-success/30 bg-success/10 text-success" }
-        : !invoice.client_visible
+        : pendingLock.locked
           ? {
-              label: "Hidden from client",
-              className: "border-hairline bg-surface text-muted-foreground",
+              label: `Payment processing — started ${formatBillingDate(pendingLock.startedAtIso?.slice(0, 10))}`,
+              className: "border-warning/30 bg-warning/10 text-warning",
             }
-          : onlinePayAvailable
+          : !invoice.client_visible
             ? {
-                label: "Client can pay online",
-                className: "border-success/30 bg-success/10 text-success",
+                label: "Hidden from client",
+                className: "border-hairline bg-surface text-muted-foreground",
               }
-            : {
-                label: "Manual/email only",
-                className: "border-warning/30 bg-warning/10 text-warning",
-              };
+            : onlinePayAvailable
+              ? {
+                  label: "Client can pay online",
+                  className: "border-success/30 bg-success/10 text-success",
+                }
+              : {
+                  label: "Manual/email only",
+                  className: "border-warning/30 bg-warning/10 text-warning",
+                };
   const today = new Date().toISOString().slice(0, 10);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
@@ -4459,6 +4537,19 @@ function BillingInvoiceRowEditor({
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          {/* Recompute paid/status from the payment ledger — the honest
+              correction path when an invoice drifted from its payments
+              (e.g. a refund processed before refund reversal shipped). */}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8"
+            disabled={reconciling}
+            onClick={onReconcile}
+          >
+            {reconciling ? "Reconciling..." : "Reconcile payments"}
+          </Button>
           <Button size="icon" variant="ghost" className="h-8 w-8" onClick={onDelete}>
             <Trash2 className="h-3.5 w-3.5" />
           </Button>

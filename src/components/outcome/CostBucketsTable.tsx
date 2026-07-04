@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Table,
   TableBody,
@@ -19,8 +19,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { Check, Plus, Search, Trash2 } from "lucide-react";
 import { fmtUSD } from "@/lib/format";
+import { sovLineForecast, sovTotals } from "@/lib/sov-rollup";
 import type { BucketRow } from "@/lib/projects.functions";
 
 type BucketSource = BucketRow["source_type"];
@@ -58,7 +59,11 @@ export function CostBucketsTable({
   onDelete,
 }: {
   buckets: BucketRow[];
-  onUpdate: (id: string, patch: BucketPatch) => void;
+  /**
+   * Commits one cell edit. Return the save promise so the committed cell can
+   * show its saved-tick only after the write actually landed.
+   */
+  onUpdate: (id: string, patch: BucketPatch) => void | Promise<unknown>;
   onCreate?: (input: NewBucketInput) => void;
   onDelete?: (id: string) => void;
 }) {
@@ -159,17 +164,9 @@ export function CostBucketsTable({
         </TableHeader>
         <TableBody>
           {visibleGroups.flatMap((group) => {
-            const totals = group.buckets.reduce(
-              (sum, b) => {
-                sum.budget += b.original_budget;
-                sum.actual += b.actual_to_date;
-                sum.ftc += b.ftc;
-                return sum;
-              },
-              { budget: 0, actual: 0, ftc: 0 },
-            );
-            const facTotal = totals.actual + totals.ftc;
-            const varianceTotal = totals.budget - facTotal;
+            const totals = sovTotals(group.buckets);
+            const facTotal = totals.fac;
+            const varianceTotal = totals.variance;
             const groupRows = [
               <TableRow key={`division-${group.division.key}`} className="bg-surface/80">
                 <TableCell colSpan={3}>
@@ -205,8 +202,7 @@ export function CostBucketsTable({
             ];
 
             for (const b of group.buckets) {
-              const fac = b.actual_to_date + b.ftc;
-              const variance = b.original_budget - fac;
+              const { fac, variance } = sovLineForecast(b);
               const neg = variance < 0;
               groupRows.push(
                 <TableRow key={b.id}>
@@ -330,26 +326,22 @@ export function CostBucketsTable({
         </TableBody>
         {buckets.length > 0 &&
           (() => {
-            const tBudget = buckets.reduce((s, b) => s + b.original_budget, 0);
-            const tActual = buckets.reduce((s, b) => s + b.actual_to_date, 0);
-            const tFtc = buckets.reduce((s, b) => s + b.ftc, 0);
-            const tFac = tActual + tFtc;
-            const tVar = tBudget - tFac;
-            const neg = tVar < 0;
+            const t = sovTotals(buckets);
+            const neg = t.variance < 0;
             return (
               <TableFooter>
                 <TableRow className="bg-surface font-semibold">
                   <TableCell />
                   <TableCell>Total</TableCell>
                   <TableCell />
-                  <TableCell className="text-right tabular">{fmtUSD(tBudget)}</TableCell>
-                  <TableCell className="text-right tabular">{fmtUSD(tActual)}</TableCell>
-                  <TableCell className="text-right tabular">{fmtUSD(tFtc)}</TableCell>
-                  <TableCell className="text-right tabular">{fmtUSD(tFac)}</TableCell>
+                  <TableCell className="text-right tabular">{fmtUSD(t.budget)}</TableCell>
+                  <TableCell className="text-right tabular">{fmtUSD(t.actual)}</TableCell>
+                  <TableCell className="text-right tabular">{fmtUSD(t.ftc)}</TableCell>
+                  <TableCell className="text-right tabular">{fmtUSD(t.fac)}</TableCell>
                   <TableCell
                     className={`text-right tabular ${neg ? "text-danger" : "text-success"}`}
                   >
-                    {neg ? `−${fmtUSD(Math.abs(tVar)).replace("−", "")}` : fmtUSD(tVar)}
+                    {neg ? `−${fmtUSD(Math.abs(t.variance)).replace("−", "")}` : fmtUSD(t.variance)}
                   </TableCell>
                   <TableCell />
                 </TableRow>
@@ -447,55 +439,155 @@ function divisionForBucket(bucket: BucketRow): DivisionInfo {
   return { key, code: firstTwo ? `Div ${firstTwo}` : "No code", label, sort };
 }
 
-function NumCell({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
+/**
+ * Saved-tick for a committed cell: resolves true only after the save promise
+ * lands, so the ✓ means "written", never "sent". The founder must never
+ * wonder whether a save happened.
+ */
+function useSavedTick() {
+  const [saved, setSaved] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+  const showTick = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setSaved(true);
+    timerRef.current = setTimeout(() => setSaved(false), 1800);
+  };
+  const commit = async (run: () => void | Promise<unknown>) => {
+    try {
+      await run();
+      showTick();
+    } catch {
+      // The mutation owner surfaces the error toast; no tick on failure.
+    }
+  };
+  return { saved, commit };
+}
+
+function SavedTick({ visible }: { visible: boolean }) {
+  if (!visible) return null;
   return (
-    <MoneyInput
-      value={value}
-      onValueChange={(v) => {
-        if (v !== value) onCommit(v);
-      }}
-      align="right"
-      className="ml-auto h-8 w-32"
-    />
+    <span
+      data-testid="sov-saved-tick"
+      className="pointer-events-none absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-success text-success-foreground shadow-sm"
+    >
+      <Check className="h-3 w-3" />
+    </span>
   );
 }
 
-function NameCell({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
-  const [v, setV] = useState(value);
+// Money cell: keystrokes stay local; the save commits ONCE on blur/Enter.
+// The pre-fix behavior committed a mutation per keystroke, and the racing
+// refetches could resolve out of order — group headers kept stale sums and a
+// mid-refetch rerender could eat the next edit. Local state + focus guard
+// means an in-flight edit survives any refetch.
+function NumCell({
+  value,
+  onCommit,
+}: {
+  value: number;
+  onCommit: (v: number) => void | Promise<unknown>;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [focused, setFocused] = useState(false);
+  const { saved, commit } = useSavedTick();
+  useEffect(() => {
+    if (!focused) setDraft(value);
+  }, [value, focused]);
   return (
-    <Textarea
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={() => {
-        const t = v.trim();
-        if (t && t !== value) onCommit(t);
-        else setV(value);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-      }}
-      rows={2}
-      className="min-h-[44px] w-full min-w-[220px] resize-y border-transparent bg-transparent px-1.5 py-1.5 leading-snug focus-visible:border-input focus-visible:bg-background"
-    />
+    <div className="relative ml-auto w-32">
+      <MoneyInput
+        value={draft}
+        onValueChange={setDraft}
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false);
+          if (draft !== value) void commit(() => onCommit(draft));
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        align="right"
+        className="h-8 w-32"
+      />
+      <SavedTick visible={saved} />
+    </div>
   );
 }
 
-function CodeCell({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+function NameCell({
+  value,
+  onCommit,
+}: {
+  value: string;
+  onCommit: (v: string) => void | Promise<unknown>;
+}) {
   const [v, setV] = useState(value);
+  const [focused, setFocused] = useState(false);
+  const { saved, commit } = useSavedTick();
+  useEffect(() => {
+    if (!focused) setV(value);
+  }, [value, focused]);
   return (
-    <Input
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={() => {
-        const t = v.trim();
-        if (t !== value) onCommit(t);
-        else setV(value);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-      }}
-      className="h-8 w-24 border-transparent bg-transparent px-1.5 font-mono text-xs focus-visible:border-input focus-visible:bg-background"
-    />
+    <div className="relative">
+      <Textarea
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false);
+          const t = v.trim();
+          if (t && t !== value) void commit(() => onCommit(t));
+          else setV(value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        rows={2}
+        className="min-h-[44px] w-full min-w-[220px] resize-y border-transparent bg-transparent px-1.5 py-1.5 leading-snug focus-visible:border-input focus-visible:bg-background"
+      />
+      <SavedTick visible={saved} />
+    </div>
+  );
+}
+
+function CodeCell({
+  value,
+  onCommit,
+}: {
+  value: string;
+  onCommit: (v: string) => void | Promise<unknown>;
+}) {
+  const [v, setV] = useState(value);
+  const [focused, setFocused] = useState(false);
+  const { saved, commit } = useSavedTick();
+  useEffect(() => {
+    if (!focused) setV(value);
+  }, [value, focused]);
+  return (
+    <div className="relative w-24">
+      <Input
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false);
+          const t = v.trim();
+          if (t !== value) void commit(() => onCommit(t));
+          else setV(value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        className="h-8 w-24 border-transparent bg-transparent px-1.5 font-mono text-xs focus-visible:border-input focus-visible:bg-background"
+      />
+      <SavedTick visible={saved} />
+    </div>
   );
 }
 
@@ -506,11 +598,12 @@ function SourceCell({
 }: {
   value: BucketSource;
   date: string | null;
-  onChange: (v: BucketSource) => void;
+  onChange: (v: BucketSource) => void | Promise<unknown>;
 }) {
+  const { saved, commit } = useSavedTick();
   return (
-    <div className="space-y-1">
-      <Select value={value} onValueChange={(v) => onChange(v as BucketSource)}>
+    <div className="relative space-y-1">
+      <Select value={value} onValueChange={(v) => void commit(() => onChange(v as BucketSource))}>
         <SelectTrigger className="h-8">
           <SelectValue />
         </SelectTrigger>
@@ -521,6 +614,7 @@ function SourceCell({
         </SelectContent>
       </Select>
       {date && <div className="text-[10px] tabular text-muted-foreground">Added {date}</div>}
+      <SavedTick visible={saved} />
     </div>
   );
 }

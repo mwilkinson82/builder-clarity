@@ -1,8 +1,16 @@
-import { Copy, CreditCard, ExternalLink, Landmark } from "lucide-react";
+import { Copy, CreditCard, ExternalLink, Hourglass, Landmark } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import type { ClientInvoicePaymentOptions } from "@/lib/client-portal.functions";
+import type { PendingPaymentLockState } from "@/lib/payments-domain";
+
+function pendingLockStartedLabel(startedAtIso: string | null) {
+  if (!startedAtIso) return "";
+  const date = new Date(startedAtIso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 
 function RemittanceLine({ label, value }: { label: string; value: string }) {
   if (!value) return null;
@@ -39,6 +47,12 @@ interface HowToPayBlockProps {
   legacyPaymentUrl: string;
   onPayOnline: (method: "card" | "ach_debit") => void;
   payPending: boolean;
+  /**
+   * A Stripe payment for this invoice is in flight (checkout session created
+   * and neither resolved nor expired). Pay buttons are replaced so a second
+   * payment can never be collected against the same invoice.
+   */
+  pendingLock?: PendingPaymentLockState;
 }
 
 /**
@@ -53,15 +67,18 @@ export function HowToPayBlock({
   legacyPaymentUrl,
   onPayOnline,
   payPending,
+  pendingLock,
 }: HowToPayBlockProps) {
   if (openBalance <= 0) return null;
 
+  const locked = Boolean(pendingLock?.locked);
   const remittance = options?.remittance ?? null;
-  const showCard = Boolean(options?.card);
-  const showAch = Boolean(options?.achDebit);
-  const showLegacyLink = !options && Boolean(legacyPaymentUrl);
+  const showCard = Boolean(options?.card) && !locked;
+  const showAch = Boolean(options?.achDebit) && !locked;
+  const showLegacyLink = !options && Boolean(legacyPaymentUrl) && !locked;
 
-  if (!remittance && !showCard && !showAch && !showLegacyLink) return null;
+  if (!remittance && !showCard && !showAch && !showLegacyLink && !locked) return null;
+  const lockStartedLabel = pendingLockStartedLabel(pendingLock?.startedAtIso ?? null);
 
   return (
     <div data-testid="how-to-pay" className="mt-5 rounded-md border border-hairline bg-surface p-4">
@@ -69,7 +86,23 @@ export function HowToPayBlock({
         How to pay
       </div>
 
-      {remittance ? (
+      {locked ? (
+        <div
+          data-testid="payment-processing-lock"
+          className="mt-3 rounded-md border border-warning/30 bg-warning/10 p-4"
+        >
+          <div className="flex items-center gap-2 text-sm font-medium text-warning">
+            <Hourglass className="h-4 w-4" />
+            Payment processing{lockStartedLabel ? ` — started ${lockStartedLabel}` : ""}
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            A payment for this invoice is already on its way (bank debits can take a few business
+            days to settle). To avoid paying twice, online payment reopens if it fails or expires.
+          </p>
+        </div>
+      ) : null}
+
+      {remittance && !locked ? (
         <div className="mt-3 rounded-md border border-hairline bg-card p-4">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Landmark className="h-4 w-4" />

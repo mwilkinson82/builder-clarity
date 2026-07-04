@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -34,7 +34,13 @@ import { downloadPdfBytes, generateDailyReportPacketPdf } from "@/lib/daily-repo
 import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import { fmtUSDCents } from "@/lib/billing-format";
 import { fmtUSD } from "@/lib/format";
-import { centsToDollars, dollarsToCents, sumDollarsToCents } from "@/lib/payments-domain";
+import {
+  centsToDollars,
+  dollarsToCents,
+  pendingPaymentLock,
+  sumDollarsToCents,
+} from "@/lib/payments-domain";
+import { expireInvoiceCheckout } from "@/lib/payments.functions";
 
 const DAILY_REPORT_BUCKET = "daily-reports";
 
@@ -101,6 +107,33 @@ function ClientProjectPage() {
     queryKey: ["client-portal-project", projectId],
     queryFn: () => loadProject({ data: { projectId } }),
   });
+
+  const expireCheckout = useServerFn(expireInvoiceCheckout);
+  // Returning from an abandoned Stripe Checkout: expire the open session so
+  // the pending-payment lock clears now instead of holding the pay buttons
+  // for the session's 24h lifetime. Stripe refuses to expire a completed
+  // session, so a payment that actually went through is never unlocked here.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("payment") !== "cancelled") return;
+    const invoiceId = params.get("invoice");
+    params.delete("payment");
+    params.delete("invoice");
+    const remaining = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${remaining ? `?${remaining}` : ""}`,
+    );
+    if (!invoiceId) return;
+    expireCheckout({ data: { invoiceId } })
+      .catch(() => null)
+      .finally(() => {
+        queryClient.invalidateQueries({ queryKey: ["client-portal-project", projectId] });
+      });
+    // Runs once per portal visit; the params are consumed above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   const decisionMutation = useMutation({
     mutationFn: (input: {
@@ -298,7 +331,7 @@ function ClientProjectPage() {
           invoiceId,
           method,
           successPath: `/client/projects/${project.id}?payment=success`,
-          cancelPath: `/client/projects/${project.id}?payment=cancelled`,
+          cancelPath: `/client/projects/${project.id}?payment=cancelled&invoice=${invoiceId}`,
         }),
       });
       const payload = (await response.json().catch(() => ({}))) as {
@@ -785,6 +818,16 @@ function ClientInvoiceBackupPanel({
   );
   const legacyPaymentUrl =
     invoice.payment_enabled && invoice.payment_url ? invoice.payment_url : "";
+  // A Stripe payment in flight locks every pay affordance for this invoice
+  // (the $708K double-collection class): HowToPayBlock shows the processing
+  // notice instead of buttons until the session resolves or expires.
+  const pendingLock = pendingPaymentLock({
+    onlinePaymentStatus: invoice.online_payment_status,
+    checkoutSessionId: invoice.stripe_checkout_session_id,
+    paymentLinkSentAtIso: invoice.payment_link_sent_at,
+    openBalanceCents: dollarsToCents(open),
+    nowIso: new Date().toISOString(),
+  });
   return (
     <article className="rounded-md border border-hairline bg-background p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -803,7 +846,7 @@ function ClientInvoiceBackupPanel({
           <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
             This invoice has no open balance.
           </div>
-        ) : !hasAnyPayOption && !legacyPaymentUrl ? (
+        ) : !hasAnyPayOption && !legacyPaymentUrl && !pendingLock.locked ? (
           <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
             Payment instructions are on their way. The project team can share bank details or enable
             online payment.
@@ -824,6 +867,7 @@ function ClientInvoiceBackupPanel({
         legacyPaymentUrl={legacyPaymentUrl}
         onPayOnline={(method) => onPayOnline?.(method)}
         payPending={Boolean(payPending)}
+        pendingLock={pendingLock}
       />
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
