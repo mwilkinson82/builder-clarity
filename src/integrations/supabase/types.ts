@@ -38,6 +38,81 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_operations: {
+        Row: {
+          api_cost_cents: number
+          created_at: string
+          created_by: string | null
+          credits_charged: number
+          error: string
+          estimate_id: string | null
+          exemplar_description: string | null
+          id: string
+          input_tokens: number
+          model_used: string
+          operation_type: string
+          organization_id: string
+          output_tokens: number
+          sheet_ids: string[]
+          sheets_completed: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          api_cost_cents?: number
+          created_at?: string
+          created_by?: string | null
+          credits_charged?: number
+          error?: string
+          estimate_id?: string | null
+          exemplar_description?: string | null
+          id?: string
+          input_tokens?: number
+          model_used?: string
+          operation_type?: string
+          organization_id: string
+          output_tokens?: number
+          sheet_ids?: string[]
+          sheets_completed?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          api_cost_cents?: number
+          created_at?: string
+          created_by?: string | null
+          credits_charged?: number
+          error?: string
+          estimate_id?: string | null
+          exemplar_description?: string | null
+          id?: string
+          input_tokens?: number
+          model_used?: string
+          operation_type?: string
+          organization_id?: string
+          output_tokens?: number
+          sheet_ids?: string[]
+          sheets_completed?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_operations_estimate_id_fkey"
+            columns: ["estimate_id"]
+            isOneToOne: false
+            referencedRelation: "estimates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_operations_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       app_super_admins: {
         Row: {
           created_at: string
@@ -168,6 +243,7 @@ export type Database = {
           id: string
           invoice_number: string
           notes: string
+          output_format: string
           paid_to_date: number
           project_id: string
           retainage: number
@@ -190,6 +266,7 @@ export type Database = {
           id?: string
           invoice_number?: string
           notes?: string
+          output_format?: string
           paid_to_date?: number
           project_id: string
           retainage?: number
@@ -212,6 +289,7 @@ export type Database = {
           id?: string
           invoice_number?: string
           notes?: string
+          output_format?: string
           paid_to_date?: number
           project_id?: string
           retainage?: number
@@ -236,13 +314,16 @@ export type Database = {
         Row: {
           billing_application_id: string | null
           client_visible: boolean
+          collections_log: string
           created_at: string
           created_by: string | null
           due_date: string | null
           enabled_payment_methods: Json
+          first_viewed_at: string | null
           id: string
           invoice_number: string
           issue_date: string | null
+          last_viewed_at: string | null
           notes: string
           online_payment_status: string
           paid_amount: number
@@ -253,6 +334,7 @@ export type Database = {
           project_id: string
           retainage: number
           sent_at: string | null
+          sent_recipients: Json
           status: string
           stripe_checkout_session_id: string
           stripe_payment_intent_id: string
@@ -260,17 +342,21 @@ export type Database = {
           title: string
           total_due: number
           updated_at: string
+          view_count: number
         }
         Insert: {
           billing_application_id?: string | null
           client_visible?: boolean
+          collections_log?: string
           created_at?: string
           created_by?: string | null
           due_date?: string | null
           enabled_payment_methods?: Json
+          first_viewed_at?: string | null
           id?: string
           invoice_number?: string
           issue_date?: string | null
+          last_viewed_at?: string | null
           notes?: string
           online_payment_status?: string
           paid_amount?: number
@@ -281,6 +367,7 @@ export type Database = {
           project_id: string
           retainage?: number
           sent_at?: string | null
+          sent_recipients?: Json
           status?: string
           stripe_checkout_session_id?: string
           stripe_payment_intent_id?: string
@@ -288,17 +375,21 @@ export type Database = {
           title?: string
           total_due?: number
           updated_at?: string
+          view_count?: number
         }
         Update: {
           billing_application_id?: string | null
           client_visible?: boolean
+          collections_log?: string
           created_at?: string
           created_by?: string | null
           due_date?: string | null
           enabled_payment_methods?: Json
+          first_viewed_at?: string | null
           id?: string
           invoice_number?: string
           issue_date?: string | null
+          last_viewed_at?: string | null
           notes?: string
           online_payment_status?: string
           paid_amount?: number
@@ -309,6 +400,7 @@ export type Database = {
           project_id?: string
           retainage?: number
           sent_at?: string | null
+          sent_recipients?: Json
           status?: string
           stripe_checkout_session_id?: string
           stripe_payment_intent_id?: string
@@ -316,6 +408,7 @@ export type Database = {
           title?: string
           total_due?: number
           updated_at?: string
+          view_count?: number
         }
         Relationships: [
           {
@@ -972,6 +1065,44 @@ export type Database = {
           },
         ]
       }
+      credit_ledger: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          delta: number
+          id: string
+          organization_id: string
+          reason: string
+          reference: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          delta: number
+          id?: string
+          organization_id: string
+          reason: string
+          reference?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          delta?: number
+          id?: string
+          organization_id?: string
+          reason?: string
+          reference?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credit_ledger_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       daily_reports: {
         Row: {
           attachment_bytes: number
@@ -1526,6 +1657,7 @@ export type Database = {
           color: string
           created_at: string
           created_by: string | null
+          created_by_ai: boolean
           estimate_id: string
           estimate_line_item_id: string | null
           geometry: Json
@@ -1544,6 +1676,7 @@ export type Database = {
           color?: string
           created_at?: string
           created_by?: string | null
+          created_by_ai?: boolean
           estimate_id: string
           estimate_line_item_id?: string | null
           geometry?: Json
@@ -1562,6 +1695,7 @@ export type Database = {
           color?: string
           created_at?: string
           created_by?: string | null
+          created_by_ai?: boolean
           estimate_id?: string
           estimate_line_item_id?: string | null
           geometry?: Json
@@ -1907,6 +2041,7 @@ export type Database = {
           account_number: string
           bank_name: string
           card_fee_pass_through: boolean
+          collections_overdue_days: number
           created_at: string
           created_by: string | null
           default_payment_methods: Json
@@ -1922,6 +2057,7 @@ export type Database = {
           account_number?: string
           bank_name?: string
           card_fee_pass_through?: boolean
+          collections_overdue_days?: number
           created_at?: string
           created_by?: string | null
           default_payment_methods?: Json
@@ -1937,6 +2073,7 @@ export type Database = {
           account_number?: string
           bank_name?: string
           card_fee_pass_through?: boolean
+          collections_overdue_days?: number
           created_at?: string
           created_by?: string | null
           default_payment_methods?: Json
@@ -1990,6 +2127,7 @@ export type Database = {
           stripe_connect_account_id: string
           stripe_connect_status: string
           stripe_customer_id: string
+          stripe_mode: Database["public"]["Enums"]["stripe_mode"]
           stripe_price_id: string
           stripe_subscription_id: string
           subscription_cancel_at_period_end: boolean
@@ -2030,6 +2168,7 @@ export type Database = {
           stripe_connect_account_id?: string
           stripe_connect_status?: string
           stripe_customer_id?: string
+          stripe_mode?: Database["public"]["Enums"]["stripe_mode"]
           stripe_price_id?: string
           stripe_subscription_id?: string
           subscription_cancel_at_period_end?: boolean
@@ -2070,6 +2209,7 @@ export type Database = {
           stripe_connect_account_id?: string
           stripe_connect_status?: string
           stripe_customer_id?: string
+          stripe_mode?: Database["public"]["Enums"]["stripe_mode"]
           stripe_price_id?: string
           stripe_subscription_id?: string
           subscription_cancel_at_period_end?: boolean
@@ -4161,6 +4301,7 @@ export type Database = {
       project_member_role: "owner" | "manager" | "editor" | "viewer"
       project_phase: "Early" | "Middle" | "Late"
       response_path: "eliminate" | "recover" | "offset" | "accept"
+      stripe_mode: "test" | "live"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -4325,6 +4466,7 @@ export const Constants = {
       project_member_role: ["owner", "manager", "editor", "viewer"],
       project_phase: ["Early", "Middle", "Late"],
       response_path: ["eliminate", "recover", "offset", "accept"],
+      stripe_mode: ["test", "live"],
     },
   },
 } as const

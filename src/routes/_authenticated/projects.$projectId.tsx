@@ -2725,6 +2725,11 @@ function BillingWorkspace({
             ach_debit: paymentMethodContext.defaultPaymentMethods.ach_debit,
           }
         : {},
+      sent_recipients: [],
+      first_viewed_at: null,
+      last_viewed_at: null,
+      view_count: 0,
+      collections_log: "",
     };
   };
   const [payAppOpen, setPayAppOpen] = useState(false);

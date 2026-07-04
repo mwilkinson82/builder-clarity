@@ -563,7 +563,7 @@ export const listUnmatchedStripePayments = createServerFn({ method: "POST" })
         if (!isMissingRelation(error)) throw new Error(error.message);
         continue;
       }
-      ((rows ?? []) as Record<string, unknown>[]).forEach((row) => {
+      ((rows ?? []) as unknown as Record<string, unknown>[]).forEach((row) => {
         const value = String(row[column] ?? "");
         if (value) matched.add(value);
       });
