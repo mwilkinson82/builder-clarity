@@ -73,6 +73,17 @@ export const VERIFIED_PROPOSAL_CONFIDENCE = 0.9;
 // localizing on a dense sheet.
 export const VERIFY_WINDOW_PX = 256;
 export const VERIFY_IMAGE_PX = 768;
+// Reference set caps (AITAKEOFF5 Task 1): the picked exemplar plus up to two
+// harvested positives teach what the symbol IS; up to two rejection crops
+// teach what it is NOT. Negatives are never manufactured — none exist until
+// the user rejects something.
+export const REFERENCE_MAX_POSITIVES = 3;
+export const REFERENCE_MAX_NEGATIVES = 2;
+
+/** Vision input cost estimate for one image: ~(w x h) / 750 tokens. */
+export function imageTokenEstimate(widthPx: number, heightPx: number): number {
+  return Math.round((Math.max(0, widthPx) * Math.max(0, heightPx)) / 750);
+}
 // Two detections closer than this (normalized sheet distance) are the same
 // symbol; the higher-confidence one wins. This is the FLOOR — when the
 // exemplar's footprint is known, the radius scales with it (AITAKEOFF5
@@ -246,20 +257,36 @@ export function verifyWindowRect(
 }
 
 /** The stage-B instruction: judge one zoomed crop, hallucinations die here. */
-export function buildVerifyInstruction(input: { label: string }): string {
+export function buildVerifyInstruction(input: {
+  label: string;
+  positiveCount?: number;
+  negativeCount?: number;
+}): string {
   const label = input.label.trim() || "the marked symbol";
+  const positives = Math.max(1, input.positiveCount ?? 1);
+  const negatives = Math.max(0, input.negativeCount ?? 0);
+  const positiveLine =
+    positives === 1
+      ? `Image 1 is an exemplar: at its center is one plan symbol from a construction drawing, marked as "${label}". Surrounding linework is context, not the symbol.`
+      : `Images 1-${positives} are exemplars, each showing the SAME plan symbol marked as "${label}" at its center (the first is the primary). Surrounding linework is context, not the symbol.`;
+  const negativeLine =
+    negatives > 0
+      ? `Image${negatives === 1 ? "" : "s"} ${positives + 1}${negatives === 1 ? "" : `-${positives + negatives}`} show${negatives === 1 ? "s" : ""} similar-looking symbols the estimator REJECTED — they are NOT the target.`
+      : "";
   return [
-    `Image 1 is an exemplar: at its center is one plan symbol from a construction drawing, marked as "${label}". Surrounding linework is context, not the symbol.`,
-    "Image 2 is a small zoomed-in crop of a drawing, taken around one possible occurrence of that symbol.",
-    "Question: does image 2 contain the same symbol type, roughly centered?",
+    positiveLine,
+    ...(negativeLine ? [negativeLine] : []),
+    "The final image is a small zoomed-in crop of a drawing, taken around one possible occurrence of that symbol.",
+    "Question: does the final image contain the same symbol type, roughly centered?",
     "",
     "Respond with ONLY this JSON object — no prose, no code fences:",
     '{"match": true or false, "center": {"x": <0-1000>, "y": <0-1000>}}',
     "",
     "Hard rules:",
     '- "match" is false if the symbol is absent, only partially inside the crop, or a DIFFERENT symbol type. Same shape, same construction only.',
+    '- If it looks like one of the REJECTED reference symbols, "match" is false.',
     "- Plain text labels, dimension marks, hatching, and title-block art are never a match.",
-    '- "center" is the center of the matched symbol, normalized 0-1000 relative to image 2 (0 is its left/top edge, 1000 its right/bottom edge). Decimals are allowed. Never answer in pixels.',
+    '- "center" is the center of the matched symbol, normalized 0-1000 relative to the FINAL image (0 is its left/top edge, 1000 its right/bottom edge). Decimals are allowed. Never answer in pixels.',
     '- Omit "center" when "match" is false.',
   ].join("\n");
 }
@@ -546,11 +573,12 @@ export const TILE_TOKEN_RESIZE_SLACK = 0.85;
 export interface TileTokenCheck {
   inputTokens: number;
   expectedTileTokens: number;
-  exemplarTokens: number;
+  /** Estimated tokens of ALL reference crops (positives + negatives). */
+  referenceTokens: number;
   promptAllowance: number;
   /** Input tokens attributable to the tile alone. */
   tileImpliedTokens: number;
-  /** The tile's perceived size, isolated from exemplar + prompt. */
+  /** The tile's perceived size, isolated from references + prompt. */
   tileImpliedMegapixels: number;
   tileMegapixels: number;
   suspectedResize: boolean;
@@ -560,23 +588,19 @@ export function tileTokenCheck(
   inputTokens: number,
   tileWidthPx: number,
   tileHeightPx: number,
-  exemplarWidthPx = 0,
-  exemplarHeightPx = 0,
+  referenceTokens = 0,
 ): TileTokenCheck {
   const tilePixels = Math.max(0, tileWidthPx) * Math.max(0, tileHeightPx);
   const expectedTileTokens = Math.round(tilePixels / 750);
-  const exemplarTokens = Math.round(
-    (Math.max(0, exemplarWidthPx) * Math.max(0, exemplarHeightPx)) / 750,
-  );
   const tileImpliedTokens = Math.max(
     0,
-    Math.round(inputTokens - exemplarTokens - PROMPT_TOKEN_ALLOWANCE),
+    Math.round(inputTokens - Math.max(0, referenceTokens) - PROMPT_TOKEN_ALLOWANCE),
   );
   const round2 = (value: number) => Math.round(value * 100) / 100;
   return {
     inputTokens,
     expectedTileTokens,
-    exemplarTokens,
+    referenceTokens: Math.max(0, referenceTokens),
     promptAllowance: PROMPT_TOKEN_ALLOWANCE,
     tileImpliedTokens,
     tileImpliedMegapixels: round2((tileImpliedTokens * 750) / 1_000_000),
@@ -690,19 +714,34 @@ export function appendAcceptedPoint(
  * server-side resize can never put the response in a different basis than
  * the tile we sliced (Task 0).
  */
-export function buildScanInstruction(input: { label: string }): string {
+export function buildScanInstruction(input: {
+  label: string;
+  positiveCount?: number;
+  negativeCount?: number;
+}): string {
   const label = input.label.trim() || "the marked symbol";
+  const positives = Math.max(1, input.positiveCount ?? 1);
+  const negatives = Math.max(0, input.negativeCount ?? 0);
+  const positiveLine =
+    positives === 1
+      ? `The first image is a cropped region of a construction drawing. At its center is one plan symbol the estimator marked as "${label}". Surrounding linework is context, not the symbol.`
+      : `Images 1-${positives} are cropped regions of a construction drawing, each showing the SAME plan symbol the estimator marked as "${label}" at its center (the first is the primary exemplar). Surrounding linework is context, not the symbol.`;
+  const negativeLine =
+    negatives > 0
+      ? `Image${negatives === 1 ? "" : "s"} ${positives + 1}${negatives === 1 ? "" : `-${positives + negatives}`} show${negatives === 1 ? "s" : ""} similar-looking symbols the estimator REJECTED — they are NOT the target. Never list a location that looks like these.`
+      : "";
   return [
-    `The first image is a cropped region of a construction drawing. At its center is one plan symbol the estimator marked as "${label}". Surrounding linework is context, not the symbol.`,
-    "The second image is a region of the same drawing set.",
-    "Task: list EVERY location in the second image that might be the same symbol type. This is a coarse first pass — each location you list is verified afterward on a zoomed-in crop, so err toward including uncertain ones.",
+    positiveLine,
+    ...(negativeLine ? [negativeLine] : []),
+    "The final image is a region of the same drawing set.",
+    "Task: list EVERY location in the final image that might be the same symbol type. This is a coarse first pass — each location you list is verified afterward on a zoomed-in crop, so err toward including uncertain ones.",
     "",
     "Respond with ONLY this JSON object — no prose, no code fences:",
     '{"exemplar_description": "<one line describing the symbol at the center of the first image>", "candidates": [{"x": <center x>, "y": <center y>}]}',
     "",
     "Hard rules:",
     "- Write exemplar_description FIRST, from the first image alone, before listing candidates.",
-    "- Each candidate is the CENTER of one possible occurrence, normalized 0-1000 relative to the second image: 0 is its left/top edge, 1000 is its right/bottom edge. Decimals are allowed. Never answer in pixels.",
+    "- Each candidate is the CENTER of one possible occurrence, normalized 0-1000 relative to the FINAL image: 0 is its left/top edge, 1000 is its right/bottom edge. Decimals are allowed. Never answer in pixels.",
     "- Err toward including uncertain candidates — a later step rejects them safely. Plain text labels, dimension marks, and title-block art are still never candidates.",
     '- An empty "candidates" list is a correct and expected answer when nothing resembles the symbol.',
   ].join("\n");

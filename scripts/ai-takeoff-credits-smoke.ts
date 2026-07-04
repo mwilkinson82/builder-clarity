@@ -43,6 +43,7 @@ import {
   DETECTION_TILE_OVERLAP_PX,
   DETECTION_TILE_PX,
   excludeNearExistingPoints,
+  imageTokenEstimate,
   measureInkFootprintPx,
   overlapForFootprintPx,
   INK_LUMINANCE_THRESHOLD,
@@ -549,6 +550,26 @@ assert.equal(firstAccept.points.length, 1, "conversion never mutates its input")
 // --- Stage-A scan instruction (recall-biased, AITAKEOFF3 Task 1) ---
 
 const instruction = buildScanInstruction({ label: "Brush wheel" });
+const referencedInstruction = buildScanInstruction({
+  label: "Brush wheel",
+  positiveCount: 3,
+  negativeCount: 2,
+});
+assert.match(
+  referencedInstruction,
+  /Images 1-3 .*SAME plan symbol/,
+  "multiple positives are framed as the same symbol",
+);
+assert.match(
+  referencedInstruction,
+  /Images 4-5 .*REJECTED .*NOT the target/,
+  "negatives are framed as rejected look-alikes",
+);
+assert.match(referencedInstruction, /final image/i, "candidates are located on the FINAL image");
+assert.ok(
+  !/Images \d/.test(buildScanInstruction({ label: "Brush wheel" })),
+  "a single positive keeps the simple one-exemplar framing",
+);
 assert.match(instruction, /Brush wheel/, "instruction names the exemplar label");
 assert.match(instruction, /exemplar_description/, "instruction demands the echo line");
 assert.match(instruction, /FIRST/, "the echo comes before any matching");
@@ -610,6 +631,17 @@ assert.deepEqual(
 );
 
 const verifyInstruction = buildVerifyInstruction({ label: "Brush wheel" });
+const referencedVerify = buildVerifyInstruction({
+  label: "Brush wheel",
+  positiveCount: 2,
+  negativeCount: 1,
+});
+assert.match(
+  referencedVerify,
+  /Images 1-2 are exemplars/,
+  "verify framing covers multiple positives",
+);
+assert.match(referencedVerify, /Image 3 shows .*REJECTED/, "verify framing covers negatives");
 assert.match(verifyInstruction, /Brush wheel/, "verify instruction names the exemplar label");
 assert.match(verifyInstruction, /"match"/, "verdict is a boolean match");
 assert.match(
@@ -745,23 +777,24 @@ assert.equal(
 
 // --- Token-implied resize check (AITAKEOFF3 Task 3) ---
 
-const oldWorldTokens = tileTokenCheck(2377, 1400, 1400, 640, 640);
+const oldWorldTokens = tileTokenCheck(2377, 1400, 1400, imageTokenEstimate(640, 640));
 assert.equal(
   oldWorldTokens.expectedTileTokens,
   2613,
   "a full 1400px tile alone costs ~2613 input tokens",
 );
-assert.equal(oldWorldTokens.exemplarTokens, 546, "a 640px exemplar costs ~546 tokens");
+assert.equal(imageTokenEstimate(640, 640), 546, "a 640px crop costs ~546 tokens");
+assert.equal(oldWorldTokens.referenceTokens, 546, "reference tokens recorded on the check");
 assert.equal(
   oldWorldTokens.tileImpliedTokens,
   2377 - 546 - 350,
-  "the tile's own share subtracts the exemplar and the prompt allowance",
+  "the tile's own share subtracts the references and the prompt allowance",
 );
 assert.ok(
   oldWorldTokens.suspectedResize,
   "RESIZE CHECK: the real A-100 numbers (2377 tokens on a 1400px tile) flag at a glance",
 );
-const newWorldTokens = tileTokenCheck(2244, 1024, 1024, 640, 640);
+const newWorldTokens = tileTokenCheck(2244, 1024, 1024, imageTokenEstimate(640, 640));
 assert.ok(
   !newWorldTokens.suspectedResize,
   "a healthy 1024px tile with exemplar + prompt subtracted reads ok",
@@ -773,9 +806,19 @@ assert.equal(
 );
 assert.equal(newWorldTokens.tileMegapixels, 1.05, "tile megapixels recorded for the glance check");
 assert.equal(
-  tileTokenCheck(0, 1024, 1024, 640, 640).suspectedResize,
+  tileTokenCheck(0, 1024, 1024, 546).suspectedResize,
   false,
   "zero reported tokens never flags",
+);
+// The full AITAKEOFF5 reference stack stays inside the ~4.5k input budget:
+// tile + 3 positives (640px) + 2 negatives (256px) + prompt allowance.
+assert.ok(
+  imageTokenEstimate(1024, 1024) +
+    3 * imageTokenEstimate(640, 640) +
+    2 * imageTokenEstimate(256, 256) +
+    350 <
+    4500,
+  "a maxed-out reference set keeps a tile call under ~4.5k input tokens",
 );
 assert.equal(
   tileTokenCheck(2027 + 350, 1400, 1400).suspectedResize,

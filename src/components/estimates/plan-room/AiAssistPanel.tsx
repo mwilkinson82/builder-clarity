@@ -376,6 +376,16 @@ export function AiAssistPanel({ ai }: { ai: AiAssistController }) {
                   Looking for:{" "}
                   {ai.scanProgress.exemplarDescription || "confirming the exemplar with the model…"}
                 </p>
+                {ai.scanProgress.references &&
+                  (ai.scanProgress.references.extraPositives > 0 ||
+                    ai.scanProgress.references.negatives > 0) && (
+                    <p className="text-xs text-muted-foreground" data-testid="ai-reference-summary">
+                      Using {ai.scanProgress.references.extraPositives} accepted match
+                      {ai.scanProgress.references.extraPositives === 1 ? "" : "es"} and{" "}
+                      {ai.scanProgress.references.negatives} rejection
+                      {ai.scanProgress.references.negatives === 1 ? "" : "s"} as references.
+                    </p>
+                  )}
                 {ai.scanProgress.verifying && ai.scanProgress.verifying.total > 0 && (
                   <p className="text-xs text-muted-foreground" data-testid="ai-verify-progress">
                     Double-checking possible match{" "}

@@ -189,6 +189,7 @@ export interface DetectionVerifyWindowImage {
 export function renderVerifyWindow(
   raster: DetectionSheetRaster,
   candidate: SheetPoint,
+  options: { upscale?: boolean } = {},
 ): DetectionVerifyWindowImage {
   const rect = verifyWindowRect(
     { x: candidate.x * raster.widthPx, y: candidate.y * raster.heightPx },
@@ -196,7 +197,9 @@ export function renderVerifyWindow(
     raster.heightPx,
   );
   const canvas = document.createElement("canvas");
-  const scale = VERIFY_IMAGE_PX / Math.max(rect.width, rect.height);
+  // Negative reference crops skip the 3x upscale (AITAKEOFF5 Task 1): they
+  // only show what the wrong symbol looks like, at ~a tenth of the tokens.
+  const scale = (options.upscale ?? true) ? VERIFY_IMAGE_PX / Math.max(rect.width, rect.height) : 1;
   canvas.width = Math.max(1, Math.round(rect.width * scale));
   canvas.height = Math.max(1, Math.round(rect.height * scale));
   const context = canvas.getContext("2d");
