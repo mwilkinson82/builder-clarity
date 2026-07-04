@@ -13,6 +13,8 @@ import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   DETECTION_LONG_EDGE_PX,
   planDetectionTiles,
+  VERIFY_IMAGE_PX,
+  verifyWindowRect,
   type DetectionTileRect,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
 import type { SheetPoint } from "@/lib/ai-takeoff/ai-takeoff-domain";
@@ -143,6 +145,66 @@ export function sliceDetectionTiles(raster: DetectionSheetRaster): DetectionTile
       mediaType: "image/png" as const,
     };
   });
+}
+
+export interface DetectionVerifyWindowImage {
+  /** The window on the detection raster, in raster pixels. */
+  rect: { left: number; top: number; width: number; height: number };
+  /** The window's sheet-space origin + per-pixel scale (tile semantics). */
+  frame: DetectionTileFrame;
+  base64: string;
+  mediaType: "image/png";
+  /** Size of the upscaled image actually sent to the model. */
+  widthPx: number;
+  heightPx: number;
+}
+
+/**
+ * Crop the stage-B verification window around one stage-A candidate from the
+ * already-rendered detection raster and upscale it (AITAKEOFF3 Task 2): the
+ * model judges a zoomed symbol instead of localizing on a dense sheet. The
+ * window's frame reuses the tile transform semantics — the normalized
+ * verdict center maps back through the same tested path with a smaller
+ * denominator, so the absolute error shrinks proportionally.
+ */
+export function renderVerifyWindow(
+  raster: DetectionSheetRaster,
+  candidate: SheetPoint,
+): DetectionVerifyWindowImage {
+  const rect = verifyWindowRect(
+    { x: candidate.x * raster.widthPx, y: candidate.y * raster.heightPx },
+    raster.widthPx,
+    raster.heightPx,
+  );
+  const canvas = document.createElement("canvas");
+  const scale = VERIFY_IMAGE_PX / Math.max(rect.width, rect.height);
+  canvas.width = Math.max(1, Math.round(rect.width * scale));
+  canvas.height = Math.max(1, Math.round(rect.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("This browser could not prepare the sheet for scanning.");
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(
+    raster.canvas,
+    rect.left,
+    rect.top,
+    rect.width,
+    rect.height,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+  return {
+    rect,
+    frame: tileFrameFor(rect, raster.widthPx, raster.heightPx),
+    base64: canvasToBase64Png(canvas),
+    mediaType: "image/png",
+    widthPx: canvas.width,
+    heightPx: canvas.height,
+  };
 }
 
 /**

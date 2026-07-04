@@ -376,9 +376,16 @@ export function AiAssistPanel({ ai }: { ai: AiAssistController }) {
                   Looking for:{" "}
                   {ai.scanProgress.exemplarDescription || "confirming the exemplar with the model…"}
                 </p>
+                {ai.scanProgress.verifying && ai.scanProgress.verifying.total > 0 && (
+                  <p className="text-xs text-muted-foreground" data-testid="ai-verify-progress">
+                    Double-checking possible match{" "}
+                    {Math.min(ai.scanProgress.verifying.done + 1, ai.scanProgress.verifying.total)}{" "}
+                    of {ai.scanProgress.verifying.total} up close…
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground">
-                  {ai.scanProgress.found} match{ai.scanProgress.found === 1 ? "" : "es"} found so
-                  far.
+                  {ai.scanProgress.found} match{ai.scanProgress.found === 1 ? "" : "es"} confirmed
+                  so far.
                 </p>
                 <Button
                   type="button"

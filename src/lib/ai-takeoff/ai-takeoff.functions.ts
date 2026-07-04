@@ -17,14 +17,17 @@ import {
   refundEntryForFailedScan,
 } from "@/lib/credits/credits-domain";
 import {
-  applyConfidenceFloor,
   buildScanInstruction,
+  buildVerifyInstruction,
+  COARSE_CANDIDATE_CONFIDENCE,
   dedupeCandidates,
   DEFAULT_MAX_PROPOSALS_PER_SHEET,
   DEFAULT_MIN_PROPOSAL_CONFIDENCE,
   excludeNearExistingPoints,
-  matchCenters,
   parseScanResponse,
+  parseVerifyResponse,
+  tileTokenCheck,
+  VERIFIED_PROPOSAL_CONFIDENCE,
   type AiCountCandidate,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
 import { tileLocalToSheetPoint, type DetectionTileFrame } from "@/lib/ai-takeoff/coord-transforms";
@@ -336,16 +339,14 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
       rawResponseText = result.text;
       const parsed = parseScanResponse(result.text, data.tile.width, data.tile.height);
       exemplarDescription = parsed.exemplarDescription;
-      // One mapping path: bbox → center (tile pixels) → sheet space through
-      // the tile's frame. The confidence floor runs before dedupe so a weak
-      // duplicate can never displace a strong sibling.
+      // One mapping path: candidate center (tile pixels) → sheet space
+      // through the tile's frame. Recall-biased stage A (AITAKEOFF3 Task 1):
+      // no confidence floor here — stage B is the filter now, so every
+      // candidate carries the coarse placeholder confidence until verified.
       const frame = data.tile.frame as DetectionTileFrame;
-      const mapped = applyConfidenceFloor(
-        matchCenters(parsed.matches),
-        minProposalConfidence(),
-      ).map((center) => ({
+      const mapped = parsed.candidates.map((center) => ({
         ...tileLocalToSheetPoint(frame, center.x, center.y),
-        confidence: center.confidence,
+        confidence: COARSE_CANDIDATE_CONFIDENCE,
       }));
       candidates = excludeNearExistingPoints(dedupeCandidates(mapped), data.existing_points);
     } catch (error) {
@@ -404,6 +405,9 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
           rawResponse: rawResponseText.slice(0, 20000),
           mappedCandidates: candidates,
           usage,
+          // Token-implied perceived megapixels (AITAKEOFF3 Task 3): a future
+          // silent resize shows up here as suspectedResize at a glance.
+          tokenCheck: tileTokenCheck(usage.inputTokens, data.tile.width, data.tile.height),
           createdAt: new Date().toISOString(),
         }),
       ),
@@ -431,6 +435,158 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
       exemplarDescription,
       usage,
       sheetsCompleted,
+    };
+  });
+
+const verifyCandidateInput = z.object({
+  operation_id: z.string().uuid(),
+  sheet_id: z.string().uuid(),
+  // Position of this candidate in the sheet's verification batch — names the
+  // diagnostic artifacts (verify-{sheetId}-{n}.png/.json).
+  candidate_index: z.number().int().min(0).max(1000),
+  // The stage-A candidate in normalized sheet space: the fallback point when
+  // the verdict confirms a match without a usable center, and the diagnostic
+  // record of what stage B was asked about.
+  candidate: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }),
+  exemplar: z.object({
+    label: z.string().max(240).default(""),
+    media_type: z.enum(["image/png", "image/webp", "image/jpeg"]),
+    base64: z.string().min(1).max(2_500_000),
+  }),
+  // The verification window: a small crop of the detection raster around the
+  // candidate, upscaled client-side. The frame carries the WINDOW's
+  // sheet-space origin/scale — the normalized verdict center maps through it
+  // exactly like a tile response, just with a smaller denominator.
+  window: z.object({
+    left: z.number().int().min(0).max(20000),
+    top: z.number().int().min(0).max(20000),
+    width: z.number().int().min(1).max(2000),
+    height: z.number().int().min(1).max(2000),
+    frame: z.object({
+      originSheetX: z.number().min(0).max(1),
+      originSheetY: z.number().min(0).max(1),
+      sheetPerPxX: z.number().gt(0).max(1),
+      sheetPerPxY: z.number().gt(0).max(1),
+    }),
+    media_type: z.enum(["image/png", "image/webp", "image/jpeg"]),
+    base64: z.string().min(1).max(4_000_000),
+  }),
+});
+
+/**
+ * Stage B (AITAKEOFF3 Task 2): verify ONE stage-A candidate on a zoomed
+ * crop. Accept only a literal `match: true`; the final sheet point
+ * re-derives from the stage-B center through the window's frame. The verdict
+ * is the real confidence — verified proposals carry the stage-derived
+ * baseline, never the model's self-reported numbers.
+ */
+export const verifyAiCountCandidate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof verifyCandidateInput>) =>
+    verifyCandidateInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const operation = await loadOwnedPendingOperation(
+      supabaseAdmin,
+      data.operation_id,
+      context.userId,
+    );
+    if (!operation.sheet_ids.includes(data.sheet_id)) {
+      throw new Error("That sheet is not part of this AI scan.");
+    }
+
+    const { callAnthropicVision } = await import("@/lib/ai-takeoff/anthropic.server");
+
+    let match = false;
+    let point: { x: number; y: number } | null = null;
+    let centerRefined = false;
+    let usage = { inputTokens: 0, outputTokens: 0 };
+    let rawResponseText = "";
+    try {
+      const result = await callAnthropicVision({
+        model: operation.model_used,
+        instruction: buildVerifyInstruction({ label: data.exemplar.label }),
+        images: [
+          { mediaType: data.exemplar.media_type, base64: data.exemplar.base64 },
+          { mediaType: data.window.media_type, base64: data.window.base64 },
+        ],
+        maxTokens: 300,
+      });
+      usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens };
+      rawResponseText = result.text;
+      const verdict = parseVerifyResponse(result.text, data.window.width, data.window.height);
+      // The stage-derived confidence is what the floor gates on now.
+      match = verdict.match && VERIFIED_PROPOSAL_CONFIDENCE >= minProposalConfidence();
+      if (match) {
+        centerRefined = verdict.center !== null;
+        point = verdict.center
+          ? tileLocalToSheetPoint(
+              data.window.frame as DetectionTileFrame,
+              verdict.center.x,
+              verdict.center.y,
+            )
+          : { x: data.candidate.x, y: data.candidate.y };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The AI model call failed.";
+      await markOperationFailed(supabaseAdmin, operation, message);
+      throw new Error(`${message} Unused credits were refunded — the scan can be started again.`);
+    }
+
+    // Per-candidate stage-B artifacts (AITAKEOFF3 Task 3): the crop actually
+    // judged, the raw verdict, and the final mapped point. Best-effort only.
+    const folder = diagnosticsFolder(operation.organization_id, operation.id);
+    const artifactName = `verify-${data.sheet_id}-${data.candidate_index}`;
+    await uploadDiagnostic(
+      supabaseAdmin,
+      `${folder}/${artifactName}.png`,
+      base64ToBytes(data.window.base64),
+      data.window.media_type,
+    );
+    await uploadDiagnostic(
+      supabaseAdmin,
+      `${folder}/${artifactName}.json`,
+      new TextEncoder().encode(
+        JSON.stringify({
+          sheetId: data.sheet_id,
+          candidateIndex: data.candidate_index,
+          candidate: data.candidate,
+          window: {
+            left: data.window.left,
+            top: data.window.top,
+            width: data.window.width,
+            height: data.window.height,
+          },
+          frame: data.window.frame,
+          match,
+          centerRefined,
+          mappedPoint: point,
+          rawResponse: rawResponseText.slice(0, 4000),
+          usage,
+          createdAt: new Date().toISOString(),
+        }),
+      ),
+      "application/json",
+    );
+
+    const inputTokens = operation.input_tokens + usage.inputTokens;
+    const outputTokens = operation.output_tokens + usage.outputTokens;
+    const { error: updateError } = await dynamicTable(supabaseAdmin, "ai_operations")
+      .update({
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        api_cost_cents: computeApiCostCents(operation.model_used, inputTokens, outputTokens),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", operation.id);
+    if (updateError) throw new Error(updateError.message);
+
+    return {
+      match,
+      point,
+      confidence: VERIFIED_PROPOSAL_CONFIDENCE,
+      usage,
     };
   });
 
