@@ -33,6 +33,7 @@ import { Route as LovableEmailAuthPreviewRouteImport } from './routes/lovable/em
 import { Route as ApiStripeConnectAccountLinkRouteImport } from './routes/api/stripe/connect/account-link'
 import { Route as ApiStripeCheckoutSubscriptionRouteImport } from './routes/api/stripe/checkout/subscription'
 import { Route as ApiStripeCheckoutInvoiceRouteImport } from './routes/api/stripe/checkout/invoice'
+import { Route as ApiStripeCheckoutCreditsRouteImport } from './routes/api/stripe/checkout/credits'
 import { Route as ApiCompanyAssetsLogoRouteImport } from './routes/api/company/assets/logo'
 import { Route as AuthenticatedProjectsProjectIdScheduleRouteImport } from './routes/_authenticated/projects.$projectId.schedule'
 import { Route as AuthenticatedEstimatesEstimateIdPlanRoomRouteImport } from './routes/_authenticated/estimates.$estimateId.plan-room'
@@ -167,6 +168,12 @@ const ApiStripeCheckoutInvoiceRoute =
     path: '/api/stripe/checkout/invoice',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiStripeCheckoutCreditsRoute =
+  ApiStripeCheckoutCreditsRouteImport.update({
+    id: '/api/stripe/checkout/credits',
+    path: '/api/stripe/checkout/credits',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiCompanyAssetsLogoRoute = ApiCompanyAssetsLogoRouteImport.update({
   id: '/api/company/assets/logo',
   path: '/api/company/assets/logo',
@@ -211,6 +218,7 @@ export interface FileRoutesByFullPath {
   '/estimates/$estimateId/plan-room': typeof AuthenticatedEstimatesEstimateIdPlanRoomRoute
   '/projects/$projectId/schedule': typeof AuthenticatedProjectsProjectIdScheduleRoute
   '/api/company/assets/logo': typeof ApiCompanyAssetsLogoRoute
+  '/api/stripe/checkout/credits': typeof ApiStripeCheckoutCreditsRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
@@ -240,6 +248,7 @@ export interface FileRoutesByTo {
   '/estimates/$estimateId/plan-room': typeof AuthenticatedEstimatesEstimateIdPlanRoomRoute
   '/projects/$projectId/schedule': typeof AuthenticatedProjectsProjectIdScheduleRoute
   '/api/company/assets/logo': typeof ApiCompanyAssetsLogoRoute
+  '/api/stripe/checkout/credits': typeof ApiStripeCheckoutCreditsRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
@@ -271,6 +280,7 @@ export interface FileRoutesById {
   '/_authenticated/estimates/$estimateId/plan-room': typeof AuthenticatedEstimatesEstimateIdPlanRoomRoute
   '/_authenticated/projects/$projectId/schedule': typeof AuthenticatedProjectsProjectIdScheduleRoute
   '/api/company/assets/logo': typeof ApiCompanyAssetsLogoRoute
+  '/api/stripe/checkout/credits': typeof ApiStripeCheckoutCreditsRoute
   '/api/stripe/checkout/invoice': typeof ApiStripeCheckoutInvoiceRoute
   '/api/stripe/checkout/subscription': typeof ApiStripeCheckoutSubscriptionRoute
   '/api/stripe/connect/account-link': typeof ApiStripeConnectAccountLinkRoute
@@ -302,6 +312,7 @@ export interface FileRouteTypes {
     | '/estimates/$estimateId/plan-room'
     | '/projects/$projectId/schedule'
     | '/api/company/assets/logo'
+    | '/api/stripe/checkout/credits'
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
@@ -331,6 +342,7 @@ export interface FileRouteTypes {
     | '/estimates/$estimateId/plan-room'
     | '/projects/$projectId/schedule'
     | '/api/company/assets/logo'
+    | '/api/stripe/checkout/credits'
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
@@ -361,6 +373,7 @@ export interface FileRouteTypes {
     | '/_authenticated/estimates/$estimateId/plan-room'
     | '/_authenticated/projects/$projectId/schedule'
     | '/api/company/assets/logo'
+    | '/api/stripe/checkout/credits'
     | '/api/stripe/checkout/invoice'
     | '/api/stripe/checkout/subscription'
     | '/api/stripe/connect/account-link'
@@ -379,6 +392,7 @@ export interface RootRouteChildren {
   ApiStripeWebhookRoute: typeof ApiStripeWebhookRoute
   LovableEmailSuppressionRoute: typeof LovableEmailSuppressionRoute
   ApiCompanyAssetsLogoRoute: typeof ApiCompanyAssetsLogoRoute
+  ApiStripeCheckoutCreditsRoute: typeof ApiStripeCheckoutCreditsRoute
   ApiStripeCheckoutInvoiceRoute: typeof ApiStripeCheckoutInvoiceRoute
   ApiStripeCheckoutSubscriptionRoute: typeof ApiStripeCheckoutSubscriptionRoute
   ApiStripeConnectAccountLinkRoute: typeof ApiStripeConnectAccountLinkRoute
@@ -559,6 +573,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiStripeCheckoutInvoiceRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/stripe/checkout/credits': {
+      id: '/api/stripe/checkout/credits'
+      path: '/api/stripe/checkout/credits'
+      fullPath: '/api/stripe/checkout/credits'
+      preLoaderRoute: typeof ApiStripeCheckoutCreditsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/company/assets/logo': {
       id: '/api/company/assets/logo'
       path: '/api/company/assets/logo'
@@ -682,6 +703,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiStripeWebhookRoute: ApiStripeWebhookRoute,
   LovableEmailSuppressionRoute: LovableEmailSuppressionRoute,
   ApiCompanyAssetsLogoRoute: ApiCompanyAssetsLogoRoute,
+  ApiStripeCheckoutCreditsRoute: ApiStripeCheckoutCreditsRoute,
   ApiStripeCheckoutInvoiceRoute: ApiStripeCheckoutInvoiceRoute,
   ApiStripeCheckoutSubscriptionRoute: ApiStripeCheckoutSubscriptionRoute,
   ApiStripeConnectAccountLinkRoute: ApiStripeConnectAccountLinkRoute,

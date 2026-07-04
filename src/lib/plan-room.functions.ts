@@ -127,6 +127,9 @@ export interface TakeoffMeasurementRow {
   color: string;
   geometry: Json;
   notes: string;
+  // AI provenance (AITAKEOFF1): true when this marker came from accepted AI
+  // count proposals. The human approved every point; the model only suggested.
+  created_by_ai: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -204,6 +207,7 @@ const normalizeTakeoffMeasurement = (row: Record<string, unknown>): TakeoffMeasu
   color: str(row.color, "#1b7a6e"),
   geometry: (row.geometry ?? {}) as Json,
   notes: str(row.notes),
+  created_by_ai: Boolean(row.created_by_ai),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
 });
@@ -576,6 +580,7 @@ const measurementInput = z.object({
   color: z.string().max(40).optional().default("#1b7a6e"),
   geometry: z.unknown().optional().default({}),
   notes: z.string().max(2000).optional().default(""),
+  created_by_ai: z.boolean().optional().default(false),
 });
 
 const updateMeasurementInput = z.object({
@@ -872,27 +877,35 @@ export const createTakeoffMeasurement = createServerFn({ method: "POST" })
   .inputValidator((input: z.input<typeof measurementInput>) => measurementInput.parse(input))
   .handler(async ({ data, context }) => {
     await loadEstimate(context, data.estimate_id);
-    const { data: row, error } = await dynamicTable(
-      context.supabase,
-      "estimate_takeoff_measurements",
-    )
-      .insert({
-        estimate_id: data.estimate_id,
-        plan_sheet_id: data.plan_sheet_id,
-        estimate_line_item_id: data.estimate_line_item_id ?? null,
-        library_item_id: data.library_item_id ?? null,
-        created_by: context.userId,
-        tool_type: data.tool_type,
-        label: clean(data.label, 240),
-        unit: clean(data.unit.toUpperCase(), 16),
-        quantity: data.quantity,
-        waste_pct: data.waste_pct,
-        color: clean(data.color, 40) || "#1b7a6e",
-        geometry: data.geometry as Json,
-        notes: clean(data.notes, 2000),
-      })
+    const insertPayload: Record<string, unknown> = {
+      estimate_id: data.estimate_id,
+      plan_sheet_id: data.plan_sheet_id,
+      estimate_line_item_id: data.estimate_line_item_id ?? null,
+      library_item_id: data.library_item_id ?? null,
+      created_by: context.userId,
+      tool_type: data.tool_type,
+      label: clean(data.label, 240),
+      unit: clean(data.unit.toUpperCase(), 16),
+      quantity: data.quantity,
+      waste_pct: data.waste_pct,
+      color: clean(data.color, 40) || "#1b7a6e",
+      geometry: data.geometry as Json,
+      notes: clean(data.notes, 2000),
+      created_by_ai: data.created_by_ai,
+    };
+    let { data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+      .insert(insertPayload)
       .select("*")
       .single();
+    // Pre-migration fallback: before the created_by_ai column lands, human
+    // takeoffs keep saving exactly as they always have.
+    if (error && isMissingCreatedByAiColumn(error)) {
+      delete insertPayload.created_by_ai;
+      ({ data: row, error } = await dynamicTable(context.supabase, "estimate_takeoff_measurements")
+        .insert(insertPayload)
+        .select("*")
+        .single());
+    }
     if (error || !row) throw new Error(error?.message ?? "Takeoff did not save.");
 
     if (data.estimate_line_item_id) {
@@ -967,6 +980,15 @@ export const deleteTakeoffMeasurement = createServerFn({ method: "POST" })
     if (lineId) await syncTakeoffQuantityToLine(context, estimateId, lineId);
     return { ok: true };
   });
+
+function isMissingCreatedByAiColumn(error: DynamicSupabaseError | null | undefined) {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" || error.code === "42703") &&
+    /created_by_ai/i.test(message),
+  );
+}
 
 function isMissingQuantityProvenanceColumn(error: DynamicSupabaseError | null | undefined) {
   const message = error?.message ?? "";

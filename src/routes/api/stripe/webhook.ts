@@ -150,6 +150,14 @@ async function handleCheckoutCompleted(object: StripeObject) {
     }
     return;
   }
+  if (metadata.kind === "credit_pack") {
+    // AI credit pack (AITAKEOFF1): card-only checkout, so completion books
+    // immediately; the async branch below is a safety net.
+    if (checkoutSessionOutcome(str(object.payment_status)) === "book") {
+      await grantCreditPackPurchase(object);
+    }
+    return;
+  }
   if (metadata.kind === "subscription") {
     await markSubscriptionCheckoutComplete(object);
   }
@@ -157,8 +165,71 @@ async function handleCheckoutCompleted(object: StripeObject) {
 
 async function handleCheckoutAsyncSucceeded(object: StripeObject) {
   const metadata = sessionMetadata(object);
+  if (metadata.kind === "credit_pack") {
+    await grantCreditPackPurchase(object);
+    return;
+  }
   if (metadata.kind !== "client_invoice") return;
   await markInvoicePaid(object);
+}
+
+function isMissingCreditLedger(error: DynamicQueryError | null) {
+  const message = (error?.message ?? "").toLowerCase();
+  return isMissingRelationError(error) && message.includes("credit_ledger");
+}
+
+// Credits the AI credit ledger for a completed credit-pack checkout
+// (AITAKEOFF1 Task 0). Idempotent twice over: the event-id claim upstream,
+// plus one purchase entry per checkout session (unique partial index on
+// credit_ledger.reference).
+async function grantCreditPackPurchase(object: StripeObject) {
+  const metadata = sessionMetadata(object);
+  const organizationId = str(metadata.organization_id);
+  const credits = Math.round(num(metadata.credits));
+  const sessionId = str(object.id);
+  if (!organizationId || !sessionId || credits <= 0) return;
+
+  const admin = createSupabaseAdminClient();
+  const { data: existing, error: existingError } = await dynamicTable(admin, "credit_ledger")
+    .select("id")
+    .eq("reason", "purchase")
+    .eq("reference", sessionId)
+    .maybeSingle();
+  if (existingError) {
+    if (isMissingCreditLedger(existingError)) {
+      // Non-2xx so Stripe retries after the credits migration is applied —
+      // a paid pack must never silently drop.
+      throw new RouteError(
+        "credits_schema_not_ready",
+        "Credit pack purchase is waiting on the AI credits database migration.",
+        409,
+        { cause: existingError.message },
+      );
+    }
+    throw new Error(existingError.message);
+  }
+  if (existing) return;
+
+  const { error: insertError } = await dynamicTable(admin, "credit_ledger").insert({
+    organization_id: organizationId,
+    delta: credits,
+    reason: "purchase",
+    reference: sessionId,
+    created_by: str(metadata.user_id) || null,
+  });
+  if (insertError) {
+    // A racing duplicate delivery losing the unique index is already granted.
+    if (insertError.code === "23505") return;
+    if (isMissingCreditLedger(insertError)) {
+      throw new RouteError(
+        "credits_schema_not_ready",
+        "Credit pack purchase is waiting on the AI credits database migration.",
+        409,
+        { cause: insertError.message },
+      );
+    }
+    throw new Error(insertError.message);
+  }
 }
 
 // Async payment (ACH debit) settled later: bank confirmation still pending.

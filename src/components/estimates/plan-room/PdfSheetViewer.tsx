@@ -63,6 +63,7 @@ import {
 import { DraftShape, MeasurementShape, TakeoffDraftHud } from "./TakeoffTools";
 import { TakeoffRunPreview, type RunCursorState } from "./TakeoffRunPreview";
 import { PlanMiniMap } from "./SheetSidebar";
+import { AiGhostLayer, type AiGhostRender } from "./AiGhostLayer";
 
 const isDirectPlanFileUrl = (filePath: string) =>
   /^(https?:|blob:|data:)/i.test(filePath) || filePath.startsWith("/");
@@ -379,6 +380,11 @@ export function PlanCanvas({
   roomControls,
   sheetControls,
   toolControls,
+  aiGhosts = [],
+  activeAiGhostId = null,
+  onAiGhostSelect,
+  aiPanel,
+  aiReviewBar,
   hasPreviousSheet = false,
   hasNextSheet = false,
   onPreviousSheet,
@@ -425,6 +431,15 @@ export function PlanCanvas({
   roomControls?: ReactNode;
   sheetControls?: ReactNode;
   toolControls?: ReactNode;
+  // AI-assisted count ghosts on the current sheet (AITAKEOFF1). The review
+  // flow owns the list; the canvas only draws them and pans to the active one.
+  aiGhosts?: AiGhostRender[];
+  activeAiGhostId?: string | null;
+  onAiGhostSelect?: (ghostId: string) => void;
+  // Floating AI Assist surfaces rendered over the canvas in both standard and
+  // cockpit modes (same overlay discipline as the command decks).
+  aiPanel?: ReactNode;
+  aiReviewBar?: ReactNode;
   hasPreviousSheet?: boolean;
   hasNextSheet?: boolean;
   onPreviousSheet?: () => void;
@@ -890,6 +905,16 @@ export function PlanCanvas({
           };
     requestAnimationFrame(() => jumpViewport(center));
   }, [jumpViewport, selectedMeasurement, sheet?.id, viewSize.height, viewSize.width, zoom]);
+
+  // AI review: pan (and zoom in enough to read the symbol) to the active
+  // ghost so the human always sees what they are accepting or rejecting.
+  useEffect(() => {
+    if (!activeAiGhostId) return;
+    const ghost = aiGhosts.find((item) => item.id === activeAiGhostId);
+    if (!ghost) return;
+    setZoom((current) => (current < 1.5 ? 1.5 : current));
+    requestAnimationFrame(() => jumpViewport({ x: ghost.x, y: ghost.y }));
+  }, [activeAiGhostId, aiGhosts, jumpViewport, sheet?.id, viewSize.height, viewSize.width, zoom]);
 
   useEffect(() => {
     requestAnimationFrame(updateViewportFrame);
@@ -1527,6 +1552,17 @@ export function PlanCanvas({
         </div>
       )}
 
+      {aiPanel && (
+        <div className="pointer-events-none absolute right-3 top-14 z-40 flex justify-end">
+          <div className="pointer-events-auto">{aiPanel}</div>
+        </div>
+      )}
+      {aiReviewBar && (
+        <div className="pointer-events-none absolute inset-x-3 bottom-16 z-40 flex justify-center">
+          <div className="pointer-events-auto">{aiReviewBar}</div>
+        </div>
+      )}
+
       <div
         ref={scrollRef}
         tabIndex={0}
@@ -1711,6 +1747,12 @@ export function PlanCanvas({
                   unit={draftUnit}
                 />
               )}
+              <AiGhostLayer
+                ghosts={aiGhosts}
+                activeGhostId={activeAiGhostId}
+                viewSize={viewSize}
+                onGhostSelect={onAiGhostSelect}
+              />
               <ZoomWindowShape draft={zoomWindowDraft} viewSize={viewSize} />
             </svg>
             {finishPopover && finishPopoverAnchor && (

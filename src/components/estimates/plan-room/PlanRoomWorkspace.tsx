@@ -96,6 +96,9 @@ import {
 } from "@/lib/takeoff-undo";
 import type { ProcessedSheetPage } from "./PdfSheetViewer";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
+import { AiAssistPanel } from "./AiAssistPanel";
+import { AiReviewBar } from "./AiReviewBar";
+import { useAiAssist } from "./useAiAssist";
 import {
   COCKPIT_CHROME_PANEL_TOP_GAP,
   COCKPIT_PANEL_EDGE_GAP,
@@ -2115,6 +2118,19 @@ export function PlanRoomWorkspace({
       setSelectedMeasurementId("");
     }
   };
+  // AI Assist (AITAKEOFF1): the model proposes count locations, the human
+  // verifies every one in this same harness. The hook owns the panel, scan,
+  // and review state; the workspace only wires canvas + toolbar surfaces.
+  const aiAssist = useAiAssist({
+    estimateId: estimate.id,
+    sheets,
+    planSets,
+    measurements,
+    currentSheetId: currentSheet?.id ?? null,
+    viewSize,
+    openSheet,
+    onTakeoffsChanged: invalidate,
+  });
   const openFirstUnscaledSheet = () => {
     const sheet = unscaledSheets[0];
     if (!sheet) return;
@@ -2342,6 +2358,8 @@ export function PlanRoomWorkspace({
     canRedo: canRedoTakeoff,
     onUndo: undoTakeoff,
     onRedo: redoTakeoff,
+    onOpenAiAssist: () => (aiAssist.open ? aiAssist.closePanel() : aiAssist.openPanel()),
+    aiAssistOpen: aiAssist.open,
   };
   const takeoffToolButtons = <TakeoffTools {...takeoffToolsProps} compact={false} />;
   const cockpitTakeoffToolButtons = <TakeoffTools {...takeoffToolsProps} compact />;
@@ -3079,7 +3097,11 @@ export function PlanRoomWorkspace({
             selectedMeasurementId={selectedMeasurementId}
             onMeasurementSelect={(measurementId) => {
               const measurement = measurements.find((item) => item.id === measurementId);
-              if (measurement) selectMeasurement(measurement);
+              if (!measurement) return;
+              // While AI Assist is arming an exemplar, the click picks the
+              // exemplar instead of selecting the marker.
+              if (aiAssist.handleMeasurementSelected(measurement)) return;
+              selectMeasurement(measurement);
             }}
             onMeasurementGeometryChange={saveMeasurementGeometry}
             isGeometrySaving={updateMeasurementMutation.isPending}
@@ -3093,6 +3115,11 @@ export function PlanRoomWorkspace({
                 </div>
               ) : null
             }
+            aiGhosts={aiAssist.ghostsForSheet(currentSheet?.id ?? null)}
+            activeAiGhostId={aiAssist.activeProposal?.id ?? null}
+            onAiGhostSelect={aiAssist.selectProposal}
+            aiPanel={<AiAssistPanel ai={aiAssist} />}
+            aiReviewBar={<AiReviewBar ai={aiAssist} />}
             hasPreviousSheet={Boolean(previousSheetNavigationItem)}
             hasNextSheet={Boolean(nextSheetNavigationItem)}
             onPreviousSheet={() => openAdjacentSheet(-1)}
@@ -3546,10 +3573,22 @@ export function PlanRoomWorkspace({
                 </p>
               </div>
               {selectedMeasurement && (
-                <Badge variant="secondary">
-                  {toolLabel(selectedMeasurement.tool_type)} ·{" "}
-                  {formatQty(selectedMeasurement.quantity, selectedMeasurement.unit)}
-                </Badge>
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                  {selectedMeasurement.created_by_ai && (
+                    <Badge
+                      variant="outline"
+                      className="gap-1 border-amber-300 bg-amber-50 text-amber-900"
+                      title="Counted with AI Assist — every point was reviewed and accepted by hand."
+                      data-testid="takeoff-inspector-ai-chip"
+                    >
+                      AI-assisted
+                    </Badge>
+                  )}
+                  <Badge variant="secondary">
+                    {toolLabel(selectedMeasurement.tool_type)} ·{" "}
+                    {formatQty(selectedMeasurement.quantity, selectedMeasurement.unit)}
+                  </Badge>
+                </div>
               )}
             </div>
             {selectedMeasurement ? (

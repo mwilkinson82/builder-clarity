@@ -1,4 +1,13 @@
-import { AlertTriangle, ChevronDown, ChevronRight, Link2, Trash2, Unlink } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Link2,
+  Sparkles,
+  Trash2,
+  Unlink,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { takeoffUnitsCompatible, type TakeoffWorksheetGroup } from "@/lib/plan-room-math";
@@ -85,6 +94,17 @@ export function TakeoffGroupCard({
               data-testid="takeoff-group-swatch"
             />
             <p className="truncate text-sm font-medium">{group.label}</p>
+            {group.members.some((member) => member.created_by_ai) && (
+              <Badge
+                variant="outline"
+                className="shrink-0 gap-1 border-amber-300 bg-amber-50 text-[10px] text-amber-900"
+                title="Part of this group was counted with AI Assist — every point was reviewed and accepted by hand."
+                data-testid="takeoff-ai-chip"
+              >
+                <Sparkles className="h-2.5 w-2.5" />
+                AI-assisted
+              </Badge>
+            )}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             {group.members.length} takeoffs · {formatQty(group.measuredQuantity, group.unit)} total
