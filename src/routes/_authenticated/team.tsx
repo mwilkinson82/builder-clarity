@@ -1826,7 +1826,10 @@ function TeamPage() {
                       {team.canManageSettings && (
                         <div className="space-y-2">
                           <Label htmlFor="company-logo-upload">Logo</Label>
-                          <Input
+                          {/* Native input: the styled Input's w-full fights sr-only's 1px width
+                              and (depending on compiled CSS order) renders a viewport-wide
+                              invisible box that forces page-level horizontal scroll. */}
+                          <input
                             key={logoInputKey}
                             ref={logoInputRef}
                             id="company-logo-upload"
