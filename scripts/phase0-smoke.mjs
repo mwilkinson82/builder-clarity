@@ -570,21 +570,36 @@ await expectContains(
     /toast\.success\("Inspection logged/,
     /shared risk ledger until the inspection table is available/,
     /toast\.success\("Inspection sent to risk tally/,
-    /Finish payment setup/,
+    // BILLINGBATCH1: payment readiness reads the LIVE connect status; the
+    // pre-Phase-1 vestiges ("Finish payment setup", per-invoice "Enable
+    // online pay" links) are removed and must stay removed.
+    /invoiceOnlinePayReady/,
+    /methodAvailability\(/,
+    /resolveEnabledMethods\(/,
+    /paymentMethodContext\.stripeConnectStatus/,
     /Invoice email queued/,
     /toast\.success\("Linked to-do created/,
     /toast\.success\("Risk deleted/,
     /toast\.success\("Application created/,
     /toast\.success\("Invoice created/,
     /toast\.success\("Payment recorded/,
-    /toast\.success\("Payment link ready/,
-    /Enable online pay/,
     /Client can pay online/,
     /Manual\/email only/,
     /toast\.success\("SOV mapping saved/,
     /toast\.success\("SOV imported/,
   ],
   "project route wires core Phase 0 write paths and success toasts",
+);
+
+await expectNotContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [
+    /Finish payment setup/,
+    /Enable online pay/,
+    /Online pay links unlock after Stripe Connect/,
+    /invoice\.payment_enabled &&\s*invoice\.payment_url/,
+  ],
+  "pre-Phase-1 payment vestiges stay removed from the billing workspace (BILLINGBATCH1)",
 );
 
 await expectContains(

@@ -58,12 +58,15 @@ const cleanPdfText = (value?: string | number | null) =>
     .join("")
     .trim();
 
+// Invoice money always shows exact cents: whole-dollar rounding on the
+// client-facing document is how a fractional-cent defect stayed hidden.
 const fmtUSD = (value: number) => {
   const amount = Number(value ?? 0);
   const formatted = Math.abs(amount).toLocaleString("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
   return amount < 0 ? `(${formatted})` : formatted;
 };

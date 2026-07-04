@@ -22,8 +22,15 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { aiaBillingFilename, downloadPdfBytes, generateAiaBillingPdf } from "@/lib/aia-pdf";
+import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { billingDocumentLabel } from "@/lib/billing-labels";
-import { fmtPct, fmtUSD } from "@/lib/format";
+import { fmtPct } from "@/lib/format";
+import {
+  dollarsToCents,
+  lineWorkForPercentCents,
+  percentOfCents,
+  sumDollarsToCents,
+} from "@/lib/payments-domain";
 import type {
   BillingLineItemRow,
   BillingWorkspaceData,
@@ -248,29 +255,33 @@ export function BillingLineItemsPanel({
   useEffect(() => {
     setRetainagePctDraft(formatPercentInput(selectedRetainagePct));
   }, [selectedPayAppId, selectedRetainagePct]);
-  const totals = useMemo(
-    () =>
-      selectedLines.reduce(
-        (sum, line) => {
-          sum.scheduled += centsToDollars(line.scheduled_value_cents);
-          sum.co += centsToDollars(line.change_order_value_cents);
-          sum.previous += centsToDollars(
-            line.work_completed_previous_cents + line.materials_stored_previous_cents,
-          );
-          sum.thisPeriod += centsToDollars(
-            line.work_completed_this_period_cents + line.materials_stored_this_period_cents,
-          );
-          sum.total += centsToDollars(line.total_completed_and_stored_cents);
-          sum.balance += centsToDollars(line.balance_to_finish_cents);
-          sum.retainage += centsToDollars(
-            line.retainage_held_cents - line.retainage_released_cents,
-          );
-          return sum;
-        },
-        { scheduled: 0, co: 0, previous: 0, thisPeriod: 0, total: 0, balance: 0, retainage: 0 },
-      ),
-    [selectedLines],
-  );
+  // Application totals sum in integer cents and convert once at the edge —
+  // never accumulate float dollars on the money path.
+  const totals = useMemo(() => {
+    const cents = selectedLines.reduce(
+      (sum, line) => {
+        sum.scheduled += line.scheduled_value_cents;
+        sum.co += line.change_order_value_cents;
+        sum.previous += line.work_completed_previous_cents + line.materials_stored_previous_cents;
+        sum.thisPeriod +=
+          line.work_completed_this_period_cents + line.materials_stored_this_period_cents;
+        sum.total += line.total_completed_and_stored_cents;
+        sum.balance += line.balance_to_finish_cents;
+        sum.retainage += line.retainage_held_cents - line.retainage_released_cents;
+        return sum;
+      },
+      { scheduled: 0, co: 0, previous: 0, thisPeriod: 0, total: 0, balance: 0, retainage: 0 },
+    );
+    return {
+      scheduled: centsToDollars(cents.scheduled),
+      co: centsToDollars(cents.co),
+      previous: centsToDollars(cents.previous),
+      thisPeriod: centsToDollars(cents.thisPeriod),
+      total: centsToDollars(cents.total),
+      balance: centsToDollars(cents.balance),
+      retainage: centsToDollars(cents.retainage),
+    };
+  }, [selectedLines]);
   const showRetainageAmounts = selectedLines.some(
     (line) =>
       Math.abs(line.retainage_pct) > 0.01 ||
@@ -476,13 +487,11 @@ export function BillingLineItemsPanel({
 }
 
 function ApplicationChangeOrderBridge({ selectedLines }: { selectedLines: BillingLineItemRow[] }) {
-  const originalSov = selectedLines.reduce(
-    (sum, line) => sum + centsToDollars(line.scheduled_value_cents),
-    0,
+  const originalSov = centsToDollars(
+    selectedLines.reduce((sum, line) => sum + line.scheduled_value_cents, 0),
   );
-  const approvedCoTotal = selectedLines.reduce(
-    (sum, line) => sum + centsToDollars(line.change_order_value_cents),
-    0,
+  const approvedCoTotal = centsToDollars(
+    selectedLines.reduce((sum, line) => sum + line.change_order_value_cents, 0),
   );
   const coLines = selectedLines.filter((line) => line.change_order_value_cents > 0);
 
@@ -577,21 +586,34 @@ function BillingLineItemEditor({
     line.retainage_released_cents,
     line.billing_percent_complete,
   ]);
-  const previous = centsToDollars(
-    line.work_completed_previous_cents + line.materials_stored_previous_cents,
-  );
-  const contractValue = centsToDollars(line.scheduled_value_cents + line.change_order_value_cents);
-  const draftCompletedStored = previous + work + stored;
-  const draftBalance = contractValue - draftCompletedStored;
+  // All draft math runs in integer cents; dollars exist only at the edges so
+  // the value the contractor sees is exactly the value that saves.
+  const previousCents = line.work_completed_previous_cents + line.materials_stored_previous_cents;
+  const previous = centsToDollars(previousCents);
+  const contractCents = line.scheduled_value_cents + line.change_order_value_cents;
+  const contractValue = centsToDollars(contractCents);
+  const draftCompletedStoredCents = previousCents + dollarsToCents(work) + dollarsToCents(stored);
+  const draftCompletedStored = centsToDollars(draftCompletedStoredCents);
+  const draftBalance = centsToDollars(contractCents - draftCompletedStoredCents);
   const draftCompletePct =
-    contractValue > 0 ? clampPercent((draftCompletedStored / contractValue) * 100) : 0;
-  const draftRetainageHeld = Math.max(
-    0,
-    draftCompletedStored * (parsePercentInput(retainagePct) / 100) - released,
+    contractCents > 0 ? clampPercent((draftCompletedStoredCents / contractCents) * 100) : 0;
+  const draftRetainageHeld = centsToDollars(
+    Math.max(
+      0,
+      percentOfCents(draftCompletedStoredCents, parsePercentInput(retainagePct)) -
+        dollarsToCents(released),
+    ),
   );
-  const overbilled = draftBalance < -0.005;
+  const overbilled = draftBalance < 0;
   const workForPercent = (pctValue: number, storedValue = stored) =>
-    Math.max(0, contractValue * (clampPercent(pctValue) / 100) - previous - storedValue);
+    centsToDollars(
+      lineWorkForPercentCents({
+        contractCents,
+        targetPercent: clampPercent(pctValue),
+        previousCents,
+        storedCents: dollarsToCents(storedValue),
+      }),
+    );
   const updateCompletePct = (value: string) => {
     setEntryMode("percent");
     setTargetCompletePct(value);
@@ -606,7 +628,10 @@ function BillingLineItemEditor({
   const updateWork = (value: number) => {
     setEntryMode("dollars");
     setWork(value);
-    const nextPct = contractValue > 0 ? ((previous + value + stored) / contractValue) * 100 : 0;
+    const nextPct =
+      contractCents > 0
+        ? ((previousCents + dollarsToCents(value) + dollarsToCents(stored)) / contractCents) * 100
+        : 0;
     setTargetCompletePct(formatPercentInput(clampPercent(nextPct)));
   };
 
@@ -751,22 +776,39 @@ export function ProjectCostTrackingPanel({
     notes: "",
   }));
   const activeActuals = costActuals.filter((actual) => actual.status !== "void");
-  const totalCommitted = activeActuals
-    .filter((actual) => actual.status === "committed")
-    .reduce((sum, actual) => sum + actual.amount, 0);
-  const totalPaid = activeActuals
-    .filter((actual) => actual.status === "paid")
-    .reduce((sum, actual) => sum + actual.amount, 0);
-  const totalBudget = buckets.reduce((sum, bucket) => sum + bucket.original_budget, 0);
-  const totalActual = buckets.reduce((sum, bucket) => sum + bucket.actual_to_date, 0);
-  const totalFtc = buckets.reduce((sum, bucket) => sum + bucket.ftc, 0);
-  const projectedCost = totalActual + totalFtc;
-  const budgetVariance = totalBudget - projectedCost;
-  const costBackupTotal = activeActuals.reduce((sum, actual) => sum + actual.amount, 0);
+  const totalCommitted = centsToDollars(
+    sumDollarsToCents(
+      activeActuals
+        .filter((actual) => actual.status === "committed")
+        .map((actual) => actual.amount),
+    ),
+  );
+  const totalPaid = centsToDollars(
+    sumDollarsToCents(
+      activeActuals.filter((actual) => actual.status === "paid").map((actual) => actual.amount),
+    ),
+  );
+  const totalBudget = centsToDollars(
+    sumDollarsToCents(buckets.map((bucket) => bucket.original_budget)),
+  );
+  const totalActual = centsToDollars(
+    sumDollarsToCents(buckets.map((bucket) => bucket.actual_to_date)),
+  );
+  const totalFtc = centsToDollars(sumDollarsToCents(buckets.map((bucket) => bucket.ftc)));
+  const projectedCost = centsToDollars(dollarsToCents(totalActual) + dollarsToCents(totalFtc));
+  const budgetVariance = centsToDollars(
+    dollarsToCents(totalBudget) - dollarsToCents(projectedCost),
+  );
+  const costBackupTotal = centsToDollars(
+    sumDollarsToCents(activeActuals.map((actual) => actual.amount)),
+  );
   const unmatchedActualCount = activeActuals.filter((actual) => !actual.cost_bucket_id).length;
-  const backupByBucket = activeActuals.reduce((map, actual) => {
+  const backupCentsByBucket = activeActuals.reduce((map, actual) => {
     if (!actual.cost_bucket_id) return map;
-    map.set(actual.cost_bucket_id, (map.get(actual.cost_bucket_id) ?? 0) + actual.amount);
+    map.set(
+      actual.cost_bucket_id,
+      (map.get(actual.cost_bucket_id) ?? 0) + dollarsToCents(actual.amount),
+    );
     return map;
   }, new Map<string, number>());
 
@@ -1057,13 +1099,17 @@ export function ProjectCostTrackingPanel({
         </div>
         <div className="mt-4 grid gap-3">
           {buckets.map((bucket) => {
-            const forecast = bucket.actual_to_date + bucket.ftc;
-            const variance = bucket.original_budget - forecast;
+            const forecast = centsToDollars(
+              dollarsToCents(bucket.actual_to_date) + dollarsToCents(bucket.ftc),
+            );
+            const variance = centsToDollars(
+              dollarsToCents(bucket.original_budget) - dollarsToCents(forecast),
+            );
             const spentPct =
               bucket.original_budget > 0
                 ? (bucket.actual_to_date / bucket.original_budget) * 100
                 : 0;
-            const backupTotal = backupByBucket.get(bucket.id) ?? 0;
+            const backupTotal = centsToDollars(backupCentsByBucket.get(bucket.id) ?? 0);
             const tone = variance < 0 ? "danger" : spentPct >= 80 ? "warning" : "success";
             return (
               <div key={bucket.id} className="rounded-md border border-hairline bg-card p-4">

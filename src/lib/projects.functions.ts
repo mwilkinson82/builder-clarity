@@ -3,7 +3,12 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { normalizeBillingNumberLabel } from "@/lib/billing-labels";
-import { dollarsToCents } from "@/lib/payments-domain";
+import {
+  centsToDollars,
+  dollarsToCents,
+  quantizeDollars,
+  sumDollarsToCents,
+} from "@/lib/payments-domain";
 import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
 import {
   HARBOR_DEMO_CLIENT,
@@ -2544,8 +2549,10 @@ function isInvoiceSentStatus(status: InvoiceStatus) {
 }
 
 function paymentAdjustedInvoiceStatus(totalDue: number, paidAmount: number): InvoiceStatus {
-  if (totalDue > 0 && paidAmount >= totalDue) return "paid";
-  if (paidAmount > 0) return "partially_paid";
+  const totalDueCents = dollarsToCents(totalDue);
+  const paidCents = dollarsToCents(paidAmount);
+  if (totalDueCents > 0 && paidCents >= totalDueCents) return "paid";
+  if (paidCents > 0) return "partially_paid";
   return "sent";
 }
 
@@ -2585,8 +2592,14 @@ export const createBillingInvoice = createServerFn({ method: "POST" })
       }
     }
     const invoiceNumber = normalizeBillingNumberLabel(rest.invoice_number);
+    // Boundary defense: stored invoice money is always exact cents, no matter
+    // what float the client derivation produced (the 2601-001 penny bug).
     const invoicePayload = {
       ...rest,
+      subtotal: quantizeDollars(rest.subtotal),
+      retainage: quantizeDollars(rest.retainage),
+      total_due: quantizeDollars(rest.total_due),
+      paid_amount: quantizeDollars(rest.paid_amount),
       invoice_number: invoiceNumber,
       title: normalizeBillingNumberLabel(rest.title),
     };
@@ -2647,6 +2660,11 @@ export const updateBillingInvoice = createServerFn({ method: "POST" })
     if (!before) throw new Error("Invoice not found.");
 
     const patch: Record<string, unknown> = { ...data.patch };
+    for (const moneyKey of ["subtotal", "retainage", "total_due", "paid_amount"] as const) {
+      if (typeof patch[moneyKey] === "number") {
+        patch[moneyKey] = quantizeDollars(patch[moneyKey] as number);
+      }
+    }
     if (typeof patch.invoice_number === "string") {
       patch.invoice_number = normalizeBillingNumberLabel(patch.invoice_number);
     }
@@ -2708,9 +2726,15 @@ export const recordInvoicePayment = createServerFn({ method: "POST" })
 
     const projectId = invoice.project_id as string;
     const billingApplicationId = (invoice.billing_application_id as string | null) ?? null;
-    const processorFee = data.processor_fee ?? 0;
-    const overwatchFee = data.overwatch_fee ?? 0;
-    const netPayout = Math.max(0, data.amount - processorFee - overwatchFee);
+    const amount = quantizeDollars(data.amount);
+    const processorFee = quantizeDollars(data.processor_fee ?? 0);
+    const overwatchFee = quantizeDollars(data.overwatch_fee ?? 0);
+    const netPayout = centsToDollars(
+      Math.max(
+        0,
+        dollarsToCents(amount) - dollarsToCents(processorFee) - dollarsToCents(overwatchFee),
+      ),
+    );
 
     const { data: paymentProject } = await dynamicTable(context.supabase, "projects")
       .select("organization_id")
@@ -2726,8 +2750,8 @@ export const recordInvoicePayment = createServerFn({ method: "POST" })
       project_id: projectId,
       invoice_id: data.invoiceId,
       billing_application_id: billingApplicationId,
-      amount: data.amount,
-      amount_cents: dollarsToCents(data.amount),
+      amount,
+      amount_cents: dollarsToCents(amount),
       currency: "usd",
       organization_id: organizationId,
       processor_fee: processorFee,
@@ -2764,9 +2788,12 @@ export const recordInvoicePayment = createServerFn({ method: "POST" })
       .eq("status", "succeeded");
     if (paymentsError) throw new Error(paymentsError.message);
 
-    const paidAmount = ((payments ?? []) as Record<string, unknown>[]).reduce(
-      (sum: number, payment: Record<string, unknown>) => sum + num(payment.amount),
-      0,
+    // Sum succeeded payments in integer cents; the stored paid_amount is the
+    // exact-cent conversion, never a float accumulation.
+    const paidAmount = centsToDollars(
+      sumDollarsToCents(
+        ((payments ?? []) as Record<string, unknown>[]).map((payment) => num(payment.amount)),
+      ),
     );
     const totalDue = num(invoice.total_due);
     const nextStatus = paymentAdjustedInvoiceStatus(totalDue, paidAmount);

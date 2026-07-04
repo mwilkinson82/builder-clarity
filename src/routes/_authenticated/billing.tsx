@@ -5,7 +5,8 @@ import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
 import { listPortfolioBilling, type PortfolioBillingProject } from "@/lib/billing.functions";
 import { StripeConnectNudge } from "@/components/billing/StripeConnectNudge";
-import { fmtPct, fmtUSD } from "@/lib/format";
+import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
+import { fmtPct } from "@/lib/format";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import {
   ArrowDownRight,
