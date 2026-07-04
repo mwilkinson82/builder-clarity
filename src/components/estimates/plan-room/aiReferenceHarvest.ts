@@ -37,6 +37,31 @@ export interface ExemplarIdentity {
   point: SheetPoint;
 }
 
+/** The picked exemplar: identity plus the styling a new AI count inherits. */
+export interface AiExemplar extends ExemplarIdentity {
+  unit: string;
+  color: string;
+  wastePct: number;
+}
+
+/** A count marker becomes an exemplar; anything else can't seed a scan. */
+export function exemplarFromMeasurement(measurement: TakeoffMeasurementRow): AiExemplar | null {
+  if (measurement.tool_type !== "count") return null;
+  const points = geometryPoints(measurement.geometry);
+  if (points.length === 0) return null;
+  return {
+    measurementId: measurement.id,
+    sheetId: measurement.plan_sheet_id,
+    label: measurement.label,
+    unit: measurement.unit || "EA",
+    color: measurement.color,
+    wastePct: measurement.waste_pct,
+    estimateLineItemId: measurement.estimate_line_item_id,
+    libraryItemId: measurement.library_item_id,
+    point: points[0],
+  };
+}
+
 const sameIdentity = (measurement: TakeoffMeasurementRow, exemplar: ExemplarIdentity) => {
   if (exemplar.estimateLineItemId && measurement.estimate_line_item_id) {
     return measurement.estimate_line_item_id === exemplar.estimateLineItemId;

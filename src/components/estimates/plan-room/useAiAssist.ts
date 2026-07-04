@@ -5,7 +5,6 @@
 // markers. Proposals are session-scoped on purpose — the ai_operations row is
 // the durable record.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -21,9 +20,11 @@ import { listPriorSheetRejections } from "@/lib/ai-takeoff/ai-scan-diagnostics.f
 import {
   buildNegativeReferences,
   buildPositiveReferences,
+  exemplarFromMeasurement,
   harvestPositivePoints,
+  type AiExemplar,
 } from "./aiReferenceHarvest";
-import { getCreditSummary, type CreditSummary } from "@/lib/credits/credits.functions";
+import { useAiCredits } from "./useAiCredits";
 import {
   appendAcceptedPoint,
   capProposalsPerSheet,
@@ -54,19 +55,8 @@ import {
 import { geometryFromPoints, geometryPoints, type ViewSize } from "./planRoomShared";
 
 export type AiAssistPhase = "idle" | "scanning" | "review";
+export type { AiExemplar } from "./aiReferenceHarvest";
 export type AiScanScope = "sheet" | "all";
-
-export interface AiExemplar {
-  measurementId: string;
-  sheetId: string;
-  label: string;
-  unit: string;
-  color: string;
-  wastePct: number;
-  estimateLineItemId: string | null;
-  libraryItemId: string | null;
-  point: SheetPoint;
-}
 
 export interface AiScanProgress {
   sheetsDone: number;
@@ -103,23 +93,6 @@ export interface UseAiAssistArgs {
   onTakeoffsChanged: () => void;
 }
 
-function exemplarFromMeasurement(measurement: TakeoffMeasurementRow): AiExemplar | null {
-  if (measurement.tool_type !== "count") return null;
-  const points = geometryPoints(measurement.geometry);
-  if (points.length === 0) return null;
-  return {
-    measurementId: measurement.id,
-    sheetId: measurement.plan_sheet_id,
-    label: measurement.label,
-    unit: measurement.unit || "EA",
-    color: measurement.color,
-    wastePct: measurement.waste_pct,
-    estimateLineItemId: measurement.estimate_line_item_id,
-    libraryItemId: measurement.library_item_id,
-    point: points[0],
-  };
-}
-
 export function useAiAssist({
   estimateId,
   sheets,
@@ -130,14 +103,12 @@ export function useAiAssist({
   openSheet,
   onTakeoffsChanged,
 }: UseAiAssistArgs) {
-  const queryClient = useQueryClient();
   const beginScanFn = useServerFn(beginAiCountScan);
   const scanTileFn = useServerFn(scanSheetTileForAiCounts);
   const verifyCandidateFn = useServerFn(verifyAiCountCandidate);
   const priorRejectionsFn = useServerFn(listPriorSheetRejections);
   const completeScanFn = useServerFn(completeAiCountScan);
   const failScanFn = useServerFn(failAiCountScan);
-  const getCreditSummaryFn = useServerFn(getCreditSummary);
   const createMeasurementFn = useServerFn(createTakeoffMeasurement);
   const updateMeasurementFn = useServerFn(updateTakeoffMeasurement);
 
@@ -150,7 +121,6 @@ export function useAiAssist({
   const [scanError, setScanError] = useState("");
   const [proposals, setProposals] = useState<AiCountProposal[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
-  const [isPurchasing, setIsPurchasing] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
   // Survives scan completion so the diagnostics view can open on it.
   const [lastOperationId, setLastOperationId] = useState<string | null>(null);
@@ -162,17 +132,8 @@ export function useAiAssist({
   // they become negative references on the next scan (AITAKEOFF5 Task 1).
   const sessionRejectionsRef = useRef(new Map<string, SheetPoint[]>());
 
-  const creditSummaryQuery = useQuery({
-    queryKey: ["credit-summary"],
-    queryFn: async () => (await getCreditSummaryFn()) as CreditSummary,
-    enabled: open,
-    staleTime: 30_000,
-  });
-  const creditSummary = creditSummaryQuery.data ?? null;
-  const refreshCredits = useCallback(
-    () => queryClient.invalidateQueries({ queryKey: ["credit-summary"] }),
-    [queryClient],
-  );
+  const credits = useAiCredits(open);
+  const { refreshCredits } = credits;
 
   const sheetById = useMemo(() => new Map(sheets.map((sheet) => [sheet.id, sheet])), [sheets]);
   const planSetById = useMemo(
@@ -782,52 +743,6 @@ export function useAiAssist({
     [proposals],
   );
 
-  const purchasePack = useCallback(async (packId: string) => {
-    setIsPurchasing(true);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) throw new Error("Sign in again before buying credits.");
-      const response = await fetch("/api/stripe/checkout/credits", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          packId,
-          successPath: `${window.location.pathname}?credits=success`,
-          cancelPath: `${window.location.pathname}?credits=cancelled`,
-        }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        ok?: boolean;
-        checkoutUrl?: string;
-        error?: string;
-      };
-      if (!response.ok || !payload.checkoutUrl) {
-        throw new Error(payload.error || "Checkout could not start. Try again.");
-      }
-      window.location.href = payload.checkoutUrl;
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Checkout could not start.");
-      setIsPurchasing(false);
-    }
-  }, []);
-
-  // Returning from Stripe with ?credits=success refreshes the balance.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("credits") === "success") {
-      refreshCredits();
-      toast.success("Credit purchase complete — your balance updates as soon as Stripe confirms.");
-      params.delete("credits");
-      const next = params.toString();
-      window.history.replaceState({}, "", `${window.location.pathname}${next ? `?${next}` : ""}`);
-    }
-  }, [refreshCredits]);
-
   const ghostsForSheet = useCallback(
     (sheetId: string | null) =>
       sheetId && phase === "review"
@@ -849,8 +764,8 @@ export function useAiAssist({
     setScope,
     targetSheetCount: targetSheets.length,
     quoteCredits,
-    creditSummary,
-    creditSummaryLoading: creditSummaryQuery.isLoading,
+    creditSummary: credits.creditSummary,
+    creditSummaryLoading: credits.creditSummaryLoading,
     scanProgress,
     scanError,
     runScan,
@@ -866,8 +781,8 @@ export function useAiAssist({
     selectProposal,
     endReview,
     isAccepting,
-    purchasePack,
-    isPurchasing,
+    purchasePack: credits.purchasePack,
+    isPurchasing: credits.isPurchasing,
     handleMeasurementSelected,
     ghostsForSheet,
     lastOperationId,
