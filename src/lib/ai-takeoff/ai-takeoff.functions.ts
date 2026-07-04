@@ -326,11 +326,7 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
     try {
       const result = await callAnthropicVision({
         model: operation.model_used,
-        instruction: buildScanInstruction({
-          label: data.exemplar.label,
-          tileWidthPx: data.tile.width,
-          tileHeightPx: data.tile.height,
-        }),
+        instruction: buildScanInstruction({ label: data.exemplar.label }),
         images: [
           { mediaType: data.exemplar.media_type, base64: data.exemplar.base64 },
           { mediaType: data.tile.media_type, base64: data.tile.base64 },

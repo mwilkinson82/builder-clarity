@@ -42,8 +42,17 @@ export interface AiCountProposal {
 // Detection raster: the sheet's long edge renders at this many pixels before
 // being sliced into tiles the model can actually read symbols on.
 export const DETECTION_LONG_EDGE_PX = 3800;
-export const DETECTION_TILE_PX = 1400;
-export const DETECTION_TILE_OVERLAP_PX = 96;
+// Tile size is bounded by what the vision API passes through UNRESIZED:
+// ≤ ~1.15 megapixels and ≤ 1568px on the long edge. The 1400px tiles of
+// AITAKEOFF2 (1.96 MP) were silently downscaled server-side to ~1072px,
+// making every pixel coordinate ambiguous between two bases (the proven
+// AITAKEOFF3 displacement bug). 1024×1024 = 1.05 MP stays under both caps.
+export const DETECTION_TILE_PX = 1024;
+export const DETECTION_TILE_OVERLAP_PX = 128;
+// Model coordinates are 0–1000 normalized relative to the image the model
+// actually sees — invariant to any server-side resize, so the coordinate
+// basis can never silently drift again.
+export const NORMALIZED_COORD_MAX = 1000;
 // Below this confidence a proposal gets the warning tint and sorts last.
 export const LOW_CONFIDENCE_THRESHOLD = 0.5;
 // Guardrails (AITAKEOFF2 Task 2): matches under the floor never become
@@ -93,19 +102,35 @@ export function planDetectionTiles(
 /**
  * Parsed scan response (AITAKEOFF2): the echo line comes first — the model
  * must describe the exemplar before matching — then matches as small
- * bounding boxes in tile pixels. Centers are derived server-side.
+ * bounding boxes, converted here to tile-local pixels. Centers are derived
+ * server-side.
  */
 export interface ParsedScanResponse {
   exemplarDescription: string;
   matches: TileBoundingBox[];
 }
 
+/** 0–1000 normalized model coordinate → tile-local pixel (one conversion). */
+export function normalizedToTileLocalPx(value: number, tileEdgePx: number): number {
+  return (value / NORMALIZED_COORD_MAX) * tileEdgePx;
+}
+
+/** Tile-local pixel → 0–1000 normalized. Inverse of the above. */
+export function tileLocalPxToNormalized(value: number, tileEdgePx: number): number {
+  return tileEdgePx > 0 ? (value / tileEdgePx) * NORMALIZED_COORD_MAX : 0;
+}
+
 /**
  * Parse the model's strict-JSON scan object. The instruction demands a bare
  * JSON object, but responses are still untrusted text: tolerate code fences
  * and prose around the object, validate every box, and drop anything outside
- * the tile or degenerate (inverted/absurdly large boxes are model confusion,
+ * the image or degenerate (inverted/absurdly large boxes are model confusion,
  * not matches). A missing echo comes back as "" so callers can surface it.
+ *
+ * Coordinates arrive 0–1000 normalized relative to whatever image the model
+ * saw (AITAKEOFF3 Task 0) and convert to tile-local pixels HERE, in exactly
+ * one place, before the matchCenters → tileLocalToSheetPoint path. A
+ * server-side resize changes nothing: normalized coordinates are invariant.
  */
 export function parseScanResponse(
   text: string,
@@ -130,8 +155,8 @@ export function parseScanResponse(
       : "";
   const rawMatches = Array.isArray(raw.matches) ? raw.matches : [];
   const matches: TileBoundingBox[] = [];
-  // A match box wider/taller than half the tile is not a symbol match.
-  const maxBoxEdge = Math.max(tileWidthPx, tileHeightPx) / 2;
+  // A match box wider/taller than half the image is not a symbol match.
+  const maxBoxEdgeNorm = NORMALIZED_COORD_MAX / 2;
   for (const entry of rawMatches) {
     if (!entry || typeof entry !== "object") continue;
     const box = entry as Record<string, unknown>;
@@ -142,13 +167,13 @@ export function parseScanResponse(
     const confidence = Number(box.confidence);
     if (![x0, y0, x1, y1].every(Number.isFinite)) continue;
     if (x1 <= x0 || y1 <= y0) continue;
-    if (x0 < 0 || y0 < 0 || x1 > tileWidthPx || y1 > tileHeightPx) continue;
-    if (x1 - x0 > maxBoxEdge || y1 - y0 > maxBoxEdge) continue;
+    if (x0 < 0 || y0 < 0 || x1 > NORMALIZED_COORD_MAX || y1 > NORMALIZED_COORD_MAX) continue;
+    if (x1 - x0 > maxBoxEdgeNorm || y1 - y0 > maxBoxEdgeNorm) continue;
     matches.push({
-      x0,
-      y0,
-      x1,
-      y1,
+      x0: normalizedToTileLocalPx(x0, tileWidthPx),
+      y0: normalizedToTileLocalPx(y0, tileHeightPx),
+      x1: normalizedToTileLocalPx(x1, tileWidthPx),
+      y1: normalizedToTileLocalPx(y1, tileHeightPx),
       confidence: Number.isFinite(confidence) ? clamp01(confidence) : 0,
     });
   }
@@ -257,27 +282,29 @@ export function appendAcceptedPoint(
  * The per-tile instruction (AITAKEOFF2 Task 2, hardened against eager
  * matching). The echo requirement comes first: the model must describe the
  * exemplar before it may match anything — a corrupted crop announces itself.
+ *
+ * AITAKEOFF3 Task 0: coordinates are requested 0–1000 normalized relative to
+ * the image the model SEES, and the prompt never declares pixel dimensions —
+ * a server-side resize can no longer put the response in a different basis
+ * than the tile we sliced.
  */
-export function buildScanInstruction(input: {
-  label: string;
-  tileWidthPx: number;
-  tileHeightPx: number;
-}): string {
+export function buildScanInstruction(input: { label: string }): string {
   const label = input.label.trim() || "the marked symbol";
   return [
     `The first image is a cropped region of a construction drawing. At its center is one plan symbol the estimator marked as "${label}". Surrounding linework is context, not the symbol.`,
-    `The second image is a ${input.tileWidthPx}x${input.tileHeightPx} pixel region of the same drawing set.`,
+    "The second image is a region of the same drawing set.",
     "Task: find occurrences of that SAME symbol type in the second image.",
     "",
     "Respond with ONLY this JSON object — no prose, no code fences:",
-    '{"exemplar_description": "<one line describing the symbol at the center of the first image>", "matches": [{"x0": <left px>, "y0": <top px>, "x1": <right px>, "y1": <bottom px>, "confidence": <0 to 1>}]}',
+    '{"exemplar_description": "<one line describing the symbol at the center of the first image>", "matches": [{"x0": <left>, "y0": <top>, "x1": <right>, "y1": <bottom>, "confidence": <0 to 1>}]}',
     "",
     "Hard rules:",
     "- Write exemplar_description FIRST, from the first image alone, before looking for matches.",
+    "- All coordinates are normalized 0-1000 relative to the second image: 0 is its left/top edge, 1000 is its right/bottom edge. Decimals are allowed. Never answer in pixels.",
     "- A match must be the same symbol TYPE: same shape, same construction. Similar-looking but different symbols are not matches.",
     "- Empty regions, ambiguous linework, text labels, dimension marks, and title-block art are NEVER matches.",
     '- If you are not sure, leave it out. An empty "matches" list is a correct and expected answer.',
-    "- Each match is a SMALL bounding box tightly around one symbol, in pixel coordinates of the second image.",
+    "- Each match is a SMALL bounding box tightly around one symbol.",
     "- Every match needs its own confidence between 0 and 1.",
   ].join("\n");
 }

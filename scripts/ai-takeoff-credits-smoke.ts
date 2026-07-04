@@ -42,9 +42,12 @@ import {
   excludeNearExistingPoints,
   LOW_CONFIDENCE_THRESHOLD,
   matchCenters,
+  NORMALIZED_COORD_MAX,
+  normalizedToTileLocalPx,
   parseScanResponse,
   planDetectionTiles,
   sortProposalsForReview,
+  tileLocalPxToNormalized,
 } from "../src/lib/ai-takeoff/ai-takeoff-domain.ts";
 import {
   bboxCenter,
@@ -273,6 +276,46 @@ assert.ok(
   "edge markers stay inside the crop",
 );
 
+// --- Detection tile size vs the vision API's silent-resize thresholds ---
+// (AITAKEOFF3 Task 0: the proven basis bug — 1400px tiles were 1.96 MP and
+// got downscaled server-side, putting every pixel coordinate in a different
+// basis than the tile we sliced.)
+
+assert.ok(
+  (DETECTION_TILE_PX * DETECTION_TILE_PX) / 1_000_000 <= 1.15,
+  "RESIZE GUARD: a full tile stays under the API's ~1.15 MP downscale threshold",
+);
+assert.ok(DETECTION_TILE_PX <= 1568, "RESIZE GUARD: tile long edge stays under the 1568px cap");
+assert.ok(
+  DETECTION_TILE_OVERLAP_PX >= 96,
+  "tile overlap still covers a full exemplar symbol footprint",
+);
+
+// --- 0-1000 normalized coordinate conversion (both directions) ---
+
+assert.equal(NORMALIZED_COORD_MAX, 1000, "model coordinates are normalized 0-1000");
+assert.equal(
+  normalizedToTileLocalPx(500, 1024),
+  512,
+  "normalized center of a 1024px tile is 512px",
+);
+assert.equal(
+  tileLocalPxToNormalized(512, 1024),
+  500,
+  "pixel center of a 1024px tile is 500 normalized",
+);
+for (const value of [0, 1, 250.5, 999, 1000]) {
+  assert.ok(
+    Math.abs(tileLocalPxToNormalized(normalizedToTileLocalPx(value, 1024), 1024) - value) < 1e-9,
+    `normalized -> px -> normalized round trip is exact (${value})`,
+  );
+  assert.ok(
+    Math.abs(normalizedToTileLocalPx(tileLocalPxToNormalized(value, 777), 777) - value) < 1e-9,
+    `px -> normalized -> px round trip is exact (${value})`,
+  );
+}
+assert.equal(tileLocalPxToNormalized(10, 0), 0, "zero-size image normalizes to 0, never NaN");
+
 // --- Detection tiles + frames ---
 
 const tiles = planDetectionTiles(3800, 2600);
@@ -338,8 +381,10 @@ const goodResponse = parseScanResponse(
       { x0: 900, y0: 80, x1: 960, y1: 130, confidence: 0.4 },
     ],
   }),
-  1400,
-  1400,
+  // A 1000px tile makes the 0-1000 normalized -> pixel conversion an
+  // identity, so the box math below stays readable.
+  1000,
+  1000,
 );
 assert.equal(
   goodResponse.exemplarDescription,
@@ -358,50 +403,63 @@ assert.deepEqual(
   "matchCenters carries confidence through",
 );
 
+// The one normalized->pixel conversion: the same response against a 500px
+// tile lands at half the pixel positions — coordinates are resize-invariant.
+const scaledResponse = parseScanResponse(
+  '{"matches": [{"x0": 100, "y0": 200, "x1": 140, "y1": 240, "confidence": 0.9}]}',
+  500,
+  500,
+);
+assert.deepEqual(
+  bboxCenter(scaledResponse.matches[0]),
+  { x: 60, y: 110 },
+  "normalized coordinates convert against the ACTUAL tile size",
+);
+
 const fenced = parseScanResponse(
   'Here you go:\n```json\n{"exemplar_description": "duplex outlet", "matches": [{"x0": 10, "y0": 10, "x1": 30, "y1": 30, "confidence": 1.7}]}\n```',
-  1400,
-  1400,
+  1000,
+  1000,
 );
 assert.equal(fenced.exemplarDescription, "duplex outlet", "fenced responses still parse");
 assert.equal(fenced.matches[0].confidence, 1, "confidence clamps to [0,1]");
 
 assert.deepEqual(
-  parseScanResponse("no matches here", 1400, 1400),
+  parseScanResponse("no matches here", 1000, 1000),
   { exemplarDescription: "", matches: [] },
   "prose-only responses yield nothing",
 );
 assert.deepEqual(
-  parseScanResponse('{"exemplar_description": "a symbol", "matches": []}', 1400, 1400).matches,
+  parseScanResponse('{"exemplar_description": "a symbol", "matches": []}', 1000, 1000).matches,
   [],
   "an empty matches list is a first-class answer",
 );
 assert.equal(
   parseScanResponse(
     '{"matches": [{"x0": 50, "y0": 50, "x1": 40, "y1": 60, "confidence": 1}]}',
-    1400,
-    1400,
+    1000,
+    1000,
   ).matches.length,
   0,
   "inverted boxes are dropped",
 );
 assert.equal(
   parseScanResponse(
-    '{"matches": [{"x0": 0, "y0": 0, "x1": 1200, "y1": 1200, "confidence": 1}]}',
-    1400,
-    1400,
+    '{"matches": [{"x0": 0, "y0": 0, "x1": 900, "y1": 900, "confidence": 1}]}',
+    1000,
+    1000,
   ).matches.length,
   0,
-  "boxes bigger than half the tile are model confusion, not matches",
+  "boxes spanning more than half the image are model confusion, not matches",
 );
 assert.equal(
   parseScanResponse(
-    '{"matches": [{"x0": 1300, "y0": 10, "x1": 1500, "y1": 40, "confidence": 1}]}',
-    1400,
-    1400,
+    '{"matches": [{"x0": 950, "y0": 10, "x1": 1100, "y1": 40, "confidence": 1}]}',
+    1000,
+    1000,
   ).matches.length,
   0,
-  "boxes outside the tile are dropped",
+  "boxes outside the 0-1000 basis are dropped",
 );
 
 // --- Confidence floor + per-sheet cap (AITAKEOFF2 Task 2) ---
@@ -484,15 +542,20 @@ assert.equal(firstAccept.points.length, 1, "conversion never mutates its input")
 
 // --- Hardened scan instruction (AITAKEOFF2 Task 2) ---
 
-const instruction = buildScanInstruction({
-  label: "Brush wheel",
-  tileWidthPx: 1400,
-  tileHeightPx: 1200,
-});
+const instruction = buildScanInstruction({ label: "Brush wheel" });
 assert.match(instruction, /Brush wheel/, "instruction names the exemplar label");
 assert.match(instruction, /exemplar_description/, "instruction demands the echo line");
 assert.match(instruction, /FIRST/, "the echo comes before any matching");
 assert.match(instruction, /x0/, "matches come back as bounding boxes");
+assert.match(
+  instruction,
+  /normalized 0-1000/,
+  "coordinates are requested 0-1000 normalized — invariant to any resize",
+);
+assert.ok(
+  !/\d+\s*x\s*\d+\s*pixel/i.test(instruction),
+  "RESIZE GUARD: the prompt never declares pixel dimensions the model might not actually see",
+);
 assert.match(instruction, /NEVER matches/, "empty and ambiguous regions are never matches");
 assert.match(instruction, /leave it out/i, "empty list beats guessing");
 assert.match(instruction, /confidence between 0 and 1/, "per-match confidence required");
@@ -667,27 +730,33 @@ assert.ok(
 );
 
 const detectionTiles = planDetectionTiles(rasterWidthPx, rasterHeightPx);
+// The seam overlap must make the WHOLE symbol visible in at least one tile —
+// a glyph clipped at a tile edge is exactly what the prompt tells the model
+// not to match, so the fixture (like the real pipeline) relies on the
+// overlapping neighbor.
+const glyphRadiusPx = GLYPH_RADIUS_PT * detectionScale;
 const glyphTile = detectionTiles.find(
   (tile) =>
-    glyphRasterPx.px >= tile.left &&
-    glyphRasterPx.px < tile.left + tile.width &&
-    glyphRasterPx.py >= tile.top &&
-    glyphRasterPx.py < tile.top + tile.height,
+    glyphRasterPx.px - glyphRadiusPx >= tile.left &&
+    glyphRasterPx.px + glyphRadiusPx <= tile.left + tile.width &&
+    glyphRasterPx.py - glyphRadiusPx >= tile.top &&
+    glyphRasterPx.py + glyphRadiusPx <= tile.top + tile.height,
 );
-assert.ok(glyphTile, "some tile contains the glyph");
+assert.ok(glyphTile, "OVERLAP GUARD: some tile contains the whole glyph, not a clipped sliver");
 const glyphLocal = { x: glyphRasterPx.px - glyphTile!.left, y: glyphRasterPx.py - glyphTile!.top };
 
-// The mock model reports a small box around the glyph in tile pixels —
-// exactly what the hardened prompt asks for.
-const glyphRadiusPx = GLYPH_RADIUS_PT * detectionScale;
+// The mock model reports a small box around the glyph in 0-1000 normalized
+// coordinates of the tile — exactly what the AITAKEOFF3 prompt asks for.
+// One-decimal rounding simulates realistic model output precision.
+const round1 = (value: number) => Math.round(value * 10) / 10;
 const mockResponse = JSON.stringify({
   exemplar_description: "A solid filled circle",
   matches: [
     {
-      x0: glyphLocal.x - glyphRadiusPx,
-      y0: glyphLocal.y - glyphRadiusPx,
-      x1: glyphLocal.x + glyphRadiusPx,
-      y1: glyphLocal.y + glyphRadiusPx,
+      x0: round1(tileLocalPxToNormalized(glyphLocal.x - glyphRadiusPx, glyphTile!.width)),
+      y0: round1(tileLocalPxToNormalized(glyphLocal.y - glyphRadiusPx, glyphTile!.height)),
+      x1: round1(tileLocalPxToNormalized(glyphLocal.x + glyphRadiusPx, glyphTile!.width)),
+      y1: round1(tileLocalPxToNormalized(glyphLocal.y + glyphRadiusPx, glyphTile!.height)),
       confidence: 0.95,
     },
   ],
@@ -698,12 +767,55 @@ const mockCenter = matchCenters(parsedMock.matches)[0];
 const glyphFrame = tileFrameFor(glyphTile!, rasterWidthPx, rasterHeightPx);
 const mappedSheet = tileLocalToSheetPoint(glyphFrame, mockCenter.x, mockCenter.y);
 
-// "Within a few points of the true sheet position": measure in PDF points.
+// Measure the miss in PDF points; the tolerance is the normalized-coordinate
+// quantization bound, nothing looser.
 const mappedPdf = sheetPointToPdfPoint(mappedSheet, PAGE);
 const errPt = Math.hypot(mappedPdf.xPt - GLYPH_PDF.xPt, mappedPdf.yPt - GLYPH_PDF.yPt);
 assert.ok(
-  errPt < 2,
-  `ROUND-TRIP PROOF: mock response maps back within 2 PDF points of truth (got ${errPt.toFixed(3)}pt)`,
+  errPt < 0.042,
+  `ROUND-TRIP PROOF: normalized mock response maps back within 0.042 PDF points of truth (got ${errPt.toFixed(4)}pt)`,
+);
+
+// DOWNSCALE-INVARIANCE REGRESSION (the point of normalized coordinates): a
+// silent server-side resize of the tile must not move the mapped point. The
+// model sees a 784px version of the 1024px tile and answers 0-1000 relative
+// to WHAT IT SEES; the mapping still lands on the glyph.
+const DOWNSCALED_TILE_PX = 784;
+const downscale = DOWNSCALED_TILE_PX / glyphTile!.width;
+const glyphOnDownscaled = { x: glyphLocal.x * downscale, y: glyphLocal.y * downscale };
+const downscaledResponse = JSON.stringify({
+  exemplar_description: "A solid filled circle",
+  matches: [
+    {
+      x0: round1(tileLocalPxToNormalized(glyphOnDownscaled.x - 2, DOWNSCALED_TILE_PX)),
+      y0: round1(tileLocalPxToNormalized(glyphOnDownscaled.y - 2, DOWNSCALED_TILE_PX)),
+      x1: round1(tileLocalPxToNormalized(glyphOnDownscaled.x + 2, DOWNSCALED_TILE_PX)),
+      y1: round1(tileLocalPxToNormalized(glyphOnDownscaled.y + 2, DOWNSCALED_TILE_PX)),
+      confidence: 0.95,
+    },
+  ],
+});
+const parsedDownscaled = parseScanResponse(downscaledResponse, glyphTile!.width, glyphTile!.height);
+assert.equal(parsedDownscaled.matches.length, 1, "the downscaled-image mock box parses");
+const downscaledCenter = matchCenters(parsedDownscaled.matches)[0];
+const downscaledSheet = tileLocalToSheetPoint(glyphFrame, downscaledCenter.x, downscaledCenter.y);
+const downscaledPdf = sheetPointToPdfPoint(downscaledSheet, PAGE);
+const downscaledErrPt = Math.hypot(
+  downscaledPdf.xPt - GLYPH_PDF.xPt,
+  downscaledPdf.yPt - GLYPH_PDF.yPt,
+);
+assert.ok(
+  downscaledErrPt < 0.06,
+  `DOWNSCALE GUARD: coordinates from a resized image still map onto the glyph (got ${downscaledErrPt.toFixed(4)}pt)`,
+);
+// The AITAKEOFF2 failure mode for contrast: treating the downscaled image's
+// PIXELS as tile-local pixels displaces the point toward the tile's
+// top-left by the resize factor — never a quiet near-miss.
+const wrongBasisSheet = tileLocalToSheetPoint(glyphFrame, glyphOnDownscaled.x, glyphOnDownscaled.y);
+const wrongBasisPdf = sheetPointToPdfPoint(wrongBasisSheet, PAGE);
+assert.ok(
+  Math.hypot(wrongBasisPdf.xPt - GLYPH_PDF.xPt, wrongBasisPdf.yPt - GLYPH_PDF.yPt) > 20,
+  "PIXEL-BASIS GUARD: the old pixel interpretation of a resized image misses by tens of points",
 );
 
 // Y-FLIP REGRESSION GUARD (mapping side): flipping the mapped Y misses badly.
