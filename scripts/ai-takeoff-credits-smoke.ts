@@ -1210,6 +1210,23 @@ page2.drawRectangle({
   height: GLYPH_RADIUS_PT * 2,
   color: pdfLib.rgb(0, 0, 0),
 });
+// RADIAL DECOY (AITAKEOFF5 Task 3): an eight-pointed filled star — visually
+// adjacent to the sunburst glyph family (fans/impellers/gears class). Stage A
+// may propose it; describe-then-decide stage B must reject it by TYPE.
+const RADIAL_DECOY_PDF = { xPt: 760, yPt: 300 }; // raster (1900, 1625)
+const starPath =
+  Array.from({ length: 16 }, (_, index) => {
+    const angle = (Math.PI * index) / 8;
+    const radius = index % 2 === 0 ? GLYPH_RADIUS_PT : 7;
+    const px = Math.cos(angle) * radius;
+    const py = Math.sin(angle) * radius;
+    return `${index === 0 ? "M" : "L"}${px.toFixed(2)},${py.toFixed(2)}`;
+  }).join(" ") + " Z";
+page2.drawSvgPath(starPath, {
+  x: RADIAL_DECOY_PDF.xPt,
+  y: RADIAL_DECOY_PDF.yPt,
+  color: pdfLib.rgb(0, 0, 0),
+});
 const loadedPdf2 = await pdfjs.getDocument({ data: await doc2.save() }).promise;
 const pdfPage2 = await loadedPdf2.getPage(1);
 const raster2 = await renderViewport(
@@ -1236,6 +1253,7 @@ const dedupeRadius2 = dedupeRadiusForFootprint(
 
 const circleRasterPx = CIRCLES_PDF.map((spot) => pdfPointToRenderPixel(spot, PAGE, detectionScale));
 const decoyRasterPx = pdfPointToRenderPixel(DECOY_PDF, PAGE, detectionScale);
+const radialDecoyRasterPx = pdfPointToRenderPixel(RADIAL_DECOY_PDF, PAGE, detectionScale);
 for (const [index, spot] of circleRasterPx.entries()) {
   assert.ok(darknessAt(raster2, spot.px, spot.py) < 200, `circle ${index} ink is where planned`);
 }
@@ -1283,7 +1301,7 @@ assert.ok(
   "SEAM CASE: the glyph spills past its home tile's right edge — only the overlap neighbor sees it whole",
 );
 
-const stageAShapes = [...circleRasterPx, decoyRasterPx, HALLUCINATION_RASTER];
+const stageAShapes = [...circleRasterPx, decoyRasterPx, radialDecoyRasterPx, HALLUCINATION_RASTER];
 const coarse2: Array<{ x: number; y: number; confidence: number }> = [];
 for (const tile of detectionTiles2) {
   const entries = stageAShapes
@@ -1359,9 +1377,11 @@ for (const candidate of toVerify2) {
   );
   const circleHit = circleIndex >= 0 ? circleRasterPx[circleIndex] : undefined;
   const decoyHit = Math.hypot(decoyRasterPx.px - centerPx.x, decoyRasterPx.py - centerPx.y) < 5;
-  if (circleHit || decoyHit) {
+  const radialHit =
+    Math.hypot(radialDecoyRasterPx.px - centerPx.x, radialDecoyRasterPx.py - centerPx.y) < 5;
+  if (circleHit || decoyHit || radialHit) {
     // The window the model judges really contains the symbol's ink.
-    const inkSpot = circleHit ?? decoyRasterPx;
+    const inkSpot = circleHit ?? (decoyHit ? decoyRasterPx : radialDecoyRasterPx);
     assert.ok(
       inkSpot.px >= rect.left &&
         inkSpot.px < rect.left + rect.width &&
@@ -1394,7 +1414,9 @@ for (const candidate of toVerify2) {
     : JSON.stringify({
         observed: decoyHit
           ? "a solid filled square fixture, not a circular symbol"
-          : "blank drawing paper with no symbol",
+          : radialHit
+            ? "an eight-pointed star like an impeller or fan, not the brush symbol"
+            : "blank drawing paper with no symbol",
         match: false,
       });
   const verdict2 = parseVerifyResponse(verdictText, rect.width, rect.height);
@@ -1431,11 +1453,9 @@ for (const candidate of toVerify2) {
       "the rejection cites what was observed instead of the symbol",
     );
     // Rejected candidates never snap; the hallucination's window must also
-    // have no blob at all — its mask is blank around the center.
-    if (
-      !circleHit &&
-      Math.hypot(decoyRasterPx.px - centerPx.x, decoyRasterPx.py - centerPx.y) >= 5
-    ) {
+    // have no blob at all — its mask is blank around the center. (The two
+    // decoys DO have ink — they are rejected by type, not by absence.)
+    if (!circleHit && !decoyHit && !radialHit) {
       assert.equal(
         snapToInkCentroid(wireMask!, {
           x: centerPx.x - rect.left,
@@ -1450,7 +1470,11 @@ for (const candidate of toVerify2) {
 }
 assert.equal(snapRecoveries, 4, "every glyph went through the perturbed-center snap path");
 assert.equal(verified2.length, 4, "TWO-STAGE PROOF: exactly the four true symbols verify");
-assert.equal(rejected2, 2, "TWO-STAGE PROOF: the decoy and the hallucination die in stage B");
+assert.equal(
+  rejected2,
+  3,
+  "TWO-STAGE PROOF: the square decoy, the radial decoy, and the hallucination die in stage B",
+);
 
 const matchedCircles = new Set<number>();
 let worstVerifiedErrPt = 0;
@@ -1475,5 +1499,5 @@ for (const point of verified2) {
 assert.equal(matchedCircles.size, 4, "each verified point maps to a DISTINCT true symbol");
 
 console.log(
-  `AI takeoff two-stage fixture passed: 4 glyphs (incl. seam) verified within ${worstVerifiedErrPt.toFixed(4)}pt, decoy and hallucination rejected in stage B.`,
+  `AI takeoff two-stage fixture passed: 4 glyphs (incl. seam) verified within ${worstVerifiedErrPt.toFixed(4)}pt; square decoy, radial decoy, and hallucination rejected with observed sentences.`,
 );
