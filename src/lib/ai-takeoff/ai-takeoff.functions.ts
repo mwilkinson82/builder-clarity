@@ -16,13 +16,17 @@ import {
   refundEntryForFailedScan,
 } from "@/lib/credits/credits-domain";
 import {
+  applyConfidenceFloor,
   buildScanInstruction,
   dedupeCandidates,
+  DEFAULT_MAX_PROPOSALS_PER_SHEET,
+  DEFAULT_MIN_PROPOSAL_CONFIDENCE,
   excludeNearExistingPoints,
-  parseTileCandidates,
-  tileCandidateToSheet,
+  matchCenters,
+  parseScanResponse,
   type AiCountCandidate,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
+import { tileLocalToSheetPoint, type DetectionTileFrame } from "@/lib/ai-takeoff/coord-transforms";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -31,6 +35,7 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   insert(values: unknown): DynamicSupabaseQuery;
   update(values: unknown): DynamicSupabaseQuery;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
+  is(column: string, value: null): DynamicSupabaseQuery;
   in(column: string, values: readonly string[]): DynamicSupabaseQuery;
   single(): Promise<DynamicSupabaseResult>;
   maybeSingle(): Promise<DynamicSupabaseResult>;
@@ -99,6 +104,107 @@ const normalizeOperation = (row: Record<string, unknown>): AiOperationRow => ({
 function maxSheetsPerScan(): number {
   const raw = Number(process.env.AI_SCAN_MAX_SHEETS);
   return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MAX_SHEETS_PER_SCAN;
+}
+
+// Guardrail config (AITAKEOFF2 Task 2): env-overridable, defaults from the
+// domain module so client and server agree.
+function minProposalConfidence(): number {
+  const raw = Number(process.env.AI_MIN_CONFIDENCE);
+  return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : DEFAULT_MIN_PROPOSAL_CONFIDENCE;
+}
+
+function maxProposalsPerSheet(): number {
+  const raw = Number(process.env.AI_MAX_PROPOSALS_PER_SHEET);
+  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MAX_PROPOSALS_PER_SHEET;
+}
+
+// --- Scan diagnostics (AITAKEOFF2 Task 4) ---
+// Transient artifacts in the existing plan-room bucket, one folder per
+// operation: the exemplar image actually sent, every tile with its
+// sheet-space frame, the raw model response, and the mapped positions.
+// Uploads are strictly best-effort — diagnostics must never fail a scan.
+
+const AI_DIAGNOSTICS_BUCKET = "plan-room";
+const AI_DIAGNOSTICS_PREFIX = "ai-diagnostics";
+const AI_DIAGNOSTICS_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+type StorageClient = {
+  storage: {
+    from(bucket: string): {
+      upload(
+        path: string,
+        body: Uint8Array,
+        options?: { contentType?: string; upsert?: boolean },
+      ): Promise<{ error: { message: string } | null }>;
+      list(
+        path: string,
+        options?: { limit?: number },
+      ): Promise<{
+        data: Array<{ name: string; created_at?: string }> | null;
+        error: { message: string } | null;
+      }>;
+      remove(paths: string[]): Promise<{ error: { message: string } | null }>;
+      download(path: string): Promise<{ data: Blob | null; error: { message: string } | null }>;
+      createSignedUrl(
+        path: string,
+        expiresIn: number,
+      ): Promise<{ data: { signedUrl: string } | null; error: { message: string } | null }>;
+    };
+  };
+};
+
+function diagnosticsFolder(organizationId: string, operationId: string) {
+  return `${AI_DIAGNOSTICS_PREFIX}/${organizationId}/${operationId}`;
+}
+
+// atob/TextEncoder are Node globals too; keeps this file off Buffer typings.
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function uploadDiagnostic(
+  admin: unknown,
+  path: string,
+  body: Uint8Array,
+  contentType: string,
+) {
+  try {
+    await (admin as StorageClient).storage
+      .from(AI_DIAGNOSTICS_BUCKET)
+      .upload(path, body, { contentType, upsert: true });
+  } catch {
+    // Best-effort only.
+  }
+}
+
+/** 24h cleanup: drop whole diagnostic folders whose files are all stale. */
+async function pruneOldDiagnostics(admin: unknown, organizationId: string) {
+  try {
+    const storage = (admin as StorageClient).storage.from(AI_DIAGNOSTICS_BUCKET);
+    const orgPrefix = `${AI_DIAGNOSTICS_PREFIX}/${organizationId}`;
+    const { data: folders } = await storage.list(orgPrefix, { limit: 12 });
+    if (!folders) return;
+    const cutoff = Date.now() - AI_DIAGNOSTICS_RETENTION_MS;
+    for (const folder of folders) {
+      if (!folder.name) continue;
+      const folderPath = `${orgPrefix}/${folder.name}`;
+      const { data: files } = await storage.list(folderPath, { limit: 100 });
+      if (!files || files.length === 0) continue;
+      const allStale = files.every((file) => {
+        const created = Date.parse(file.created_at ?? "");
+        return Number.isFinite(created) && created < cutoff;
+      });
+      if (!allStale) continue;
+      await storage.remove(files.map((file) => `${folderPath}/${file.name}`));
+    }
+  } catch {
+    // Best-effort only.
+  }
 }
 
 async function loadOwnedPendingOperation(
@@ -278,11 +384,16 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
       throw new Error("Credits could not be charged for this scan. Nothing was scanned.");
     }
 
+    // Transient diagnostics from earlier scans age out here (24h retention).
+    await pruneOldDiagnostics(supabaseAdmin, organizationId);
+
     return {
       operationId: operation.id,
       creditsCharged: quote,
       model,
       maxSheets: cap,
+      minConfidence: minProposalConfidence(),
+      maxProposalsPerSheet: maxProposalsPerSheet(),
     };
   });
 
@@ -295,7 +406,8 @@ const tileScanInput = z.object({
   exemplar: z.object({
     label: z.string().max(240).default(""),
     media_type: z.enum(["image/png", "image/webp", "image/jpeg"]),
-    base64: z.string().min(1).max(1_500_000),
+    // Region-rendered crop (~640px long side) is bigger than Phase A's.
+    base64: z.string().min(1).max(2_500_000),
   }),
   tile: z.object({
     index: z.number().int().min(0).max(500),
@@ -303,6 +415,15 @@ const tileScanInput = z.object({
     top: z.number().int().min(0).max(20000),
     width: z.number().int().min(1).max(4000),
     height: z.number().int().min(1).max(4000),
+    // The tile's sheet-space origin and per-pixel scale (AITAKEOFF2 Task 1):
+    // response mapping goes tile-local → sheet through this frame and the
+    // one tested transform path, never ad-hoc math.
+    frame: z.object({
+      originSheetX: z.number().min(0).max(1),
+      originSheetY: z.number().min(0).max(1),
+      sheetPerPxX: z.number().gt(0).max(1),
+      sheetPerPxY: z.number().gt(0).max(1),
+    }),
     media_type: z.enum(["image/png", "image/webp", "image/jpeg"]),
     base64: z.string().min(1).max(6_000_000),
   }),
@@ -314,6 +435,15 @@ const tileScanInput = z.object({
     .max(20000)
     .default([]),
 });
+
+function isMissingExemplarDescriptionColumn(error: DynamicSupabaseError | null | undefined) {
+  const message = error?.message ?? "";
+  return Boolean(
+    error &&
+    (error.code === "PGRST204" || error.code === "42703") &&
+    /exemplar_description/i.test(message),
+  );
+}
 
 /**
  * Scan one rendered tile of one sheet. The client iterates tiles and sheets
@@ -338,6 +468,8 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
 
     let candidates: AiCountCandidate[] = [];
     let usage = { inputTokens: 0, outputTokens: 0 };
+    let exemplarDescription = "";
+    let rawResponseText = "";
     try {
       const result = await callAnthropicVision({
         model: operation.model_used,
@@ -352,20 +484,82 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
         ],
       });
       usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens };
-      const tileCandidates = parseTileCandidates(result.text, data.tile.width, data.tile.height);
-      candidates = excludeNearExistingPoints(
-        dedupeCandidates(
-          tileCandidates.map((candidate) =>
-            tileCandidateToSheet(candidate, data.tile, data.sheet_width_px, data.sheet_height_px),
-          ),
-        ),
-        data.existing_points,
-      );
+      rawResponseText = result.text;
+      const parsed = parseScanResponse(result.text, data.tile.width, data.tile.height);
+      exemplarDescription = parsed.exemplarDescription;
+      // One mapping path: bbox → center (tile pixels) → sheet space through
+      // the tile's frame. The confidence floor runs before dedupe so a weak
+      // duplicate can never displace a strong sibling.
+      const frame = data.tile.frame as DetectionTileFrame;
+      const mapped = applyConfidenceFloor(
+        matchCenters(parsed.matches),
+        minProposalConfidence(),
+      ).map((center) => ({
+        ...tileLocalToSheetPoint(frame, center.x, center.y),
+        confidence: center.confidence,
+      }));
+      candidates = excludeNearExistingPoints(dedupeCandidates(mapped), data.existing_points);
     } catch (error) {
       const message = error instanceof Error ? error.message : "The AI model call failed.";
       await markOperationFailed(supabaseAdmin, operation, message);
       throw new Error(`${message} Unused credits were refunded — the scan can be started again.`);
     }
+
+    // Echo check (AITAKEOFF2 Task 0): the first tile's description of the
+    // exemplar persists on the operation — corruption stays visible forever.
+    if (exemplarDescription) {
+      // First tile wins; later tiles never overwrite the stored echo.
+      const { error: echoError } = await dynamicTable(supabaseAdmin, "ai_operations")
+        .update({ exemplar_description: exemplarDescription })
+        .eq("id", operation.id)
+        .is("exemplar_description", null);
+      if (echoError && !isMissingExemplarDescriptionColumn(echoError)) {
+        // Non-fatal: the echo still reaches the panel through the response.
+      }
+    }
+
+    // Diagnostics (best-effort, never blocks the scan): the exemplar image
+    // actually sent (once), each tile image, and its raw/mapped results.
+    const folder = diagnosticsFolder(operation.organization_id, operation.id);
+    if (data.sheet_id === operation.sheet_ids[0] && data.tile.index === 0) {
+      await uploadDiagnostic(
+        supabaseAdmin,
+        `${folder}/exemplar.png`,
+        base64ToBytes(data.exemplar.base64),
+        data.exemplar.media_type,
+      );
+    }
+    await uploadDiagnostic(
+      supabaseAdmin,
+      `${folder}/tile-${data.sheet_id}-${data.tile.index}.png`,
+      base64ToBytes(data.tile.base64),
+      data.tile.media_type,
+    );
+    await uploadDiagnostic(
+      supabaseAdmin,
+      `${folder}/tile-${data.sheet_id}-${data.tile.index}.json`,
+      new TextEncoder().encode(
+        JSON.stringify({
+          sheetId: data.sheet_id,
+          tileIndex: data.tile.index,
+          rect: {
+            left: data.tile.left,
+            top: data.tile.top,
+            width: data.tile.width,
+            height: data.tile.height,
+          },
+          frame: data.tile.frame,
+          sheetWidthPx: data.sheet_width_px,
+          sheetHeightPx: data.sheet_height_px,
+          exemplarDescription,
+          rawResponse: rawResponseText.slice(0, 20000),
+          mappedCandidates: candidates,
+          usage,
+          createdAt: new Date().toISOString(),
+        }),
+      ),
+      "application/json",
+    );
 
     const inputTokens = operation.input_tokens + usage.inputTokens;
     const outputTokens = operation.output_tokens + usage.outputTokens;
@@ -385,6 +579,7 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
 
     return {
       candidates,
+      exemplarDescription,
       usage,
       sheetsCompleted,
     };
@@ -438,4 +633,155 @@ export const failAiCountScan = createServerFn({ method: "POST" })
       data.reason.trim() || "Scan cancelled before it finished.",
     );
     return { ok: true };
+  });
+
+const diagnosticsInput = z.object({
+  operation_id: z.string().uuid(),
+});
+
+export interface AiScanDiagnosticsTile {
+  sheetId: string;
+  tileIndex: number;
+  imageUrl: string | null;
+  rect: { left: number; top: number; width: number; height: number } | null;
+  frame: DetectionTileFrame | null;
+  exemplarDescription: string;
+  rawResponse: string;
+  mappedCandidates: AiCountCandidate[];
+  usage: { inputTokens: number; outputTokens: number } | null;
+}
+
+export interface AiScanDiagnostics {
+  operation: {
+    id: string;
+    status: string;
+    modelUsed: string;
+    exemplarDescription: string;
+    sheetIds: string[];
+    sheetsCompleted: number;
+    creditsCharged: number;
+    apiCostCents: number;
+    inputTokens: number;
+    outputTokens: number;
+    createdAt: string;
+    error: string;
+  };
+  exemplarUrl: string | null;
+  tiles: AiScanDiagnosticsTile[];
+  diagnosticsAvailable: boolean;
+}
+
+/**
+ * Scan diagnostics (AITAKEOFF2 Task 4) — the founder's microscope. Super
+ * admin only: shows the exemplar crop actually sent to the model, every tile
+ * with its sheet-space origin, the raw model responses, and the mapped
+ * positions. Images are transient (24h prune on the next scan).
+ */
+export const getAiScanDiagnostics = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof diagnosticsInput>) => diagnosticsInput.parse(input))
+  .handler(async ({ data, context }): Promise<AiScanDiagnostics> => {
+    const { data: isSuper, error: superError } = await (
+      context.supabase as unknown as { rpc(fn: string): Promise<DynamicSupabaseResult<boolean>> }
+    ).rpc("is_super_admin");
+    if (superError) throw new Error(superError.message);
+    if (!isSuper) {
+      throw new Error("Scan diagnostics are only available to the platform super admin.");
+    }
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: operationRow, error: operationError } = await dynamicTable(
+      supabaseAdmin,
+      "ai_operations",
+    )
+      .select("*")
+      .eq("id", data.operation_id)
+      .maybeSingle();
+    if (operationError) {
+      if (isMissingCreditsSchema(operationError)) throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
+      throw new Error(operationError.message);
+    }
+    if (!operationRow) throw new Error("That AI operation was not found.");
+    const operation = normalizeOperation(operationRow as Record<string, unknown>);
+    const exemplarDescription = str((operationRow as Record<string, unknown>).exemplar_description);
+
+    const summary: AiScanDiagnostics["operation"] = {
+      id: operation.id,
+      status: operation.status,
+      modelUsed: operation.model_used,
+      exemplarDescription,
+      sheetIds: operation.sheet_ids,
+      sheetsCompleted: operation.sheets_completed,
+      creditsCharged: operation.credits_charged,
+      apiCostCents: operation.api_cost_cents,
+      inputTokens: operation.input_tokens,
+      outputTokens: operation.output_tokens,
+      createdAt: operation.created_at,
+      error: operation.error,
+    };
+
+    const storage = (supabaseAdmin as unknown as StorageClient).storage.from(AI_DIAGNOSTICS_BUCKET);
+    const folder = diagnosticsFolder(operation.organization_id, operation.id);
+    const { data: files } = await storage.list(folder, { limit: 200 });
+    if (!files || files.length === 0) {
+      return { operation: summary, exemplarUrl: null, tiles: [], diagnosticsAvailable: false };
+    }
+
+    const signedUrlFor = async (name: string) => {
+      const { data: signed } = await storage.createSignedUrl(`${folder}/${name}`, 3600);
+      return signed?.signedUrl ?? null;
+    };
+
+    const fileNames = new Set(files.map((file) => file.name));
+    const exemplarUrl = fileNames.has("exemplar.png") ? await signedUrlFor("exemplar.png") : null;
+
+    const tiles: AiScanDiagnosticsTile[] = [];
+    for (const file of files) {
+      if (!file.name.endsWith(".json")) continue;
+      let meta: Record<string, unknown> = {};
+      try {
+        const { data: blob } = await storage.download(`${folder}/${file.name}`);
+        if (blob) meta = JSON.parse(await blob.text()) as Record<string, unknown>;
+      } catch {
+        // A corrupt diagnostic file still gets a row so the gap is visible.
+      }
+      const imageName = file.name.replace(/\.json$/, ".png");
+      const rect = (meta.rect ?? null) as AiScanDiagnosticsTile["rect"];
+      const frame = (meta.frame ?? null) as DetectionTileFrame | null;
+      const mapped = Array.isArray(meta.mappedCandidates)
+        ? (meta.mappedCandidates as AiCountCandidate[])
+        : [];
+      tiles.push({
+        sheetId: str(meta.sheetId),
+        tileIndex: Math.max(0, Math.round(num(meta.tileIndex))),
+        imageUrl: fileNames.has(imageName) ? await signedUrlFor(imageName) : null,
+        rect,
+        frame,
+        exemplarDescription: str(meta.exemplarDescription),
+        rawResponse: str(meta.rawResponse),
+        mappedCandidates: mapped,
+        usage:
+          meta.usage && typeof meta.usage === "object"
+            ? {
+                inputTokens: Math.max(
+                  0,
+                  Math.round(num((meta.usage as Record<string, unknown>).inputTokens)),
+                ),
+                outputTokens: Math.max(
+                  0,
+                  Math.round(num((meta.usage as Record<string, unknown>).outputTokens)),
+                ),
+              }
+            : null,
+      });
+    }
+
+    const sheetOrder = new Map(operation.sheet_ids.map((id, index) => [id, index]));
+    tiles.sort((a, b) => {
+      const sheetSort = (sheetOrder.get(a.sheetId) ?? 999) - (sheetOrder.get(b.sheetId) ?? 999);
+      if (sheetSort !== 0) return sheetSort;
+      return a.tileIndex - b.tileIndex;
+    });
+
+    return { operation: summary, exemplarUrl, tiles, diagnosticsAvailable: true };
   });

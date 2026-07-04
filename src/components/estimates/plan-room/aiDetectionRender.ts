@@ -1,18 +1,27 @@
-// Client-side detection rendering for AI-assisted counts (AITAKEOFF1 Task 1).
-// The pdfjs render machinery lives in the browser (same machinery the viewer
-// and thumbnails use), so the client renders the sheet at detection
-// resolution, slices tiles, and crops the exemplar; the server meters credits
-// and talks to the model. Nothing here touches the network besides the
-// signed-URL PDF fetch pdfjs performs.
+// Client-side detection rendering for AI-assisted counts (AITAKEOFF1 Task 1,
+// pipeline rebuilt in AITAKEOFF2). The pdfjs render machinery lives in the
+// browser (same machinery the viewer and thumbnails use), so the client
+// renders the sheet at detection resolution, slices tiles, and renders the
+// exemplar region; the server meters credits and talks to the model.
+//
+// The exemplar crop is a CLEAN region render straight from the PDF —
+// takeoff markers live on the SVG overlay, never in these canvases — and all
+// geometry goes through the pure transforms in coord-transforms.ts so the
+// crop window and the response mapping share one tested path.
 
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   DETECTION_LONG_EDGE_PX,
-  EXEMPLAR_CROP_PX,
   planDetectionTiles,
   type DetectionTileRect,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
 import type { SheetPoint } from "@/lib/ai-takeoff/ai-takeoff-domain";
+import {
+  exemplarCropPlan,
+  tileFrameFor,
+  type DetectionTileFrame,
+  type PdfPageSize,
+} from "@/lib/ai-takeoff/coord-transforms";
 
 const configurePdfWorker = (pdfjs: unknown) => {
   const workerSrc = String(pdfWorkerUrl || "");
@@ -21,14 +30,67 @@ const configurePdfWorker = (pdfjs: unknown) => {
     workerSrc;
 };
 
+type PdfJsPage = {
+  getViewport: (options: { scale: number; offsetX?: number; offsetY?: number }) => {
+    width: number;
+    height: number;
+  };
+  // pdfjs's own RenderParameters type; kept loose for the dynamic import.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  render: (options: any) => { promise: Promise<unknown> };
+};
+
+async function loadPdfPage(signedUrl: string, pageNumber: number): Promise<PdfJsPage> {
+  const pdfjs = await import("pdfjs-dist");
+  configurePdfWorker(pdfjs);
+  const pdf = await pdfjs.getDocument({ url: signedUrl }).promise;
+  return (await pdf.getPage(Math.max(1, pageNumber))) as unknown as PdfJsPage;
+}
+
+function pageSizeOf(page: PdfJsPage): PdfPageSize {
+  // Viewport at scale 1 is the page in PDF points with rotation applied —
+  // the same space the viewer normalizes marker geometry against.
+  const viewport = page.getViewport({ scale: 1 });
+  if (!Number.isFinite(viewport.width) || viewport.width <= 0 || viewport.height <= 0) {
+    throw new Error("This sheet could not be measured for scanning.");
+  }
+  return { widthPt: viewport.width, heightPt: viewport.height };
+}
+
+function renderToCanvas(
+  page: PdfJsPage,
+  widthPx: number,
+  heightPx: number,
+  viewport: unknown,
+): Promise<HTMLCanvasElement> {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(widthPx));
+  canvas.height = Math.max(1, Math.round(heightPx));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("This browser could not prepare the sheet for scanning.");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  return page.render({ canvas, canvasContext: context, viewport }).promise.then(() => canvas);
+}
+
+function canvasToBase64Png(canvas: HTMLCanvasElement): string {
+  const dataUrl = canvas.toDataURL("image/png");
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex < 0) throw new Error("Scan image could not be encoded.");
+  return dataUrl.slice(commaIndex + 1);
+}
+
 export interface DetectionSheetRaster {
   canvas: HTMLCanvasElement;
   widthPx: number;
   heightPx: number;
+  pageSize: PdfPageSize;
 }
 
 export interface DetectionTileImage {
   rect: DetectionTileRect;
+  /** Sheet-space origin + per-pixel scale — travels with the tile (Task 1). */
+  frame: DetectionTileFrame;
   base64: string;
   mediaType: "image/png";
 }
@@ -36,6 +98,8 @@ export interface DetectionTileImage {
 export interface DetectionExemplarImage {
   base64: string;
   mediaType: "image/png";
+  widthPx: number;
+  heightPx: number;
 }
 
 /** Render one PDF page at detection resolution (long edge ~3800px). */
@@ -43,91 +107,67 @@ export async function renderDetectionSheet(
   signedUrl: string,
   pageNumber: number,
 ): Promise<DetectionSheetRaster> {
-  const pdfjs = await import("pdfjs-dist");
-  configurePdfWorker(pdfjs);
-  const pdf = await pdfjs.getDocument({ url: signedUrl }).promise;
-  const page = await pdf.getPage(Math.max(1, pageNumber));
-  const baseViewport = page.getViewport({ scale: 1 });
-  const longEdge = Math.max(baseViewport.width, baseViewport.height);
-  if (!Number.isFinite(longEdge) || longEdge <= 0) {
-    throw new Error("This sheet could not be rendered for scanning.");
-  }
+  const page = await loadPdfPage(signedUrl, pageNumber);
+  const pageSize = pageSizeOf(page);
+  const longEdge = Math.max(pageSize.widthPt, pageSize.heightPt);
   const viewport = page.getViewport({ scale: DETECTION_LONG_EDGE_PX / longEdge });
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(viewport.width));
-  canvas.height = Math.max(1, Math.round(viewport.height));
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("This browser could not prepare the sheet for scanning.");
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  await page.render({ canvas, canvasContext: context, viewport }).promise;
-  return { canvas, widthPx: canvas.width, heightPx: canvas.height };
+  const canvas = await renderToCanvas(page, viewport.width, viewport.height, viewport);
+  return { canvas, widthPx: canvas.width, heightPx: canvas.height, pageSize };
 }
 
-function canvasRegionToBase64Png(
-  source: HTMLCanvasElement,
-  left: number,
-  top: number,
-  width: number,
-  height: number,
-): string {
-  const region = document.createElement("canvas");
-  region.width = Math.max(1, Math.round(width));
-  region.height = Math.max(1, Math.round(height));
-  const context = region.getContext("2d");
-  if (!context) throw new Error("This browser could not prepare the sheet for scanning.");
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, region.width, region.height);
-  context.drawImage(
-    source,
-    left,
-    top,
-    region.width,
-    region.height,
-    0,
-    0,
-    region.width,
-    region.height,
-  );
-  const dataUrl = region.toDataURL("image/png");
-  const commaIndex = dataUrl.indexOf(",");
-  if (commaIndex < 0) throw new Error("Tile image could not be encoded.");
-  return dataUrl.slice(commaIndex + 1);
-}
-
-/** Slice the detection raster into overlapping tiles for the model. */
+/** Slice the detection raster into overlapping tiles, each with its frame. */
 export function sliceDetectionTiles(raster: DetectionSheetRaster): DetectionTileImage[] {
-  return planDetectionTiles(raster.widthPx, raster.heightPx).map((rect) => ({
-    rect,
-    base64: canvasRegionToBase64Png(raster.canvas, rect.left, rect.top, rect.width, rect.height),
-    mediaType: "image/png" as const,
-  }));
+  return planDetectionTiles(raster.widthPx, raster.heightPx).map((rect) => {
+    const region = document.createElement("canvas");
+    region.width = Math.max(1, Math.round(rect.width));
+    region.height = Math.max(1, Math.round(rect.height));
+    const context = region.getContext("2d");
+    if (!context) throw new Error("This browser could not prepare the sheet for scanning.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, region.width, region.height);
+    context.drawImage(
+      raster.canvas,
+      rect.left,
+      rect.top,
+      region.width,
+      region.height,
+      0,
+      0,
+      region.width,
+      region.height,
+    );
+    return {
+      rect,
+      frame: tileFrameFor(rect, raster.widthPx, raster.heightPx),
+      base64: canvasToBase64Png(region),
+      mediaType: "image/png" as const,
+    };
+  });
 }
 
-/** Crop the exemplar box around a human-placed count point (normalized coords). */
-export function cropDetectionExemplar(
-  raster: DetectionSheetRaster,
-  point: SheetPoint,
-): DetectionExemplarImage {
-  const half = EXEMPLAR_CROP_PX / 2;
-  const centerX = point.x * raster.widthPx;
-  const centerY = point.y * raster.heightPx;
-  const left = Math.min(
-    Math.max(0, centerX - half),
-    Math.max(0, raster.widthPx - EXEMPLAR_CROP_PX),
-  );
-  const top = Math.min(
-    Math.max(0, centerY - half),
-    Math.max(0, raster.heightPx - EXEMPLAR_CROP_PX),
-  );
+/**
+ * Render the exemplar crop as a CLEAN region render of the PDF around the
+ * marker (AITAKEOFF2 Task 0): ~4 sheet-inches on a side, ~640px long edge,
+ * no overlay layer, window planned by the tested transform chain.
+ */
+export async function renderExemplarCrop(
+  signedUrl: string,
+  pageNumber: number,
+  marker: SheetPoint,
+): Promise<DetectionExemplarImage> {
+  const page = await loadPdfPage(signedUrl, pageNumber);
+  const pageSize = pageSizeOf(page);
+  const plan = exemplarCropPlan(marker, pageSize);
+  const viewport = page.getViewport({
+    scale: plan.scale,
+    offsetX: plan.offsetX,
+    offsetY: plan.offsetY,
+  });
+  const canvas = await renderToCanvas(page, plan.widthPx, plan.heightPx, viewport);
   return {
-    base64: canvasRegionToBase64Png(
-      raster.canvas,
-      left,
-      top,
-      Math.min(EXEMPLAR_CROP_PX, raster.widthPx),
-      Math.min(EXEMPLAR_CROP_PX, raster.heightPx),
-    ),
+    base64: canvasToBase64Png(canvas),
     mediaType: "image/png",
+    widthPx: canvas.width,
+    heightPx: canvas.height,
   };
 }

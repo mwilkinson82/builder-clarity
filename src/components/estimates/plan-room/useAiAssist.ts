@@ -19,6 +19,8 @@ import {
 import { getCreditSummary, type CreditSummary } from "@/lib/credits/credits.functions";
 import {
   appendAcceptedPoint,
+  applyConfidenceFloor,
+  capProposalsPerSheet,
   sortProposalsForReview,
   type AiCountProposal,
   type SheetPoint,
@@ -32,11 +34,7 @@ import {
   type PlanSheetRow,
   type TakeoffMeasurementRow,
 } from "@/lib/plan-room.functions";
-import {
-  cropDetectionExemplar,
-  renderDetectionSheet,
-  sliceDetectionTiles,
-} from "./aiDetectionRender";
+import { renderDetectionSheet, renderExemplarCrop, sliceDetectionTiles } from "./aiDetectionRender";
 import { geometryFromPoints, geometryPoints, type ViewSize } from "./planRoomShared";
 
 export type AiAssistPhase = "idle" | "scanning" | "review";
@@ -59,6 +57,12 @@ export interface AiScanProgress {
   sheetsTotal: number;
   currentSheetLabel: string;
   found: number;
+  /**
+   * Echo check (AITAKEOFF2): the model's own one-line description of the
+   * exemplar it received — "Looking for: circular brush with radial spokes".
+   * A wrong echo exposes a corrupted crop instantly.
+   */
+  exemplarDescription: string;
 }
 
 export interface UseAiAssistArgs {
@@ -119,6 +123,8 @@ export function useAiAssist({
   const [reviewIndex, setReviewIndex] = useState(0);
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
+  // Survives scan completion so the diagnostics view can open on it.
+  const [lastOperationId, setLastOperationId] = useState<string | null>(null);
   const cancelRequestedRef = useRef(false);
   const operationIdRef = useRef<string | null>(null);
   // AI measurement created per sheet during this review (id + points so far).
@@ -243,11 +249,13 @@ export function useAiAssist({
     aiMeasurementsRef.current = new Map();
     cancelRequestedRef.current = false;
     operationIdRef.current = null;
+    let echo = "";
     setScanProgress({
       sheetsDone: 0,
       sheetsTotal: targetSheets.length,
       currentSheetLabel: "",
       found: 0,
+      exemplarDescription: "",
     });
 
     const signedUrlFor = async (planSetId: string) => {
@@ -270,13 +278,16 @@ export function useAiAssist({
         },
       });
       operationIdRef.current = begin.operationId;
+      setLastOperationId(begin.operationId);
 
-      // The exemplar crop renders once from its own sheet.
-      const exemplarRaster = await renderDetectionSheet(
+      // Clean region render straight from the PDF around the marker — the
+      // human's marker dot lives on the SVG overlay and can never leak in
+      // (AITAKEOFF2 Task 0). ~4 sheet-inches square at ~640px.
+      const exemplarImage = await renderExemplarCrop(
         await signedUrlFor(exemplarSheet.plan_set_id),
         exemplarSheet.page_number,
+        exemplar.point,
       );
-      const exemplarImage = cropDetectionExemplar(exemplarRaster, exemplar.point);
 
       const found: AiCountProposal[] = [];
       let sheetsDone = 0;
@@ -288,14 +299,16 @@ export function useAiAssist({
           sheetsTotal: targetSheets.length,
           currentSheetLabel: sheetLabel,
           found: found.length,
+          exemplarDescription: echo,
         });
 
-        const raster =
-          sheet.id === exemplarSheet.id
-            ? exemplarRaster
-            : await renderDetectionSheet(await signedUrlFor(sheet.plan_set_id), sheet.page_number);
+        const raster = await renderDetectionSheet(
+          await signedUrlFor(sheet.plan_set_id),
+          sheet.page_number,
+        );
         const tiles = sliceDetectionTiles(raster);
         const existingPoints = existingCountPointsForSheet(sheet.id);
+        const sheetCandidates: AiCountProposal[] = [];
 
         for (let index = 0; index < tiles.length; index += 1) {
           if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
@@ -317,6 +330,7 @@ export function useAiAssist({
                 top: tile.rect.top,
                 width: tile.rect.width,
                 height: tile.rect.height,
+                frame: tile.frame,
                 media_type: tile.mediaType,
                 base64: tile.base64,
               },
@@ -324,8 +338,11 @@ export function useAiAssist({
               existing_points: existingPoints,
             },
           });
+          if (!echo && result.exemplarDescription) {
+            echo = result.exemplarDescription;
+          }
           for (const candidate of result.candidates) {
-            found.push({
+            sheetCandidates.push({
               id: crypto.randomUUID(),
               sheetId: sheet.id,
               x: candidate.x,
@@ -338,9 +355,19 @@ export function useAiAssist({
             sheetsDone,
             sheetsTotal: targetSheets.length,
             currentSheetLabel: sheetLabel,
-            found: found.length,
+            found: found.length + sheetCandidates.length,
+            exemplarDescription: echo,
           });
         }
+
+        // Guardrails before anything becomes a ghost (AITAKEOFF2 Task 2):
+        // the server already floors confidence; the cap is per sheet.
+        found.push(
+          ...capProposalsPerSheet(
+            applyConfidenceFloor(sheetCandidates, begin.minConfidence),
+            begin.maxProposalsPerSheet,
+          ),
+        );
         sheetsDone += 1;
       }
 
@@ -685,6 +712,7 @@ export function useAiAssist({
     isPurchasing,
     handleMeasurementSelected,
     ghostsForSheet,
+    lastOperationId,
   };
 }
 

@@ -47,6 +47,8 @@ export interface CreditSummary {
   aiModel: string;
   /** False until the credits migrations are applied to this environment. */
   schemaReady: boolean;
+  /** Gates the scan-diagnostics entry point (AITAKEOFF2 Task 4). */
+  isSuperAdmin: boolean;
 }
 
 const creditSummaryInput = z.object({}).optional();
@@ -61,11 +63,25 @@ export const getCreditSummary = createServerFn({ method: "GET" })
       await import("@/lib/ai-takeoff/anthropic.server");
 
     const packs = creditPacksFromEnv(process.env.CREDIT_PACKS_JSON);
+
+    // The gate itself lives on the diagnostics server fn; this flag only
+    // decides whether the panel shows the entry point.
+    let isSuperAdmin = false;
+    try {
+      const { data: superFlag } = await (
+        context.supabase as unknown as { rpc(fn: string): Promise<{ data: boolean | null }> }
+      ).rpc("is_super_admin");
+      isSuperAdmin = Boolean(superFlag);
+    } catch {
+      isSuperAdmin = false;
+    }
+
     const base = {
       organizationId,
       packs,
       aiAssistConfigured: isAiAssistConfigured(),
       aiModel: resolveConfiguredAiModel(),
+      isSuperAdmin,
     };
 
     const ledgerResult = (await dynamicTable(context.supabase, "credit_ledger")

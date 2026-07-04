@@ -1,7 +1,13 @@
-// AI-assisted count domain logic (AITAKEOFF1 Phase A).
+// AI-assisted count domain logic (AITAKEOFF1 Phase A, hardened in AITAKEOFF2).
 // Pure functions only: no Supabase, no fetch, no env reads, no DOM.
 // Measurement authority never belongs to the model — everything here treats
 // model output as untrusted suggestions that a human verifies at accept time.
+// Coordinate transforms live in coord-transforms.ts; this module owns tile
+// planning, response parsing, and proposal hygiene.
+
+// Relative import on purpose: the smoke suite runs this module under plain
+// node --experimental-strip-types, which cannot resolve the @/ alias.
+import { bboxCenter, clamp01, type TileBoundingBox } from "./coord-transforms.ts";
 
 export type SheetPoint = { x: number; y: number };
 
@@ -12,13 +18,6 @@ export interface DetectionTileRect {
   top: number;
   width: number;
   height: number;
-}
-
-/** A raw model match inside one tile, in tile pixel coordinates. */
-export interface TileCountCandidate {
-  x: number;
-  y: number;
-  confidence: number;
 }
 
 /** A match candidate in normalized [0,1] sheet coordinates. */
@@ -45,10 +44,13 @@ export interface AiCountProposal {
 export const DETECTION_LONG_EDGE_PX = 3800;
 export const DETECTION_TILE_PX = 1400;
 export const DETECTION_TILE_OVERLAP_PX = 96;
-// Exemplar crop box (detection pixels) around the human-placed count marker.
-export const EXEMPLAR_CROP_PX = 180;
 // Below this confidence a proposal gets the warning tint and sorts last.
 export const LOW_CONFIDENCE_THRESHOLD = 0.5;
+// Guardrails (AITAKEOFF2 Task 2): matches under the floor never become
+// ghosts; the per-sheet cap is the runaway brake. Both env-overridable
+// (AI_MIN_CONFIDENCE / AI_MAX_PROPOSALS_PER_SHEET) server-side.
+export const DEFAULT_MIN_PROPOSAL_CONFIDENCE = 0.5;
+export const DEFAULT_MAX_PROPOSALS_PER_SHEET = 60;
 // Two detections closer than this (normalized sheet distance) are the same
 // symbol; the higher-confidence one wins.
 export const DEDUPE_RADIUS_NORMALIZED = 0.008;
@@ -88,64 +90,95 @@ export function planDetectionTiles(
   return tiles;
 }
 
-/** Map a candidate from tile pixel coordinates to normalized sheet coordinates. */
-export function tileCandidateToSheet(
-  candidate: TileCountCandidate,
-  tile: Pick<DetectionTileRect, "left" | "top">,
-  sheetWidthPx: number,
-  sheetHeightPx: number,
-): AiCountCandidate {
-  const x = (tile.left + candidate.x) / Math.max(1, sheetWidthPx);
-  const y = (tile.top + candidate.y) / Math.max(1, sheetHeightPx);
-  return {
-    x: clamp01(x),
-    y: clamp01(y),
-    confidence: clamp01(candidate.confidence),
-  };
-}
-
-function clamp01(value: number) {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
+/**
+ * Parsed scan response (AITAKEOFF2): the echo line comes first — the model
+ * must describe the exemplar before matching — then matches as small
+ * bounding boxes in tile pixels. Centers are derived server-side.
+ */
+export interface ParsedScanResponse {
+  exemplarDescription: string;
+  matches: TileBoundingBox[];
 }
 
 /**
- * Parse the model's strict-JSON candidate list. The instruction demands a
- * bare JSON array, but responses are still untrusted text: tolerate code
- * fences and prose around the array, validate every entry, and drop anything
- * outside the tile. Returns [] when no valid array is present.
+ * Parse the model's strict-JSON scan object. The instruction demands a bare
+ * JSON object, but responses are still untrusted text: tolerate code fences
+ * and prose around the object, validate every box, and drop anything outside
+ * the tile or degenerate (inverted/absurdly large boxes are model confusion,
+ * not matches). A missing echo comes back as "" so callers can surface it.
  */
-export function parseTileCandidates(
+export function parseScanResponse(
   text: string,
   tileWidthPx: number,
   tileHeightPx: number,
-): TileCountCandidate[] {
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start < 0 || end <= start) return [];
+): ParsedScanResponse {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  const empty: ParsedScanResponse = { exemplarDescription: "", matches: [] };
+  if (start < 0 || end <= start) return empty;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text.slice(start, end + 1));
   } catch {
-    return [];
+    return empty;
   }
-  if (!Array.isArray(parsed)) return [];
-  const candidates: TileCountCandidate[] = [];
-  for (const entry of parsed) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return empty;
+  const raw = parsed as Record<string, unknown>;
+  const exemplarDescription =
+    typeof raw.exemplar_description === "string"
+      ? raw.exemplar_description.trim().slice(0, 500)
+      : "";
+  const rawMatches = Array.isArray(raw.matches) ? raw.matches : [];
+  const matches: TileBoundingBox[] = [];
+  // A match box wider/taller than half the tile is not a symbol match.
+  const maxBoxEdge = Math.max(tileWidthPx, tileHeightPx) / 2;
+  for (const entry of rawMatches) {
     if (!entry || typeof entry !== "object") continue;
-    const raw = entry as Record<string, unknown>;
-    const x = Number(raw.x);
-    const y = Number(raw.y);
-    const confidence = Number(raw.confidence);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    if (x < 0 || y < 0 || x > tileWidthPx || y > tileHeightPx) continue;
-    candidates.push({
-      x,
-      y,
+    const box = entry as Record<string, unknown>;
+    const x0 = Number(box.x0);
+    const y0 = Number(box.y0);
+    const x1 = Number(box.x1);
+    const y1 = Number(box.y1);
+    const confidence = Number(box.confidence);
+    if (![x0, y0, x1, y1].every(Number.isFinite)) continue;
+    if (x1 <= x0 || y1 <= y0) continue;
+    if (x0 < 0 || y0 < 0 || x1 > tileWidthPx || y1 > tileHeightPx) continue;
+    if (x1 - x0 > maxBoxEdge || y1 - y0 > maxBoxEdge) continue;
+    matches.push({
+      x0,
+      y0,
+      x1,
+      y1,
       confidence: Number.isFinite(confidence) ? clamp01(confidence) : 0,
     });
   }
-  return candidates;
+  return { exemplarDescription, matches };
+}
+
+/** Centers of parsed match boxes, in tile-local pixels. */
+export function matchCenters(
+  matches: TileBoundingBox[],
+): Array<{ x: number; y: number; confidence: number }> {
+  return matches.map((box) => ({ ...bboxCenter(box), confidence: box.confidence }));
+}
+
+/** Drop candidates under the confidence floor before they become ghosts. */
+export function applyConfidenceFloor<T extends { confidence: number }>(
+  candidates: T[],
+  minConfidence: number = DEFAULT_MIN_PROPOSAL_CONFIDENCE,
+): T[] {
+  const floor = clamp01(minConfidence);
+  return candidates.filter((candidate) => candidate.confidence >= floor);
+}
+
+/** Runaway guard: keep at most `cap` proposals per sheet, best-confidence first. */
+export function capProposalsPerSheet<T extends { confidence: number }>(
+  candidates: T[],
+  cap: number = DEFAULT_MAX_PROPOSALS_PER_SHEET,
+): T[] {
+  const limit = Math.max(1, Math.trunc(cap));
+  if (candidates.length <= limit) return candidates;
+  return [...candidates].sort((a, b) => b.confidence - a.confidence).slice(0, limit);
 }
 
 /**
@@ -220,7 +253,11 @@ export function appendAcceptedPoint(
   return { points, quantity: points.length };
 }
 
-/** The tight per-tile instruction sent with the exemplar crop and tile image. */
+/**
+ * The per-tile instruction (AITAKEOFF2 Task 2, hardened against eager
+ * matching). The echo requirement comes first: the model must describe the
+ * exemplar before it may match anything — a corrupted crop announces itself.
+ */
 export function buildScanInstruction(input: {
   label: string;
   tileWidthPx: number;
@@ -228,13 +265,20 @@ export function buildScanInstruction(input: {
 }): string {
   const label = input.label.trim() || "the marked symbol";
   return [
-    `The first image is a cropped exemplar of one plan symbol the estimator marked: "${label}".`,
-    `The second image is a ${input.tileWidthPx}x${input.tileHeightPx} pixel region of the same construction drawing.`,
-    "Find every occurrence of the same symbol in the second image.",
-    "Respond with ONLY a JSON array, no prose, no code fences. Each element:",
-    '{"x": <center x in pixels of the second image>, "y": <center y in pixels>, "confidence": <0 to 1>}',
-    "Rules: report visually matching symbols only; ignore text labels, dimension marks, and different symbol types.",
-    "If there are no matches, respond with [].",
+    `The first image is a cropped region of a construction drawing. At its center is one plan symbol the estimator marked as "${label}". Surrounding linework is context, not the symbol.`,
+    `The second image is a ${input.tileWidthPx}x${input.tileHeightPx} pixel region of the same drawing set.`,
+    "Task: find occurrences of that SAME symbol type in the second image.",
+    "",
+    "Respond with ONLY this JSON object — no prose, no code fences:",
+    '{"exemplar_description": "<one line describing the symbol at the center of the first image>", "matches": [{"x0": <left px>, "y0": <top px>, "x1": <right px>, "y1": <bottom px>, "confidence": <0 to 1>}]}',
+    "",
+    "Hard rules:",
+    "- Write exemplar_description FIRST, from the first image alone, before looking for matches.",
+    "- A match must be the same symbol TYPE: same shape, same construction. Similar-looking but different symbols are not matches.",
+    "- Empty regions, ambiguous linework, text labels, dimension marks, and title-block art are NEVER matches.",
+    '- If you are not sure, leave it out. An empty "matches" list is a correct and expected answer.',
+    "- Each match is a SMALL bounding box tightly around one symbol, in pixel coordinates of the second image.",
+    "- Every match needs its own confidence between 0 and 1.",
   ].join("\n");
 }
 
