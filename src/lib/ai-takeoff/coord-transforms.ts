@@ -12,6 +12,24 @@
 // - RENDER PIXEL space: pixels at a given scale, origin TOP-LEFT — what a
 //   pdfjs viewport canvas (and every crop/tile we send the model) uses.
 
+// --- Branded coordinate scalars (AITAKEOFF7 Task 0) ---
+// The production candidate collapse happened because a raster-pixel length
+// flowed, unbounded, into radii applied in normalized sheet space. Branding
+// the two spaces makes mixing them a tsc error at the call site, not a
+// code-review hope. Brands are type-level only — the smoke suites run these
+// modules under plain node type-stripping, where a brand is just a number.
+
+declare const RASTER_PX_BRAND: unique symbol;
+declare const SHEET_NORM_BRAND: unique symbol;
+
+/** A length/position measured in detection-raster pixels. */
+export type RasterPx = number & { readonly [RASTER_PX_BRAND]: true };
+/** A length measured in normalized sheet space ([0,1] per axis). */
+export type SheetNorm = number & { readonly [SHEET_NORM_BRAND]: true };
+
+export const rasterPx = (value: number): RasterPx => value as RasterPx;
+export const sheetNorm = (value: number): SheetNorm => value as SheetNorm;
+
 export interface PdfPageSize {
   /** Page width in PDF points (viewport-at-scale-1 width). */
   widthPt: number;

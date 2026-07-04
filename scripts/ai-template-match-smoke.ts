@@ -26,15 +26,20 @@ import {
 import { matchTemplateSweep } from "../src/lib/ai-takeoff/template-match/template-matcher.ts";
 import { openCvReady } from "../src/lib/ai-takeoff/template-match/opencv-runtime.ts";
 import {
+  buildVerifyInstruction,
   capProposalsPerSheet,
   DEFAULT_MAX_PROPOSALS_PER_SHEET,
-  dedupeRadiusForFootprint,
   DETECTION_LONG_EDGE_PX,
+  excludeNearExistingPoints,
+  exemplarSheetGeometry,
   inkMaskFromRgba,
+  MAX_DEDUPE_RADIUS_LONG_EDGE,
   measureInkFootprintPx,
   parseVerifyResponse,
+  sheetRadiusFromLongEdge,
   tileLocalPxToNormalized,
   verifyWindowRect,
+  type SheetRadius,
 } from "../src/lib/ai-takeoff/ai-takeoff-domain.ts";
 import {
   exemplarCropPlan,
@@ -102,14 +107,17 @@ assert.equal(
 );
 
 // --- Pure domain: NMS + union + origin labels ---
+// Radii are SheetRadius now (AITAKEOFF7 Task 0) — raw scalars stopped
+// compiling when raster pixels leaked into sheet space in production.
 
+const domainRadius = sheetRadiusFromLongEdge(0.008, 1000, 1000);
 const nmsKept = suppressNonMaxima(
   [
     { x: 0.5, y: 0.5, score: 0.9 },
     { x: 0.502, y: 0.5, score: 0.7 },
     { x: 0.8, y: 0.8, score: 0.6 },
   ],
-  0.008,
+  domainRadius,
 );
 assert.equal(nmsKept.length, 2, "NMS collapses hits within the radius");
 assert.equal(nmsKept[0].score, 0.9, "the best score wins the NMS");
@@ -119,7 +127,7 @@ assert.equal(
       { x: 0.5, y: 0.5, score: 0.7 },
       { x: 0.5, y: 0.52, score: 0.9 },
     ],
-    0.008,
+    domainRadius,
   ).length,
   2,
   "hits outside the radius both survive",
@@ -131,7 +139,7 @@ const union = unionProposalCandidates(
     { x: 0.501, y: 0.5, confidence: 0.5 },
     { x: 0.2, y: 0.2, confidence: 0.5 },
   ],
-  0.008,
+  domainRadius,
 );
 assert.equal(union.length, 2, "union dedupes the two engines by footprint radius");
 assert.equal(union[0].source, "template", "the higher-scoring template hit wins the collision");
@@ -213,6 +221,15 @@ function cropRgba(source: RgbaFixture, left: number, top: number, side: number):
   return crop;
 }
 
+/** Canonical radius for a synthetic raster (1pt = 1px, so footprintPt = px). */
+const syntheticRadius = (footprintPx: number, width: number, height: number): SheetRadius =>
+  exemplarSheetGeometry({
+    footprintPt: footprintPx,
+    pageLongEdgePt: Math.max(width, height),
+    rasterWidthPx: width,
+    rasterHeightPx: height,
+  }).radius;
+
 // NCC correctness: one L-shape, no rotation/scale sweep — one exact hit.
 {
   const raster = blankRgba(400, 300);
@@ -221,6 +238,7 @@ function cropRgba(source: RgbaFixture, left: number, top: number, side: number):
   const output = matchTemplateSweep(cv, raster, template, {
     threshold: 0.8,
     footprintPx: 48,
+    radius: syntheticRadius(48, 400, 300),
     rotationStepDeg: 360,
     scales: [1],
   });
@@ -247,6 +265,7 @@ function cropRgba(source: RgbaFixture, left: number, top: number, side: number):
   const output = matchTemplateSweep(cv, raster, template, {
     threshold: 0.6,
     footprintPx: 48,
+    radius: syntheticRadius(48, 600, 400),
     rotationStepDeg: 30,
     scales: [1],
   });
@@ -272,6 +291,7 @@ function cropRgba(source: RgbaFixture, left: number, top: number, side: number):
   const output = matchTemplateSweep(cv, raster, template, {
     threshold: 0.6,
     footprintPx: 48,
+    radius: syntheticRadius(48, 600, 400),
     rotationStepDeg: 360,
     scales: [0.85, 1, 1.15],
   });
@@ -289,6 +309,7 @@ function cropRgba(source: RgbaFixture, left: number, top: number, side: number):
   const output = matchTemplateSweep(cv, raster, template, {
     threshold: 0.5,
     footprintPx: 48,
+    radius: syntheticRadius(48, 4000, 3000),
     rotationStepDeg: 360,
     scales: [1],
   });
@@ -319,6 +340,7 @@ function cropRgba(source: RgbaFixture, left: number, top: number, side: number):
   const output = matchTemplateSweep(cv, raster, template, {
     threshold: 0.55,
     footprintPx: 48,
+    radius: syntheticRadius(48, 800, 600),
     rotationStepDeg: 30,
     scales: [0.85, 1, 1.15],
   });
@@ -513,7 +535,19 @@ assert.ok(
   Math.abs(footprintPt - 36) < 3,
   `the lollipop bbox long edge is ~36pt (got ${footprintPt.toFixed(1)}pt)`,
 );
-const footprintRasterPx = footprintPt * detectionScale;
+// Canonical geometry (AITAKEOFF7 Task 0): the one derivation every consumer
+// shares — footprint at raster scale plus the floored+capped radius.
+const fixtureGeometry = exemplarSheetGeometry({
+  footprintPt,
+  pageLongEdgePt: Math.max(PAGE.widthPt, PAGE.heightPt),
+  rasterWidthPx,
+  rasterHeightPx,
+});
+const footprintRasterPx = fixtureGeometry.footprintRasterPx!;
+assert.ok(
+  Math.abs(footprintRasterPx - footprintPt * detectionScale) < 1e-9,
+  "canonical footprint equals the crop measurement at raster scale",
+);
 
 const markerRasterPx = sheetPointToRenderPixel(exemplarSheetPoint, PAGE, detectionScale);
 const templateRect = templateCropRect(
@@ -539,7 +573,11 @@ const sweep = matchTemplateSweep(
     height: rasterHeightPx,
   },
   { data: templateImage.data, width: templateRect.width, height: templateRect.height },
-  { threshold: DEFAULT_TEMPLATE_MATCH_THRESHOLD, footprintPx: footprintRasterPx },
+  {
+    threshold: DEFAULT_TEMPLATE_MATCH_THRESHOLD,
+    footprintPx: footprintRasterPx,
+    radius: fixtureGeometry.radius,
+  },
 );
 const sweepElapsedMs = Date.now() - sweepStartedAt;
 assert.equal(sweep.sweepCount, 36, "12 rotations x 3 scales all ran");
@@ -605,10 +643,7 @@ console.log(
 
 // Union with a mock model stage-A list: the model re-finding G0 must not buy
 // a second verification; a model-only find elsewhere must survive.
-const dedupeRadius = dedupeRadiusForFootprint(
-  footprintRasterPx,
-  Math.max(rasterWidthPx, rasterHeightPx),
-);
+const dedupeRadius = fixtureGeometry.radius;
 const unionWithModel = unionProposalCandidates(
   sweep.candidates,
   [
@@ -708,4 +743,375 @@ assert.equal(matchedGlyphs.size, 3, "each verified point maps to a distinct glyp
 
 console.log(
   `Template-match PDF fixture passed: 3 glyphs (incl. 45° rotation + seam) proposed and verified within ${worstErrPt.toFixed(4)}pt; ${rejections} non-glyph proposal(s) died in stage B.`,
+);
+
+// --- AITAKEOFF7: the production root cause, reproduced and made impossible ---
+// A-100 pass 1/2 collapsed 12+ symbols to 7-9 stage-B candidates because the
+// exemplar's ink FUSED with surrounding linework: measureInkFootprintPx
+// (fused-linework cap lifted in AITAKEOFF5) measured the whole connected
+// network, and the radius derived from it — floor but no ceiling — swallowed
+// legitimate neighbors. This fixture builds exactly that exemplar and proves
+// both defenses: the measurement clamp and the radius cap.
+
+{
+  const fusedDoc = await pdfLib.PDFDocument.create();
+  const fusedPage = fusedDoc.addPage([PAGE.widthPt, PAGE.heightPt]);
+  fusedPage.drawSvgPath(lollipopPath(0), { x: 700, y: 500, color: pdfLib.rgb(0, 0, 0) });
+  // The wall line straight through the symbol — one connected ink network.
+  fusedPage.drawRectangle({
+    x: 550,
+    y: 498,
+    width: 450,
+    height: 4,
+    color: pdfLib.rgb(0, 0, 0),
+  });
+  const fusedPdf = await pdfjs.getDocument({ data: await fusedDoc.save() }).promise;
+  const fusedPdfPage = await fusedPdf.getPage(1);
+  const fusedSheetPoint = pdfPointToSheetPoint({ xPt: 700, yPt: 500 }, PAGE);
+  const fusedPlan = exemplarCropPlan(fusedSheetPoint, PAGE);
+  const fusedCanvas = napi.createCanvas(fusedPlan.widthPx, fusedPlan.heightPx);
+  const fusedContext = fusedCanvas.getContext("2d");
+  fusedContext.fillStyle = "#ffffff";
+  fusedContext.fillRect(0, 0, fusedPlan.widthPx, fusedPlan.heightPx);
+  await fusedPdfPage.render({
+    canvasContext: fusedContext,
+    viewport: fusedPdfPage.getViewport({
+      scale: fusedPlan.scale,
+      offsetX: fusedPlan.offsetX,
+      offsetY: fusedPlan.offsetY,
+    }),
+  }).promise;
+  const fusedImage = fusedContext.getImageData(0, 0, fusedPlan.widthPx, fusedPlan.heightPx);
+  const fusedMask = inkMaskFromRgba(fusedImage.data, fusedPlan.widthPx, fusedPlan.heightPx);
+  const fusedFootprintCropPx = measureInkFootprintPx(fusedMask, {
+    x: fusedPlan.markerInCropPx.px,
+    y: fusedPlan.markerInCropPx.py,
+  });
+  assert.ok(fusedFootprintCropPx, "the fused exemplar still measures");
+  const measurementCap = Math.floor(Math.max(fusedPlan.widthPx, fusedPlan.heightPx) / 2);
+  assert.equal(
+    fusedFootprintCropPx,
+    measurementCap,
+    `MEASUREMENT CLAMP: a symbol fused to a wall line measures the clamp (${measurementCap} crop px), never the whole network`,
+  );
+  const fusedGeometry7 = exemplarSheetGeometry({
+    footprintPt: fusedFootprintCropPx! / fusedPlan.scale,
+    pageLongEdgePt: Math.max(PAGE.widthPt, PAGE.heightPt),
+    rasterWidthPx,
+    rasterHeightPx,
+  });
+  assert.ok(
+    Math.abs(fusedGeometry7.radius.x - MAX_DEDUPE_RADIUS_LONG_EDGE) < 1e-12,
+    "RADIUS CAP: even the clamped fused footprint hits the radius ceiling, never beyond",
+  );
+  assert.ok(
+    fusedGeometry7.radius.x * rasterWidthPx <= 152.001,
+    "the capped radius is ≤152 raster px — under any 2-footprint symbol spacing",
+  );
+  console.log(
+    `Fused-exemplar proof passed: footprint clamps to ${fusedFootprintCropPx} crop px, radius caps at ${(fusedGeometry7.radius.x * rasterWidthPx).toFixed(0)}px.`,
+  );
+}
+
+// --- AITAKEOFF7 Task 2: dense-band candidate-collapse regression ---
+// 12 glyphs in a realistic band (~2.8 footprints apart, like the A-100 brush
+// row), 2 pre-existing marks, run at TWO raster sizes so any px/normalized
+// confusion diverges between runs and fails. Task 1 (verify-crop geometry)
+// and Task 3 (negatives never raise the bar) prove inside the same flow.
+
+const DENSE_GLYPHS_PDF = Array.from({ length: 12 }, (_, index) => ({
+  xPt: 109.2 + index * 100, // glyph 3 sits at xPt 409.2 — raster x=1023 @2.5
+  yPt: 500,
+}));
+const DENSE_MARKED = [2, 7];
+const DENSE_HALLUCINATION_PDF = { xPt: 1300, yPt: 200 }; // blank paper
+const denseDoc = await pdfLib.PDFDocument.create();
+const densePage = denseDoc.addPage([PAGE.widthPt, PAGE.heightPt]);
+for (const glyph of DENSE_GLYPHS_PDF) {
+  densePage.drawSvgPath(lollipopPath(0), {
+    x: glyph.xPt,
+    y: glyph.yPt,
+    color: pdfLib.rgb(0, 0, 0),
+  });
+}
+const densePdf = await pdfjs.getDocument({ data: await denseDoc.save() }).promise;
+const densePdfPage = await densePdf.getPage(1);
+
+// Exemplar (glyph 0) measured once from its clean crop — scale-independent.
+const denseExemplarSheet = pdfPointToSheetPoint(
+  { xPt: DENSE_GLYPHS_PDF[0].xPt, yPt: DENSE_GLYPHS_PDF[0].yPt },
+  PAGE,
+);
+const densePlan = exemplarCropPlan(denseExemplarSheet, PAGE);
+const denseCropCanvas = napi.createCanvas(densePlan.widthPx, densePlan.heightPx);
+const denseCropContext = denseCropCanvas.getContext("2d");
+denseCropContext.fillStyle = "#ffffff";
+denseCropContext.fillRect(0, 0, densePlan.widthPx, densePlan.heightPx);
+await densePdfPage.render({
+  canvasContext: denseCropContext,
+  viewport: densePdfPage.getViewport({
+    scale: densePlan.scale,
+    offsetX: densePlan.offsetX,
+    offsetY: densePlan.offsetY,
+  }),
+}).promise;
+const denseCropImage = denseCropContext.getImageData(0, 0, densePlan.widthPx, densePlan.heightPx);
+const denseFootprintCropPx = measureInkFootprintPx(
+  inkMaskFromRgba(denseCropImage.data, densePlan.widthPx, densePlan.heightPx),
+  { x: densePlan.markerInCropPx.px, y: densePlan.markerInCropPx.py },
+);
+assert.ok(denseFootprintCropPx, "the dense-band exemplar measures");
+const denseFootprintPt = denseFootprintCropPx! / densePlan.scale;
+
+/** Ink within a small search box around a point on the rendered raster? */
+const hasInkAround = (
+  context: { getImageData: (x: number, y: number, w: number, h: number) => { data: Uint8Array } },
+  centerPx: { px: number; py: number },
+  searchRadiusPx: number,
+) => {
+  for (let dy = -searchRadiusPx; dy <= searchRadiusPx; dy += 3) {
+    for (let dx = -searchRadiusPx; dx <= searchRadiusPx; dx += 3) {
+      if (darknessAt(context, centerPx.px + dx, centerPx.py + dy) < 200) return true;
+    }
+  }
+  return false;
+};
+
+async function runDenseBand(longEdgePx: number): Promise<Array<{ xPt: number; yPt: number }>> {
+  const scale = longEdgePx / Math.max(PAGE.widthPt, PAGE.heightPt);
+  const denseW = Math.round(PAGE.widthPt * scale);
+  const denseH = Math.round(PAGE.heightPt * scale);
+  const denseCanvas = napi.createCanvas(denseW, denseH);
+  const denseContext = denseCanvas.getContext("2d");
+  denseContext.fillStyle = "#ffffff";
+  denseContext.fillRect(0, 0, denseW, denseH);
+  await densePdfPage.render({
+    canvasContext: denseContext,
+    viewport: densePdfPage.getViewport({ scale }),
+  }).promise;
+
+  const geometry = exemplarSheetGeometry({
+    footprintPt: denseFootprintPt,
+    pageLongEdgePt: Math.max(PAGE.widthPt, PAGE.heightPt),
+    rasterWidthPx: denseW,
+    rasterHeightPx: denseH,
+  });
+  const footprintPx = geometry.footprintRasterPx!;
+  const glyphPx = DENSE_GLYPHS_PDF.map((glyph) =>
+    pdfPointToRenderPixel({ xPt: glyph.xPt, yPt: glyph.yPt }, PAGE, scale),
+  );
+  const spacingPx = glyphPx[1].px - glyphPx[0].px;
+  assert.ok(
+    spacingPx > 2 * footprintPx && spacingPx < 3 * footprintPx,
+    `the band spacing is 2-3 footprints (${(spacingPx / footprintPx).toFixed(2)}x)`,
+  );
+  assert.ok(
+    Math.max(geometry.radius.x * denseW, geometry.radius.y * denseH) < spacingPx / 2,
+    "REGRESSION GUARD: the capped radius can never reach a neighboring symbol",
+  );
+
+  const markerPx = { x: glyphPx[0].px, y: glyphPx[0].py };
+  const rect = templateCropRect(markerPx, footprintPx, denseW, denseH);
+  const template = denseContext.getImageData(rect.left, rect.top, rect.width, rect.height);
+  const sweep = matchTemplateSweep(
+    cv,
+    { data: denseContext.getImageData(0, 0, denseW, denseH).data, width: denseW, height: denseH },
+    { data: template.data, width: rect.width, height: rect.height },
+    { threshold: DEFAULT_TEMPLATE_MATCH_THRESHOLD, footprintPx, radius: geometry.radius },
+  );
+  const hitsPx = sweep.candidates.map((candidate) => ({
+    candidate,
+    px: candidate.x * denseW,
+    py: candidate.y * denseH,
+  }));
+  for (const [index, spot] of glyphPx.entries()) {
+    assert.equal(
+      hitsPx.filter((hit) => Math.hypot(hit.px - spot.px, hit.py - spot.py) < footprintPx / 2)
+        .length,
+      1,
+      `DENSE BAND @${longEdgePx}px: glyph ${index} proposes exactly once${index === 3 ? " (the AITAKEOFF5 seam column)" : ""}`,
+    );
+  }
+
+  // Mock stage A finds every glyph too (slightly off), plus one blank-paper
+  // hallucination — the union must collapse duplicates, keep the model-only.
+  const modelCandidates = [
+    ...glyphPx.map((spot) => ({
+      x: (spot.px + 4) / denseW,
+      y: (spot.py - 3) / denseH,
+      confidence: 0.5,
+    })),
+    {
+      x: pdfPointToRenderPixel(DENSE_HALLUCINATION_PDF, PAGE, scale).px / denseW,
+      y: pdfPointToRenderPixel(DENSE_HALLUCINATION_PDF, PAGE, scale).py / denseH,
+      confidence: 0.5,
+    },
+  ];
+  const unioned = unionProposalCandidates(sweep.candidates, modelCandidates, geometry.radius);
+  assert.equal(
+    unioned.length,
+    13,
+    "UNION: 12 cross-engine duplicates collapse, the model-only hallucination survives",
+  );
+  assert.ok(
+    unioned.length >= sweep.candidates.length,
+    "PANEL INVARIANT: the union never outputs fewer candidates than the NMS'd template hits",
+  );
+
+  // Near-existing suppression removes EXACTLY the two marked glyphs.
+  const marks = DENSE_MARKED.map((index) =>
+    pdfPointToSheetPoint(
+      { xPt: DENSE_GLYPHS_PDF[index].xPt, yPt: DENSE_GLYPHS_PDF[index].yPt },
+      PAGE,
+    ),
+  );
+  const fresh = excludeNearExistingPoints(unioned, marks, geometry.radius) as typeof unioned;
+  assert.equal(fresh.length, 11, "SUPPRESSION: exactly the 2 marked glyphs drop (10 glyphs + 1)");
+  for (const index of DENSE_MARKED) {
+    assert.ok(
+      !fresh.some(
+        (entry) =>
+          Math.hypot(entry.x * denseW - glyphPx[index].px, entry.y * denseH - glyphPx[index].py) <
+          footprintPx / 2,
+      ),
+      `the marked glyph ${index} is suppressed`,
+    );
+  }
+  assert.ok(
+    fresh.filter((entry) => entry.source === "template").length >= 10,
+    "COLLAPSE REGRESSION: at least 10 candidates reach stage B on a 12-symbol band",
+  );
+
+  // Task 1 — verify-crop geometry: for BOTH engines' candidates the 256px
+  // window contains the center, and glyph-sourced crops have ink at the
+  // center region. A blank-center crop on a glyph candidate fails here.
+  const hallucinationPx = pdfPointToRenderPixel(DENSE_HALLUCINATION_PDF, PAGE, scale);
+  for (const entry of fresh) {
+    const centerPx = { px: entry.x * denseW, py: entry.y * denseH };
+    const windowRect = verifyWindowRect({ x: centerPx.px, y: centerPx.py }, denseW, denseH);
+    assert.ok(
+      centerPx.px >= windowRect.left &&
+        centerPx.px < windowRect.left + windowRect.width &&
+        centerPx.py >= windowRect.top &&
+        centerPx.py < windowRect.top + windowRect.height,
+      "VERIFY-CROP GEOMETRY: the window contains the candidate center (both engines)",
+    );
+    const isHallucination =
+      Math.hypot(centerPx.px - hallucinationPx.px, centerPx.py - hallucinationPx.py) <
+      footprintPx / 2;
+    assert.equal(
+      hasInkAround(denseContext, centerPx, Math.ceil(footprintPx / 2)),
+      !isHallucination,
+      isHallucination
+        ? "the planted hallucination window is blank paper"
+        : "VERIFY-CROP GEOMETRY: a glyph candidate's crop has ink at its center region",
+    );
+  }
+
+  // Task 3 — one negative reference present: the rubric says negatives never
+  // raise the bar, and the mocked stage B verifies all 10 unmarked glyphs.
+  const verifyWithNegative = buildVerifyInstruction({
+    label: "brush",
+    positiveCount: 1,
+    negativeCount: 1,
+  });
+  assert.match(
+    verifyWithNegative,
+    /never raise the bar: a clear match of the positive references is still true/i,
+    "STRICTNESS GUARD: the verify rubric with a negative present keeps clear matches true",
+  );
+  const verifiedPdfPoints: Array<{ xPt: number; yPt: number }> = [];
+  let denseRejections = 0;
+  for (const entry of capProposalsPerSheet(fresh, DEFAULT_MAX_PROPOSALS_PER_SHEET)) {
+    const centerPx = { x: entry.x * denseW, y: entry.y * denseH };
+    const windowRect = verifyWindowRect(centerPx, denseW, denseH);
+    const frame = tileFrameFor(windowRect, denseW, denseH);
+    const glyphHit = glyphPx.find(
+      (spot) => Math.hypot(spot.px - centerPx.x, spot.py - centerPx.y) < footprintPx / 2,
+    );
+    const verdictText = glyphHit
+      ? JSON.stringify({
+          observed: "a filled circle with one straight tail, matching the exemplar",
+          match: true,
+          center: {
+            x:
+              Math.round(
+                tileLocalPxToNormalized(glyphHit.px - windowRect.left, windowRect.width) * 10,
+              ) / 10,
+            y:
+              Math.round(
+                tileLocalPxToNormalized(glyphHit.py - windowRect.top, windowRect.height) * 10,
+              ) / 10,
+          },
+        })
+      : JSON.stringify({ observed: "blank drawing paper with no symbol", match: false });
+    const verdict = parseVerifyResponse(verdictText, windowRect.width, windowRect.height);
+    if (verdict.match && verdict.center) {
+      const point = tileLocalToSheetPoint(frame, verdict.center.x, verdict.center.y);
+      verifiedPdfPoints.push(sheetPointToPdfPoint(point, PAGE));
+    } else {
+      assert.ok(verdict.observed.length > 0, "rejections carry the observed sentence");
+      denseRejections += 1;
+    }
+  }
+  assert.equal(
+    verifiedPdfPoints.length,
+    10,
+    "TWO-STAGE PROOF: all 10 unmarked glyphs verify with a negative reference present",
+  );
+  assert.equal(denseRejections, 1, "only the hallucination dies in stage B");
+  const matched = new Set<number>();
+  for (const point of verifiedPdfPoints) {
+    let best = -1;
+    let bestErr = Number.POSITIVE_INFINITY;
+    for (const [index, truth] of DENSE_GLYPHS_PDF.entries()) {
+      const err = Math.hypot(truth.xPt - point.xPt, truth.yPt - point.yPt);
+      if (err < bestErr) {
+        bestErr = err;
+        best = index;
+      }
+    }
+    assert.ok(bestErr < 0.1, `verified point lands on its glyph (got ${bestErr.toFixed(4)}pt)`);
+    matched.add(best);
+  }
+  assert.equal(matched.size, 10, "each verified point maps to a distinct unmarked glyph");
+
+  // The old-bug canary: the fixture DETECTS the uncapped-radius class. With
+  // the A-100 balloon radius (0.083 of the long edge), the same band
+  // collapses below 10 — remove the cap and this smoke fails.
+  const balloonRadius = sheetRadiusFromLongEdge(0.0833, denseW, denseH);
+  const collapsed = unionProposalCandidates(sweep.candidates, [], balloonRadius);
+  assert.ok(
+    collapsed.length < 10,
+    `BUG-CLASS CANARY: the uncapped A-100 radius collapses the band (${collapsed.length} of 12 survive)`,
+  );
+  const swallowed = excludeNearExistingPoints(unioned, marks, balloonRadius);
+  assert.ok(
+    swallowed.length < unioned.length - 2,
+    "BUG-CLASS CANARY: with the balloon radius, marks swallow unmarked neighbors too",
+  );
+
+  return verifiedPdfPoints.sort((a, b) => a.xPt - b.xPt);
+}
+
+const denseLarge = await runDenseBand(3800);
+// 1824 on purpose, not 1900: at 1900 the canvas height rounds 1187.5 → 1188
+// and the half-row canvas/content mismatch shows up as a systematic ~0.2pt
+// offset — sub-pixel render quantization, not a units bug. Integral dims at
+// both sizes (3800×2375, 1824×1140) keep this detector sharp at 0.1pt, so
+// only a REAL px/normalized confusion can trip it.
+const denseSmall = await runDenseBand(1824);
+// Any px/normalized confusion diverges between raster sizes; agreeing PDF
+// positions prove the whole chain is unit-clean at both.
+assert.equal(denseLarge.length, denseSmall.length, "both raster sizes verify the same count");
+for (const [index, point] of denseLarge.entries()) {
+  const other = denseSmall[index];
+  assert.ok(
+    Math.hypot(point.xPt - other.xPt, point.yPt - other.yPt) < 0.1,
+    `TWO-SIZE PROOF: verified point ${index} agrees across raster sizes within 0.1pt`,
+  );
+}
+
+console.log(
+  `Dense-band regression passed at 3800px and 1824px: 12 proposed, 2 suppressed by marks, 10 verified, hallucination rejected; cross-size agreement < 0.1pt; balloon-radius canary still detects the bug class.`,
 );

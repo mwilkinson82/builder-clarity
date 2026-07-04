@@ -7,7 +7,7 @@
 
 // Relative import on purpose: the smoke suite runs this module under plain
 // node --experimental-strip-types, which cannot resolve the @/ alias.
-import { DEDUPE_RADIUS_NORMALIZED } from "../ai-takeoff-domain.ts";
+import { withinSheetRadius, type SheetRadius } from "../ai-takeoff-domain.ts";
 
 /** One template-match hit, in normalized [0,1] sheet space. */
 export interface TemplateMatchCandidate {
@@ -112,22 +112,20 @@ export function templateCropRect(
 }
 
 /**
- * Non-max suppression: highest score wins within the radius (normalized
- * sheet units — the footprint-derived dedupe radius from AITAKEOFF5 Task 0).
- * Same greedy shape as dedupeCandidates, keyed on score instead of
- * confidence so sweep metadata survives.
+ * Non-max suppression: highest score wins within the radius (the canonical
+ * footprint-derived SheetRadius — AITAKEOFF7 made raw numbers a tsc error
+ * here after raster pixels leaked into sheet space in production). Same
+ * greedy shape as dedupeCandidates, keyed on score instead of confidence so
+ * sweep metadata survives.
  */
 export function suppressNonMaxima<T extends { x: number; y: number; score: number }>(
   candidates: T[],
-  radiusNormalized: number = DEDUPE_RADIUS_NORMALIZED,
+  radius: SheetRadius,
 ): T[] {
   const sorted = [...candidates].sort((a, b) => b.score - a.score);
   const kept: T[] = [];
   for (const candidate of sorted) {
-    const duplicate = kept.some(
-      (existing) =>
-        Math.hypot(existing.x - candidate.x, existing.y - candidate.y) < radiusNormalized,
-    );
+    const duplicate = kept.some((existing) => withinSheetRadius(existing, candidate, radius));
     if (!duplicate) kept.push(candidate);
   }
   return kept;
@@ -144,7 +142,7 @@ export function suppressNonMaxima<T extends { x: number; y: number; score: numbe
 export function unionProposalCandidates(
   templateHits: TemplateMatchCandidate[],
   modelCandidates: Array<{ x: number; y: number; confidence: number }>,
-  radiusNormalized: number,
+  radius: SheetRadius,
 ): Array<{
   x: number;
   y: number;
@@ -170,9 +168,7 @@ export function unionProposalCandidates(
       score: candidate.confidence,
     })),
   ];
-  return suppressNonMaxima(merged, radiusNormalized).map(
-    ({ score: _score, ...candidate }) => candidate,
-  );
+  return suppressNonMaxima(merged, radius).map(({ score: _score, ...candidate }) => candidate);
 }
 
 /** Human-readable origin line for diagnostics: "template 0.78 @ 30°". */

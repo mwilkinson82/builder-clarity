@@ -31,17 +31,23 @@ import {
   parseVerifyResponse,
   REFERENCE_MAX_NEGATIVES,
   REFERENCE_MAX_POSITIVES,
+  sheetRadiusFromLongEdge,
   snapToInkCentroid,
   tileTokenCheck,
   VERIFIED_PROPOSAL_CONFIDENCE,
   type AiCountCandidate,
+  type SheetRadius,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
 import {
   describeCandidateOrigin,
   resolveProposalSource,
   resolveTemplateMatchThreshold,
 } from "@/lib/ai-takeoff/template-match/template-match-domain";
-import { tileLocalToSheetPoint, type DetectionTileFrame } from "@/lib/ai-takeoff/coord-transforms";
+import {
+  sheetNorm,
+  tileLocalToSheetPoint,
+  type DetectionTileFrame,
+} from "@/lib/ai-takeoff/coord-transforms";
 import {
   base64ToBytes,
   CREDITS_SCHEMA_PENDING_MESSAGE,
@@ -345,12 +351,29 @@ const tileScanInput = z.object({
     .array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }))
     .max(20000)
     .default([]),
-  // Footprint-derived dedupe/exclusion radius (AITAKEOFF5 Task 0): the
-  // client measures the exemplar's ink footprint and scales the radius so
-  // same-symbol duplicates and already-marked symbols collapse at symbol
-  // scale. Defaults to the fixed floor for older clients.
-  dedupe_radius_normalized: z.number().min(0.001).max(0.1).default(DEDUPE_RADIUS_NORMALIZED),
+  // Footprint-derived dedupe/exclusion radius (AITAKEOFF5 Task 0, per-axis
+  // since AITAKEOFF7): the client derives it ONCE via exemplarSheetGeometry
+  // — floored and capped — and sends the per-axis normalized form so the
+  // distance check is isotropic in raster pixels. The legacy scalar stays
+  // accepted for one deploy's worth of stale clients.
+  dedupe_radius: z
+    .object({
+      x: z.number().min(0.0005).max(0.25),
+      y: z.number().min(0.0005).max(0.25),
+    })
+    .optional(),
+  dedupe_radius_normalized: z.number().min(0.001).max(0.1).optional(),
 });
+
+/** Wire radius → SheetRadius: per-axis wins, legacy scalar tolerated, floor otherwise. */
+function radiusFromWire(
+  perAxis: { x: number; y: number } | undefined,
+  legacyScalar: number | undefined,
+): SheetRadius {
+  if (perAxis) return { x: sheetNorm(perAxis.x), y: sheetNorm(perAxis.y) };
+  const scalar = legacyScalar ?? DEDUPE_RADIUS_NORMALIZED;
+  return { x: sheetNorm(scalar), y: sheetNorm(scalar) };
+}
 
 function isMissingExemplarDescriptionColumn(error: DynamicSupabaseError | null | undefined) {
   const message = error?.message ?? "";
@@ -413,12 +436,9 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
         ...tileLocalToSheetPoint(frame, center.x, center.y),
         confidence: COARSE_CANDIDATE_CONFIDENCE,
       }));
-      const deduped = dedupeCandidates(mapped, data.dedupe_radius_normalized);
-      candidates = excludeNearExistingPoints(
-        deduped,
-        data.existing_points,
-        data.dedupe_radius_normalized,
-      );
+      const radius = radiusFromWire(data.dedupe_radius, data.dedupe_radius_normalized);
+      const deduped = dedupeCandidates(mapped, radius);
+      candidates = excludeNearExistingPoints(deduped, data.existing_points, radius);
       // Candidates sitting on already-counted symbols are suppressed, not
       // lost: diagnostics labels them so "8 found" plus 4 hand-marked brushes
       // reads as intended behavior, not missed symbols (AITAKEOFF4 Task 2).
@@ -753,6 +773,77 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
       confidence: VERIFIED_PROPOSAL_CONFIDENCE,
       usage,
     };
+  });
+
+// Per-sheet funnel summary (AITAKEOFF7 Task 4): "N proposed → M after dedupe
+// → K after suppression" is the one line that makes a candidate collapse
+// visible on the first diagnostics screenshot instead of after a production
+// incident. The client records it once per sheet, after verification.
+const sheetSummaryInput = z.object({
+  operation_id: z.string().uuid(),
+  sheet_id: z.string().uuid(),
+  summary: z.object({
+    proposed_template: z.number().int().min(0).max(5000),
+    proposed_model: z.number().int().min(0).max(20000),
+    after_union_dedupe: z.number().int().min(0).max(20000),
+    after_suppression: z.number().int().min(0).max(20000),
+    sent_to_verify: z.number().int().min(0).max(2000),
+    verified: z.number().int().min(0).max(2000),
+    /** Stage-A tiles the client actually scanned (0 in template-only mode). */
+    stage_a_tiles: z.number().int().min(0).max(500),
+    footprint_raster_px: z.number().min(0).max(20000).nullable().default(null),
+    radius: z
+      .object({ x: z.number().min(0).max(0.25), y: z.number().min(0).max(0.25) })
+      .nullable()
+      .default(null),
+    template_engine: z.enum(["ok", "failed", "skipped"]),
+    template_error: z.string().max(500).default(""),
+    template_elapsed_ms: z.number().int().min(0).max(600_000).nullable().default(null),
+  }),
+});
+
+/**
+ * Records the per-sheet proposal funnel as a diagnostics artifact, and — in
+ * template-only mode, where stage A never runs a tile — advances
+ * sheets_completed so the failure-refund math stays honest (AITAKEOFF7
+ * Task 4: refunds previously assumed stage A was the only sheet consumer).
+ */
+export const recordAiScanSheetSummary = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof sheetSummaryInput>) => sheetSummaryInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const operation = await loadOwnedPendingOperation(
+      supabaseAdmin,
+      data.operation_id,
+      context.userId,
+    );
+    if (!operation.sheet_ids.includes(data.sheet_id)) {
+      throw new Error("That sheet is not part of this AI scan.");
+    }
+    const folder = diagnosticsFolder(operation.organization_id, operation.id);
+    await uploadDiagnostic(
+      supabaseAdmin,
+      `${folder}/summary-${data.sheet_id}.json`,
+      new TextEncoder().encode(
+        JSON.stringify({
+          sheetId: data.sheet_id,
+          ...data.summary,
+          createdAt: new Date().toISOString(),
+        }),
+      ),
+      "application/json",
+    );
+    if (data.summary.stage_a_tiles === 0) {
+      const { error } = await dynamicTable(supabaseAdmin, "ai_operations")
+        .update({
+          sheets_completed: Math.min(operation.sheets_completed + 1, operation.sheet_ids.length),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", operation.id);
+      if (error && !isMissingCreditsSchema(error)) throw new Error(error.message);
+    }
+    return { ok: true };
   });
 
 const finishScanInput = z.object({

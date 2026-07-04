@@ -35,17 +35,21 @@ import {
   buildVerifyInstruction,
   capProposalsPerSheet,
   COARSE_CANDIDATE_CONFIDENCE,
+  DEDUPE_RADIUS_NORMALIZED,
   dedupeCandidates,
   DEFAULT_MAX_PROPOSALS_PER_SHEET,
   DEFAULT_MIN_PROPOSAL_CONFIDENCE,
-  dedupeRadiusForFootprint,
   DETECTION_LONG_EDGE_PX,
   DETECTION_TILE_OVERLAP_PX,
   DETECTION_TILE_PX,
   excludeNearExistingPoints,
+  exemplarSheetGeometry,
   imageTokenEstimate,
+  MAX_DEDUPE_RADIUS_LONG_EDGE,
   measureInkFootprintPx,
   overlapForFootprintPx,
+  sheetRadiusFromLongEdge,
+  withinSheetRadius,
   INK_LUMINANCE_THRESHOLD,
   inkMaskFromBase64,
   inkMaskFromRgba,
@@ -498,13 +502,99 @@ assert.equal(
   "under the cap nothing is dropped",
 );
 
+// --- Sheet-space radii (AITAKEOFF7 Task 0) ---
+// One raster-pixel distance expressed per axis; distance checks isotropic
+// in raster pixels regardless of aspect ratio.
+
+const squareRadius = sheetRadiusFromLongEdge(DEDUPE_RADIUS_NORMALIZED, 1000, 1000);
+assert.ok(
+  Math.abs(squareRadius.x - 0.008) < 1e-12 && Math.abs(squareRadius.y - 0.008) < 1e-12,
+  "on a square raster both axes carry the long-edge fraction",
+);
+const wideRadius = sheetRadiusFromLongEdge(0.02, 3800, 2533);
+assert.ok(Math.abs(wideRadius.x - 0.02) < 1e-12, "x radius = fraction when width IS the long edge");
+assert.ok(
+  Math.abs(wideRadius.y - (0.02 * 3800) / 2533) < 1e-12,
+  "ANISOTROPY FIX: the y radius scales up so both axes cover the SAME raster-px distance",
+);
+assert.ok(
+  Math.abs(wideRadius.x * 3800 - wideRadius.y * 2533) < 1e-9,
+  "per-axis radii are one raster-pixel distance (76px) on both axes",
+);
+// The distance check matches: a 75px gap is inside, a 77px gap is outside —
+// on EITHER axis, which the old hypot-on-mixed-normalization got wrong.
+assert.ok(
+  withinSheetRadius({ x: 0.5, y: 0.5 }, { x: 0.5 + 75 / 3800, y: 0.5 }, wideRadius),
+  "75px x-gap is within the 76px radius",
+);
+assert.ok(
+  withinSheetRadius({ x: 0.5, y: 0.5 }, { x: 0.5, y: 0.5 + 75 / 2533 }, wideRadius),
+  "75px y-gap is within the 76px radius (was ~1.5x overweighted before)",
+);
+assert.ok(
+  !withinSheetRadius({ x: 0.5, y: 0.5 }, { x: 0.5 + 77 / 3800, y: 0.5 }, wideRadius),
+  "77px x-gap is outside",
+);
+assert.ok(
+  !withinSheetRadius({ x: 0.5, y: 0.5 }, { x: 0.5, y: 0.5 + 77 / 2533 }, wideRadius),
+  "77px y-gap is outside",
+);
+
+// The canonical exemplar geometry: floor, footprint scaling, and the CAP
+// that makes the A-100 collapse impossible.
+const isolatedGeometry = exemplarSheetGeometry({
+  footprintPt: 52,
+  pageLongEdgePt: 1520,
+  rasterWidthPx: 3800,
+  rasterHeightPx: 2375,
+});
+assert.ok(
+  Math.abs((isolatedGeometry.footprintRasterPx ?? 0) - 130) < 1e-9,
+  "a 52pt symbol on a 1520pt page is 130px on the 3800px raster",
+);
+assert.ok(
+  Math.abs(isolatedGeometry.radius.x - (0.75 * 130) / 3800) < 1e-12,
+  "a real symbol footprint derives the AITAKEOFF5 radius unchanged",
+);
+assert.equal(isolatedGeometry.tileOverlapPx, 195, "overlap = 1.5x footprint");
+const fusedGeometry = exemplarSheetGeometry({
+  footprintPt: 288, // a footprint measurement that ran away into linework
+  pageLongEdgePt: 1520,
+  rasterWidthPx: 3800,
+  rasterHeightPx: 2375,
+});
+assert.ok(
+  Math.abs(fusedGeometry.radius.x - MAX_DEDUPE_RADIUS_LONG_EDGE) < 1e-12,
+  "COLLAPSE GUARD: a runaway footprint caps at the radius ceiling (was 0.083 uncapped on A-100)",
+);
+assert.ok(
+  fusedGeometry.radius.x * 3800 <= 152.000001,
+  "the capped radius is at most 152 raster px — below any 2-footprint symbol spacing",
+);
+const unmeasurableGeometry = exemplarSheetGeometry({
+  footprintPt: null,
+  pageLongEdgePt: 1520,
+  rasterWidthPx: 3800,
+  rasterHeightPx: 2375,
+});
+assert.equal(unmeasurableGeometry.footprintRasterPx, null, "no footprint stays null");
+assert.ok(
+  Math.abs(unmeasurableGeometry.radius.x - DEDUPE_RADIUS_NORMALIZED) < 1e-12,
+  "no footprint falls back to the fixed floor",
+);
+assert.equal(unmeasurableGeometry.tileOverlapPx, 128, "no footprint keeps the fixed overlap");
+
 // --- Dedupe + existing-point exclusion ---
 
-const deduped = dedupeCandidates([
-  { x: 0.5, y: 0.5, confidence: 0.6 },
-  { x: 0.502, y: 0.5, confidence: 0.9 },
-  { x: 0.8, y: 0.8, confidence: 0.3 },
-]);
+const testRadius = sheetRadiusFromLongEdge(DEDUPE_RADIUS_NORMALIZED, 1000, 1000);
+const deduped = dedupeCandidates(
+  [
+    { x: 0.5, y: 0.5, confidence: 0.6 },
+    { x: 0.502, y: 0.5, confidence: 0.9 },
+    { x: 0.8, y: 0.8, confidence: 0.3 },
+  ],
+  testRadius,
+);
 assert.equal(deduped.length, 2, "overlap-seam duplicates collapse");
 assert.equal(
   deduped.find((c) => Math.abs(c.x - 0.5) < 0.01)?.confidence,
@@ -518,6 +608,7 @@ const filtered = excludeNearExistingPoints(
     { x: 0.75, y: 0.75, confidence: 0.9 },
   ],
   [{ x: 0.251, y: 0.249 }],
+  testRadius,
 );
 assert.equal(filtered.length, 1, "candidates on already-counted points drop out");
 assert.equal(filtered[0].x, 0.75, "fresh candidates survive");
@@ -564,6 +655,11 @@ assert.match(
   referencedInstruction,
   /Images 4-5 .*REJECTED .*NOT the target/,
   "negatives are framed as rejected look-alikes",
+);
+assert.match(
+  referencedInstruction,
+  /never raise the bar/i,
+  "STRICTNESS GUARD (AITAKEOFF7 Task 3): negatives exclude look-alikes, they never raise the bar",
 );
 assert.match(referencedInstruction, /final image/i, "candidates are located on the FINAL image");
 assert.ok(
@@ -642,6 +738,11 @@ assert.match(
   "verify framing covers multiple positives",
 );
 assert.match(referencedVerify, /Image 3 shows .*REJECTED/, "verify framing covers negatives");
+assert.match(
+  referencedVerify,
+  /never raise the bar: a clear match of the positive references is still true/i,
+  "STRICTNESS GUARD (AITAKEOFF7 Task 3): a clear positive match survives negative references",
+);
 assert.match(
   verifyInstruction,
   /"observed" FIRST/,
@@ -1237,19 +1338,26 @@ const raster2 = await renderViewport(
 );
 
 // Exemplar-derived tiling for this sheet (AITAKEOFF5 Task 0), exactly as the
-// client computes it: measured footprint (PDF pt) -> raster px -> overlap.
-const footprintRasterPx = footprintPt * detectionScale;
-const tileOverlap2 = overlapForFootprintPx(footprintRasterPx);
+// client computes it: ONE canonical derivation (AITAKEOFF7 Task 0).
+const geometry2 = exemplarSheetGeometry({
+  footprintPt,
+  pageLongEdgePt: Math.max(PAGE.widthPt, PAGE.heightPt),
+  rasterWidthPx,
+  rasterHeightPx,
+});
+const footprintRasterPx = geometry2.footprintRasterPx!;
+assert.ok(
+  Math.abs(footprintRasterPx - footprintPt * detectionScale) < 1e-9,
+  "the canonical footprint matches the crop-measured value at raster scale",
+);
+const tileOverlap2 = geometry2.tileOverlapPx;
 assert.equal(tileOverlap2, 135, "the 90px fixture footprint sizes a 135px overlap");
 assert.ok(
   tileOverlap2 >= 1.5 * footprintRasterPx - 1,
   "the overlap covers 1.5x the symbol footprint",
 );
 const detectionTiles2 = planDetectionTiles(rasterWidthPx, rasterHeightPx, undefined, tileOverlap2);
-const dedupeRadius2 = dedupeRadiusForFootprint(
-  footprintRasterPx,
-  Math.max(rasterWidthPx, rasterHeightPx),
-);
+const dedupeRadius2 = geometry2.radius;
 
 const circleRasterPx = CIRCLES_PDF.map((spot) => pdfPointToRenderPixel(spot, PAGE, detectionScale));
 const decoyRasterPx = pdfPointToRenderPixel(DECOY_PDF, PAGE, detectionScale);

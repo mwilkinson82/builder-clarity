@@ -16,7 +16,7 @@ import {
   planRotationSweep,
   type TemplateMatchCandidate,
 } from "./template-match-domain.ts";
-import { dedupeRadiusForFootprint } from "../ai-takeoff-domain.ts";
+import type { SheetRadius } from "../ai-takeoff-domain.ts";
 import { tileFrameFor, tileLocalToSheetPoint } from "../coord-transforms.ts";
 import type { CvMat, OpenCvApi } from "./opencv-runtime.ts";
 
@@ -32,6 +32,12 @@ export interface TemplateMatchOptions {
   threshold: number;
   /** Exemplar ink footprint on the detection raster, in raster pixels. */
   footprintPx: number;
+  /**
+   * The canonical NMS radius from exemplarSheetGeometry (AITAKEOFF7): the
+   * matcher no longer derives its own — one derivation site, capped, shared
+   * with every other dedupe/suppression consumer.
+   */
+  radius: SheetRadius;
   rotationStepDeg?: number;
   scales?: readonly number[];
   maxLongEdgePx?: number;
@@ -281,13 +287,9 @@ export function matchTemplateSweep(
       scale: hit.scale,
     }));
 
-    // Footprint-radius NMS (the AITAKEOFF5 dedupe derivation), then the
+    // Footprint-radius NMS with the caller's canonical radius, then the
     // safety cap — best scores first, truncation reported.
-    const radius = dedupeRadiusForFootprint(
-      options.footprintPx,
-      Math.max(raster.width, raster.height),
-    );
-    const suppressed = suppressNonMaxima(mapped, radius);
+    const suppressed = suppressNonMaxima(mapped, options.radius);
     const truncated = suppressed.length > TEMPLATE_MATCH_MAX_HITS;
     return {
       candidates: truncated ? suppressed.slice(0, TEMPLATE_MATCH_MAX_HITS) : suppressed,

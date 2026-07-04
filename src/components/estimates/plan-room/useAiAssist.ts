@@ -13,6 +13,7 @@ import {
   beginAiCountScan,
   completeAiCountScan,
   failAiCountScan,
+  recordAiScanSheetSummary,
   scanSheetTileForAiCounts,
   verifyAiCountCandidate,
 } from "@/lib/ai-takeoff/ai-takeoff.functions";
@@ -28,10 +29,8 @@ import { useAiCredits } from "./useAiCredits";
 import {
   appendAcceptedPoint,
   capProposalsPerSheet,
-  dedupeRadiusForFootprint,
-  DETECTION_LONG_EDGE_PX,
   excludeNearExistingPoints,
-  overlapForFootprintPx,
+  exemplarSheetGeometry,
   sortProposalsForReview,
   type AiCountCandidate,
   type AiCountProposal,
@@ -118,6 +117,7 @@ export function useAiAssist({
   const priorRejectionsFn = useServerFn(listPriorSheetRejections);
   const completeScanFn = useServerFn(completeAiCountScan);
   const failScanFn = useServerFn(failAiCountScan);
+  const recordSummaryFn = useServerFn(recordAiScanSheetSummary);
   const createMeasurementFn = useServerFn(createTakeoffMeasurement);
   const updateMeasurementFn = useServerFn(updateTakeoffMeasurement);
 
@@ -329,18 +329,23 @@ export function useAiAssist({
           exemplarSheetUrl,
           exemplarSheet.page_number,
         );
-        const exemplarLongEdgePt = Math.max(
-          exemplarRaster.pageSize.widthPt,
-          exemplarRaster.pageSize.heightPt,
-        );
-        const exemplarFootprintPx =
-          exemplarImage.footprintPt * (DETECTION_LONG_EDGE_PX / exemplarLongEdgePt);
+        // Canonical derivation (AITAKEOFF7 Task 0) — the same helper every
+        // dedupe/suppression consumer uses; nothing re-derives footprints.
+        const exemplarGeometry = exemplarSheetGeometry({
+          footprintPt: exemplarImage.footprintPt,
+          pageLongEdgePt: Math.max(
+            exemplarRaster.pageSize.widthPt,
+            exemplarRaster.pageSize.heightPt,
+          ),
+          rasterWidthPx: exemplarRaster.widthPx,
+          rasterHeightPx: exemplarRaster.heightPx,
+        });
         const templateRect = templateCropRect(
           {
             x: exemplar.point.x * exemplarRaster.widthPx,
             y: exemplar.point.y * exemplarRaster.heightPx,
           },
-          exemplarFootprintPx,
+          exemplarGeometry.footprintRasterPx ?? 0,
           exemplarRaster.widthPx,
           exemplarRaster.heightPx,
         );
@@ -383,23 +388,20 @@ export function useAiAssist({
           exemplarRasterReuse && sheet.id === exemplar.sheetId
             ? exemplarRasterReuse
             : await renderDetectionSheet(await signedUrlFor(sheet.plan_set_id), sheet.page_number);
-        // Exemplar-derived geometry (AITAKEOFF5 Task 0): the symbol footprint
-        // sizes the tile overlap (whole symbol always fits ≥1 tile) and the
-        // dedupe/exclusion radius (seam duplicates + already-marked symbols
-        // collapse at symbol scale, not at a fixed 0.008).
-        const pageLongEdgePt = Math.max(raster.pageSize.widthPt, raster.pageSize.heightPt);
-        const footprintRasterPx =
-          exemplarImage.footprintPt !== null && pageLongEdgePt > 0
-            ? exemplarImage.footprintPt * (DETECTION_LONG_EDGE_PX / pageLongEdgePt)
-            : null;
-        const tileOverlapPx = overlapForFootprintPx(footprintRasterPx);
-        const dedupeRadius = dedupeRadiusForFootprint(
-          footprintRasterPx,
-          Math.max(raster.widthPx, raster.heightPx),
-        );
+        // Exemplar-derived geometry (AITAKEOFF5 Task 0, canonical since
+        // AITAKEOFF7): ONE derivation of footprint, tile overlap, and the
+        // floored+capped per-axis dedupe/suppression radius for this sheet.
+        // The A-100 collapse came from re-derived, uncapped radii — every
+        // consumer below takes THESE values.
+        const geometry = exemplarSheetGeometry({
+          footprintPt: exemplarImage.footprintPt,
+          pageLongEdgePt: Math.max(raster.pageSize.widthPt, raster.pageSize.heightPt),
+          rasterWidthPx: raster.widthPx,
+          rasterHeightPx: raster.heightPx,
+        });
         // Template-only scans never slice tiles — stage A is skipped whole.
         const tiles =
-          proposalSource === "template" ? [] : sliceDetectionTiles(raster, tileOverlapPx);
+          proposalSource === "template" ? [] : sliceDetectionTiles(raster, geometry.tileOverlapPx);
         const existingPoints = existingCountPointsForSheet(sheet.id);
         // Negative references (AITAKEOFF5 Task 1): this session's rejections
         // for this sheet + exemplar first; otherwise the previous scan's
@@ -429,9 +431,13 @@ export function useAiAssist({
         // Template engine (AITAKEOFF6 Task 1): NCC of the exemplar template
         // against the WHOLE raster in the worker — deterministic, seam-free
         // proposals. In "both" mode a matcher failure degrades to the model
-        // engine alone; in "template" mode it is the scan failure.
+        // engine alone — but never silently anymore (AITAKEOFF7): the
+        // per-sheet summary records engine status, error, and timing.
         let templateHits: TemplateMatchCandidate[] = [];
-        if (templateSession && templateImage && footprintRasterPx) {
+        let templateEngine: "ok" | "failed" | "skipped" = "skipped";
+        let templateError = "";
+        let templateElapsedMs: number | null = null;
+        if (templateSession && templateImage && geometry.footprintRasterPx !== null) {
           try {
             const rasterPixels = raster.canvas
               .getContext("2d")
@@ -442,12 +448,17 @@ export function useAiAssist({
               template: templateImage,
               options: {
                 threshold: begin.templateMatchThreshold ?? 0.55,
-                footprintPx: footprintRasterPx,
+                footprintPx: geometry.footprintRasterPx,
+                radius: geometry.radius,
               },
             });
             templateHits = matched.candidates;
+            templateEngine = "ok";
+            templateElapsedMs = matched.elapsedMs;
           } catch (error) {
             if (proposalSource === "template") throw error;
+            templateEngine = "failed";
+            templateError = error instanceof Error ? error.message : "The symbol matcher failed.";
             templateHits = [];
           }
         }
@@ -480,7 +491,7 @@ export function useAiAssist({
               },
               is_last_tile_of_sheet: index === tiles.length - 1,
               existing_points: existingPoints,
-              dedupe_radius_normalized: dedupeRadius,
+              dedupe_radius: { x: geometry.radius.x, y: geometry.radius.y },
             },
           });
           if (!echo && result.exemplarDescription) {
@@ -499,20 +510,21 @@ export function useAiAssist({
         }
 
         // Stage B (AITAKEOFF3 Task 2, union in AITAKEOFF6): both engines'
-        // candidates merge and dedupe by the footprint radius FIRST — a
-        // symbol both engines found never buys two verification calls —
-        // template hits ranking by NCC score for the per-sheet cap. The
-        // near-existing suppression the server applies to model candidates
-        // covers template hits here, same helper, same radius.
-        const unioned = unionProposalCandidates(templateHits, sheetCoarse, dedupeRadius);
+        // candidates merge and dedupe by the canonical footprint radius
+        // FIRST — a symbol both engines found never buys two verification
+        // calls — template hits ranking by NCC score for the per-sheet cap.
+        // The near-existing suppression the server applies to model
+        // candidates covers template hits here, same helper, same radius.
+        const unioned = unionProposalCandidates(templateHits, sheetCoarse, geometry.radius);
         const fresh = excludeNearExistingPoints(
           unioned,
           existingPoints,
-          dedupeRadius,
+          geometry.radius,
           // excludeNearExistingPoints filters without mapping, so the union
           // entries' engine metadata survives the narrower parameter type.
         ) as typeof unioned;
         const toVerify = capProposalsPerSheet(fresh, begin.maxProposalsPerSheet);
+        let sheetVerified = 0;
         for (let index = 0; index < toVerify.length; index += 1) {
           if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
           setScanProgress({
@@ -557,6 +569,7 @@ export function useAiAssist({
             },
           });
           if (verdict.match && verdict.point) {
+            sheetVerified += 1;
             found.push({
               id: crypto.randomUUID(),
               sheetId: sheet.id,
@@ -575,6 +588,35 @@ export function useAiAssist({
             references: progressReferences,
             exemplarDescription: echo,
           });
+        }
+        // Per-sheet funnel summary (AITAKEOFF7 Task 4): the "N proposed → M
+        // after dedupe → K after suppression" record that makes a candidate
+        // collapse visible in diagnostics — plus footprint/radius values and
+        // template-engine status. Best-effort; in template-only mode this is
+        // also what advances sheets_completed for honest failure refunds.
+        try {
+          await recordSummaryFn({
+            data: {
+              operation_id: begin.operationId,
+              sheet_id: sheet.id,
+              summary: {
+                proposed_template: templateHits.length,
+                proposed_model: sheetCoarse.length,
+                after_union_dedupe: unioned.length,
+                after_suppression: fresh.length,
+                sent_to_verify: toVerify.length,
+                verified: sheetVerified,
+                stage_a_tiles: tiles.length,
+                footprint_raster_px: geometry.footprintRasterPx,
+                radius: { x: geometry.radius.x, y: geometry.radius.y },
+                template_engine: templateEngine,
+                template_error: templateError.slice(0, 500),
+                template_elapsed_ms: templateElapsedMs,
+              },
+            },
+          });
+        } catch {
+          // Diagnostics only — a summary failure never fails the scan.
         }
         sheetsDone += 1;
       }
@@ -628,6 +670,7 @@ export function useAiAssist({
     measurements,
     priorRejectionsFn,
     refreshCredits,
+    recordSummaryFn,
     scanTileFn,
     sheetById,
     targetSheets,
