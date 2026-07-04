@@ -1,8 +1,10 @@
-// Scan diagnostics dialog (AITAKEOFF2 Task 4) — the founder's microscope.
-// Super-admin only (enforced server-side): shows the exemplar crop actually
-// sent to the model, every tile with its sheet-space origin, the raw model
-// responses, and the mapped positions. Enough to distinguish "the model is
-// wrong" from "the plumbing fed it garbage" for any accuracy report.
+// Scan diagnostics dialog (AITAKEOFF2 Task 4, upgraded in AITAKEOFF3
+// Task 3) — the founder's microscope. Super-admin only (enforced
+// server-side): the exemplar crop actually sent to the model, every stage-A
+// tile with its mapped candidates drawn ON the thumbnail, every stage-B
+// verification crop with its verdict, and the token-implied perceived
+// megapixels so a silent API resize flags at a glance. Enough to distinguish
+// "the model is wrong" from "the plumbing fed it garbage".
 
 import { useCallback, useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
@@ -21,7 +23,230 @@ import { Label } from "@/components/ui/label";
 import {
   getAiScanDiagnostics,
   type AiScanDiagnostics as AiScanDiagnosticsData,
+  type AiScanDiagnosticsTile,
+  type AiScanVerification,
 } from "@/lib/ai-takeoff/ai-scan-diagnostics.functions";
+import type { DetectionTileFrame } from "@/lib/ai-takeoff/coord-transforms";
+
+// Marker palette: verification verdicts on thumbnails.
+const MARKER_ACCEPTED = "#16a34a"; // verified match
+const MARKER_REJECTED = "#dc2626"; // verification said no
+const MARKER_UNVERIFIED = "#d97706"; // never verified (deduped away or capped)
+
+interface ImageMarker {
+  leftPct: number;
+  topPct: number;
+  color: string;
+}
+
+/** Sheet-space point → percent position inside a tile/crop image. */
+function markerFor(
+  point: { x: number; y: number },
+  frame: DetectionTileFrame,
+  rect: { width: number; height: number },
+  color: string,
+): ImageMarker | null {
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const localX = (point.x - frame.originSheetX) / frame.sheetPerPxX;
+  const localY = (point.y - frame.originSheetY) / frame.sheetPerPxY;
+  const leftPct = (localX / rect.width) * 100;
+  const topPct = (localY / rect.height) * 100;
+  if (leftPct < 0 || leftPct > 100 || topPct < 0 || topPct > 100) return null;
+  return { leftPct, topPct, color };
+}
+
+/** Thumbnail with position markers drawn on it — no number cross-referencing. */
+function MarkedImage({
+  src,
+  alt,
+  markers,
+  className,
+}: {
+  src: string;
+  alt: string;
+  markers: ImageMarker[];
+  className?: string;
+}) {
+  return (
+    <div className="relative inline-block max-w-full">
+      <img src={src} alt={alt} className={className} loading="lazy" />
+      {markers.map((marker, index) => (
+        <span
+          key={index}
+          className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2"
+          style={{
+            left: `${marker.leftPct}%`,
+            top: `${marker.topPct}%`,
+            borderColor: marker.color,
+            backgroundColor: `${marker.color}33`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+const pointKey = (point: { x: number; y: number }) => `${point.x.toFixed(6)},${point.y.toFixed(6)}`;
+
+function TileCard({
+  tile,
+  verdictByPoint,
+}: {
+  tile: AiScanDiagnosticsTile;
+  verdictByPoint: Map<string, boolean>;
+}) {
+  const markers: ImageMarker[] =
+    tile.frame && tile.rect
+      ? tile.mappedCandidates
+          .map((candidate) => {
+            const verdict = verdictByPoint.get(pointKey(candidate));
+            const color =
+              verdict === true
+                ? MARKER_ACCEPTED
+                : verdict === false
+                  ? MARKER_REJECTED
+                  : MARKER_UNVERIFIED;
+            return markerFor(candidate, tile.frame!, tile.rect!, color);
+          })
+          .filter((marker): marker is ImageMarker => marker !== null)
+      : [];
+
+  return (
+    <div className="rounded-md border border-hairline p-3" data-testid="ai-diagnostics-tile">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <Badge variant="outline">tile {tile.tileIndex}</Badge>
+        <span>sheet {tile.sheetId.slice(0, 8)}…</span>
+        {tile.metadataMissing && (
+          <Badge variant="destructive" data-testid="ai-diagnostics-tile-orphan">
+            metadata missing
+          </Badge>
+        )}
+        {tile.frame && (
+          <span>
+            origin ({tile.frame.originSheetX.toFixed(4)}, {tile.frame.originSheetY.toFixed(4)})
+          </span>
+        )}
+        {tile.rect && (
+          <span>
+            {tile.rect.width}×{tile.rect.height}px @ ({tile.rect.left}, {tile.rect.top})
+          </span>
+        )}
+        <span>{tile.mappedCandidates.length} candidates</span>
+        {tile.usage && (
+          <span>
+            {tile.usage.inputTokens}in/{tile.usage.outputTokens}out tok
+          </span>
+        )}
+        {tile.tokenCheck && (
+          <span>
+            tokens ⇒ ~{tile.tokenCheck.tokenImpliedMegapixels}MP vs tile{" "}
+            {tile.tokenCheck.tileMegapixels}MP
+          </span>
+        )}
+        {tile.tokenCheck?.suspectedResize && (
+          <Badge variant="destructive" data-testid="ai-diagnostics-resize-flag">
+            resize suspected
+          </Badge>
+        )}
+      </div>
+      {tile.imageUrl && (
+        <div className="mt-2">
+          <MarkedImage
+            src={tile.imageUrl}
+            alt={`Tile ${tile.tileIndex}`}
+            markers={markers}
+            className="max-h-48 rounded border border-hairline"
+          />
+        </div>
+      )}
+      {tile.mappedCandidates.length > 0 && (
+        <p className="mt-2 break-words text-xs text-muted-foreground">
+          Candidates:{" "}
+          {tile.mappedCandidates
+            .map((candidate) => `(${candidate.x.toFixed(4)}, ${candidate.y.toFixed(4)})`)
+            .join(" ")}
+        </p>
+      )}
+      {tile.rawResponse && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-muted-foreground">
+            Raw model response
+          </summary>
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-surface p-2 text-[11px]">
+            {tile.rawResponse}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function VerificationCard({ verification }: { verification: AiScanVerification }) {
+  const markers: ImageMarker[] =
+    verification.mappedPoint && verification.frame && verification.window
+      ? ([
+          markerFor(
+            verification.mappedPoint,
+            verification.frame,
+            verification.window,
+            verification.match ? MARKER_ACCEPTED : MARKER_REJECTED,
+          ),
+        ].filter(Boolean) as ImageMarker[])
+      : [];
+
+  return (
+    <div
+      className="rounded-md border border-hairline p-3"
+      data-testid="ai-diagnostics-verification"
+    >
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <Badge
+          variant={verification.match ? "secondary" : "destructive"}
+          data-testid="ai-diagnostics-verdict"
+        >
+          {verification.match ? "verified" : "rejected"}
+        </Badge>
+        <Badge variant="outline">candidate {verification.candidateIndex}</Badge>
+        <span>sheet {verification.sheetId.slice(0, 8)}…</span>
+        {verification.metadataMissing && <Badge variant="destructive">metadata missing</Badge>}
+        {verification.window && (
+          <span>
+            {verification.window.width}×{verification.window.height}px @ ({verification.window.left}
+            , {verification.window.top})
+          </span>
+        )}
+        {verification.match && !verification.centerRefined && (
+          <span>center fallback: stage-A point</span>
+        )}
+        {verification.usage && (
+          <span>
+            {verification.usage.inputTokens}in/{verification.usage.outputTokens}out tok
+          </span>
+        )}
+      </div>
+      {verification.imageUrl && (
+        <div className="mt-2">
+          <MarkedImage
+            src={verification.imageUrl}
+            alt={`Verification crop ${verification.candidateIndex}`}
+            markers={markers}
+            className="max-h-40 rounded border border-hairline"
+          />
+        </div>
+      )}
+      {verification.rawResponse && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-muted-foreground">
+            Raw verify response
+          </summary>
+          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-surface p-2 text-[11px]">
+            {verification.rawResponse}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
 
 export function AiScanDiagnosticsDialog({
   open,
@@ -70,6 +295,14 @@ export function AiScanDiagnosticsDialog({
   }, [defaultOperationId, load, open]);
 
   const operation = diagnostics?.operation ?? null;
+  // Verification verdicts keyed by the stage-A candidate point they judged,
+  // so tile thumbnails can color their markers without cross-referencing.
+  const verdictByPoint = new Map<string, boolean>();
+  for (const verification of diagnostics?.verifications ?? []) {
+    if (verification.candidate) {
+      verdictByPoint.set(pointKey(verification.candidate), verification.match);
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -80,8 +313,9 @@ export function AiScanDiagnosticsDialog({
             Scan diagnostics
           </DialogTitle>
           <DialogDescription>
-            What the model actually saw: the exemplar crop, every tile with its sheet-space origin,
-            the raw responses, and the mapped positions. Images are kept for ~24 hours.
+            What the model actually saw at both stages: the exemplar crop, every tile with its
+            candidates drawn on, and every verification crop with its verdict. Images are kept for
+            ~24 hours.
           </DialogDescription>
         </DialogHeader>
 
@@ -161,68 +395,41 @@ export function AiScanDiagnosticsDialog({
 
                 <div className="space-y-3">
                   <p className="text-sm font-medium">
-                    Tiles ({diagnostics.tiles.length}) — origin is the tile's top-left in normalized
-                    sheet space
+                    Tiles ({diagnostics.tiles.length}) — stage-A candidates drawn on each tile
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Markers: <span style={{ color: MARKER_ACCEPTED }}>green</span> verified,{" "}
+                    <span style={{ color: MARKER_REJECTED }}>red</span> rejected in verification,{" "}
+                    <span style={{ color: MARKER_UNVERIFIED }}>amber</span> never verified (deduped
+                    across tiles or capped).
                   </p>
                   {diagnostics.tiles.map((tile) => (
-                    <div
+                    <TileCard
                       key={`${tile.sheetId}-${tile.tileIndex}`}
-                      className="rounded-md border border-hairline p-3"
-                      data-testid="ai-diagnostics-tile"
-                    >
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <Badge variant="outline">tile {tile.tileIndex}</Badge>
-                        <span>sheet {tile.sheetId.slice(0, 8)}…</span>
-                        {tile.frame && (
-                          <span>
-                            origin ({tile.frame.originSheetX.toFixed(4)},{" "}
-                            {tile.frame.originSheetY.toFixed(4)})
-                          </span>
-                        )}
-                        {tile.rect && (
-                          <span>
-                            {tile.rect.width}×{tile.rect.height}px @ ({tile.rect.left},{" "}
-                            {tile.rect.top})
-                          </span>
-                        )}
-                        <span>{tile.mappedCandidates.length} mapped</span>
-                        {tile.usage && (
-                          <span>
-                            {tile.usage.inputTokens}in/{tile.usage.outputTokens}out tok
-                          </span>
-                        )}
-                      </div>
-                      {tile.imageUrl && (
-                        <img
-                          src={tile.imageUrl}
-                          alt={`Tile ${tile.tileIndex}`}
-                          className="mt-2 max-h-48 rounded border border-hairline"
-                          loading="lazy"
-                        />
-                      )}
-                      {tile.mappedCandidates.length > 0 && (
-                        <p className="mt-2 break-words text-xs text-muted-foreground">
-                          Mapped:{" "}
-                          {tile.mappedCandidates
-                            .map(
-                              (candidate) =>
-                                `(${candidate.x.toFixed(4)}, ${candidate.y.toFixed(4)} @ ${candidate.confidence.toFixed(2)})`,
-                            )
-                            .join(" ")}
-                        </p>
-                      )}
-                      {tile.rawResponse && (
-                        <details className="mt-2">
-                          <summary className="cursor-pointer text-xs text-muted-foreground">
-                            Raw model response
-                          </summary>
-                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-surface p-2 text-[11px]">
-                            {tile.rawResponse}
-                          </pre>
-                        </details>
-                      )}
-                    </div>
+                      tile={tile}
+                      verdictByPoint={verdictByPoint}
+                    />
                   ))}
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-sm font-medium">
+                    Verifications ({diagnostics.verifications.length}) — each candidate judged on a
+                    zoomed crop
+                  </p>
+                  {diagnostics.verifications.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      No verification artifacts (stage A found no candidates, or the scan predates
+                      two-stage detection).
+                    </p>
+                  ) : (
+                    diagnostics.verifications.map((verification) => (
+                      <VerificationCard
+                        key={`${verification.sheetId}-${verification.candidateIndex}`}
+                        verification={verification}
+                      />
+                    ))
+                  )}
                 </div>
               </>
             )}
