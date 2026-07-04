@@ -679,7 +679,9 @@ await expectContains(
     /Complete to date %/,
     /Pull SOV \+ approved COs/,
     /Change orders in this application/,
-    /Download AIA package/,
+    // GETTINGPAID1: AIA affordances only for applications built as AIA.
+    /output_format === "aia_g702"/,
+    /Download AIA G702\/G703/,
     /Cost ledger: job-cost backup/,
     /Cost code health/,
     /Cost transaction backup/,
@@ -699,25 +701,53 @@ await expectContains(
   "billing document labels normalize generated-looking leading zeroes before rendering or export",
 );
 
+// GETTINGPAID1: the AIA package is lender-grade — G702 face with lines 1-9
+// including the retainage split, certification + notary + architect blocks,
+// and the full G703 column set, all reconciling through aia-math.
 await expectContains(
   "src/lib/aia-pdf.ts",
   [
     /billingDocumentLabel/,
     /APPLICATION AND CERTIFICATE FOR PAYMENT/,
     /CONTINUATION SHEET/,
-    /Owner \/ Company/,
-    /CONTRACT SUMMARY/,
-    /CONTRACTOR CERTIFICATION/,
-    /hasRetainage/,
-    /Total earned to date/,
-    /computePreviousCertificateCents/,
+    /To \(Owner\)/,
+    /From \(Contractor\)/,
+    /Via \(Architect\)/,
+    /CONTRACTOR'S APPLICATION FOR PAYMENT/,
+    /Of completed work/,
+    /Of stored material/,
+    /Total earned less retainage \(4 - 5\)/,
     /Less previous certificates for payment/,
+    /Balance to finish, incl\. retainage \(3 - 6\)/,
+    /CHANGE ORDER SUMMARY/,
+    /CONTRACTOR'S CERTIFICATION/,
+    /NOTARY/,
+    /My commission expires/,
+    /ARCHITECT'S CERTIFICATE FOR PAYMENT/,
+    /AMOUNT CERTIFIED/,
+    /computeG702Face/,
+    /computeG703Rows/,
+    /computePreviousCertificatesCents/,
+    /From Previous Application/,
+    /Materials Presently Stored/,
+    /GRAND TOTALS/,
     /getContinuationColumns/,
-    /drawContinuationColumnHeader/,
-    /PCT_TEXT_X/,
     /aia-pay-application-package\.pdf/,
   ],
-  "application PDF generator creates a cover sheet and continuation sheet package",
+  "application PDF generator produces the lender-grade G702/G703 package",
+);
+
+await expectContains(
+  "src/lib/aia-math.ts",
+  [
+    /computeG703Row/,
+    /computeG703Totals/,
+    /computeG702Face/,
+    /retainageCompletedWorkCents/,
+    /retainageStoredMaterialCents/,
+    /percentOfCents/,
+  ],
+  "AIA arithmetic is a pure cents module shared by the PDF and the tests",
 );
 
 await expectContains(

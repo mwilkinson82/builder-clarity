@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -21,6 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   getClientPortalProject,
   recordClientChangeOrderDecision,
+  recordInvoicePortalView,
   type ChangeOrderApprovalRow,
   type ClientPortalBillingApplication,
   type ClientPortalChangeOrder,
@@ -134,6 +135,25 @@ function ClientProjectPage() {
     // Runs once per portal visit; the params are consumed above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // Viewed signal (GETTINGPAID1): opening an invoice detail in the portal is
+  // the "viewed" event, recorded server-side once per invoice per visit.
+  // The server ignores internal-team views; only genuine client opens count.
+  const recordView = useServerFn(recordInvoicePortalView);
+  const viewedInvoiceIdsRef = useRef<Set<string>>(new Set());
+  const visibleInvoices = projectQuery.data?.billingInvoices ?? [];
+  const viewedInvoiceId =
+    (
+      visibleInvoices.find((invoice: BillingInvoiceRow) => invoice.id === selectedInvoiceId) ??
+      visibleInvoices[0] ??
+      null
+    )?.id ?? null;
+  useEffect(() => {
+    if (!viewedInvoiceId || viewedInvoiceIdsRef.current.has(viewedInvoiceId)) return;
+    viewedInvoiceIdsRef.current.add(viewedInvoiceId);
+    recordView({ data: { invoiceId: viewedInvoiceId } }).catch(() => null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewedInvoiceId]);
 
   const decisionMutation = useMutation({
     mutationFn: (input: {

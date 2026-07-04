@@ -12,6 +12,7 @@ import {
   type PipelineStage,
 } from "@/lib/pipeline.functions";
 import { createProject, listProjects, seedDemoIfEmpty } from "@/lib/projects.functions";
+import { BillingFeedBadge } from "@/components/billing/BillingFeedBadge";
 import { PipelineWorkspace } from "@/components/pipeline/PipelineWorkspace";
 import {
   assignProjectMember,
@@ -398,6 +399,7 @@ function PortfolioPage() {
               <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
                 <Link to="/billing">
                   <ReceiptText className="h-3.5 w-3.5" /> Billing
+                  <BillingFeedBadge />
                 </Link>
               </Button>
               <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
