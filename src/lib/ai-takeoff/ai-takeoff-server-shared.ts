@@ -81,14 +81,15 @@ export const normalizeOperation = (row: Record<string, unknown>): AiOperationRow
   updated_at: str(row.updated_at),
 });
 
-// --- Scan diagnostics storage (AITAKEOFF2 Task 4) ---
-// Transient artifacts in the existing plan-room bucket, one folder per
-// operation: the exemplar image actually sent, every tile with its
-// sheet-space frame, the raw model response, and the mapped positions.
-// Uploads are strictly best-effort — diagnostics must never fail a scan.
+// --- Scan diagnostics storage (AITAKEOFF2 Task 4, own bucket since
+// AITAKEOFF4 Task 3) ---
+// Transient artifacts in the dedicated private ai-diagnostics bucket, one
+// folder per operation: the exemplar image actually sent, every tile with
+// its sheet-space frame, the raw model responses, verification crops, and
+// the mapped positions. Written and read by the service role only. Uploads
+// are strictly best-effort — diagnostics must never fail a scan.
 
-export const AI_DIAGNOSTICS_BUCKET = "plan-room";
-export const AI_DIAGNOSTICS_PREFIX = "ai-diagnostics";
+export const AI_DIAGNOSTICS_BUCKET = "ai-diagnostics";
 export const AI_DIAGNOSTICS_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 export type StorageClient = {
@@ -117,7 +118,7 @@ export type StorageClient = {
 };
 
 export function diagnosticsFolder(organizationId: string, operationId: string) {
-  return `${AI_DIAGNOSTICS_PREFIX}/${organizationId}/${operationId}`;
+  return `${organizationId}/${operationId}`;
 }
 
 // atob/TextEncoder are Node globals too; keeps this file off Buffer typings.
@@ -149,7 +150,7 @@ export async function uploadDiagnostic(
 export async function pruneOldDiagnostics(admin: unknown, organizationId: string) {
   try {
     const storage = (admin as StorageClient).storage.from(AI_DIAGNOSTICS_BUCKET);
-    const orgPrefix = `${AI_DIAGNOSTICS_PREFIX}/${organizationId}`;
+    const orgPrefix = organizationId;
     const { data: folders } = await storage.list(orgPrefix, { limit: 12 });
     if (!folders) return;
     const cutoff = Date.now() - AI_DIAGNOSTICS_RETENTION_MS;

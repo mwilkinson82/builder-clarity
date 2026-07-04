@@ -32,6 +32,7 @@ import type { DetectionTileFrame } from "@/lib/ai-takeoff/coord-transforms";
 const MARKER_ACCEPTED = "#16a34a"; // verified match
 const MARKER_REJECTED = "#dc2626"; // verification said no
 const MARKER_UNVERIFIED = "#d97706"; // never verified (deduped away or capped)
+const MARKER_SUPPRESSED = "#2563eb"; // suppressed: the estimator already marked it
 
 interface ImageMarker {
   leftPct: number;
@@ -97,8 +98,8 @@ function TileCard({
 }) {
   const markers: ImageMarker[] =
     tile.frame && tile.rect
-      ? tile.mappedCandidates
-          .map((candidate) => {
+      ? [
+          ...tile.mappedCandidates.map((candidate) => {
             const verdict = verdictByPoint.get(pointKey(candidate));
             const color =
               verdict === true
@@ -107,8 +108,11 @@ function TileCard({
                   ? MARKER_REJECTED
                   : MARKER_UNVERIFIED;
             return markerFor(candidate, tile.frame!, tile.rect!, color);
-          })
-          .filter((marker): marker is ImageMarker => marker !== null)
+          }),
+          ...tile.suppressedNearExisting.map((candidate) =>
+            markerFor(candidate, tile.frame!, tile.rect!, MARKER_SUPPRESSED),
+          ),
+        ].filter((marker): marker is ImageMarker => marker !== null)
       : [];
 
   return (
@@ -132,15 +136,20 @@ function TileCard({
           </span>
         )}
         <span>{tile.mappedCandidates.length} candidates</span>
+        {tile.suppressedNearExisting.length > 0 && (
+          <span data-testid="ai-diagnostics-suppressed-count">
+            {tile.suppressedNearExisting.length} suppressed — already marked by hand
+          </span>
+        )}
         {tile.usage && (
           <span>
             {tile.usage.inputTokens}in/{tile.usage.outputTokens}out tok
           </span>
         )}
-        {tile.tokenCheck && (
-          <span>
-            tokens ⇒ ~{tile.tokenCheck.tokenImpliedMegapixels}MP vs tile{" "}
-            {tile.tokenCheck.tileMegapixels}MP
+        {tile.tokenCheck && Number.isFinite(tile.tokenCheck.tileImpliedMegapixels) && (
+          <span data-testid="ai-diagnostics-tile-mp">
+            tile ⇒ ~{tile.tokenCheck.tileImpliedMegapixels}MP
+            {tile.tokenCheck.suspectedResize ? "" : " (ok)"}
           </span>
         )}
         {tile.tokenCheck?.suspectedResize && (
@@ -182,17 +191,35 @@ function TileCard({
 }
 
 function VerificationCard({ verification }: { verification: AiScanVerification }) {
-  const markers: ImageMarker[] =
-    verification.mappedPoint && verification.frame && verification.window
-      ? ([
-          markerFor(
-            verification.mappedPoint,
-            verification.frame,
-            verification.window,
-            verification.match ? MARKER_ACCEPTED : MARKER_REJECTED,
-          ),
-        ].filter(Boolean) as ImageMarker[])
-      : [];
+  const markers: ImageMarker[] = [];
+  if (verification.mappedPoint && verification.frame && verification.window) {
+    const finalMarker = markerFor(
+      verification.mappedPoint,
+      verification.frame,
+      verification.window,
+      verification.match ? MARKER_ACCEPTED : MARKER_REJECTED,
+    );
+    if (finalMarker) markers.push(finalMarker);
+  }
+  // The pre-snap stage-B center in amber: raw vs final IS the correction
+  // vector, visible on the crop itself (AITAKEOFF4 Task 1).
+  if (verification.rawCenterPx && verification.snappedCenterPx && verification.window) {
+    const { width, height } = verification.window;
+    if (width > 0 && height > 0) {
+      markers.push({
+        leftPct: (verification.rawCenterPx.x / width) * 100,
+        topPct: (verification.rawCenterPx.y / height) * 100,
+        color: MARKER_UNVERIFIED,
+      });
+    }
+  }
+  const snapDeltaPx =
+    verification.rawCenterPx && verification.snappedCenterPx
+      ? Math.hypot(
+          verification.snappedCenterPx.x - verification.rawCenterPx.x,
+          verification.snappedCenterPx.y - verification.rawCenterPx.y,
+        )
+      : null;
 
   return (
     <div
@@ -217,6 +244,14 @@ function VerificationCard({ verification }: { verification: AiScanVerification }
         )}
         {verification.match && !verification.centerRefined && (
           <span>center fallback: stage-A point</span>
+        )}
+        {snapDeltaPx !== null && (
+          <span data-testid="ai-diagnostics-snap-delta">
+            snap moved the center {snapDeltaPx.toFixed(1)}px
+          </span>
+        )}
+        {verification.match && verification.rawCenterPx && !verification.snappedCenterPx && (
+          <span>no ink blob to snap to — stage-B center kept</span>
         )}
         {verification.usage && (
           <span>
@@ -401,7 +436,8 @@ export function AiScanDiagnosticsDialog({
                     Markers: <span style={{ color: MARKER_ACCEPTED }}>green</span> verified,{" "}
                     <span style={{ color: MARKER_REJECTED }}>red</span> rejected in verification,{" "}
                     <span style={{ color: MARKER_UNVERIFIED }}>amber</span> never verified (deduped
-                    across tiles or capped).
+                    across tiles or capped), <span style={{ color: MARKER_SUPPRESSED }}>blue</span>{" "}
+                    suppressed — the estimator already marked that symbol.
                   </p>
                   {diagnostics.tiles.map((tile) => (
                     <TileCard

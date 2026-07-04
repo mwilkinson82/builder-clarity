@@ -24,8 +24,10 @@ import {
   DEFAULT_MAX_PROPOSALS_PER_SHEET,
   DEFAULT_MIN_PROPOSAL_CONFIDENCE,
   excludeNearExistingPoints,
+  inkMaskFromBase64,
   parseScanResponse,
   parseVerifyResponse,
+  snapToInkCentroid,
   tileTokenCheck,
   VERIFIED_PROPOSAL_CONFIDENCE,
   type AiCountCandidate,
@@ -264,6 +266,11 @@ const tileScanInput = z.object({
     media_type: z.enum(["image/png", "image/webp", "image/jpeg"]),
     // Region-rendered crop (~640px long side) is bigger than Phase A's.
     base64: z.string().min(1).max(2_500_000),
+    // Pixel dimensions of the exemplar crop (AITAKEOFF4 Task 2): lets the
+    // token check subtract the exemplar's share and isolate the tile's own
+    // perceived megapixels.
+    width_px: z.number().int().min(1).max(4000).optional(),
+    height_px: z.number().int().min(1).max(4000).optional(),
   }),
   tile: z.object({
     index: z.number().int().min(0).max(500),
@@ -323,6 +330,7 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
     const { callAnthropicVision } = await import("@/lib/ai-takeoff/anthropic.server");
 
     let candidates: AiCountCandidate[] = [];
+    let suppressedNearExisting: AiCountCandidate[] = [];
     let usage = { inputTokens: 0, outputTokens: 0 };
     let exemplarDescription = "";
     let rawResponseText = "";
@@ -348,7 +356,13 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
         ...tileLocalToSheetPoint(frame, center.x, center.y),
         confidence: COARSE_CANDIDATE_CONFIDENCE,
       }));
-      candidates = excludeNearExistingPoints(dedupeCandidates(mapped), data.existing_points);
+      const deduped = dedupeCandidates(mapped);
+      candidates = excludeNearExistingPoints(deduped, data.existing_points);
+      // Candidates sitting on already-counted symbols are suppressed, not
+      // lost: diagnostics labels them so "8 found" plus 4 hand-marked brushes
+      // reads as intended behavior, not missed symbols (AITAKEOFF4 Task 2).
+      const kept = new Set(candidates);
+      suppressedNearExisting = deduped.filter((candidate) => !kept.has(candidate));
     } catch (error) {
       const message = error instanceof Error ? error.message : "The AI model call failed.";
       await markOperationFailed(supabaseAdmin, operation, message);
@@ -404,10 +418,18 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
           exemplarDescription,
           rawResponse: rawResponseText.slice(0, 20000),
           mappedCandidates: candidates,
+          suppressedNearExisting,
           usage,
-          // Token-implied perceived megapixels (AITAKEOFF3 Task 3): a future
-          // silent resize shows up here as suspectedResize at a glance.
-          tokenCheck: tileTokenCheck(usage.inputTokens, data.tile.width, data.tile.height),
+          // Token-implied perceived megapixels (AITAKEOFF3 Task 3, isolated
+          // from exemplar + prompt in AITAKEOFF4 Task 2): a future silent
+          // resize shows up here as suspectedResize at a glance.
+          tokenCheck: tileTokenCheck(
+            usage.inputTokens,
+            data.tile.width,
+            data.tile.height,
+            data.exemplar.width_px ?? 0,
+            data.exemplar.height_px ?? 0,
+          ),
           createdAt: new Date().toISOString(),
         }),
       ),
@@ -470,6 +492,10 @@ const verifyCandidateInput = z.object({
     }),
     media_type: z.enum(["image/png", "image/webp", "image/jpeg"]),
     base64: z.string().min(1).max(4_000_000),
+    // Bit-packed dark-pixel mask at window resolution (AITAKEOFF4 Task 1):
+    // lets the server snap the verdict center onto the symbol's ink centroid
+    // without decoding the PNG. A 256x256 window packs to ~11KB of base64.
+    ink_mask_base64: z.string().min(1).max(700_000),
   }),
 });
 
@@ -501,6 +527,11 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
     let match = false;
     let point: { x: number; y: number } | null = null;
     let centerRefined = false;
+    // Window-local centers (AITAKEOFF4 Task 1): the raw stage-B center and
+    // the ink-centroid snap, both persisted so diagnostics can show the
+    // correction vector.
+    let rawCenterPx: { x: number; y: number } | null = null;
+    let snappedCenterPx: { x: number; y: number } | null = null;
     let usage = { inputTokens: 0, outputTokens: 0 };
     let rawResponseText = "";
     try {
@@ -520,13 +551,27 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
       match = verdict.match && VERIFIED_PROPOSAL_CONFIDENCE >= minProposalConfidence();
       if (match) {
         centerRefined = verdict.center !== null;
-        point = verdict.center
-          ? tileLocalToSheetPoint(
-              data.window.frame as DetectionTileFrame,
-              verdict.center.x,
-              verdict.center.y,
-            )
-          : { x: data.candidate.x, y: data.candidate.y };
+        const frame = data.window.frame as DetectionTileFrame;
+        // Without a usable verdict center, snap around where the stage-A
+        // candidate sits inside the window instead.
+        rawCenterPx = verdict.center ?? {
+          x: (data.candidate.x - frame.originSheetX) / frame.sheetPerPxX,
+          y: (data.candidate.y - frame.originSheetY) / frame.sheetPerPxY,
+        };
+        // Deterministic precision polish (AITAKEOFF4 Task 1): snap the
+        // verified center onto the symbol's ink centroid; fall back to the
+        // stage-B center when nothing nearby looks like a symbol.
+        const inkMask = inkMaskFromBase64(
+          data.window.ink_mask_base64,
+          data.window.width,
+          data.window.height,
+        );
+        snappedCenterPx = inkMask ? snapToInkCentroid(inkMask, rawCenterPx) : null;
+        const finalCenterPx = snappedCenterPx ?? rawCenterPx;
+        point =
+          verdict.center || snappedCenterPx
+            ? tileLocalToSheetPoint(frame, finalCenterPx.x, finalCenterPx.y)
+            : { x: data.candidate.x, y: data.candidate.y };
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "The AI model call failed.";
@@ -561,6 +606,8 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
           frame: data.window.frame,
           match,
           centerRefined,
+          rawCenterPx,
+          snappedCenterPx,
           mappedPoint: point,
           rawResponse: rawResponseText.slice(0, 4000),
           usage,

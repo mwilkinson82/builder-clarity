@@ -1125,7 +1125,11 @@ export function PlanCanvas({
       dragged: false,
     };
     setIsPanning(true);
-    event.currentTarget.setPointerCapture(event.pointerId);
+    // Deliberately NO pointer capture here (AITAKEOFF4 Task 0): capturing at
+    // press time retargets the eventual click to this svg, which silently
+    // eats clicks on measurement markers in select mode — arming an AI
+    // exemplar from a saved marker did nothing. The pan takes capture only
+    // once movement proves the gesture is a drag (see handlePointerMove).
   };
 
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -1168,7 +1172,15 @@ export function PlanCanvas({
     if (isPanning && scrollRef.current) {
       const dx = event.clientX - panStartRef.current.x;
       const dy = event.clientY - panStartRef.current.y;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) panStartRef.current.dragged = true;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        panStartRef.current.dragged = true;
+        // The gesture is now provably a drag: take capture so the pan keeps
+        // tracking outside the svg. Never earlier — capture at press time
+        // retargets the click and eats marker selection (AITAKEOFF4 Task 0).
+        if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }
+      }
       scrollRef.current.scrollLeft = panStartRef.current.left - dx;
       scrollRef.current.scrollTop = panStartRef.current.top - dy;
       lastPointerRef.current = {
@@ -1237,7 +1249,10 @@ export function PlanCanvas({
     }
     if (!isPanning) return;
     setIsPanning(false);
-    event.currentTarget.releasePointerCapture(event.pointerId);
+    // Capture only exists when the pan actually dragged.
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   };
 
   const pointFromEvent = (event: ReactMouseEvent<SVGSVGElement>): Point | null => {

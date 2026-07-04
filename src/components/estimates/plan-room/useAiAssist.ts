@@ -341,6 +341,8 @@ export function useAiAssist({
                 label: exemplar.label,
                 media_type: exemplarImage.mediaType,
                 base64: exemplarImage.base64,
+                width_px: exemplarImage.widthPx,
+                height_px: exemplarImage.heightPx,
               },
               tile: {
                 index: tile.rect.index,
@@ -410,6 +412,7 @@ export function useAiAssist({
                 frame: window.frame,
                 media_type: window.mediaType,
                 base64: window.base64,
+                ink_mask_base64: window.inkMaskBase64,
               },
             },
           });
