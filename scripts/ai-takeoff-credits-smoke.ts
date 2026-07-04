@@ -774,6 +774,8 @@ const darknessAt = (
 };
 
 const renderViewport = async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  page: any,
   viewport: { width: number; height: number },
   w: number,
   h: number,
@@ -782,7 +784,7 @@ const renderViewport = async (
   const context = canvas.getContext("2d");
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, canvas.width, canvas.height);
-  await pdfPage.render({ canvasContext: context, viewport }).promise;
+  await page.render({ canvasContext: context, viewport }).promise;
   return context;
 };
 
@@ -803,6 +805,7 @@ assert.ok(
 // 4. EXEMPLAR CROP: the region render around the marker contains the glyph.
 const plan = exemplarCropPlan(trueSheetPoint, PAGE);
 const cropContext = await renderViewport(
+  pdfPage,
   pdfPage.getViewport({ scale: plan.scale, offsetX: plan.offsetX, offsetY: plan.offsetY }),
   plan.widthPx,
   plan.heightPx,
@@ -819,6 +822,7 @@ assert.ok(
 // exact Phase-A-suspect bug) must produce EMPTY paper at its center.
 const mirroredPlan = exemplarCropPlan({ x: trueSheetPoint.x, y: 1 - trueSheetPoint.y }, PAGE);
 const mirroredContext = await renderViewport(
+  pdfPage,
   pdfPage.getViewport({
     scale: mirroredPlan.scale,
     offsetX: mirroredPlan.offsetX,
@@ -838,6 +842,7 @@ const detectionScale = DETECTION_LONG_EDGE_PX / Math.max(PAGE.widthPt, PAGE.heig
 const rasterWidthPx = Math.round(PAGE.widthPt * detectionScale);
 const rasterHeightPx = Math.round(PAGE.heightPt * detectionScale);
 const rasterContext = await renderViewport(
+  pdfPage,
   pdfPage.getViewport({ scale: detectionScale }),
   rasterWidthPx,
   rasterHeightPx,
@@ -981,4 +986,179 @@ assert.ok(
 
 console.log(
   `AI takeoff round-trip fixtures passed: exemplar crop verified by pixel sampling, tile mapping within ${errPt.toFixed(3)}pt of truth.`,
+);
+
+// --- Two-stage fixture (AITAKEOFF3 Task 5): 3 glyphs + 1 decoy + 1 ghost ---
+// A second generated page: three circle glyphs at known spots, one filled
+// SQUARE decoy (same size, different symbol type), and one deliberate
+// hallucination on blank paper. Stage A mocks recall-biased candidate lists
+// per tile; everything else is the real pipeline — tiling, frames,
+// normalized parsing, cross-tile dedupe, the runaway cap, real verification
+// windows pixel-sampled from the raster, and verdict mapping. The decoy and
+// the hallucination MUST die in stage B; the three circles MUST verify
+// within the stage-B quantization tolerance.
+
+// Fractional PDF positions on purpose: raster pixels land off-grid, so the
+// 0-1000 rounding actually quantizes and the tolerance assertion means it.
+const CIRCLES_PDF = [
+  { xPt: 380.3, yPt: 750.29 }, // raster ~(950.8, 499.3) — on a tile seam (dedupe)
+  { xPt: 1120.13, yPt: 230.17 }, // raster ~(2800.3, 1799.6) — covered by SIX tiles
+  { xPt: 200.37, yPt: 150.41 }, // raster ~(500.9, 1999.0)
+];
+const DECOY_PDF = { xPt: 600, yPt: 550 }; // raster (1500, 1000)
+const doc2 = await pdfLib.PDFDocument.create();
+const page2 = doc2.addPage([PAGE.widthPt, PAGE.heightPt]);
+for (const spot of CIRCLES_PDF) {
+  page2.drawCircle({
+    x: spot.xPt,
+    y: spot.yPt,
+    size: GLYPH_RADIUS_PT,
+    color: pdfLib.rgb(0, 0, 0),
+  });
+}
+page2.drawRectangle({
+  x: DECOY_PDF.xPt - GLYPH_RADIUS_PT,
+  y: DECOY_PDF.yPt - GLYPH_RADIUS_PT,
+  width: GLYPH_RADIUS_PT * 2,
+  height: GLYPH_RADIUS_PT * 2,
+  color: pdfLib.rgb(0, 0, 0),
+});
+const loadedPdf2 = await pdfjs.getDocument({ data: await doc2.save() }).promise;
+const pdfPage2 = await loadedPdf2.getPage(1);
+const raster2 = await renderViewport(
+  pdfPage2,
+  pdfPage2.getViewport({ scale: detectionScale }),
+  rasterWidthPx,
+  rasterHeightPx,
+);
+
+const circleRasterPx = CIRCLES_PDF.map((spot) => pdfPointToRenderPixel(spot, PAGE, detectionScale));
+const decoyRasterPx = pdfPointToRenderPixel(DECOY_PDF, PAGE, detectionScale);
+for (const [index, spot] of circleRasterPx.entries()) {
+  assert.ok(darknessAt(raster2, spot.px, spot.py) < 200, `circle ${index} ink is where planned`);
+}
+assert.ok(
+  darknessAt(raster2, decoyRasterPx.px, decoyRasterPx.py) < 200,
+  "decoy ink is where planned",
+);
+const HALLUCINATION_RASTER = { px: 2200, py: 500 };
+assert.ok(
+  darknessAt(raster2, HALLUCINATION_RASTER.px, HALLUCINATION_RASTER.py) > 700,
+  "the planted hallucination spot is blank paper",
+);
+
+// Stage A: per tile, the mock lists every shape center inside the tile
+// (recall bias includes the decoy) plus the hallucination — then the REAL
+// parse/frame/map path turns them into sheet-space coarse candidates.
+const stageAShapes = [...circleRasterPx, decoyRasterPx, HALLUCINATION_RASTER];
+const coarse2: Array<{ x: number; y: number; confidence: number }> = [];
+for (const tile of detectionTiles) {
+  const entries = stageAShapes
+    .filter(
+      (spot) =>
+        spot.px >= tile.left &&
+        spot.px < tile.left + tile.width &&
+        spot.py >= tile.top &&
+        spot.py < tile.top + tile.height,
+    )
+    .map((spot) => ({
+      x: round1(tileLocalPxToNormalized(spot.px - tile.left, tile.width)),
+      y: round1(tileLocalPxToNormalized(spot.py - tile.top, tile.height)),
+    }));
+  const parsed2 = parseScanResponse(
+    JSON.stringify({ exemplar_description: "A solid filled circle", candidates: entries }),
+    tile.width,
+    tile.height,
+  );
+  const tileFrame = tileFrameFor(tile, rasterWidthPx, rasterHeightPx);
+  for (const candidate of parsed2.candidates) {
+    coarse2.push({
+      ...tileLocalToSheetPoint(tileFrame, candidate.x, candidate.y),
+      confidence: COARSE_CANDIDATE_CONFIDENCE,
+    });
+  }
+}
+assert.ok(
+  coarse2.length > stageAShapes.length,
+  "tile overlap produced duplicate coarse candidates (the seam did its job)",
+);
+const toVerify2 = capProposalsPerSheet(dedupeCandidates(coarse2), DEFAULT_MAX_PROPOSALS_PER_SHEET);
+assert.equal(
+  toVerify2.length,
+  stageAShapes.length,
+  "cross-tile dedupe collapses seam duplicates before any verification is bought",
+);
+
+// Stage B: real windows, pixel-sampled; mock verdicts confirm circles only.
+const verified2: Array<{ x: number; y: number }> = [];
+let rejected2 = 0;
+for (const candidate of toVerify2) {
+  const centerPx = { x: candidate.x * rasterWidthPx, y: candidate.y * rasterHeightPx };
+  const rect = verifyWindowRect(centerPx, rasterWidthPx, rasterHeightPx);
+  const windowFrame2 = tileFrameFor(rect, rasterWidthPx, rasterHeightPx);
+  const circleHit = circleRasterPx.find(
+    (spot) => Math.hypot(spot.px - centerPx.x, spot.py - centerPx.y) < 5,
+  );
+  const decoyHit = Math.hypot(decoyRasterPx.px - centerPx.x, decoyRasterPx.py - centerPx.y) < 5;
+  if (circleHit || decoyHit) {
+    // The window the model judges really contains the symbol's ink.
+    const inkSpot = circleHit ?? decoyRasterPx;
+    assert.ok(
+      inkSpot.px >= rect.left &&
+        inkSpot.px < rect.left + rect.width &&
+        inkSpot.py >= rect.top &&
+        inkSpot.py < rect.top + rect.height,
+      "the verification window contains the shape it was cut for",
+    );
+    assert.ok(darknessAt(raster2, inkSpot.px, inkSpot.py) < 200, "window target has ink");
+  } else {
+    // The hallucination window is blank — exactly what stage B rejects.
+    assert.ok(
+      darknessAt(raster2, centerPx.x, centerPx.y) > 700,
+      "the hallucination window is empty paper",
+    );
+  }
+  const verdictText = circleHit
+    ? JSON.stringify({
+        match: true,
+        center: {
+          x: round1(tileLocalPxToNormalized(circleHit.px - rect.left, rect.width)),
+          y: round1(tileLocalPxToNormalized(circleHit.py - rect.top, rect.height)),
+        },
+      })
+    : JSON.stringify({ match: false });
+  const verdict2 = parseVerifyResponse(verdictText, rect.width, rect.height);
+  if (verdict2.match && verdict2.center) {
+    verified2.push(tileLocalToSheetPoint(windowFrame2, verdict2.center.x, verdict2.center.y));
+  } else {
+    rejected2 += 1;
+  }
+}
+assert.equal(verified2.length, 3, "TWO-STAGE PROOF: exactly the three true symbols verify");
+assert.equal(rejected2, 2, "TWO-STAGE PROOF: the decoy and the hallucination die in stage B");
+
+const matchedCircles = new Set<number>();
+let worstVerifiedErrPt = 0;
+for (const point of verified2) {
+  const pdf = sheetPointToPdfPoint(point, PAGE);
+  let bestIndex = -1;
+  let bestErr = Number.POSITIVE_INFINITY;
+  for (const [index, truth] of CIRCLES_PDF.entries()) {
+    const err = Math.hypot(truth.xPt - pdf.xPt, truth.yPt - pdf.yPt);
+    if (err < bestErr) {
+      bestErr = err;
+      bestIndex = index;
+    }
+  }
+  assert.ok(
+    bestErr < 0.042,
+    `TWO-STAGE PROOF: verified point lands within 0.042pt of a true symbol (got ${bestErr.toFixed(4)}pt)`,
+  );
+  matchedCircles.add(bestIndex);
+  worstVerifiedErrPt = Math.max(worstVerifiedErrPt, bestErr);
+}
+assert.equal(matchedCircles.size, 3, "each verified point maps to a DISTINCT true symbol");
+
+console.log(
+  `AI takeoff two-stage fixture passed: 3 glyphs verified within ${worstVerifiedErrPt.toFixed(4)}pt, decoy and hallucination rejected in stage B.`,
 );
