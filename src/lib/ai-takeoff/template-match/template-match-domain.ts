@@ -21,6 +21,19 @@ export interface TemplateMatchCandidate {
   scale: number;
 }
 
+/**
+ * One of the best sweep scores, threshold or not (AITAKEOFF8 Task 1): the
+ * transparency record that distinguishes "threshold problem" from "matching
+ * problem" the moment a sheet reports zero hits.
+ */
+export interface TemplateTopScore {
+  x: number;
+  y: number;
+  score: number;
+  rotationDeg: number;
+  scale: number;
+}
+
 /** Where a stage-B candidate came from — the two proposal engines. */
 export type AiCandidateSource = "template" | "model";
 
@@ -32,10 +45,27 @@ export type AiProposalSource = "template" | "model" | "both";
 // the scale band absorbs modest render-scale drift between sheets.
 export const TEMPLATE_ROTATION_STEP_DEG = 30;
 export const TEMPLATE_MATCH_SCALES = [0.85, 1.0, 1.15] as const;
-// Recall-biased NCC floor (stage B is the precision gate). Env-tunable
-// server-side via AI_TEMPLATE_MATCH_THRESHOLD, resolved with the helper
-// below and handed to the client by beginAiCountScan.
-export const DEFAULT_TEMPLATE_MATCH_THRESHOLD = 0.55;
+// Recall-biased score floor for MASKED correlation (AITAKEOFF8): only the
+// symbol's dilated ink participates in TM_CCORR_NORMED, and masked scores
+// run higher than the old whole-rectangle CCOEFF. Calibrated on the dense
+// fixture: clean matches 0.87-1.0, the hardest legitimate case (a 45°-
+// rotated glyph on a rail, matched by the 30°/60° variants) ~0.78, a solid
+// ink blob ~0.70, hatching ~0.37 — 0.75 keeps the hard case with margin and
+// still excludes blobs. Stage B stays the precision gate. Env-tunable via
+// AI_TEMPLATE_MATCH_THRESHOLD, resolved below, handed out by
+// beginAiCountScan, and recorded in the per-sheet funnel.
+export const DEFAULT_TEMPLATE_MATCH_THRESHOLD = 0.75;
+// The unmasked CCOEFF fallback keeps the AITAKEOFF6 floor — it only runs
+// when the mask is degenerate (below the coverage floor, or masking is
+// switched off for the fixture comparison).
+export const UNMASKED_TEMPLATE_MATCH_THRESHOLD = 0.55;
+// A mask covering less than this fraction of the tightened template crop is
+// degenerate — a nearly-empty mask matches everything — so the sweep falls
+// back to unmasked matching and says so in the funnel.
+export const MIN_MASK_COVERAGE = 0.03;
+// Top-of-sweep transparency (AITAKEOFF8 Task 1): the best N sweep scores are
+// always reported, threshold or not — a zero-hit sheet must never be opaque.
+export const TEMPLATE_TOP_SCORE_COUNT = 5;
 // Matching runs on a downscaled copy of the detection raster so the sweep
 // stays inside the performance budget; hits map back through the one tested
 // tile transform (tileFrameFor semantics on the whole downscaled raster).

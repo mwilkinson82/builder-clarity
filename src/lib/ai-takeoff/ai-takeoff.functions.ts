@@ -799,6 +799,23 @@ const sheetSummaryInput = z.object({
     template_engine: z.enum(["ok", "failed", "skipped"]),
     template_error: z.string().max(500).default(""),
     template_elapsed_ms: z.number().int().min(0).max(600_000).nullable().default(null),
+    // Score transparency (AITAKEOFF8 Task 1): the threshold applied, whether
+    // the masked metric ran, and the best sweep scores threshold-or-not.
+    template_threshold: z.number().min(0).max(1).nullable().default(null),
+    template_masked: z.boolean().nullable().default(null),
+    template_mask_coverage: z.number().min(0).max(1).nullable().default(null),
+    template_top_scores: z
+      .array(
+        z.object({
+          x: z.number().min(0).max(1),
+          y: z.number().min(0).max(1),
+          score: z.number().min(-1).max(1),
+          rotation_deg: z.number().min(0).lt(360),
+          scale: z.number().gt(0).max(10),
+        }),
+      )
+      .max(5)
+      .default([]),
   }),
 });
 

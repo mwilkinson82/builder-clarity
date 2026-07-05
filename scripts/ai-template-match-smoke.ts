@@ -11,6 +11,9 @@ import {
   DEFAULT_TEMPLATE_MATCH_THRESHOLD,
   describeCandidateOrigin,
   matchDownscaleFor,
+  MIN_MASK_COVERAGE,
+  UNMASKED_TEMPLATE_MATCH_THRESHOLD,
+  TEMPLATE_TOP_SCORE_COUNT,
   planRotationSweep,
   resolveProposalSource,
   resolveTemplateMatchThreshold,
@@ -66,12 +69,18 @@ assert.deepEqual(planRotationSweep(Number.NaN), [0], "a garbage step degrades to
 
 assert.equal(TEMPLATE_ROTATION_STEP_DEG, 30, "default rotation step per spec");
 assert.deepEqual([...TEMPLATE_MATCH_SCALES], [0.85, 1.0, 1.15], "scale band per spec");
-assert.equal(DEFAULT_TEMPLATE_MATCH_THRESHOLD, 0.55, "recall-biased NCC floor per spec");
+// AITAKEOFF8: the default floor is for MASKED correlation, which scores
+// higher than the old whole-rectangle CCOEFF; the unmasked fallback keeps
+// the AITAKEOFF6 floor.
+assert.equal(DEFAULT_TEMPLATE_MATCH_THRESHOLD, 0.75, "masked-correlation floor per AITAKEOFF8");
+assert.equal(UNMASKED_TEMPLATE_MATCH_THRESHOLD, 0.55, "unmasked fallback keeps the old floor");
+assert.equal(MIN_MASK_COVERAGE, 0.03, "masks under 3% ink coverage are degenerate");
+assert.equal(TEMPLATE_TOP_SCORE_COUNT, 5, "top-5 sweep scores always reported");
 
-assert.equal(resolveTemplateMatchThreshold(undefined), 0.55, "no env override uses the default");
+assert.equal(resolveTemplateMatchThreshold(undefined), 0.75, "no env override uses the default");
 assert.equal(resolveTemplateMatchThreshold("0.7"), 0.7, "env override wins when sane");
-assert.equal(resolveTemplateMatchThreshold("1.5"), 0.55, "out-of-range overrides are ignored");
-assert.equal(resolveTemplateMatchThreshold("garbage"), 0.55, "garbage overrides are ignored");
+assert.equal(resolveTemplateMatchThreshold("1.5"), 0.75, "out-of-range overrides are ignored");
+assert.equal(resolveTemplateMatchThreshold("garbage"), 0.75, "garbage overrides are ignored");
 
 assert.equal(resolveProposalSource(undefined), "both", "proposal source defaults to both");
 assert.equal(resolveProposalSource(" TEMPLATE "), "template", "source env is case/space tolerant");
@@ -246,9 +255,11 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
   assert.equal(output.sweepCount, 1, "no-rotation sweep is a single pass");
   assert.equal(output.candidates.length, 1, "NCC PROOF: exactly one candidate, plateau collapsed");
   const hit = output.candidates[0];
+  // AITAKEOFF8: the tightened template centers hits on the symbol's INK
+  // BBOX (the L's bbox center sits ~(151.5, 79.5)), not the crop center.
   assert.ok(
-    Math.hypot(hit.x * 400 - 140, hit.y * 300 - 80) <= 2,
-    "NCC PROOF: the hit lands on the symbol center",
+    Math.hypot(hit.x * 400 - 151.5, hit.y * 300 - 79.5) <= 3,
+    "NCC PROOF: the hit lands on the symbol's ink-bbox center",
   );
   assert.ok(hit.score > 0.95, `a same-scale symbol scores near 1 (got ${hit.score.toFixed(3)})`);
   assert.equal(hit.rotationDeg, 0, "unrotated hit reports rotation 0");
@@ -262,8 +273,11 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
   paintL(raster, 120, 100, 0);
   paintL(raster, 420, 250, 300);
   const template = cropRgba(raster, 120 - 32, 100 - 32, 64);
+  // 0.85: masked CCORR scores wrong rotations of the SAME instance up to
+  // ~0.78 (ink self-overlap), true rotations 0.96+ — the threshold sits in
+  // the gap so each instance proposes exactly once.
   const output = matchTemplateSweep(cv, raster, template, {
-    threshold: 0.6,
+    threshold: 0.85,
     footprintPx: 48,
     radius: syntheticRadius(48, 600, 400),
     rotationStepDeg: 30,
@@ -271,8 +285,10 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
   });
   assert.equal(output.sweepCount, 12, "full default rotation sweep ran");
   assert.equal(output.candidates.length, 2, "both instances propose exactly once");
-  const upright = output.candidates.find((c) => Math.hypot(c.x * 600 - 120, c.y * 400 - 100) < 4);
-  const turned = output.candidates.find((c) => Math.hypot(c.x * 600 - 420, c.y * 400 - 250) < 4);
+  // Hits land on the ink-bbox center (AITAKEOFF8), which sits ~11.5px from
+  // the L's paint origin and rotates with the instance — search generously.
+  const upright = output.candidates.find((c) => Math.hypot(c.x * 600 - 120, c.y * 400 - 100) < 18);
+  const turned = output.candidates.find((c) => Math.hypot(c.x * 600 - 420, c.y * 400 - 250) < 18);
   assert.ok(upright && turned, "ROTATION PROOF: both instances found at their true centers");
   assert.equal(upright!.rotationDeg, 0, "the upright instance matches the 0° variant");
   assert.equal(turned!.rotationDeg, 300, "ROTATION PROOF: the turned instance recovers its angle");
@@ -289,13 +305,13 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
   paintL(raster, 420, 250, 0, 1.15);
   const template = cropRgba(raster, 120 - 32, 100 - 32, 64);
   const output = matchTemplateSweep(cv, raster, template, {
-    threshold: 0.6,
+    threshold: 0.8,
     footprintPx: 48,
     radius: syntheticRadius(48, 600, 400),
     rotationStepDeg: 360,
     scales: [0.85, 1, 1.15],
   });
-  const grown = output.candidates.find((c) => Math.hypot(c.x * 600 - 420, c.y * 400 - 250) < 6);
+  const grown = output.candidates.find((c) => Math.hypot(c.x * 600 - 420, c.y * 400 - 250) < 20);
   assert.ok(grown, "SCALE PROOF: the enlarged instance still proposes");
   assert.equal(grown!.scale, 1.15, "SCALE PROOF: the 1.15 template variant wins it");
 }
@@ -315,7 +331,7 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
   });
   assert.equal(output.downscale, 0.5, "a 4000px raster matches at half resolution");
   assert.equal(output.matchWidthPx, 2000, "match raster width follows the downscale");
-  const hit = output.candidates.find((c) => Math.hypot(c.x * 4000 - 1000, c.y * 3000 - 750) < 6);
+  const hit = output.candidates.find((c) => Math.hypot(c.x * 4000 - 1000, c.y * 3000 - 750) < 20);
   assert.ok(
     hit,
     "DOWNSCALE ROUND-TRIP: the hit maps back to the true raster position within quantization",
@@ -604,10 +620,14 @@ for (const [index, spot] of glyphRasterPx.entries()) {
     `TEMPLATE PROOF: glyph ${index} proposes exactly once (rotated + seam included)`,
   );
 }
-const g0Hit = candidateRasterPx.find((entry) => near(entry, glyphRasterPx[0], 10));
-assert.ok(g0Hit, "the exemplar's own instance lands within a few pixels of truth");
+const g0Hit = candidateRasterPx.find((entry) =>
+  near(entry, glyphRasterPx[0], footprintRasterPx / 2),
+);
+assert.ok(g0Hit, "the exemplar's own instance lands on its symbol (ink-bbox center)");
 assert.equal(g0Hit!.candidate.rotationDeg, 0, "the exemplar instance matches the 0° variant");
-const seamHit = candidateRasterPx.find((entry) => near(entry, glyphRasterPx[2], 10));
+const seamHit = candidateRasterPx.find((entry) =>
+  near(entry, glyphRasterPx[2], footprintRasterPx / 2),
+);
 assert.ok(
   seamHit,
   "SEAM PROOF: whole-raster matching proposes the seam glyph — no tiles, no seams",
@@ -1114,4 +1134,295 @@ for (const [index, point] of denseLarge.entries()) {
 
 console.log(
   `Dense-band regression passed at 3800px and 1824px: 12 proposed, 2 suppressed by marks, 10 verified, hallucination rejected; cross-size agreement < 0.1pt; balloon-radius canary still detects the bug class.`,
+);
+
+// --- AITAKEOFF8 Task 2: the dense-background variant (kill the blank-paper
+// blindspot). Production A-100 returned ZERO template hits on a sheet
+// covered in its symbol because the template carried fused rail linework and
+// forced-white rotation padding, and whole-rectangle CCOEFF penalized every
+// true site's differing context — a failure no blank-paper fixture could
+// see. This variant embeds the glyphs in linework: a rail through EACH
+// glyph (the rotated glyph's rail rotates with it), hatching and a
+// dimension string nearby, and a text block within a footprint of the
+// rotated glyph. The exemplar is the FUSED G0 — exactly the production
+// template composition.
+
+const denseBgDoc = await pdfLib.PDFDocument.create();
+const denseBgPage = denseBgDoc.addPage([PAGE.widthPt, PAGE.heightPt]);
+const denseBgFont = await denseBgDoc.embedFont(pdfLib.StandardFonts.Helvetica);
+for (const glyph of GLYPHS_PDF) {
+  denseBgPage.drawSvgPath(lollipopPath(glyph.rotationDeg), {
+    x: glyph.xPt,
+    y: glyph.yPt,
+    color: pdfLib.rgb(0, 0, 0),
+  });
+  const railRad = (glyph.rotationDeg * Math.PI) / 180;
+  const railDx = Math.cos(railRad) * 150;
+  const railDy = Math.sin(railRad) * 150;
+  denseBgPage.drawLine({
+    start: { x: glyph.xPt - railDx, y: glyph.yPt - railDy },
+    end: { x: glyph.xPt + railDx, y: glyph.yPt + railDy },
+    thickness: 1.5,
+    color: pdfLib.rgb(0, 0, 0),
+  });
+}
+for (let index = 0; index < 12; index += 1) {
+  denseBgPage.drawLine({
+    start: { x: 360 + index * 8, y: 740 },
+    end: { x: 380 + index * 8, y: 790 },
+    thickness: 1,
+    color: pdfLib.rgb(0, 0, 0),
+  });
+}
+denseBgPage.drawLine({
+  start: { x: 340, y: 870 },
+  end: { x: 480, y: 870 },
+  thickness: 1,
+  color: pdfLib.rgb(0, 0, 0),
+});
+denseBgPage.drawText("12'-6\"", {
+  x: 390,
+  y: 875,
+  size: 10,
+  font: denseBgFont,
+  color: pdfLib.rgb(0, 0, 0),
+});
+for (const [index, line] of ["BRUSH ASSEMBLY", "SEE DETAIL 4/A-500", "TYP. 12 PLCS"].entries()) {
+  denseBgPage.drawText(line, {
+    x: GLYPHS_PDF[1].xPt + 28,
+    y: GLYPHS_PDF[1].yPt + 10 - index * 12,
+    size: 9,
+    font: denseBgFont,
+    color: pdfLib.rgb(0, 0, 0),
+  });
+}
+const standardFontDataUrl = require
+  .resolve("pdfjs-dist/package.json")
+  .replace("package.json", "standard_fonts/");
+const denseBgPdf = await pdfjs.getDocument({ data: await denseBgDoc.save(), standardFontDataUrl })
+  .promise;
+const denseBgPdfPage = await denseBgPdf.getPage(1);
+const denseBgCanvas = napi.createCanvas(rasterWidthPx, rasterHeightPx);
+const denseBgContext = denseBgCanvas.getContext("2d");
+denseBgContext.fillStyle = "#ffffff";
+denseBgContext.fillRect(0, 0, rasterWidthPx, rasterHeightPx);
+await denseBgPdfPage.render({
+  canvasContext: denseBgContext,
+  viewport: denseBgPdfPage.getViewport({ scale: detectionScale }),
+}).promise;
+// The text block really rendered — a silently-blank text layer would turn
+// the "glyph within a footprint of text" case back into blank paper.
+assert.ok(
+  (() => {
+    const near = pdfPointToRenderPixel(
+      { xPt: GLYPHS_PDF[1].xPt + 40, yPt: GLYPHS_PDF[1].yPt + 13 },
+      PAGE,
+      detectionScale,
+    );
+    for (let dy = -10; dy <= 10; dy += 2) {
+      for (let dx = -40; dx <= 40; dx += 2) {
+        if (darknessAt(denseBgContext, near.px + dx, near.py + dy) < 200) return true;
+      }
+    }
+    return false;
+  })(),
+  "the text block near the rotated glyph actually rendered",
+);
+
+// Exemplar = the FUSED G0 (rail through it), measured exactly as the client
+// measures it: clamped footprint, capped radius (AITAKEOFF7 defenses).
+const denseBgPlan = exemplarCropPlan(exemplarSheetPoint, PAGE);
+const denseBgCropCanvas = napi.createCanvas(denseBgPlan.widthPx, denseBgPlan.heightPx);
+const denseBgCropContext = denseBgCropCanvas.getContext("2d");
+denseBgCropContext.fillStyle = "#ffffff";
+denseBgCropContext.fillRect(0, 0, denseBgPlan.widthPx, denseBgPlan.heightPx);
+await denseBgPdfPage.render({
+  canvasContext: denseBgCropContext,
+  viewport: denseBgPdfPage.getViewport({
+    scale: denseBgPlan.scale,
+    offsetX: denseBgPlan.offsetX,
+    offsetY: denseBgPlan.offsetY,
+  }),
+}).promise;
+const denseBgCropImage = denseBgCropContext.getImageData(
+  0,
+  0,
+  denseBgPlan.widthPx,
+  denseBgPlan.heightPx,
+);
+const denseBgFootprintCropPx = measureInkFootprintPx(
+  inkMaskFromRgba(denseBgCropImage.data, denseBgPlan.widthPx, denseBgPlan.heightPx),
+  { x: denseBgPlan.markerInCropPx.px, y: denseBgPlan.markerInCropPx.py },
+);
+assert.ok(denseBgFootprintCropPx, "the fused dense exemplar measures");
+const denseBgGeometry = exemplarSheetGeometry({
+  footprintPt: denseBgFootprintCropPx! / denseBgPlan.scale,
+  pageLongEdgePt: Math.max(PAGE.widthPt, PAGE.heightPt),
+  rasterWidthPx,
+  rasterHeightPx,
+});
+const denseBgMarker = sheetPointToRenderPixel(exemplarSheetPoint, PAGE, detectionScale);
+const denseBgRect = templateCropRect(
+  { x: denseBgMarker.px, y: denseBgMarker.py },
+  denseBgGeometry.footprintRasterPx!,
+  rasterWidthPx,
+  rasterHeightPx,
+);
+const denseBgTemplate = denseBgContext.getImageData(
+  denseBgRect.left,
+  denseBgRect.top,
+  denseBgRect.width,
+  denseBgRect.height,
+);
+const denseBgRaster = denseBgContext.getImageData(0, 0, rasterWidthPx, rasterHeightPx);
+const denseBgGlyphPx = GLYPHS_PDF.map((glyph) =>
+  pdfPointToRenderPixel({ xPt: glyph.xPt, yPt: glyph.yPt }, PAGE, detectionScale),
+);
+const denseBgFoundGlyphs = (candidates: TemplateMatchCandidate[]) =>
+  denseBgGlyphPx.map((spot) =>
+    candidates.some(
+      (candidate) =>
+        Math.hypot(candidate.x * rasterWidthPx - spot.px, candidate.y * rasterHeightPx - spot.py) <
+        denseBgGeometry.footprintRasterPx! / 2,
+    ),
+  );
+
+// MASKED run at the calibrated default: every glyph proposes — the rotated
+// one on its rotated rail and the seam-column one included.
+const denseBgMasked = matchTemplateSweep(
+  cv,
+  { data: denseBgRaster.data, width: rasterWidthPx, height: rasterHeightPx },
+  { data: denseBgTemplate.data, width: denseBgRect.width, height: denseBgRect.height },
+  {
+    threshold: DEFAULT_TEMPLATE_MATCH_THRESHOLD,
+    footprintPx: denseBgGeometry.footprintRasterPx!,
+    radius: denseBgGeometry.radius,
+  },
+);
+assert.equal(denseBgMasked.maskedMatching, true, "the masked metric ran on the dense variant");
+assert.ok(
+  denseBgMasked.maskCoverage > MIN_MASK_COVERAGE,
+  "the fused template's mask coverage is healthy",
+);
+assert.deepEqual(
+  denseBgFoundGlyphs(denseBgMasked.candidates),
+  [true, true, true],
+  "DENSE PROOF: the masked matcher proposes every glyph — rotated-on-rail and seam included",
+);
+assert.equal(
+  denseBgMasked.appliedThreshold,
+  DEFAULT_TEMPLATE_MATCH_THRESHOLD,
+  "the applied threshold is reported",
+);
+// Score transparency (Task 1): the top list is populated, sorted, and led by
+// the exemplar's own instance.
+assert.ok(denseBgMasked.topScores.length >= 3, "top scores are recorded");
+assert.ok(
+  denseBgMasked.topScores.every(
+    (top, index) => index === 0 || top.score <= denseBgMasked.topScores[index - 1].score,
+  ),
+  "top scores are sorted best-first",
+);
+assert.ok(
+  denseBgMasked.topScores[0].score > 0.9,
+  "the exemplar's own instance leads the top scores",
+);
+
+// UNMASKED comparison (the spec's regression documentation): the legacy
+// whole-rectangle metric is ALLOWED to fail on the dense variant — and it
+// does: fused context + white padding sink the rotated glyph. If this ever
+// starts passing, celebrate and delete the comment.
+const denseBgUnmasked = matchTemplateSweep(
+  cv,
+  { data: denseBgRaster.data, width: rasterWidthPx, height: rasterHeightPx },
+  { data: denseBgTemplate.data, width: denseBgRect.width, height: denseBgRect.height },
+  {
+    threshold: DEFAULT_TEMPLATE_MATCH_THRESHOLD,
+    footprintPx: denseBgGeometry.footprintRasterPx!,
+    radius: denseBgGeometry.radius,
+    maskedMatching: false,
+  },
+);
+assert.equal(denseBgUnmasked.maskedMatching, false, "the comparison flag forces unmasked");
+assert.equal(
+  denseBgUnmasked.appliedThreshold,
+  UNMASKED_TEMPLATE_MATCH_THRESHOLD,
+  "unmasked applies its own floor",
+);
+const maskedFound = denseBgFoundGlyphs(denseBgMasked.candidates).filter(Boolean).length;
+const unmaskedFound = denseBgFoundGlyphs(denseBgUnmasked.candidates).filter(Boolean).length;
+assert.ok(
+  maskedFound >= unmaskedFound,
+  "masked never finds fewer glyphs than unmasked on the dense variant",
+);
+assert.equal(
+  denseBgFoundGlyphs(denseBgUnmasked.candidates)[1],
+  false,
+  "REGRESSION DOCUMENTATION: whole-rectangle correlation misses the rotated glyph in dense context — the A-100 zero-hit failure mode, pinned",
+);
+console.log(
+  `Dense-background variant: masked found ${maskedFound}/3 glyphs (top ${denseBgMasked.topScores
+    .slice(0, 3)
+    .map((top) => top.score.toFixed(2))
+    .join(
+      "/",
+    )}, thr ${denseBgMasked.appliedThreshold}), unmasked found ${unmaskedFound}/3 (thr ${denseBgUnmasked.appliedThreshold}).`,
+);
+
+// Zero-hit transparency (Task 1): an impossible threshold produces zero
+// candidates but NEVER an opaque zero — the top list still says what the
+// best scores were. (The dense template against the BLANK dense-band raster:
+// no exemplar self-match, so nothing reaches 0.9999.)
+{
+  const bandCanvas = napi.createCanvas(rasterWidthPx, rasterHeightPx);
+  const bandContext = bandCanvas.getContext("2d");
+  bandContext.fillStyle = "#ffffff";
+  bandContext.fillRect(0, 0, rasterWidthPx, rasterHeightPx);
+  await densePdfPage.render({
+    canvasContext: bandContext,
+    viewport: densePdfPage.getViewport({ scale: detectionScale }),
+  }).promise;
+  const bandRaster = bandContext.getImageData(0, 0, rasterWidthPx, rasterHeightPx);
+  const zeroHit = matchTemplateSweep(
+    cv,
+    { data: bandRaster.data, width: rasterWidthPx, height: rasterHeightPx },
+    { data: denseBgTemplate.data, width: denseBgRect.width, height: denseBgRect.height },
+    {
+      threshold: 0.9999,
+      footprintPx: denseBgGeometry.footprintRasterPx!,
+      radius: denseBgGeometry.radius,
+    },
+  );
+  assert.equal(zeroHit.candidates.length, 0, "an impossible threshold yields zero candidates");
+  assert.ok(
+    zeroHit.topScores.length >= 3,
+    "ZERO-HIT TRANSPARENCY: the top-score list is populated even with zero hits",
+  );
+  assert.ok(
+    zeroHit.topScores[0].score > 0.5 && zeroHit.topScores[0].score < 0.9999,
+    `the best score is visible and explains the zero (got ${zeroHit.topScores[0].score.toFixed(3)})`,
+  );
+}
+
+// Degenerate-mask guard: a blank template (no ink at all) must fall back to
+// unmasked — reported, never silent — and still propose nothing.
+{
+  const blankTemplate = denseBgContext.getImageData(10, 10, 120, 120);
+  const degenerate = matchTemplateSweep(
+    cv,
+    { data: denseBgRaster.data, width: rasterWidthPx, height: rasterHeightPx },
+    { data: blankTemplate.data, width: 120, height: 120 },
+    {
+      threshold: DEFAULT_TEMPLATE_MATCH_THRESHOLD,
+      footprintPx: denseBgGeometry.footprintRasterPx!,
+      radius: denseBgGeometry.radius,
+    },
+  );
+  assert.equal(degenerate.maskedMatching, false, "DEGENERATE MASK: falls back to unmasked");
+  assert.ok(degenerate.maskCoverage < MIN_MASK_COVERAGE, "the coverage that caused it is reported");
+  assert.equal(degenerate.candidates.length, 0, "a blank template proposes nothing");
+}
+
+console.log(
+  "Masked-correlation fixtures passed: dense variant fully proposed, unmasked failure pinned, zero-hit transparency and degenerate-mask guard verified.",
 );

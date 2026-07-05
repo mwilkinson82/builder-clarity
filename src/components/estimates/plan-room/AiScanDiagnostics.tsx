@@ -143,6 +143,30 @@ function SheetSummaryCard({ summary }: { summary: AiScanSheetSummary }) {
           </Badge>
         )}
       </div>
+      {/* Score transparency (AITAKEOFF8 Task 1): zero hits must explain
+          themselves — the best sweep scores print next to the threshold. */}
+      {summary.templateEngine === "ok" && summary.templateThreshold !== null && (
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <span data-testid="ai-diagnostics-top-scores">
+            {summary.templateTopScores.length > 0
+              ? `template top ${summary.templateTopScores
+                  .map((top) => top.score.toFixed(2))
+                  .join("/")} (thr ${summary.templateThreshold.toFixed(2)})${
+                  summary.proposedTemplate === 0 ? " — no hits" : ""
+                }`
+              : `template scores: none finite (thr ${summary.templateThreshold.toFixed(2)})`}
+          </span>
+          {summary.templateMasked === false && (
+            <Badge variant="destructive" data-testid="ai-diagnostics-mask-fallback">
+              degenerate mask ({((summary.templateMaskCoverage ?? 0) * 100).toFixed(1)}% ink) —
+              unmasked fallback
+            </Badge>
+          )}
+          {summary.templateMasked === true && summary.templateMaskCoverage !== null && (
+            <span>mask {(summary.templateMaskCoverage * 100).toFixed(0)}% of crop</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
