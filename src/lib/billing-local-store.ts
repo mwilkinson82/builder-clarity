@@ -31,6 +31,19 @@ export type InvoiceDraft = Omit<
   | "payment_link_sent_at"
 >;
 
+export type PaymentDraft = {
+  invoiceId: string;
+  amount: number;
+  processor_fee: number;
+  overwatch_fee: number;
+  paid_at: string;
+  payment_method: string;
+  processor: string;
+  processor_payment_id: string;
+  reference: string;
+  notes: string;
+};
+
 export const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
 export const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
 
