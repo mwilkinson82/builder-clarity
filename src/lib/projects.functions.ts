@@ -87,6 +87,8 @@ export interface ProjectRow {
   original_contract: number;
   original_cost_budget: number;
   default_retainage_pct: number;
+  /** Default output document for new pay applications (GETTINGPAID3). */
+  default_output_format: BillingOutputFormat;
   schedule_variance_weeks: number;
   phase: Phase;
   percent_complete: number;
@@ -767,6 +769,8 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   original_contract: num(p.original_contract),
   original_cost_budget: num(p.original_cost_budget),
   default_retainage_pct: num(p.default_retainage_pct ?? 10),
+  default_output_format:
+    str(p.default_output_format, "invoice") === "aia_g702" ? "aia_g702" : "invoice",
   schedule_variance_weeks: num(p.schedule_variance_weeks),
   phase: (p.phase as Phase) ?? "Early",
   percent_complete: num(p.percent_complete),
@@ -1725,6 +1729,7 @@ const updateFinancialsInput = z.object({
     baseline_completion_date: z.string().optional().nullable(),
     last_review_summary: z.string().max(4000).optional(),
     project_manager: z.string().max(200).optional(),
+    default_output_format: z.enum(["invoice", "aia_g702"]).optional(),
   }),
 });
 
@@ -1764,13 +1769,26 @@ export const updateProjectFinancials = createServerFn({ method: "POST" })
 
     const savePatch = (nextPatch: typeof patch) =>
       context.supabase
+        // default_output_format is not in the generated types until the
+        // GETTINGPAID3 migration regenerates them; cast at the boundary only.
         .from("projects")
-        .update(nextPatch)
+        .update(nextPatch as never)
         .eq("id", data.projectId)
         .select("*")
         .single();
 
-    const { data: updated, error } = await savePatch(patch);
+    let { data: updated, error } = await savePatch(patch);
+    // GETTINGPAID3 column may be ahead of the database; retry without it so
+    // the rest of the financials still save while the migration lands.
+    if (
+      error &&
+      "default_output_format" in patch &&
+      isMissingRestColumn(error, "default_output_format")
+    ) {
+      const { default_output_format: _dropped, ...rest } = patch;
+      void _dropped;
+      ({ data: updated, error } = await savePatch(rest as typeof patch));
+    }
     throwIfProjectSchemaError(error);
     if (error) throw new Error(error.message);
     return {

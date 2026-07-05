@@ -604,9 +604,11 @@ const CONTINUATION_COLUMNS = [
   },
   { key: "scheduled", letter: "C", label: "Scheduled Value", x: 222, width: 74, align: "right" },
   {
+    // Standard G703 labels this column "D"; the form's own note reads
+    // "Work Completed From Previous Application (D+E)". G = D+E+F.
     key: "previous",
-    letter: "D+E",
-    label: "From Previous Application",
+    letter: "D",
+    label: "Work Completed From Previous Application (D + E)",
     x: 296,
     width: 68,
     align: "right",

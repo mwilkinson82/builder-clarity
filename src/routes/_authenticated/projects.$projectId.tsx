@@ -2019,6 +2019,10 @@ function ProjectPage() {
                 onUpdatePayAppRetainageRate={(billingApplicationId, retainage_pct) =>
                   billingRetainageRateUpdate.mutate({ billingApplicationId, retainage_pct })
                 }
+                onUpdateOutputFormat={(billingApplicationId, output_format) =>
+                  handleUpdatePayApp(billingApplicationId, { output_format })
+                }
+                savingOutputFormat={billingUpdate.isPending}
                 onCreateCostActual={(input) =>
                   costActualCreate.mutate({
                     projectId,
@@ -2433,6 +2437,8 @@ function BillingWorkspace({
   onGenerateBillingLines,
   onUpdateBillingLine,
   onUpdatePayAppRetainageRate,
+  onUpdateOutputFormat,
+  savingOutputFormat,
   onCreateCostActual,
   onImportCostActuals,
   onVoidCostActual,
@@ -2473,6 +2479,8 @@ function BillingWorkspace({
     },
   ) => void;
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
+  onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
+  savingOutputFormat?: boolean;
   onCreateCostActual: (input: {
     cost_bucket_id: string | null;
     cost_code: string;
@@ -2669,7 +2677,9 @@ function BillingWorkspace({
       total_retainage_held: 0,
       retainage_released_this_period: 0,
       status: "draft",
-      output_format: "invoice",
+      // AIA-native projects birth applications as aia_g702 (GP3 Task 3), so a
+      // lender-driven job stops making the biller flip format every time.
+      output_format: project.default_output_format ?? "invoice",
       notes: "",
       sort_order: billingApplications.length + 1,
     };
@@ -3180,8 +3190,10 @@ function BillingWorkspace({
               onGenerateLines={onGenerateBillingLines}
               onUpdateLine={onUpdateBillingLine}
               onUpdatePayAppRetainageRate={onUpdatePayAppRetainageRate}
+              onUpdateOutputFormat={onUpdateOutputFormat}
               savingLine={savingBillingLine}
               savingRetainageRate={savingRetainageRate}
+              savingOutputFormat={savingOutputFormat}
             />
           ))}
         </TabsContent>
@@ -4714,6 +4726,7 @@ type EditableProject = {
   hold_variance_note: string;
   forecast_completion_date: string | null;
   baseline_completion_date: string | null;
+  default_output_format: BillingOutputFormat;
 };
 
 function EditFinancialsDialog({
@@ -4750,6 +4763,7 @@ function EditFinancialsDialog({
     hold_variance_note: project.hold_variance_note || defaultHoldNote(),
     forecast_completion_date: project.forecast_completion_date,
     baseline_completion_date: project.baseline_completion_date,
+    default_output_format: project.default_output_format ?? "invoice",
   });
   const [form, setForm] = useState<EditableProject>(init);
   const calculatedScheduleVariance = computeScheduleVarianceWeeks(
@@ -4850,6 +4864,27 @@ function EditFinancialsDialog({
                 onChange={(e) => setForm({ ...form, percent_complete: Number(e.target.value) })}
               />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Default billing document</Label>
+            <Select
+              value={form.default_output_format}
+              onValueChange={(v) =>
+                setForm({ ...form, default_output_format: v as BillingOutputFormat })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="invoice">Client invoice</SelectItem>
+                <SelectItem value="aia_g702">AIA G702/G703 (AIA-native project)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              New pay applications start in this format. Choose AIA G702/G703 for lender- or
+              owner's-rep-driven jobs so the biller never has to flip it each time.
+            </p>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1.5">
