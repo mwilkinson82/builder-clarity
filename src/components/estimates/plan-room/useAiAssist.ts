@@ -58,10 +58,8 @@ import {
   createEmbeddingMatchSession,
   type EmbeddingMatchSession,
 } from "@/lib/ai-takeoff/embedding-match/embedding-match-client";
-import {
-  resolveAiEngine,
-  DEFAULT_EMBEDDING_MATCH_THRESHOLD,
-} from "@/lib/ai-takeoff/embedding-match/embedding-match-domain";
+import { DEFAULT_EMBEDDING_MATCH_THRESHOLD } from "@/lib/ai-takeoff/embedding-match/embedding-match-domain";
+import { activeAiEngine } from "@/lib/ai-takeoff/embedding-match/ai-engine-flag";
 import { DEFAULT_MAX_SHEETS_PER_SCAN, quoteScanCredits } from "@/lib/credits/credits-domain";
 import {
   createTakeoffMeasurement,
@@ -284,7 +282,7 @@ export function useAiAssist({
     // per scan, disposed in the same finally. When on it replaces the pixel
     // sweep and its hits ride the exact same auto-ghost path.
     let embeddingSession: EmbeddingMatchSession | null = null;
-    const aiEngine = resolveAiEngine(import.meta.env.VITE_AI_ENGINE);
+    const aiEngine = activeAiEngine();
     let echo = "";
     setScanProgress({
       sheetsDone: 0,
