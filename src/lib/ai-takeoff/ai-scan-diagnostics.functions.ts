@@ -175,6 +175,8 @@ export interface AiScanSheetSummary {
   afterSuppression: number;
   sentToVerify: number;
   verified: number;
+  /** Template hits ghosted directly without a model verify (AITAKEOFF11). */
+  templateAutoghosted: number;
   /** Verified ghosts rejected by the center sanity band (AITAKEOFF9). */
   centerMismatchRejected: number;
   stageATiles: number;
@@ -406,6 +408,7 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
         afterSuppression: Math.max(0, Math.round(num(meta.after_suppression))),
         sentToVerify: Math.max(0, Math.round(num(meta.sent_to_verify))),
         verified: Math.max(0, Math.round(num(meta.verified))),
+        templateAutoghosted: Math.max(0, Math.round(num(meta.template_autoghosted))),
         centerMismatchRejected: Math.max(0, Math.round(num(meta.center_mismatch_rejected))),
         stageATiles: Math.max(0, Math.round(num(meta.stage_a_tiles))),
         footprintRasterPx: Number.isFinite(Number(meta.footprint_raster_px))

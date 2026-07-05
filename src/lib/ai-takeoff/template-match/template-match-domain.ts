@@ -50,16 +50,21 @@ export type AiProposalSource = "template" | "model" | "both";
 // small ROI. Thin radial symbols land between 30° steps; the fine grid
 // gets within 5°.
 export const TEMPLATE_ROTATION_STEP_DEG = 30;
-export const TEMPLATE_MATCH_SCALES = [0.85, 1.0, 1.15] as const;
+// Wide scale coverage (AITAKEOFF11): a real sheet mixes symbol SIZES — the
+// A-100 carwash has small brushes and brushes ~2x larger, and one exemplar
+// must find both. The ladder spans 0.6x-2.3x (geometric, ~1.18x steps); the
+// coarse scales are the every-other subset (~1.4x apart), each a ladder
+// member so its ±1-step fine neighbors tile the whole ladder with no gap.
+export const TEMPLATE_MATCH_SCALES = [0.6, 0.85, 1.18, 1.65, 2.3] as const;
 export const FINE_ROTATION_STEP_DEG = 10;
-export const TEMPLATE_SCALE_LADDER = [0.75, 0.85, 0.925, 1.0, 1.075, 1.15, 1.3] as const;
+export const TEMPLATE_SCALE_LADDER = [0.6, 0.72, 0.85, 1.0, 1.18, 1.4, 1.65, 1.95, 2.3] as const;
 // Coarse pool margin: candidates scoring within this of the threshold get
 // refined — the refinement decides, at the REAL threshold.
 export const LADDER_RECALL_MARGIN = 0.15;
 // Secondary templates (harvested accepted marks) are unvetted crops — they
 // earn a slightly higher floor than the estimator's own exemplar.
 // Calibrated on the variant fixture.
-export const SECONDARY_TEMPLATE_FLOOR = 0.68;
+export const SECONDARY_TEMPLATE_FLOOR = 0.64;
 
 /** Fine-scale neighbors of a coarse scale on the ladder (inclusive). */
 export function ladderNeighborsFor(scale: number): number[] {
@@ -75,16 +80,16 @@ export function fineRotationsFor(coarseDeg: number): number[] {
     (delta) => (coarseDeg + delta + 360) % 360,
   );
 }
-// Recall-biased score floor for MASKED correlation (AITAKEOFF8, recall-
-// biased further in AITAKEOFF9 Task 2 after a heavily-fused A-100 brush
-// missed at 0.75). Calibrated on the dense fixtures: clean matches
-// 0.87-1.0, fused instances (rail through the symbol + hatching over two
-// arms) 0.66-0.82 depending on raster scale, hatching ~0.37. 0.62 keeps
-// every legitimate fused case; a solid ink blob (~0.70) now proposes and
-// dies in stage B — a lower floor costs pennies in verify calls, never
-// accuracy. Env-tunable via AI_TEMPLATE_MATCH_THRESHOLD, resolved below,
-// handed out by beginAiCountScan, and recorded in the per-sheet funnel.
-export const DEFAULT_TEMPLATE_MATCH_THRESHOLD = 0.62;
+// Recall-biased score floor for MASKED correlation (AITAKEOFF8; lowered in
+// AITAKEOFF9; recall-first in AITAKEOFF11). Since AITAKEOFF11 a template hit
+// is a REVIEW GHOST the human accepts or rejects — the estimator is the
+// precision gate, not a model veto — so the floor only needs to keep real
+// symbols in while not flooding the review bar. Fixture landscape: clean
+// matches 0.87-1.0, fused/large-variant instances 0.6-0.85, hatching ~0.37.
+// 0.58 keeps every legitimate case with margin; the odd near-miss is one
+// click to reject. Env-tunable via AI_TEMPLATE_MATCH_THRESHOLD, resolved
+// below, handed out by beginAiCountScan, recorded in the per-sheet funnel.
+export const DEFAULT_TEMPLATE_MATCH_THRESHOLD = 0.58;
 // The unmasked CCOEFF fallback keeps the AITAKEOFF6 floor — it only runs
 // when the mask is degenerate (below the coverage floor, or masking is
 // switched off for the fixture comparison).

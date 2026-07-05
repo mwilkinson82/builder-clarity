@@ -111,7 +111,10 @@ function SheetSummaryCard({ summary }: { summary: AiScanSheetSummary }) {
         <span className="font-medium text-foreground" data-testid="ai-diagnostics-funnel">
           {summary.proposedTemplate} template + {summary.proposedModel} model proposed →{" "}
           {summary.afterUnionDedupe} after dedupe → {summary.afterSuppression} after suppression →{" "}
-          {summary.verified} verified
+          {summary.verified} ghosts
+          {summary.templateAutoghosted > 0
+            ? ` (${summary.templateAutoghosted} template direct + ${summary.verified - summary.templateAutoghosted} model-verified)`
+            : ""}
         </span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-2">
