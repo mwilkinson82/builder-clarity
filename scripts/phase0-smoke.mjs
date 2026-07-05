@@ -602,6 +602,30 @@ await expectNotContains(
   "pre-Phase-1 payment vestiges stay removed from the billing workspace (BILLINGBATCH1)",
 );
 
+// GETTINGPAID2: the portal Viewed stamp fires only on an explicit invoice
+// open through the shared hook — the recording path must never fall back to
+// the display-default invoice, and internal-team sessions never count.
+await expectContains(
+  "src/routes/_authenticated/client.projects.$projectId.tsx",
+  [/useInvoiceViewSignal\(/, /selectedInvoiceId,/],
+  "portal viewed signal records through the explicit-open hook (GETTINGPAID2)",
+);
+await expectNotContains(
+  "src/routes/_authenticated/client.projects.$projectId.tsx",
+  [/visibleInvoices\[0\]/, /viewedInvoiceId/],
+  "portal viewed recording never falls back to the display-default invoice (GETTINGPAID2)",
+);
+await expectContains(
+  "src/lib/client-portal.functions.ts",
+  [
+    /recordInvoicePortalView/,
+    /can_view_client_billing/,
+    /if \(clientBillingRes\.error \|\| !clientBillingRes\.data\) return \{ ok: true, recorded: false \};/,
+    /if \(!internalRes\.error && internalRes\.data\) return \{ ok: true, recorded: false \};/,
+  ],
+  "portal view recording counts only genuine client sessions, never internal team views",
+);
+
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [

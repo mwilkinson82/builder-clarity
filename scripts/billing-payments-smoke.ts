@@ -28,6 +28,7 @@ import {
   type EnabledPaymentMethods,
 } from "../src/lib/payments-domain.ts";
 import { applySovBucketPatch, sovLineForecast, sovTotals } from "../src/lib/sov-rollup.ts";
+import { invoiceViewToRecord } from "../src/lib/portal-view-signal.ts";
 import {
   computeG702Face,
   computeG703Rows,
@@ -747,5 +748,61 @@ assert.equal(
 );
 // Line 7: previous completed/stored less retainage held on it, per line.
 assert.equal(g702.previousCertificatesCents, 2_100_000 - 210_000 + (500_000 - 25_000));
+
+// --- Portal Viewed trigger (GETTINGPAID2: no false Viewed stamps) -------------
+
+// The false-positive class: invoices visible, nothing explicitly opened.
+// The recording derivation must return null — never the display default.
+const VIEW_IDS = ["invoice-a", "invoice-b"];
+assert.equal(
+  invoiceViewToRecord({
+    selectedInvoiceId: null,
+    visibleInvoiceIds: VIEW_IDS,
+    alreadyRecorded: new Set(),
+  }),
+  null,
+);
+// Explicit open records that id, exactly.
+assert.equal(
+  invoiceViewToRecord({
+    selectedInvoiceId: "invoice-b",
+    visibleInvoiceIds: VIEW_IDS,
+    alreadyRecorded: new Set(),
+  }),
+  "invoice-b",
+);
+// Per-visit dedupe: an already-recorded id never records twice.
+assert.equal(
+  invoiceViewToRecord({
+    selectedInvoiceId: "invoice-b",
+    visibleInvoiceIds: VIEW_IDS,
+    alreadyRecorded: new Set(["invoice-b"]),
+  }),
+  null,
+);
+// A selection outside the visible list never records.
+assert.equal(
+  invoiceViewToRecord({
+    selectedInvoiceId: "invoice-zz",
+    visibleInvoiceIds: VIEW_IDS,
+    alreadyRecorded: new Set(),
+  }),
+  null,
+);
+// Full visit sequence: land (null), open A, switch to B, revisit A.
+const recorded = new Set<string>();
+const visitCalls: string[] = [];
+for (const selection of [null, "invoice-a", "invoice-b", "invoice-a"]) {
+  const toRecord = invoiceViewToRecord({
+    selectedInvoiceId: selection,
+    visibleInvoiceIds: VIEW_IDS,
+    alreadyRecorded: recorded,
+  });
+  if (toRecord) {
+    recorded.add(toRecord);
+    visitCalls.push(toRecord);
+  }
+}
+assert.deepEqual(visitCalls, ["invoice-a", "invoice-b"]);
 
 console.log("billing payments smoke: all assertions passed");

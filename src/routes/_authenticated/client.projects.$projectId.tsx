@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -42,6 +42,7 @@ import {
   sumDollarsToCents,
 } from "@/lib/payments-domain";
 import { expireInvoiceCheckout } from "@/lib/payments.functions";
+import { useInvoiceViewSignal } from "@/lib/portal-view-signal";
 
 const DAILY_REPORT_BUCKET = "daily-reports";
 
@@ -139,21 +140,16 @@ function ClientProjectPage() {
   // Viewed signal (GETTINGPAID1): opening an invoice detail in the portal is
   // the "viewed" event, recorded server-side once per invoice per visit.
   // The server ignores internal-team views; only genuine client opens count.
+  // Recording is gated on an EXPLICIT open (a non-null selection): the
+  // display default below (`selectedInvoice` falling back to the first
+  // invoice) must never feed this — a false Viewed delays collections
+  // (GETTINGPAID2).
   const recordView = useServerFn(recordInvoicePortalView);
-  const viewedInvoiceIdsRef = useRef<Set<string>>(new Set());
-  const visibleInvoices = projectQuery.data?.billingInvoices ?? [];
-  const viewedInvoiceId =
-    (
-      visibleInvoices.find((invoice: BillingInvoiceRow) => invoice.id === selectedInvoiceId) ??
-      visibleInvoices[0] ??
-      null
-    )?.id ?? null;
-  useEffect(() => {
-    if (!viewedInvoiceId || viewedInvoiceIdsRef.current.has(viewedInvoiceId)) return;
-    viewedInvoiceIdsRef.current.add(viewedInvoiceId);
-    recordView({ data: { invoiceId: viewedInvoiceId } }).catch(() => null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewedInvoiceId]);
+  useInvoiceViewSignal(
+    selectedInvoiceId,
+    (projectQuery.data?.billingInvoices ?? []).map((invoice: BillingInvoiceRow) => invoice.id),
+    (invoiceId) => recordView({ data: { invoiceId } }),
+  );
 
   const decisionMutation = useMutation({
     mutationFn: (input: {
