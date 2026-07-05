@@ -569,13 +569,9 @@ await expectContains(
     /ClientPortalWorkspace/,
     /Invoices & payments/,
     /Client payment readiness/,
-    /Record payment/,
     /ledgerEarnedToDate/,
     /unbilledEarnedToDate/,
     /generateInvoicePdf/,
-    /Invoice PDF downloaded/,
-    /enqueueInvoiceEmail/,
-    /invoice-notification/,
     /Billing recipients/,
     /exposureCategoryFromChangeOrder/,
     /toast\.success\("CO sent to risk tally/,
@@ -589,18 +585,34 @@ await expectContains(
     /methodAvailability\(/,
     /resolveEnabledMethods\(/,
     /paymentMethodContext\.stripeConnectStatus/,
-    /Invoice email queued/,
     /toast\.success\("Linked to-do created/,
     /toast\.success\("Risk deleted/,
     /toast\.success\("Application created/,
     /toast\.success\("Invoice created/,
     /toast\.success\("Payment recorded/,
-    /Client can pay online/,
-    /Manual\/email only/,
     /toast\.success\("SOV mapping saved/,
     /toast\.success\("SOV imported/,
   ],
   "project route wires core Phase 0 write paths and success toasts",
+);
+
+// PROJECTDECOMP1: the invoice row editor (extracted from the project route)
+// owns the invoice write paths — record payment, PDF download, email queue,
+// and the online-pay readiness copy. Behavior unchanged, new home.
+await expectContains(
+  "src/components/project/billing/BillingInvoiceRowEditor.tsx",
+  [
+    /export function BillingInvoiceRowEditor/,
+    /Record payment/,
+    /generateInvoicePdf/,
+    /Invoice PDF downloaded/,
+    /enqueueInvoiceEmail/,
+    /invoice-notification/,
+    /Invoice email queued/,
+    /Client can pay online/,
+    /Manual\/email only/,
+  ],
+  "extracted invoice row editor owns the invoice write paths and readiness copy",
 );
 
 await expectNotContains(
