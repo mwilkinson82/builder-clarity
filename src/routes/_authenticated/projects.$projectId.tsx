@@ -105,6 +105,7 @@ import {
   sortBillingApplications,
   writeLocalBillingApplications,
   type BillingDraft,
+  type InvoiceDraft,
 } from "@/lib/billing-local-store";
 import { EditFinancialsDialog } from "@/components/project/EditFinancialsDialog";
 import {
@@ -173,7 +174,7 @@ import {
 } from "@/lib/projects.functions";
 import { isHarborDemoProject } from "@/lib/demo-seed";
 import { listSchedule } from "@/lib/schedule.functions";
-import { fmtUSD, fmtPct } from "@/lib/format";
+import { fmtUSD, fmtPct, formatShortDateTime } from "@/lib/format";
 import {
   computeScheduleVarianceWeeks,
   remainingExposureValue,
@@ -2153,12 +2154,6 @@ function MiniLedgerStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function formatShortDateTime(value: string) {
-  if (!value) return "Date not recorded";
-  const compact = value.replace("T", " ").slice(0, 16);
-  return compact || "Date not recorded";
-}
-
 function invoiceFilename(project: ProjectRow, invoice: BillingInvoiceRow) {
   const projectPart = (project.job_number || project.name || "project")
     .replace(/[^a-z0-9]+/gi, "-")
@@ -2252,22 +2247,6 @@ function responseAction(path: import("@/lib/ior").ResponsePath) {
   return "Accept";
 }
 
-type InvoiceDraft = Omit<
-  BillingInvoiceRow,
-  | "id"
-  | "project_id"
-  | "payment_events"
-  | "created_at"
-  | "updated_at"
-  | "sent_at"
-  | "paid_at"
-  | "payment_enabled"
-  | "payment_url"
-  | "stripe_checkout_session_id"
-  | "stripe_payment_intent_id"
-  | "online_payment_status"
-  | "payment_link_sent_at"
->;
 type PaymentDraft = {
   invoiceId: string;
   amount: number;

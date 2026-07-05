@@ -6,9 +6,30 @@
 // those local records. Extracted verbatim from the project route during the
 // PROJECTDECOMP1 mechanical split; no behavior change.
 import { normalizeBillingNumberLabel } from "@/lib/billing-labels";
-import type { BillingApplicationRow, BillingApplicationEventRow } from "@/lib/projects.functions";
+import type {
+  BillingApplicationRow,
+  BillingApplicationEventRow,
+  BillingInvoiceRow,
+} from "@/lib/projects.functions";
 
 export type BillingDraft = Omit<BillingApplicationRow, "id" | "project_id" | "status_events">;
+
+export type InvoiceDraft = Omit<
+  BillingInvoiceRow,
+  | "id"
+  | "project_id"
+  | "payment_events"
+  | "created_at"
+  | "updated_at"
+  | "sent_at"
+  | "paid_at"
+  | "payment_enabled"
+  | "payment_url"
+  | "stripe_checkout_session_id"
+  | "stripe_payment_intent_id"
+  | "online_payment_status"
+  | "payment_link_sent_at"
+>;
 
 export const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
 export const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
