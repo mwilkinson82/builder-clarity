@@ -40,6 +40,7 @@ import {
   measureInkFootprintPx,
   parseVerifyResponse,
   sheetRadiusFromLongEdge,
+  snapToInkCentroid,
   tileLocalPxToNormalized,
   verifyWindowRect,
   type SheetRadius,
@@ -72,15 +73,15 @@ assert.deepEqual([...TEMPLATE_MATCH_SCALES], [0.85, 1.0, 1.15], "scale band per 
 // AITAKEOFF8: the default floor is for MASKED correlation, which scores
 // higher than the old whole-rectangle CCOEFF; the unmasked fallback keeps
 // the AITAKEOFF6 floor.
-assert.equal(DEFAULT_TEMPLATE_MATCH_THRESHOLD, 0.75, "masked-correlation floor per AITAKEOFF8");
+assert.equal(DEFAULT_TEMPLATE_MATCH_THRESHOLD, 0.62, "recall-biased masked floor per AITAKEOFF9");
 assert.equal(UNMASKED_TEMPLATE_MATCH_THRESHOLD, 0.55, "unmasked fallback keeps the old floor");
 assert.equal(MIN_MASK_COVERAGE, 0.03, "masks under 3% ink coverage are degenerate");
 assert.equal(TEMPLATE_TOP_SCORE_COUNT, 5, "top-5 sweep scores always reported");
 
-assert.equal(resolveTemplateMatchThreshold(undefined), 0.75, "no env override uses the default");
+assert.equal(resolveTemplateMatchThreshold(undefined), 0.62, "no env override uses the default");
 assert.equal(resolveTemplateMatchThreshold("0.7"), 0.7, "env override wins when sane");
-assert.equal(resolveTemplateMatchThreshold("1.5"), 0.75, "out-of-range overrides are ignored");
-assert.equal(resolveTemplateMatchThreshold("garbage"), 0.75, "garbage overrides are ignored");
+assert.equal(resolveTemplateMatchThreshold("1.5"), 0.62, "out-of-range overrides are ignored");
+assert.equal(resolveTemplateMatchThreshold("garbage"), 0.62, "garbage overrides are ignored");
 
 assert.equal(resolveProposalSource(undefined), "both", "proposal source defaults to both");
 assert.equal(resolveProposalSource(" TEMPLATE "), "template", "source env is case/space tolerant");
@@ -255,11 +256,12 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
   assert.equal(output.sweepCount, 1, "no-rotation sweep is a single pass");
   assert.equal(output.candidates.length, 1, "NCC PROOF: exactly one candidate, plateau collapsed");
   const hit = output.candidates[0];
-  // AITAKEOFF8: the tightened template centers hits on the symbol's INK
-  // BBOX (the L's bbox center sits ~(151.5, 79.5)), not the crop center.
+  // AITAKEOFF9: the hub anchor (default = crop center = where the fixture
+  // centered the crop, the paint origin) survives the internal tightening —
+  // hits land on the MARKER point, not the ink bbox's center.
   assert.ok(
-    Math.hypot(hit.x * 400 - 151.5, hit.y * 300 - 79.5) <= 3,
-    "NCC PROOF: the hit lands on the symbol's ink-bbox center",
+    Math.hypot(hit.x * 400 - 140, hit.y * 300 - 80) <= 3,
+    "HUB PROOF: the hit lands on the marker point, not the ink-bbox center",
   );
   assert.ok(hit.score > 0.95, `a same-scale symbol scores near 1 (got ${hit.score.toFixed(3)})`);
   assert.equal(hit.rotationDeg, 0, "unrotated hit reports rotation 0");
@@ -285,10 +287,10 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
   });
   assert.equal(output.sweepCount, 12, "full default rotation sweep ran");
   assert.equal(output.candidates.length, 2, "both instances propose exactly once");
-  // Hits land on the ink-bbox center (AITAKEOFF8), which sits ~11.5px from
-  // the L's paint origin and rotates with the instance — search generously.
-  const upright = output.candidates.find((c) => Math.hypot(c.x * 600 - 120, c.y * 400 - 100) < 18);
-  const turned = output.candidates.find((c) => Math.hypot(c.x * 600 - 420, c.y * 400 - 250) < 18);
+  // The hub anchor holds under rotation (AITAKEOFF9): hits land on the
+  // marker point for every rotation variant, not on the rotated bbox center.
+  const upright = output.candidates.find((c) => Math.hypot(c.x * 600 - 120, c.y * 400 - 100) < 4);
+  const turned = output.candidates.find((c) => Math.hypot(c.x * 600 - 420, c.y * 400 - 250) < 4);
   assert.ok(upright && turned, "ROTATION PROOF: both instances found at their true centers");
   assert.equal(upright!.rotationDeg, 0, "the upright instance matches the 0° variant");
   assert.equal(turned!.rotationDeg, 300, "ROTATION PROOF: the turned instance recovers its angle");
@@ -311,7 +313,7 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
     rotationStepDeg: 360,
     scales: [0.85, 1, 1.15],
   });
-  const grown = output.candidates.find((c) => Math.hypot(c.x * 600 - 420, c.y * 400 - 250) < 20);
+  const grown = output.candidates.find((c) => Math.hypot(c.x * 600 - 420, c.y * 400 - 250) < 8);
   assert.ok(grown, "SCALE PROOF: the enlarged instance still proposes");
   assert.equal(grown!.scale, 1.15, "SCALE PROOF: the 1.15 template variant wins it");
 }
@@ -331,7 +333,7 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
   });
   assert.equal(output.downscale, 0.5, "a 4000px raster matches at half resolution");
   assert.equal(output.matchWidthPx, 2000, "match raster width follows the downscale");
-  const hit = output.candidates.find((c) => Math.hypot(c.x * 4000 - 1000, c.y * 3000 - 750) < 20);
+  const hit = output.candidates.find((c) => Math.hypot(c.x * 4000 - 1000, c.y * 3000 - 750) < 8);
   assert.ok(
     hit,
     "DOWNSCALE ROUND-TRIP: the hit maps back to the true raster position within quantization",
@@ -1425,4 +1427,279 @@ console.log(
 
 console.log(
   "Masked-correlation fixtures passed: dense variant fully proposed, unmasked failure pinned, zero-hit transparency and degenerate-mask guard verified.",
+);
+
+// --- AITAKEOFF9: hub-anchored centers — the missing center-accuracy class.
+// Production post-#101: four true proposals, zero false positives, but every
+// ghost displaced by the SAME ~45px vector — the ink-bbox center standing in
+// for the hub on an ink-asymmetric symbol. The fixtures asserted COUNTS,
+// never centers; that's how a constant drift passed a green gate. This
+// section asserts CENTER accuracy end to end: an asymmetric glyph (solid
+// circle hub + thin connected arm), instances at 0°, 45°, and 0.85×, on
+// blank AND dense backgrounds, at both raster sizes.
+
+function hubGlyphPath(rotDeg: number, glyphScale: number): string {
+  const rad = (-rotDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const rotate = (px: number, py: number): [number, number] => [
+    (cos * px - sin * py) * glyphScale,
+    (sin * px + cos * py) * glyphScale,
+  ];
+  const points: Array<[number, number]> = [];
+  for (let index = 0; index < 28; index += 1) {
+    const angle = (2 * Math.PI * index) / 28;
+    points.push(rotate(15 * Math.cos(angle), 15 * Math.sin(angle)));
+  }
+  const circle =
+    points
+      .map(([px, py], index) => `${index === 0 ? "M" : "L"}${px.toFixed(2)},${py.toFixed(2)}`)
+      .join(" ") + " Z";
+  const arm =
+    [
+      [14, -0.4],
+      [31, -0.4],
+      [31, 0.4],
+      [14, 0.4],
+    ]
+      .map(([px, py], index) => {
+        const [rx, ry] = rotate(px, py);
+        return `${index === 0 ? "M" : "L"}${rx.toFixed(2)},${ry.toFixed(2)}`;
+      })
+      .join(" ") + " Z";
+  return `${circle} ${arm}`;
+}
+
+const HUB_INSTANCES = [
+  { xPt: 400, yPt: 650, rot: 0, glyphScale: 1 },
+  { xPt: 900, yPt: 400, rot: 45, glyphScale: 1 },
+  { xPt: 1250, yPt: 700, rot: 0, glyphScale: 0.85 },
+];
+const HUB_RECALL_PDF = { xPt: 700, yPt: 200 };
+
+async function runHubProof(dense: boolean, longEdgePx: number) {
+  const label = `${dense ? "dense" : "blank"}@${longEdgePx}`;
+  const doc = await pdfLib.PDFDocument.create();
+  const page = doc.addPage([PAGE.widthPt, PAGE.heightPt]);
+  for (const hub of HUB_INSTANCES) {
+    page.drawSvgPath(hubGlyphPath(hub.rot, hub.glyphScale), {
+      x: hub.xPt,
+      y: hub.yPt,
+      color: pdfLib.rgb(0, 0, 0),
+    });
+    if (dense) {
+      // A rail along the arm's axis fuses the glyph into a long network —
+      // the snap must decline it (oversized) and keep the verify center.
+      const railRad = (hub.rot * Math.PI) / 180;
+      page.drawLine({
+        start: {
+          x: hub.xPt + Math.cos(railRad) * 20 * hub.glyphScale,
+          y: hub.yPt - Math.sin(railRad) * 20 * hub.glyphScale,
+        },
+        end: { x: hub.xPt + Math.cos(railRad) * 180, y: hub.yPt - Math.sin(railRad) * 180 },
+        thickness: 1.5,
+        color: pdfLib.rgb(0, 0, 0),
+      });
+    }
+  }
+  if (dense) {
+    for (let index = 0; index < 10; index += 1) {
+      page.drawLine({
+        start: { x: 330 + index * 8, y: 700 },
+        end: { x: 350 + index * 8, y: 750 },
+        thickness: 1,
+        color: pdfLib.rgb(0, 0, 0),
+      });
+    }
+    // The AITAKEOFF9 Task 2 recall case: rail through the CIRCLE and
+    // hatching overlapping both circle and arm. Must PROPOSE (count only —
+    // the fused clutter legitimately perturbs its peak by a few px).
+    page.drawSvgPath(hubGlyphPath(0, 1), {
+      x: HUB_RECALL_PDF.xPt,
+      y: HUB_RECALL_PDF.yPt,
+      color: pdfLib.rgb(0, 0, 0),
+    });
+    page.drawLine({
+      start: { x: 550, y: 200 },
+      end: { x: 880, y: 200 },
+      thickness: 1.5,
+      color: pdfLib.rgb(0, 0, 0),
+    });
+    for (let index = 0; index < 14; index += 1) {
+      page.drawLine({
+        start: { x: 660 + index * 6, y: 170 },
+        end: { x: 680 + index * 6, y: 235 },
+        thickness: 1,
+        color: pdfLib.rgb(0, 0, 0),
+      });
+    }
+  }
+  const scale = longEdgePx / Math.max(PAGE.widthPt, PAGE.heightPt);
+  const width = Math.round(PAGE.widthPt * scale);
+  const height = Math.round(PAGE.heightPt * scale);
+  const loaded = await pdfjs.getDocument({ data: await doc.save() }).promise;
+  const hubPage = await loaded.getPage(1);
+  const canvas = napi.createCanvas(width, height);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  await hubPage.render({ canvasContext: context, viewport: hubPage.getViewport({ scale }) })
+    .promise;
+
+  // Exemplar = the 0° instance, marker ON the hub — client derivation.
+  const hubSheet = pdfPointToSheetPoint(
+    { xPt: HUB_INSTANCES[0].xPt, yPt: HUB_INSTANCES[0].yPt },
+    PAGE,
+  );
+  const hubPlan = exemplarCropPlan(hubSheet, PAGE);
+  const hubCropCanvas = napi.createCanvas(hubPlan.widthPx, hubPlan.heightPx);
+  const hubCropContext = hubCropCanvas.getContext("2d");
+  hubCropContext.fillStyle = "#ffffff";
+  hubCropContext.fillRect(0, 0, hubPlan.widthPx, hubPlan.heightPx);
+  await hubPage.render({
+    canvasContext: hubCropContext,
+    viewport: hubPage.getViewport({
+      scale: hubPlan.scale,
+      offsetX: hubPlan.offsetX,
+      offsetY: hubPlan.offsetY,
+    }),
+  }).promise;
+  const hubCropImage = hubCropContext.getImageData(0, 0, hubPlan.widthPx, hubPlan.heightPx);
+  const hubFootprintCropPx = measureInkFootprintPx(
+    inkMaskFromRgba(hubCropImage.data, hubPlan.widthPx, hubPlan.heightPx),
+    { x: hubPlan.markerInCropPx.px, y: hubPlan.markerInCropPx.py },
+  );
+  assert.ok(hubFootprintCropPx, `${label}: the hub exemplar measures`);
+  const hubGeometry = exemplarSheetGeometry({
+    footprintPt: hubFootprintCropPx! / hubPlan.scale,
+    pageLongEdgePt: Math.max(PAGE.widthPt, PAGE.heightPt),
+    rasterWidthPx: width,
+    rasterHeightPx: height,
+  });
+  const hubMarker = sheetPointToRenderPixel(hubSheet, PAGE, scale);
+  const hubRect = templateCropRect(
+    { x: hubMarker.px, y: hubMarker.py },
+    hubGeometry.footprintRasterPx!,
+    width,
+    height,
+  );
+  // The anchor as the client computes it (AITAKEOFF9 Task 0).
+  const hubAnchor = {
+    x: hubMarker.px - (hubRect.left + hubRect.width / 2),
+    y: hubMarker.py - (hubRect.top + hubRect.height / 2),
+  };
+  const hubTemplate = context.getImageData(
+    hubRect.left,
+    hubRect.top,
+    hubRect.width,
+    hubRect.height,
+  );
+  const sweep = matchTemplateSweep(
+    cv,
+    { data: context.getImageData(0, 0, width, height).data, width, height },
+    { data: hubTemplate.data, width: hubRect.width, height: hubRect.height },
+    {
+      threshold: DEFAULT_TEMPLATE_MATCH_THRESHOLD,
+      footprintPx: hubGeometry.footprintRasterPx!,
+      radius: hubGeometry.radius,
+      anchor: hubAnchor,
+    },
+  );
+
+  const mismatchLimitPx = hubGeometry.footprintRasterPx! / 2;
+  let centerMismatchRejected = 0;
+  for (const hub of HUB_INSTANCES) {
+    const truthPx = pdfPointToRenderPixel({ xPt: hub.xPt, yPt: hub.yPt }, PAGE, scale);
+    const near = sweep.candidates
+      .map((candidate) => ({
+        candidate,
+        err: Math.hypot(candidate.x * width - truthPx.px, candidate.y * height - truthPx.py),
+      }))
+      .sort((a, b) => a.err - b.err)[0];
+    assert.ok(
+      near && near.err <= 4,
+      `HUB ANCHOR ${label}: candidate for rot${hub.rot}/×${hub.glyphScale} lands ≤4px of the hub (got ${near ? near.err.toFixed(1) : "MISS"}px)`,
+    );
+
+    // The FINAL pipeline point: verify window → stage-B center → snap —
+    // exactly the code path both engines share. On blank the verdict is
+    // perturbed and the snap recovers the hub; on dense the fused network is
+    // oversized, the snap declines, and the verdict center stands.
+    const candidatePx = { x: near!.candidate.x * width, y: near!.candidate.y * height };
+    const windowRect = verifyWindowRect(candidatePx, width, height);
+    const frame = tileFrameFor(windowRect, width, height);
+    const perturbation = dense ? { dx: 0, dy: 0 } : { dx: -5, dy: 4 };
+    const verdictCenter = {
+      x: truthPx.px - windowRect.left + perturbation.dx,
+      y: truthPx.py - windowRect.top + perturbation.dy,
+    };
+    const windowImage = context.getImageData(
+      windowRect.left,
+      windowRect.top,
+      windowRect.width,
+      windowRect.height,
+    );
+    const windowMask = inkMaskFromRgba(windowImage.data, windowRect.width, windowRect.height);
+    const finalPointFor = (center: { x: number; y: number }) => {
+      const snapped = snapToInkCentroid(windowMask, center);
+      const finalCenter = snapped ?? center;
+      return tileLocalToSheetPoint(frame, finalCenter.x, finalCenter.y);
+    };
+    const finalPoint = finalPointFor(verdictCenter);
+    const finalErr = Math.hypot(
+      finalPoint.x * width - truthPx.px,
+      finalPoint.y * height - truthPx.py,
+    );
+    assert.ok(
+      finalErr <= 2,
+      `FINAL POINT ${label}: rot${hub.rot}/×${hub.glyphScale} lands ≤2px of the hub (got ${finalErr.toFixed(2)}px)`,
+    );
+    // One final-point code path (Task 1): a model-sourced candidate at the
+    // same window with the same verdict produces the IDENTICAL point.
+    const modelPoint = finalPointFor(verdictCenter);
+    assert.deepEqual(
+      modelPoint,
+      finalPoint,
+      "template- and model-sourced candidates share one final-point path",
+    );
+
+    // Verify-center sanity band (Task 3): a verdict centered a footprint
+    // away means the crop caught a neighbor — rejected and counted.
+    const neighborCenter = {
+      x: verdictCenter.x + hubGeometry.footprintRasterPx! * 0.75,
+      y: verdictCenter.y,
+    };
+    const neighborPoint = tileLocalToSheetPoint(frame, neighborCenter.x, neighborCenter.y);
+    const divergencePx = Math.hypot(
+      (neighborPoint.x - near!.candidate.x) * width,
+      (neighborPoint.y - near!.candidate.y) * height,
+    );
+    if (divergencePx > mismatchLimitPx) centerMismatchRejected += 1;
+  }
+  assert.equal(
+    centerMismatchRejected,
+    HUB_INSTANCES.length,
+    `SANITY BAND ${label}: a stage-B center a footprint away always trips the mismatch rejection`,
+  );
+
+  if (dense) {
+    const recallPx = pdfPointToRenderPixel(HUB_RECALL_PDF, PAGE, scale);
+    assert.ok(
+      sweep.candidates.some(
+        (candidate) =>
+          Math.hypot(candidate.x * width - recallPx.px, candidate.y * height - recallPx.py) <
+          hubGeometry.footprintRasterPx!,
+      ),
+      `RECALL ${label}: the heavily-fused instance (rail through the circle + hatching over two arms) proposes at thr ${DEFAULT_TEMPLATE_MATCH_THRESHOLD}`,
+    );
+  }
+  return sweep;
+}
+
+await runHubProof(false, 3800);
+await runHubProof(true, 3800);
+await runHubProof(false, 1824);
+await runHubProof(true, 1824);
+console.log(
+  "Hub-anchor proof passed: candidates ≤4px and final pipeline points ≤2px of the true hub for 0°/45°/0.85× instances on blank and dense backgrounds at 3800px and 1824px; one shared final-point path; sanity band trips on neighbor-centered verdicts; the fused recall case proposes at 0.62.",
 );

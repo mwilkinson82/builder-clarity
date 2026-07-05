@@ -32,6 +32,7 @@ import {
   excludeNearExistingPoints,
   exemplarSheetGeometry,
   sortProposalsForReview,
+  VERIFY_WINDOW_PX,
   type AiCountCandidate,
   type AiCountProposal,
   type SheetPoint,
@@ -325,6 +326,10 @@ export function useAiAssist({
       // the worker unions its hits with stage A on every sheet.
       const proposalSource = begin.proposalSource ?? "both";
       let templateImage: ImageData | null = null;
+      // Hub anchor (AITAKEOFF9 Task 0): where the estimator's marker sits
+      // relative to the template crop's center — recovered hits land on the
+      // hub, not on the ink bbox's center (the constant ~45px A-100 drift).
+      let templateAnchor = { x: 0, y: 0 };
       let exemplarRasterReuse: Awaited<ReturnType<typeof renderDetectionSheet>> | null = null;
       if (proposalSource !== "model" && exemplarImage.footprintPt !== null) {
         const exemplarRaster = await renderDetectionSheet(
@@ -360,6 +365,14 @@ export function useAiAssist({
               templateRect.width,
               templateRect.height,
             ) ?? null;
+        templateAnchor = {
+          x:
+            exemplar.point.x * exemplarRaster.widthPx -
+            (templateRect.left + templateRect.width / 2),
+          y:
+            exemplar.point.y * exemplarRaster.heightPx -
+            (templateRect.top + templateRect.height / 2),
+        };
         exemplarRasterReuse = exemplarRaster;
         if (templateImage) templateSession = createTemplateMatchSession();
       }
@@ -459,6 +472,7 @@ export function useAiAssist({
                 threshold: begin.templateMatchThreshold ?? DEFAULT_TEMPLATE_MATCH_THRESHOLD,
                 footprintPx: geometry.footprintRasterPx,
                 radius: geometry.radius,
+                anchor: templateAnchor,
               },
             });
             templateHits = matched.candidates;
@@ -538,6 +552,7 @@ export function useAiAssist({
         ) as typeof unioned;
         const toVerify = capProposalsPerSheet(fresh, begin.maxProposalsPerSheet);
         let sheetVerified = 0;
+        let sheetCenterMismatch = 0;
         for (let index = 0; index < toVerify.length; index += 1) {
           if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
           setScanProgress({
@@ -581,7 +596,21 @@ export function useAiAssist({
               },
             },
           });
-          if (verdict.match && verdict.point) {
+          // Verify-center sanity band (AITAKEOFF9 Task 3): a stage-B center
+          // more than half a footprint from the candidate means the crop
+          // caught a NEIGHBOR — accepting it would silently relocate a
+          // marker. Rejected and counted in the funnel.
+          const mismatchLimitPx = (geometry.footprintRasterPx ?? VERIFY_WINDOW_PX) / 2;
+          const centerMismatch =
+            verdict.match && verdict.point
+              ? Math.hypot(
+                  (verdict.point.x - candidate.x) * raster.widthPx,
+                  (verdict.point.y - candidate.y) * raster.heightPx,
+                ) > mismatchLimitPx
+              : false;
+          if (centerMismatch) {
+            sheetCenterMismatch += 1;
+          } else if (verdict.match && verdict.point) {
             sheetVerified += 1;
             found.push({
               id: crypto.randomUUID(),
@@ -619,6 +648,7 @@ export function useAiAssist({
                 after_suppression: fresh.length,
                 sent_to_verify: toVerify.length,
                 verified: sheetVerified,
+                center_mismatch_rejected: sheetCenterMismatch,
                 stage_a_tiles: tiles.length,
                 footprint_raster_px: geometry.footprintRasterPx,
                 radius: { x: geometry.radius.x, y: geometry.radius.y },

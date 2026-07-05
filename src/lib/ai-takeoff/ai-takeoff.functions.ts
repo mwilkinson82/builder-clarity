@@ -789,6 +789,8 @@ const sheetSummaryInput = z.object({
     after_suppression: z.number().int().min(0).max(20000),
     sent_to_verify: z.number().int().min(0).max(2000),
     verified: z.number().int().min(0).max(2000),
+    /** Verified ghosts rejected because stage B centered on a neighbor. */
+    center_mismatch_rejected: z.number().int().min(0).max(2000).default(0),
     /** Stage-A tiles the client actually scanned (0 in template-only mode). */
     stage_a_tiles: z.number().int().min(0).max(500),
     footprint_raster_px: z.number().min(0).max(20000).nullable().default(null),
