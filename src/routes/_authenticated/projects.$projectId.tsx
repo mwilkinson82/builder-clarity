@@ -97,6 +97,16 @@ import {
 } from "@/components/billing/BillingStageRail";
 import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import {
+  LOCAL_BILLING_ID_PREFIX,
+  isMissingBillingApplicationsTableError,
+  makeLocalBillingApplication,
+  makeLocalBillingEvent,
+  readLocalBillingApplications,
+  sortBillingApplications,
+  writeLocalBillingApplications,
+  type BillingDraft,
+} from "@/lib/billing-local-store";
+import {
   getClientPortalManagement,
   type ProjectClientAccessRow,
 } from "@/lib/client-portal.functions";
@@ -239,8 +249,6 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   component: ProjectRoute,
 });
 
-const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
-const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
 const PROJECT_NAV_RAIL_CLASS =
   "h-auto w-full justify-start gap-1.5 overflow-x-auto rounded-lg border border-accent/25 bg-accent/[0.07] p-1.5 shadow-[0_18px_42px_rgb(27_122_110_/_0.16),0_4px_12px_rgb(31_28_23_/_0.10)] ring-1 ring-accent/15 backdrop-blur-sm lg:-translate-y-1 lg:flex-col lg:items-stretch lg:overflow-visible";
 
@@ -261,191 +269,6 @@ function projectNavIconClass({ compact, active }: { compact: boolean; active?: b
     compact ? "lg:mr-0" : "mr-2",
     active ? "text-accent-foreground drop-shadow-sm" : "text-current group-hover:text-accent",
   );
-}
-
-function isBillingStatus(value: unknown): value is BillingApplicationRow["status"] {
-  return typeof value === "string" && BILLING_STATUS_VALUES.includes(value as never);
-}
-
-function isMissingBillingApplicationsTableError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return /billing_applications|schema cache/i.test(message);
-}
-
-function makeLocalBillingId() {
-  const randomId =
-    typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `${LOCAL_BILLING_ID_PREFIX}${randomId}`;
-}
-
-function makeLocalBillingEvent(
-  projectId: string,
-  billingApplicationId: string,
-  input: {
-    event_type: string;
-    from_status?: string;
-    to_status?: string;
-    amount?: number;
-    notes?: string;
-  },
-): BillingApplicationEventRow {
-  const randomId =
-    typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return {
-    id: `local-billing-event-${randomId}`,
-    billing_application_id: billingApplicationId,
-    project_id: projectId,
-    event_type: input.event_type,
-    from_status: input.from_status ?? "",
-    to_status: input.to_status ?? "",
-    amount: input.amount ?? 0,
-    notes: input.notes ?? "",
-    created_by: null,
-    created_at: new Date().toISOString(),
-  };
-}
-
-function billingString(value: unknown, fallback = "") {
-  return typeof value === "string" ? value : fallback;
-}
-
-function billingNumber(value: unknown) {
-  return typeof value === "number" ? value : Number(value ?? 0);
-}
-
-function billingDate(value: unknown) {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function sortBillingApplications(apps: BillingApplicationRow[]) {
-  return [...apps].sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id));
-}
-
-function makeLocalBillingApplication(
-  projectId: string,
-  input: BillingDraft,
-): BillingApplicationRow {
-  const id = makeLocalBillingId();
-  return {
-    id,
-    project_id: projectId,
-    application_number: normalizeBillingNumberLabel(input.application_number),
-    invoice_number: normalizeBillingNumberLabel(input.invoice_number),
-    submitted_date: input.submitted_date || null,
-    due_date: input.due_date || null,
-    billing_period: input.billing_period,
-    contract_amount: input.contract_amount,
-    change_order_amount: input.change_order_amount,
-    amount_billed: input.amount_billed,
-    paid_to_date: input.paid_to_date,
-    retainage: input.retainage,
-    has_line_detail: input.has_line_detail,
-    total_retainage_held: input.total_retainage_held,
-    retainage_released_this_period: input.retainage_released_this_period,
-    status: input.status,
-    output_format: input.output_format,
-    notes: input.notes,
-    sort_order: input.sort_order,
-    status_events: [
-      makeLocalBillingEvent(projectId, id, {
-        event_type: "created",
-        from_status: "",
-        to_status: input.status,
-        amount: input.amount_billed,
-        notes: input.notes || "Application created locally.",
-      }),
-    ],
-  };
-}
-
-function normalizeStoredBillingEvent(
-  projectId: string,
-  billingApplicationId: string,
-  raw: unknown,
-): BillingApplicationEventRow | null {
-  if (!raw || typeof raw !== "object") return null;
-  const record = raw as Record<string, unknown>;
-  const id = billingString(record.id);
-  return {
-    id: id || `local-billing-event-${Date.now()}`,
-    billing_application_id: billingString(record.billing_application_id, billingApplicationId),
-    project_id: billingString(record.project_id, projectId),
-    event_type: billingString(record.event_type, "status_change"),
-    from_status: billingString(record.from_status),
-    to_status: billingString(record.to_status),
-    amount: billingNumber(record.amount),
-    notes: billingString(record.notes),
-    created_by: typeof record.created_by === "string" ? record.created_by : null,
-    created_at: billingString(record.created_at, new Date().toISOString()),
-  };
-}
-
-function normalizeStoredBillingApplication(
-  projectId: string,
-  raw: unknown,
-): BillingApplicationRow | null {
-  if (!raw || typeof raw !== "object") return null;
-  const record = raw as Record<string, unknown>;
-  const id = billingString(record.id);
-  const normalizedId = id.startsWith(LOCAL_BILLING_ID_PREFIX) ? id : makeLocalBillingId();
-  return {
-    id: normalizedId,
-    project_id: projectId,
-    application_number: normalizeBillingNumberLabel(
-      billingString(record.application_number, "Application"),
-    ),
-    invoice_number: normalizeBillingNumberLabel(billingString(record.invoice_number)),
-    submitted_date: billingDate(record.submitted_date),
-    due_date: billingDate(record.due_date),
-    billing_period: billingString(record.billing_period),
-    contract_amount: billingNumber(record.contract_amount),
-    change_order_amount: billingNumber(record.change_order_amount),
-    amount_billed: billingNumber(record.amount_billed),
-    paid_to_date: billingNumber(record.paid_to_date),
-    retainage: billingNumber(record.retainage),
-    has_line_detail: Boolean(record.has_line_detail ?? false),
-    total_retainage_held: billingNumber(record.total_retainage_held),
-    retainage_released_this_period: billingNumber(record.retainage_released_this_period),
-    status: isBillingStatus(record.status) ? record.status : "draft",
-    output_format: billingString(record.output_format) === "aia_g702" ? "aia_g702" : "invoice",
-    notes: billingString(record.notes),
-    sort_order: billingNumber(record.sort_order),
-    status_events: Array.isArray(record.status_events)
-      ? record.status_events
-          .map((event) => normalizeStoredBillingEvent(projectId, normalizedId, event))
-          .filter((event): event is BillingApplicationEventRow => Boolean(event))
-      : [],
-  };
-}
-
-function localBillingStorageKey(projectId: string) {
-  return `ior:billing-applications:${projectId}`;
-}
-
-function readLocalBillingApplications(projectId: string) {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(
-      window.localStorage.getItem(localBillingStorageKey(projectId)) ?? "[]",
-    );
-    if (!Array.isArray(parsed)) return [];
-    return sortBillingApplications(
-      parsed
-        .map((app) => normalizeStoredBillingApplication(projectId, app))
-        .filter((app): app is BillingApplicationRow => Boolean(app)),
-    );
-  } catch {
-    return [];
-  }
-}
-
-function writeLocalBillingApplications(projectId: string, apps: BillingApplicationRow[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(localBillingStorageKey(projectId), JSON.stringify(apps));
 }
 
 function exposureCategoryFromChangeOrder(coType: ChangeOrderRow["co_type"]): ExposureCategory {
@@ -2428,7 +2251,6 @@ function responseAction(path: import("@/lib/ior").ResponsePath) {
   return "Accept";
 }
 
-type BillingDraft = Omit<BillingApplicationRow, "id" | "project_id" | "status_events">;
 type InvoiceDraft = Omit<
   BillingInvoiceRow,
   | "id"
