@@ -19,7 +19,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Check, Plus, Search, Trash2 } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Check, FileSpreadsheet, Plus, Search, Trash2 } from "lucide-react";
 import { fmtUSD } from "@/lib/format";
 import { sovLineForecast, sovTotals } from "@/lib/sov-rollup";
 import type { BucketRow } from "@/lib/projects.functions";
@@ -264,9 +265,12 @@ export function CostBucketsTable({
           })}
           {buckets.length === 0 && (
             <TableRow>
-              <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
-                No cost buckets yet. Use "Import SOV" to bring in your existing schedule of values
-                from Excel or QuickBooks, or add the first line below.
+              <TableCell colSpan={9} className="py-8">
+                <EmptyState
+                  icon={FileSpreadsheet}
+                  title="No cost buckets yet"
+                  description='Use "Import SOV" above to bring in your schedule of values from Excel or QuickBooks — or add the first line below.'
+                />
               </TableCell>
             </TableRow>
           )}

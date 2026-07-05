@@ -1,14 +1,33 @@
 import { useState } from "react";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Pencil, ShieldAlert, Trash2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { EmptyState } from "@/components/ui/empty-state";
+import { FileText, Plus, Pencil, ShieldAlert, Trash2 } from "lucide-react";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
 import type { ChangeOrderRow, COStatus, COType } from "@/lib/projects.functions";
@@ -53,7 +72,6 @@ const empty: Draft = {
   co_type: "owner_change",
 };
 
-
 export function ChangeOrdersTable({
   changeOrders,
   onCreate,
@@ -73,14 +91,23 @@ export function ChangeOrdersTable({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(empty);
 
-  const openNew = () => { setEditingId(null); setDraft(empty); setOpen(true); };
+  const openNew = () => {
+    setEditingId(null);
+    setDraft(empty);
+    setOpen(true);
+  };
   const openEdit = (c: ChangeOrderRow) => {
     setEditingId(c.id);
     setDraft({
-      number: c.number, description: c.description,
-      contract_amount: c.contract_amount, cost_amount: c.cost_amount,
-      status: c.status, probability: c.probability,
-      owner: c.owner, notes: c.notes, co_type: c.co_type,
+      number: c.number,
+      description: c.description,
+      contract_amount: c.contract_amount,
+      cost_amount: c.cost_amount,
+      status: c.status,
+      probability: c.probability,
+      owner: c.owner,
+      notes: c.notes,
+      co_type: c.co_type,
     });
 
     setOpen(true);
@@ -104,7 +131,13 @@ export function ChangeOrdersTable({
       }
       return acc;
     },
-    { approvedContract: 0, approvedCost: 0, pendingContract: 0, weightedContract: 0, weightedCost: 0 },
+    {
+      approvedContract: 0,
+      approvedCost: 0,
+      pendingContract: 0,
+      weightedContract: 0,
+      weightedCost: 0,
+    },
   );
 
   return (
@@ -113,7 +146,11 @@ export function ChangeOrdersTable({
         <Stat label="Approved (contract)" value={fmtUSD(totals.approvedContract)} />
         <Stat label="Approved (cost)" value={fmtUSD(totals.approvedCost)} />
         <Stat label="Pending (raw)" value={fmtUSD(totals.pendingContract)} />
-        <Stat label="Pending (probability-weighted)" value={fmtUSD(totals.weightedContract)} accent />
+        <Stat
+          label="Pending (probability-weighted)"
+          value={fmtUSD(totals.weightedContract)}
+          accent
+        />
       </div>
 
       <div className="flex justify-end">
@@ -140,13 +177,21 @@ export function ChangeOrdersTable({
           <TableBody>
             {changeOrders.map((c) => (
               <TableRow key={c.id}>
-                <TableCell className="font-mono text-xs text-muted-foreground">{c.number}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">
+                  {c.number}
+                </TableCell>
                 <TableCell className="font-medium">{c.description}</TableCell>
-                <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">{CO_TYPE_LABELS[c.co_type] ?? "—"}</TableCell>
+                <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                  {CO_TYPE_LABELS[c.co_type] ?? "—"}
+                </TableCell>
                 <TableCell className="text-right tabular">{fmtUSD(c.contract_amount)}</TableCell>
-                <TableCell className="text-right tabular text-foreground/80">{fmtUSD(c.cost_amount)}</TableCell>
+                <TableCell className="text-right tabular text-foreground/80">
+                  {fmtUSD(c.cost_amount)}
+                </TableCell>
                 <TableCell>
-                  <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${statusStyles[c.status]}`}>
+                  <span
+                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${statusStyles[c.status]}`}
+                  >
                     {c.status}
                   </span>
                 </TableCell>
@@ -168,10 +213,20 @@ export function ChangeOrdersTable({
                     >
                       <ShieldAlert className="h-3.5 w-3.5" />
                     </Button>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(c)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() => openEdit(c)}
+                    >
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => onDelete(c.id)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() => onDelete(c.id)}
+                    >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -180,18 +235,28 @@ export function ChangeOrdersTable({
             ))}
             {changeOrders.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
-                  No change orders yet. Add approved and pending COs to roll into the forecasted final contract.
+                <TableCell colSpan={9} className="py-8">
+                  <EmptyState
+                    icon={FileText}
+                    title="No change orders yet"
+                    description="Add approved and pending change orders so they roll into the forecasted final contract."
+                    action={
+                      <Button size="sm" className="gap-1.5" onClick={openNew}>
+                        <Plus className="h-3.5 w-3.5" /> Add change order
+                      </Button>
+                    }
+                  />
                 </TableCell>
               </TableRow>
             )}
-
           </TableBody>
         </Table>
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogTrigger asChild><span /></DialogTrigger>
+        <DialogTrigger asChild>
+          <span />
+        </DialogTrigger>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="font-serif text-2xl">
@@ -202,12 +267,21 @@ export function ChangeOrdersTable({
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label>CO number</Label>
-                <Input value={draft.number} onChange={(e) => setDraft({ ...draft, number: e.target.value })} placeholder="CO-005" />
+                <Input
+                  value={draft.number}
+                  onChange={(e) => setDraft({ ...draft, number: e.target.value })}
+                  placeholder="CO-005"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Status</Label>
-                <Select value={draft.status} onValueChange={(v) => setDraft({ ...draft, status: v as COStatus })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={draft.status}
+                  onValueChange={(v) => setDraft({ ...draft, status: v as COStatus })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Approved">Approved</SelectItem>
                     <SelectItem value="Pending">Pending</SelectItem>
@@ -227,44 +301,70 @@ export function ChangeOrdersTable({
             </div>
             <div className="space-y-1.5">
               <Label>Description</Label>
-              <Input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+              <Input
+                value={draft.description}
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Change order type</Label>
-              <Select value={draft.co_type} onValueChange={(v) => setDraft({ ...draft, co_type: v as COType })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select
+                value={draft.co_type}
+                onValueChange={(v) => setDraft({ ...draft, co_type: v as COType })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   {(Object.keys(CO_TYPE_LABELS) as COType[]).map((k) => (
-                    <SelectItem key={k} value={k}>{CO_TYPE_LABELS[k]}</SelectItem>
+                    <SelectItem key={k} value={k}>
+                      {CO_TYPE_LABELS[k]}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="text-[11px] text-muted-foreground">
-                What caused this CO? Used to spot patterns (design errors vs. owner adds vs. field conditions) across the portfolio.
+                What caused this CO? Used to spot patterns (design errors vs. owner adds vs. field
+                conditions) across the portfolio.
               </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Contract amount (USD)</Label>
-                <MoneyInput value={draft.contract_amount} onValueChange={(v) => setDraft({ ...draft, contract_amount: v })} />
+                <MoneyInput
+                  value={draft.contract_amount}
+                  onValueChange={(v) => setDraft({ ...draft, contract_amount: v })}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Cost amount (USD)</Label>
-                <MoneyInput value={draft.cost_amount} onValueChange={(v) => setDraft({ ...draft, cost_amount: v })} />
+                <MoneyInput
+                  value={draft.cost_amount}
+                  onValueChange={(v) => setDraft({ ...draft, cost_amount: v })}
+                />
               </div>
             </div>
             <div className="space-y-1.5">
               <Label>Owner</Label>
-              <Input value={draft.owner} onChange={(e) => setDraft({ ...draft, owner: e.target.value })} />
+              <Input
+                value={draft.owner}
+                onChange={(e) => setDraft({ ...draft, owner: e.target.value })}
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Notes</Label>
-              <Textarea rows={2} value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} />
+              <Textarea
+                rows={2}
+                value={draft.notes}
+                onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+              />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
             <Button onClick={save}>{editingId ? "Save changes" : "Add change order"}</Button>
           </DialogFooter>
         </DialogContent>
@@ -276,8 +376,12 @@ export function ChangeOrdersTable({
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className="bg-card px-5 py-4">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</div>
-      <div className={`mt-1 font-serif text-2xl tabular ${accent ? "text-accent" : ""}`}>{value}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 font-serif text-2xl tabular ${accent ? "text-accent" : ""}`}>
+        {value}
+      </div>
     </div>
   );
 }
