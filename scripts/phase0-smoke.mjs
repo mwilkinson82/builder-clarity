@@ -2257,6 +2257,21 @@ await expectContains(
   "cost buckets table teaches the import/add path when empty",
 );
 
+// POLISH1 Task 3 (density): the rarely-opened reference tabs (inspections, IOR
+// report, daily reports) collapse under a "More" menu so the financial path
+// leads the rail; deep links (?tab=…) still resolve to the demoted tabs.
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [
+    /SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>\(\[\s*"inspections",\s*"ior-report",\s*"daily-reports",/,
+    /primaryNavItems\.map/,
+    /secondaryNavItems\.map/,
+    /DropdownMenuTrigger[\s\S]*More project tabs/,
+    /onSelect=\{\(\) => setProjectTab\(item\.value\)\}/,
+  ],
+  "project tab rail collapses rarely-used tabs under a More menu while keeping deep links",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");
