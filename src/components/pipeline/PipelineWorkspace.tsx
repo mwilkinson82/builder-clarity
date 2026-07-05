@@ -38,7 +38,7 @@ import { PipelineKanban } from "./PipelineKanban";
 import { PipelineList } from "./PipelineList";
 import { PipelineMetrics } from "./PipelineMetrics";
 import { PipelineCrmOverview } from "./PipelineCrmOverview";
-import { OpportunityCreateDialog } from "./OpportunityCreateDialog";
+import { OpportunityCreateDialog, QuickAddOpportunity } from "./OpportunityCreateDialog";
 import { OpportunityDetail } from "./OpportunityDetail";
 import {
   isDemoOpportunityId,
@@ -546,6 +546,10 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
               <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
               Reset
             </Button>
+            <QuickAddOpportunity
+              isCreating={createMutation.isPending}
+              onCreate={(input) => createMutation.mutateAsync(input).then(() => undefined)}
+            />
             <OpportunityCreateDialog
               members={members}
               isCreating={createMutation.isPending}
