@@ -539,11 +539,20 @@ export function nearestInkComponent(
     searchRadiusPx?: number;
     maxComponentEdgePx?: number;
     minComponentPixels?: number;
+    /**
+     * Skip components touching the mask boundary (AITAKEOFF9): a component
+     * clipped by the window has an UNKNOWABLE true extent — a fused rail
+     * truncated to exactly the size cap slipped past the oversize skip and
+     * dragged the A-100 snap ~8px off-hub. Snapping declines these; the
+     * footprint measurement keeps them (it clamps instead).
+     */
+    skipBoundaryComponents?: boolean;
   } = {},
 ): InkComponent | null {
   const radius = options.searchRadiusPx ?? SNAP_SEARCH_RADIUS_PX;
   const maxEdge = options.maxComponentEdgePx ?? SNAP_MAX_COMPONENT_EDGE_PX;
   const minPixels = options.minComponentPixels ?? SNAP_MIN_COMPONENT_PIXELS;
+  const skipBoundary = options.skipBoundaryComponents === true;
   const { width, height } = mask;
   if (width <= 0 || height <= 0) return null;
 
@@ -601,6 +610,9 @@ export function nearestInkComponent(
       }
       if (count < minPixels) continue;
       if (maxX - minX > maxEdge || maxY - minY > maxEdge) continue;
+      if (skipBoundary && (minX === 0 || minY === 0 || maxX === width - 1 || maxY === height - 1)) {
+        continue;
+      }
       if (nearestDistance > radius) continue;
       if (!best || nearestDistance < best.nearestDistance) {
         // +0.5: a pixel at index (x, y) is CENTERED at (x+0.5, y+0.5) in the
@@ -633,7 +645,12 @@ export function snapToInkCentroid(
     minComponentPixels?: number;
   } = {},
 ): { x: number; y: number } | null {
-  const component = nearestInkComponent(mask, center, options);
+  // Boundary-clipped components are never snap targets (AITAKEOFF9): their
+  // centroid is an artifact of where the window cut them.
+  const component = nearestInkComponent(mask, center, {
+    ...options,
+    skipBoundaryComponents: true,
+  });
   return component ? { x: component.centroid.x, y: component.centroid.y } : null;
 }
 

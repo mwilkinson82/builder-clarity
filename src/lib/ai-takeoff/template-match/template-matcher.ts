@@ -51,6 +51,15 @@ export interface TemplateMatchOptions {
    * degenerate, which falls back automatically and says so).
    */
   maskedMatching?: boolean;
+  /**
+   * Hub anchor (AITAKEOFF9 Task 0): the exemplar MARKER point's offset from
+   * the template crop's center, in template-native px. Recovered hits land
+   * where the estimator's marker convention designates — the hub —
+   * independent of ink asymmetry, crop shape, padding, or tightening. The
+   * A-100 drift (every ghost off by the same ~45px vector) was the ink-bbox
+   * center standing in for this point. Default {0,0} = the crop center.
+   */
+  anchor?: { x: number; y: number };
   rotationStepDeg?: number;
   scales?: readonly number[];
   maxLongEdgePx?: number;
@@ -309,6 +318,17 @@ export function matchTemplateSweep(
     const inkBox = inkBoundingBox(maskFull);
     let templateGray = templateGrayFull;
     let maskTight = maskFull;
+    // Hub anchor (AITAKEOFF9 Task 0): the marker point in ORIGINAL crop
+    // coordinates. Tightening moves the template's center to the ink bbox —
+    // the exact drift that displaced every A-100 ghost by one constant
+    // vector — so the anchor is re-expressed against the tightened center
+    // and travels through every rotation/scale below.
+    const anchor = options.anchor ?? { x: 0, y: 0 };
+    const markerInCrop = {
+      x: template.width / 2 + anchor.x,
+      y: template.height / 2 + anchor.y,
+    };
+    let anchorVsCenter = { x: 0, y: 0 };
     if (inkBox) {
       const left = Math.max(0, inkBox.left - TIGHTEN_MARGIN_PX);
       const top = Math.max(0, inkBox.top - TIGHTEN_MARGIN_PX);
@@ -317,6 +337,10 @@ export function matchTemplateSweep(
       const roi = new cv.Rect(left, top, width, height);
       templateGray = scope.track(templateGrayFull.roi(roi).clone());
       maskTight = scope.track(maskFull.roi(roi).clone());
+      anchorVsCenter = {
+        x: markerInCrop.x - (left + width / 2),
+        y: markerInCrop.y - (top + height / 2),
+      };
     }
     const maskCoverage = inkBox
       ? cv.countNonZero(maskTight) / Math.max(1, maskTight.cols * maskTight.rows)
@@ -382,6 +406,14 @@ export function matchTemplateSweep(
       // counter-clockwise-positive; recovery only needs the same convention
       // both ways). The mask rotates with the SAME matrix, nearest-neighbor
       // so it stays binary, black border so nothing new joins it.
+      // The anchor rotates with the content: opencv angle `a` rotates
+      // content by −a in y-down pixel algebra (pinned empirically in the
+      // AITAKEOFF6 fixtures), so the marker offset transforms by R(−a).
+      const rotationRad = (-rotationDeg * Math.PI) / 180;
+      const rotatedAnchor = {
+        x: Math.cos(rotationRad) * anchorVsCenter.x - Math.sin(rotationRad) * anchorVsCenter.y,
+        y: Math.sin(rotationRad) * anchorVsCenter.x + Math.cos(rotationRad) * anchorVsCenter.y,
+      };
       let rotated = templatePadded;
       let rotatedMask = maskPadded;
       if (rotationDeg !== 0) {
@@ -435,13 +467,16 @@ export function matchTemplateSweep(
           } else {
             cv.matchTemplate(rasterBin, templateBin, result, cv.TM_CCOEFF_NORMED);
           }
+          // Hub anchor applied here (AITAKEOFF9 Task 0): the recovered
+          // center is the MARKER point, not the rectangle center — the
+          // rotated anchor scales with this sweep step and rides the offset.
           hits.push(
             ...collectPeaks(
               result,
               appliedThreshold,
               footprintMatchPx / 2,
-              scaledW / 2,
-              scaledH / 2,
+              scaledW / 2 + rotatedAnchor.x * factor,
+              scaledH / 2 + rotatedAnchor.y * factor,
               rotationDeg,
               scale,
               topTracker,

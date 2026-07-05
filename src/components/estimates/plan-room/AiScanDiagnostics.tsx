@@ -142,6 +142,11 @@ function SheetSummaryCard({ summary }: { summary: AiScanSheetSummary }) {
             heavy dedupe collapse — check the radius line above
           </Badge>
         )}
+        {summary.centerMismatchRejected > 0 && (
+          <span data-testid="ai-diagnostics-center-mismatch">
+            {summary.centerMismatchRejected} center-mismatch rejected
+          </span>
+        )}
       </div>
       {/* Score transparency (AITAKEOFF8 Task 1): zero hits must explain
           themselves — the best sweep scores print next to the threshold. */}

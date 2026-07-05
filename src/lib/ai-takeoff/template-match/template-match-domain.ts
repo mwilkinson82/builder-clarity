@@ -45,16 +45,16 @@ export type AiProposalSource = "template" | "model" | "both";
 // the scale band absorbs modest render-scale drift between sheets.
 export const TEMPLATE_ROTATION_STEP_DEG = 30;
 export const TEMPLATE_MATCH_SCALES = [0.85, 1.0, 1.15] as const;
-// Recall-biased score floor for MASKED correlation (AITAKEOFF8): only the
-// symbol's dilated ink participates in TM_CCORR_NORMED, and masked scores
-// run higher than the old whole-rectangle CCOEFF. Calibrated on the dense
-// fixture: clean matches 0.87-1.0, the hardest legitimate case (a 45°-
-// rotated glyph on a rail, matched by the 30°/60° variants) ~0.78, a solid
-// ink blob ~0.70, hatching ~0.37 — 0.75 keeps the hard case with margin and
-// still excludes blobs. Stage B stays the precision gate. Env-tunable via
-// AI_TEMPLATE_MATCH_THRESHOLD, resolved below, handed out by
-// beginAiCountScan, and recorded in the per-sheet funnel.
-export const DEFAULT_TEMPLATE_MATCH_THRESHOLD = 0.75;
+// Recall-biased score floor for MASKED correlation (AITAKEOFF8, recall-
+// biased further in AITAKEOFF9 Task 2 after a heavily-fused A-100 brush
+// missed at 0.75). Calibrated on the dense fixtures: clean matches
+// 0.87-1.0, fused instances (rail through the symbol + hatching over two
+// arms) 0.66-0.82 depending on raster scale, hatching ~0.37. 0.62 keeps
+// every legitimate fused case; a solid ink blob (~0.70) now proposes and
+// dies in stage B — a lower floor costs pennies in verify calls, never
+// accuracy. Env-tunable via AI_TEMPLATE_MATCH_THRESHOLD, resolved below,
+// handed out by beginAiCountScan, and recorded in the per-sheet funnel.
+export const DEFAULT_TEMPLATE_MATCH_THRESHOLD = 0.62;
 // The unmasked CCOEFF fallback keeps the AITAKEOFF6 floor — it only runs
 // when the mask is degenerate (below the coverage floor, or masking is
 // switched off for the fixture comparison).
