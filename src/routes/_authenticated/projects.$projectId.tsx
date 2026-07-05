@@ -86,6 +86,11 @@ import {
   ProjectCostTrackingPanel,
   WipAnalysisPanel,
 } from "@/components/billing/BillingEnhancements";
+import {
+  BillingStageRail,
+  type BillingRailLedger,
+  type BillingRailStage,
+} from "@/components/billing/BillingStageRail";
 import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import {
   getClientPortalManagement,
@@ -230,8 +235,6 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
 
 const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
 const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
-const BILLING_WORKSPACE_TAB_TRIGGER_CLASS =
-  "whitespace-nowrap rounded-md border border-accent/35 bg-accent/10 px-3 py-2 text-sm font-semibold text-foreground shadow-sm transition hover:border-accent/60 hover:bg-accent/20 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-accent data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-md";
 const PROJECT_NAV_RAIL_CLASS =
   "h-auto w-full justify-start gap-1.5 overflow-x-auto rounded-lg border border-accent/25 bg-accent/[0.07] p-1.5 shadow-[0_18px_42px_rgb(27_122_110_/_0.16),0_4px_12px_rgb(31_28_23_/_0.10)] ring-1 ring-accent/15 backdrop-blur-sm lg:-translate-y-1 lg:flex-col lg:items-stretch lg:overflow-visible";
 
@@ -2742,6 +2745,7 @@ function BillingWorkspace({
       collections_log: "",
     };
   };
+  const [billingStage, setBillingStage] = useState("billing");
   const [payAppOpen, setPayAppOpen] = useState(false);
   const [draft, setDraft] = useState<BillingDraft>(() => buildDraft());
   const [draftRetainagePct, setDraftRetainagePct] = useState(() =>
@@ -2870,9 +2874,87 @@ function BillingWorkspace({
     return render(billingWorkspace);
   };
 
+  // Stage state for the billing rail (BILLINGRAIL1). Honest chips from live data — never
+  // painted complete off a project-level roll-up. SOV lines are the cost buckets; pay apps
+  // and WIP are built from them, so both block-with-reason until the SOV exists.
+  const railActiveCostActuals =
+    billingWorkspace?.costActuals?.filter((actual) => actual.status !== "void") ?? [];
+  const railWip = billingWorkspace?.wip ?? null;
+  const railSovLineCount = buckets.length;
+  const railPayAppCount = billingApplications.length;
+  const railNoSov = railSovLineCount === 0;
+
+  let railWipChip = "Not started";
+  let railWipTone: BillingRailStage["tone"] = "empty";
+  if (railWip && railWip.bucket_count > 0) {
+    if (railWip.assessed_bucket_count >= railWip.bucket_count) {
+      railWipChip = "All buckets assessed";
+      railWipTone = "complete";
+    } else {
+      railWipChip = `${railWip.assessed_bucket_count} of ${railWip.bucket_count} assessed`;
+      railWipTone = railWip.assessed_bucket_count > 0 ? "progress" : "empty";
+    }
+  }
+
+  const billingStages: BillingRailStage[] = [
+    {
+      value: "billing",
+      step: 1,
+      title: "Overview",
+      chip: "Billing position",
+      tone: "home",
+    },
+    {
+      value: "project-costs",
+      step: 2,
+      title: "Costs",
+      chip:
+        railActiveCostActuals.length > 0
+          ? `${railActiveCostActuals.length} cost ${railActiveCostActuals.length === 1 ? "actual" : "actuals"}`
+          : "No costs recorded yet",
+      tone: railActiveCostActuals.length > 0 ? "complete" : "empty",
+    },
+    {
+      value: "pay-app-detail",
+      step: 3,
+      title: "Pay Applications",
+      chip:
+        railPayAppCount > 0
+          ? `${railPayAppCount} ${railPayAppCount === 1 ? "application" : "applications"}`
+          : "No applications yet",
+      tone: railPayAppCount > 0 ? "progress" : "empty",
+      ...(railNoSov
+        ? {
+            blockedReason:
+              "Import your schedule of values first — pay apps are built from these lines.",
+            routeTo: "project-costs",
+          }
+        : {}),
+    },
+    {
+      value: "wip-analysis",
+      step: 4,
+      title: "WIP",
+      chip: railWipChip,
+      tone: railWipTone,
+      ...(railNoSov
+        ? {
+            blockedReason: "Import your schedule of values first — WIP is built from these lines.",
+            routeTo: "project-costs",
+          }
+        : {}),
+    },
+  ];
+
+  const billingLedgers: BillingRailLedger[] = [
+    { value: "invoice-ledger", title: "Invoices & Payments" },
+    { value: "pending-cos", title: "Pending COs" },
+    { value: "pay-app-ledger", title: "A/R Ledger" },
+  ];
+
   return (
     <section className="space-y-4">
-      <Tabs defaultValue="billing" className="space-y-4">
+      <Tabs value={billingStage} onValueChange={setBillingStage} className="space-y-4">
         <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <WorkspaceHeader
@@ -3105,46 +3187,12 @@ function BillingWorkspace({
             Remaining to bill is forecasted contract less billed to date. Open A/R is billed less
             paid and retainage.
           </p>
-          <div className="mt-5 grid gap-3 lg:grid-cols-3">
-            <BillingWorkflowStep
-              step="1"
-              title="Application"
-              body="Enter percent complete and stored materials by SOV line. Approved COs allocated to cost codes roll into the line contract value."
-            />
-            <BillingWorkflowStep
-              step="2"
-              title="Invoice"
-              body="Create the client-facing invoice from the application when the bill is ready to send."
-            />
-            <BillingWorkflowStep
-              step="3"
-              title="Payment and A/R"
-              body="Send, enable online pay when available, record deposits, and track aging until clear."
-            />
-          </div>
-          <TabsList className="mt-5 h-auto w-full justify-start gap-1.5 overflow-x-auto rounded-lg border border-accent/25 bg-accent/5 p-1.5 shadow-card ring-1 ring-accent/10 sm:flex-wrap sm:overflow-visible">
-            <TabsTrigger value="billing" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Overview
-            </TabsTrigger>
-            <TabsTrigger value="pay-app-detail" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Applications
-            </TabsTrigger>
-            <TabsTrigger value="project-costs" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Cost Ledger
-            </TabsTrigger>
-            <TabsTrigger value="wip-analysis" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              WIP Review
-            </TabsTrigger>
-            <TabsTrigger value="invoice-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Invoices & Payments
-            </TabsTrigger>
-            <TabsTrigger value="pending-cos" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              Pending COs
-            </TabsTrigger>
-            <TabsTrigger value="pay-app-ledger" className={BILLING_WORKSPACE_TAB_TRIGGER_CLASS}>
-              A/R Ledger
-            </TabsTrigger>
-          </TabsList>
+          <BillingStageRail
+            value={billingStage}
+            onValueChange={setBillingStage}
+            stages={billingStages}
+            ledgers={billingLedgers}
+          />
         </div>
 
         <TabsContent value="billing" className="mt-0 space-y-4">

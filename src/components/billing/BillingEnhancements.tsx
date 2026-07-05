@@ -1242,7 +1242,9 @@ export function ProjectCostTrackingPanel({
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      {actual.cost_date} · {actual.cost_code || "No code"} · {actual.status}
+                      {actual.cost_date} · {actual.cost_code || "No code"} · {actual.status} ·{" "}
+                      {/* Provenance: imports carry an import_batch_id; manual entries don't. */}
+                      {actual.import_batch_id ? "Imported" : "Manual"}
                     </div>
                     <div className="mt-1 font-medium text-foreground">{actual.description}</div>
                     <div className="mt-1 text-xs capitalize text-muted-foreground">
