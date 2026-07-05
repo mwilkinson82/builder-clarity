@@ -13,6 +13,7 @@ import {
   beginAiCountScan,
   completeAiCountScan,
   failAiCountScan,
+  recordAiGhostRejection,
   recordAiScanSheetSummary,
   scanSheetTileForAiCounts,
   verifyAiCountCandidate,
@@ -31,7 +32,9 @@ import {
   capProposalsPerSheet,
   excludeNearExistingPoints,
   exemplarSheetGeometry,
+  negativeEligiblePoints,
   sortProposalsForReview,
+  type GhostRejectionReason,
   VERIFY_WINDOW_PX,
   type AiCountCandidate,
   type AiCountProposal,
@@ -63,6 +66,7 @@ import {
   renderVerifyWindow,
   sliceDetectionTiles,
 } from "./aiDetectionRender";
+import { clamp01 } from "@/lib/ai-takeoff/coord-transforms";
 import { geometryFromPoints, geometryPoints, type ViewSize } from "./planRoomShared";
 
 export type AiAssistPhase = "idle" | "scanning" | "review";
@@ -121,6 +125,7 @@ export function useAiAssist({
   const completeScanFn = useServerFn(completeAiCountScan);
   const failScanFn = useServerFn(failAiCountScan);
   const recordSummaryFn = useServerFn(recordAiScanSheetSummary);
+  const recordRejectionFn = useServerFn(recordAiGhostRejection);
   const createMeasurementFn = useServerFn(createTakeoffMeasurement);
   const updateMeasurementFn = useServerFn(updateTakeoffMeasurement);
 
@@ -140,9 +145,15 @@ export function useAiAssist({
   const operationIdRef = useRef<string | null>(null);
   // AI measurement created per sheet during this review (id + points so far).
   const aiMeasurementsRef = useRef(new Map<string, { id: string; points: SheetPoint[] }>());
-  // Rejections the user made this session, keyed by sheet + exemplar label —
-  // they become negative references on the next scan (AITAKEOFF5 Task 1).
-  const sessionRejectionsRef = useRef(new Map<string, SheetPoint[]>());
+  // Rejections the user made this session, keyed by sheet + exemplar label.
+  // Each carries the user's REASON (AITAKEOFF10 Task 0): only explicit
+  // "wrong_symbol" verdicts may ever become stage-B negatives — placement
+  // complaints are never identity evidence.
+  const sessionRejectionsRef = useRef(
+    new Map<string, Array<{ x: number; y: number; reason: GhostRejectionReason }>>(),
+  );
+  // Counts rejections recorded during review, per sheet, for the funnel.
+  const rejectionTallyRef = useRef(new Map<string, { wrongSymbol: number; wrongSpot: number }>());
 
   const credits = useAiCredits(open);
   const { refreshCredits } = credits;
@@ -422,7 +433,11 @@ export function useAiAssist({
         // for this sheet + exemplar first; otherwise the previous scan's
         // stage-B rejections (from diagnostics). Never manufactured.
         const rejectionKey = `${sheet.id}|${exemplar.label.trim().toLowerCase()}`;
-        let rejectedPoints = sessionRejectionsRef.current.get(rejectionKey) ?? [];
+        // Only explicit identity rejections feed negatives (AITAKEOFF10):
+        // the prior-scan source applies the same rule server-side.
+        let rejectedPoints = negativeEligiblePoints(
+          sessionRejectionsRef.current.get(rejectionKey) ?? [],
+        );
         if (rejectedPoints.length === 0) {
           try {
             const prior = await priorRejectionsFn({
@@ -881,31 +896,83 @@ export function useAiAssist({
     proposals,
   ]);
 
-  const rejectActiveProposal = useCallback(() => {
-    if (!activeProposal || isAccepting) return;
-    // Remember what was rejected: it teaches the next scan what NOT to find.
-    if (exemplar) {
-      const key = `${activeProposal.sheetId}|${exemplar.label.trim().toLowerCase()}`;
-      const rejected = sessionRejectionsRef.current.get(key) ?? [];
-      rejected.unshift({ x: activeProposal.x, y: activeProposal.y });
-      sessionRejectionsRef.current.set(key, rejected.slice(0, 10));
-    }
-    const index = proposals.findIndex((p) => p.id === activeProposal.id);
-    const updated = proposals.map((p) =>
-      p.id === activeProposal.id ? { ...p, status: "rejected" as const } : p,
-    );
-    setProposals(updated);
-    if (!advanceToNextPending(index, updated)) {
-      setTimeout(() => endReviewWithProposals(updated), 0);
-    }
-  }, [
-    activeProposal,
-    advanceToNextPending,
-    endReviewWithProposals,
-    exemplar,
-    isAccepting,
-    proposals,
-  ]);
+  /**
+   * Reject the active ghost with an explicit REASON (AITAKEOFF10 Task 1).
+   * "wrong_spot" is the default single-click semantic — a mistaken
+   * positive-suppression costs less than a poisoned negative. Only
+   * "wrong_symbol" teaches the next scan what NOT to find. This handler is
+   * the ONLY code path that ever creates a rejection record; every cleanup
+   * path (cancel, supersede, navigation) discards ghosts verdict-free.
+   */
+  const rejectActiveProposal = useCallback(
+    (reason: GhostRejectionReason = "wrong_spot") => {
+      if (!activeProposal || isAccepting) return;
+      if (exemplar) {
+        const key = `${activeProposal.sheetId}|${exemplar.label.trim().toLowerCase()}`;
+        const rejected = sessionRejectionsRef.current.get(key) ?? [];
+        rejected.unshift({ x: activeProposal.x, y: activeProposal.y, reason });
+        sessionRejectionsRef.current.set(key, rejected.slice(0, 10));
+        const tally = rejectionTallyRef.current.get(activeProposal.sheetId) ?? {
+          wrongSymbol: 0,
+          wrongSpot: 0,
+        };
+        if (reason === "wrong_symbol") tally.wrongSymbol += 1;
+        else tally.wrongSpot += 1;
+        rejectionTallyRef.current.set(activeProposal.sheetId, tally);
+        // Durable record for the next scan's negative harvest + the funnel's
+        // placement metric. Best-effort — review never blocks on it.
+        if (lastOperationId) {
+          const rejectionIndex = tally.wrongSymbol + tally.wrongSpot - 1;
+          void recordRejectionFn({
+            data: {
+              operation_id: lastOperationId,
+              sheet_id: activeProposal.sheetId,
+              index: rejectionIndex,
+              point: { x: activeProposal.x, y: activeProposal.y },
+              reason,
+              exemplar_label: exemplar.label,
+            },
+          }).catch(() => undefined);
+        }
+      }
+      const index = proposals.findIndex((p) => p.id === activeProposal.id);
+      const updated = proposals.map((p) =>
+        p.id === activeProposal.id ? { ...p, status: "rejected" as const } : p,
+      );
+      setProposals(updated);
+      if (!advanceToNextPending(index, updated)) {
+        setTimeout(() => endReviewWithProposals(updated), 0);
+      }
+    },
+    [
+      activeProposal,
+      advanceToNextPending,
+      endReviewWithProposals,
+      exemplar,
+      isAccepting,
+      lastOperationId,
+      proposals,
+      recordRejectionFn,
+    ],
+  );
+
+  /**
+   * Nudge the active ghost onto the hub before accepting (AITAKEOFF10
+   * Task 2). The corrected point is what persists to the measurement AND
+   * what the next scan harvests as a positive template with its own anchor
+   * — placement imperfection stops zeroing the positive set.
+   */
+  const nudgeActiveProposal = useCallback(
+    (dx: number, dy: number) => {
+      if (!activeProposal || isAccepting) return;
+      setProposals((current) =>
+        current.map((p) =>
+          p.id === activeProposal.id ? { ...p, x: clamp01(p.x + dx), y: clamp01(p.y + dy) } : p,
+        ),
+      );
+    },
+    [activeProposal, isAccepting],
+  );
 
   /** "Accept all remaining" — deliberately behind the per-item flow. */
   const acceptAllRemaining = useCallback(async () => {
@@ -983,6 +1050,7 @@ export function useAiAssist({
     activeProposal,
     acceptActiveProposal,
     rejectActiveProposal,
+    nudgeActiveProposal,
     acceptAllRemaining,
     navigateReview,
     selectProposal,

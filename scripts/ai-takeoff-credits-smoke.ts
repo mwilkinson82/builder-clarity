@@ -46,7 +46,9 @@ import {
   exemplarSheetGeometry,
   imageTokenEstimate,
   MAX_DEDUPE_RADIUS_LONG_EDGE,
+  isNegativeEligibleRejection,
   measureInkFootprintPx,
+  negativeEligiblePoints,
   overlapForFootprintPx,
   sheetRadiusFromLongEdge,
   withinSheetRadius,
@@ -945,6 +947,47 @@ assert.equal(
   tileTokenCheck(2027 + 350, 1400, 1400).suspectedResize,
   true,
   "exemplar dims defaulting to zero still catches genuine under-coverage",
+);
+
+// --- Ghost rejection semantics (AITAKEOFF10 Task 0) ---
+// The absolute rule: only an explicit user "wrong symbol" verdict may ever
+// become a stage-B negative. Legacy records (stage-B model rejections
+// harvested as if a human made them — the A-100 poisoning) carry no reason
+// field and fail the check forever; placement complaints fail it by design.
+
+assert.equal(
+  isNegativeEligibleRejection({ reason: "wrong_symbol" }),
+  true,
+  "an explicit identity rejection may teach a negative",
+);
+assert.equal(
+  isNegativeEligibleRejection({ reason: "wrong_spot" }),
+  false,
+  "POISON GUARD: a placement rejection is never identity evidence",
+);
+assert.equal(
+  isNegativeEligibleRejection({ match: false, exemplarLabel: "brush" }),
+  false,
+  "POISON GUARD: legacy stage-B model rejections (no reason field) are excluded forever",
+);
+assert.equal(isNegativeEligibleRejection(null), false, "missing records fail closed");
+assert.equal(
+  isNegativeEligibleRejection({ reason: "WRONG_SYMBOL" }),
+  false,
+  "the reason match is exact — nothing sneaks in by casing",
+);
+
+const mixedRejections = negativeEligiblePoints([
+  { x: 0.1, y: 0.1, reason: "wrong_spot" },
+  { x: 0.2, y: 0.2, reason: "wrong_symbol" },
+  { x: 0.3, y: 0.3, reason: "wrong_spot" },
+]);
+assert.equal(mixedRejections.length, 1, "only wrong_symbol session entries become negatives");
+assert.deepEqual(mixedRejections[0], { x: 0.2, y: 0.2 }, "the eligible point survives intact");
+assert.equal(
+  negativeEligiblePoints([]).length,
+  0,
+  "CANCEL REGRESSION: a scan cancelled with pending ghosts leaves zero rejection records — the panel reads 0 rejections",
 );
 
 // --- Panel availability states ---

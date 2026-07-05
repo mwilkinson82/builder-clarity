@@ -80,6 +80,30 @@ export const VERIFY_IMAGE_PX = 768;
 export const REFERENCE_MAX_POSITIVES = 3;
 export const REFERENCE_MAX_NEGATIVES = 2;
 
+// --- Ghost rejection semantics (AITAKEOFF10 Task 0) ---
+// Production poisoning: stage-B MODEL rejections were harvested as if a
+// human had rejected them, teaching the model that real symbols are not
+// symbols. The absolute rule, enforced at the write AND read sites: only an
+// explicit user interaction with a reject control creates a rejection
+// record, and only an explicit "wrong symbol" verdict may ever become a
+// stage-B negative. Placement complaints are NEVER identity evidence.
+
+export type GhostRejectionReason = "wrong_symbol" | "wrong_spot";
+
+/** May this stored rejection record ever become a stage-B negative? */
+export function isNegativeEligibleRejection(record: { reason?: unknown } | null): boolean {
+  return Boolean(record) && record!.reason === "wrong_symbol";
+}
+
+/** The subset of session rejections that may feed negative references. */
+export function negativeEligiblePoints(
+  entries: Array<{ x: number; y: number; reason: GhostRejectionReason }>,
+): SheetPoint[] {
+  return entries
+    .filter((entry) => isNegativeEligibleRejection(entry))
+    .map((entry) => ({ x: entry.x, y: entry.y }));
+}
+
 /** Vision input cost estimate for one image: ~(w x h) / 750 tokens. */
 export function imageTokenEstimate(widthPx: number, heightPx: number): number {
   return Math.round((Math.max(0, widthPx) * Math.max(0, heightPx)) / 750);
