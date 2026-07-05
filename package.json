@@ -16,6 +16,7 @@
     "test:crm": "node --experimental-strip-types scripts/crm-pipeline-smoke.ts",
     "test:billing": "node --experimental-strip-types scripts/billing-payments-smoke.ts",
     "test:billing:aia": "node --experimental-strip-types scripts/aia-pdf-fixture-smoke.ts",
+    "test:billing:portal": "vitest run scripts/portal-view-signal.test.tsx",
     "test:roles": "node --experimental-strip-types scripts/roles-capability-parity-smoke.ts",
     "test:schedule": "node --experimental-strip-types scripts/schedule-spine-smoke.ts",
     "test:schedule:import": "node --experimental-strip-types scripts/schedule-import-smoke.ts",
