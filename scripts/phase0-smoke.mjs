@@ -2198,6 +2198,18 @@ expectSql(
   "Harbor demo seed gives SOV lines cost codes and pre-allocates CO-002 to Finishes",
 );
 
+// Billing artifacts created before their bucket was coded get their cost code
+// mirrored from the parent SOV line — blank-only, coded-bucket-only, global.
+expectSql(
+  sql,
+  [
+    /UPDATE public\.billing_line_items li[\s\S]*SET cost_code = cb\.cost_code/,
+    /UPDATE public\.cost_actuals ca[\s\S]*SET cost_code = cb\.cost_code/,
+    /COALESCE\(NULLIF\(TRIM\(cb\.cost_code\), ''\), ''\) <> ''/,
+  ],
+  "cost-code backfill mirrors billing line items and cost actuals from their coded buckets",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");
