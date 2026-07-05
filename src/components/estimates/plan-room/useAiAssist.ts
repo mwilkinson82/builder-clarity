@@ -54,6 +54,14 @@ import {
   createTemplateMatchSession,
   type TemplateMatchSession,
 } from "@/lib/ai-takeoff/template-match/template-match-client";
+import {
+  createEmbeddingMatchSession,
+  type EmbeddingMatchSession,
+} from "@/lib/ai-takeoff/embedding-match/embedding-match-client";
+import {
+  resolveAiEngine,
+  DEFAULT_EMBEDDING_MATCH_THRESHOLD,
+} from "@/lib/ai-takeoff/embedding-match/embedding-match-domain";
 import { DEFAULT_MAX_SHEETS_PER_SCAN, quoteScanCredits } from "@/lib/credits/credits-domain";
 import {
   createTakeoffMeasurement,
@@ -271,6 +279,12 @@ export function useAiAssist({
     // The template-match worker session (AITAKEOFF6): one per scan so the
     // opencv.js wasm compiles once; disposed in the finally below.
     let templateSession: TemplateMatchSession | null = null;
+    // Embedding engine (AITAKEOFF12): the learned-identity alternative to the
+    // pixel matcher, selected by VITE_AI_ENGINE (default "pixel"). One session
+    // per scan, disposed in the same finally. When on it replaces the pixel
+    // sweep and its hits ride the exact same auto-ghost path.
+    let embeddingSession: EmbeddingMatchSession | null = null;
+    const aiEngine = resolveAiEngine(import.meta.env.VITE_AI_ENGINE);
     let echo = "";
     setScanProgress({
       sheetsDone: 0,
@@ -393,7 +407,10 @@ export function useAiAssist({
             ]
           : [];
         exemplarRasterReuse = exemplarRaster;
-        if (templates.length > 0) templateSession = createTemplateMatchSession();
+        if (templates.length > 0) {
+          if (aiEngine === "embedding") embeddingSession = createEmbeddingMatchSession();
+          else templateSession = createTemplateMatchSession();
+        }
       }
       if (proposalSource === "template" && !templateSession) {
         throw new Error(
@@ -483,7 +500,47 @@ export function useAiAssist({
         let templateMasked: boolean | null = null;
         let templateMaskCoverage: number | null = null;
         let templateThreshold: number | null = null;
-        if (templateSession && templates.length > 0 && geometry.footprintRasterPx !== null) {
+        if (embeddingSession && templates.length > 0 && geometry.footprintRasterPx !== null) {
+          try {
+            const rasterPixels = raster.canvas
+              .getContext("2d")
+              ?.getImageData(0, 0, raster.widthPx, raster.heightPx);
+            if (!rasterPixels) throw new Error("The sheet could not be read for matching.");
+            const matched = await embeddingSession.match({
+              raster: rasterPixels,
+              exemplar: templates[0].image,
+              footprintPx: geometry.footprintRasterPx,
+              threshold: DEFAULT_EMBEDDING_MATCH_THRESHOLD,
+            });
+            // Learned-identity hits ride the shared template-hit path so they
+            // auto-ghost (AITAKEOFF11) exactly like pixel hits; no rotation.
+            templateHits = matched.candidates.map((candidate) => ({
+              x: candidate.x,
+              y: candidate.y,
+              score: candidate.score,
+              rotationDeg: 0,
+              scale: candidate.scale,
+              templateIndex: 0,
+            }));
+            templateEngine = "ok";
+            templateElapsedMs = matched.elapsedMs;
+            templateSweeps = matched.windowCount;
+            templateTopScores = matched.topScores.map((top) => ({
+              x: top.x,
+              y: top.y,
+              score: top.score,
+              rotationDeg: 0,
+              scale: top.scale,
+              templateIndex: 0,
+            }));
+            templateThreshold = matched.appliedThreshold;
+          } catch (error) {
+            if (proposalSource === "template") throw error;
+            templateEngine = "failed";
+            templateError = error instanceof Error ? error.message : "The symbol matcher failed.";
+            templateHits = [];
+          }
+        } else if (templateSession && templates.length > 0 && geometry.footprintRasterPx !== null) {
           try {
             const rasterPixels = raster.canvas
               .getContext("2d")
@@ -788,6 +845,7 @@ export function useAiAssist({
     } finally {
       // The worker (and its wasm heap) never outlives the scan.
       templateSession?.dispose();
+      embeddingSession?.dispose();
     }
   }, [
     beginScanFn,
