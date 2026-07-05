@@ -8,7 +8,10 @@ export interface WIPBucketInput {
   change_order_additions: number;
   actual_to_date: number;
   ftc: number;
-  earned_percent_complete: number;
+  // null = the bucket has never had an earned % entered ("not assessed"). An explicit 0
+  // is a real assessment and must NOT be confused with null. Never borrow the project
+  // roll-up here — a project-level % is not a per-bucket truth.
+  earned_percent_complete: number | null;
   billed_to_date: number;
   retainage_held: number;
   retainage_released: number;
@@ -19,9 +22,13 @@ export interface WIPBucketResult {
   cost_code: string;
   bucket: string;
   contract_value: number;
-  earned_revenue: number;
+  // True when an earned % was explicitly entered for this bucket. When false, the bucket
+  // is "not assessed" and earned_revenue / over_under_billing are null — the app must not
+  // invent a number it does not have.
+  assessed: boolean;
+  earned_revenue: number | null;
   billed_to_date: number;
-  over_under_billing: number;
+  over_under_billing: number | null;
   cost_to_date: number;
   cost_to_complete: number;
   estimated_total_cost: number;
@@ -44,6 +51,11 @@ export interface ProjectWIPResult {
   total_retainage_net: number;
   open_receivable: number;
   cash_position: number;
+  // Coverage: how many buckets have an explicitly-entered earned % vs. the total. When
+  // assessed_bucket_count < bucket_count, total_earned and total_over_under reflect only the
+  // assessed buckets — the UI must say so rather than present them as the whole truth.
+  assessed_bucket_count: number;
+  bucket_count: number;
   buckets: WIPBucketResult[];
 }
 
@@ -52,8 +64,12 @@ const clampPercent = (value: number) =>
 
 export function computeWIPBucket(input: WIPBucketInput): WIPBucketResult {
   const contract_value = input.original_budget + input.change_order_additions;
-  const earned_revenue = contract_value * (clampPercent(input.earned_percent_complete) / 100);
-  const over_under_billing = input.billed_to_date - earned_revenue;
+  // An explicit 0 is a real assessment (earns nothing); only null means "not assessed".
+  const assessed = input.earned_percent_complete != null;
+  const earned_revenue = assessed
+    ? contract_value * (clampPercent(input.earned_percent_complete as number) / 100)
+    : null;
+  const over_under_billing = earned_revenue == null ? null : input.billed_to_date - earned_revenue;
   const estimated_total_cost = input.actual_to_date + input.ftc;
   const estimated_gross_profit = contract_value - estimated_total_cost;
   const gross_profit_pct = contract_value > 0 ? (estimated_gross_profit / contract_value) * 100 : 0;
@@ -63,6 +79,7 @@ export function computeWIPBucket(input: WIPBucketInput): WIPBucketResult {
     cost_code: input.cost_code,
     bucket: input.bucket,
     contract_value,
+    assessed,
     earned_revenue,
     billed_to_date: input.billed_to_date,
     over_under_billing,
@@ -81,8 +98,12 @@ export function computeProjectWIP(
   paid_to_date: number,
 ): ProjectWIPResult {
   const results = buckets.map(computeWIPBucket);
+  const bucket_count = results.length;
+  const assessed_bucket_count = results.filter((bucket) => bucket.assessed).length;
   const total_contract = results.reduce((sum, bucket) => sum + bucket.contract_value, 0);
-  const total_earned = results.reduce((sum, bucket) => sum + bucket.earned_revenue, 0);
+  // Unassessed buckets contribute no earned revenue — we do not know it, so we do not
+  // fabricate it. Coverage counts let the caller flag the total as partial.
+  const total_earned = results.reduce((sum, bucket) => sum + (bucket.earned_revenue ?? 0), 0);
   const total_billed = results.reduce((sum, bucket) => sum + bucket.billed_to_date, 0);
   const total_cost = results.reduce((sum, bucket) => sum + bucket.cost_to_date, 0);
   const total_cost_to_complete = results.reduce((sum, bucket) => sum + bucket.cost_to_complete, 0);
@@ -103,6 +124,8 @@ export function computeProjectWIP(
     total_retainage_net,
     open_receivable: Math.max(0, total_billed - paid_to_date - total_retainage_net),
     cash_position: paid_to_date - total_cost,
+    assessed_bucket_count,
+    bucket_count,
     buckets: results,
   };
 }
