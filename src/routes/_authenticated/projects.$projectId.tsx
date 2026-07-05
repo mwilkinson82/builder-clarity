@@ -97,6 +97,18 @@ import {
 } from "@/components/billing/BillingStageRail";
 import { billingDocumentLabel, normalizeBillingNumberLabel } from "@/lib/billing-labels";
 import {
+  LOCAL_BILLING_ID_PREFIX,
+  isMissingBillingApplicationsTableError,
+  makeLocalBillingApplication,
+  makeLocalBillingEvent,
+  readLocalBillingApplications,
+  sortBillingApplications,
+  writeLocalBillingApplications,
+  type BillingDraft,
+  type InvoiceDraft,
+} from "@/lib/billing-local-store";
+import { EditFinancialsDialog } from "@/components/project/EditFinancialsDialog";
+import {
   getClientPortalManagement,
   type ProjectClientAccessRow,
 } from "@/lib/client-portal.functions";
@@ -162,7 +174,7 @@ import {
 } from "@/lib/projects.functions";
 import { isHarborDemoProject } from "@/lib/demo-seed";
 import { listSchedule } from "@/lib/schedule.functions";
-import { fmtUSD, fmtPct } from "@/lib/format";
+import { fmtUSD, fmtPct, formatShortDateTime } from "@/lib/format";
 import {
   computeScheduleVarianceWeeks,
   remainingExposureValue,
@@ -239,8 +251,6 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   component: ProjectRoute,
 });
 
-const LOCAL_BILLING_ID_PREFIX = "local-pay-app-";
-const BILLING_STATUS_VALUES = ["draft", "submitted", "paid", "partial", "rejected"] as const;
 const PROJECT_NAV_RAIL_CLASS =
   "h-auto w-full justify-start gap-1.5 overflow-x-auto rounded-lg border border-accent/25 bg-accent/[0.07] p-1.5 shadow-[0_18px_42px_rgb(27_122_110_/_0.16),0_4px_12px_rgb(31_28_23_/_0.10)] ring-1 ring-accent/15 backdrop-blur-sm lg:-translate-y-1 lg:flex-col lg:items-stretch lg:overflow-visible";
 
@@ -261,191 +271,6 @@ function projectNavIconClass({ compact, active }: { compact: boolean; active?: b
     compact ? "lg:mr-0" : "mr-2",
     active ? "text-accent-foreground drop-shadow-sm" : "text-current group-hover:text-accent",
   );
-}
-
-function isBillingStatus(value: unknown): value is BillingApplicationRow["status"] {
-  return typeof value === "string" && BILLING_STATUS_VALUES.includes(value as never);
-}
-
-function isMissingBillingApplicationsTableError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return /billing_applications|schema cache/i.test(message);
-}
-
-function makeLocalBillingId() {
-  const randomId =
-    typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `${LOCAL_BILLING_ID_PREFIX}${randomId}`;
-}
-
-function makeLocalBillingEvent(
-  projectId: string,
-  billingApplicationId: string,
-  input: {
-    event_type: string;
-    from_status?: string;
-    to_status?: string;
-    amount?: number;
-    notes?: string;
-  },
-): BillingApplicationEventRow {
-  const randomId =
-    typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return {
-    id: `local-billing-event-${randomId}`,
-    billing_application_id: billingApplicationId,
-    project_id: projectId,
-    event_type: input.event_type,
-    from_status: input.from_status ?? "",
-    to_status: input.to_status ?? "",
-    amount: input.amount ?? 0,
-    notes: input.notes ?? "",
-    created_by: null,
-    created_at: new Date().toISOString(),
-  };
-}
-
-function billingString(value: unknown, fallback = "") {
-  return typeof value === "string" ? value : fallback;
-}
-
-function billingNumber(value: unknown) {
-  return typeof value === "number" ? value : Number(value ?? 0);
-}
-
-function billingDate(value: unknown) {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function sortBillingApplications(apps: BillingApplicationRow[]) {
-  return [...apps].sort((a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id));
-}
-
-function makeLocalBillingApplication(
-  projectId: string,
-  input: BillingDraft,
-): BillingApplicationRow {
-  const id = makeLocalBillingId();
-  return {
-    id,
-    project_id: projectId,
-    application_number: normalizeBillingNumberLabel(input.application_number),
-    invoice_number: normalizeBillingNumberLabel(input.invoice_number),
-    submitted_date: input.submitted_date || null,
-    due_date: input.due_date || null,
-    billing_period: input.billing_period,
-    contract_amount: input.contract_amount,
-    change_order_amount: input.change_order_amount,
-    amount_billed: input.amount_billed,
-    paid_to_date: input.paid_to_date,
-    retainage: input.retainage,
-    has_line_detail: input.has_line_detail,
-    total_retainage_held: input.total_retainage_held,
-    retainage_released_this_period: input.retainage_released_this_period,
-    status: input.status,
-    output_format: input.output_format,
-    notes: input.notes,
-    sort_order: input.sort_order,
-    status_events: [
-      makeLocalBillingEvent(projectId, id, {
-        event_type: "created",
-        from_status: "",
-        to_status: input.status,
-        amount: input.amount_billed,
-        notes: input.notes || "Application created locally.",
-      }),
-    ],
-  };
-}
-
-function normalizeStoredBillingEvent(
-  projectId: string,
-  billingApplicationId: string,
-  raw: unknown,
-): BillingApplicationEventRow | null {
-  if (!raw || typeof raw !== "object") return null;
-  const record = raw as Record<string, unknown>;
-  const id = billingString(record.id);
-  return {
-    id: id || `local-billing-event-${Date.now()}`,
-    billing_application_id: billingString(record.billing_application_id, billingApplicationId),
-    project_id: billingString(record.project_id, projectId),
-    event_type: billingString(record.event_type, "status_change"),
-    from_status: billingString(record.from_status),
-    to_status: billingString(record.to_status),
-    amount: billingNumber(record.amount),
-    notes: billingString(record.notes),
-    created_by: typeof record.created_by === "string" ? record.created_by : null,
-    created_at: billingString(record.created_at, new Date().toISOString()),
-  };
-}
-
-function normalizeStoredBillingApplication(
-  projectId: string,
-  raw: unknown,
-): BillingApplicationRow | null {
-  if (!raw || typeof raw !== "object") return null;
-  const record = raw as Record<string, unknown>;
-  const id = billingString(record.id);
-  const normalizedId = id.startsWith(LOCAL_BILLING_ID_PREFIX) ? id : makeLocalBillingId();
-  return {
-    id: normalizedId,
-    project_id: projectId,
-    application_number: normalizeBillingNumberLabel(
-      billingString(record.application_number, "Application"),
-    ),
-    invoice_number: normalizeBillingNumberLabel(billingString(record.invoice_number)),
-    submitted_date: billingDate(record.submitted_date),
-    due_date: billingDate(record.due_date),
-    billing_period: billingString(record.billing_period),
-    contract_amount: billingNumber(record.contract_amount),
-    change_order_amount: billingNumber(record.change_order_amount),
-    amount_billed: billingNumber(record.amount_billed),
-    paid_to_date: billingNumber(record.paid_to_date),
-    retainage: billingNumber(record.retainage),
-    has_line_detail: Boolean(record.has_line_detail ?? false),
-    total_retainage_held: billingNumber(record.total_retainage_held),
-    retainage_released_this_period: billingNumber(record.retainage_released_this_period),
-    status: isBillingStatus(record.status) ? record.status : "draft",
-    output_format: billingString(record.output_format) === "aia_g702" ? "aia_g702" : "invoice",
-    notes: billingString(record.notes),
-    sort_order: billingNumber(record.sort_order),
-    status_events: Array.isArray(record.status_events)
-      ? record.status_events
-          .map((event) => normalizeStoredBillingEvent(projectId, normalizedId, event))
-          .filter((event): event is BillingApplicationEventRow => Boolean(event))
-      : [],
-  };
-}
-
-function localBillingStorageKey(projectId: string) {
-  return `ior:billing-applications:${projectId}`;
-}
-
-function readLocalBillingApplications(projectId: string) {
-  if (typeof window === "undefined") return [];
-  try {
-    const parsed = JSON.parse(
-      window.localStorage.getItem(localBillingStorageKey(projectId)) ?? "[]",
-    );
-    if (!Array.isArray(parsed)) return [];
-    return sortBillingApplications(
-      parsed
-        .map((app) => normalizeStoredBillingApplication(projectId, app))
-        .filter((app): app is BillingApplicationRow => Boolean(app)),
-    );
-  } catch {
-    return [];
-  }
-}
-
-function writeLocalBillingApplications(projectId: string, apps: BillingApplicationRow[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(localBillingStorageKey(projectId), JSON.stringify(apps));
 }
 
 function exposureCategoryFromChangeOrder(coType: ChangeOrderRow["co_type"]): ExposureCategory {
@@ -2329,12 +2154,6 @@ function MiniLedgerStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function formatShortDateTime(value: string) {
-  if (!value) return "Date not recorded";
-  const compact = value.replace("T", " ").slice(0, 16);
-  return compact || "Date not recorded";
-}
-
 function invoiceFilename(project: ProjectRow, invoice: BillingInvoiceRow) {
   const projectPart = (project.job_number || project.name || "project")
     .replace(/[^a-z0-9]+/gi, "-")
@@ -2428,23 +2247,6 @@ function responseAction(path: import("@/lib/ior").ResponsePath) {
   return "Accept";
 }
 
-type BillingDraft = Omit<BillingApplicationRow, "id" | "project_id" | "status_events">;
-type InvoiceDraft = Omit<
-  BillingInvoiceRow,
-  | "id"
-  | "project_id"
-  | "payment_events"
-  | "created_at"
-  | "updated_at"
-  | "sent_at"
-  | "paid_at"
-  | "payment_enabled"
-  | "payment_url"
-  | "stripe_checkout_session_id"
-  | "stripe_payment_intent_id"
-  | "online_payment_status"
-  | "payment_link_sent_at"
->;
 type PaymentDraft = {
   invoiceId: string;
   amount: number;
@@ -4800,256 +4602,5 @@ function EditableText({
       }}
       className={`h-8 w-full min-w-0 ${small ? "mt-1 text-xs text-muted-foreground" : ""}`}
     />
-  );
-}
-
-type EditableProject = {
-  name: string;
-  job_number: string;
-  client: string;
-  project_manager: string;
-  original_contract: number;
-  original_cost_budget: number;
-  phase: Phase;
-  percent_complete: number;
-  hold_variance_note: string;
-  forecast_completion_date: string | null;
-  baseline_completion_date: string | null;
-  default_output_format: BillingOutputFormat;
-};
-
-function EditFinancialsDialog({
-  project,
-  rollup,
-  guidance,
-  onSave,
-  pending,
-}: {
-  project: ProjectRow;
-  rollup: Rollup;
-  guidance: { ePct: number; cPct: number; eTarget: number; cTarget: number };
-  onSave: (patch: Partial<EditableProject>) => void;
-  pending: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const defaultHoldNote = () => {
-    const belowGuidance =
-      rollup.exposureHolds < guidance.eTarget || rollup.contingencyHold < guidance.cTarget;
-    const posture = belowGuidance
-      ? "Below guidance: document why the project can safely carry less hold than the target."
-      : "At or above guidance: document what is driving the hold and what must happen to release dollars.";
-    return `${posture} Current holds: E-Hold ${fmtUSD(rollup.exposureHolds)} vs ${fmtUSD(guidance.eTarget)} guidance (${guidance.ePct}%) and C-Hold ${fmtUSD(rollup.contingencyHold)} vs ${fmtUSD(guidance.cTarget)} guidance (${guidance.cPct}%).`;
-  };
-  const init = (): EditableProject => ({
-    name: project.name,
-    job_number: project.job_number,
-    client: project.client,
-    project_manager: project.project_manager,
-    original_contract: project.original_contract,
-    original_cost_budget: project.original_cost_budget,
-    phase: project.phase,
-    percent_complete: project.percent_complete,
-    hold_variance_note: project.hold_variance_note || defaultHoldNote(),
-    forecast_completion_date: project.forecast_completion_date,
-    baseline_completion_date: project.baseline_completion_date,
-    default_output_format: project.default_output_format ?? "invoice",
-  });
-  const [form, setForm] = useState<EditableProject>(init);
-  const calculatedScheduleVariance = computeScheduleVarianceWeeks(
-    form.baseline_completion_date,
-    form.forecast_completion_date,
-  );
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o);
-        if (o) setForm(init());
-      }}
-    >
-      <DialogTrigger asChild>
-        <Button size="sm" variant="ghost" className="gap-1.5">
-          <Pencil className="h-3.5 w-3.5" /> Edit
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="font-serif text-2xl">Edit project</DialogTitle>
-        </DialogHeader>
-        <div className="grid gap-4 py-2">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Project name</Label>
-              <Input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Job number</Label>
-              <Input
-                value={form.job_number}
-                onChange={(e) => setForm({ ...form, job_number: e.target.value })}
-                placeholder="e.g. 26-014"
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Client</Label>
-            <Input
-              value={form.client}
-              onChange={(e) => setForm({ ...form, client: e.target.value })}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Project manager</Label>
-            <Input
-              value={form.project_manager}
-              onChange={(e) => setForm({ ...form, project_manager: e.target.value })}
-              placeholder="e.g. Marshall Wilkinson"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Original contract</Label>
-              <MoneyInput
-                value={form.original_contract}
-                onValueChange={(v) => setForm({ ...form, original_contract: v })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Original cost budget</Label>
-              <MoneyInput
-                value={form.original_cost_budget}
-                onValueChange={(v) => setForm({ ...form, original_cost_budget: v })}
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Phase</Label>
-              <Select
-                value={form.phase}
-                onValueChange={(v) => setForm({ ...form, phase: v as Phase })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Early">Early</SelectItem>
-                  <SelectItem value="Middle">Middle</SelectItem>
-                  <SelectItem value="Late">Late</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>% complete</Label>
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                value={form.percent_complete}
-                onChange={(e) => setForm({ ...form, percent_complete: Number(e.target.value) })}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Default billing document</Label>
-            <Select
-              value={form.default_output_format}
-              onValueChange={(v) =>
-                setForm({ ...form, default_output_format: v as BillingOutputFormat })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="invoice">Client invoice</SelectItem>
-                <SelectItem value="aia_g702">AIA G702/G703 (AIA-native project)</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              New pay applications start in this format. Choose AIA G702/G703 for lender- or
-              owner's-rep-driven jobs so the biller never has to flip it each time.
-            </p>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1.5">
-              <Label>Baseline completion</Label>
-              <Input
-                type="date"
-                value={form.baseline_completion_date ?? ""}
-                onChange={(e) =>
-                  setForm({ ...form, baseline_completion_date: e.target.value || null })
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Forecast completion</Label>
-              <Input
-                type="date"
-                value={form.forecast_completion_date ?? ""}
-                onChange={(e) =>
-                  setForm({ ...form, forecast_completion_date: e.target.value || null })
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Calculated variance</Label>
-              <div
-                className={`flex h-10 items-center rounded-md border border-input bg-surface px-3 text-sm tabular ${
-                  (calculatedScheduleVariance ?? 0) > 0
-                    ? "text-danger"
-                    : (calculatedScheduleVariance ?? 0) < 0
-                      ? "text-success"
-                      : "text-foreground"
-                }`}
-              >
-                {calculatedScheduleVariance == null
-                  ? "Set dates"
-                  : calculatedScheduleVariance > 0
-                    ? `+${calculatedScheduleVariance} wk`
-                    : calculatedScheduleVariance < 0
-                      ? `${calculatedScheduleVariance} wk`
-                      : "On plan"}
-              </div>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>
-              Hold guidance note{" "}
-              <span className="text-muted-foreground">
-                (why current E-Hold/C-Hold posture is appropriate)
-              </span>
-            </Label>
-            <Textarea
-              rows={2}
-              value={form.hold_variance_note}
-              placeholder={defaultHoldNote()}
-              onChange={(e) => setForm({ ...form, hold_variance_note: e.target.value })}
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>
-            Cancel
-          </Button>
-          <Button
-            disabled={pending}
-            onClick={() => {
-              onSave({
-                ...form,
-                hold_variance_note: form.hold_variance_note.trim() || defaultHoldNote(),
-              });
-              setOpen(false);
-            }}
-          >
-            {pending ? "Saving…" : "Save changes"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

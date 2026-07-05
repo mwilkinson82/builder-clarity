@@ -10,5 +10,12 @@ export const fmtUSD = (n: number, opts: { sign?: boolean } = {}) => {
   return formatted;
 };
 
-export const fmtPct = (n: number, digits = 1) =>
-  `${n.toFixed(digits)}%`;
+export const fmtPct = (n: number, digits = 1) => `${n.toFixed(digits)}%`;
+
+// Compact "YYYY-MM-DD HH:MM" rendering of a stored ISO timestamp for billing
+// event/history rows. Extracted from the project route (PROJECTDECOMP1).
+export function formatShortDateTime(value: string) {
+  if (!value) return "Date not recorded";
+  const compact = value.replace("T", " ").slice(0, 16);
+  return compact || "Date not recorded";
+}
