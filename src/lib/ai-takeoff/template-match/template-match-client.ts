@@ -56,8 +56,19 @@ export function createTemplateMatchSession(): TemplateMatchSession {
       const target = ensureWorker();
       const id = nextId;
       nextId += 1;
+      // Self-heal (AITAKEOFF7): any failure retires THIS worker so the next
+      // sheet spawns a fresh one — a wasm runtime that died mid-scan costs
+      // one sheet's template hits, never the rest of the scan. The per-sheet
+      // summary records the failed sheet either way.
+      const retireWorker = () => {
+        if (worker === target) {
+          worker.terminate();
+          worker = null;
+        }
+      };
       const timer = setTimeout(() => {
         cleanup();
+        retireWorker();
         reject(new Error("The symbol matcher timed out."));
       }, MATCH_TIMEOUT_MS);
       const onMessage = (event: MessageEvent<TemplateMatchResponse>) => {
@@ -67,11 +78,13 @@ export function createTemplateMatchSession(): TemplateMatchSession {
           const { id: _id, ok: _ok, ...result } = event.data;
           resolve(result);
         } else {
+          retireWorker();
           reject(new Error(event.data.error));
         }
       };
       const onError = (event: ErrorEvent) => {
         cleanup();
+        retireWorker();
         reject(new Error(event.message || "The symbol matcher failed to load."));
       };
       const cleanup = () => {

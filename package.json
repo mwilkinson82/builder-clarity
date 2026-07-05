@@ -61,7 +61,7 @@
     "@tanstack/react-router": "^1.168.25",
     "@tanstack/react-start": "^1.167.50",
     "@tanstack/router-plugin": "^1.167.28",
-    "@techstark/opencv-js": "4.12.0-release.1",
+    "@techstark/opencv-js": "5.0.0-release.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

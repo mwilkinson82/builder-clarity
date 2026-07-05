@@ -7,7 +7,7 @@
 
 // Relative import on purpose: the smoke suite runs this module under plain
 // node --experimental-strip-types, which cannot resolve the @/ alias.
-import { clamp01 } from "./coord-transforms.ts";
+import { clamp01, rasterPx, sheetNorm, type RasterPx, type SheetNorm } from "./coord-transforms.ts";
 
 export type SheetPoint = { x: number; y: number };
 
@@ -84,11 +84,19 @@ export const REFERENCE_MAX_NEGATIVES = 2;
 export function imageTokenEstimate(widthPx: number, heightPx: number): number {
   return Math.round((Math.max(0, widthPx) * Math.max(0, heightPx)) / 750);
 }
-// Two detections closer than this (normalized sheet distance) are the same
-// symbol; the higher-confidence one wins. This is the FLOOR — when the
+// Two detections closer than this (fraction of the raster LONG EDGE) are the
+// same symbol; the higher-confidence one wins. This is the FLOOR — when the
 // exemplar's footprint is known, the radius scales with it (AITAKEOFF5
 // Task 0) so seam double-proposals and same-symbol duplicates collapse.
 export const DEDUPE_RADIUS_NORMALIZED = 0.008;
+// The CEILING (AITAKEOFF7): a dedupe/suppression radius is a symbol-scale
+// distance, never more. The A-100 production collapse happened because an
+// exemplar fused to surrounding linework measured as a whole-network
+// footprint (~422 raster px), and the radius derived from it — uncapped —
+// grew to ~316px, swallowing legitimate neighbors 2-3 footprints apart and
+// every unmarked symbol near a hand-placed mark. 0.04 × 3800 = 152px stays
+// above any real symbol radius while making that failure impossible.
+export const MAX_DEDUPE_RADIUS_LONG_EDGE = 0.04;
 // Tile overlap bounds (AITAKEOFF5 Task 0): overlap derives from the
 // exemplar's measured ink footprint so a whole symbol always fits inside at
 // least one tile — 128px overlap vs a ~130px brush was a coin flip at every
@@ -107,15 +115,95 @@ export function overlapForFootprintPx(footprintRasterPx: number | null): number 
   );
 }
 
-/** Dedupe/exclusion radius scaled to the symbol footprint (sheet units). */
-export function dedupeRadiusForFootprint(
-  footprintRasterPx: number | null,
-  rasterLongEdgePx: number,
-): number {
-  if (!footprintRasterPx || footprintRasterPx <= 0 || rasterLongEdgePx <= 0) {
-    return DEDUPE_RADIUS_NORMALIZED;
-  }
-  return Math.max(DEDUPE_RADIUS_NORMALIZED, (0.75 * footprintRasterPx) / rasterLongEdgePx);
+// --- Sheet-space radii (AITAKEOFF7 Task 0) ---
+// Takeoff points are normalized PER AXIS (x by width, y by height), so a
+// single scalar radius compared against hypot(dx, dy) was anisotropic on
+// non-square rasters: on a 3800×2533 sheet a vertical gap weighed ~1.5× a
+// horizontal one. A SheetRadius carries per-axis normalized radii derived
+// from ONE raster-pixel distance, and every dedupe/suppression distance
+// check goes through withinSheetRadius — isotropic in raster pixels.
+
+/** Per-axis normalized radius: one raster-px distance, expressed per axis. */
+export interface SheetRadius {
+  readonly x: SheetNorm;
+  readonly y: SheetNorm;
+}
+
+/** A radius given as a fraction of the raster LONG EDGE → per-axis form. */
+export function sheetRadiusFromLongEdge(
+  longEdgeFraction: number,
+  rasterWidthPx: number,
+  rasterHeightPx: number,
+): SheetRadius {
+  const safeW = Math.max(1, rasterWidthPx);
+  const safeH = Math.max(1, rasterHeightPx);
+  const longEdge = Math.max(safeW, safeH);
+  const fraction = Number.isFinite(longEdgeFraction)
+    ? Math.max(0, longEdgeFraction)
+    : DEDUPE_RADIUS_NORMALIZED;
+  return {
+    x: sheetNorm((fraction * longEdge) / safeW),
+    y: sheetNorm((fraction * longEdge) / safeH),
+  };
+}
+
+/** Is b inside the radius around a? Elliptical in sheet space = circular in raster px. */
+export function withinSheetRadius(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  radius: SheetRadius,
+): boolean {
+  if (radius.x <= 0 || radius.y <= 0) return false;
+  const dx = (a.x - b.x) / radius.x;
+  const dy = (a.y - b.y) / radius.y;
+  return dx * dx + dy * dy < 1;
+}
+
+/**
+ * The canonical per-sheet exemplar geometry (AITAKEOFF7 Task 0): footprint,
+ * tile overlap, and the dedupe/suppression radius derive HERE, once, in both
+ * spaces. Every consumer — in-tile dedupe, cross-tile union dedupe, template
+ * NMS, near-existing suppression — takes these values; nothing re-derives.
+ * The radius is floored (seam duplicates still collapse) and CAPPED (an
+ * overrun footprint measurement can never again swallow neighbors).
+ */
+export interface ExemplarSheetGeometry {
+  /** Ink footprint on this sheet's detection raster; null = not measurable. */
+  footprintRasterPx: RasterPx | null;
+  /** Tile overlap so a whole symbol fits in at least one tile. */
+  tileOverlapPx: RasterPx;
+  /** Dedupe/suppression radius, per-axis normalized, floor+cap applied. */
+  radius: SheetRadius;
+}
+
+export function exemplarSheetGeometry(input: {
+  /** Measured exemplar ink footprint in PDF points (null = unmeasurable). */
+  footprintPt: number | null;
+  /** Long edge of the exemplar's page, in PDF points. */
+  pageLongEdgePt: number;
+  rasterWidthPx: number;
+  rasterHeightPx: number;
+}): ExemplarSheetGeometry {
+  const longEdgePx = Math.max(1, input.rasterWidthPx, input.rasterHeightPx);
+  const footprint =
+    input.footprintPt !== null &&
+    Number.isFinite(input.footprintPt) &&
+    input.footprintPt > 0 &&
+    input.pageLongEdgePt > 0
+      ? rasterPx(input.footprintPt * (longEdgePx / input.pageLongEdgePt))
+      : null;
+  const longEdgeFraction =
+    footprint === null
+      ? DEDUPE_RADIUS_NORMALIZED
+      : Math.min(
+          MAX_DEDUPE_RADIUS_LONG_EDGE,
+          Math.max(DEDUPE_RADIUS_NORMALIZED, (0.75 * footprint) / longEdgePx),
+        );
+  return {
+    footprintRasterPx: footprint,
+    tileOverlapPx: rasterPx(overlapForFootprintPx(footprint)),
+    radius: sheetRadiusFromLongEdge(longEdgeFraction, input.rasterWidthPx, input.rasterHeightPx),
+  };
 }
 
 /**
@@ -287,6 +375,7 @@ export function buildVerifyInstruction(input: {
     '- "match" is true ONLY if the observed object is the same symbol TYPE as the positive references — same shape, same construction.',
     "- Radial or starburst look-alikes — fans, impellers, gears, sprinkler heads, air registers — are NOT matches.",
     '- If it looks like one of the REJECTED reference symbols, "match" is false.',
+    "- Rejected references only rule out look-alikes of a DIFFERENT type. They never raise the bar: a clear match of the positive references is still true.",
     "- Symbols only partially inside the crop are false. Plain text labels, dimension marks, hatching, and title-block art are never a match.",
     '- "center" is the center of the matched symbol, normalized 0-1000 relative to the FINAL image (0 is its left/top edge, 1000 its right/bottom edge). Decimals are allowed. Never answer in pixels. Omit "center" when "match" is false.',
   ].join("\n");
@@ -551,7 +640,11 @@ export function snapToInkCentroid(
 /**
  * Measure the exemplar symbol's ink footprint (longest bbox edge, mask px):
  * the component under/nearest the marker, with the fused-linework cap
- * lifted — oversized results are handled by the overlap clamp instead.
+ * lifted so a symbol touching other linework still measures — but the
+ * RESULT clamps to half the mask's long edge (AITAKEOFF7). A "footprint"
+ * spanning most of a 4-sheet-inch crop is connected linework, not a symbol;
+ * believing it verbatim is what ballooned the A-100 dedupe radius until
+ * neighboring symbols swallowed each other.
  */
 export function measureInkFootprintPx(
   mask: InkMask,
@@ -560,7 +653,9 @@ export function measureInkFootprintPx(
   const component = nearestInkComponent(mask, center, {
     maxComponentEdgePx: Number.POSITIVE_INFINITY,
   });
-  return component ? Math.max(component.bboxWidthPx, component.bboxHeightPx) : null;
+  if (!component) return null;
+  const cap = Math.max(1, Math.floor(Math.max(mask.width, mask.height) / 2));
+  return Math.min(cap, Math.max(component.bboxWidthPx, component.bboxHeightPx));
 }
 
 // --- Token-implied resize check (AITAKEOFF3 Task 3, isolated in AITAKEOFF4
@@ -638,18 +733,18 @@ export function capProposalsPerSheet<T extends { confidence: number }>(
 
 /**
  * Collapse duplicate detections (tile-overlap seams, repeated model output).
- * Highest confidence wins within the radius.
+ * Highest confidence wins within the radius. The radius is a SheetRadius on
+ * purpose (AITAKEOFF7): a raw number here is exactly how raster pixels once
+ * leaked into sheet space — now it's a tsc error.
  */
 export function dedupeCandidates(
   candidates: AiCountCandidate[],
-  radius: number = DEDUPE_RADIUS_NORMALIZED,
+  radius: SheetRadius,
 ): AiCountCandidate[] {
   const sorted = [...candidates].sort((a, b) => b.confidence - a.confidence);
   const kept: AiCountCandidate[] = [];
   for (const candidate of sorted) {
-    const duplicate = kept.some(
-      (existing) => Math.hypot(existing.x - candidate.x, existing.y - candidate.y) < radius,
-    );
+    const duplicate = kept.some((existing) => withinSheetRadius(existing, candidate, radius));
     if (!duplicate) kept.push(candidate);
   }
   return kept;
@@ -663,14 +758,11 @@ export function dedupeCandidates(
 export function excludeNearExistingPoints(
   candidates: AiCountCandidate[],
   existingPoints: SheetPoint[],
-  radius: number = DEDUPE_RADIUS_NORMALIZED,
+  radius: SheetRadius,
 ): AiCountCandidate[] {
   if (existingPoints.length === 0) return candidates;
   return candidates.filter(
-    (candidate) =>
-      !existingPoints.some(
-        (point) => Math.hypot(point.x - candidate.x, point.y - candidate.y) < radius,
-      ),
+    (candidate) => !existingPoints.some((point) => withinSheetRadius(point, candidate, radius)),
   );
 }
 
@@ -750,6 +842,7 @@ export function buildScanInstruction(input: {
     "- Write exemplar_description FIRST, from the first image alone, before listing candidates.",
     "- Each candidate is the CENTER of one possible occurrence, normalized 0-1000 relative to the FINAL image: 0 is its left/top edge, 1000 is its right/bottom edge. Decimals are allowed. Never answer in pixels.",
     "- Err toward including uncertain candidates — a later step rejects them safely. Plain text labels, dimension marks, and title-block art are still never candidates.",
+    "- Rejected references only illustrate look-alikes to EXCLUDE. They never raise the bar: keep listing everything that resembles the positive references.",
     '- An empty "candidates" list is a correct and expected answer when nothing resembles the symbol.',
   ].join("\n");
 }

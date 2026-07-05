@@ -24,6 +24,7 @@ import {
   getAiScanDiagnostics,
   type AiScanDiagnostics as AiScanDiagnosticsData,
   type AiScanDiagnosticsTile,
+  type AiScanSheetSummary,
   type AiScanVerification,
 } from "@/lib/ai-takeoff/ai-scan-diagnostics.functions";
 import type { DetectionTileFrame } from "@/lib/ai-takeoff/coord-transforms";
@@ -88,6 +89,63 @@ function MarkedImage({
 }
 
 const pointKey = (point: { x: number; y: number }) => `${point.x.toFixed(6)},${point.y.toFixed(6)}`;
+
+/**
+ * The proposal funnel, one line per sheet (AITAKEOFF7 Task 4): every count
+ * between "engines proposed" and "stage B judged" is visible, so a radius
+ * bug that swallows candidates shows up on the first screenshot.
+ */
+function SheetSummaryCard({ summary }: { summary: AiScanSheetSummary }) {
+  // Template hits are already NMS'd with the SAME radius, so the union can
+  // only ADD model-only candidates — fewer out than template hits in is a
+  // geometric impossibility unless a radius bug is eating candidates.
+  const collapseLooksWrong =
+    summary.proposedTemplate > 0 && summary.afterUnionDedupe < summary.proposedTemplate;
+  return (
+    <div
+      className="rounded-md border border-hairline p-3 text-xs text-muted-foreground"
+      data-testid="ai-diagnostics-sheet-summary"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline">sheet {summary.sheetId.slice(0, 8)}…</Badge>
+        <span className="font-medium text-foreground" data-testid="ai-diagnostics-funnel">
+          {summary.proposedTemplate} template + {summary.proposedModel} model proposed →{" "}
+          {summary.afterUnionDedupe} after dedupe → {summary.afterSuppression} after suppression →{" "}
+          {summary.verified} verified
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        {summary.footprintRasterPx !== null && (
+          <span>footprint {Math.round(summary.footprintRasterPx)}px</span>
+        )}
+        {summary.radius && (
+          <span>
+            radius ({summary.radius.x.toFixed(4)}, {summary.radius.y.toFixed(4)}) of sheet
+          </span>
+        )}
+        {summary.stageATiles > 0 ? (
+          <span>{summary.stageATiles} stage-A tiles</span>
+        ) : (
+          <span>stage A skipped (template-only)</span>
+        )}
+        {summary.templateEngine === "ok" && summary.templateElapsedMs !== null && (
+          <span>template engine ok in {summary.templateElapsedMs}ms</span>
+        )}
+        {summary.templateEngine === "skipped" && <span>template engine skipped</span>}
+        {summary.templateEngine === "failed" && (
+          <Badge variant="destructive" data-testid="ai-diagnostics-template-failed">
+            template engine failed{summary.templateError ? `: ${summary.templateError}` : ""}
+          </Badge>
+        )}
+        {collapseLooksWrong && (
+          <Badge variant="destructive" data-testid="ai-diagnostics-collapse-flag">
+            heavy dedupe collapse — check the radius line above
+          </Badge>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function TileCard({
   tile,
@@ -235,6 +293,11 @@ function VerificationCard({ verification }: { verification: AiScanVerification }
         </Badge>
         <Badge variant="outline">candidate {verification.candidateIndex}</Badge>
         <span>sheet {verification.sheetId.slice(0, 8)}…</span>
+        {verification.originLabel && (
+          <Badge variant="outline" data-testid="ai-diagnostics-origin">
+            {verification.originLabel}
+          </Badge>
+        )}
         {verification.observed && (
           <span className="basis-full" data-testid="ai-diagnostics-observed">
             model saw: “{verification.observed}”
@@ -419,6 +482,17 @@ export function AiScanDiagnosticsDialog({
               </p>
             ) : (
               <>
+                {diagnostics.sheetSummaries.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium">
+                      Proposal funnel — engines proposed → dedupe → suppression → verified
+                    </p>
+                    {diagnostics.sheetSummaries.map((sheetSummary) => (
+                      <SheetSummaryCard key={sheetSummary.sheetId} summary={sheetSummary} />
+                    ))}
+                  </div>
+                )}
+
                 <div className="space-y-1.5">
                   <p className="text-sm font-medium">Exemplar crop sent to the model</p>
                   {diagnostics.exemplarUrl ? (

@@ -82,12 +82,14 @@ export const OPENCV_READY_TIMEOUT_MS = 120_000;
 /**
  * Wait for the opencv.js runtime and return it in a WRAPPER object.
  *
- * The wrapper is load-bearing, not style: the emscripten module is a
+ * The wrapper is load-bearing, not style: OLDER emscripten builds export a
  * self-resolving thenable — its `then` calls back with the module itself, so
  * any promise that resolves TO the module re-adopts it forever (a silent
- * 100% CPU spin, reproduced under node during AITAKEOFF6). Nothing may ever
- * return or resolve the raw module through promise machinery; callers
- * destructure `{ cv }` instead.
+ * 100% CPU spin, reproduced under node during AITAKEOFF6). MODERN builds
+ * (the opencv.js 5.x line) export a genuine Promise whose resolution VALUE
+ * is the cv module. This handles both: the `then` callback's argument wins
+ * when it looks like a cv module, and nothing raw ever flows through
+ * promise adoption — callers destructure `{ cv }`.
  */
 export function openCvReady(
   cvModule: unknown,
@@ -100,13 +102,15 @@ export function openCvReady(
       return;
     }
     let settled = false;
-    const settle = () => {
+    const settle = (candidate: unknown) => {
       if (settled) return;
       settled = true;
-      resolve({ cv: moduleRecord as unknown as OpenCvApi });
+      const record = candidate as Record<string, unknown> | null;
+      const cv = record && typeof record === "object" && record.Mat ? record : moduleRecord;
+      resolve({ cv: cv as unknown as OpenCvApi });
     };
     if (moduleRecord.Mat) {
-      settle();
+      settle(moduleRecord);
       return;
     }
     const timer = setTimeout(() => {
@@ -116,15 +120,17 @@ export function openCvReady(
       }
     }, timeoutMs);
     (timer as unknown as { unref?: () => void }).unref?.();
-    const onReady = () => {
-      clearTimeout(timer);
-      settle();
-    };
     if (typeof moduleRecord.then === "function") {
       // Callback style only — never `await` the module (see above).
-      (moduleRecord.then as (cb: () => void) => void)(onReady);
+      (moduleRecord.then as (cb: (value: unknown) => void) => void)((value) => {
+        clearTimeout(timer);
+        settle(value);
+      });
       return;
     }
-    moduleRecord.onRuntimeInitialized = onReady;
+    moduleRecord.onRuntimeInitialized = () => {
+      clearTimeout(timer);
+      settle(moduleRecord);
+    };
   });
 }

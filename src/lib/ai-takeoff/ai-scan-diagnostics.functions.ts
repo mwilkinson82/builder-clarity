@@ -134,6 +134,8 @@ export interface AiScanVerification {
   match: boolean;
   /** The model's describe-then-decide sentence (AITAKEOFF5 Task 2). */
   observed: string;
+  /** Which engine proposed it: "template 0.78 @ 30°" or "model" (AITAKEOFF7). */
+  originLabel: string;
   centerRefined: boolean;
   /** Stage-B center in window pixels, before the ink-centroid snap. */
   rawCenterPx: { x: number; y: number } | null;
@@ -143,6 +145,27 @@ export interface AiScanVerification {
   rawResponse: string;
   usage: { inputTokens: number; outputTokens: number } | null;
   metadataMissing: boolean;
+}
+
+/**
+ * The per-sheet proposal funnel (AITAKEOFF7 Task 4): what each engine
+ * proposed and how many candidates survived each collapse step — the one
+ * line that makes a radius/units bug visible on the first screenshot.
+ */
+export interface AiScanSheetSummary {
+  sheetId: string;
+  proposedTemplate: number;
+  proposedModel: number;
+  afterUnionDedupe: number;
+  afterSuppression: number;
+  sentToVerify: number;
+  verified: number;
+  stageATiles: number;
+  footprintRasterPx: number | null;
+  radius: { x: number; y: number } | null;
+  templateEngine: string;
+  templateError: string;
+  templateElapsedMs: number | null;
 }
 
 export interface AiScanDiagnostics {
@@ -161,12 +184,14 @@ export interface AiScanDiagnostics {
     error: string;
   };
   exemplarUrl: string | null;
+  sheetSummaries: AiScanSheetSummary[];
   tiles: AiScanDiagnosticsTile[];
   verifications: AiScanVerification[];
   diagnosticsAvailable: boolean;
 }
 
 const ARTIFACT_NAME = /^(tile|verify)-([0-9a-f-]{36})-(\d+)\.(png|json)$/;
+const SUMMARY_NAME = /^summary-([0-9a-f-]{36})\.json$/;
 
 function parseUsage(raw: unknown): { inputTokens: number; outputTokens: number } | null {
   if (!raw || typeof raw !== "object") return null;
@@ -242,6 +267,7 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
       return {
         operation: summary,
         exemplarUrl: null,
+        sheetSummaries: [],
         tiles: [],
         verifications: [],
         diagnosticsAvailable: false,
@@ -319,6 +345,7 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
           frame: (meta?.frame ?? null) as DetectionTileFrame | null,
           match: meta?.match === true,
           observed: str(meta?.observed),
+          originLabel: str(meta?.originLabel),
           centerRefined: meta?.centerRefined === true,
           rawCenterPx: parsePoint(meta?.rawCenterPx),
           snappedCenterPx: parsePoint(meta?.snappedCenterPx),
@@ -328,6 +355,35 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
           metadataMissing: meta === null,
         });
       }
+    }
+
+    // Per-sheet funnel summaries (AITAKEOFF7 Task 4).
+    const sheetSummaries: AiScanSheetSummary[] = [];
+    for (const file of files) {
+      const parsed = SUMMARY_NAME.exec(file.name);
+      if (!parsed) continue;
+      const meta = await downloadMeta(file.name);
+      if (!meta) continue;
+      const radiusPoint = parsePoint(meta.radius);
+      sheetSummaries.push({
+        sheetId: parsed[1],
+        proposedTemplate: Math.max(0, Math.round(num(meta.proposed_template))),
+        proposedModel: Math.max(0, Math.round(num(meta.proposed_model))),
+        afterUnionDedupe: Math.max(0, Math.round(num(meta.after_union_dedupe))),
+        afterSuppression: Math.max(0, Math.round(num(meta.after_suppression))),
+        sentToVerify: Math.max(0, Math.round(num(meta.sent_to_verify))),
+        verified: Math.max(0, Math.round(num(meta.verified))),
+        stageATiles: Math.max(0, Math.round(num(meta.stage_a_tiles))),
+        footprintRasterPx: Number.isFinite(Number(meta.footprint_raster_px))
+          ? Number(meta.footprint_raster_px)
+          : null,
+        radius: radiusPoint,
+        templateEngine: str(meta.template_engine),
+        templateError: str(meta.template_error),
+        templateElapsedMs: Number.isFinite(Number(meta.template_elapsed_ms))
+          ? Number(meta.template_elapsed_ms)
+          : null,
+      });
     }
 
     const sheetOrder = new Map(operation.sheet_ids.map((id, index) => [id, index]));
@@ -343,6 +399,16 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
     };
     tiles.sort((a, b) => bySheetThenIndex(a, b, a.tileIndex, b.tileIndex));
     verifications.sort((a, b) => bySheetThenIndex(a, b, a.candidateIndex, b.candidateIndex));
+    sheetSummaries.sort(
+      (a, b) => (sheetOrder.get(a.sheetId) ?? 999) - (sheetOrder.get(b.sheetId) ?? 999),
+    );
 
-    return { operation: summary, exemplarUrl, tiles, verifications, diagnosticsAvailable: true };
+    return {
+      operation: summary,
+      exemplarUrl,
+      sheetSummaries,
+      tiles,
+      verifications,
+      diagnosticsAvailable: true,
+    };
   });
