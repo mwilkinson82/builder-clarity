@@ -202,6 +202,7 @@ import {
   LogOut,
   Archive,
   Mail,
+  MoreHorizontal,
   Pencil,
   Plus,
   ReceiptText,
@@ -209,6 +210,12 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const PROJECT_TAB_VALUES = [
   "dashboard",
@@ -236,6 +243,15 @@ const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
   "billing",
   "change-orders",
   "client-portal",
+  "ior-report",
+  "daily-reports",
+]);
+
+// POLISH1 Task 3 (density): the primary financial path — Dashboard → SOV/Costs
+// → Billing → Change Orders — leads the rail; the rarely-opened reference tabs
+// collapse under a "More" menu. Deep links (?tab=…) still resolve to the tab.
+const SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
+  "inspections",
   "ior-report",
   "daily-reports",
 ]);
@@ -1350,6 +1366,14 @@ function ProjectPage() {
       icon: FileText,
     },
   ];
+  const primaryNavItems = projectNavItems.filter(
+    (item) => !SECONDARY_PROJECT_NAV_TABS.has(item.value as ProjectTabValue),
+  );
+  const secondaryNavItems = projectNavItems.filter((item) =>
+    SECONDARY_PROJECT_NAV_TABS.has(item.value as ProjectTabValue),
+  );
+  const isSecondaryTabActive = SECONDARY_PROJECT_NAV_TABS.has(activeProjectTab);
+  const activeSecondaryNavItem = secondaryNavItems.find((item) => item.value === activeProjectTab);
   const companyLogoUrl =
     project.organization_logo_url && project.organization_logo_url !== companyLogoFailedUrl
       ? project.organization_logo_url
@@ -1637,7 +1661,7 @@ function ProjectPage() {
                     </span>
                   </a>
                 </ProjectNavTooltip>
-                {projectNavItems.map((item) => {
+                {primaryNavItems.map((item) => {
                   const Icon = item.icon;
                   const isActive = activeProjectTab === item.value;
                   return (
@@ -1684,6 +1708,67 @@ function ProjectPage() {
                     </ProjectNavTooltip>
                   );
                 })}
+                {secondaryNavItems.length > 0 && (
+                  <DropdownMenu>
+                    <ProjectNavTooltip
+                      enabled={compactProjectNav}
+                      label="More"
+                      detail="Reports & inspections"
+                    >
+                      <DropdownMenuTrigger
+                        aria-label="More project tabs: reports and inspections"
+                        title="More project tabs"
+                        className={cn(
+                          "relative inline-flex items-center",
+                          projectNavItemClass({
+                            compact: compactProjectNav,
+                            active: isSecondaryTabActive,
+                          }),
+                        )}
+                      >
+                        {isSecondaryTabActive && (
+                          <span
+                            aria-hidden="true"
+                            className="absolute inset-y-2 left-1 w-1 rounded-full bg-accent-foreground/90 shadow-[0_0_14px_rgb(255_255_255_/_0.75)]"
+                          />
+                        )}
+                        <MoreHorizontal
+                          className={projectNavIconClass({
+                            compact: compactProjectNav,
+                            active: isSecondaryTabActive,
+                          })}
+                        />
+                        <span className={`min-w-0 ${compactProjectNav ? "lg:sr-only" : ""}`}>
+                          <span className="block text-sm font-medium leading-tight">More</span>
+                          <span
+                            className={`mt-0.5 block truncate text-[11px] font-normal ${
+                              isSecondaryTabActive ? "opacity-85" : "opacity-70"
+                            }`}
+                          >
+                            {activeSecondaryNavItem?.label ?? "Reports & inspections"}
+                          </span>
+                        </span>
+                      </DropdownMenuTrigger>
+                    </ProjectNavTooltip>
+                    <DropdownMenuContent align="start" side="right" className="w-56">
+                      {secondaryNavItems.map((item) => {
+                        const Icon = item.icon;
+                        const isActive = activeProjectTab === item.value;
+                        return (
+                          <DropdownMenuItem
+                            key={item.value}
+                            onSelect={() => setProjectTab(item.value)}
+                            className={cn("gap-2", isActive && "bg-accent/10 text-foreground")}
+                          >
+                            <Icon className="h-4 w-4 text-muted-foreground" />
+                            <span className="flex-1">{item.label}</span>
+                            <span className="text-[11px] text-muted-foreground">{item.detail}</span>
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
               </TabsList>
             </TooltipProvider>
           </aside>
