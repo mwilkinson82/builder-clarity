@@ -20,9 +20,13 @@ import {
   embeddingDedupeRadius,
   embeddingMatchDownscaleFor,
   describeEmbeddingOrigin,
+  resolveAiEngine,
+  clsEmbeddingAt,
+  scoreEmbeddingWindows,
   DEFAULT_EMBEDDING_MATCH_THRESHOLD,
   EMBEDDING_WINDOW_SCALES,
   EMBEDDING_MATCH_MAX_LONG_EDGE_PX,
+  EMBEDDING_DIM,
   type EmbeddingMatchCandidate,
 } from "../src/lib/ai-takeoff/embedding-match/embedding-match-domain.ts";
 
@@ -166,5 +170,34 @@ ok(
   describeEmbeddingOrigin({ score: 0.9, scale: 1 }) === "embedding 0.90",
   "origin string, scale 1 omitted",
 );
+
+// --- 6. runtime seam: flag, CLS slice, window scoring ----------------------
+ok(resolveAiEngine(undefined) === "pixel", "AI_ENGINE defaults to the proven pixel engine");
+ok(resolveAiEngine("embedding") === "embedding", "AI_ENGINE=embedding opts in");
+ok(resolveAiEngine("Pixel") === "pixel", "unknown/anything-else → pixel");
+
+// CLS slice: token 0 of a [batch,257,384] buffer for a given crop index.
+const flat = new Float32Array(2 * 257 * EMBEDDING_DIM);
+flat[0] = 1; // crop 0, token 0, dim 0
+flat[1 * 257 * EMBEDDING_DIM + 1] = 2; // crop 1, token 0, dim 1
+const cls0 = clsEmbeddingAt(flat, 0);
+const cls1 = clsEmbeddingAt(flat, 1);
+ok(cls0.length === EMBEDDING_DIM && cls0[0] === 1, "CLS slice reads crop 0 token 0");
+ok(cls1[1] === 2, "CLS slice offsets to crop 1");
+
+// scoreEmbeddingWindows: the worker's only job beyond producing embeddings is
+// handing scoring to this pure fn — cosine per window, exemplar reproduced at 1.
+const scored = scoreEmbeddingWindows(exemplar, [
+  { x: 0.1, y: 0.1, scale: 1.3, embedding: exemplar },
+  { x: 0.2, y: 0.2, scale: 1.3, embedding: blowers[0] },
+  { x: 0.3, y: 0.3, scale: 1.3, embedding: brushes[0] },
+]);
+ok(Math.abs(scored[0].score - 1) < 1e-9, "window scoring: exemplar-vs-self → 1");
+ok(
+  scored[1].score > 0.7 && scored[2].score < 0.45,
+  "window scoring preserves the blower/brush gap",
+);
+const scoredMatches = selectEmbeddingMatches(scored, DEFAULT_EMBEDDING_MATCH_THRESHOLD, radius);
+ok(scoredMatches.length === 2, "scored windows → 2 matches (self + twin), brush rejected");
 
 console.log(`ai-embedding-match smoke: ${checks} checks passed`);

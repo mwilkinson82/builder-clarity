@@ -71,6 +71,7 @@
     "entities": "4.5.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.575.0",
+    "onnxruntime-web": "^1.27.0",
     "papaparse": "^5.5.3",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.0.227",

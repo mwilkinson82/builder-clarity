@@ -266,3 +266,67 @@ export function describeEmbeddingOrigin(origin: {
       : "";
   return `embedding ${score}${scale}`;
 }
+
+// --- Model / preprocessing (shared by the worker and any node harness) ------
+// DINOv2-small, quantized ONNX, bundled as a frontend static asset (no backend,
+// no external host). The worker loads it once and caches the InferenceSession.
+export const EMBEDDING_MODEL_URL = "/models/dinov2-small.onnx";
+// onnxruntime-web wasm is self-hosted too, so a CDN outage can never break a
+// scan. Copied into public/ort at this version.
+export const EMBEDDING_ORT_WASM_PATH = "/ort/";
+// DINOv2 input: 224², ImageNet normalization, CLS token (index 0) of the
+// 257-token last_hidden_state is the 384-d whole-crop embedding.
+export const EMBEDDING_INPUT_PX = 224;
+export const EMBEDDING_DIM = 384;
+export const EMBEDDING_CLS_TOKENS = 257;
+export const IMAGENET_MEAN = [0.485, 0.456, 0.406] as const;
+export const IMAGENET_STD = [0.229, 0.224, 0.225] as const;
+
+/** The two detection engines. Flag defaults to pixel until embedding is QA'd. */
+export type AiEngine = "pixel" | "embedding";
+
+/** VITE_AI_ENGINE env value → engine, defaulting to the proven pixel engine. */
+export function resolveAiEngine(raw: string | undefined): AiEngine {
+  return (raw ?? "").trim().toLowerCase() === "embedding" ? "embedding" : "pixel";
+}
+
+/**
+ * Extract the CLS embedding for one crop from a flat model output buffer —
+ * last_hidden_state is [batch, 257, 384]; token 0 of each row is the whole-crop
+ * vector. Pure so the worker and a node harness slice identically.
+ */
+export function clsEmbeddingAt(
+  output: Float32Array | number[],
+  index: number,
+  dim: number = EMBEDDING_DIM,
+  tokens: number = EMBEDDING_CLS_TOKENS,
+): number[] {
+  const start = index * tokens * dim;
+  const out = new Array<number>(dim);
+  for (let i = 0; i < dim; i += 1) out[i] = output[start + i] ?? 0;
+  return out;
+}
+
+export interface ScoredWindow {
+  x: number;
+  y: number;
+  scale: number;
+  embedding: EmbeddingVector;
+}
+
+/**
+ * Score every swept window against the exemplar embedding — the pure heart of
+ * the sweep, so the worker only has to produce embeddings and the scoring is
+ * covered by the node smoke. Cosine similarity, one candidate per window.
+ */
+export function scoreEmbeddingWindows(
+  exemplar: EmbeddingVector,
+  windows: ScoredWindow[],
+): EmbeddingMatchCandidate[] {
+  return windows.map((w) => ({
+    x: w.x,
+    y: w.y,
+    scale: w.scale,
+    score: cosineSimilarity(exemplar, w.embedding),
+  }));
+}
