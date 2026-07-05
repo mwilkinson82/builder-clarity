@@ -32,9 +32,12 @@ import {
   capProposalsPerSheet,
   excludeNearExistingPoints,
   exemplarSheetGeometry,
+  inkMaskFromBase64,
   negativeEligiblePoints,
+  snapToInkCentroid,
   sortProposalsForReview,
   type GhostRejectionReason,
+  VERIFIED_PROPOSAL_CONFIDENCE,
   VERIFY_WINDOW_PX,
   type AiCountCandidate,
   type AiCountProposal,
@@ -66,7 +69,7 @@ import {
   renderVerifyWindow,
   sliceDetectionTiles,
 } from "./aiDetectionRender";
-import { clamp01 } from "@/lib/ai-takeoff/coord-transforms";
+import { clamp01, tileLocalToSheetPoint } from "@/lib/ai-takeoff/coord-transforms";
 import { geometryFromPoints, geometryPoints, type ViewSize } from "./planRoomShared";
 
 export type AiAssistPhase = "idle" | "scanning" | "review";
@@ -574,18 +577,70 @@ export function useAiAssist({
         const toVerify = capProposalsPerSheet(fresh, begin.maxProposalsPerSheet);
         let sheetVerified = 0;
         let sheetCenterMismatch = 0;
-        for (let index = 0; index < toVerify.length; index += 1) {
+        let sheetTemplateGhosts = 0;
+
+        // Recall-first (AITAKEOFF11): a TEMPLATE hit is a deterministic
+        // same-shape geometric match whose center is already hub-anchored
+        // (AITAKEOFF9). It becomes a review ghost DIRECTLY — the estimator
+        // accepts or rejects it, so a model veto never throttles template
+        // recall (the A-100 "0 verified" was the model rejecting big-brush
+        // variants it couldn't confirm against a small-brush reference). A
+        // free client-side ink-centroid snap centers the ghost on the actual
+        // symbol, fixing the off-hub placement the estimator flagged. No
+        // model call, no verify cost. Only MODEL-sourced candidates still
+        // run stage B, where the filter earns its keep.
+        const templateGhosts = toVerify.filter(
+          (candidate) => candidate.source === "template" && candidate.templateHit,
+        );
+        const modelToVerify = toVerify.filter((candidate) => candidate.source !== "template");
+        for (const candidate of templateGhosts) {
+          if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
+          const window = renderVerifyWindow(raster, candidate, { upscale: false });
+          const mask = inkMaskFromBase64(
+            window.inkMaskBase64,
+            window.rect.width,
+            window.rect.height,
+          );
+          const candidateInWindow = {
+            x: candidate.x * raster.widthPx - window.rect.left,
+            y: candidate.y * raster.heightPx - window.rect.top,
+          };
+          const snapped = mask ? snapToInkCentroid(mask, candidateInWindow) : null;
+          const point = snapped
+            ? tileLocalToSheetPoint(window.frame, snapped.x, snapped.y)
+            : { x: candidate.x, y: candidate.y };
+          sheetTemplateGhosts += 1;
+          found.push({
+            id: crypto.randomUUID(),
+            sheetId: sheet.id,
+            x: point.x,
+            y: point.y,
+            confidence: VERIFIED_PROPOSAL_CONFIDENCE,
+            status: "pending",
+          });
+          setScanProgress({
+            sheetsDone,
+            sheetsTotal: targetSheets.length,
+            currentSheetLabel: sheetLabel,
+            found: found.length,
+            verifying: null,
+            references: progressReferences,
+            exemplarDescription: echo,
+          });
+        }
+
+        for (let index = 0; index < modelToVerify.length; index += 1) {
           if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
           setScanProgress({
             sheetsDone,
             sheetsTotal: targetSheets.length,
             currentSheetLabel: sheetLabel,
             found: found.length,
-            verifying: { done: index, total: toVerify.length },
+            verifying: { done: index, total: modelToVerify.length },
             references: progressReferences,
             exemplarDescription: echo,
           });
-          const candidate = toVerify[index];
+          const candidate = modelToVerify[index];
           const window = renderVerifyWindow(raster, candidate);
           const verdict = await verifyCandidateFn({
             data: {
@@ -593,24 +648,15 @@ export function useAiAssist({
               sheet_id: sheet.id,
               candidate_index: index,
               candidate: { x: candidate.x, y: candidate.y },
-              // Which engine proposed it (AITAKEOFF6): rides into the verify
-              // diagnostics as "template 0.78 @ 30°" vs "model".
-              candidate_origin:
-                candidate.source === "template" && candidate.templateHit
-                  ? {
-                      source: "template" as const,
-                      score: Math.min(1, candidate.templateHit.score),
-                      rotation_deg: candidate.templateHit.rotationDeg,
-                      scale: candidate.templateHit.scale,
-                      template_index: candidate.templateHit.templateIndex,
-                    }
-                  : {
-                      source: "model" as const,
-                      score: null,
-                      rotation_deg: null,
-                      scale: null,
-                      template_index: null,
-                    },
+              // Only MODEL candidates reach stage B now (AITAKEOFF11):
+              // template hits ghosted directly above.
+              candidate_origin: {
+                source: "model" as const,
+                score: null,
+                rotation_deg: null,
+                scale: null,
+                template_index: null,
+              },
               references,
               window: {
                 left: window.rect.left,
@@ -654,7 +700,7 @@ export function useAiAssist({
             sheetsTotal: targetSheets.length,
             currentSheetLabel: sheetLabel,
             found: found.length,
-            verifying: { done: index + 1, total: toVerify.length },
+            verifying: { done: index + 1, total: modelToVerify.length },
             references: progressReferences,
             exemplarDescription: echo,
           });
@@ -674,8 +720,9 @@ export function useAiAssist({
                 proposed_model: sheetCoarse.length,
                 after_union_dedupe: unioned.length,
                 after_suppression: fresh.length,
-                sent_to_verify: toVerify.length,
-                verified: sheetVerified,
+                sent_to_verify: modelToVerify.length,
+                verified: sheetVerified + sheetTemplateGhosts,
+                template_autoghosted: sheetTemplateGhosts,
                 center_mismatch_rejected: sheetCenterMismatch,
                 stage_a_tiles: tiles.length,
                 footprint_raster_px: geometry.footprintRasterPx,
