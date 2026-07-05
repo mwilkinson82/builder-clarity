@@ -129,7 +129,15 @@ function SheetSummaryCard({ summary }: { summary: AiScanSheetSummary }) {
           <span>stage A skipped (template-only)</span>
         )}
         {summary.templateEngine === "ok" && summary.templateElapsedMs !== null && (
-          <span>template engine ok in {summary.templateElapsedMs}ms</span>
+          <span>
+            template engine ok in {summary.templateElapsedMs}ms
+            {summary.templateSweeps !== null ? ` (${summary.templateSweeps} sweeps` : ""}
+            {summary.templateSweeps !== null && summary.templateCount !== null
+              ? `, ${summary.templateCount} template${summary.templateCount === 1 ? "" : "s"})`
+              : summary.templateSweeps !== null
+                ? ")"
+                : ""}
+          </span>
         )}
         {summary.templateEngine === "skipped" && <span>template engine skipped</span>}
         {summary.templateEngine === "failed" && (

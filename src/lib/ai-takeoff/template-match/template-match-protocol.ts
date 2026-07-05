@@ -4,16 +4,22 @@
 import type { TemplateMatchCandidate, TemplateTopScore } from "./template-match-domain.ts";
 import type { TemplateMatchOptions } from "./template-matcher.ts";
 
+export interface TemplateMatchWireTemplate {
+  rgba: ArrayBuffer;
+  width: number;
+  height: number;
+  /** Hub anchor (AITAKEOFF9): marker − crop center, template-native px. */
+  anchor: { x: number; y: number };
+}
+
 export interface TemplateMatchRequest {
   id: number;
   /** Detection raster RGBA, transferred (the ArrayBuffer moves, no copy). */
   rasterRgba: ArrayBuffer;
   rasterWidth: number;
   rasterHeight: number;
-  /** Exemplar template RGBA, transferred. */
-  templateRgba: ArrayBuffer;
-  templateWidth: number;
-  templateHeight: number;
+  /** Templates (AITAKEOFF10): the exemplar first, harvested positives after. */
+  templates: TemplateMatchWireTemplate[];
   options: TemplateMatchOptions;
 }
 
@@ -26,6 +32,7 @@ export type TemplateMatchResponse =
       matchHeightPx: number;
       downscale: number;
       sweepCount: number;
+      templateCount: number;
       truncated: boolean;
       /** Masked metric ran (false = degenerate-mask fallback, AITAKEOFF8). */
       maskedMatching: boolean;

@@ -5,7 +5,7 @@
 
 import cvModule from "@techstark/opencv-js";
 import { openCvReady, type OpenCvApi } from "./opencv-runtime.ts";
-import { matchTemplateSweep } from "./template-matcher.ts";
+import { matchTemplatesSweep } from "./template-matcher.ts";
 import type { TemplateMatchRequest, TemplateMatchResponse } from "./template-match-protocol.ts";
 
 let cvPromise: Promise<{ cv: OpenCvApi }> | null = null;
@@ -21,18 +21,21 @@ workerScope.onmessage = async (event) => {
     cvPromise ??= openCvReady(cvModule);
     const { cv } = await cvPromise;
     const startedAt = Date.now();
-    const output = matchTemplateSweep(
+    const output = matchTemplatesSweep(
       cv,
       {
         data: new Uint8Array(request.rasterRgba),
         width: request.rasterWidth,
         height: request.rasterHeight,
       },
-      {
-        data: new Uint8Array(request.templateRgba),
-        width: request.templateWidth,
-        height: request.templateHeight,
-      },
+      request.templates.map((template) => ({
+        image: {
+          data: new Uint8Array(template.rgba),
+          width: template.width,
+          height: template.height,
+        },
+        anchor: template.anchor,
+      })),
       request.options,
     );
     workerScope.postMessage({
@@ -43,6 +46,7 @@ workerScope.onmessage = async (event) => {
       matchHeightPx: output.matchHeightPx,
       downscale: output.downscale,
       sweepCount: output.sweepCount,
+      templateCount: output.templateCount,
       truncated: output.truncated,
       maskedMatching: output.maskedMatching,
       maskCoverage: output.maskCoverage,

@@ -336,11 +336,11 @@ export function useAiAssist({
       // detection raster (footprint-sized, same scale matching runs at);
       // the worker unions its hits with stage A on every sheet.
       const proposalSource = begin.proposalSource ?? "both";
-      let templateImage: ImageData | null = null;
-      // Hub anchor (AITAKEOFF9 Task 0): where the estimator's marker sits
-      // relative to the template crop's center — recovered hits land on the
-      // hub, not on the ink bbox's center (the constant ~45px A-100 drift).
-      let templateAnchor = { x: 0, y: 0 };
+      // Templates (AITAKEOFF10 Task 3): the exemplar first, then every
+      // harvested same-label positive (accepted marks incl. nudged ones) as
+      // its own template with its own hub anchor — different symbol variants
+      // get covered by their own accepted instances within one session.
+      let templates: Array<{ image: ImageData; anchor: { x: number; y: number } }> = [];
       let exemplarRasterReuse: Awaited<ReturnType<typeof renderDetectionSheet>> | null = null;
       if (proposalSource !== "model" && exemplarImage.footprintPt !== null) {
         const exemplarRaster = await renderDetectionSheet(
@@ -358,34 +358,39 @@ export function useAiAssist({
           rasterWidthPx: exemplarRaster.widthPx,
           rasterHeightPx: exemplarRaster.heightPx,
         });
-        const templateRect = templateCropRect(
-          {
-            x: exemplar.point.x * exemplarRaster.widthPx,
-            y: exemplar.point.y * exemplarRaster.heightPx,
-          },
-          exemplarGeometry.footprintRasterPx ?? 0,
-          exemplarRaster.widthPx,
-          exemplarRaster.heightPx,
-        );
-        templateImage =
-          exemplarRaster.canvas
-            .getContext("2d")
-            ?.getImageData(
-              templateRect.left,
-              templateRect.top,
-              templateRect.width,
-              templateRect.height,
-            ) ?? null;
-        templateAnchor = {
-          x:
-            exemplar.point.x * exemplarRaster.widthPx -
-            (templateRect.left + templateRect.width / 2),
-          y:
-            exemplar.point.y * exemplarRaster.heightPx -
-            (templateRect.top + templateRect.height / 2),
+        const exemplarContext = exemplarRaster.canvas.getContext("2d");
+        const templateFromPoint = (point: SheetPoint) => {
+          const markerPx = {
+            x: point.x * exemplarRaster.widthPx,
+            y: point.y * exemplarRaster.heightPx,
+          };
+          const rect = templateCropRect(
+            markerPx,
+            exemplarGeometry.footprintRasterPx ?? 0,
+            exemplarRaster.widthPx,
+            exemplarRaster.heightPx,
+          );
+          const image = exemplarContext?.getImageData(rect.left, rect.top, rect.width, rect.height);
+          if (!image) return null;
+          return {
+            image,
+            anchor: {
+              x: markerPx.x - (rect.left + rect.width / 2),
+              y: markerPx.y - (rect.top + rect.height / 2),
+            },
+          };
         };
+        const primaryTemplate = templateFromPoint(exemplar.point);
+        templates = primaryTemplate
+          ? [
+              primaryTemplate,
+              ...harvestPoints
+                .map((point) => templateFromPoint(point))
+                .filter((entry): entry is NonNullable<typeof entry> => entry !== null),
+            ]
+          : [];
         exemplarRasterReuse = exemplarRaster;
-        if (templateImage) templateSession = createTemplateMatchSession();
+        if (templates.length > 0) templateSession = createTemplateMatchSession();
       }
       if (proposalSource === "template" && !templateSession) {
         throw new Error(
@@ -464,6 +469,7 @@ export function useAiAssist({
         // engine alone — but never silently anymore (AITAKEOFF7): the
         // per-sheet summary records engine status, error, and timing.
         let templateHits: TemplateMatchCandidate[] = [];
+        let templateSweeps: number | null = null;
         let templateEngine: "ok" | "failed" | "skipped" = "skipped";
         let templateError = "";
         let templateElapsedMs: number | null = null;
@@ -474,7 +480,7 @@ export function useAiAssist({
         let templateMasked: boolean | null = null;
         let templateMaskCoverage: number | null = null;
         let templateThreshold: number | null = null;
-        if (templateSession && templateImage && geometry.footprintRasterPx !== null) {
+        if (templateSession && templates.length > 0 && geometry.footprintRasterPx !== null) {
           try {
             const rasterPixels = raster.canvas
               .getContext("2d")
@@ -482,17 +488,17 @@ export function useAiAssist({
             if (!rasterPixels) throw new Error("The sheet could not be read for matching.");
             const matched = await templateSession.match({
               raster: rasterPixels,
-              template: templateImage,
+              templates,
               options: {
                 threshold: begin.templateMatchThreshold ?? DEFAULT_TEMPLATE_MATCH_THRESHOLD,
                 footprintPx: geometry.footprintRasterPx,
                 radius: geometry.radius,
-                anchor: templateAnchor,
               },
             });
             templateHits = matched.candidates;
             templateEngine = "ok";
             templateElapsedMs = matched.elapsedMs;
+            templateSweeps = matched.sweepCount;
             templateTopScores = matched.topScores;
             templateMasked = matched.maskedMatching;
             templateMaskCoverage = matched.maskCoverage;
@@ -596,8 +602,15 @@ export function useAiAssist({
                       score: Math.min(1, candidate.templateHit.score),
                       rotation_deg: candidate.templateHit.rotationDeg,
                       scale: candidate.templateHit.scale,
+                      template_index: candidate.templateHit.templateIndex,
                     }
-                  : { source: "model" as const, score: null, rotation_deg: null, scale: null },
+                  : {
+                      source: "model" as const,
+                      score: null,
+                      rotation_deg: null,
+                      scale: null,
+                      template_index: null,
+                    },
               references,
               window: {
                 left: window.rect.left,
@@ -673,6 +686,8 @@ export function useAiAssist({
                 // Score transparency (AITAKEOFF8 Task 1): zero hits must
                 // read as "top 0.41 vs threshold 0.78", never as a mystery.
                 template_threshold: templateThreshold,
+                template_sweeps: templateSweeps,
+                template_count: templates.length,
                 template_masked: templateMasked,
                 template_mask_coverage: templateMaskCoverage,
                 template_top_scores: templateTopScores.map((top) => ({

@@ -185,6 +185,9 @@ export interface AiScanSheetSummary {
   templateElapsedMs: number | null;
   /** The score floor the sweep applied (AITAKEOFF8 Task 1). */
   templateThreshold: number | null;
+  /** matchTemplate invocations, coarse+fine (AITAKEOFF10 Task 3). */
+  templateSweeps: number | null;
+  templateCount: number | null;
   /** Masked metric ran; false = degenerate-mask fallback (AITAKEOFF8). */
   templateMasked: boolean | null;
   templateMaskCoverage: number | null;
@@ -416,6 +419,12 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
           : null,
         templateThreshold: Number.isFinite(Number(meta.template_threshold))
           ? Number(meta.template_threshold)
+          : null,
+        templateSweeps: Number.isFinite(Number(meta.template_sweeps))
+          ? Number(meta.template_sweeps)
+          : null,
+        templateCount: Number.isFinite(Number(meta.template_count))
+          ? Number(meta.template_count)
           : null,
         templateMasked: typeof meta.template_masked === "boolean" ? meta.template_masked : null,
         templateMaskCoverage: Number.isFinite(Number(meta.template_mask_coverage))

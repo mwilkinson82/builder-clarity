@@ -583,6 +583,7 @@ const verifyCandidateInput = z.object({
       score: z.number().min(0).max(1).nullable().default(null),
       rotation_deg: z.number().min(0).lt(360).nullable().default(null),
       scale: z.number().gt(0).max(10).nullable().default(null),
+      template_index: z.number().int().min(0).max(10).nullable().default(null),
     })
     .optional(),
   references: referencesSchema,
@@ -703,6 +704,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
       score: null,
       rotation_deg: null,
       scale: null,
+      template_index: null,
     };
     const folder = diagnosticsFolder(operation.organization_id, operation.id);
     const artifactName = `verify-${data.sheet_id}-${data.candidate_index}`;
@@ -731,6 +733,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
             score: origin.score,
             rotationDeg: origin.rotation_deg,
             scale: origin.scale,
+            templateIndex: origin.template_index,
           }),
           references: referenceComposition(data.references),
           window: {
@@ -862,6 +865,8 @@ const sheetSummaryInput = z.object({
     // Score transparency (AITAKEOFF8 Task 1): the threshold applied, whether
     // the masked metric ran, and the best sweep scores threshold-or-not.
     template_threshold: z.number().min(0).max(1).nullable().default(null),
+    template_sweeps: z.number().int().min(0).max(100000).nullable().default(null),
+    template_count: z.number().int().min(0).max(10).nullable().default(null),
     template_masked: z.boolean().nullable().default(null),
     template_mask_coverage: z.number().min(0).max(1).nullable().default(null),
     template_top_scores: z

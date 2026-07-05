@@ -26,7 +26,10 @@ import {
   TEMPLATE_MIN_SIDE_PX,
   unionProposalCandidates,
 } from "../src/lib/ai-takeoff/template-match/template-match-domain.ts";
-import { matchTemplateSweep } from "../src/lib/ai-takeoff/template-match/template-matcher.ts";
+import {
+  matchTemplateSweep,
+  matchTemplatesSweep,
+} from "../src/lib/ai-takeoff/template-match/template-matcher.ts";
 import { openCvReady } from "../src/lib/ai-takeoff/template-match/opencv-runtime.ts";
 import {
   buildVerifyInstruction,
@@ -38,6 +41,7 @@ import {
   inkMaskFromRgba,
   MAX_DEDUPE_RADIUS_LONG_EDGE,
   measureInkFootprintPx,
+  negativeEligiblePoints,
   parseVerifyResponse,
   sheetRadiusFromLongEdge,
   snapToInkCentroid,
@@ -251,9 +255,10 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
     radius: syntheticRadius(48, 400, 300),
     rotationStepDeg: 360,
     scales: [1],
+    coarseOnly: true,
   });
   assert.equal(output.downscale, 1, "small rasters match at native resolution");
-  assert.equal(output.sweepCount, 1, "no-rotation sweep is a single pass");
+  assert.equal(output.sweepCount, 1, "no-rotation coarse-only sweep is a single pass");
   assert.equal(output.candidates.length, 1, "NCC PROOF: exactly one candidate, plateau collapsed");
   const hit = output.candidates[0];
   // AITAKEOFF9: the hub anchor (default = crop center = where the fixture
@@ -284,8 +289,9 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
     radius: syntheticRadius(48, 600, 400),
     rotationStepDeg: 30,
     scales: [1],
+    coarseOnly: true,
   });
-  assert.equal(output.sweepCount, 12, "full default rotation sweep ran");
+  assert.equal(output.sweepCount, 12, "full coarse rotation grid ran");
   assert.equal(output.candidates.length, 2, "both instances propose exactly once");
   // The hub anchor holds under rotation (AITAKEOFF9): hits land on the
   // marker point for every rotation variant, not on the rotated bbox center.
@@ -315,7 +321,12 @@ const syntheticRadius = (footprintPx: number, width: number, height: number): Sh
   });
   const grown = output.candidates.find((c) => Math.hypot(c.x * 600 - 420, c.y * 400 - 250) < 8);
   assert.ok(grown, "SCALE PROOF: the enlarged instance still proposes");
-  assert.equal(grown!.scale, 1.15, "SCALE PROOF: the 1.15 template variant wins it");
+  // The fine ladder estimates scale to within one ±7.5% step — on
+  // nearest-neighbor-painted ink the empirical best can sit one step off.
+  assert.ok(
+    Math.abs(grown!.scale - 1.15) <= 0.076,
+    `SCALE PROOF: the ladder recovers the 1.15 instance within one step (got ${grown!.scale})`,
+  );
 }
 
 // Coordinate round-trip through the downscale: a raster over the match
@@ -598,7 +609,10 @@ const sweep = matchTemplateSweep(
   },
 );
 const sweepElapsedMs = Date.now() - sweepStartedAt;
-assert.equal(sweep.sweepCount, 36, "12 rotations x 3 scales all ran");
+assert.ok(
+  sweep.sweepCount >= 36,
+  `coarse grid plus ROI refinements all ran (${sweep.sweepCount} sweeps)`,
+);
 assert.ok(!sweep.truncated, "the fixture sheet never hits the safety cap");
 assert.ok(
   sweepElapsedMs < 20_000,
@@ -637,9 +651,15 @@ assert.ok(
 const rotatedHit = candidateRasterPx.find((entry) =>
   near(entry, glyphRasterPx[1], footprintRasterPx / 2),
 );
+const angularDistanceTo45 = rotatedHit
+  ? Math.min(
+      Math.abs(rotatedHit.candidate.rotationDeg - 45),
+      360 - Math.abs(rotatedHit.candidate.rotationDeg - 45),
+    )
+  : Number.POSITIVE_INFINITY;
 assert.ok(
-  rotatedHit && [30, 60].includes(rotatedHit.candidate.rotationDeg),
-  `ROTATION PROOF: the 45° instance matches a neighboring sweep variant (got ${rotatedHit?.candidate.rotationDeg}° at ${rotatedHit?.candidate.score.toFixed(3)})`,
+  rotatedHit && angularDistanceTo45 <= 10,
+  `ROTATION PROOF: the fine ladder recovers the 45° instance within 10° (got ${rotatedHit?.candidate.rotationDeg}° at ${rotatedHit?.candidate.score.toFixed(3)})`,
 );
 
 // Nothing proposes on blank paper: every candidate is one of the 5 shapes.
@@ -1702,4 +1722,255 @@ await runHubProof(false, 1824);
 await runHubProof(true, 1824);
 console.log(
   "Hub-anchor proof passed: candidates ≤4px and final pipeline points ≤2px of the true hub for 0°/45°/0.85× instances on blank and dense backgrounds at 3800px and 1824px; one shared final-point path; sanity band trips on neighbor-centered verdicts; the fused recall case proposes at 0.62.",
+);
+
+// --- AITAKEOFF10: variant recall + the honest teach loop ---
+// A-100 (op 38eb2a3c): template top-5 read 0.86/0.76/0.56/0.55/0.53 at thr
+// 0.62 — a cliff whose sub-threshold cluster sat on REAL brushes of other
+// designs. One template cannot cover a family. This fixture builds three
+// variants of one symbol family; the exemplar-only pass finds its own
+// variant (including a 15° instance sitting between the coarse 30° steps —
+// the fine ladder's job), and after simulated nudged accepts of one
+// instance of each other variant, the multi-template rescan proposes ALL
+// instances of ALL variants with per-template provenance.
+
+interface VariantSpec {
+  radiusPt: number;
+  spokes: number;
+}
+const VARIANTS: VariantSpec[] = [
+  { radiusPt: 12, spokes: 4 }, // V0 — the exemplar's design
+  { radiusPt: 13.2, spokes: 6 }, // V1 — +10% diameter, different spokes
+  { radiusPt: 10.8, spokes: 8 }, // V2 — −10% diameter, different spokes
+];
+const VARIANT_INSTANCES = [
+  { variant: 0, xPt: 250, yPt: 700, rot: 0 },
+  { variant: 0, xPt: 550, yPt: 700, rot: 15 }, // between the 30° coarse steps
+  { variant: 1, xPt: 850, yPt: 700, rot: 50 },
+  { variant: 1, xPt: 1150, yPt: 700, rot: 155 },
+  { variant: 2, xPt: 400, yPt: 350, rot: 0 },
+  { variant: 2, xPt: 900, yPt: 350, rot: 85 },
+];
+
+const variantDoc = await pdfLib.PDFDocument.create();
+const variantPage = variantDoc.addPage([PAGE.widthPt, PAGE.heightPt]);
+for (const instance of VARIANT_INSTANCES) {
+  const spec = VARIANTS[instance.variant];
+  variantPage.drawCircle({
+    x: instance.xPt,
+    y: instance.yPt,
+    size: spec.radiusPt,
+    borderWidth: 2,
+    borderColor: pdfLib.rgb(0, 0, 0),
+  });
+  for (let spoke = 0; spoke < spec.spokes; spoke += 1) {
+    const angle = (2 * Math.PI * spoke) / spec.spokes + (instance.rot * Math.PI) / 180;
+    variantPage.drawLine({
+      start: { x: instance.xPt, y: instance.yPt },
+      end: {
+        x: instance.xPt + Math.cos(angle) * spec.radiusPt,
+        y: instance.yPt + Math.sin(angle) * spec.radiusPt,
+      },
+      thickness: 1.2,
+      color: pdfLib.rgb(0, 0, 0),
+    });
+  }
+}
+const variantPdf = await pdfjs.getDocument({ data: await variantDoc.save() }).promise;
+const variantPdfPage = await variantPdf.getPage(1);
+const variantCanvas = napi.createCanvas(rasterWidthPx, rasterHeightPx);
+const variantContext = variantCanvas.getContext("2d");
+variantContext.fillStyle = "#ffffff";
+variantContext.fillRect(0, 0, rasterWidthPx, rasterHeightPx);
+await variantPdfPage.render({
+  canvasContext: variantContext,
+  viewport: variantPdfPage.getViewport({ scale: detectionScale }),
+}).promise;
+const variantRaster = variantContext.getImageData(0, 0, rasterWidthPx, rasterHeightPx);
+const variantPx = VARIANT_INSTANCES.map((instance) =>
+  pdfPointToRenderPixel({ xPt: instance.xPt, yPt: instance.yPt }, PAGE, detectionScale),
+);
+
+// Exemplar = instance 0 (V0 at 0°), measured through the client path.
+const variantSheet = pdfPointToSheetPoint(
+  { xPt: VARIANT_INSTANCES[0].xPt, yPt: VARIANT_INSTANCES[0].yPt },
+  PAGE,
+);
+const variantPlan = exemplarCropPlan(variantSheet, PAGE);
+const variantCropCanvas = napi.createCanvas(variantPlan.widthPx, variantPlan.heightPx);
+const variantCropContext = variantCropCanvas.getContext("2d");
+variantCropContext.fillStyle = "#ffffff";
+variantCropContext.fillRect(0, 0, variantPlan.widthPx, variantPlan.heightPx);
+await variantPdfPage.render({
+  canvasContext: variantCropContext,
+  viewport: variantPdfPage.getViewport({
+    scale: variantPlan.scale,
+    offsetX: variantPlan.offsetX,
+    offsetY: variantPlan.offsetY,
+  }),
+}).promise;
+const variantCropImage = variantCropContext.getImageData(
+  0,
+  0,
+  variantPlan.widthPx,
+  variantPlan.heightPx,
+);
+const variantFootprintCropPx = measureInkFootprintPx(
+  inkMaskFromRgba(variantCropImage.data, variantPlan.widthPx, variantPlan.heightPx),
+  { x: variantPlan.markerInCropPx.px, y: variantPlan.markerInCropPx.py },
+);
+assert.ok(variantFootprintCropPx, "the variant exemplar measures");
+const variantGeometry = exemplarSheetGeometry({
+  footprintPt: variantFootprintCropPx! / variantPlan.scale,
+  pageLongEdgePt: Math.max(PAGE.widthPt, PAGE.heightPt),
+  rasterWidthPx,
+  rasterHeightPx,
+});
+
+/** A template crop with its own hub anchor, exactly as the client builds it. */
+const variantTemplateAt = (instanceIndex: number) => {
+  const markerPx = variantPx[instanceIndex];
+  const rect = templateCropRect(
+    { x: markerPx.px, y: markerPx.py },
+    variantGeometry.footprintRasterPx!,
+    rasterWidthPx,
+    rasterHeightPx,
+  );
+  const image = variantContext.getImageData(rect.left, rect.top, rect.width, rect.height);
+  return {
+    image: { data: image.data, width: rect.width, height: rect.height },
+    anchor: {
+      x: markerPx.px - (rect.left + rect.width / 2),
+      y: markerPx.py - (rect.top + rect.height / 2),
+    },
+  };
+};
+const variantFound = (candidates: { x: number; y: number }[], instanceIndex: number) =>
+  candidates.some(
+    (candidate) =>
+      Math.hypot(
+        candidate.x * rasterWidthPx - variantPx[instanceIndex].px,
+        candidate.y * rasterHeightPx - variantPx[instanceIndex].py,
+      ) <
+      variantGeometry.footprintRasterPx! / 2,
+  );
+
+// PASS 1: exemplar template only. Its own variant — including the 15°
+// instance between coarse steps — must propose.
+const pass1 = matchTemplatesSweep(
+  cv,
+  { data: variantRaster.data, width: rasterWidthPx, height: rasterHeightPx },
+  [variantTemplateAt(0)],
+  {
+    threshold: DEFAULT_TEMPLATE_MATCH_THRESHOLD,
+    footprintPx: variantGeometry.footprintRasterPx!,
+    radius: variantGeometry.radius,
+  },
+);
+assert.ok(variantFound(pass1.candidates, 0), "PASS 1: the exemplar's own instance proposes");
+assert.ok(
+  variantFound(pass1.candidates, 1),
+  "PASS 1 / FINE LADDER: the 15° off-step instance of the exemplar's variant proposes",
+);
+const pass1OtherVariants = [2, 3, 4, 5].filter((index) =>
+  variantFound(pass1.candidates, index),
+).length;
+
+// PASS 2: simulated nudged accepts of one instance of V1 and V2 — each
+// becomes a template with its own mask and anchor. ALL instances of ALL
+// variants must now propose, with per-template provenance.
+const pass2StartedAt = Date.now();
+const pass2 = matchTemplatesSweep(
+  cv,
+  { data: variantRaster.data, width: rasterWidthPx, height: rasterHeightPx },
+  [variantTemplateAt(0), variantTemplateAt(2), variantTemplateAt(4)],
+  {
+    threshold: DEFAULT_TEMPLATE_MATCH_THRESHOLD,
+    footprintPx: variantGeometry.footprintRasterPx!,
+    radius: variantGeometry.radius,
+  },
+);
+const pass2ElapsedMs = Date.now() - pass2StartedAt;
+for (const [index] of VARIANT_INSTANCES.entries()) {
+  assert.ok(
+    variantFound(pass2.candidates, index),
+    `PASS 2 / VARIANT RECALL: instance ${index} (variant ${VARIANT_INSTANCES[index].variant}, rot ${VARIANT_INSTANCES[index].rot}°) proposes after nudged accepts`,
+  );
+}
+assert.ok(
+  pass2.candidates.some((candidate) => candidate.templateIndex === 1) &&
+    pass2.candidates.some((candidate) => candidate.templateIndex === 2),
+  "PROVENANCE: hits carry the index of the template that found them",
+);
+assert.equal(pass2.templateCount, 3, "the funnel reports the template count");
+assert.ok(pass2.sweepCount > pass1.sweepCount, "multi-template runs more sweeps, reported");
+assert.ok(
+  pass2ElapsedMs < 20_000,
+  `BUDGET: the 3-template coarse-to-fine pass stays under 20s/sheet (took ${pass2ElapsedMs}ms)`,
+);
+console.log(
+  `Variant fixture: pass 1 found ${2 + pass1OtherVariants}/6 (own variant complete), pass 2 found 6/6 in ${pass2ElapsedMs}ms with ${pass2.sweepCount} sweeps across 3 templates.`,
+);
+
+// --- Poisoning regression (AITAKEOFF10 Task 4): a placement rejection whose
+// crop IS a true glyph must never become a stage-B negative. Pre-fix, the
+// stored rejection fed buildNegativeReferences and taught the model that
+// the symbol is not the symbol; the eligibility filter now blocks it at the
+// source, so the verify rubric carries ZERO negative framing and every true
+// glyph still verifies.
+{
+  const poisonedSession = [
+    // The founder's actual A-100 case: real symbols "rejected" without any
+    // wrong-symbol verdict — placement complaints and lifecycle fabrications.
+    {
+      x: variantPx[0].px / rasterWidthPx,
+      y: variantPx[0].py / rasterHeightPx,
+      reason: "wrong_spot" as const,
+    },
+    {
+      x: variantPx[2].px / rasterWidthPx,
+      y: variantPx[2].py / rasterHeightPx,
+      reason: "wrong_spot" as const,
+    },
+  ];
+  const negatives = negativeEligiblePoints(poisonedSession);
+  assert.equal(
+    negatives.length,
+    0,
+    "POISON REGRESSION: placement rejections of true glyphs never become negatives",
+  );
+  const rubric = buildVerifyInstruction({
+    label: "spoked wheel",
+    positiveCount: 1,
+    negativeCount: negatives.length,
+  });
+  assert.ok(
+    !/REJECTED/.test(rubric),
+    "the verify rubric carries no rejected-reference framing when no identity negatives exist",
+  );
+  // Stage B (mocked as always) verifies every true instance — nothing was
+  // taught to reject them.
+  let verifiedCount = 0;
+  for (const [index] of VARIANT_INSTANCES.entries()) {
+    const centerPx = { x: variantPx[index].px, y: variantPx[index].py };
+    const rect = verifyWindowRect(centerPx, rasterWidthPx, rasterHeightPx);
+    const verdict = parseVerifyResponse(
+      JSON.stringify({
+        observed: "a spoked wheel symbol matching the exemplar",
+        match: true,
+        center: {
+          x: Math.round(tileLocalPxToNormalized(centerPx.x - rect.left, rect.width) * 10) / 10,
+          y: Math.round(tileLocalPxToNormalized(centerPx.y - rect.top, rect.height) * 10) / 10,
+        },
+      }),
+      rect.width,
+      rect.height,
+    );
+    if (verdict.match) verifiedCount += 1;
+  }
+  assert.equal(verifiedCount, 6, "POISON REGRESSION: all true glyphs still verify");
+}
+
+console.log(
+  "Honest-teach-loop fixtures passed: variant recall via nudged-accept templates, provenance per hit, placement rejections never poison stage B.",
 );
