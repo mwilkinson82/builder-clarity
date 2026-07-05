@@ -1,19 +1,24 @@
-// The template-match sweep (AITAKEOFF6 Task 0, masked in AITAKEOFF8). CV
-// proposes, the model verifies: masked normalized cross-correlation of the
-// exemplar's INK — not its neighborhood — against the whole detection
-// raster. The A-100 zero-hit incident proved whole-rectangle correlation
-// structurally wrong on real sheets: the template crop carries fused context
-// linework and forced-white rotation padding, and at true match sites the
-// differing context dragged every score under the threshold. With the
-// dilated ink mask, padding and context stop mattering by construction.
+// The template-match sweep (AITAKEOFF6; masked in AITAKEOFF8; hub-anchored
+// in AITAKEOFF9; multi-template + coarse-to-fine in AITAKEOFF10). CV
+// proposes, the model verifies: masked normalized cross-correlation of each
+// positive reference's INK — the estimator's exemplar plus harvested
+// accepted marks, each with its own mask and anchor — against the whole
+// detection raster. A coarse 30°/3-scale pass finds promise; a fine
+// 10°/±7.5% refinement on small ROIs decides at the real threshold, so thin
+// radial symbols sitting between coarse steps stop slipping away without
+// paying a 7× flat-sweep bill.
 //
 // The opencv.js module arrives by injection so this file runs identically in
 // the Web Worker (browser wasm) and under plain node in the smoke suite —
 // the fixture proof exercises the REAL matcher, not a stand-in.
 
 import {
+  fineRotationsFor,
+  ladderNeighborsFor,
+  LADDER_RECALL_MARGIN,
   matchDownscaleFor,
   MIN_MASK_COVERAGE,
+  SECONDARY_TEMPLATE_FLOOR,
   suppressNonMaxima,
   TEMPLATE_MATCH_SCALES,
   TEMPLATE_ROTATION_STEP_DEG,
@@ -34,32 +39,24 @@ export interface RgbaImage {
   height: number;
 }
 
+/** One template: pixels + the marker's offset from the crop center. */
+export interface TemplateInput {
+  image: RgbaImage;
+  /** Hub anchor (AITAKEOFF9): marker − crop center, template-native px. */
+  anchor: { x: number; y: number };
+}
+
 export interface TemplateMatchOptions {
-  /** Recall-biased masked-score floor — candidates below never reach stage B. */
+  /** Recall-biased masked-score floor for the PRIMARY template. */
   threshold: number;
   /** Exemplar ink footprint on the detection raster, in raster pixels. */
   footprintPx: number;
-  /**
-   * The canonical NMS radius from exemplarSheetGeometry (AITAKEOFF7): the
-   * matcher no longer derives its own — one derivation site, capped, shared
-   * with every other dedupe/suppression consumer.
-   */
+  /** The canonical NMS radius from exemplarSheetGeometry (AITAKEOFF7). */
   radius: SheetRadius;
-  /**
-   * Fixture comparison flag (AITAKEOFF8 Task 2): false forces the legacy
-   * unmasked CCOEFF path. Production always masks (unless the mask is
-   * degenerate, which falls back automatically and says so).
-   */
+  /** Fixture comparison flag (AITAKEOFF8): false = legacy unmasked CCOEFF. */
   maskedMatching?: boolean;
-  /**
-   * Hub anchor (AITAKEOFF9 Task 0): the exemplar MARKER point's offset from
-   * the template crop's center, in template-native px. Recovered hits land
-   * where the estimator's marker convention designates — the hub —
-   * independent of ink asymmetry, crop shape, padding, or tightening. The
-   * A-100 drift (every ghost off by the same ~45px vector) was the ink-bbox
-   * center standing in for this point. Default {0,0} = the crop center.
-   */
-  anchor?: { x: number; y: number };
+  /** Fixture flag: skip the fine refinement, coarse grid decides directly. */
+  coarseOnly?: boolean;
   rotationStepDeg?: number;
   scales?: readonly number[];
   maxLongEdgePx?: number;
@@ -67,23 +64,21 @@ export interface TemplateMatchOptions {
 
 export interface TemplateMatchOutput {
   candidates: TemplateMatchCandidate[];
-  /** Matching resolution actually used (diagnostics + tests). */
   matchWidthPx: number;
   matchHeightPx: number;
   downscale: number;
+  /** Every matchTemplate invocation — coarse full-raster and fine ROI alike. */
   sweepCount: number;
+  templateCount: number;
   /** True when the safety cap dropped hits — never silently. */
   truncated: boolean;
-  /** Whether the masked metric actually ran (false = degenerate fallback). */
+  /** Whether the masked metric ran (false = degenerate fallback). */
   maskedMatching: boolean;
-  /** Mask ink fraction of the tightened template crop. */
+  /** Mask ink fraction of the PRIMARY template's tightened crop. */
   maskCoverage: number;
-  /** The score floor the sweep actually applied. */
+  /** The score floor applied to the primary template. */
   appliedThreshold: number;
-  /**
-   * Best sweep scores regardless of the threshold (AITAKEOFF8 Task 1) — a
-   * zero-hit sheet reports 0.41-vs-0.78, never an opaque nothing.
-   */
+  /** Best sweep scores regardless of threshold (AITAKEOFF8 Task 1). */
   topScores: TemplateTopScore[];
 }
 
@@ -96,8 +91,12 @@ const BINARIZE_DELTA = 10;
 const MASK_DILATE_KERNEL_PX = 5;
 // Margin kept around the mask's ink bbox when tightening the template crop.
 const TIGHTEN_MARGIN_PX = 3;
-// Safety cap on hits leaving the matcher — a pathological sheet (hatching
-// that correlates everywhere) must not flood stage B. Reported, never silent.
+// Fine-refinement ROI slack per side, in match-space footprints.
+const REFINE_MARGIN_FOOTPRINTS = 0.5;
+// At most this many coarse seeds refine — the fine pass must stay ROI-cheap
+// even on pathological sheets.
+const MAX_REFINE_CANDIDATES = 128;
+// Safety cap on hits leaving the matcher. Reported, never silent.
 export const TEMPLATE_MATCH_MAX_HITS = 512;
 
 /** Track-and-free helper: every Mat registered here dies in the finally. */
@@ -114,8 +113,9 @@ function matScope() {
     },
   };
 }
+type MatScope = ReturnType<typeof matScope>;
 
-function rgbaToGray(cv: OpenCvApi, image: RgbaImage, scope: ReturnType<typeof matScope>): CvMat {
+function rgbaToGray(cv: OpenCvApi, image: RgbaImage, scope: MatScope): CvMat {
   const rgba = scope.track(new cv.Mat(image.height, image.width, cv.CV_8UC4));
   rgba.data.set(
     image.data instanceof Uint8Array
@@ -127,7 +127,7 @@ function rgbaToGray(cv: OpenCvApi, image: RgbaImage, scope: ReturnType<typeof ma
   return gray;
 }
 
-function binarize(cv: OpenCvApi, gray: CvMat, scope: ReturnType<typeof matScope>): CvMat {
+function binarize(cv: OpenCvApi, gray: CvMat, scope: MatScope): CvMat {
   const bin = scope.track(new cv.Mat());
   cv.adaptiveThreshold(
     gray,
@@ -185,38 +185,35 @@ interface SweepHit {
   score: number;
   rotationDeg: number;
   scale: number;
+  templateIndex: number;
 }
 
-/**
- * Rolling top-N sweep scores across ALL sweeps, threshold or not
- * (AITAKEOFF8 Task 1). Entries keep a minimum separation so the list shows
- * N distinct places, not N pixels of one plateau.
- */
+/** Rolling top-N sweep scores across everything, threshold or not. */
 function makeTopTracker(count: number, minSeparationPx: number) {
   const entries: SweepHit[] = [];
   const separation = Math.max(2, minSeparationPx);
   return {
     entries,
     floor: Number.NEGATIVE_INFINITY,
-    offer(x: number, y: number, score: number, rotationDeg: number, scale: number) {
+    offer(hit: SweepHit) {
       const nearIndex = entries.findIndex(
-        (entry) => Math.abs(entry.x - x) < separation && Math.abs(entry.y - y) < separation,
+        (entry) => Math.abs(entry.x - hit.x) < separation && Math.abs(entry.y - hit.y) < separation,
       );
       if (nearIndex >= 0) {
-        if (score <= entries[nearIndex].score) return;
-        entries[nearIndex] = { x, y, score, rotationDeg, scale };
+        if (hit.score <= entries[nearIndex].score) return;
+        entries[nearIndex] = hit;
       } else if (entries.length < count) {
-        entries.push({ x, y, score, rotationDeg, scale });
+        entries.push(hit);
       } else {
         let worst = 0;
         for (let index = 1; index < entries.length; index += 1) {
           if (entries[index].score < entries[worst].score) worst = index;
         }
-        if (score <= entries[worst].score) {
+        if (hit.score <= entries[worst].score) {
           this.floor = entries[worst].score;
           return;
         }
-        entries[worst] = { x, y, score, rotationDeg, scale };
+        entries[worst] = hit;
       }
       entries.sort((a, b) => b.score - a.score);
       this.floor =
@@ -224,13 +221,9 @@ function makeTopTracker(count: number, minSeparationPx: number) {
     },
   };
 }
+type TopTracker = ReturnType<typeof makeTopTracker>;
 
-/**
- * Grid-max peak collection over one matchTemplate result: one pass, keeping
- * the best score per footprint-half cell, feeding the top tracker with every
- * finite score along the way. The plateau around a genuine hit collapses
- * here cheaply; cross-sweep duplicates collapse in the final NMS.
- */
+/** Grid-max peak collection over one matchTemplate result. */
 function collectPeaks(
   result: CvMat,
   threshold: number,
@@ -239,7 +232,8 @@ function collectPeaks(
   offsetY: number,
   rotationDeg: number,
   scale: number,
-  topTracker: ReturnType<typeof makeTopTracker>,
+  templateIndex: number,
+  topTracker: TopTracker | null,
 ): SweepHit[] {
   const cell = Math.max(2, Math.round(cellPx));
   const best = new Map<number, SweepHit>();
@@ -249,35 +243,165 @@ function collectPeaks(
     const rowOffset = y * cols;
     for (let x = 0; x < cols; x += 1) {
       const score = values[rowOffset + x];
-      // Guard normalization pathologies: masked CCORR emits NaN on blank
-      // regions (0/0) and CCOEFF can emit garbage on flat ones — only
-      // finite, in-range scores count anywhere below.
+      // Guard normalization pathologies (NaN on blank, garbage on flat).
       if (!Number.isFinite(score) || score > 1.0001) continue;
-      if (score > topTracker.floor) {
-        topTracker.offer(x + offsetX, y + offsetY, score, rotationDeg, scale);
+      if (topTracker && score > topTracker.floor) {
+        topTracker.offer({
+          x: x + offsetX,
+          y: y + offsetY,
+          score,
+          rotationDeg,
+          scale,
+          templateIndex,
+        });
       }
       if (score < threshold) continue;
       const key = Math.floor(y / cell) * 65536 + Math.floor(x / cell);
       const existing = best.get(key);
       if (!existing || score > existing.score) {
-        best.set(key, { x: x + offsetX, y: y + offsetY, score, rotationDeg, scale });
+        best.set(key, { x: x + offsetX, y: y + offsetY, score, rotationDeg, scale, templateIndex });
       }
     }
   }
   return [...best.values()];
 }
 
+/** One template prepared for sweeping: padded gray + mask + anchor. */
+interface PreparedTemplate {
+  padded: CvMat;
+  maskPadded: CvMat;
+  anchorVsCenter: { x: number; y: number };
+  maskCoverage: number;
+  hasInk: boolean;
+  /** Per-angle warp cache — fine angles reuse across ROI refinements. */
+  rotationCache: Map<number, { rotated: CvMat; rotatedMask: CvMat }>;
+}
+
+function prepareTemplate(
+  cv: OpenCvApi,
+  template: TemplateInput,
+  scope: MatScope,
+): PreparedTemplate {
+  const grayFull = rgbaToGray(cv, template.image, scope);
+  const binFull = binarize(cv, grayFull, scope);
+  const maskFull = scope.track(new cv.Mat());
+  const dilateKernel = scope.track(
+    cv.Mat.ones(MASK_DILATE_KERNEL_PX, MASK_DILATE_KERNEL_PX, cv.CV_8UC1),
+  );
+  cv.dilate(binFull, maskFull, dilateKernel);
+
+  const inkBox = inkBoundingBox(maskFull);
+  const markerInCrop = {
+    x: template.image.width / 2 + template.anchor.x,
+    y: template.image.height / 2 + template.anchor.y,
+  };
+  let gray = grayFull;
+  let maskTight = maskFull;
+  let anchorVsCenter = { x: 0, y: 0 };
+  if (inkBox) {
+    const left = Math.max(0, inkBox.left - TIGHTEN_MARGIN_PX);
+    const top = Math.max(0, inkBox.top - TIGHTEN_MARGIN_PX);
+    const width = Math.min(template.image.width - left, inkBox.width + 2 * TIGHTEN_MARGIN_PX);
+    const height = Math.min(template.image.height - top, inkBox.height + 2 * TIGHTEN_MARGIN_PX);
+    const roi = new cv.Rect(left, top, width, height);
+    gray = scope.track(grayFull.roi(roi).clone());
+    maskTight = scope.track(maskFull.roi(roi).clone());
+    anchorVsCenter = {
+      x: markerInCrop.x - (left + width / 2),
+      y: markerInCrop.y - (top + height / 2),
+    };
+  }
+  const maskCoverage = inkBox
+    ? cv.countNonZero(maskTight) / Math.max(1, maskTight.cols * maskTight.rows)
+    : 0;
+
+  const pad = Math.ceil((Math.SQRT2 - 1) * Math.max(gray.cols, gray.rows) * 0.5) + 1;
+  const padded = scope.track(new cv.Mat());
+  cv.copyMakeBorder(gray, padded, pad, pad, pad, pad, cv.BORDER_CONSTANT, new cv.Scalar(255));
+  const maskPadded = scope.track(new cv.Mat());
+  cv.copyMakeBorder(
+    maskTight,
+    maskPadded,
+    pad,
+    pad,
+    pad,
+    pad,
+    cv.BORDER_CONSTANT,
+    new cv.Scalar(0),
+  );
+
+  return {
+    padded,
+    maskPadded,
+    anchorVsCenter,
+    maskCoverage,
+    hasInk: Boolean(inkBox),
+    rotationCache: new Map(),
+  };
+}
+
+/** Rotated template + mask for one angle, cached (opencv CCW convention). */
+function rotatedVariant(
+  cv: OpenCvApi,
+  prepared: PreparedTemplate,
+  rotationDeg: number,
+  scope: MatScope,
+): { rotated: CvMat; rotatedMask: CvMat } {
+  const cached = prepared.rotationCache.get(rotationDeg);
+  if (cached) return cached;
+  if (rotationDeg === 0) {
+    const entry = { rotated: prepared.padded, rotatedMask: prepared.maskPadded };
+    prepared.rotationCache.set(0, entry);
+    return entry;
+  }
+  const center = new cv.Point(prepared.padded.cols / 2, prepared.padded.rows / 2);
+  const rotation = scope.track(cv.getRotationMatrix2D(center, rotationDeg, 1));
+  const rotated = scope.track(new cv.Mat());
+  cv.warpAffine(
+    prepared.padded,
+    rotated,
+    rotation,
+    new cv.Size(prepared.padded.cols, prepared.padded.rows),
+    cv.INTER_LINEAR,
+    cv.BORDER_CONSTANT,
+    new cv.Scalar(255),
+  );
+  const rotatedMask = scope.track(new cv.Mat());
+  cv.warpAffine(
+    prepared.maskPadded,
+    rotatedMask,
+    rotation,
+    new cv.Size(prepared.maskPadded.cols, prepared.maskPadded.rows),
+    cv.INTER_NEAREST,
+    cv.BORDER_CONSTANT,
+    new cv.Scalar(0),
+  );
+  const entry = { rotated, rotatedMask };
+  prepared.rotationCache.set(rotationDeg, entry);
+  return entry;
+}
+
+/** The anchor offset for one rotation, in padded-template native px. */
+function rotatedAnchor(prepared: PreparedTemplate, rotationDeg: number): { x: number; y: number } {
+  // opencv angle a rotates content by −a in y-down pixel algebra (pinned
+  // empirically in the AITAKEOFF6 fixtures) — the anchor transforms with it.
+  const rad = (-rotationDeg * Math.PI) / 180;
+  return {
+    x: Math.cos(rad) * prepared.anchorVsCenter.x - Math.sin(rad) * prepared.anchorVsCenter.y,
+    y: Math.sin(rad) * prepared.anchorVsCenter.x + Math.cos(rad) * prepared.anchorVsCenter.y,
+  };
+}
+
 /**
- * Run the full rotation × scale sweep of one exemplar template against one
- * detection raster. Returns candidates in normalized sheet space — mapped
- * through the SAME tested tile transform the model pipeline uses: the
- * downscaled raster is one whole-sheet tile at origin, so tileFrameFor +
+ * Run the coarse-to-fine multi-template sweep against one detection raster.
+ * Hits map through the SAME tested tile transform the model pipeline uses:
+ * the downscaled raster is one whole-sheet tile at origin, so tileFrameFor +
  * tileLocalToSheetPoint is the single conversion out of match space.
  */
-export function matchTemplateSweep(
+export function matchTemplatesSweep(
   cv: OpenCvApi,
   raster: RgbaImage,
-  template: RgbaImage,
+  templates: TemplateInput[],
   options: TemplateMatchOptions,
 ): TemplateMatchOutput {
   const scope = matScope();
@@ -287,7 +411,6 @@ export function matchTemplateSweep(
     const matchHeightPx = Math.max(1, Math.round(raster.height * downscale));
     const footprintMatchPx = Math.max(2, options.footprintPx * downscale);
 
-    // Raster: gray → downscale → binarize (ink = 255).
     const rasterGray = rgbaToGray(cv, raster, scope);
     let rasterScaled = rasterGray;
     if (downscale !== 1) {
@@ -303,58 +426,17 @@ export function matchTemplateSweep(
     }
     const rasterBin = binarize(cv, rasterScaled, scope);
 
-    // Template + mask at native resolution (AITAKEOFF8 Task 0): the mask is
-    // the template's own binarized ink dilated ~2px — only symbol ink
-    // participates in the correlation. Both tighten to the ink bbox (+small
-    // margin): smaller template, faster sweep, less garbage.
-    const templateGrayFull = rgbaToGray(cv, template, scope);
-    const templateBinFull = binarize(cv, templateGrayFull, scope);
-    const maskFull = scope.track(new cv.Mat());
-    const dilateKernel = scope.track(
-      cv.Mat.ones(MASK_DILATE_KERNEL_PX, MASK_DILATE_KERNEL_PX, cv.CV_8UC1),
-    );
-    cv.dilate(templateBinFull, maskFull, dilateKernel);
-
-    const inkBox = inkBoundingBox(maskFull);
-    let templateGray = templateGrayFull;
-    let maskTight = maskFull;
-    // Hub anchor (AITAKEOFF9 Task 0): the marker point in ORIGINAL crop
-    // coordinates. Tightening moves the template's center to the ink bbox —
-    // the exact drift that displaced every A-100 ghost by one constant
-    // vector — so the anchor is re-expressed against the tightened center
-    // and travels through every rotation/scale below.
-    const anchor = options.anchor ?? { x: 0, y: 0 };
-    const markerInCrop = {
-      x: template.width / 2 + anchor.x,
-      y: template.height / 2 + anchor.y,
-    };
-    let anchorVsCenter = { x: 0, y: 0 };
-    if (inkBox) {
-      const left = Math.max(0, inkBox.left - TIGHTEN_MARGIN_PX);
-      const top = Math.max(0, inkBox.top - TIGHTEN_MARGIN_PX);
-      const width = Math.min(template.width - left, inkBox.width + 2 * TIGHTEN_MARGIN_PX);
-      const height = Math.min(template.height - top, inkBox.height + 2 * TIGHTEN_MARGIN_PX);
-      const roi = new cv.Rect(left, top, width, height);
-      templateGray = scope.track(templateGrayFull.roi(roi).clone());
-      maskTight = scope.track(maskFull.roi(roi).clone());
-      anchorVsCenter = {
-        x: markerInCrop.x - (left + width / 2),
-        y: markerInCrop.y - (top + height / 2),
-      };
-    }
-    const maskCoverage = inkBox
-      ? cv.countNonZero(maskTight) / Math.max(1, maskTight.cols * maskTight.rows)
-      : 0;
-    // A template with NO ink at all can never match a symbol — and feeding a
-    // zero-variance template to CCOEFF emits garbage scores everywhere.
-    // Empty in, empty out, reported through the same funnel fields.
-    if (!inkBox) {
+    const prepared = templates.map((template) => prepareTemplate(cv, template, scope));
+    const primary = prepared[0];
+    if (!primary || !primary.hasInk) {
+      // A primary template with NO ink can never match — empty in, empty out.
       return {
         candidates: [],
         matchWidthPx,
         matchHeightPx,
         downscale,
         sweepCount: 0,
+        templateCount: templates.length,
         truncated: false,
         maskedMatching: false,
         maskCoverage: 0,
@@ -362,154 +444,189 @@ export function matchTemplateSweep(
         topScores: [],
       };
     }
-    // Degenerate-mask guard: a nearly-empty mask matches everything, so the
-    // sweep falls back to the legacy unmasked metric — reported, never
-    // silent (the funnel shows masked=false + the coverage that caused it).
-    const masked = options.maskedMatching !== false && maskCoverage >= MIN_MASK_COVERAGE;
+    const masked = options.maskedMatching !== false && primary.maskCoverage >= MIN_MASK_COVERAGE;
     const appliedThreshold = masked ? options.threshold : UNMASKED_TEMPLATE_MATCH_THRESHOLD;
+    /** Secondary templates are unvetted crops — they earn a higher floor. */
+    const thresholdFor = (templateIndex: number) =>
+      templateIndex === 0 ? appliedThreshold : Math.max(appliedThreshold, SECONDARY_TEMPLATE_FLOOR);
 
-    // Pad for rotation headroom: template with white paper, mask with BLACK
-    // — the pad zone never participates in a masked correlation.
-    const pad =
-      Math.ceil((Math.SQRT2 - 1) * Math.max(templateGray.cols, templateGray.rows) * 0.5) + 1;
-    const templatePadded = scope.track(new cv.Mat());
-    cv.copyMakeBorder(
-      templateGray,
-      templatePadded,
-      pad,
-      pad,
-      pad,
-      pad,
-      cv.BORDER_CONSTANT,
-      new cv.Scalar(255),
+    const coarseRotations = planRotationSweep(
+      options.rotationStepDeg ?? TEMPLATE_ROTATION_STEP_DEG,
     );
-    const maskPadded = scope.track(new cv.Mat());
-    cv.copyMakeBorder(
-      maskTight,
-      maskPadded,
-      pad,
-      pad,
-      pad,
-      pad,
-      cv.BORDER_CONSTANT,
-      new cv.Scalar(0),
-    );
-
-    const rotations = planRotationSweep(options.rotationStepDeg ?? TEMPLATE_ROTATION_STEP_DEG);
-    const scales = options.scales ?? TEMPLATE_MATCH_SCALES;
-    const hits: SweepHit[] = [];
+    const coarseScales = options.scales ?? TEMPLATE_MATCH_SCALES;
     const topTracker = makeTopTracker(TEMPLATE_TOP_SCORE_COUNT, footprintMatchPx);
     let sweepCount = 0;
 
-    for (const rotationDeg of rotations) {
-      // Rotate once per angle at native resolution (opencv angles are
-      // counter-clockwise-positive; recovery only needs the same convention
-      // both ways). The mask rotates with the SAME matrix, nearest-neighbor
-      // so it stays binary, black border so nothing new joins it.
-      // The anchor rotates with the content: opencv angle `a` rotates
-      // content by −a in y-down pixel algebra (pinned empirically in the
-      // AITAKEOFF6 fixtures), so the marker offset transforms by R(−a).
-      const rotationRad = (-rotationDeg * Math.PI) / 180;
-      const rotatedAnchor = {
-        x: Math.cos(rotationRad) * anchorVsCenter.x - Math.sin(rotationRad) * anchorVsCenter.y,
-        y: Math.sin(rotationRad) * anchorVsCenter.x + Math.cos(rotationRad) * anchorVsCenter.y,
-      };
-      let rotated = templatePadded;
-      let rotatedMask = maskPadded;
-      if (rotationDeg !== 0) {
-        const center = new cv.Point(templatePadded.cols / 2, templatePadded.rows / 2);
-        const rotation = scope.track(cv.getRotationMatrix2D(center, rotationDeg, 1));
-        rotated = scope.track(new cv.Mat());
-        cv.warpAffine(
-          templatePadded,
-          rotated,
-          rotation,
-          new cv.Size(templatePadded.cols, templatePadded.rows),
-          cv.INTER_LINEAR,
-          cv.BORDER_CONSTANT,
-          new cv.Scalar(255),
+    /** One matchTemplate pass of one template variant over a target mat. */
+    const sweepVariant = (
+      target: CvMat,
+      templateIndex: number,
+      rotationDeg: number,
+      scale: number,
+      threshold: number,
+      regionOffset: { x: number; y: number },
+      sweepScope: MatScope,
+    ): SweepHit[] => {
+      const preparedTemplate = prepared[templateIndex];
+      if (!preparedTemplate.hasInk) return [];
+      const variant = rotatedVariant(cv, preparedTemplate, rotationDeg, scope);
+      const factor = downscale * scale;
+      const scaledW = Math.round(variant.rotated.cols * factor);
+      const scaledH = Math.round(variant.rotated.rows * factor);
+      if (scaledW < 4 || scaledH < 4 || scaledW > target.cols || scaledH > target.rows) return [];
+      const templateScaled = sweepScope.track(new cv.Mat());
+      cv.resize(
+        variant.rotated,
+        templateScaled,
+        new cv.Size(scaledW, scaledH),
+        0,
+        0,
+        cv.INTER_AREA,
+      );
+      const templateBin = binarize(cv, templateScaled, sweepScope);
+      const result = sweepScope.track(new cv.Mat());
+      if (masked) {
+        const maskResized = sweepScope.track(new cv.Mat());
+        cv.resize(
+          variant.rotatedMask,
+          maskResized,
+          new cv.Size(scaledW, scaledH),
+          0,
+          0,
+          cv.INTER_AREA,
         );
-        rotatedMask = scope.track(new cv.Mat());
-        cv.warpAffine(
-          maskPadded,
-          rotatedMask,
-          rotation,
-          new cv.Size(maskPadded.cols, maskPadded.rows),
-          cv.INTER_NEAREST,
-          cv.BORDER_CONSTANT,
-          new cv.Scalar(0),
-        );
+        const maskScaled = sweepScope.track(new cv.Mat());
+        cv.threshold(maskResized, maskScaled, 63, 255, cv.THRESH_BINARY);
+        cv.matchTemplate(target, templateBin, result, cv.TM_CCORR_NORMED, maskScaled);
+      } else {
+        cv.matchTemplate(target, templateBin, result, cv.TM_CCOEFF_NORMED);
       }
-      for (const scale of scales) {
-        const factor = downscale * scale;
-        const scaledW = Math.round(rotated.cols * factor);
-        const scaledH = Math.round(rotated.rows * factor);
-        // A template that no longer fits the match raster has no sweep.
-        if (scaledW < 4 || scaledH < 4 || scaledW > matchWidthPx || scaledH > matchHeightPx) {
-          continue;
-        }
-        // Per-sweep scope: the correlation result is raster-sized float32 —
-        // 36 of them held to the end would be hundreds of MB of wasm heap.
-        const sweepScope = matScope();
-        try {
-          const templateScaled = sweepScope.track(new cv.Mat());
-          cv.resize(rotated, templateScaled, new cv.Size(scaledW, scaledH), 0, 0, cv.INTER_AREA);
-          const templateBin = binarize(cv, templateScaled, sweepScope);
-          const result = sweepScope.track(new cv.Mat());
-          if (masked) {
-            // Scale the mask alongside; re-binarize generously (≥64) so the
-            // dilation ring survives INTER_AREA at half resolution.
-            const maskResized = sweepScope.track(new cv.Mat());
-            cv.resize(rotatedMask, maskResized, new cv.Size(scaledW, scaledH), 0, 0, cv.INTER_AREA);
-            const maskScaled = sweepScope.track(new cv.Mat());
-            cv.threshold(maskResized, maskScaled, 63, 255, cv.THRESH_BINARY);
-            cv.matchTemplate(rasterBin, templateBin, result, cv.TM_CCORR_NORMED, maskScaled);
-          } else {
-            cv.matchTemplate(rasterBin, templateBin, result, cv.TM_CCOEFF_NORMED);
+      sweepCount += 1;
+      const anchor = rotatedAnchor(preparedTemplate, rotationDeg);
+      return collectPeaks(
+        result,
+        threshold,
+        footprintMatchPx / 2,
+        regionOffset.x + scaledW / 2 + anchor.x * factor,
+        regionOffset.y + scaledH / 2 + anchor.y * factor,
+        rotationDeg,
+        scale,
+        templateIndex,
+        topTracker,
+      );
+    };
+
+    // COARSE PASS: full raster, recall-pool threshold, every template.
+    const coarsePool: SweepHit[] = [];
+    for (let templateIndex = 0; templateIndex < prepared.length; templateIndex += 1) {
+      const poolThreshold = Math.max(0.05, thresholdFor(templateIndex) - LADDER_RECALL_MARGIN);
+      for (const rotationDeg of coarseRotations) {
+        for (const scale of coarseScales) {
+          const sweepScope = matScope();
+          try {
+            coarsePool.push(
+              ...sweepVariant(
+                rasterBin,
+                templateIndex,
+                rotationDeg,
+                scale,
+                poolThreshold,
+                { x: 0, y: 0 },
+                sweepScope,
+              ),
+            );
+          } finally {
+            sweepScope.release();
           }
-          // Hub anchor applied here (AITAKEOFF9 Task 0): the recovered
-          // center is the MARKER point, not the rectangle center — the
-          // rotated anchor scales with this sweep step and rides the offset.
-          hits.push(
-            ...collectPeaks(
-              result,
-              appliedThreshold,
-              footprintMatchPx / 2,
-              scaledW / 2 + rotatedAnchor.x * factor,
-              scaledH / 2 + rotatedAnchor.y * factor,
-              rotationDeg,
-              scale,
-              topTracker,
-            ),
-          );
-          sweepCount += 1;
-        } finally {
-          sweepScope.release();
         }
       }
     }
 
-    // Blank-window guard: a peak with no ink anywhere near it is correlation
-    // pathology, not a symbol — deterministic to check, cheap to drop.
-    const inked = hits.filter((hit) => hasInkNear(rasterBin, hit.x, hit.y, footprintMatchPx / 2));
+    // Promising coarse cells, NMS'd (normalized space, the canonical radius)
+    // so one symbol refines at most once per winning template.
+    const refineSeeds = suppressNonMaxima(
+      coarsePool.map((hit) => ({ ...hit, x: hit.x / matchWidthPx, y: hit.y / matchHeightPx })),
+      options.radius,
+    )
+      .slice(0, MAX_REFINE_CANDIDATES)
+      .map((hit) => ({ ...hit, x: hit.x * matchWidthPx, y: hit.y * matchHeightPx }));
 
-    // Match space → normalized sheet space: the one tested transform.
+    // FINE PASS: ±10° / ladder-neighbor scales on a small ROI per seed; the
+    // refined best decides at the REAL threshold. (coarseOnly = fixture flag
+    // for comparing grids; seeds then decide directly.)
+    const finalHits: SweepHit[] = [];
+    for (const seed of refineSeeds) {
+      const threshold = thresholdFor(seed.templateIndex);
+      if (options.coarseOnly) {
+        if (seed.score >= threshold) finalHits.push(seed);
+        continue;
+      }
+      const preparedTemplate = prepared[seed.templateIndex];
+      const seedVariant = rotatedVariant(cv, preparedTemplate, seed.rotationDeg, scope);
+      const maxSide = Math.ceil(
+        Math.max(seedVariant.rotated.cols, seedVariant.rotated.rows) *
+          downscale *
+          seed.scale *
+          1.16 +
+          REFINE_MARGIN_FOOTPRINTS * footprintMatchPx * 2,
+      );
+      const half = Math.ceil(maxSide / 2);
+      const left = Math.max(0, Math.min(matchWidthPx - maxSide, Math.round(seed.x) - half));
+      const top = Math.max(0, Math.min(matchHeightPx - maxSide, Math.round(seed.y) - half));
+      const width = Math.min(maxSide, matchWidthPx - left);
+      const height = Math.min(maxSide, matchHeightPx - top);
+      if (width < 8 || height < 8) continue;
+      const roiScope = matScope();
+      try {
+        const roi = roiScope.track(rasterBin.roi(new cv.Rect(left, top, width, height)).clone());
+        let best: SweepHit | null = null;
+        for (const rotationDeg of fineRotationsFor(seed.rotationDeg)) {
+          for (const scale of ladderNeighborsFor(seed.scale)) {
+            const sweepScope = matScope();
+            try {
+              // Collect everything in the tiny ROI; the best decides below.
+              const hits = sweepVariant(
+                roi,
+                seed.templateIndex,
+                rotationDeg,
+                scale,
+                0.05,
+                { x: left, y: top },
+                sweepScope,
+              );
+              for (const hit of hits) {
+                if (!best || hit.score > best.score) best = hit;
+              }
+            } finally {
+              sweepScope.release();
+            }
+          }
+        }
+        if (best && best.score >= threshold) finalHits.push(best);
+      } finally {
+        roiScope.release();
+      }
+    }
+
+    // Blank-window guard, then match space → sheet space, NMS, cap.
+    const inked = finalHits.filter((hit) =>
+      hasInkNear(rasterBin, hit.x, hit.y, footprintMatchPx / 2),
+    );
     const frame = tileFrameFor({ left: 0, top: 0 }, matchWidthPx, matchHeightPx);
     const mapped: TemplateMatchCandidate[] = inked.map((hit) => ({
       ...tileLocalToSheetPoint(frame, hit.x, hit.y),
       score: hit.score,
       rotationDeg: hit.rotationDeg,
       scale: hit.scale,
+      templateIndex: hit.templateIndex,
     }));
     const topScores: TemplateTopScore[] = topTracker.entries.map((hit) => ({
       ...tileLocalToSheetPoint(frame, hit.x, hit.y),
       score: hit.score,
       rotationDeg: hit.rotationDeg,
       scale: hit.scale,
+      templateIndex: hit.templateIndex,
     }));
-
-    // Footprint-radius NMS with the caller's canonical radius, then the
-    // safety cap — best scores first, truncation reported.
     const suppressed = suppressNonMaxima(mapped, options.radius);
     const truncated = suppressed.length > TEMPLATE_MATCH_MAX_HITS;
     return {
@@ -518,13 +635,30 @@ export function matchTemplateSweep(
       matchHeightPx,
       downscale,
       sweepCount,
+      templateCount: templates.length,
       truncated,
       maskedMatching: masked,
-      maskCoverage,
+      maskCoverage: primary.maskCoverage,
       appliedThreshold,
       topScores,
     };
   } finally {
     scope.release();
   }
+}
+
+/** Single-template compatibility wrapper (fixtures + probes). */
+export function matchTemplateSweep(
+  cv: OpenCvApi,
+  raster: RgbaImage,
+  template: RgbaImage,
+  options: TemplateMatchOptions & { anchor?: { x: number; y: number } },
+): TemplateMatchOutput {
+  const { anchor, ...rest } = options;
+  return matchTemplatesSweep(
+    cv,
+    raster,
+    [{ image: template, anchor: anchor ?? { x: 0, y: 0 } }],
+    rest,
+  );
 }

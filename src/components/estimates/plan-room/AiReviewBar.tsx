@@ -1,11 +1,14 @@
-// Floating review bar for AI count proposals (AITAKEOFF1 Task 2).
-// Keyboard cadence: Enter accepts, X or Delete rejects, arrows navigate, Esc
-// ends the review. The viewport pans to each ghost so the human always sees
-// the actual symbol before deciding. "Accept all remaining" exists but sits
-// behind the per-item flow, never first.
+// Floating review bar for AI count proposals (AITAKEOFF1 Task 2; honest
+// verdicts in AITAKEOFF10). Keyboard cadence: Enter accepts, X or Delete
+// rejects as "wrong spot" (the safe default — a mistaken suppression costs
+// less than a poisoned negative), Shift+X rejects as "not this symbol"
+// (the only verdict that teaches the model a negative), Alt+arrows nudge
+// the ghost onto the hub before accepting, plain arrows navigate, Esc ends
+// the review. The viewport pans to each ghost so the human always sees the
+// actual symbol before deciding.
 
 import { useEffect } from "react";
-import { Check, ChevronLeft, ChevronRight, Loader2, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Loader2, Move, Sparkles, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +19,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LOW_CONFIDENCE_THRESHOLD } from "@/lib/ai-takeoff/ai-takeoff-domain";
 import type { AiAssistController } from "./useAiAssist";
+
+// One nudge step in normalized sheet units: ~4px on a 3800px detection
+// raster — a few presses walk a ghost onto its hub.
+const NUDGE_STEP_NORMALIZED = 0.001;
 
 function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
@@ -35,7 +42,15 @@ export function AiReviewBar({ ai }: { ai: AiAssistController }) {
         void ai.acceptActiveProposal();
       } else if (event.key === "x" || event.key === "X" || event.key === "Delete") {
         event.preventDefault();
-        ai.rejectActiveProposal();
+        // Shift = "not this symbol" (identity negative); plain = wrong spot.
+        ai.rejectActiveProposal(event.shiftKey ? "wrong_symbol" : "wrong_spot");
+      } else if (event.altKey && event.key.startsWith("Arrow")) {
+        event.preventDefault();
+        const step = NUDGE_STEP_NORMALIZED;
+        if (event.key === "ArrowRight") ai.nudgeActiveProposal(step, 0);
+        else if (event.key === "ArrowLeft") ai.nudgeActiveProposal(-step, 0);
+        else if (event.key === "ArrowDown") ai.nudgeActiveProposal(0, step);
+        else if (event.key === "ArrowUp") ai.nudgeActiveProposal(0, -step);
       } else if (event.key === "ArrowRight" || event.key === "ArrowDown") {
         event.preventDefault();
         ai.navigateReview(1);
@@ -118,14 +133,74 @@ export function AiReviewBar({ ai }: { ai: AiAssistController }) {
           size="sm"
           variant="outline"
           className="gap-1.5"
-          title="Reject this proposal (X or Delete)"
+          title="Right symbol, wrong spot (X or Delete) — never teaches the model a negative"
           disabled={ai.isAccepting || !ai.activeProposal}
-          onClick={ai.rejectActiveProposal}
+          onClick={() => ai.rejectActiveProposal("wrong_spot")}
           data-testid="ai-review-reject"
         >
           <X className="h-3.5 w-3.5" />
-          Reject
+          Wrong spot
         </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="gap-1.5 border-destructive/40 text-destructive"
+          title="Not this symbol (Shift+X) — teaches the next scan what NOT to find"
+          disabled={ai.isAccepting || !ai.activeProposal}
+          onClick={() => ai.rejectActiveProposal("wrong_symbol")}
+          data-testid="ai-review-reject-symbol"
+        >
+          <X className="h-3.5 w-3.5" />
+          Not this symbol
+        </Button>
+        <div
+          className="flex items-center gap-0.5 rounded-md border border-hairline px-1 py-0.5"
+          title="Nudge the ghost onto the hub before accepting (Alt+arrows)"
+          data-testid="ai-review-nudge"
+        >
+          <Move className="h-3 w-3 text-muted-foreground" />
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6"
+            disabled={ai.isAccepting || !ai.activeProposal}
+            onClick={() => ai.nudgeActiveProposal(-NUDGE_STEP_NORMALIZED, 0)}
+          >
+            <ChevronLeft className="h-3 w-3" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6"
+            disabled={ai.isAccepting || !ai.activeProposal}
+            onClick={() => ai.nudgeActiveProposal(0, -NUDGE_STEP_NORMALIZED)}
+          >
+            <ChevronLeft className="h-3 w-3 rotate-90" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6"
+            disabled={ai.isAccepting || !ai.activeProposal}
+            onClick={() => ai.nudgeActiveProposal(0, NUDGE_STEP_NORMALIZED)}
+          >
+            <ChevronRight className="h-3 w-3 rotate-90" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6"
+            disabled={ai.isAccepting || !ai.activeProposal}
+            onClick={() => ai.nudgeActiveProposal(NUDGE_STEP_NORMALIZED, 0)}
+          >
+            <ChevronRight className="h-3 w-3" />
+          </Button>
+        </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -147,7 +222,7 @@ export function AiReviewBar({ ai }: { ai: AiAssistController }) {
               Accept all remaining ({ai.pendingCount})
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => ai.endReview()}>
-              End review (discard remaining)
+              End review (discard remaining — no verdicts recorded)
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

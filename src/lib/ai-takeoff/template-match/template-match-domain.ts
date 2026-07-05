@@ -19,6 +19,8 @@ export interface TemplateMatchCandidate {
   rotationDeg: number;
   /** Scale of the best-matching template variant (1 = exemplar size). */
   scale: number;
+  /** Which template found it: 0 = the exemplar, 1+ = harvested positives. */
+  templateIndex: number;
 }
 
 /**
@@ -32,6 +34,7 @@ export interface TemplateTopScore {
   score: number;
   rotationDeg: number;
   scale: number;
+  templateIndex: number;
 }
 
 /** Where a stage-B candidate came from — the two proposal engines. */
@@ -40,11 +43,38 @@ export type AiCandidateSource = "template" | "model";
 /** Which proposal engine(s) feed stage-B verification. */
 export type AiProposalSource = "template" | "model" | "both";
 
-// The sweep: same-scale symbols dominate plan sheets, but blocks get placed
-// rotated, so the template rotates through a full turn at a coarse step;
-// the scale band absorbs modest render-scale drift between sheets.
+// The sweep (coarse-to-fine since AITAKEOFF10 Task 3): a full flat sweep at
+// 10°/7 scales would be ~7x the budget, so the coarse pass keeps the
+// original 30°/3-scale grid with a recall-biased pool (threshold − margin),
+// and only cells that show promise get the fine 10°/±7.5% refinement on a
+// small ROI. Thin radial symbols land between 30° steps; the fine grid
+// gets within 5°.
 export const TEMPLATE_ROTATION_STEP_DEG = 30;
 export const TEMPLATE_MATCH_SCALES = [0.85, 1.0, 1.15] as const;
+export const FINE_ROTATION_STEP_DEG = 10;
+export const TEMPLATE_SCALE_LADDER = [0.75, 0.85, 0.925, 1.0, 1.075, 1.15, 1.3] as const;
+// Coarse pool margin: candidates scoring within this of the threshold get
+// refined — the refinement decides, at the REAL threshold.
+export const LADDER_RECALL_MARGIN = 0.15;
+// Secondary templates (harvested accepted marks) are unvetted crops — they
+// earn a slightly higher floor than the estimator's own exemplar.
+// Calibrated on the variant fixture.
+export const SECONDARY_TEMPLATE_FLOOR = 0.68;
+
+/** Fine-scale neighbors of a coarse scale on the ladder (inclusive). */
+export function ladderNeighborsFor(scale: number): number[] {
+  const ladder = TEMPLATE_SCALE_LADDER as readonly number[];
+  const index = ladder.findIndex((entry) => Math.abs(entry - scale) < 1e-9);
+  if (index < 0) return [scale];
+  return ladder.slice(Math.max(0, index - 1), Math.min(ladder.length, index + 2)) as number[];
+}
+
+/** Fine rotation neighbors of a coarse angle: ±FINE step, normalized 0-360. */
+export function fineRotationsFor(coarseDeg: number): number[] {
+  return [-FINE_ROTATION_STEP_DEG, 0, FINE_ROTATION_STEP_DEG].map(
+    (delta) => (coarseDeg + delta + 360) % 360,
+  );
+}
 // Recall-biased score floor for MASKED correlation (AITAKEOFF8, recall-
 // biased further in AITAKEOFF9 Task 2 after a heavily-fused A-100 brush
 // missed at 0.75). Calibrated on the dense fixtures: clean matches
@@ -201,14 +231,19 @@ export function unionProposalCandidates(
   return suppressNonMaxima(merged, radius).map(({ score: _score, ...candidate }) => candidate);
 }
 
-/** Human-readable origin line for diagnostics: "template 0.78 @ 30°". */
+/** Human-readable origin: "template 0.78 @ 30°" / "template#2 0.83" / "model". */
 export function describeCandidateOrigin(origin: {
   source: AiCandidateSource;
   score?: number | null;
   rotationDeg?: number | null;
   scale?: number | null;
+  templateIndex?: number | null;
 }): string {
   if (origin.source !== "template") return "model";
+  const index =
+    Number.isFinite(origin.templateIndex ?? NaN) && (origin.templateIndex as number) > 0
+      ? `#${origin.templateIndex}`
+      : "";
   const score = Number.isFinite(origin.score ?? NaN) ? (origin.score as number).toFixed(2) : "?";
   const rotation = Number.isFinite(origin.rotationDeg ?? NaN)
     ? ` @ ${Math.round(origin.rotationDeg as number)}°`
@@ -217,5 +252,5 @@ export function describeCandidateOrigin(origin: {
     Number.isFinite(origin.scale ?? NaN) && origin.scale !== 1
       ? ` ×${(origin.scale as number).toFixed(2)}`
       : "";
-  return `template ${score}${rotation}${scale}`;
+  return `template${index} ${score}${rotation}${scale}`;
 }

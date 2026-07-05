@@ -33,6 +33,7 @@ import {
   REFERENCE_MAX_POSITIVES,
   sheetRadiusFromLongEdge,
   snapToInkCentroid,
+  type GhostRejectionReason,
   tileTokenCheck,
   VERIFIED_PROPOSAL_CONFIDENCE,
   type AiCountCandidate,
@@ -582,6 +583,7 @@ const verifyCandidateInput = z.object({
       score: z.number().min(0).max(1).nullable().default(null),
       rotation_deg: z.number().min(0).lt(360).nullable().default(null),
       scale: z.number().gt(0).max(10).nullable().default(null),
+      template_index: z.number().int().min(0).max(10).nullable().default(null),
     })
     .optional(),
   references: referencesSchema,
@@ -702,6 +704,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
       score: null,
       rotation_deg: null,
       scale: null,
+      template_index: null,
     };
     const folder = diagnosticsFolder(operation.organization_id, operation.id);
     const artifactName = `verify-${data.sheet_id}-${data.candidate_index}`;
@@ -730,6 +733,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
             score: origin.score,
             rotationDeg: origin.rotation_deg,
             scale: origin.scale,
+            templateIndex: origin.template_index,
           }),
           references: referenceComposition(data.references),
           window: {
@@ -775,6 +779,63 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
     };
   });
 
+// Ghost rejection records (AITAKEOFF10 Task 0). THE WRITE SITE of the
+// absolute rule: this function is called from exactly one place — the
+// review bar's explicit reject controls. Scan cancel, supersede,
+// navigation, timeout, and every other cleanup path discards pending
+// ghosts with NO verdict written. The reason field decides forever whether
+// a record may teach stage B ("wrong_symbol") or only feed the placement
+// metric ("wrong_spot").
+const ghostRejectionInput = z.object({
+  operation_id: z.string().uuid(),
+  sheet_id: z.string().uuid(),
+  index: z.number().int().min(0).max(2000),
+  point: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }),
+  reason: z.enum(["wrong_symbol", "wrong_spot"]),
+  exemplar_label: z.string().max(240).default(""),
+});
+
+export const recordAiGhostRejection = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof ghostRejectionInput>) => ghostRejectionInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // Review happens after the scan completes, so unlike the scan-time
+    // functions this accepts a finished operation — ownership still binds.
+    const { data: row, error } = await dynamicTable(supabaseAdmin, "ai_operations")
+      .select("*")
+      .eq("id", data.operation_id)
+      .maybeSingle();
+    if (error) {
+      if (isMissingCreditsSchema(error)) throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
+      throw new Error(error.message);
+    }
+    if (!row) throw new Error("This AI scan was not found.");
+    const operation = normalizeOperation(row as Record<string, unknown>);
+    if (operation.created_by !== context.userId) {
+      throw new Error("This AI scan belongs to another user.");
+    }
+    if (!operation.sheet_ids.includes(data.sheet_id)) {
+      throw new Error("That sheet is not part of this AI scan.");
+    }
+    const folder = diagnosticsFolder(operation.organization_id, operation.id);
+    await uploadDiagnostic(
+      supabaseAdmin,
+      `${folder}/user-reject-${data.sheet_id}-${data.index}.json`,
+      new TextEncoder().encode(
+        JSON.stringify({
+          sheetId: data.sheet_id,
+          point: data.point,
+          reason: data.reason satisfies GhostRejectionReason,
+          exemplarLabel: data.exemplar_label,
+          createdAt: new Date().toISOString(),
+        }),
+      ),
+      "application/json",
+    );
+    return { ok: true };
+  });
+
 // Per-sheet funnel summary (AITAKEOFF7 Task 4): "N proposed → M after dedupe
 // → K after suppression" is the one line that makes a candidate collapse
 // visible on the first diagnostics screenshot instead of after a production
@@ -804,6 +865,8 @@ const sheetSummaryInput = z.object({
     // Score transparency (AITAKEOFF8 Task 1): the threshold applied, whether
     // the masked metric ran, and the best sweep scores threshold-or-not.
     template_threshold: z.number().min(0).max(1).nullable().default(null),
+    template_sweeps: z.number().int().min(0).max(100000).nullable().default(null),
+    template_count: z.number().int().min(0).max(10).nullable().default(null),
     template_masked: z.boolean().nullable().default(null),
     template_mask_coverage: z.number().min(0).max(1).nullable().default(null),
     template_top_scores: z

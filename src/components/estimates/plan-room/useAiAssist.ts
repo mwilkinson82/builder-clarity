@@ -13,6 +13,7 @@ import {
   beginAiCountScan,
   completeAiCountScan,
   failAiCountScan,
+  recordAiGhostRejection,
   recordAiScanSheetSummary,
   scanSheetTileForAiCounts,
   verifyAiCountCandidate,
@@ -31,7 +32,9 @@ import {
   capProposalsPerSheet,
   excludeNearExistingPoints,
   exemplarSheetGeometry,
+  negativeEligiblePoints,
   sortProposalsForReview,
+  type GhostRejectionReason,
   VERIFY_WINDOW_PX,
   type AiCountCandidate,
   type AiCountProposal,
@@ -63,6 +66,7 @@ import {
   renderVerifyWindow,
   sliceDetectionTiles,
 } from "./aiDetectionRender";
+import { clamp01 } from "@/lib/ai-takeoff/coord-transforms";
 import { geometryFromPoints, geometryPoints, type ViewSize } from "./planRoomShared";
 
 export type AiAssistPhase = "idle" | "scanning" | "review";
@@ -121,6 +125,7 @@ export function useAiAssist({
   const completeScanFn = useServerFn(completeAiCountScan);
   const failScanFn = useServerFn(failAiCountScan);
   const recordSummaryFn = useServerFn(recordAiScanSheetSummary);
+  const recordRejectionFn = useServerFn(recordAiGhostRejection);
   const createMeasurementFn = useServerFn(createTakeoffMeasurement);
   const updateMeasurementFn = useServerFn(updateTakeoffMeasurement);
 
@@ -140,9 +145,15 @@ export function useAiAssist({
   const operationIdRef = useRef<string | null>(null);
   // AI measurement created per sheet during this review (id + points so far).
   const aiMeasurementsRef = useRef(new Map<string, { id: string; points: SheetPoint[] }>());
-  // Rejections the user made this session, keyed by sheet + exemplar label —
-  // they become negative references on the next scan (AITAKEOFF5 Task 1).
-  const sessionRejectionsRef = useRef(new Map<string, SheetPoint[]>());
+  // Rejections the user made this session, keyed by sheet + exemplar label.
+  // Each carries the user's REASON (AITAKEOFF10 Task 0): only explicit
+  // "wrong_symbol" verdicts may ever become stage-B negatives — placement
+  // complaints are never identity evidence.
+  const sessionRejectionsRef = useRef(
+    new Map<string, Array<{ x: number; y: number; reason: GhostRejectionReason }>>(),
+  );
+  // Counts rejections recorded during review, per sheet, for the funnel.
+  const rejectionTallyRef = useRef(new Map<string, { wrongSymbol: number; wrongSpot: number }>());
 
   const credits = useAiCredits(open);
   const { refreshCredits } = credits;
@@ -325,11 +336,11 @@ export function useAiAssist({
       // detection raster (footprint-sized, same scale matching runs at);
       // the worker unions its hits with stage A on every sheet.
       const proposalSource = begin.proposalSource ?? "both";
-      let templateImage: ImageData | null = null;
-      // Hub anchor (AITAKEOFF9 Task 0): where the estimator's marker sits
-      // relative to the template crop's center — recovered hits land on the
-      // hub, not on the ink bbox's center (the constant ~45px A-100 drift).
-      let templateAnchor = { x: 0, y: 0 };
+      // Templates (AITAKEOFF10 Task 3): the exemplar first, then every
+      // harvested same-label positive (accepted marks incl. nudged ones) as
+      // its own template with its own hub anchor — different symbol variants
+      // get covered by their own accepted instances within one session.
+      let templates: Array<{ image: ImageData; anchor: { x: number; y: number } }> = [];
       let exemplarRasterReuse: Awaited<ReturnType<typeof renderDetectionSheet>> | null = null;
       if (proposalSource !== "model" && exemplarImage.footprintPt !== null) {
         const exemplarRaster = await renderDetectionSheet(
@@ -347,34 +358,39 @@ export function useAiAssist({
           rasterWidthPx: exemplarRaster.widthPx,
           rasterHeightPx: exemplarRaster.heightPx,
         });
-        const templateRect = templateCropRect(
-          {
-            x: exemplar.point.x * exemplarRaster.widthPx,
-            y: exemplar.point.y * exemplarRaster.heightPx,
-          },
-          exemplarGeometry.footprintRasterPx ?? 0,
-          exemplarRaster.widthPx,
-          exemplarRaster.heightPx,
-        );
-        templateImage =
-          exemplarRaster.canvas
-            .getContext("2d")
-            ?.getImageData(
-              templateRect.left,
-              templateRect.top,
-              templateRect.width,
-              templateRect.height,
-            ) ?? null;
-        templateAnchor = {
-          x:
-            exemplar.point.x * exemplarRaster.widthPx -
-            (templateRect.left + templateRect.width / 2),
-          y:
-            exemplar.point.y * exemplarRaster.heightPx -
-            (templateRect.top + templateRect.height / 2),
+        const exemplarContext = exemplarRaster.canvas.getContext("2d");
+        const templateFromPoint = (point: SheetPoint) => {
+          const markerPx = {
+            x: point.x * exemplarRaster.widthPx,
+            y: point.y * exemplarRaster.heightPx,
+          };
+          const rect = templateCropRect(
+            markerPx,
+            exemplarGeometry.footprintRasterPx ?? 0,
+            exemplarRaster.widthPx,
+            exemplarRaster.heightPx,
+          );
+          const image = exemplarContext?.getImageData(rect.left, rect.top, rect.width, rect.height);
+          if (!image) return null;
+          return {
+            image,
+            anchor: {
+              x: markerPx.x - (rect.left + rect.width / 2),
+              y: markerPx.y - (rect.top + rect.height / 2),
+            },
+          };
         };
+        const primaryTemplate = templateFromPoint(exemplar.point);
+        templates = primaryTemplate
+          ? [
+              primaryTemplate,
+              ...harvestPoints
+                .map((point) => templateFromPoint(point))
+                .filter((entry): entry is NonNullable<typeof entry> => entry !== null),
+            ]
+          : [];
         exemplarRasterReuse = exemplarRaster;
-        if (templateImage) templateSession = createTemplateMatchSession();
+        if (templates.length > 0) templateSession = createTemplateMatchSession();
       }
       if (proposalSource === "template" && !templateSession) {
         throw new Error(
@@ -422,7 +438,11 @@ export function useAiAssist({
         // for this sheet + exemplar first; otherwise the previous scan's
         // stage-B rejections (from diagnostics). Never manufactured.
         const rejectionKey = `${sheet.id}|${exemplar.label.trim().toLowerCase()}`;
-        let rejectedPoints = sessionRejectionsRef.current.get(rejectionKey) ?? [];
+        // Only explicit identity rejections feed negatives (AITAKEOFF10):
+        // the prior-scan source applies the same rule server-side.
+        let rejectedPoints = negativeEligiblePoints(
+          sessionRejectionsRef.current.get(rejectionKey) ?? [],
+        );
         if (rejectedPoints.length === 0) {
           try {
             const prior = await priorRejectionsFn({
@@ -449,6 +469,7 @@ export function useAiAssist({
         // engine alone — but never silently anymore (AITAKEOFF7): the
         // per-sheet summary records engine status, error, and timing.
         let templateHits: TemplateMatchCandidate[] = [];
+        let templateSweeps: number | null = null;
         let templateEngine: "ok" | "failed" | "skipped" = "skipped";
         let templateError = "";
         let templateElapsedMs: number | null = null;
@@ -459,7 +480,7 @@ export function useAiAssist({
         let templateMasked: boolean | null = null;
         let templateMaskCoverage: number | null = null;
         let templateThreshold: number | null = null;
-        if (templateSession && templateImage && geometry.footprintRasterPx !== null) {
+        if (templateSession && templates.length > 0 && geometry.footprintRasterPx !== null) {
           try {
             const rasterPixels = raster.canvas
               .getContext("2d")
@@ -467,17 +488,17 @@ export function useAiAssist({
             if (!rasterPixels) throw new Error("The sheet could not be read for matching.");
             const matched = await templateSession.match({
               raster: rasterPixels,
-              template: templateImage,
+              templates,
               options: {
                 threshold: begin.templateMatchThreshold ?? DEFAULT_TEMPLATE_MATCH_THRESHOLD,
                 footprintPx: geometry.footprintRasterPx,
                 radius: geometry.radius,
-                anchor: templateAnchor,
               },
             });
             templateHits = matched.candidates;
             templateEngine = "ok";
             templateElapsedMs = matched.elapsedMs;
+            templateSweeps = matched.sweepCount;
             templateTopScores = matched.topScores;
             templateMasked = matched.maskedMatching;
             templateMaskCoverage = matched.maskCoverage;
@@ -581,8 +602,15 @@ export function useAiAssist({
                       score: Math.min(1, candidate.templateHit.score),
                       rotation_deg: candidate.templateHit.rotationDeg,
                       scale: candidate.templateHit.scale,
+                      template_index: candidate.templateHit.templateIndex,
                     }
-                  : { source: "model" as const, score: null, rotation_deg: null, scale: null },
+                  : {
+                      source: "model" as const,
+                      score: null,
+                      rotation_deg: null,
+                      scale: null,
+                      template_index: null,
+                    },
               references,
               window: {
                 left: window.rect.left,
@@ -658,6 +686,8 @@ export function useAiAssist({
                 // Score transparency (AITAKEOFF8 Task 1): zero hits must
                 // read as "top 0.41 vs threshold 0.78", never as a mystery.
                 template_threshold: templateThreshold,
+                template_sweeps: templateSweeps,
+                template_count: templates.length,
                 template_masked: templateMasked,
                 template_mask_coverage: templateMaskCoverage,
                 template_top_scores: templateTopScores.map((top) => ({
@@ -881,31 +911,83 @@ export function useAiAssist({
     proposals,
   ]);
 
-  const rejectActiveProposal = useCallback(() => {
-    if (!activeProposal || isAccepting) return;
-    // Remember what was rejected: it teaches the next scan what NOT to find.
-    if (exemplar) {
-      const key = `${activeProposal.sheetId}|${exemplar.label.trim().toLowerCase()}`;
-      const rejected = sessionRejectionsRef.current.get(key) ?? [];
-      rejected.unshift({ x: activeProposal.x, y: activeProposal.y });
-      sessionRejectionsRef.current.set(key, rejected.slice(0, 10));
-    }
-    const index = proposals.findIndex((p) => p.id === activeProposal.id);
-    const updated = proposals.map((p) =>
-      p.id === activeProposal.id ? { ...p, status: "rejected" as const } : p,
-    );
-    setProposals(updated);
-    if (!advanceToNextPending(index, updated)) {
-      setTimeout(() => endReviewWithProposals(updated), 0);
-    }
-  }, [
-    activeProposal,
-    advanceToNextPending,
-    endReviewWithProposals,
-    exemplar,
-    isAccepting,
-    proposals,
-  ]);
+  /**
+   * Reject the active ghost with an explicit REASON (AITAKEOFF10 Task 1).
+   * "wrong_spot" is the default single-click semantic — a mistaken
+   * positive-suppression costs less than a poisoned negative. Only
+   * "wrong_symbol" teaches the next scan what NOT to find. This handler is
+   * the ONLY code path that ever creates a rejection record; every cleanup
+   * path (cancel, supersede, navigation) discards ghosts verdict-free.
+   */
+  const rejectActiveProposal = useCallback(
+    (reason: GhostRejectionReason = "wrong_spot") => {
+      if (!activeProposal || isAccepting) return;
+      if (exemplar) {
+        const key = `${activeProposal.sheetId}|${exemplar.label.trim().toLowerCase()}`;
+        const rejected = sessionRejectionsRef.current.get(key) ?? [];
+        rejected.unshift({ x: activeProposal.x, y: activeProposal.y, reason });
+        sessionRejectionsRef.current.set(key, rejected.slice(0, 10));
+        const tally = rejectionTallyRef.current.get(activeProposal.sheetId) ?? {
+          wrongSymbol: 0,
+          wrongSpot: 0,
+        };
+        if (reason === "wrong_symbol") tally.wrongSymbol += 1;
+        else tally.wrongSpot += 1;
+        rejectionTallyRef.current.set(activeProposal.sheetId, tally);
+        // Durable record for the next scan's negative harvest + the funnel's
+        // placement metric. Best-effort — review never blocks on it.
+        if (lastOperationId) {
+          const rejectionIndex = tally.wrongSymbol + tally.wrongSpot - 1;
+          void recordRejectionFn({
+            data: {
+              operation_id: lastOperationId,
+              sheet_id: activeProposal.sheetId,
+              index: rejectionIndex,
+              point: { x: activeProposal.x, y: activeProposal.y },
+              reason,
+              exemplar_label: exemplar.label,
+            },
+          }).catch(() => undefined);
+        }
+      }
+      const index = proposals.findIndex((p) => p.id === activeProposal.id);
+      const updated = proposals.map((p) =>
+        p.id === activeProposal.id ? { ...p, status: "rejected" as const } : p,
+      );
+      setProposals(updated);
+      if (!advanceToNextPending(index, updated)) {
+        setTimeout(() => endReviewWithProposals(updated), 0);
+      }
+    },
+    [
+      activeProposal,
+      advanceToNextPending,
+      endReviewWithProposals,
+      exemplar,
+      isAccepting,
+      lastOperationId,
+      proposals,
+      recordRejectionFn,
+    ],
+  );
+
+  /**
+   * Nudge the active ghost onto the hub before accepting (AITAKEOFF10
+   * Task 2). The corrected point is what persists to the measurement AND
+   * what the next scan harvests as a positive template with its own anchor
+   * — placement imperfection stops zeroing the positive set.
+   */
+  const nudgeActiveProposal = useCallback(
+    (dx: number, dy: number) => {
+      if (!activeProposal || isAccepting) return;
+      setProposals((current) =>
+        current.map((p) =>
+          p.id === activeProposal.id ? { ...p, x: clamp01(p.x + dx), y: clamp01(p.y + dy) } : p,
+        ),
+      );
+    },
+    [activeProposal, isAccepting],
+  );
 
   /** "Accept all remaining" — deliberately behind the per-item flow. */
   const acceptAllRemaining = useCallback(async () => {
@@ -983,6 +1065,7 @@ export function useAiAssist({
     activeProposal,
     acceptActiveProposal,
     rejectActiveProposal,
+    nudgeActiveProposal,
     acceptAllRemaining,
     navigateReview,
     selectProposal,

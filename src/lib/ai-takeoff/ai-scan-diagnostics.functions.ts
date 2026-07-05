@@ -9,7 +9,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import type { AiCountCandidate, TileTokenCheck } from "@/lib/ai-takeoff/ai-takeoff-domain";
+import {
+  isNegativeEligibleRejection,
+  type AiCountCandidate,
+  type TileTokenCheck,
+} from "@/lib/ai-takeoff/ai-takeoff-domain";
 import type { DetectionTileFrame } from "@/lib/ai-takeoff/coord-transforms";
 import {
   AI_DIAGNOSTICS_BUCKET,
@@ -35,11 +39,17 @@ const priorRejectionsInput = z.object({
 });
 
 /**
- * Stage-B rejections from the most recent succeeded scan of this sheet with
- * the same exemplar label (AITAKEOFF5 Task 1) — the negative-reference
- * source when the session has no fresh rejections yet. Strictly best-effort:
- * any miss returns an empty list, never an error. Diagnostics are ~24h
- * transient, so this naturally only reaches recent scans.
+ * EXPLICIT user "wrong symbol" rejections from the most recent succeeded
+ * scan of this sheet with the same exemplar label — the negative-reference
+ * source when the session has no fresh rejections yet. Rewritten in
+ * AITAKEOFF10 Task 0: this used to harvest stage-B MODEL rejections
+ * (match:false verify artifacts) as if a human had rejected them — the
+ * write path that poisoned A-100's teach loop with crops of real brushes.
+ * It now reads ONLY user-reject-*.json records carrying
+ * reason:"wrong_symbol"; every legacy record (all verify-derived) is
+ * excluded at read time, permanently. Strictly best-effort: any miss
+ * returns an empty list, never an error. Diagnostics are ~24h transient,
+ * so this naturally only reaches recent scans.
  */
 export const listPriorSheetRejections = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -78,22 +88,27 @@ export const listPriorSheetRejections = createServerFn({ method: "GET" })
       );
       const folder = diagnosticsFolder(organizationId, previous.id);
       const { data: files } = await storage.list(folder, { limit: 1000 });
-      const verifyFiles = (files ?? [])
+      const rejectionFiles = (files ?? [])
         .map((file) => file.name)
-        .filter((name) => name.startsWith(`verify-${data.sheet_id}-`) && name.endsWith(".json"))
+        .filter(
+          (name) => name.startsWith(`user-reject-${data.sheet_id}-`) && name.endsWith(".json"),
+        )
         .slice(0, 30);
       const points: Array<{ x: number; y: number }> = [];
-      for (const name of verifyFiles) {
+      for (const name of rejectionFiles) {
         if (points.length >= 8) break;
         try {
           const { data: blob } = await storage.download(`${folder}/${name}`);
           if (!blob) continue;
           const meta = JSON.parse(await blob.text()) as Record<string, unknown>;
-          if (meta.match !== false) continue;
+          // The absolute rule's READ side: only an explicit "wrong symbol"
+          // verdict is identity evidence. Placement rejections and every
+          // legacy record fail this check forever.
+          if (!isNegativeEligibleRejection(meta)) continue;
           if (str(meta.exemplarLabel).trim().toLowerCase() !== label.toLowerCase()) continue;
-          const candidate = meta.candidate as Record<string, unknown> | null;
-          const x = Number(candidate?.x);
-          const y = Number(candidate?.y);
+          const point = meta.point as Record<string, unknown> | null;
+          const x = Number(point?.x);
+          const y = Number(point?.y);
           if (Number.isFinite(x) && Number.isFinite(y)) points.push({ x, y });
         } catch {
           // Skip unreadable artifacts.
@@ -170,6 +185,9 @@ export interface AiScanSheetSummary {
   templateElapsedMs: number | null;
   /** The score floor the sweep applied (AITAKEOFF8 Task 1). */
   templateThreshold: number | null;
+  /** matchTemplate invocations, coarse+fine (AITAKEOFF10 Task 3). */
+  templateSweeps: number | null;
+  templateCount: number | null;
   /** Masked metric ran; false = degenerate-mask fallback (AITAKEOFF8). */
   templateMasked: boolean | null;
   templateMaskCoverage: number | null;
@@ -401,6 +419,12 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
           : null,
         templateThreshold: Number.isFinite(Number(meta.template_threshold))
           ? Number(meta.template_threshold)
+          : null,
+        templateSweeps: Number.isFinite(Number(meta.template_sweeps))
+          ? Number(meta.template_sweeps)
+          : null,
+        templateCount: Number.isFinite(Number(meta.template_count))
+          ? Number(meta.template_count)
           : null,
         templateMasked: typeof meta.template_masked === "boolean" ? meta.template_masked : null,
         templateMaskCoverage: Number.isFinite(Number(meta.template_mask_coverage))

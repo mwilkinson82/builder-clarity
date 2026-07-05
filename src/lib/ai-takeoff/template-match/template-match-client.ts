@@ -12,8 +12,8 @@ import type { TemplateMatchOptions } from "./template-matcher.ts";
 export interface TemplateMatchSheetInput {
   /** Detection raster pixels for the sheet being scanned. */
   raster: ImageData;
-  /** Template crop around the exemplar marker (templateCropRect sized). */
-  template: ImageData;
+  /** Templates (AITAKEOFF10): the exemplar first, harvested positives after. */
+  templates: Array<{ image: ImageData; anchor: { x: number; y: number } }>;
   options: TemplateMatchOptions;
 }
 
@@ -23,6 +23,7 @@ export interface TemplateMatchSheetResult {
   matchHeightPx: number;
   downscale: number;
   sweepCount: number;
+  templateCount: number;
   truncated: boolean;
   /** Masked metric ran (false = degenerate-mask fallback, AITAKEOFF8). */
   maskedMatching: boolean;
@@ -105,16 +106,22 @@ export function createTemplateMatchSession(): TemplateMatchSession {
         rasterRgba: input.raster.data.buffer as ArrayBuffer,
         rasterWidth: input.raster.width,
         rasterHeight: input.raster.height,
-        // Copied, not transferred: one template serves every sheet of the
-        // scan, so the caller's buffer must survive this call.
-        templateRgba: input.template.data.slice().buffer as ArrayBuffer,
-        templateWidth: input.template.width,
-        templateHeight: input.template.height,
+        // Copied, not transferred: the templates serve every sheet of the
+        // scan, so the caller's buffers must survive this call.
+        templates: input.templates.map((template) => ({
+          rgba: template.image.data.slice().buffer as ArrayBuffer,
+          width: template.image.width,
+          height: template.image.height,
+          anchor: template.anchor,
+        })),
         options: input.options,
       };
       // The raster IS transferred — ~38MB of RGBA per sheet, read once by
       // the worker; the caller's raster ImageData is detached afterward.
-      target.postMessage(request, [request.rasterRgba, request.templateRgba]);
+      target.postMessage(request, [
+        request.rasterRgba,
+        ...request.templates.map((template) => template.rgba),
+      ]);
     });
 
   return {
