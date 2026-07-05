@@ -567,24 +567,11 @@ await expectContains(
     /saveSovMappingProfile/,
     /DailyReportsWorkspace/,
     /ClientPortalWorkspace/,
-    /Invoices & payments/,
-    /Client payment readiness/,
-    /ledgerEarnedToDate/,
-    /unbilledEarnedToDate/,
-    /generateInvoicePdf/,
-    /Billing recipients/,
     /exposureCategoryFromChangeOrder/,
     /toast\.success\("CO sent to risk tally/,
     /toast\.success\("Inspection logged/,
     /shared risk ledger until the inspection table is available/,
     /toast\.success\("Inspection sent to risk tally/,
-    // BILLINGBATCH1: payment readiness reads the LIVE connect status; the
-    // pre-Phase-1 vestiges ("Finish payment setup", per-invoice "Enable
-    // online pay" links) are removed and must stay removed.
-    /invoiceOnlinePayReady/,
-    /methodAvailability\(/,
-    /resolveEnabledMethods\(/,
-    /paymentMethodContext\.stripeConnectStatus/,
     /toast\.success\("Linked to-do created/,
     /toast\.success\("Risk deleted/,
     /toast\.success\("Application created/,
@@ -671,7 +658,21 @@ await expectContains(
     /TooltipProvider delayDuration=\{120\}/,
     /aria-label=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
     /title=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
-    // Billing renders as a numbered stage rail, not seven equal sibling tabs (BILLINGRAIL1).
+    // Billing is lazy-loaded (PROJECTDECOMP1 part 3): the rail hosts a Suspense
+    // boundary and the workspace itself lives in its own module (pinned below).
+    /const BillingWorkspace = lazy\(/,
+    /<Suspense/,
+  ],
+  "workspace-heavy project tabs open a wide rail layout with labeled icon tooltips",
+);
+
+// PROJECTDECOMP1 part 3: the billing workspace — stage rail (overview / costs /
+// pay apps / WIP), the enhanced-panel gate, the ledgers, and the invoice write
+// paths — lives in its own lazy-loaded module. Behavior unchanged, new home.
+await expectContains(
+  "src/components/project/billing/BillingWorkspace.tsx",
+  [
+    /export function BillingWorkspace/,
     /BillingStageRail/,
     /value=\{billingStage\}/,
     /stages=\{billingStages\}/,
@@ -682,16 +683,19 @@ await expectContains(
     /Invoices & Payments/,
     /Pending COs/,
     /Pending change orders: not billable yet/,
-    // The pending-COs tab now leads with the allocate-to-bill panel (the old
-    // read-only "Approved + allocated" step grid was replaced by it).
     /ChangeOrderAllocationPanel/,
     /A\/R Ledger/,
     /renderEnhancedBillingPanel/,
     /BillingLineItemsPanel/,
     /ProjectCostTrackingPanel/,
     /WipAnalysisPanel/,
+    /Client payment readiness/,
+    /Billing recipients/,
+    /methodAvailability\(/,
+    /resolveEnabledMethods\(/,
+    /changeOrderAllocations/,
   ],
-  "workspace-heavy project tabs open a wide rail layout with labeled icon tooltips",
+  "lazy-loaded billing workspace owns the stage rail, ledgers, and invoice write paths",
 );
 
 await expectContains(
@@ -2204,7 +2208,6 @@ await expectContains(
     /ChangeOrderAllocationPanel/,
     /allocateChangeOrderFn/,
     /deleteChangeOrderAllocationFn/,
-    /changeOrderAllocations/,
   ],
   "project billing workspace wires the change-order allocation panel and mutations",
 );
