@@ -2275,6 +2275,25 @@ await expectContains(
   "project tab rail collapses rarely-used tabs under a More menu while keeping deep links",
 );
 
+// POLISH1 Task 1: one shared state chip (empty / in-progress / complete /
+// blocked) instead of each module inventing its own status pill. Adopted in
+// ≥2 modules (billing CO allocation + schedule risk items).
+await expectContains(
+  "src/components/ui/status-chip.tsx",
+  [/export function StatusChip/, /StatusTone/, /"in-progress"/, /complete:/, /blocked:/],
+  "shared StatusChip carries the one empty/in-progress/complete/blocked vocabulary",
+);
+await expectContains(
+  "src/components/billing/ChangeOrderAllocationPanel.tsx",
+  [/StatusChip/, /tone="complete"/, /tone="blocked"/],
+  "billing CO allocation uses the shared status chip",
+);
+await expectContains(
+  "src/components/schedule/ScheduleRiskItems.tsx",
+  [/StatusChip/, /tone="complete"/],
+  "schedule risk items use the shared status chip",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");

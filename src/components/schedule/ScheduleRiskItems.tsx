@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
 import { Plus, Trash2, Pencil, CheckCircle2 } from "lucide-react";
 import {
   type ScheduleRiskKind,
@@ -200,9 +201,9 @@ function RiskItem({
                 {local.hold_class}
               </span>
               {isLinked && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-success">
-                  <CheckCircle2 className="h-3 w-3" /> Linked
-                </span>
+                <StatusChip tone="complete" icon={CheckCircle2}>
+                  Linked
+                </StatusChip>
               )}
               <span
                 className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${RISK_STATUS_STYLES[local.status]}`}
