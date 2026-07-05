@@ -321,6 +321,18 @@ await expectContains(
 );
 
 await expectContains(
+  "supabase/migrations/20260705180000_crm_conversion_ior_contingency_seed.sql",
+  [
+    /FUNCTION public\.seed_project_award_contingency/,
+    /'C-Hold'::public\.hold_class/,
+    /'other'::public\.exposure_category/,
+    /WHERE NOT EXISTS/,
+    /PERFORM public\.seed_project_award_contingency/,
+  ],
+  "CRM conversion seeds the IOR register with an award contingency (CRMCARRY1)",
+);
+
+await expectContains(
   "src/components/pipeline/PipelineWorkspace.tsx",
   [
     /createEstimate/,
