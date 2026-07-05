@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { StatusChip } from "@/components/ui/status-chip";
 import { fmtUSDCents } from "@/lib/billing-format";
 import { billingDocumentLabel } from "@/lib/billing-labels";
 import { allocatedContractByChangeOrder, summarizeApprovedCo } from "@/lib/change-order-allocation";
@@ -85,13 +86,13 @@ function ApprovedCoRow({
               {billingDocumentLabel(co.number, "", "Change order")}
             </span>
             {summary.fullyAllocated ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-success/40 bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
-                <Check className="h-3 w-3" /> Allocated
-              </span>
+              <StatusChip tone="complete" icon={Check}>
+                Allocated
+              </StatusChip>
             ) : (
-              <span className="inline-flex items-center gap-1 rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
-                <AlertTriangle className="h-3 w-3" /> {fmtUSDCents(summary.remaining)} to allocate
-              </span>
+              <StatusChip tone="blocked" icon={AlertTriangle}>
+                {fmtUSDCents(summary.remaining)} to allocate
+              </StatusChip>
             )}
           </div>
           {co.description ? (
