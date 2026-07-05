@@ -12,6 +12,8 @@ import {
   type PipelineStage,
 } from "@/lib/pipeline.functions";
 import { createProject, listProjects, seedDemoIfEmpty } from "@/lib/projects.functions";
+import { getOnboardingStatus } from "@/lib/onboarding.functions";
+import { FirstRunChecklist, type ChecklistStep } from "@/components/onboarding/FirstRunChecklist";
 import { BillingFeedBadge } from "@/components/billing/BillingFeedBadge";
 import { PipelineWorkspace } from "@/components/pipeline/PipelineWorkspace";
 import {
@@ -76,6 +78,8 @@ function formatNumber(value: number) {
 function formatUsageValue(used: number, limit: number) {
   return `${formatNumber(used)} / ${limit > 0 ? formatNumber(limit) : "No cap"}`;
 }
+
+const ONBOARDING_DISMISSED_KEY = "overwatch:onboarding-dismissed:v1";
 
 function companyInitials(name: string) {
   return (
@@ -180,6 +184,25 @@ function PortfolioPage() {
     queryKey: ["company-workspace-context"],
     queryFn: () => loadCompanyContext(),
   });
+  const loadOnboardingStatus = useServerFn(getOnboardingStatus);
+  const { data: onboardingStatus } = useQuery({
+    queryKey: ["onboarding-status"],
+    queryFn: () => loadOnboardingStatus(),
+  });
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  useEffect(() => {
+    // Client-only: read the persisted dismissal after mount to avoid an SSR mismatch.
+    if (typeof window !== "undefined") {
+      setOnboardingDismissed(window.localStorage.getItem(ONBOARDING_DISMISSED_KEY) === "1");
+    }
+  }, []);
+  const dismissOnboarding = () => {
+    setOnboardingDismissed(true);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ONBOARDING_DISMISSED_KEY, "1");
+    }
+  };
   const [search, setSearch] = useState("");
   const [seedError, setSeedError] = useState<string | null>(null);
   const [companyFilter, setCompanyFilter] = useState("all");
@@ -357,6 +380,76 @@ function PortfolioPage() {
     navigate({ to: "/auth" });
   };
 
+  // First-run checklist (ONBOARDING1). Each step self-checks from live data; the billing
+  // steps stay disabled until their prerequisite lands, and deep-link straight to Billing.
+  const onboardingFirstProjectId = onboardingStatus?.firstProjectId ?? null;
+  const onboardingHasCompany = Boolean(companyContext?.name) && companyContext?.name !== "Company";
+  const onboardingHasProject = Boolean(onboardingStatus?.hasProject);
+  const onboardingHasSov = Boolean(onboardingStatus?.hasScheduleOfValues);
+  const onboardingHasPayApp = Boolean(onboardingStatus?.hasPayApplication);
+  const onboardingAllDone =
+    onboardingHasCompany && onboardingHasProject && onboardingHasSov && onboardingHasPayApp;
+  const billingDeepLink = (label: string, enabled: boolean) =>
+    enabled && onboardingFirstProjectId ? (
+      <Button asChild size="sm" variant="outline">
+        <Link
+          to="/projects/$projectId"
+          params={{ projectId: onboardingFirstProjectId }}
+          search={{ tab: "billing" }}
+        >
+          {label}
+        </Link>
+      </Button>
+    ) : (
+      <Button size="sm" variant="outline" disabled>
+        {label}
+      </Button>
+    );
+  const onboardingSteps: ChecklistStep[] = [
+    {
+      key: "company",
+      title: "Set up your company",
+      description: "Add your company name and logo so pay apps and portals are branded.",
+      done: onboardingHasCompany,
+      action: (
+        <Button asChild size="sm" variant="outline">
+          <Link to="/team">Open company</Link>
+        </Button>
+      ),
+    },
+    {
+      key: "project",
+      title: "Create your first project",
+      description: "Start a real job alongside the Harbor Residence demo.",
+      done: onboardingHasProject,
+      action: (
+        <Button size="sm" variant="outline" onClick={() => setCreateProjectOpen(true)}>
+          New project
+        </Button>
+      ),
+    },
+    {
+      key: "sov",
+      title: "Import a schedule of values",
+      description: "Open Billing, then Costs, and bring in your SOV cost codes.",
+      done: onboardingHasSov,
+      blocked: !onboardingHasProject,
+      blockedReason: "Create your first project first — the schedule of values lives on a project.",
+      action: billingDeepLink("Open billing", onboardingHasProject),
+    },
+    {
+      key: "payapp",
+      title: "Generate your first pay application",
+      description: "In Billing, then Pay Applications, bill your SOV progress.",
+      done: onboardingHasPayApp,
+      blocked: !onboardingHasSov,
+      blockedReason: "Import a schedule of values first — pay apps are built from it.",
+      action: billingDeepLink("Open billing", onboardingHasSov),
+    },
+  ];
+  const showOnboarding =
+    onboardingStatus !== undefined && !onboardingDismissed && !onboardingAllDone;
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="relative border-b border-hairline bg-surface-elevated/95 shadow-[0_10px_30px_rgb(31_28_23_/_0.05)]">
@@ -412,7 +505,7 @@ function PortfolioPage() {
                   <Users className="h-3.5 w-3.5" /> Company
                 </Link>
               </Button>
-              <NewProjectButton />
+              <NewProjectButton open={createProjectOpen} onOpenChange={setCreateProjectOpen} />
               <Button variant="ghost" size="sm" onClick={signOut} className="gap-1.5">
                 <LogOut className="h-3.5 w-3.5" /> Sign out
               </Button>
@@ -454,6 +547,11 @@ function PortfolioPage() {
             </div>
           </div>
           <TabsContent value="projects" className="mt-0">
+            {showOnboarding ? (
+              <div className="mb-4">
+                <FirstRunChecklist steps={onboardingSteps} onDismiss={dismissOnboarding} />
+              </div>
+            ) : null}
             {isLoading ? (
               <p className="text-sm text-muted-foreground">Loading…</p>
             ) : projectsDidError ? (
@@ -2150,8 +2248,18 @@ function InviteByMagicLinkButton() {
   );
 }
 
-function NewProjectButton() {
-  const [open, setOpen] = useState(false);
+function NewProjectButton({
+  open: openProp,
+  onOpenChange,
+}: {
+  open?: boolean;
+  onOpenChange?: (value: boolean) => void;
+} = {}) {
+  const [openState, setOpenState] = useState(false);
+  // Controllable so the first-run checklist (ONBOARDING1) can open this dialog; falls back
+  // to self-managed state when rendered standalone.
+  const open = openProp ?? openState;
+  const setOpen = onOpenChange ?? setOpenState;
   const [name, setName] = useState("");
   const [jobNumber, setJobNumber] = useState("");
   const [client, setClient] = useState("");
