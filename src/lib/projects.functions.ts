@@ -2037,6 +2037,72 @@ export const deleteChangeOrder = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+// ---------------- CHANGE ORDER ALLOCATIONS ----------------
+// Assign an approved change order's value to an SOV cost code so it becomes
+// billable (rolls into that line's change_order_value_cents = G702 line 2 on
+// the next application). Before this, the app nudged "allocate to a cost
+// code" with nowhere to do it; this is that missing control.
+
+const changeOrderAllocationInput = z.object({
+  projectId: z.string().uuid(),
+  changeOrderId: z.string().uuid(),
+  costBucketId: z.string().uuid(),
+  contractAmount: z.number().min(0),
+  costAmount: z.number().min(0).default(0),
+});
+
+export const allocateChangeOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof changeOrderAllocationInput>) =>
+    changeOrderAllocationInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    // RLS-scoped reads gate access: no cost bucket / CO in a project the
+    // caller cannot manage means no allocation. The bucket supplies the cost
+    // code and the CO its label, so the allocation carries readable context.
+    const bucketRes = await dynamicTable(context.supabase, "cost_buckets")
+      .select("id,project_id,cost_code,bucket")
+      .eq("id", data.costBucketId)
+      .maybeSingle();
+    if (bucketRes.error) throw new Error(bucketRes.error.message);
+    const bucket = bucketRes.data as Record<string, unknown> | null;
+    if (!bucket || (bucket.project_id as string) !== data.projectId) {
+      throw new Error("Cost code not found on this project.");
+    }
+    const coRes = await dynamicTable(context.supabase, "change_orders")
+      .select("id,project_id,number,description")
+      .eq("id", data.changeOrderId)
+      .maybeSingle();
+    if (coRes.error) throw new Error(coRes.error.message);
+    const co = coRes.data as Record<string, unknown> | null;
+    if (!co || (co.project_id as string) !== data.projectId) {
+      throw new Error("Change order not found on this project.");
+    }
+
+    const { error } = await dynamicTable(context.supabase, "change_order_allocations").insert({
+      project_id: data.projectId,
+      change_order_id: data.changeOrderId,
+      cost_bucket_id: data.costBucketId,
+      cost_code: str(bucket.cost_code),
+      description: [str(co.number, "CO"), str(co.description)].filter(Boolean).join(" - "),
+      contract_amount: data.contractAmount,
+      cost_amount: data.costAmount,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteChangeOrderAllocation = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "change_order_allocations")
+      .delete()
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 // ---------------- INSPECTIONS ----------------
 
 const inspectionInput = z.object({

@@ -656,7 +656,9 @@ await expectContains(
     /Invoices & Payments/,
     /Pending COs/,
     /Pending change orders: not billable yet/,
-    /Approved \+ allocated/,
+    // The pending-COs tab now leads with the allocate-to-bill panel (the old
+    // read-only "Approved + allocated" step grid was replaced by it).
+    /ChangeOrderAllocationPanel/,
     /A\/R Ledger/,
     /renderEnhancedBillingPanel/,
     /BillingLineItemsPanel/,
@@ -2130,6 +2132,68 @@ expectSql(
     /storage_limit_mb/i,
   ],
   "company workspace and non-blocking Contractor Circle grant foundation exists",
+);
+
+// CO-ALLOCATION: approved change orders become billable only once allocated
+// to an SOV cost code. The math is a pure, cents-safe, node-loadable module;
+// the server fns verify bucket+CO ownership before writing; the panel guides
+// the allocate step and refuses uncoded lines.
+await expectContains(
+  "src/lib/change-order-allocation.ts",
+  [
+    /allocatedContractByChangeOrder/,
+    /unallocatedContract/,
+    /summarizeApprovedCo/,
+    /fullyAllocated/,
+    /dollarsToCents/,
+    /from "\.\/payments-domain\.ts"/,
+  ],
+  "change-order allocation math is a pure, cents-safe, node-loadable module",
+);
+await expectContains(
+  "src/components/billing/ChangeOrderAllocationPanel.tsx",
+  [
+    /export function ChangeOrderAllocationPanel/,
+    /Allocate to cost code/,
+    /Add cost codes to your SOV lines first/,
+    /to allocate/,
+    /G702 line 2/,
+    /codedBuckets/,
+  ],
+  "change-order allocation panel guides the allocate step and blocks uncoded lines",
+);
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /allocateChangeOrder/,
+    /deleteChangeOrderAllocation/,
+    /change_order_allocations/,
+    /changeOrderAllocationInput/,
+  ],
+  "change-order allocation server fns verify ownership and write to change_order_allocations",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [
+    /ChangeOrderAllocationPanel/,
+    /allocateChangeOrderFn/,
+    /deleteChangeOrderAllocationFn/,
+    /changeOrderAllocations/,
+  ],
+  "project billing workspace wires the change-order allocation panel and mutations",
+);
+
+// The Harbor demo seed is coherent: cost-coded SOV lines and one approved CO
+// already allocated to a cost code, so line 2 is non-zero out of the box.
+expectSql(
+  sql,
+  [
+    /CREATE OR REPLACE FUNCTION public\.seed_demo_project/,
+    /cost_buckets \(project_id, bucket, cost_code, original_budget/,
+    /INSERT INTO public\.change_order_allocations/,
+    /CO-002 - Upgraded primary bath stone package/,
+  ],
+  "Harbor demo seed gives SOV lines cost codes and pre-allocates CO-002 to Finishes",
 );
 
 if (live) {
