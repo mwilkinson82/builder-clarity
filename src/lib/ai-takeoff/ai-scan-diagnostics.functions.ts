@@ -166,6 +166,19 @@ export interface AiScanSheetSummary {
   templateEngine: string;
   templateError: string;
   templateElapsedMs: number | null;
+  /** The score floor the sweep applied (AITAKEOFF8 Task 1). */
+  templateThreshold: number | null;
+  /** Masked metric ran; false = degenerate-mask fallback (AITAKEOFF8). */
+  templateMasked: boolean | null;
+  templateMaskCoverage: number | null;
+  /** Best sweep scores regardless of the threshold (AITAKEOFF8 Task 1). */
+  templateTopScores: Array<{
+    x: number;
+    y: number;
+    score: number;
+    rotationDeg: number;
+    scale: number;
+  }>;
 }
 
 export interface AiScanDiagnostics {
@@ -383,6 +396,25 @@ export const getAiScanDiagnostics = createServerFn({ method: "GET" })
         templateElapsedMs: Number.isFinite(Number(meta.template_elapsed_ms))
           ? Number(meta.template_elapsed_ms)
           : null,
+        templateThreshold: Number.isFinite(Number(meta.template_threshold))
+          ? Number(meta.template_threshold)
+          : null,
+        templateMasked: typeof meta.template_masked === "boolean" ? meta.template_masked : null,
+        templateMaskCoverage: Number.isFinite(Number(meta.template_mask_coverage))
+          ? Number(meta.template_mask_coverage)
+          : null,
+        templateTopScores: Array.isArray(meta.template_top_scores)
+          ? (meta.template_top_scores as Array<Record<string, unknown>>)
+              .slice(0, 5)
+              .map((entry) => ({
+                x: num(entry?.x),
+                y: num(entry?.y),
+                score: num(entry?.score),
+                rotationDeg: num(entry?.rotation_deg),
+                scale: num(entry?.scale),
+              }))
+              .filter((entry) => Number.isFinite(entry.score))
+          : [],
       });
     }
 

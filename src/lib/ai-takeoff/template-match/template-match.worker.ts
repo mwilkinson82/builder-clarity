@@ -44,6 +44,10 @@ workerScope.onmessage = async (event) => {
       downscale: output.downscale,
       sweepCount: output.sweepCount,
       truncated: output.truncated,
+      maskedMatching: output.maskedMatching,
+      maskCoverage: output.maskCoverage,
+      appliedThreshold: output.appliedThreshold,
+      topScores: output.topScores,
       elapsedMs: Date.now() - startedAt,
     });
   } catch (error) {

@@ -37,9 +37,11 @@ import {
   type SheetPoint,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
 import {
+  DEFAULT_TEMPLATE_MATCH_THRESHOLD,
   templateCropRect,
   unionProposalCandidates,
   type TemplateMatchCandidate,
+  type TemplateTopScore,
 } from "@/lib/ai-takeoff/template-match/template-match-domain";
 import {
   createTemplateMatchSession,
@@ -437,6 +439,13 @@ export function useAiAssist({
         let templateEngine: "ok" | "failed" | "skipped" = "skipped";
         let templateError = "";
         let templateElapsedMs: number | null = null;
+        // Score transparency (AITAKEOFF8 Task 1): the sweep's best scores,
+        // the threshold it applied, and whether the masked metric ran — a
+        // zero-hit sheet must explain itself in the funnel.
+        let templateTopScores: TemplateTopScore[] = [];
+        let templateMasked: boolean | null = null;
+        let templateMaskCoverage: number | null = null;
+        let templateThreshold: number | null = null;
         if (templateSession && templateImage && geometry.footprintRasterPx !== null) {
           try {
             const rasterPixels = raster.canvas
@@ -447,7 +456,7 @@ export function useAiAssist({
               raster: rasterPixels,
               template: templateImage,
               options: {
-                threshold: begin.templateMatchThreshold ?? 0.55,
+                threshold: begin.templateMatchThreshold ?? DEFAULT_TEMPLATE_MATCH_THRESHOLD,
                 footprintPx: geometry.footprintRasterPx,
                 radius: geometry.radius,
               },
@@ -455,6 +464,10 @@ export function useAiAssist({
             templateHits = matched.candidates;
             templateEngine = "ok";
             templateElapsedMs = matched.elapsedMs;
+            templateTopScores = matched.topScores;
+            templateMasked = matched.maskedMatching;
+            templateMaskCoverage = matched.maskCoverage;
+            templateThreshold = matched.appliedThreshold;
           } catch (error) {
             if (proposalSource === "template") throw error;
             templateEngine = "failed";
@@ -612,6 +625,18 @@ export function useAiAssist({
                 template_engine: templateEngine,
                 template_error: templateError.slice(0, 500),
                 template_elapsed_ms: templateElapsedMs,
+                // Score transparency (AITAKEOFF8 Task 1): zero hits must
+                // read as "top 0.41 vs threshold 0.78", never as a mystery.
+                template_threshold: templateThreshold,
+                template_masked: templateMasked,
+                template_mask_coverage: templateMaskCoverage,
+                template_top_scores: templateTopScores.map((top) => ({
+                  x: top.x,
+                  y: top.y,
+                  score: Math.min(1, top.score),
+                  rotation_deg: top.rotationDeg,
+                  scale: top.scale,
+                })),
               },
             },
           });

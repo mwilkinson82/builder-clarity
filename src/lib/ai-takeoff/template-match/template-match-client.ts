@@ -5,7 +5,7 @@
 // constructed inside functions that only run from user gestures, so SSR
 // never touches it.
 
-import type { TemplateMatchCandidate } from "./template-match-domain.ts";
+import type { TemplateMatchCandidate, TemplateTopScore } from "./template-match-domain.ts";
 import type { TemplateMatchRequest, TemplateMatchResponse } from "./template-match-protocol.ts";
 import type { TemplateMatchOptions } from "./template-matcher.ts";
 
@@ -24,6 +24,12 @@ export interface TemplateMatchSheetResult {
   downscale: number;
   sweepCount: number;
   truncated: boolean;
+  /** Masked metric ran (false = degenerate-mask fallback, AITAKEOFF8). */
+  maskedMatching: boolean;
+  maskCoverage: number;
+  appliedThreshold: number;
+  /** Best sweep scores regardless of threshold (AITAKEOFF8 Task 1). */
+  topScores: TemplateTopScore[];
   elapsedMs: number;
 }
 

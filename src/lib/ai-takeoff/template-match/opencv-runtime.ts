@@ -11,6 +11,8 @@ export interface CvMat {
   data: Uint8Array;
   data32F: Float32Array;
   ucharPtr(row: number, col: number): Uint8Array;
+  roi(rect: unknown): CvMat;
+  clone(): CvMat;
   delete(): void;
 }
 
@@ -18,6 +20,7 @@ export interface CvMatConstructor {
   new (): CvMat;
   new (rows: number, cols: number, type: number): CvMat;
   new (rows: number, cols: number, type: number, scalar: unknown): CvMat;
+  ones(rows: number, cols: number, type: number): CvMat;
 }
 
 /** The slice of the opencv.js module the matcher calls. */
@@ -26,15 +29,22 @@ export interface OpenCvApi {
   CV_8UC4: number;
   COLOR_RGBA2GRAY: number;
   ADAPTIVE_THRESH_MEAN_C: number;
+  THRESH_BINARY: number;
   THRESH_BINARY_INV: number;
   TM_CCOEFF_NORMED: number;
+  TM_CCORR_NORMED: number;
   INTER_AREA: number;
   INTER_LINEAR: number;
+  INTER_NEAREST: number;
   BORDER_CONSTANT: number;
   Mat: CvMatConstructor;
   Size: new (width: number, height: number) => unknown;
   Point: new (x: number, y: number) => unknown;
+  Rect: new (x: number, y: number, width: number, height: number) => unknown;
   Scalar: new (...values: number[]) => unknown;
+  countNonZero(src: CvMat): number;
+  dilate(src: CvMat, dst: CvMat, kernel: CvMat): void;
+  threshold(src: CvMat, dst: CvMat, thresh: number, maxval: number, type: number): number;
   cvtColor(src: CvMat, dst: CvMat, code: number): void;
   resize(
     src: CvMat,
@@ -73,7 +83,7 @@ export interface OpenCvApi {
     borderMode: number,
     borderValue: unknown,
   ): void;
-  matchTemplate(image: CvMat, templ: CvMat, result: CvMat, method: number): void;
+  matchTemplate(image: CvMat, templ: CvMat, result: CvMat, method: number, mask?: CvMat): void;
 }
 
 /** How long the wasm runtime gets to come up before the scan fails loudly. */
