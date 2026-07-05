@@ -194,6 +194,45 @@ export function OpportunityCreateDialog({
   );
 }
 
+// One-field quick capture (POLISH1 / audit 2.2): a CRM dies on data-entry friction, and the
+// full dialog has 14 fields when only the name is required. Type a name, press Enter, lead
+// logged in seconds. The full "New Opportunity" dialog stays for when you have more to enter.
+export function QuickAddOpportunity({
+  isCreating,
+  onCreate,
+}: {
+  isCreating: boolean;
+  onCreate: (input: CreateOpportunityInput) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const trimmed = name.trim();
+  const submit = async () => {
+    if (!trimmed) return;
+    await onCreate({ ...emptyDraft, name: trimmed });
+    setName("");
+  };
+  return (
+    <form
+      className="flex items-center gap-1.5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <Input
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+        placeholder="Quick-add a lead by name…"
+        aria-label="Quick-add opportunity name"
+        className="h-9 w-48"
+      />
+      <Button type="submit" size="sm" variant="outline" disabled={isCreating || !trimmed}>
+        Add
+      </Button>
+    </form>
+  );
+}
+
 function Field({
   label,
   className,
