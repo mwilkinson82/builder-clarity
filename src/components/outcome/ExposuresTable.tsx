@@ -17,7 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ListChecks, Plus, Pencil, Trash2 } from "lucide-react";
+import { ListChecks, Plus, Pencil, ShieldAlert, Trash2 } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
 import {
@@ -342,9 +343,17 @@ export function ExposuresTable({
             />
           ))}
           {exposures.length === 0 && (
-            <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-              No risk allocations yet. Every emerging problem has a dollar consequence - add the
-              first one to begin protecting margin.
+            <div className="px-4 py-10">
+              <EmptyState
+                icon={ShieldAlert}
+                title="No risk allocations yet"
+                description="Every emerging problem has a dollar consequence — add the first one to begin protecting margin."
+                action={
+                  <Button onClick={openNew} size="sm" className="gap-1.5">
+                    <Plus className="h-3.5 w-3.5" /> Add risk
+                  </Button>
+                }
+              />
             </div>
           )}
         </div>

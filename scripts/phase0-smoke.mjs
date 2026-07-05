@@ -2234,6 +2234,29 @@ expectSql(
   "cost-code backfill mirrors billing line items and cost actuals from their coded buckets",
 );
 
+// POLISH1 Task 4: empty tables teach — one shared EmptyState (icon + what the
+// table is for + the action that fills it) across the IOR tables.
+await expectContains(
+  "src/components/ui/empty-state.tsx",
+  [/export function EmptyState/, /icon\?:/, /action\?:/, /title/, /description/],
+  "shared EmptyState component gives empty tables an instruction and an action slot",
+);
+await expectContains(
+  "src/components/outcome/ChangeOrdersTable.tsx",
+  [/EmptyState/, /No change orders yet/, /Add change order/],
+  "change orders table teaches and offers add when empty",
+);
+await expectContains(
+  "src/components/outcome/ExposuresTable.tsx",
+  [/EmptyState/, /No risk allocations yet/, /Add risk/],
+  "risk table teaches and offers add when empty",
+);
+await expectContains(
+  "src/components/outcome/CostBucketsTable.tsx",
+  [/EmptyState/, /No cost buckets yet/, /Import SOV/],
+  "cost buckets table teaches the import/add path when empty",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");
