@@ -174,6 +174,46 @@ export function computePreviousCertificatesCents(lines: readonly G703LineInput[]
   }, 0);
 }
 
+// ---------------------------------------------------------------------------
+// Overbilling guardrail (GETTINGPAID3 Task 1 — lender-rejection prevention)
+// ---------------------------------------------------------------------------
+
+export interface OverbilledLine {
+  item: string;
+  description: string;
+  scheduledValueCents: number; // C (incl. allocated approved COs)
+  totalCompletedStoredCents: number; // G
+  percentComplete: number; // G / C * 100, > 100 here
+  overageCents: number; // G - C, always positive
+}
+
+// A line is overbilled when total completed & stored exceeds its scheduled
+// value (G > C, i.e. > 100% / negative balance to finish). Lenders typically
+// reject lines over 100%. A soft flag, never a block — the estimator decides
+// whether to reallocate via change order or adjust.
+export function overbilledLines(lines: readonly G703LineInput[]): OverbilledLine[] {
+  return computeG703Rows(lines)
+    .filter(
+      (row) =>
+        row.scheduledValueCents > 0 && row.totalCompletedStoredCents > row.scheduledValueCents,
+    )
+    .map((row) => ({
+      item: row.item,
+      description: row.description,
+      scheduledValueCents: row.scheduledValueCents,
+      totalCompletedStoredCents: row.totalCompletedStoredCents,
+      percentComplete: row.percentComplete,
+      overageCents: row.totalCompletedStoredCents - row.scheduledValueCents,
+    }));
+}
+
+// The estimator-facing warning naming the line and its overage.
+export function overbilledLineMessage(line: OverbilledLine): string {
+  return `${line.description || line.item} bills to ${line.percentComplete.toFixed(
+    1,
+  )}% of scheduled value — lenders typically reject lines over 100%; reallocate via change order or adjust.`;
+}
+
 export interface G702FaceInput {
   originalContractSumCents: number;
   netChangeByChangeOrdersCents: number;

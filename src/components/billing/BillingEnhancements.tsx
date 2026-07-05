@@ -21,7 +21,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { AiaApplicationStepper } from "@/components/billing/AiaApplicationStepper";
 import { aiaBillingFilename, downloadPdfBytes, generateAiaBillingPdf } from "@/lib/aia-pdf";
+import { overbilledLines } from "@/lib/aia-math";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { billingDocumentLabel } from "@/lib/billing-labels";
 import { fmtPct } from "@/lib/format";
@@ -37,8 +39,13 @@ import type {
   CostActualImportRow,
   CostActualRow,
 } from "@/lib/billing.functions";
-import type { BillingApplicationRow, BucketRow, ProjectRow } from "@/lib/projects.functions";
-import { Check, Download, Plus, Save, Trash2, Upload, Wand2 } from "lucide-react";
+import type {
+  BillingApplicationRow,
+  BillingOutputFormat,
+  BucketRow,
+  ProjectRow,
+} from "@/lib/projects.functions";
+import { AlertTriangle, Check, Plus, Save, Trash2, Upload } from "lucide-react";
 
 type LinePatch = {
   work_completed_this_period?: number;
@@ -82,6 +89,8 @@ type BillingEnhancementProps = {
   onGenerateLines: (billingApplicationId: string) => void;
   onUpdateLine: (id: string, patch: LinePatch) => void;
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
+  onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
+  savingOutputFormat?: boolean;
   onCreateCostActual: (input: CostActualDraft) => void;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
@@ -164,6 +173,8 @@ export function BillingEnhancementPanels({
   onGenerateLines,
   onUpdateLine,
   onUpdatePayAppRetainageRate,
+  onUpdateOutputFormat,
+  savingOutputFormat,
   onCreateCostActual,
   onImportCostActuals,
   onVoidCostActual,
@@ -195,8 +206,10 @@ export function BillingEnhancementPanels({
         onGenerateLines={onGenerateLines}
         onUpdateLine={onUpdateLine}
         onUpdatePayAppRetainageRate={onUpdatePayAppRetainageRate}
+        onUpdateOutputFormat={onUpdateOutputFormat}
         savingLine={savingLine}
         savingRetainageRate={savingRetainageRate}
+        savingOutputFormat={savingOutputFormat}
       />
       <ProjectCostTrackingPanel
         projectId={projectId}
@@ -224,8 +237,10 @@ export function BillingLineItemsPanel({
   onGenerateLines,
   onUpdateLine,
   onUpdatePayAppRetainageRate,
+  onUpdateOutputFormat,
   savingLine,
   savingRetainageRate,
+  savingOutputFormat,
 }: {
   project: ProjectRow;
   payApps: BillingApplicationRow[];
@@ -233,8 +248,10 @@ export function BillingLineItemsPanel({
   onGenerateLines: (billingApplicationId: string) => void;
   onUpdateLine: (id: string, patch: LinePatch) => void;
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
+  onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
   savingLine?: boolean;
   savingRetainageRate?: boolean;
+  savingOutputFormat?: boolean;
 }) {
   const [pdfBusy, setPdfBusy] = useState(false);
   const firstDetailedPayAppId = lineItems[0]?.billing_application_id ?? payApps[0]?.id ?? "";
@@ -288,6 +305,20 @@ export function BillingLineItemsPanel({
       Math.abs(line.retainage_held_cents - line.retainage_released_cents) > 0 ||
       line.retainage_released_cents > 0,
   );
+  // Overbilled lines (G > C) drive the soft lender-rejection warning at
+  // entry and the confirm at generation. BillingLineItemRow carries every
+  // field the G703 math needs, so the live lines feed it directly.
+  const overbilled = useMemo(() => overbilledLines(selectedLines), [selectedLines]);
+  const linesWithActivity = selectedLines.filter(
+    (line) =>
+      line.work_completed_this_period_cents > 0 || line.materials_stored_this_period_cents > 0,
+  ).length;
+  const builderSnapshot = {
+    outputFormat: (selectedPayApp?.output_format ?? "invoice") as "invoice" | "aia_g702",
+    lineCount: selectedLines.length,
+    linesWithActivity,
+    overbilledCount: overbilled.length,
+  };
 
   const releaseAll = () => {
     if (!selectedLines.length) return;
@@ -358,30 +389,6 @@ export function BillingLineItemsPanel({
           <Button
             type="button"
             size="sm"
-            variant="outline"
-            className="gap-1.5"
-            disabled={!selectedPayApp || selectedLines.length > 0}
-            onClick={() => selectedPayApp && onGenerateLines(selectedPayApp.id)}
-          >
-            <Wand2 className="h-3.5 w-3.5" /> Pull SOV + approved COs
-          </Button>
-          {/* AIA affordances appear only when the application was built as
-              AIA G702/G703 — companies that never pick AIA never see them. */}
-          {selectedPayApp?.output_format === "aia_g702" ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              disabled={pdfBusy || selectedLines.length === 0}
-              onClick={downloadAiaPdf}
-            >
-              <Download className="h-3.5 w-3.5" /> Download AIA G702/G703
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            size="sm"
             variant="ghost"
             className="gap-1.5"
             disabled={selectedLines.length === 0 || !showRetainageAmounts}
@@ -392,11 +399,29 @@ export function BillingLineItemsPanel({
         </div>
       </div>
 
+      {/* Always-visible progression: format, SOV import, entries, generate —
+          each actionable or disabled-with-reason, never hidden (GP3 Task 0). */}
+      {selectedPayApp ? (
+        <div className="mt-4">
+          <AiaApplicationStepper
+            snapshot={builderSnapshot}
+            overbilled={overbilled}
+            canImport={Boolean(selectedPayApp)}
+            generating={pdfBusy}
+            savingFormat={savingOutputFormat}
+            onSetOutputFormat={(format) => onUpdateOutputFormat(selectedPayApp.id, format)}
+            onImportSov={() => onGenerateLines(selectedPayApp.id)}
+            onGenerate={downloadAiaPdf}
+          />
+        </div>
+      ) : null}
+
       <div className="mt-4 space-y-3">
         {selectedLines.length === 0 ? (
           <div className="rounded-md border border-hairline bg-surface py-9 text-center text-sm text-muted-foreground">
-            Pull lines from the SOV to enter percent complete and stored materials by cost code.
-            Approved change orders allocated to a cost code are added to the matching line.
+            Use step 2 above to import your schedule of values, then enter percent complete and
+            stored materials by cost code. Approved change orders allocated to a cost code are added
+            to the matching line.
           </div>
         ) : (
           <>
@@ -601,6 +626,10 @@ function BillingLineItemEditor({
   const draftBalance = centsToDollars(contractCents - draftCompletedStoredCents);
   const draftCompletePct =
     contractCents > 0 ? clampPercent((draftCompletedStoredCents / contractCents) * 100) : 0;
+  // Unclamped, so the overbilling warning can name the true overage (e.g.
+  // 108.8%) instead of the display-capped 100%.
+  const draftCompletePctRaw =
+    contractCents > 0 ? (draftCompletedStoredCents / contractCents) * 100 : 0;
   const draftRetainageHeld = centsToDollars(
     Math.max(
       0,
@@ -660,6 +689,18 @@ function BillingLineItemEditor({
           />
         </div>
       </div>
+      {/* Overbilling guardrail at entry (GP3 Task 1): soft warning naming the
+          line and its overage — a flag the estimator decides on, not a block. */}
+      {overbilled ? (
+        <div className="mt-3 flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            {line.description || line.cost_code || "This line"} bills to{" "}
+            {fmtPct(draftCompletePctRaw)} of scheduled value — lenders typically reject lines over
+            100%; reallocate via change order or adjust.
+          </span>
+        </div>
+      ) : null}
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         <BillingDetail label="Contract value" value={fmtUSD(contractValue)} />
         <BillingDetail label="Previous" value={fmtUSD(previous)} />

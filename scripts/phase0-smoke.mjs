@@ -701,11 +701,12 @@ await expectContains(
     /billingDocumentLabel/,
     /Applications: progress billing/,
     /Complete to date %/,
-    /Pull SOV \+ approved COs/,
     /Change orders in this application/,
-    // GETTINGPAID1: AIA affordances only for applications built as AIA.
-    /output_format === "aia_g702"/,
-    /Download AIA G702\/G703/,
+    // GETTINGPAID3: the AIA path is a persistent stepper, and overbilled
+    // lines are flagged at entry (soft warning, not a block).
+    /AiaApplicationStepper/,
+    /overbilledLines/,
+    /lenders typically reject lines over/,
     /Cost ledger: job-cost backup/,
     /Cost code health/,
     /Cost transaction backup/,
@@ -723,6 +724,27 @@ await expectContains(
   "src/lib/billing-labels.ts",
   [/normalizeBillingNumberLabel/, /LEADING_ZERO_NUMBER_TOKEN/, /billingDocumentLabel/],
   "billing document labels normalize generated-looking leading zeroes before rendering or export",
+);
+
+// GETTINGPAID3: the builder guides with a persistent stepper — every step
+// present, disabled-with-reason, never absent — and the generate gate lives
+// in a pure, shared module.
+await expectContains(
+  "src/components/billing/AiaApplicationStepper.tsx",
+  [
+    /aiaBuilderSteps/,
+    /aiaGenerateGate/,
+    /routeToBlockingStep/,
+    /Confirm & download anyway/,
+    /Import from SOV/,
+    /Go to step/,
+  ],
+  "AIA application stepper keeps every step visible and routes blocked generate clicks",
+);
+await expectContains(
+  "src/lib/aia-builder-steps.ts",
+  [/aiaGenerateGate/, /blockingStep/, /Import your schedule of values first/],
+  "AIA builder gate is a pure module shared by the stepper and the tests",
 );
 
 // GETTINGPAID1: the AIA package is lender-grade — G702 face with lines 1-9
@@ -752,13 +774,20 @@ await expectContains(
     /computeG702Face/,
     /computeG703Rows/,
     /computePreviousCertificatesCents/,
-    /From Previous Application/,
+    // GETTINGPAID3 Task 3: the from-previous column letter is "D" (the
+    // standard form's G = D+E+F), not "D+E".
+    /letter: "D",/,
     /Materials Presently Stored/,
     /GRAND TOTALS/,
     /getContinuationColumns/,
     /aia-pay-application-package\.pdf/,
   ],
   "application PDF generator produces the lender-grade G702/G703 package",
+);
+await expectNotContains(
+  "src/lib/aia-pdf.ts",
+  [/letter: "D\+E"/],
+  "G703 from-previous column uses the standard letter D, not D+E (GETTINGPAID3)",
 );
 
 await expectContains(
@@ -770,6 +799,8 @@ await expectContains(
     /retainageCompletedWorkCents/,
     /retainageStoredMaterialCents/,
     /percentOfCents/,
+    // GETTINGPAID3: overbilling detection (G > C) lives in the same module.
+    /export function overbilledLines/,
   ],
   "AIA arithmetic is a pure cents module shared by the PDF and the tests",
 );

@@ -8,6 +8,7 @@ import {
   type ProjectWIPResult,
   type WIPBucketInput,
 } from "@/lib/wip";
+import { buildBillingLinesFromBuckets } from "@/lib/billing-line-generation";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -761,67 +762,48 @@ export const generateBillingLineItems = createServerFn({ method: "POST" })
         normalizeLineItem(row as Record<string, unknown>),
       );
     }
-    const previousByBucket = new Map(
-      previousLines
-        .filter((line) => line.cost_bucket_id)
-        .map((line) => [line.cost_bucket_id as string, line]),
-    );
 
     const changeOrders = ((changeOrderRes.data ?? []) as unknown[]).map((row) =>
       normalizeChangeOrder(row as Record<string, unknown>),
     );
-    const approvedChangeOrderIds = new Set(
-      changeOrders.filter((co) => co.status === "Approved").map((co) => co.id),
-    );
     const allocations = ((allocationRes.data ?? []) as unknown[]).map((row) =>
       normalizeChangeOrderAllocation(row as Record<string, unknown>),
     );
-    const coByBucket = new Map<string, number>();
-    allocations.forEach((allocation) => {
-      if (!allocation.cost_bucket_id || !approvedChangeOrderIds.has(allocation.change_order_id))
-        return;
-      coByBucket.set(
-        allocation.cost_bucket_id,
-        (coByBucket.get(allocation.cost_bucket_id) ?? 0) + allocation.contract_amount,
-      );
-    });
-
-    const targetThisPeriod = dollarsToCents(app.amount_billed);
-    const contractTotal = buckets.reduce(
-      (sum, bucket) => sum + bucket.original_budget + (coByBucket.get(bucket.id) ?? 0),
-      0,
-    );
-    let remainingThisPeriod = targetThisPeriod;
     const project = projectRes.data as Record<string, unknown>;
     const defaultRetainage = num(project.default_retainage_pct ?? 10);
-    const rows = buckets.map((bucket, index) => {
-      const lineContract = bucket.original_budget + (coByBucket.get(bucket.id) ?? 0);
-      const thisPeriod =
-        index === buckets.length - 1
-          ? remainingThisPeriod
-          : contractTotal > 0
-            ? Math.round(targetThisPeriod * (lineContract / contractTotal))
-            : 0;
-      remainingThisPeriod -= thisPeriod;
-      const previous = previousByBucket.get(bucket.id);
-      return {
-        billing_application_id: app.id,
-        project_id: data.projectId,
-        cost_bucket_id: bucket.id,
+    // Shared, pure mapping (billing-line-generation): an approved CO
+    // allocated to a cost code rides change_order_value_cents (G702 line 2),
+    // never scheduled_value_cents (line 1). Exercised directly by the
+    // CO-reaches-line-2 regression test.
+    const generatedLines = buildBillingLinesFromBuckets({
+      buckets: buckets.map((bucket) => ({
+        id: bucket.id,
         cost_code: bucket.cost_code,
-        description: bucket.bucket,
+        bucket: bucket.bucket,
+        original_budget: bucket.original_budget,
+        retainage_pct: bucket.retainage_pct,
         billing_method: bucket.billing_method,
-        scheduled_value_cents: dollarsToCents(bucket.original_budget),
-        change_order_value_cents: dollarsToCents(coByBucket.get(bucket.id) ?? 0),
-        work_completed_previous_cents: previous?.work_completed_to_date_cents ?? 0,
-        materials_stored_previous_cents: previous?.materials_stored_to_date_cents ?? 0,
-        work_completed_this_period_cents: Math.max(0, thisPeriod),
-        materials_stored_this_period_cents: 0,
-        retainage_pct: bucket.retainage_pct || defaultRetainage,
-        retainage_released_cents: 0,
-        sort_order: bucket.sort_order || index + 1,
-      };
+        sort_order: bucket.sort_order,
+      })),
+      changeOrders: changeOrders.map((co) => ({ id: co.id, status: co.status })),
+      allocations: allocations.map((allocation) => ({
+        change_order_id: allocation.change_order_id,
+        cost_bucket_id: allocation.cost_bucket_id,
+        contract_amount: allocation.contract_amount,
+      })),
+      previousLines: previousLines.map((line) => ({
+        cost_bucket_id: line.cost_bucket_id,
+        work_completed_to_date_cents: line.work_completed_to_date_cents,
+        materials_stored_to_date_cents: line.materials_stored_to_date_cents,
+      })),
+      amountBilled: app.amount_billed,
+      defaultRetainagePct: defaultRetainage,
     });
+    const rows = generatedLines.map((line) => ({
+      ...line,
+      billing_application_id: app.id,
+      project_id: data.projectId,
+    }));
 
     const insertRes = await dynamicTable(ctx.supabase, "billing_line_items").insert(rows);
     if (insertRes.error) throw new Error(insertRes.error.message);

@@ -34,7 +34,15 @@ import {
   computeG703Rows,
   computeG703Totals,
   computePreviousCertificatesCents,
+  overbilledLineMessage,
+  overbilledLines,
 } from "../src/lib/aia-math.ts";
+import {
+  aiaBuilderSteps,
+  aiaGenerateGate,
+  type AiaBuilderSnapshot,
+} from "../src/lib/aia-builder-steps.ts";
+import { buildBillingLinesFromBuckets } from "../src/lib/billing-line-generation.ts";
 import {
   agingBucketTotals,
   appendCollectionsNote,
@@ -804,5 +812,241 @@ for (const selection of [null, "invoice-a", "invoice-b", "invoice-a"]) {
   }
 }
 assert.deepEqual(visitCalls, ["invoice-a", "invoice-b"]);
+
+// --- Overbilling guardrail (GETTINGPAID3 Task 1) ------------------------------
+
+function aiaLine(overrides: Partial<Parameters<typeof computeG703Rows>[0][number]> = {}) {
+  return {
+    cost_code: "0100",
+    description: "Sitework",
+    scheduled_value_cents: 10_000_00,
+    change_order_value_cents: 0,
+    work_completed_previous_cents: 0,
+    materials_stored_previous_cents: 0,
+    work_completed_this_period_cents: 0,
+    materials_stored_this_period_cents: 0,
+    work_completed_to_date_cents: 0,
+    materials_stored_to_date_cents: 0,
+    total_completed_and_stored_cents: 0,
+    balance_to_finish_cents: 10_000_00,
+    retainage_pct: 10,
+    retainage_held_cents: 0,
+    retainage_released_cents: 0,
+    ...overrides,
+  };
+}
+
+// A clean SOV (every line at or under 100%) raises nothing.
+const cleanSov = [
+  aiaLine({ total_completed_and_stored_cents: 8_000_00, balance_to_finish_cents: 2_000_00 }),
+  aiaLine({
+    cost_code: "0300",
+    description: "Structure",
+    total_completed_and_stored_cents: 10_000_00,
+    balance_to_finish_cents: 0,
+  }),
+];
+assert.deepEqual(overbilledLines(cleanSov), []);
+
+// One line over 100% is flagged with its true overage percent.
+const overSov = [
+  aiaLine({
+    description: "Sitework",
+    scheduled_value_cents: 10_000_00, // C
+    total_completed_and_stored_cents: 10_880_00, // G -> 108.8%
+    balance_to_finish_cents: -880_00,
+  }),
+  aiaLine({
+    cost_code: "0300",
+    description: "Structure",
+    total_completed_and_stored_cents: 5_000_00,
+    balance_to_finish_cents: 5_000_00,
+  }),
+];
+const flagged = overbilledLines(overSov);
+assert.equal(flagged.length, 1);
+assert.equal(flagged[0].description, "Sitework");
+assert.equal(Number(flagged[0].percentComplete.toFixed(1)), 108.8);
+assert.equal(flagged[0].overageCents, 880_00);
+assert.match(overbilledLineMessage(flagged[0]), /Sitework bills to 108\.8% of scheduled value/);
+assert.match(overbilledLineMessage(flagged[0]), /lenders typically reject lines over 100%/);
+// Exactly 100% is not overbilled (G == C).
+assert.deepEqual(
+  overbilledLines([
+    aiaLine({ total_completed_and_stored_cents: 10_000_00, balance_to_finish_cents: 0 }),
+  ]),
+  [],
+);
+// A change order raises C, so billing into the CO is not overbilling.
+assert.deepEqual(
+  overbilledLines([
+    aiaLine({
+      scheduled_value_cents: 10_000_00,
+      change_order_value_cents: 2_000_00, // C = 12,000
+      total_completed_and_stored_cents: 11_000_00, // 91.7%
+      balance_to_finish_cents: 1_000_00,
+    }),
+  ]),
+  [],
+);
+
+// --- Builder stepper gate (GETTINGPAID3 Task 0) -------------------------------
+
+const invoiceSnap: AiaBuilderSnapshot = {
+  outputFormat: "invoice",
+  lineCount: 12,
+  linesWithActivity: 4,
+  overbilledCount: 0,
+};
+// Wrong output format blocks at the format step, not silently.
+const invoiceGate = aiaGenerateGate(invoiceSnap);
+assert.equal(invoiceGate.ready, false);
+assert.equal(invoiceGate.blockingStep, "format");
+assert.match(invoiceGate.reason, /AIA G702\/G703/);
+
+// AIA selected but no lines: blocks at the SOV import step.
+const noLinesGate = aiaGenerateGate({ ...invoiceSnap, outputFormat: "aia_g702", lineCount: 0 });
+assert.equal(noLinesGate.ready, false);
+assert.equal(noLinesGate.blockingStep, "sov");
+assert.match(noLinesGate.reason, /Import your schedule of values first/);
+
+// AIA + lines: ready, even with zero this-period activity (a valid $0
+// certificate). Entries are never a hard prerequisite.
+const zeroPeriodGate = aiaGenerateGate({
+  outputFormat: "aia_g702",
+  lineCount: 12,
+  linesWithActivity: 0,
+  overbilledCount: 0,
+});
+assert.equal(zeroPeriodGate.ready, true);
+assert.equal(zeroPeriodGate.blockingStep, "generate");
+assert.equal(zeroPeriodGate.reason, "");
+
+// Step statuses: format always done; sov active until imported; generate
+// active once ready.
+const noLinesSteps = aiaBuilderSteps({ ...invoiceSnap, outputFormat: "aia_g702", lineCount: 0 });
+assert.equal(noLinesSteps.find((s) => s.key === "format")?.status, "done");
+assert.equal(noLinesSteps.find((s) => s.key === "sov")?.status, "active");
+assert.equal(noLinesSteps.find((s) => s.key === "generate")?.status, "todo");
+const readySteps = aiaBuilderSteps(
+  zeroPeriodGate.ready
+    ? {
+        outputFormat: "aia_g702",
+        lineCount: 12,
+        linesWithActivity: 3,
+        overbilledCount: 0,
+      }
+    : invoiceSnap,
+);
+assert.equal(readySteps.find((s) => s.key === "sov")?.status, "done");
+assert.equal(readySteps.find((s) => s.key === "generate")?.status, "active");
+assert.match(readySteps.find((s) => s.key === "entries")?.detail ?? "", /3 of 12 lines/);
+
+// --- CO reaches G702 line 2 (GETTINGPAID3 Task 2 integration) -----------------
+
+// Approve a change order through the CO model, allocate it to an SOV cost
+// code, generate the application lines with the SAME code production runs,
+// then assert the G702 face separates original contract (line 1) from the
+// net change order (line 2) and the G703 total reconciles to line 4.
+const SITEWORK_ID = "bucket-sitework";
+const FINISHES_ID = "bucket-finishes";
+const generated = buildBillingLinesFromBuckets({
+  buckets: [
+    {
+      id: SITEWORK_ID,
+      cost_code: "0100",
+      bucket: "Sitework",
+      original_budget: 220_000,
+      retainage_pct: 10,
+      billing_method: "percent",
+      sort_order: 1,
+    },
+    {
+      id: FINISHES_ID,
+      cost_code: "0900",
+      bucket: "Finishes",
+      original_budget: 780_000,
+      retainage_pct: 10,
+      billing_method: "percent",
+      sort_order: 2,
+    },
+  ],
+  changeOrders: [
+    { id: "co-approved", status: "Approved" },
+    { id: "co-pending", status: "Pending" },
+  ],
+  allocations: [
+    // Approved CO allocated to Finishes -> flows to line 2.
+    { change_order_id: "co-approved", cost_bucket_id: FINISHES_ID, contract_amount: 65_000 },
+    // Pending CO allocation must NOT count.
+    { change_order_id: "co-pending", cost_bucket_id: SITEWORK_ID, contract_amount: 40_000 },
+  ],
+  previousLines: [],
+  amountBilled: 0,
+  defaultRetainagePct: 10,
+});
+// The CO rides change_order_value_cents on its allocated line only.
+const finishesLine = generated.find((line) => line.cost_bucket_id === FINISHES_ID);
+const siteworkLine = generated.find((line) => line.cost_bucket_id === SITEWORK_ID);
+assert.equal(finishesLine?.change_order_value_cents, 65_000_00);
+assert.equal(finishesLine?.scheduled_value_cents, 780_000_00);
+assert.equal(siteworkLine?.change_order_value_cents, 0); // pending CO excluded
+assert.equal(siteworkLine?.scheduled_value_cents, 220_000_00);
+
+// Feed the generated lines through the G703/G702 math (add completed work so
+// the certificate is non-trivial), then check the face.
+const coG703Inputs = generated.map((line) => ({
+  cost_code: line.cost_code,
+  description: line.description,
+  scheduled_value_cents: line.scheduled_value_cents,
+  change_order_value_cents: line.change_order_value_cents,
+  work_completed_previous_cents: 0,
+  materials_stored_previous_cents: 0,
+  work_completed_this_period_cents: Math.round(
+    (line.scheduled_value_cents + line.change_order_value_cents) * 0.25,
+  ),
+  materials_stored_this_period_cents: 0,
+  work_completed_to_date_cents: Math.round(
+    (line.scheduled_value_cents + line.change_order_value_cents) * 0.25,
+  ),
+  materials_stored_to_date_cents: 0,
+  total_completed_and_stored_cents: Math.round(
+    (line.scheduled_value_cents + line.change_order_value_cents) * 0.25,
+  ),
+  balance_to_finish_cents: Math.round(
+    (line.scheduled_value_cents + line.change_order_value_cents) * 0.75,
+  ),
+  retainage_pct: line.retainage_pct,
+  retainage_held_cents: 0,
+  retainage_released_cents: 0,
+}));
+const coRows = computeG703Rows(coG703Inputs);
+const coTotals = computeG703Totals(coRows);
+const coFace = computeG702Face({
+  // Line 1 sums only base SOV (scheduled_value_cents), EXCLUDING the CO.
+  originalContractSumCents: generated.reduce((sum, line) => sum + line.scheduled_value_cents, 0),
+  // Line 2 = net change by approved change orders.
+  netChangeByChangeOrdersCents: generated.reduce(
+    (sum, line) => sum + line.change_order_value_cents,
+    0,
+  ),
+  totals: coTotals,
+  previousCertificatesCents: computePreviousCertificatesCents(coG703Inputs),
+});
+// (a) line 1 = original contract EXCLUDING the CO.
+assert.equal(coFace.originalContractSumCents, 1_000_000_00); // 220k + 780k
+// (b) line 2 = net CO value (only the approved+allocated one).
+assert.equal(coFace.netChangeByChangeOrdersCents, 65_000_00);
+// (c) line 3 = 1 + 2.
+assert.equal(coFace.contractSumToDateCents, 1_065_000_00);
+assert.equal(
+  coFace.contractSumToDateCents,
+  coFace.originalContractSumCents + coFace.netChangeByChangeOrdersCents,
+);
+// (d) CO summary is populated (net change is non-zero and positive).
+assert.ok(coFace.netChangeByChangeOrdersCents > 0);
+// (e) G703 grand total (column C) reconciles to line 3, and column G to line 4.
+assert.equal(coTotals.scheduledValueCents, coFace.contractSumToDateCents);
+assert.equal(coTotals.totalCompletedStoredCents, coFace.totalCompletedStoredCents);
 
 console.log("billing payments smoke: all assertions passed");
