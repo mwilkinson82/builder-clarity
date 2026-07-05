@@ -41,6 +41,13 @@ const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
 
 const num = (value: unknown) => (typeof value === "number" ? value : Number(value ?? 0));
+// Like num(), but preserves "no value" as null instead of collapsing it to 0. Used where
+// the difference between "explicitly 0" and "never entered" is meaningful (e.g. WIP earned %).
+const numOrNull = (value: unknown): number | null => {
+  if (value === null || value === undefined) return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 const str = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback);
 const bool = (value: unknown) => (typeof value === "boolean" ? value : Boolean(value));
 const dollarsToCents = (value: number) => Math.round((Number.isFinite(value) ? value : 0) * 100);
@@ -181,7 +188,8 @@ type BucketRecord = {
   billing_method: BillingMethod;
   contract_quantity: number;
   unit: string;
-  earned_percent_complete: number;
+  // null when this bucket has never had an earned % entered ("not assessed").
+  earned_percent_complete: number | null;
 };
 
 type BillingApplicationRecord = {
@@ -283,7 +291,10 @@ const normalizeBucket = (row: Record<string, unknown>): BucketRecord => ({
   billing_method: str(row.billing_method, "percent") as BillingMethod,
   contract_quantity: num(row.contract_quantity),
   unit: str(row.unit),
-  earned_percent_complete: num(row.earned_percent_complete ?? row.percent_complete),
+  // Preserve null: a bucket with no earned % (and no per-bucket percent_complete) is
+  // "not assessed", not 0%. `??` keeps an explicit 0. We never fall back to the PROJECT
+  // roll-up here — that borrowing is the bug WIPHONESTY1 removes.
+  earned_percent_complete: numOrNull(row.earned_percent_complete ?? row.percent_complete),
 });
 
 const normalizeBillingApplication = (row: Record<string, unknown>): BillingApplicationRecord => ({
@@ -465,8 +476,10 @@ function buildWIPForProject(input: {
       change_order_additions: allocatedContractByBucket.get(bucket.id) ?? 0,
       actual_to_date: bucket.actual_to_date,
       ftc: bucket.ftc,
-      earned_percent_complete:
-        bucket.earned_percent_complete || input.project.percent_complete || 0,
+      // Use only the bucket's own assessment (including an explicit 0, and null when
+      // unassessed). Never substitute the project-level percent_complete — that made every
+      // un-updated bucket report the project roll-up as if it were fact.
+      earned_percent_complete: bucket.earned_percent_complete,
       billed_to_date: line
         ? centsToDollars(line.total_completed_and_stored_cents)
         : hasLineDetail
@@ -490,7 +503,10 @@ function buildWIPForProject(input: {
       change_order_additions: unallocatedApprovedContract,
       actual_to_date: 0,
       ftc: 0,
-      earned_percent_complete: input.project.percent_complete || 0,
+      // Synthetic roll-up of approved change orders not yet allocated to a bucket. It has
+      // contract value but no earned assessment of its own — report it as not assessed
+      // rather than borrowing the project percent.
+      earned_percent_complete: null,
       billed_to_date: hasLineDetail
         ? 0
         : totalBilledFromApps * (unallocatedApprovedContract / totalBucketContract),

@@ -1325,13 +1325,22 @@ export function WipAnalysisPanel({
       </section>
     );
   }
+  const fullyAssessed = wip.assessed_bucket_count >= wip.bucket_count;
   const overbilled = wip.total_over_under > 1;
   const underbilled = wip.total_over_under < -1;
   const projectedCost = wip.total_cost + wip.total_cost_to_complete;
   const projectedLoss = wip.estimated_gross_profit < -1;
   const projectedProfit = wip.estimated_gross_profit > 1;
   const projectedGpTone = projectedLoss ? "danger" : projectedProfit ? "success" : undefined;
-  const billingPositionTone = overbilled ? "danger" : underbilled ? "success" : undefined;
+  // Don't show a confident over/under color when earned totals are built from only some
+  // buckets — a partial number reading as "Overbilled" would repeat the very lie we fixed.
+  const billingPositionTone = !fullyAssessed
+    ? undefined
+    : overbilled
+      ? "danger"
+      : underbilled
+        ? "success"
+        : undefined;
 
   return (
     <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
@@ -1370,6 +1379,15 @@ export function WipAnalysisPanel({
         </div>
       </div>
 
+      {!fullyAssessed ? (
+        <div className="mt-4 rounded-md border border-warning/35 bg-warning/10 px-3 py-2 text-xs font-medium text-warning">
+          {wip.assessed_bucket_count} of {wip.bucket_count} buckets assessed. Earned and
+          billing-position totals below reflect only the assessed buckets — unassessed buckets
+          contribute nothing until you set their earned %. Update each bucket below to complete the
+          picture.
+        </div>
+      ) : null}
+
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <div className="rounded-md border border-hairline bg-surface p-4">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1405,7 +1423,11 @@ export function WipAnalysisPanel({
         <BillingMetric
           label="Earned to date"
           value={fmtUSD(wip.total_earned)}
-          sub="Contract x earned %"
+          sub={
+            fullyAssessed
+              ? "Contract x earned %"
+              : `Contract x earned % · ${wip.assessed_bucket_count}/${wip.bucket_count} assessed`
+          }
         />
         <BillingMetric
           label="Billed to date"
@@ -1415,7 +1437,7 @@ export function WipAnalysisPanel({
         <BillingMetric
           label="Billing position"
           value={billingTimingLabel(wip.total_over_under)}
-          sub="Billed minus earned"
+          sub={fullyAssessed ? "Billed minus earned" : "Partial — some buckets not assessed"}
           tone={billingPositionTone}
         />
         <BillingMetric
@@ -1437,8 +1459,11 @@ export function WipAnalysisPanel({
       <div className="mt-4 space-y-3">
         {wip.buckets.map((bucket) => {
           const editableBucket = bucketById.get(bucket.cost_bucket_id);
+          // null earned % = not assessed; render as such rather than a fabricated 0.
           const earnedPct =
-            bucket.contract_value > 0 ? (bucket.earned_revenue / bucket.contract_value) * 100 : 0;
+            bucket.assessed && bucket.earned_revenue != null && bucket.contract_value > 0
+              ? (bucket.earned_revenue / bucket.contract_value) * 100
+              : null;
           return (
             <WipBucketRow
               key={bucket.cost_bucket_id}
@@ -1460,13 +1485,15 @@ export function WipAnalysisPanel({
   );
 }
 
-function billingTimingLabel(value: number) {
+function billingTimingLabel(value: number | null) {
+  if (value == null) return "Not assessed";
   if (value > 1) return `Overbilled ${fmtUSD(value)}`;
   if (value < -1) return `Underbilled ${fmtUSD(Math.abs(value))}`;
   return "Aligned";
 }
 
-function billingTimingTone(value: number) {
+function billingTimingTone(value: number | null) {
+  if (value == null) return undefined;
   if (value > 1) return "danger" as const;
   if (value < -1) return "success" as const;
   return undefined;
@@ -1486,12 +1513,15 @@ function WipBucketRow({
   onSave,
 }: {
   bucket: NonNullable<BillingWorkspaceData["wip"]>["buckets"][number];
-  earnedPct: number;
+  earnedPct: number | null;
   editable: boolean;
   saving?: boolean;
   onSave: (earnedPct: number) => void;
 }) {
-  const [value, setValue] = useState(String(Math.round(earnedPct)));
+  const assessed = bucket.assessed;
+  // Leave the input empty for an unassessed bucket so the user sees "no value entered",
+  // not a fabricated 0 they might mistake for a real assessment.
+  const [value, setValue] = useState(earnedPct == null ? "" : String(Math.round(earnedPct)));
   const projectedLoss = bucket.estimated_gross_profit < -1;
   const projectedProfit = bucket.estimated_gross_profit > 1;
   const projectedRowClass = projectedLoss
@@ -1531,6 +1561,7 @@ function WipBucketRow({
               <Input
                 value={value}
                 inputMode="decimal"
+                placeholder="Not set"
                 className="h-8 w-16 text-right tabular"
                 onChange={(event) => setValue(event.target.value)}
               />
@@ -1546,7 +1577,10 @@ function WipBucketRow({
               </Button>
             </div>
           ) : (
-            <BillingDetail label="Earned %" value={fmtPct(earnedPct)} />
+            <BillingDetail
+              label="Earned %"
+              value={earnedPct == null ? "Not assessed" : fmtPct(earnedPct)}
+            />
           )}
         </div>
       </div>
@@ -1559,15 +1593,17 @@ function WipBucketRow({
             <BillingDetail label="Contract value" value={fmtUSD(bucket.contract_value)} />
             <BillingDetail
               label="Earned to date"
-              value={fmtUSD(bucket.earned_revenue)}
-              sub={`${fmtPct(earnedPct)} of contract`}
+              value={bucket.earned_revenue == null ? "Not assessed" : fmtUSD(bucket.earned_revenue)}
+              sub={
+                earnedPct == null ? "Set earned % to compute" : `${fmtPct(earnedPct)} of contract`
+              }
             />
             <BillingDetail label="Billed to date" value={fmtUSD(bucket.billed_to_date)} />
             <BillingDetail
               label="Billing position"
               value={billingTimingLabel(bucket.over_under_billing)}
               tone={billingTone}
-              sub="Billed minus earned"
+              sub={assessed ? "Billed minus earned" : "Needs earned %"}
             />
           </div>
         </div>

@@ -28,6 +28,7 @@ import {
   type EnabledPaymentMethods,
 } from "../src/lib/payments-domain.ts";
 import { applySovBucketPatch, sovLineForecast, sovTotals } from "../src/lib/sov-rollup.ts";
+import { computeWIPBucket, computeProjectWIP, type WIPBucketInput } from "../src/lib/wip.ts";
 import { invoiceViewToRecord } from "../src/lib/portal-view-signal.ts";
 import {
   computeG702Face,
@@ -1048,5 +1049,61 @@ assert.ok(coFace.netChangeByChangeOrdersCents > 0);
 // (e) G703 grand total (column C) reconciles to line 3, and column G to line 4.
 assert.equal(coTotals.scheduledValueCents, coFace.contractSumToDateCents);
 assert.equal(coTotals.totalCompletedStoredCents, coFace.totalCompletedStoredCents);
+
+// --- WIP honesty (WIPHONESTY1): earned % is never borrowed from the project roll-up ---
+// Three buckets: assessed at 25%, explicitly assessed at 0%, and never assessed (null).
+// A project shown "60% complete" must NOT leak 60% into any of them.
+const wipBase: Omit<WIPBucketInput, "cost_bucket_id" | "earned_percent_complete"> = {
+  cost_code: "01",
+  bucket: "Bucket",
+  original_budget: 100_000,
+  change_order_additions: 0,
+  actual_to_date: 0,
+  ftc: 0,
+  billed_to_date: 40_000,
+  retainage_held: 0,
+  retainage_released: 0,
+};
+
+// Assessed at 25% earns exactly 25% of contract.
+const assessed25 = computeWIPBucket({
+  ...wipBase,
+  cost_bucket_id: "a",
+  earned_percent_complete: 25,
+});
+assert.equal(assessed25.assessed, true);
+assert.equal(assessed25.earned_revenue, 25_000);
+assert.equal(assessed25.over_under_billing, 15_000); // billed 40k - earned 25k
+
+// Explicit 0% is a real assessment: earns 0, NOT the project roll-up. This is the `||`-zero bug.
+const assessed0 = computeWIPBucket({ ...wipBase, cost_bucket_id: "b", earned_percent_complete: 0 });
+assert.equal(assessed0.assessed, true);
+assert.equal(assessed0.earned_revenue, 0);
+assert.equal(assessed0.over_under_billing, 40_000); // billed 40k - earned 0
+
+// Never assessed: earned and over/under are null ("not assessed"), never 0 and never 60%.
+const notAssessed = computeWIPBucket({
+  ...wipBase,
+  cost_bucket_id: "c",
+  earned_percent_complete: null,
+});
+assert.equal(notAssessed.assessed, false);
+assert.equal(notAssessed.earned_revenue, null);
+assert.equal(notAssessed.over_under_billing, null);
+
+// Project roll-up excludes the unassessed bucket and reports coverage.
+const projectWip = computeProjectWIP(
+  { id: "p", name: "Test" },
+  [
+    { ...wipBase, cost_bucket_id: "a", earned_percent_complete: 25 },
+    { ...wipBase, cost_bucket_id: "b", earned_percent_complete: 0 },
+    { ...wipBase, cost_bucket_id: "c", earned_percent_complete: null },
+  ],
+  0,
+);
+assert.equal(projectWip.bucket_count, 3);
+assert.equal(projectWip.assessed_bucket_count, 2);
+// Earned totals only the assessed buckets (25k + 0), never inventing earnings for bucket c.
+assert.equal(projectWip.total_earned, 25_000);
 
 console.log("billing payments smoke: all assertions passed");
