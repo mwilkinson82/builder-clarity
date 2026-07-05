@@ -535,6 +535,10 @@ function buildWIPForProject(input: {
       cost_code: "",
       bucket: "Unallocated billing",
       contract_value: 0,
+      // Reconciliation plug: billing not tied to any cost bucket is, by
+      // definition, billed with nothing earned behind it — a real (assessed)
+      // over-bill, not a borrowed number (WIPHONESTY1).
+      assessed: true,
       earned_revenue: 0,
       billed_to_date: unallocatedBilling,
       over_under_billing: unallocatedBilling,

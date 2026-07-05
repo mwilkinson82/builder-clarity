@@ -45,6 +45,11 @@ import {
 } from "../src/lib/aia-builder-steps.ts";
 import { buildBillingLinesFromBuckets } from "../src/lib/billing-line-generation.ts";
 import {
+  allocatedContractByChangeOrder,
+  summarizeApprovedCo,
+  unallocatedContract,
+} from "../src/lib/change-order-allocation.ts";
+import {
   agingBucketTotals,
   appendCollectionsNote,
   collectionsFlag,
@@ -1105,5 +1110,63 @@ assert.equal(projectWip.bucket_count, 3);
 assert.equal(projectWip.assessed_bucket_count, 2);
 // Earned totals only the assessed buckets (25k + 0), never inventing earnings for bucket c.
 assert.equal(projectWip.total_earned, 25_000);
+
+// --- Change-order → cost-code allocation (Harbor coherence) -------------------
+
+// Allocation totals sum per CO in cents; unallocated is never negative.
+const ALLOCS = [
+  { change_order_id: "co-a", cost_bucket_id: "b1", contract_amount: 40_000 },
+  { change_order_id: "co-a", cost_bucket_id: "b2", contract_amount: 25_000.5 },
+  { change_order_id: "co-b", cost_bucket_id: "b1", contract_amount: 10_000 },
+];
+const allocByCo = allocatedContractByChangeOrder(ALLOCS);
+assert.equal(allocByCo.get("co-a"), 65_000.5); // split across two cost codes, cents-exact
+assert.equal(allocByCo.get("co-b"), 10_000);
+assert.equal(allocByCo.get("co-none"), undefined);
+
+// A $65,000 CO fully allocated leaves nothing; a partial leaves the balance.
+assert.equal(unallocatedContract(65_000, 65_000), 0);
+assert.equal(unallocatedContract(65_000, 40_000), 25_000);
+assert.equal(unallocatedContract(65_000, 70_000), 0); // over-allocation clamps to zero
+
+const partial = summarizeApprovedCo("co-a", 145_000, ALLOCS);
+assert.equal(partial.allocated, 65_000.5);
+assert.equal(partial.remaining, 79_999.5);
+assert.equal(partial.fullyAllocated, false);
+
+const full = summarizeApprovedCo("co-b", 10_000, ALLOCS);
+assert.equal(full.allocated, 10_000);
+assert.equal(full.remaining, 0);
+assert.equal(full.fullyAllocated, true);
+
+// An unallocated approved CO reports its whole value as remaining (the
+// "allocate to bill it" nudge).
+const none = summarizeApprovedCo("co-c", 85_000, ALLOCS);
+assert.equal(none.allocated, 0);
+assert.equal(none.remaining, 85_000);
+assert.equal(none.fullyAllocated, false);
+
+// End-to-end: allocate a CO to a bucket, then build the lines — the allocated
+// value rides change_order_value_cents on that bucket's line (G702 line 2).
+const allocatedLines = buildBillingLinesFromBuckets({
+  buckets: [
+    {
+      id: "b-finishes",
+      cost_code: "0900",
+      bucket: "Finishes",
+      original_budget: 780_000,
+      retainage_pct: 10,
+      billing_method: "percent",
+      sort_order: 1,
+    },
+  ],
+  changeOrders: [{ id: "co-a", status: "Approved" }],
+  allocations: [{ change_order_id: "co-a", cost_bucket_id: "b-finishes", contract_amount: 65_000 }],
+  previousLines: [],
+  amountBilled: 0,
+  defaultRetainagePct: 10,
+});
+assert.equal(allocatedLines[0].change_order_value_cents, 65_000_00);
+assert.equal(allocatedLines[0].scheduled_value_cents, 780_000_00);
 
 console.log("billing payments smoke: all assertions passed");

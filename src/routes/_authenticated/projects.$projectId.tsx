@@ -47,6 +47,10 @@ import {
 import { InvoicePaymentMethodToggles } from "@/components/billing/InvoicePaymentMethodToggles";
 import { ReceivablesCockpit } from "@/components/billing/ReceivablesCockpit";
 import {
+  ChangeOrderAllocationPanel,
+  type ChangeOrderAllocationInput,
+} from "@/components/billing/ChangeOrderAllocationPanel";
+import {
   getInvoiceRemittance,
   getPaymentMethodContext,
   type PaymentMethodContext,
@@ -121,6 +125,8 @@ import {
   createChangeOrder,
   updateChangeOrder,
   deleteChangeOrder,
+  allocateChangeOrder,
+  deleteChangeOrderAllocation,
   createInspection,
   updateInspection,
   deleteInspection,
@@ -509,6 +515,8 @@ function ProjectPage() {
   const createCoFn = useServerFn(createChangeOrder);
   const updateCoFn = useServerFn(updateChangeOrder);
   const deleteCoFn = useServerFn(deleteChangeOrder);
+  const allocateChangeOrderFn = useServerFn(allocateChangeOrder);
+  const deleteChangeOrderAllocationFn = useServerFn(deleteChangeOrderAllocation);
   const createInspectionFn = useServerFn(createInspection);
   const updateInspectionFn = useServerFn(updateInspection);
   const deleteInspectionFn = useServerFn(deleteInspection);
@@ -618,6 +626,33 @@ function ProjectPage() {
   const coCreate = useServerMutation<Record<string, unknown>>(createCoFn as never);
   const coUpdate = useServerMutation<Record<string, unknown>>(updateCoFn as never);
   const coDelete = useServerMutation<{ id: string }>(deleteCoFn);
+  const changeOrderAllocate = useMutation({
+    mutationFn: (input: ChangeOrderAllocationInput) =>
+      allocateChangeOrderFn({ data: { projectId, ...input } }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Change order allocated", {
+        description: "It rolls into the next application's line contract value (G702 line 2).",
+      });
+    },
+    onError: (err) => {
+      toast.error("Allocation did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const changeOrderAllocationRemove = useMutation({
+    mutationFn: (input: { id: string }) => deleteChangeOrderAllocationFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Allocation removed");
+    },
+    onError: (err) => {
+      toast.error("Allocation did not remove", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
   const inspectionCreate = useMutation({
     mutationFn: (input: InspectionDraft) => createInspectionFn({ data: { projectId, ...input } }),
     onSuccess: (result) => {
@@ -2043,6 +2078,11 @@ function ProjectPage() {
                 onRecordPayment={handleRecordPayment}
                 onReconcileInvoice={(invoiceId) => invoiceReconcile.mutate(invoiceId)}
                 reconcilingInvoiceId={reconcilingInvoiceId}
+                onAllocateChangeOrder={(input) => changeOrderAllocate.mutate(input)}
+                onRemoveChangeOrderAllocation={(id) => changeOrderAllocationRemove.mutate({ id })}
+                savingAllocation={
+                  changeOrderAllocate.isPending || changeOrderAllocationRemove.isPending
+                }
               />
             </TabsContent>
 
@@ -2452,6 +2492,9 @@ function BillingWorkspace({
   onRecordPayment,
   onReconcileInvoice,
   reconcilingInvoiceId,
+  onAllocateChangeOrder,
+  onRemoveChangeOrderAllocation,
+  savingAllocation,
 }: {
   project: ProjectRow;
   rollup: Rollup;
@@ -2514,6 +2557,9 @@ function BillingWorkspace({
   onRecordPayment: (input: PaymentDraft) => void;
   onReconcileInvoice: (invoiceId: string) => void;
   reconcilingInvoiceId: string | null;
+  onAllocateChangeOrder: (input: ChangeOrderAllocationInput) => void;
+  onRemoveChangeOrderAllocation: (id: string) => void;
+  savingAllocation?: boolean;
 }) {
   const loadPaymentMethodContext = useServerFn(getPaymentMethodContext);
   const { data: paymentMethodContext } = useQuery({
@@ -3592,7 +3638,19 @@ function BillingWorkspace({
           </div>
         </TabsContent>
 
-        <TabsContent value="pending-cos" className="mt-0">
+        <TabsContent value="pending-cos" className="mt-0 space-y-4">
+          {/* Approved change orders become billable here: allocate each to an
+              SOV cost code so it rolls into the next application's line 2. */}
+          <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
+            <ChangeOrderAllocationPanel
+              changeOrders={changeOrders}
+              buckets={buckets}
+              allocations={billingWorkspace?.changeOrderAllocations ?? []}
+              onAllocate={onAllocateChangeOrder}
+              onRemoveAllocation={onRemoveChangeOrderAllocation}
+              saving={savingAllocation}
+            />
+          </div>
           <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
             <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
@@ -3607,23 +3665,6 @@ function BillingWorkspace({
               <div className="text-sm tabular text-muted-foreground">
                 Raw {fmtUSDCents(rollup.pendingCOContract)} · likely {fmtUSDCents(weightedPending)}
               </div>
-            </div>
-            <div className="mt-4 grid gap-3 lg:grid-cols-3">
-              <BillingWorkflowStep
-                step="1"
-                title="Pending"
-                body="Forecasted in risk/contract exposure, but excluded from the application."
-              />
-              <BillingWorkflowStep
-                step="2"
-                title="Approved + allocated"
-                body="Assign the approved CO value to the correct SOV cost code."
-              />
-              <BillingWorkflowStep
-                step="3"
-                title="Application"
-                body="The approved CO value appears in Applications as part of the line contract value."
-              />
             </div>
             {pendingCOs.length === 0 ? (
               <p className="mt-4 text-sm text-muted-foreground">No pending change orders.</p>
