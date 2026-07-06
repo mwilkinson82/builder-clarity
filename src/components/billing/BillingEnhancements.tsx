@@ -23,6 +23,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { AiaApplicationStepper } from "@/components/billing/AiaApplicationStepper";
 import { aiaBillingFilename, downloadPdfBytes, generateAiaBillingPdf } from "@/lib/aia-pdf";
+import { sendTransactionalEmail } from "@/lib/email/send";
+import { toast } from "sonner";
 import { overbilledLines } from "@/lib/aia-math";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { billingDocumentLabel } from "@/lib/billing-labels";
@@ -238,6 +240,7 @@ export function BillingLineItemsPanel({
   onUpdateLine,
   onUpdatePayAppRetainageRate,
   onUpdateOutputFormat,
+  recipientEmails = [],
   savingLine,
   savingRetainageRate,
   savingOutputFormat,
@@ -249,11 +252,15 @@ export function BillingLineItemsPanel({
   onUpdateLine: (id: string, patch: LinePatch) => void;
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
+  // Client billing contacts (can_view_billing) resolved by the workspace — used
+  // to email the finalized package straight from the pay-app flow.
+  recipientEmails?: string[];
   savingLine?: boolean;
   savingRetainageRate?: boolean;
   savingOutputFormat?: boolean;
 }) {
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [emailBusy, setEmailBusy] = useState(false);
   const firstDetailedPayAppId = lineItems[0]?.billing_application_id ?? payApps[0]?.id ?? "";
   const [activePayAppId, setActivePayAppId] = useState(firstDetailedPayAppId);
   const selectedPayAppId = activePayAppId || firstDetailedPayAppId;
@@ -368,6 +375,58 @@ export function BillingLineItemsPanel({
     }
   };
 
+  // Email the finalized application to the client — the same proven path invoices
+  // already use (transactional send → invoice-notification template → a secure
+  // portal link where the client reviews and downloads the G702/G703). PDF
+  // attachment is the planned follow-up.
+  const emailPackage = async () => {
+    if (!selectedPayApp) return;
+    const recipient = recipientEmails.find((email) => email.trim());
+    if (!recipient) {
+      toast.error("No client billing contact yet", {
+        description:
+          "Add a client contact who can view billing in the Client Portal tab, then email the application.",
+      });
+      return;
+    }
+    setEmailBusy(true);
+    try {
+      const portalUrl =
+        typeof window === "undefined"
+          ? `/client/projects/${project.id}`
+          : `${window.location.origin}/client/projects/${project.id}`;
+      const appLabel = billingDocumentLabel(
+        selectedPayApp.application_number,
+        selectedPayApp.invoice_number,
+      );
+      await sendTransactionalEmail({
+        templateName: "invoice-notification",
+        recipientEmail: recipient,
+        idempotencyKey: `payapp:${selectedPayApp.id}:${recipient}:${Date.now()}`,
+        templateData: {
+          projectName: project.name,
+          clientName: project.client,
+          jobNumber: project.job_number,
+          invoiceNumber: appLabel,
+          invoiceTitle: appLabel,
+          invoiceStatus: "Sent",
+          portalUrl,
+          paymentUrl: "",
+          notes: "Your pay application is ready to review in the Overwatch client portal.",
+        },
+      });
+      toast.success("Application emailed", {
+        description: `${appLabel} sent to ${recipient} with a secure portal link.`,
+      });
+    } catch (error) {
+      toast.error("Email could not be sent", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
+    } finally {
+      setEmailBusy(false);
+    }
+  };
+
   return (
     <section className="rounded-lg border border-hairline bg-card p-5 shadow-card">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -439,9 +498,11 @@ export function BillingLineItemsPanel({
             canImport={Boolean(selectedPayApp)}
             generating={pdfBusy}
             savingFormat={savingOutputFormat}
+            emailing={emailBusy}
             onSetOutputFormat={(format) => onUpdateOutputFormat(selectedPayApp.id, format)}
             onImportSov={() => onGenerateLines(selectedPayApp.id)}
             onGenerate={downloadAiaPdf}
+            onEmail={emailPackage}
           />
         </div>
       ) : null}

@@ -922,6 +922,7 @@ export function BillingWorkspace({
               onUpdateLine={onUpdateBillingLine}
               onUpdatePayAppRetainageRate={onUpdatePayAppRetainageRate}
               onUpdateOutputFormat={onUpdateOutputFormat}
+              recipientEmails={invoiceRecipients.map((access) => access.email)}
               savingLine={savingBillingLine}
               savingRetainageRate={savingRetainageRate}
               savingOutputFormat={savingOutputFormat}
