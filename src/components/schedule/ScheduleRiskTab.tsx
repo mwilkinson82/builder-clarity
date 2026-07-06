@@ -269,6 +269,19 @@ export function ScheduleRisk({
     savedForecast,
     liveCpmForecast: hasCpmActivities ? cpmScheduleDraft.forecast_completion_date : null,
   });
+  // How the live CPM finish compares to the saved record — so "the live schedule
+  // points to Oct 9" doesn't read as a contradiction against a record that still
+  // says Feb 7. Negative weeks = the live schedule is earlier (pulled ahead).
+  const unsavedDeltaWeeks =
+    cpmForecastStatus.isUnsaved &&
+    cpmForecastStatus.forecastOfRecord &&
+    cpmForecastStatus.unsavedForecast
+      ? Math.round(
+          (new Date(cpmForecastStatus.unsavedForecast).getTime() -
+            new Date(cpmForecastStatus.forecastOfRecord).getTime()) /
+            (7 * 24 * 60 * 60 * 1000),
+        )
+      : 0;
   const latestActivitySnapshotCount = latestUpdate
     ? activityUpdates.filter((row) => row.update_number === latestUpdate.update_number).length
     : 0;
@@ -438,8 +451,18 @@ export function ScheduleRisk({
                 {cpmForecastStatus.isUnsaved && (
                   <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs font-medium text-foreground">
                     Unsaved forecast: the live CPM schedule now points to{" "}
-                    {shortDate(cpmForecastStatus.unsavedForecast)}. Save a new snapshot in the CPM
-                    workbench to make it the schedule update of record.
+                    {shortDate(cpmForecastStatus.unsavedForecast)}
+                    {unsavedDeltaWeeks !== 0 ? (
+                      <>
+                        {" "}
+                        — {Math.abs(unsavedDeltaWeeks)} week
+                        {Math.abs(unsavedDeltaWeeks) === 1 ? "" : "s"}{" "}
+                        {unsavedDeltaWeeks < 0 ? "earlier" : "later"} than the saved record (
+                        {shortDate(cpmForecastStatus.forecastOfRecord)})
+                      </>
+                    ) : null}
+                    . Save a new snapshot in the CPM workbench to make it the schedule update of
+                    record.
                   </div>
                 )}
               </>
