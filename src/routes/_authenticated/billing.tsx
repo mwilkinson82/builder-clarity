@@ -14,6 +14,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   Banknote,
+  BarChart3,
   BriefcaseBusiness,
   CalendarDays,
   Clock3,
@@ -73,6 +74,11 @@ function BillingPortfolioPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Button asChild size="sm" variant="outline" className="gap-1.5">
+              <Link to="/reports">
+                <BarChart3 className="h-3.5 w-3.5" /> Reports
+              </Link>
+            </Button>
             <Button asChild size="sm" variant="outline">
               <Link to="/">Portfolio</Link>
             </Button>
