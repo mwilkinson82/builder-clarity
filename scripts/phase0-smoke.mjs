@@ -2375,6 +2375,37 @@ await expectContains(
   "SOV/Costs tab surfaces the budget-vs-cost ledger",
 );
 
+// BUDGETENGINE Phase 3: estimate → budget carry. The budget is the estimate's
+// line COSTS by cost code (markups are margin); manual entry stays via the
+// cost-line editor.
+await expectContains(
+  "src/lib/estimate-budget.ts",
+  [
+    /export function aggregateEstimateToBudget/,
+    /total_extended_cents/,
+    /from "\.\/payments-domain\.ts"/,
+  ],
+  "estimate→budget aggregation sums line costs by cost code, cents-safe and node-loadable",
+);
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /export const buildBudgetFromEstimate/,
+    /aggregateEstimateToBudget/,
+    /No Overwatch estimate is linked/,
+  ],
+  "buildBudgetFromEstimate carries estimate line costs onto cost buckets (update match, insert new)",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [
+    /buildBudgetFromEstimateFn/,
+    /Build budget from estimate/,
+    /Build the budget from the estimate\?/,
+  ],
+  "SOV/Costs tab offers the estimate→budget carry behind a confirm",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");

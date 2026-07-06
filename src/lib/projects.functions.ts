@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { normalizeBillingNumberLabel } from "@/lib/billing-labels";
+import { aggregateEstimateToBudget } from "@/lib/estimate-budget";
 import {
   centsToDollars,
   dollarsToCents,
@@ -2208,6 +2209,93 @@ export const listExposureAllocations = createServerFn({ method: "GET" })
         updated_at: str(record.updated_at),
       };
     });
+  });
+
+// ---------------- ESTIMATE → BUDGET CARRY (BUDGETENGINE Phase 3) ----------------
+
+// Turn the project's Overwatch estimate into its budget: aggregate the estimate
+// line COSTS (material + labor) by cost code and write them onto the cost
+// buckets. The estimate's markups are the margin, not the budget. Matching
+// cost codes update in place; new codes create a bucket. RLS scopes every read
+// and write to a project the caller can manage.
+export const buildBudgetFromEstimate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string }) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const estRes = await dynamicTable(context.supabase, "estimates")
+      .select("id")
+      .eq("project_id", data.projectId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (estRes.error) throw new Error(estRes.error.message);
+    const estimate = estRes.data as Record<string, unknown> | null;
+    if (!estimate) {
+      throw new Error(
+        "No Overwatch estimate is linked to this project. Enter the budget manually in the cost lines below.",
+      );
+    }
+
+    const linesRes = await dynamicTable(context.supabase, "estimate_line_items")
+      .select("cost_code,csi_division,scope_group,description,total_extended_cents")
+      .eq("estimate_id", str(estimate.id));
+    if (linesRes.error) throw new Error(linesRes.error.message);
+    const lines = ((linesRes.data as Record<string, unknown>[]) ?? []).map((row) => ({
+      cost_code: str(row.cost_code),
+      csi_division: str(row.csi_division),
+      scope_group: str(row.scope_group),
+      description: str(row.description),
+      total_extended_cents: num(row.total_extended_cents),
+    }));
+    const budgetLines = aggregateEstimateToBudget(lines);
+    if (budgetLines.length === 0) {
+      throw new Error("The linked estimate has no line items to carry into the budget.");
+    }
+
+    const bucketsRes = await dynamicTable(context.supabase, "cost_buckets")
+      .select("id,cost_code,sort_order")
+      .eq("project_id", data.projectId);
+    if (bucketsRes.error) throw new Error(bucketsRes.error.message);
+    const existingBuckets = (bucketsRes.data as Record<string, unknown>[]) ?? [];
+    const idByCode = new Map<string, string>();
+    let maxSort = 0;
+    for (const bucket of existingBuckets) {
+      const code = str(bucket.cost_code).trim();
+      if (code) idByCode.set(code, str(bucket.id));
+      maxSort = Math.max(maxSort, num(bucket.sort_order));
+    }
+
+    let updated = 0;
+    let created = 0;
+    for (const line of budgetLines) {
+      const code = line.costCode.trim();
+      const existingId = code ? idByCode.get(code) : undefined;
+      if (existingId) {
+        // Only the budget baseline moves; actuals and forecast-to-complete are
+        // tracked as the job runs and must not be disturbed by a re-carry.
+        const { error } = await dynamicTable(context.supabase, "cost_buckets")
+          .update({ original_budget: line.budget })
+          .eq("id", existingId);
+        if (error) throw new Error(error.message);
+        updated += 1;
+      } else {
+        maxSort += 1;
+        const { error } = await dynamicTable(context.supabase, "cost_buckets").insert({
+          project_id: data.projectId,
+          bucket: line.description,
+          cost_code: code,
+          original_budget: line.budget,
+          actual_to_date: 0,
+          ftc: line.budget,
+          sort_order: maxSort,
+        });
+        if (error) throw new Error(error.message);
+        created += 1;
+      }
+    }
+    return { ok: true, updated, created, codes: budgetLines.length };
   });
 
 // ---------------- INSPECTIONS ----------------
