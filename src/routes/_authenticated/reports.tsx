@@ -1,13 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { BarChart3, ReceiptText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { listPortfolioBilling } from "@/lib/billing.functions";
+import { listPortfolioBilling, listPortfolioJobCost } from "@/lib/billing.functions";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import { WipReport } from "@/components/reports/WipReport";
+import { JobCostReport } from "@/components/reports/JobCostReport";
 
 export const Route = createFileRoute("/_authenticated/reports")({
   ssr: false,
@@ -15,13 +16,15 @@ export const Route = createFileRoute("/_authenticated/reports")({
   component: ReportsPage,
 });
 
+type ReportKey = "wip" | "job-cost" | "billing-history" | "retainage-co";
+
 // The standard accounting reports a builder expects from Procore / Sage /
-// Buildertrend. The WIP schedule ships first; the rest of the suite is listed
-// so the surface reads as a real reports hub, not a one-off — each is built on
-// the same live billing data as it lands.
-const REPORTS = [
+// Buildertrend. WIP and job cost are live; the rest are listed so the surface
+// reads as a real reports hub, not a one-off — each is built on the same live
+// billing data as it lands.
+const REPORTS: { key: ReportKey; label: string; blurb: string; ready: boolean }[] = [
   { key: "wip", label: "WIP schedule", blurb: "Contract vs cost vs billing", ready: true },
-  { key: "job-cost", label: "Job cost", blurb: "Budget vs actual by cost code", ready: false },
+  { key: "job-cost", label: "Job cost", blurb: "Budget vs actual by cost code", ready: true },
   {
     key: "billing-history",
     label: "Billing history",
@@ -34,21 +37,29 @@ const REPORTS = [
     blurb: "Held retainage + CO log",
     ready: false,
   },
-] as const;
+];
 
 function ReportsPage() {
+  const [activeReport, setActiveReport] = useState<ReportKey>("wip");
   const listBilling = useServerFn(listPortfolioBilling);
+  const listJobCost = useServerFn(listPortfolioJobCost);
   const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
-  const { data, isLoading, error, refetch } = useQuery({
+
+  const billingQuery = useQuery({
     queryKey: ["portfolio-billing"],
     queryFn: () => listBilling(),
+    enabled: activeReport === "wip",
+  });
+  const jobCostQuery = useQuery({
+    queryKey: ["portfolio-job-cost"],
+    queryFn: () => listJobCost(),
+    enabled: activeReport === "job-cost",
   });
   const { data: companyContext } = useQuery({
     queryKey: ["company-workspace-context"],
     queryFn: () => loadCompanyContext(),
   });
-  const projects = useMemo(() => data?.projects ?? [], [data?.projects]);
-  const totals = data?.totals;
+
   const companyName = companyContext?.name || "Company";
   const generatedOn = useMemo(
     () =>
@@ -59,6 +70,8 @@ function ReportsPage() {
       }),
     [],
   );
+
+  const activeQuery = activeReport === "job-cost" ? jobCostQuery : billingQuery;
 
   return (
     <div className="constructline-reports-page min-h-screen bg-background text-foreground">
@@ -88,59 +101,93 @@ function ReportsPage() {
       </header>
 
       <main className="mx-auto max-w-[1500px] gap-8 px-6 py-10 lg:grid lg:grid-cols-[220px_minmax(0,1fr)] lg:px-10">
-        {/* Report rail — WIP is live; the rest of the suite is listed so the
+        {/* Report rail — live reports are selectable; the rest are listed so the
             hub reads as complete-in-progress, not vaporware. */}
         <nav className="mb-6 lg:mb-0" data-print-hide aria-label="Reports">
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             Reports
           </div>
           <ul className="mt-3 space-y-1">
-            {REPORTS.map((report) => (
-              <li key={report.key}>
-                <div
-                  className={`rounded-md border px-3 py-2.5 ${
-                    report.ready
-                      ? "border-accent/40 bg-accent/10"
-                      : "border-hairline bg-surface/60 opacity-70"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                      <BarChart3 className="h-3.5 w-3.5 text-muted-foreground" />
-                      {report.label}
+            {REPORTS.map((report) => {
+              const isActive = report.ready && report.key === activeReport;
+              const inner = (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    <BarChart3 className="h-3.5 w-3.5 text-muted-foreground" />
+                    {report.label}
+                  </span>
+                  {report.ready ? null : (
+                    <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      Soon
                     </span>
-                    {report.ready ? null : (
-                      <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Soon
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-0.5 pl-5 text-[11px] text-muted-foreground">
-                    {report.blurb}
-                  </div>
+                  )}
                 </div>
-              </li>
-            ))}
+              );
+              return (
+                <li key={report.key}>
+                  {report.ready ? (
+                    <button
+                      type="button"
+                      onClick={() => setActiveReport(report.key)}
+                      aria-current={isActive ? "page" : undefined}
+                      className={`w-full rounded-md border px-3 py-2.5 text-left transition ${
+                        isActive
+                          ? "border-accent/50 bg-accent/10"
+                          : "border-hairline bg-surface/60 hover:border-accent/30 hover:bg-accent/5"
+                      }`}
+                    >
+                      {inner}
+                      <div className="mt-0.5 pl-5 text-[11px] text-muted-foreground">
+                        {report.blurb}
+                      </div>
+                    </button>
+                  ) : (
+                    <div className="rounded-md border border-hairline bg-surface/60 px-3 py-2.5 opacity-70">
+                      {inner}
+                      <div className="mt-0.5 pl-5 text-[11px] text-muted-foreground">
+                        {report.blurb}
+                      </div>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </nav>
 
         <div>
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading reports...</p>
-          ) : error ? (
+          {activeQuery.isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading report...</p>
+          ) : activeQuery.error ? (
             <div className="rounded-lg border border-danger/30 bg-danger/10 p-5">
-              <div className="text-sm font-medium text-danger">Reports did not load</div>
+              <div className="text-sm font-medium text-danger">Report did not load</div>
               <p className="mt-1 text-sm text-muted-foreground">
-                {error instanceof Error ? error.message : "Check the billing schema and try again."}
+                {activeQuery.error instanceof Error
+                  ? activeQuery.error.message
+                  : "Check the billing schema and try again."}
               </p>
-              <Button size="sm" variant="outline" className="mt-4" onClick={() => refetch()}>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-4"
+                onClick={() => activeQuery.refetch()}
+              >
                 Retry
               </Button>
             </div>
-          ) : totals ? (
+          ) : activeReport === "job-cost" ? (
+            jobCostQuery.data ? (
+              <JobCostReport
+                projects={jobCostQuery.data.projects}
+                totals={jobCostQuery.data.totals}
+                companyName={companyName}
+                generatedOn={generatedOn}
+              />
+            ) : null
+          ) : billingQuery.data?.totals ? (
             <WipReport
-              projects={projects}
-              totals={totals}
+              projects={billingQuery.data.projects}
+              totals={billingQuery.data.totals}
               companyName={companyName}
               generatedOn={generatedOn}
             />
