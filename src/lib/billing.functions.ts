@@ -1468,6 +1468,8 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       costCode: "",
       description: "Total",
       budget: 0,
+      originalBudget: 0,
+      changeOrderBudget: 0,
       actuals: 0,
       open: 0,
       atRisk: 0,
@@ -1479,11 +1481,14 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       return { projects: [], totals: emptyLedgerRow };
     }
 
-    const [bucketRes, exposureRes, allocationRes] = await Promise.all([
-      dynamicTable(ctx.supabase, "cost_buckets").select("*").in("project_id", ids),
-      dynamicTable(ctx.supabase, "exposures").select("*").in("project_id", ids),
-      dynamicTable(ctx.supabase, "exposure_allocations").select("*").in("project_id", ids),
-    ]);
+    const [bucketRes, exposureRes, allocationRes, changeOrderRes, coAllocationRes] =
+      await Promise.all([
+        dynamicTable(ctx.supabase, "cost_buckets").select("*").in("project_id", ids),
+        dynamicTable(ctx.supabase, "exposures").select("*").in("project_id", ids),
+        dynamicTable(ctx.supabase, "exposure_allocations").select("*").in("project_id", ids),
+        dynamicTable(ctx.supabase, "change_orders").select("*").in("project_id", ids),
+        dynamicTable(ctx.supabase, "change_order_allocations").select("*").in("project_id", ids),
+      ]);
     if (bucketRes.error) throw new Error(bucketRes.error.message);
     // Exposures / allocations power the At Risk + Contingency columns only; if
     // either table isn't present yet, the ledger still stands on budget/actuals.
@@ -1491,6 +1496,16 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
     const allocationsMissing = isMissingRestRelation(allocationRes.error, "exposure_allocations");
     if (exposureRes.error && !exposuresMissing) throw new Error(exposureRes.error.message);
     if (allocationRes.error && !allocationsMissing) throw new Error(allocationRes.error.message);
+    if (changeOrderRes.error) throw new Error(changeOrderRes.error.message);
+    // BUDGETLOCK1: approved CO cost layers onto the frozen baseline. Degrade to
+    // no CO layer if the allocations table is absent.
+    const coAllocationsMissing = isMissingRestRelation(
+      coAllocationRes.error,
+      "change_order_allocations",
+    );
+    if (coAllocationRes.error && !coAllocationsMissing) {
+      throw new Error(coAllocationRes.error.message);
+    }
 
     const rawBuckets = bucketRes.data ? (bucketRes.data as Record<string, unknown>[]) : [];
     const rawExposures =
@@ -1499,10 +1514,19 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       allocationRes.error || !allocationRes.data
         ? []
         : (allocationRes.data as Record<string, unknown>[]);
+    const rawChangeOrders = changeOrderRes.data
+      ? (changeOrderRes.data as Record<string, unknown>[])
+      : [];
+    const rawCoAllocations =
+      coAllocationRes.error || !coAllocationRes.data
+        ? []
+        : (coAllocationRes.data as Record<string, unknown>[]);
 
     const bucketsByProject = groupRawByProject(rawBuckets);
     const exposuresByProject = groupRawByProject(rawExposures);
     const allocationsByProject = groupRawByProject(rawAllocations);
+    const changeOrdersByProject = groupRawByProject(rawChangeOrders);
+    const coAllocationsByProject = groupRawByProject(rawCoAllocations);
 
     const projects = projectRows.map((projectRow) => {
       const pid = projectRow.id as string;
@@ -1510,6 +1534,16 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
         (bucketsByProject.get(pid) ?? []).map(normalizeBucket),
         (exposuresByProject.get(pid) ?? []).map(normalizeExposure),
         (allocationsByProject.get(pid) ?? []).map(normalizeExposureAllocation),
+        (changeOrdersByProject.get(pid) ?? []).map((row) => ({
+          id: str(row.id),
+          status: str(row.status),
+          cost_amount: num(row.cost_amount),
+        })),
+        (coAllocationsByProject.get(pid) ?? []).map((row) => ({
+          change_order_id: str(row.change_order_id),
+          cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+          cost_amount: num(row.cost_amount),
+        })),
       );
       return {
         project_id: pid,
@@ -1528,6 +1562,8 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
         costCode: "",
         description: "Total",
         budget: acc.budget + t.budget,
+        originalBudget: acc.originalBudget + t.originalBudget,
+        changeOrderBudget: acc.changeOrderBudget + t.changeOrderBudget,
         actuals: acc.actuals + t.actuals,
         open: acc.open + t.open,
         atRisk: acc.atRisk + t.atRisk,

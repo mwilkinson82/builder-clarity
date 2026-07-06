@@ -961,6 +961,8 @@ export function BillingWorkspace({
               buckets={buckets}
               exposures={exposures}
               allocations={exposureAllocations}
+              changeOrders={changeOrders}
+              changeOrderAllocations={billingWorkspace?.changeOrderAllocations ?? []}
             />
           </div>
         </TabsContent>

@@ -49,6 +49,7 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   upsert(values: unknown, options?: { onConflict?: string }): DynamicSupabaseQuery;
   in(column: string, values: readonly string[]): Promise<DynamicSupabaseResult<unknown[]>>;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
+  is(column: string, value: unknown): DynamicSupabaseQuery;
   order(
     column: string,
     options?: { ascending?: boolean; nullsFirst?: boolean },
@@ -102,6 +103,12 @@ export interface ProjectRow {
   project_manager: string;
   source_opportunity_id: string | null;
   archived_at: string | null;
+  /**
+   * BUDGETLOCK1: when the cost-budget baseline was frozen. null = unlocked
+   * (setup). Once locked, original_budget edits are refused — budget changes
+   * flow only through approved change-order cost allocations.
+   */
+  budget_locked_at: string | null;
 }
 
 export interface ExposureRow {
@@ -784,6 +791,8 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   project_manager: str(p.project_manager),
   source_opportunity_id: (p.source_opportunity_id as string | null) ?? null,
   archived_at: (p.archived_at as string | null) ?? null,
+  // Missing column (migration not applied yet) reads as unlocked.
+  budget_locked_at: (p.budget_locked_at as string | null) ?? null,
 });
 
 async function loadDecisionOwnerOptions(
@@ -2104,6 +2113,72 @@ export const deleteChangeOrderAllocation = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+// BUDGETLOCK1: the budget ledger on the project Budget tab layers approved
+// change-order cost onto the frozen baseline, so it needs the project's CO
+// allocations at route level (BillingWorkspace loads its own copy separately).
+export interface ChangeOrderAllocationListRow {
+  id: string;
+  project_id: string;
+  change_order_id: string;
+  cost_bucket_id: string | null;
+  cost_code: string;
+  contract_amount: number;
+  cost_amount: number;
+}
+
+export const listChangeOrderAllocations = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string }) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<ChangeOrderAllocationListRow[]> => {
+    const { data: rows, error } = await dynamicTable(context.supabase, "change_order_allocations")
+      .select("id,project_id,change_order_id,cost_bucket_id,cost_code,contract_amount,cost_amount")
+      .eq("project_id", data.projectId);
+    if (error) {
+      // Table shipped in an earlier desk migration; degrade to empty if absent.
+      if (/change_order_allocations|does not exist|schema cache|relation/i.test(error.message)) {
+        return [];
+      }
+      throw new Error(error.message);
+    }
+    return ((rows ?? []) as Record<string, unknown>[]).map((row) => ({
+      id: str(row.id),
+      project_id: str(row.project_id),
+      change_order_id: str(row.change_order_id),
+      cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+      cost_code: str(row.cost_code),
+      contract_amount: num(row.contract_amount),
+      cost_amount: num(row.cost_amount),
+    }));
+  });
+
+// BUDGETLOCK1: explicit lock. Idempotent — locking an already-locked budget is
+// a no-op. There is no unlock in the product; unwinding a lock is a desk
+// operation by design.
+export const lockProjectBudget = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string }) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    // dynamicTable: the generated DB types don't carry budget_locked_at until
+    // the desk applies the migration and types regenerate.
+    const { error } = await dynamicTable(context.supabase, "projects")
+      .update({ budget_locked_at: new Date().toISOString() })
+      .eq("id", data.projectId)
+      .is("budget_locked_at", null);
+    if (error) {
+      if (/budget_locked_at|schema cache|column/i.test(error.message)) {
+        throw new Error(
+          "Budget locking isn't enabled on this workspace yet — the budget_locked_at migration hasn't been applied.",
+        );
+      }
+      throw new Error(error.message);
+    }
+    return { ok: true };
+  });
+
 // ---------------- EXPOSURE → COST-CODE ALLOCATION (BUDGETENGINE Phase 1) ----------------
 
 export interface ExposureAllocationRow {
@@ -2224,6 +2299,10 @@ export const buildBudgetFromEstimate = createServerFn({ method: "POST" })
     z.object({ projectId: z.string().uuid() }).parse(input),
   )
   .handler(async ({ data, context }) => {
+    // BUDGETLOCK1: the carry writes original_budget — refused once locked.
+    if (await isProjectBudgetLocked(context.supabase, data.projectId)) {
+      throw new Error(BUDGET_LOCKED_MESSAGE);
+    }
     const estRes = await dynamicTable(context.supabase, "estimates")
       .select("id")
       .eq("project_id", data.projectId)
@@ -2470,6 +2549,23 @@ export const deleteInspection = createServerFn({ method: "POST" })
 
 // ---------------- COST BUCKETS ----------------
 
+// BUDGETLOCK1 (founder decision 2026-07-06): the budget is a locked baseline.
+// Once projects.budget_locked_at is set, original_budget never changes — the
+// only budget movement is an approved change order's budgeted cost (priced on
+// the CO, allocated to cost codes). Reads tolerate the column not existing yet
+// (migration pending) by treating the project as unlocked.
+const BUDGET_LOCKED_MESSAGE =
+  "The budget is locked. Budget changes come through change orders — price the change order, and its budgeted cost adds to (or deducts from) the locked budget.";
+
+async function isProjectBudgetLocked(supabase: unknown, projectId: string): Promise<boolean> {
+  const { data, error } = await dynamicTable(supabase, "projects")
+    .select("budget_locked_at")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (error) return false; // pre-migration (column missing) reads as unlocked
+  return Boolean((data as { budget_locked_at?: string | null } | null)?.budget_locked_at);
+}
+
 const bucketInput = z.object({
   id: z.string().uuid(),
   patch: z.object({
@@ -2488,6 +2584,20 @@ export const updateBucket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => bucketInput.parse(input))
   .handler(async ({ data, context }) => {
+    // BUDGETLOCK1: a locked budget refuses original_budget changes. Unchanged
+    // re-commits (blur-commit UIs resend the same value) pass through.
+    if (data.patch.original_budget !== undefined) {
+      const { data: bucketRow, error: bucketError } = await context.supabase
+        .from("cost_buckets")
+        .select("project_id,original_budget")
+        .eq("id", data.id)
+        .single();
+      if (bucketError) throw new Error(bucketError.message);
+      const changed = Number(bucketRow.original_budget ?? 0) !== data.patch.original_budget;
+      if (changed && (await isProjectBudgetLocked(context.supabase, bucketRow.project_id))) {
+        throw new Error(BUDGET_LOCKED_MESSAGE);
+      }
+    }
     const { error } = await context.supabase
       .from("cost_buckets")
       .update(data.patch)
@@ -2512,6 +2622,15 @@ export const createBucket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof createBucketInput>) => createBucketInput.parse(input))
   .handler(async ({ data, context }) => {
+    // BUDGETLOCK1: new lines may be added under a locked budget (they hold CO
+    // allocations or track added cost), but they arrive with zero budget —
+    // budget dollars only enter through change orders.
+    if (
+      data.original_budget > 0 &&
+      (await isProjectBudgetLocked(context.supabase, data.projectId))
+    ) {
+      throw new Error(BUDGET_LOCKED_MESSAGE);
+    }
     const { data: last } = await context.supabase
       .from("cost_buckets")
       .select("sort_order")
@@ -2540,6 +2659,20 @@ export const deleteBucket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
+    // BUDGETLOCK1: deleting a budgeted line is a budget change. Zero-budget
+    // lines (CO receivers, added-cost tracking rows) may still be removed.
+    const { data: bucketRow, error: bucketError } = await context.supabase
+      .from("cost_buckets")
+      .select("project_id,original_budget")
+      .eq("id", data.id)
+      .single();
+    if (bucketError) throw new Error(bucketError.message);
+    if (
+      Number(bucketRow.original_budget ?? 0) !== 0 &&
+      (await isProjectBudgetLocked(context.supabase, bucketRow.project_id))
+    ) {
+      throw new Error(BUDGET_LOCKED_MESSAGE);
+    }
     const { error } = await context.supabase.from("cost_buckets").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
@@ -2724,6 +2857,15 @@ export const createBillingApplication = createServerFn({ method: "POST" })
       amount: createdRow.amount_billed,
       notes: createdRow.notes || "Pay application created.",
     });
+    // BUDGETLOCK1: the first pay application freezes the budget baseline — you
+    // don't bill against an unfrozen budget. Best-effort via dynamicTable: if
+    // the migration hasn't landed (column missing) this silently no-ops, and
+    // billing is never blocked by it.
+    const { error: lockError } = await dynamicTable(context.supabase, "projects")
+      .update({ budget_locked_at: new Date().toISOString() })
+      .eq("id", projectId)
+      .is("budget_locked_at", null);
+    void lockError;
     return { ok: true };
   });
 

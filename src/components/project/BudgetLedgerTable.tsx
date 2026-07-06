@@ -19,7 +19,13 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { fmtUSD } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { computeBudgetLedger } from "@/lib/budget-ledger";
-import type { BucketRow, ExposureAllocationRow, ExposureRow } from "@/lib/projects.functions";
+import type {
+  BucketRow,
+  ChangeOrderAllocationListRow,
+  ChangeOrderRow,
+  ExposureAllocationRow,
+  ExposureRow,
+} from "@/lib/projects.functions";
 
 // Over/under reads itself: "$3,000 over" in red, "$5,000 under" in green — never
 // a bare parenthesized number nobody can decode at a glance.
@@ -57,12 +63,28 @@ export function BudgetLedgerTable({
   buckets,
   exposures,
   allocations,
+  changeOrders = [],
+  changeOrderAllocations = [],
 }: {
   buckets: BucketRow[];
   exposures: ExposureRow[];
   allocations: ExposureAllocationRow[];
+  // BUDGETLOCK1: approved change-order cost is the ONLY thing that moves a
+  // locked budget — the ledger layers it onto the frozen baseline.
+  changeOrders?: ChangeOrderRow[];
+  changeOrderAllocations?: ChangeOrderAllocationListRow[];
 }) {
-  const ledger = computeBudgetLedger(buckets, exposures, allocations);
+  const ledger = computeBudgetLedger(
+    buckets,
+    exposures,
+    allocations,
+    changeOrders.map((co) => ({ id: co.id, status: co.status, cost_amount: co.cost_amount })),
+    changeOrderAllocations.map((allocation) => ({
+      change_order_id: allocation.change_order_id,
+      cost_bucket_id: allocation.cost_bucket_id,
+      cost_amount: allocation.cost_amount,
+    })),
+  );
 
   if (ledger.rows.length === 0) {
     return (
@@ -84,8 +106,9 @@ export function BudgetLedgerTable({
           spent plus what's still committed.{" "}
           <strong className="font-medium text-foreground">Over / under budget</strong> is your
           budget minus that — <span className="text-success">green</span> means you're coming in
-          under budget, <span className="text-danger">red</span> means over. At Risk and Contingency
-          come straight from your IOR risk holds. Hover any column for what it means.
+          under budget, <span className="text-danger">red</span> means over. Budget is your locked
+          baseline plus approved change-order cost; At Risk and Contingency come straight from your
+          IOR risk holds. Hover any column for what it means.
         </p>
       </div>
       <TooltipProvider delayDuration={150}>
@@ -95,7 +118,11 @@ export function BudgetLedgerTable({
               <TableRow className="bg-surface text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                 <TableHead className="w-[90px]">Cost code</TableHead>
                 <TableHead>Description</TableHead>
-                <TableHead className="text-right">Budget</TableHead>
+                <HelpHead
+                  label="Budget"
+                  help="Your locked baseline plus approved change-order cost. Once the budget is locked, the only thing that moves it is a change order."
+                  className="text-right"
+                />
                 <TableHead className="text-right">Actuals</TableHead>
                 <HelpHead
                   label="Open"
@@ -131,7 +158,14 @@ export function BudgetLedgerTable({
                     {row.costCode || "—"}
                   </TableCell>
                   <TableCell className="font-medium">{row.description}</TableCell>
-                  <TableCell className="text-right tabular">{fmtUSD(row.budget)}</TableCell>
+                  <TableCell className="text-right tabular">
+                    {fmtUSD(row.budget)}
+                    {row.changeOrderBudget !== 0 ? (
+                      <div className="text-[10px] font-normal text-muted-foreground">
+                        incl. {fmtUSD(row.changeOrderBudget)} CO
+                      </div>
+                    ) : null}
+                  </TableCell>
                   <TableCell className="text-right tabular">{fmtUSD(row.actuals)}</TableCell>
                   <TableCell className="text-right tabular text-muted-foreground">
                     {fmtUSD(row.open)}
@@ -155,7 +189,14 @@ export function BudgetLedgerTable({
               <TableRow className="bg-surface font-semibold">
                 <TableCell />
                 <TableCell>{ledger.totals.description}</TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(ledger.totals.budget)}</TableCell>
+                <TableCell className="text-right tabular">
+                  {fmtUSD(ledger.totals.budget)}
+                  {ledger.totals.changeOrderBudget !== 0 ? (
+                    <div className="text-[10px] font-normal text-muted-foreground">
+                      incl. {fmtUSD(ledger.totals.changeOrderBudget)} CO
+                    </div>
+                  ) : null}
+                </TableCell>
                 <TableCell className="text-right tabular">
                   {fmtUSD(ledger.totals.actuals)}
                 </TableCell>

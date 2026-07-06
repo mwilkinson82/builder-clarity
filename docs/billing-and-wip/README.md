@@ -47,10 +47,13 @@ Everything here serves four goals:
    never re-keys history. Reports read the **same engine** as the screen they
    summarize, so they can never contradict the app.
 
-4. **Billing never waits on the PM.** WIP (daily work-in-place) _feeds_ billing
-   when the PM records it, but billing works exactly the same when they don't.
-   This "dependency rule" is load-bearing — it lets us ship daily WIP without
-   forcing anyone into it.
+4. **Billing never waits on the PM — and the bill comes from the SOV.** Daily
+   WIP is project tracking: it informs the PM, who updates the SOV's percent
+   complete and hands it to accounting; accounting builds the pay application
+   from the SOV. A pay app is **never** generated from daily tracking (founder
+   decision 2026-07-06 — daily numbers may not be accurate enough to bill
+   from), and billing works exactly the same whether or not the PM records
+   daily WIP at all.
 
 ---
 
@@ -71,13 +74,14 @@ Everything here serves four goals:
                        ┌──────────▼───┐   ┌───────▼───────┐   ┌───▼──────────┐
                        │ DAILY WIP    │   │ BILLING       │   │ WIP SCHEDULE │
                        │ (Workspace B)│   │ (pay apps /   │   │ (accounting: │
-                       │ crew×hrs×rate│──►│  invoices,    │   │  billed vs   │
+                       │ crew×hrs×rate│   │  invoices,    │   │  billed vs   │
                        │ per day,     │   │  AIA G702/703,│   │  earned vs   │
                        │ per code     │   │  retainage,   │   │  cost →      │
                        │              │   │  change orders│   │  over/under) │
                        └──────────────┘   └───────────────┘   └──────────────┘
-                          feeds billing ─────►                     summarized by
-                          (never blocks it)                        the REPORTS suite
+                          informs the PM;      bills from the      summarized by
+                          NEVER becomes        SOV the PM fills    the REPORTS suite
+                          the bill             out (% complete)
 ```
 
 - **Budget = your cost.** Comes from the frozen estimate's line costs. It is

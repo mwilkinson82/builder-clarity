@@ -143,3 +143,32 @@ Per cost code:
 job runs, never in the bid → **At Risk** column. C-Hold = contingency, either a
 bid % (the only estimate touch-point) or a mid-project set-aside → **Contingency**
 column.
+
+## Addendum — the budget lock is enforced (founder decision, 2026-07-06)
+
+Resolved decision #2 ("the budget never changes") was, until BUDGETLOCK1, a
+convention the UI did not enforce — `original_budget` was editable at any time.
+The founder confirmed the hard rule and it is now enforced in code:
+
+> **The budget is locked and frozen. The ONLY way the budget changes —
+> increases or decreases — is through change orders.** A change order is
+> priced with its own budget; that budgeted cost adds to (or deducts from)
+> the locked contract budget. Change orders change the budget because they
+> add or deduct scope.
+
+Implementation (BUDGETLOCK1):
+- `projects.budget_locked_at` (migration `20260706233000_project_budget_lock.sql`)
+  records when the baseline froze. Locking happens **explicitly** ("Lock
+  budget" on the Budget tab) or **automatically when the first pay application
+  is created** — you don't bill against an unfrozen baseline. There is no
+  unlock in the product; unwinding a lock is a desk operation.
+- Server-enforced once locked: `original_budget` edits, budgeted-line deletes,
+  nonzero-budget line creation, and the estimate→budget carry are all refused
+  (`updateBucket` / `createBucket` / `deleteBucket` / `buildBudgetFromEstimate`).
+  Zero-budget lines can still be added (they receive CO allocations or track
+  added cost). Actuals and FTC stay editable — they are cost, not budget.
+- The ledger's **Budget column = frozen original + approved CO cost
+  allocations** (`computeBudgetLedger`, change-order layer). Approved CO cost
+  not yet allocated to a code appears as its own "Change-order budget
+  (unallocated)" line so the total never lies. Deductive COs carry negative
+  cost and reduce the budget. Pending/denied COs never touch it.

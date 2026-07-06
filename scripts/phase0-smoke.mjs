@@ -2440,6 +2440,28 @@ await expectContains(
   "budget tab is renamed from SOV/Costs and feeds Billing its exposures + allocations",
 );
 
+// BUDGETLOCK1 (founder decision 2026-07-06): the budget is a locked baseline —
+// the ONLY thing that moves it is an approved change order's budgeted cost.
+// Server-side enforcement + the CO cost layer in the ledger math must never
+// quietly disappear.
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /BUDGET_LOCKED_MESSAGE/,
+    /isProjectBudgetLocked/,
+    /budget_locked_at/,
+    // The first pay application freezes the baseline.
+    /\.is\("budget_locked_at", null\)/,
+    /export const lockProjectBudget/,
+  ],
+  "locked budgets refuse original_budget changes; first pay app auto-locks (BUDGETLOCK1)",
+);
+await expectContains(
+  "src/lib/budget-ledger.ts",
+  [/changeOrderBudget/, /status === "Approved"/, /Change-order budget \(unallocated\)/],
+  "budget ledger layers approved change-order cost onto the frozen baseline (BUDGETLOCK1)",
+);
+
 // BUDGETENGINE Phase 3: estimate → budget carry. The budget is the estimate's
 // line COSTS by cost code (markups are margin); manual entry stays via the
 // cost-line editor.
