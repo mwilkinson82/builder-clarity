@@ -745,6 +745,10 @@ await expectContains(
     /AiaApplicationStepper/,
     /overbilledLines/,
     /lenders typically reject lines over/,
+    // BILLING P1a: the prior-billing memory is named — this bill is carried
+    // forward from the previous application, so the biller can trust it.
+    /Carried forward from/,
+    /Overwatch remembers the rest/,
     /Cost ledger: job-cost backup/,
     /Cost code health/,
     /Cost transaction backup/,
