@@ -41,6 +41,10 @@ import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
 import { ImportSOVSheet, type SovMappingProfileDraft } from "@/components/outcome/ImportSOVSheet";
 import { ReviewsTab } from "@/components/outcome/ReviewsTab";
 import { RiskAllocationWorkbench } from "@/components/outcome/RiskAllocationWorkbench";
+import {
+  ExposureAllocationPanel,
+  type ExposureAllocationInput,
+} from "@/components/project/ExposureAllocationPanel";
 import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
@@ -94,6 +98,9 @@ import {
   deleteChangeOrder,
   allocateChangeOrder,
   deleteChangeOrderAllocation,
+  allocateExposure,
+  deleteExposureAllocation,
+  listExposureAllocations,
   createInspection,
   updateInspection,
   deleteInspection,
@@ -308,6 +315,9 @@ function ProjectPage() {
   const deleteCoFn = useServerFn(deleteChangeOrder);
   const allocateChangeOrderFn = useServerFn(allocateChangeOrder);
   const deleteChangeOrderAllocationFn = useServerFn(deleteChangeOrderAllocation);
+  const allocateExposureFn = useServerFn(allocateExposure);
+  const deleteExposureAllocationFn = useServerFn(deleteExposureAllocation);
+  const listExposureAllocationsFn = useServerFn(listExposureAllocations);
   const createInspectionFn = useServerFn(createInspection);
   const updateInspectionFn = useServerFn(updateInspection);
   const deleteInspectionFn = useServerFn(deleteInspection);
@@ -340,6 +350,7 @@ function ProjectPage() {
     qc.invalidateQueries({ queryKey: ["projects"] });
     qc.invalidateQueries({ queryKey: ["billing-workspace", projectId] });
     qc.invalidateQueries({ queryKey: ["portfolio-billing"] });
+    qc.invalidateQueries({ queryKey: ["exposure-allocations", projectId] });
   };
   const useServerMutation = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
     useMutation({ mutationFn: (input: I) => fn({ data: input }), onSuccess: invalidate });
@@ -434,6 +445,37 @@ function ProjectPage() {
   });
   const changeOrderAllocationRemove = useMutation({
     mutationFn: (input: { id: string }) => deleteChangeOrderAllocationFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Allocation removed");
+    },
+    onError: (err) => {
+      toast.error("Allocation did not remove", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const exposureAllocationsQuery = useQuery({
+    queryKey: ["exposure-allocations", projectId],
+    queryFn: () => listExposureAllocationsFn({ data: { projectId } }),
+  });
+  const exposureAllocate = useMutation({
+    mutationFn: (input: ExposureAllocationInput) =>
+      allocateExposureFn({ data: { projectId, ...input } }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Risk allocated", {
+        description: "It rolls into the budget's At Risk / Contingency column for that cost code.",
+      });
+    },
+    onError: (err) => {
+      toast.error("Allocation did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const exposureAllocationRemove = useMutation({
+    mutationFn: (input: { id: string }) => deleteExposureAllocationFn({ data: input }),
     onSuccess: () => {
       invalidate();
       toast.success("Allocation removed");
@@ -1778,6 +1820,16 @@ function ProjectPage() {
                 onDeleteExposure={handleDeleteExposure}
                 onCreateTodo={createTodoForRisk}
               />
+              <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+                <ExposureAllocationPanel
+                  exposures={exposures}
+                  buckets={buckets}
+                  allocations={exposureAllocationsQuery.data ?? []}
+                  onAllocate={(input) => exposureAllocate.mutate(input)}
+                  onRemoveAllocation={(id) => exposureAllocationRemove.mutate({ id })}
+                  saving={exposureAllocate.isPending || exposureAllocationRemove.isPending}
+                />
+              </div>
             </TabsContent>
 
             <TabsContent value="todos" className="mt-0 space-y-6">

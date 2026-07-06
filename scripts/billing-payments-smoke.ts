@@ -50,6 +50,12 @@ import {
   unallocatedContract,
 } from "../src/lib/change-order-allocation.ts";
 import {
+  allocatedByExposure,
+  riskByCostCode,
+  summarizeExposure,
+  unallocatedExposure,
+} from "../src/lib/exposure-allocation.ts";
+import {
   agingBucketTotals,
   appendCollectionsNote,
   collectionsFlag,
@@ -1145,6 +1151,46 @@ const none = summarizeApprovedCo("co-c", 85_000, ALLOCS);
 assert.equal(none.allocated, 0);
 assert.equal(none.remaining, 85_000);
 assert.equal(none.fullyAllocated, false);
+
+// --- Exposure → cost-code allocation (At Risk goes live, BUDGETENGINE P1) -----
+
+// An exposure (E/C hold) spreads across cost codes; totals sum in cents.
+const EXPO_ALLOCS = [
+  { exposure_id: "e-1", cost_bucket_id: "b1", cost_code: "0900", amount: 12_000 },
+  { exposure_id: "e-1", cost_bucket_id: "b2", cost_code: "1500", amount: 6_000.5 },
+  { exposure_id: "c-1", cost_bucket_id: null, cost_code: "", amount: 5_000 },
+];
+const allocByExp = allocatedByExposure(EXPO_ALLOCS);
+assert.equal(allocByExp.get("e-1"), 18_000.5); // split across two codes, cents-exact
+assert.equal(allocByExp.get("c-1"), 5_000);
+
+// Unallocated remainder = general job risk, never negative.
+assert.equal(unallocatedExposure(18_000.5, 18_000.5), 0);
+assert.equal(unallocatedExposure(30_000, 18_000.5), 11_999.5);
+assert.equal(unallocatedExposure(18_000, 25_000), 0); // over-allocation clamps
+
+const expPartial = summarizeExposure("e-1", 30_000, EXPO_ALLOCS);
+assert.equal(expPartial.allocated, 18_000.5);
+assert.equal(expPartial.remaining, 11_999.5);
+assert.equal(expPartial.fullyAllocated, false);
+
+// E-Holds roll into At Risk, C-Holds into Contingency, per cost code; a C-Hold
+// left unallocated to a bucket lands in general risk (null bucket).
+const RISK = riskByCostCode(
+  [
+    { id: "e-1", dollar_exposure: 30_000, hold_class: "E-Hold" as const },
+    { id: "c-1", dollar_exposure: 5_000, hold_class: "C-Hold" as const },
+  ],
+  EXPO_ALLOCS,
+);
+const riskB1 = RISK.find((r) => r.costBucketId === "b1");
+assert.equal(riskB1?.atRisk, 12_000); // E-Hold on 0900
+assert.equal(riskB1?.contingency, 0);
+const riskB2 = RISK.find((r) => r.costBucketId === "b2");
+assert.equal(riskB2?.atRisk, 6_000.5);
+const generalRisk = RISK.find((r) => r.costBucketId === null);
+assert.equal(generalRisk?.contingency, 5_000); // unallocated C-Hold → general contingency
+assert.equal(generalRisk?.atRisk, 0);
 
 // End-to-end: allocate a CO to a bucket, then build the lines — the allocated
 // value rides change_order_value_cents on that bucket's line (G702 line 2).
