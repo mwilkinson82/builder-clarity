@@ -75,6 +75,25 @@ export function isDemoContactId(id: string) {
   return id.startsWith(DEMO_CONTACT_ID_PREFIX);
 }
 
+// localStorage key holding the ids of sample opportunities the user removed
+// locally (sample CRM data is not seeded to the database, so deletions are
+// client-side). The CRM workspace owns writes to it; the portfolio dashboard
+// reads it so its Pipeline intake rollup reflects the same deletions.
+export const DEMO_REMOVED_STORAGE_KEY = "overwatch.crm.demo-opportunity-removals.v1";
+
+export function readDemoOpportunityRemovals(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(DEMO_REMOVED_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string" && isDemoOpportunityId(id));
+  } catch {
+    return [];
+  }
+}
+
 // Prune the CRM snapshot so its rollup reflects locally-removed sample
 // opportunities. Only sample rows (fixed demo ids) are ever touched — real
 // database accounts/contacts/actions pass through untouched, so this is a no-op

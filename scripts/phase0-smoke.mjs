@@ -293,6 +293,12 @@ await expectNotContains(
 );
 
 await expectContains(
+  "src/routes/_authenticated/index.tsx",
+  [/readDemoOpportunityRemovals/, /pruneRemovedDemoCrm/, /visibleOpportunities/, /prunedSnapshot/],
+  "portfolio Pipeline intake prunes locally-removed sample CRM data so deletions carry through the rollup",
+);
+
+await expectContains(
   "src/lib/team.functions.ts",
   [
     /getCompanyWorkspaceContext/,
