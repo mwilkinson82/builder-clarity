@@ -155,14 +155,59 @@ export function computeBackoffMs(
   return Math.round(base + jitter * base);
 }
 
-/** A 429 from Replicate — retryable with backoff, carrying any Retry-After hint. */
-class ReplicateThrottleError extends Error {
+/**
+ * Whether an HTTP status is worth retrying: 429 (throttle) or any 5xx (transient
+ * server error — Replicate 502/503/504 blips that resolve on their own). 4xx
+ * other than 429 are the caller's fault and fail fast. Pure so the smoke pins it.
+ */
+export function isRetryableReplicateStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/** A retryable Replicate error (throttle or transient 5xx), carrying any Retry-After hint. */
+class RetryableReplicateError extends Error {
   readonly retryAfterMs: number | null;
-  constructor(retryAfterMs: number | null) {
-    super("The embedding service is rate-limiting requests (HTTP 429).");
-    this.name = "ReplicateThrottleError";
+  constructor(message: string, retryAfterMs: number | null) {
+    super(message);
+    this.name = "RetryableReplicateError";
     this.retryAfterMs = retryAfterMs;
   }
+}
+
+/** A 429 from Replicate — rate-limited, back off (honoring Retry-After). */
+class ReplicateThrottleError extends RetryableReplicateError {
+  constructor(retryAfterMs: number | null) {
+    super("The embedding service is rate-limiting requests (HTTP 429).", retryAfterMs);
+    this.name = "ReplicateThrottleError";
+  }
+}
+
+/** A transient 5xx from Replicate (502/503/504) — retry with backoff. */
+class ReplicateServerError extends RetryableReplicateError {
+  constructor(status: number) {
+    super(`The embedding service had a transient error (HTTP ${status}).`, null);
+    this.name = "ReplicateServerError";
+  }
+}
+
+/** Turn any non-2xx response into a retryable throw (429/5xx) or a clean fail-fast error. */
+async function throwForBadStatus(response: Response): Promise<never> {
+  if (response.status === 429) {
+    throw new ReplicateThrottleError(parseRetryAfterMs(response.headers.get("retry-after")));
+  }
+  if (response.status >= 500) {
+    throw new ReplicateServerError(response.status);
+  }
+  // 4xx: read the body defensively — Replicate usually sends JSON {detail}, but a
+  // gateway may return HTML/text, which must not surface as a JSON parse error.
+  const text = await response.text().catch(() => "");
+  let detail = "";
+  try {
+    detail = (JSON.parse(text) as { detail?: string })?.detail ?? "";
+  } catch {
+    detail = text.slice(0, 200);
+  }
+  throw new Error(detail || `The embedding service returned ${response.status}.`);
 }
 
 /** One embed attempt. Throws ReplicateThrottleError on a 429 so the caller can back off. */
@@ -183,9 +228,7 @@ async function embedOneAttempt(
     body: JSON.stringify({ version, input: { [inputField]: dataUri } }),
     signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
   });
-  if (response.status === 429) {
-    throw new ReplicateThrottleError(parseRetryAfterMs(response.headers.get("retry-after")));
-  }
+  if (!response.ok) await throwForBadStatus(response);
   let prediction = (await response.json()) as {
     status?: string;
     output?: unknown;
@@ -193,9 +236,6 @@ async function embedOneAttempt(
     detail?: string;
     urls?: { get?: string };
   };
-  if (!response.ok) {
-    throw new Error(prediction?.detail || `The embedding service returned ${response.status}.`);
-  }
   let polls = 0;
   while (
     prediction.status &&
@@ -210,9 +250,7 @@ async function embedOneAttempt(
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     });
-    if (poll.status === 429) {
-      throw new ReplicateThrottleError(parseRetryAfterMs(poll.headers.get("retry-after")));
-    }
+    if (!poll.ok) await throwForBadStatus(poll);
     prediction = await poll.json();
     polls += 1;
   }
@@ -229,10 +267,11 @@ async function embedOneAttempt(
 }
 
 /**
- * Embed one crop, retrying on a 429 with exponential backoff + jitter (honoring
- * Retry-After). Only throttling is retried — every other failure fails fast so a
- * scan never hangs. On a funded account no 429 is ever seen, so this is a
- * straight pass-through at full concurrency.
+ * Embed one crop, retrying transient failures with exponential backoff + jitter
+ * (honoring Retry-After): 429 throttling and 5xx server blips (the 502s that
+ * otherwise degrade a scan to the model engine). Everything else fails fast so a
+ * scan never hangs. On a healthy funded account no retry is ever seen, so this is
+ * a straight pass-through at full concurrency.
  */
 async function embedOne(
   dataUri: string,
@@ -246,7 +285,7 @@ async function embedOne(
       return await embedOneAttempt(dataUri, token, version, inputField);
     } catch (error) {
       lastError = error;
-      if (error instanceof ReplicateThrottleError && attempt < EMBED_MAX_ATTEMPTS) {
+      if (error instanceof RetryableReplicateError && attempt < EMBED_MAX_ATTEMPTS) {
         await sleep(computeBackoffMs(attempt, error.retryAfterMs, Math.random()));
         continue;
       }

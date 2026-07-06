@@ -38,6 +38,7 @@ import {
   extractEmbedding,
   parseRetryAfterMs,
   computeBackoffMs,
+  isRetryableReplicateStatus,
 } from "../src/lib/ai-takeoff/replicate.server.ts";
 import { planVisionProviders } from "../src/lib/ai-takeoff/vision-domain.ts";
 
@@ -337,5 +338,16 @@ ok(
 );
 const jittered = computeBackoffMs(2, null, 0.5);
 ok(jittered >= 2_000 && jittered <= 4_000, `backoff: jittered wait stays in band (${jittered}ms)`);
+
+// Retryable-status table: 429 + any 5xx retry (the 502 blip that degraded a live
+// A-100 scan self-heals now); 2xx/4xx do not.
+ok(isRetryableReplicateStatus(429) === true, "429 throttle → retry");
+ok(isRetryableReplicateStatus(502) === true, "502 bad gateway → retry (the live blip)");
+ok(isRetryableReplicateStatus(503) === true, "503 → retry");
+ok(isRetryableReplicateStatus(504) === true, "504 gateway timeout → retry");
+ok(isRetryableReplicateStatus(500) === true, "500 → retry");
+ok(isRetryableReplicateStatus(400) === false, "400 bad request → fail fast");
+ok(isRetryableReplicateStatus(404) === false, "404 not found → fail fast (won't fix on retry)");
+ok(isRetryableReplicateStatus(200) === false, "200 → not an error");
 
 console.log(`ai-embedding-match smoke: ${checks} checks passed`);
