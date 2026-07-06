@@ -4,14 +4,16 @@
 // whole point of a WIP. Numbers come straight from listPortfolioBilling (the
 // same figures the Billing portfolio shows), so this report can never disagree
 // with the billing surface. Money is already in dollars here.
-import { useMemo, type ReactNode } from "react";
-import { Download, Info, Printer } from "lucide-react";
+import { useMemo } from "react";
+import { Download, Printer } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { PortfolioBillingProject, PortfolioBillingSummary } from "@/lib/billing.functions";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { fmtPct } from "@/lib/format";
+import { ColHead } from "@/components/reports/ColHead";
+import { csvCell, downloadText, money2 } from "@/components/reports/reportFormat";
 
 interface WipReportProps {
   projects: PortfolioBillingProject[];
@@ -59,18 +61,6 @@ function toWipRow(project: PortfolioBillingProject): WipRow {
     estGrossProfit: project.estimated_gross_profit,
     partial: project.assessed_bucket_count < project.bucket_count,
   };
-}
-
-// Quote a CSV cell only when it needs it, so numbers stay bare for spreadsheets.
-function csvCell(value: string | number): string {
-  const text = String(value);
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
-function money2(value: number): string {
-  // Bare dollars-and-cents for CSV — no symbol or grouping, so it imports as a
-  // number, not text.
-  return value.toFixed(2);
 }
 
 function buildCsv(rows: WipRow[], totals: PortfolioBillingSummary["totals"]): string {
@@ -130,57 +120,6 @@ function buildCsv(rows: WipRow[], totals: PortfolioBillingSummary["totals"]): st
 // it from the identity  est_gross_profit = contract − (cost + cost_to_complete).
 function totalsCostToComplete(totals: PortfolioBillingSummary["totals"]): number {
   return totals.total_contract - totals.estimated_gross_profit - totals.total_cost;
-}
-
-function downloadText(filename: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function ColHead({
-  children,
-  help,
-  align = "right",
-}: {
-  children: ReactNode;
-  help?: string;
-  align?: "left" | "right";
-}) {
-  return (
-    <th
-      className={`whitespace-nowrap px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground ${
-        align === "right" ? "text-right" : "text-left"
-      }`}
-      scope="col"
-    >
-      {help ? (
-        <span
-          className={`inline-flex items-center gap-1 ${align === "right" ? "flex-row-reverse" : ""}`}
-        >
-          {children}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="text-muted-foreground/70 transition hover:text-foreground"
-                aria-label={`About ${typeof children === "string" ? children : "this column"}`}
-              >
-                <Info className="h-3 w-3" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-[240px] text-xs leading-snug">{help}</TooltipContent>
-          </Tooltip>
-        </span>
-      ) : (
-        children
-      )}
-    </th>
-  );
 }
 
 // Over/(under) billed reads as a signed money figure with a plain-English tag,

@@ -9,6 +9,8 @@ import {
   type WIPBucketInput,
 } from "@/lib/wip";
 import { buildBillingLinesFromBuckets } from "@/lib/billing-line-generation";
+import { computeBudgetLedger, type BudgetLedger, type BudgetLedgerRow } from "@/lib/budget-ledger";
+import type { ExposureLike, ExposureAllocationLike, HoldClass } from "@/lib/exposure-allocation";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -1396,4 +1398,144 @@ export const listPortfolioBilling = createServerFn({ method: "GET" })
       totals.total_contract > 0 ? (totals.estimated_gross_profit / totals.total_contract) * 100 : 0;
 
     return { projects, totals } satisfies PortfolioBillingSummary;
+  });
+
+// ---------------- JOB COST REPORT (REPORTS P3.2) ----------------
+
+export interface JobCostProject {
+  project_id: string;
+  project_name: string;
+  job_number: string;
+  client: string;
+  project_manager: string;
+  ledger: BudgetLedger;
+}
+
+export interface JobCostSummary {
+  projects: JobCostProject[];
+  // Portfolio rollup of every project's ledger totals — the same shape as a
+  // ledger row so the report foots identically at the project and portfolio
+  // level.
+  totals: BudgetLedgerRow;
+}
+
+const normalizeExposure = (row: Record<string, unknown>): ExposureLike => ({
+  id: str(row.id),
+  dollar_exposure: num(row.dollar_exposure),
+  hold_class: str(row.hold_class, "None") as HoldClass,
+});
+
+const normalizeExposureAllocation = (row: Record<string, unknown>): ExposureAllocationLike => ({
+  exposure_id: str(row.exposure_id),
+  cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+  cost_code: str(row.cost_code),
+  amount: num(row.amount),
+});
+
+// Group raw rows by project_id before normalizing — the Like shapes the ledger
+// consumes intentionally drop project_id, so grouping has to happen on the raw
+// rows first.
+const groupRawByProject = (rows: Record<string, unknown>[]) => {
+  const map = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows) {
+    const pid = row.project_id as string;
+    if (!pid) continue;
+    const list = map.get(pid);
+    if (list) list.push(row);
+    else map.set(pid, [row]);
+  }
+  return map;
+};
+
+// The Job Cost report: budget vs actual by cost code, per project. Reuses the
+// exact budget-vs-cost ledger the project Budget tab computes (BUDGETENGINE),
+// so this report can never disagree with the project screen. One fetch scoped
+// to the caller's active projects (same RLS pattern as listPortfolioBilling),
+// then the client picks a job.
+export const listPortfolioJobCost = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<JobCostSummary> => {
+    const ctx = context as unknown as BillingServerContext;
+    const projectRes = await dynamicTable(ctx.supabase, "projects")
+      .select("*")
+      .is("archived_at", null)
+      .order("name", { ascending: true });
+    if (projectRes.error) throw new Error(projectRes.error.message);
+    const projectRows = (projectRes.data ?? []) as Record<string, unknown>[];
+    const ids = projectRows.map((project) => project.id as string).filter(Boolean);
+    const emptyLedgerRow: BudgetLedgerRow = {
+      costBucketId: null,
+      costCode: "",
+      description: "Total",
+      budget: 0,
+      actuals: 0,
+      open: 0,
+      atRisk: 0,
+      contingency: 0,
+      eac: 0,
+      overUnder: 0,
+    };
+    if (ids.length === 0) {
+      return { projects: [], totals: emptyLedgerRow };
+    }
+
+    const [bucketRes, exposureRes, allocationRes] = await Promise.all([
+      dynamicTable(ctx.supabase, "cost_buckets").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "exposures").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "exposure_allocations").select("*").in("project_id", ids),
+    ]);
+    if (bucketRes.error) throw new Error(bucketRes.error.message);
+    // Exposures / allocations power the At Risk + Contingency columns only; if
+    // either table isn't present yet, the ledger still stands on budget/actuals.
+    const exposuresMissing = isMissingRestRelation(exposureRes.error, "exposures");
+    const allocationsMissing = isMissingRestRelation(allocationRes.error, "exposure_allocations");
+    if (exposureRes.error && !exposuresMissing) throw new Error(exposureRes.error.message);
+    if (allocationRes.error && !allocationsMissing) throw new Error(allocationRes.error.message);
+
+    const rawBuckets = bucketRes.data ? (bucketRes.data as Record<string, unknown>[]) : [];
+    const rawExposures =
+      exposureRes.error || !exposureRes.data ? [] : (exposureRes.data as Record<string, unknown>[]);
+    const rawAllocations =
+      allocationRes.error || !allocationRes.data
+        ? []
+        : (allocationRes.data as Record<string, unknown>[]);
+
+    const bucketsByProject = groupRawByProject(rawBuckets);
+    const exposuresByProject = groupRawByProject(rawExposures);
+    const allocationsByProject = groupRawByProject(rawAllocations);
+
+    const projects = projectRows.map((projectRow) => {
+      const pid = projectRow.id as string;
+      const ledger = computeBudgetLedger(
+        (bucketsByProject.get(pid) ?? []).map(normalizeBucket),
+        (exposuresByProject.get(pid) ?? []).map(normalizeExposure),
+        (allocationsByProject.get(pid) ?? []).map(normalizeExposureAllocation),
+      );
+      return {
+        project_id: pid,
+        project_name: str(projectRow.name),
+        job_number: str(projectRow.job_number),
+        client: str(projectRow.client),
+        project_manager: str(projectRow.project_manager),
+        ledger,
+      } satisfies JobCostProject;
+    });
+
+    const totals = projects.reduce<BudgetLedgerRow>((acc, project) => {
+      const t = project.ledger.totals;
+      return {
+        costBucketId: null,
+        costCode: "",
+        description: "Total",
+        budget: acc.budget + t.budget,
+        actuals: acc.actuals + t.actuals,
+        open: acc.open + t.open,
+        atRisk: acc.atRisk + t.atRisk,
+        contingency: acc.contingency + t.contingency,
+        eac: acc.eac + t.eac,
+        overUnder: acc.overUnder + t.overUnder,
+      };
+    }, emptyLedgerRow);
+
+    return { projects, totals };
   });
