@@ -37,6 +37,38 @@ const resolveModel = () => process.env.REPLICATE_EMBED_MODEL?.trim() || DEFAULT_
 const resolveInputField = () =>
   process.env.REPLICATE_EMBED_INPUT_FIELD?.trim() || DEFAULT_INPUT_FIELD;
 
+/**
+ * Resolve the version hash to run. Community models (like krthr/clip-embeddings)
+ * MUST be run through POST /v1/predictions with a version — the
+ * /v1/models/{owner}/{name}/predictions endpoint is official-models-only and 404s
+ * ("The requested resource could not be found") for a community model. We look up
+ * the model's latest version once per batch; REPLICATE_EMBED_VERSION pins it
+ * explicitly (also lets an official/deployment swap skip the lookup).
+ */
+async function resolveVersion(model: string, token: string): Promise<string> {
+  const pinned = process.env.REPLICATE_EMBED_VERSION?.trim();
+  if (pinned) return pinned;
+  const response = await fetch(`${REPLICATE_API}/models/${model}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(
+      body?.detail ||
+        `Could not resolve the embedding model "${model}" (${response.status}). Check REPLICATE_EMBED_MODEL, or pin REPLICATE_EMBED_VERSION.`,
+    );
+  }
+  const body = (await response.json()) as { latest_version?: { id?: string } };
+  const id = body?.latest_version?.id;
+  if (!id) {
+    throw new Error(
+      `The embedding model "${model}" has no runnable version. Pin one with REPLICATE_EMBED_VERSION.`,
+    );
+  }
+  return id;
+}
+
 const isNumberArray = (v: unknown): v is number[] =>
   Array.isArray(v) && v.length > 0 && v.every((n) => typeof n === "number" && Number.isFinite(n));
 
@@ -74,10 +106,10 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 async function embedOne(
   dataUri: string,
   token: string,
-  model: string,
+  version: string,
   inputField: string,
 ): Promise<number[]> {
-  const response = await fetch(`${REPLICATE_API}/models/${model}/predictions`, {
+  const response = await fetch(`${REPLICATE_API}/predictions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -85,7 +117,7 @@ async function embedOne(
       // Ask Replicate to hold the request open until the prediction finishes.
       Prefer: "wait",
     },
-    body: JSON.stringify({ input: { [inputField]: dataUri } }),
+    body: JSON.stringify({ version, input: { [inputField]: dataUri } }),
     signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
   });
   let prediction = (await response.json()) as {
@@ -140,6 +172,8 @@ export async function embedImagesWithClip(images: EmbedImageInput[]): Promise<nu
   const token = requireToken();
   const model = resolveModel();
   const inputField = resolveInputField();
+  // Resolve the runnable version once, then reuse it for every crop in the batch.
+  const version = await resolveVersion(model, token);
   const out = new Array<number[]>(images.length);
   let cursor = 0;
   const runWorker = async () => {
@@ -150,7 +184,7 @@ export async function embedImagesWithClip(images: EmbedImageInput[]): Promise<nu
       out[index] = await embedOne(
         `data:${image.mediaType};base64,${image.base64}`,
         token,
-        model,
+        version,
         inputField,
       );
     }
