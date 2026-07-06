@@ -8,7 +8,11 @@
 // so node smokes can load this module directly.
 import { centsToDollars, dollarsToCents } from "./payments-domain.ts";
 
-export type HoldClass = "E-Hold" | "C-Hold";
+// Matches the IOR hold_class. "Both" (an exposure that is both an E-Hold and a
+// C-Hold) rolls into At Risk — a single dollar can't sit in two columns, and the
+// exposure/risk column is the safer default. "None" carries no hold and is
+// skipped entirely.
+export type HoldClass = "E-Hold" | "C-Hold" | "Both" | "None";
 
 export interface ExposureAllocationLike {
   exposure_id: string;
@@ -97,7 +101,7 @@ export function riskByCostCode(
   >();
   for (const allocation of allocations) {
     const hold = holdById.get(allocation.exposure_id);
-    if (!hold) continue;
+    if (!hold || hold === "None") continue; // no hold class → carries no risk
     const key = allocation.cost_bucket_id ?? `__general__:${allocation.cost_code}`;
     const row = rows.get(key) ?? {
       costBucketId: allocation.cost_bucket_id,
@@ -106,8 +110,9 @@ export function riskByCostCode(
       contingencyCents: 0,
     };
     const cents = dollarsToCents(allocation.amount);
-    if (hold === "E-Hold") row.atRiskCents += cents;
-    else row.contingencyCents += cents;
+    // C-Hold → Contingency; E-Hold and Both → At Risk.
+    if (hold === "C-Hold") row.contingencyCents += cents;
+    else row.atRiskCents += cents;
     rows.set(key, row);
   }
 
