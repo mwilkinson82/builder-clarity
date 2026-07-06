@@ -53,6 +53,18 @@ const SOURCE_LABEL: Record<BucketSource, string> = {
   added_cost: "Added Cost",
 };
 
+// Reads the same as the budget-vs-cost ledger: "$3,000 under" (green) /
+// "$3,000 over" (red) / "On budget" — never a bare parenthesized or signed
+// number. Variance is budget − projected cost, so positive means under budget.
+function overUnder(value: number): { text: string; tone: string } {
+  if (value === 0) return { text: "On budget", tone: "text-muted-foreground" };
+  const under = value > 0;
+  return {
+    text: `${fmtUSD(Math.abs(value))} ${under ? "under" : "over"}`,
+    tone: under ? "text-success" : "text-danger",
+  };
+}
+
 export function CostBucketsTable({
   buckets,
   onUpdate,
@@ -158,8 +170,8 @@ export function CostBucketsTable({
             <TableHead className="text-right">Original Budget</TableHead>
             <TableHead className="text-right">Actual to Date</TableHead>
             <TableHead className="text-right">Forecast to Complete</TableHead>
-            <TableHead className="text-right">Forecast at Completion</TableHead>
-            <TableHead className="text-right">Variance vs Budget</TableHead>
+            <TableHead className="text-right">Projected cost</TableHead>
+            <TableHead className="text-right">Over / under budget</TableHead>
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>
@@ -191,12 +203,8 @@ export function CostBucketsTable({
                   {fmtUSD(totals.ftc)}
                 </TableCell>
                 <TableCell className="text-right tabular font-medium">{fmtUSD(facTotal)}</TableCell>
-                <TableCell
-                  className={`text-right tabular ${varianceTotal < 0 ? "text-danger" : "text-success"}`}
-                >
-                  {varianceTotal < 0
-                    ? `−${fmtUSD(Math.abs(varianceTotal)).replace("−", "")}`
-                    : fmtUSD(varianceTotal)}
+                <TableCell className={`text-right tabular ${overUnder(varianceTotal).tone}`}>
+                  {overUnder(varianceTotal).text}
                 </TableCell>
                 <TableCell />
               </TableRow>,
@@ -240,9 +248,9 @@ export function CostBucketsTable({
                   </TableCell>
                   <TableCell className="text-right tabular font-medium">{fmtUSD(fac)}</TableCell>
                   <TableCell
-                    className={`text-right tabular ${neg ? "text-danger font-medium" : "text-success"}`}
+                    className={`text-right tabular ${overUnder(variance).tone} ${neg ? "font-medium" : ""}`}
                   >
-                    {neg ? `−${fmtUSD(Math.abs(variance)).replace("−", "")}` : fmtUSD(variance)}
+                    {overUnder(variance).text}
                   </TableCell>
                   <TableCell>
                     {onDelete && (
