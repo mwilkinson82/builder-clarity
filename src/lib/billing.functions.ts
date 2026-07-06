@@ -1539,3 +1539,134 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
 
     return { projects, totals };
   });
+
+// ---------------- BILLING HISTORY REPORT (REPORTS P3.3) ----------------
+
+export interface BillingHistoryEntry {
+  id: string;
+  application_number: string;
+  invoice_number: string;
+  submitted_date: string | null;
+  billing_period: string;
+  output_format: string;
+  status: string;
+  amount_billed: number;
+  retainage: number;
+  paid_to_date: number;
+  // Running cumulative of amount_billed across this project's applications, in
+  // submission order — "billed to date" as of each requisition.
+  billed_to_date: number;
+}
+
+export interface BillingHistoryProject {
+  project_id: string;
+  project_name: string;
+  job_number: string;
+  client: string;
+  entries: BillingHistoryEntry[];
+  total_billed: number;
+  total_retainage: number;
+  total_paid: number;
+}
+
+export interface BillingHistorySummary {
+  projects: BillingHistoryProject[];
+  totals: {
+    project_count: number;
+    application_count: number;
+    total_billed: number;
+    total_retainage: number;
+    total_paid: number;
+  };
+}
+
+// The Billing history report: every requisition (pay application) on a job, in
+// order, with what was billed, retainage held, the running billed-to-date, and
+// where payment stands. Same billing_applications the project billing workspace
+// reads, so the history can never disagree with the project screen.
+export const listPortfolioBillingHistory = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<BillingHistorySummary> => {
+    const ctx = context as unknown as BillingServerContext;
+    const projectRes = await dynamicTable(ctx.supabase, "projects")
+      .select("*")
+      .is("archived_at", null)
+      .order("name", { ascending: true });
+    if (projectRes.error) throw new Error(projectRes.error.message);
+    const projectRows = (projectRes.data ?? []) as Record<string, unknown>[];
+    const ids = projectRows.map((project) => project.id as string).filter(Boolean);
+    const emptyTotals = {
+      project_count: 0,
+      application_count: 0,
+      total_billed: 0,
+      total_retainage: 0,
+      total_paid: 0,
+    };
+    if (ids.length === 0) {
+      return { projects: [], totals: emptyTotals };
+    }
+
+    const appRes = await dynamicTable(ctx.supabase, "billing_applications")
+      .select("*")
+      .in("project_id", ids);
+    // The report stands even before any billing has happened.
+    if (appRes.error && !isMissingRestRelation(appRes.error, "billing_applications")) {
+      throw new Error(appRes.error.message);
+    }
+    const appRows = appRes.error || !appRes.data ? [] : (appRes.data as Record<string, unknown>[]);
+    const appsByProject = groupRawByProject(appRows);
+
+    const projects = projectRows
+      .map((projectRow) => {
+        const pid = projectRow.id as string;
+        const rows = (appsByProject.get(pid) ?? []).slice().sort((a, b) => {
+          const orderDelta = num(a.sort_order) - num(b.sort_order);
+          if (orderDelta !== 0) return orderDelta;
+          return str(a.submitted_date).localeCompare(str(b.submitted_date));
+        });
+        let runningBilled = 0;
+        const entries: BillingHistoryEntry[] = rows.map((row) => {
+          const amountBilled = num(row.amount_billed);
+          runningBilled += amountBilled;
+          return {
+            id: str(row.id),
+            application_number: str(row.application_number),
+            invoice_number: str(row.invoice_number),
+            submitted_date: (row.submitted_date as string | null) ?? null,
+            billing_period: str(row.billing_period),
+            output_format: str(row.output_format, "invoice"),
+            status: str(row.status, "draft"),
+            amount_billed: amountBilled,
+            retainage: num(row.retainage),
+            paid_to_date: num(row.paid_to_date),
+            billed_to_date: runningBilled,
+          };
+        });
+        return {
+          project_id: pid,
+          project_name: str(projectRow.name),
+          job_number: str(projectRow.job_number),
+          client: str(projectRow.client),
+          entries,
+          total_billed: entries.reduce((sum, entry) => sum + entry.amount_billed, 0),
+          total_retainage: entries.reduce((sum, entry) => sum + entry.retainage, 0),
+          total_paid: entries.reduce((sum, entry) => sum + entry.paid_to_date, 0),
+        } satisfies BillingHistoryProject;
+      })
+      // Only jobs that have actually billed belong on a billing history.
+      .filter((project) => project.entries.length > 0);
+
+    const totals = projects.reduce(
+      (acc, project) => {
+        acc.project_count += 1;
+        acc.application_count += project.entries.length;
+        acc.total_billed += project.total_billed;
+        acc.total_retainage += project.total_retainage;
+        acc.total_paid += project.total_paid;
+        return acc;
+      },
+      { ...emptyTotals },
+    );
+
+    return { projects, totals };
+  });
