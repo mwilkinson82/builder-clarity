@@ -1,4 +1,8 @@
-import type { PipelineOpportunityRow, PipelineStage } from "@/lib/pipeline.functions";
+import type {
+  PipelineCrmSnapshot,
+  PipelineOpportunityRow,
+  PipelineStage,
+} from "@/lib/pipeline.functions";
 
 export const STAGE_LABELS: Record<PipelineStage, string> = {
   lead: "Lead",
@@ -51,6 +55,48 @@ export const DEMO_OPPORTUNITY_ID_PREFIX = "00000000-0000-4000-8000-00000000010";
 
 export function isDemoOpportunityId(id: string) {
   return id.startsWith(DEMO_OPPORTUNITY_ID_PREFIX);
+}
+
+// Sample accounts, contacts, and next actions share the opportunity's fixed id
+// family: only the second-to-last id group differs (…0001XX opportunity,
+// …0002XX account, …0003XX contact, …0004XX action) and the final digit is the
+// shared 1-of-6 row index. Deleting a sample opportunity is a local-only action
+// (the CRM is not seeded to the database yet), so the server snapshot that feeds
+// the CRM command-center rollup still contains that sample's account/contact/
+// action. These prefixes let us drop the matching rollup rows locally too.
+export const DEMO_ACCOUNT_ID_PREFIX = "00000000-0000-4000-8000-00000000020";
+export const DEMO_CONTACT_ID_PREFIX = "00000000-0000-4000-8000-00000000030";
+
+export function isDemoAccountId(id: string) {
+  return id.startsWith(DEMO_ACCOUNT_ID_PREFIX);
+}
+
+export function isDemoContactId(id: string) {
+  return id.startsWith(DEMO_CONTACT_ID_PREFIX);
+}
+
+// Prune the CRM snapshot so its rollup reflects locally-removed sample
+// opportunities. Only sample rows (fixed demo ids) are ever touched — real
+// database accounts/contacts/actions pass through untouched, so this is a no-op
+// once a company has its own CRM data.
+export function pruneRemovedDemoCrm(
+  snapshot: PipelineCrmSnapshot,
+  removedOpportunityIds: string[],
+): PipelineCrmSnapshot {
+  const removedIndices = new Set(
+    removedOpportunityIds.filter(isDemoOpportunityId).map((id) => id.slice(-1)),
+  );
+  if (removedIndices.size === 0) return snapshot;
+  const removedOpportunitySet = new Set(removedOpportunityIds);
+  const isRemovedDemoRow = (id: string, isDemoRow: (id: string) => boolean) =>
+    isDemoRow(id) && removedIndices.has(id.slice(-1));
+  return {
+    accounts: snapshot.accounts.filter((account) => !isRemovedDemoRow(account.id, isDemoAccountId)),
+    contacts: snapshot.contacts.filter((contact) => !isRemovedDemoRow(contact.id, isDemoContactId)),
+    openActions: snapshot.openActions.filter(
+      (action) => !(action.opportunity_id && removedOpportunitySet.has(action.opportunity_id)),
+    ),
+  };
 }
 
 export function initials(value: string) {

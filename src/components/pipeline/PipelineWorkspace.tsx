@@ -42,6 +42,7 @@ import { OpportunityCreateDialog, QuickAddOpportunity } from "./OpportunityCreat
 import { OpportunityDetail } from "./OpportunityDetail";
 import {
   isDemoOpportunityId,
+  pruneRemovedDemoCrm,
   STAGE_LABELS,
   STAGE_ORDER,
   type PipelineSortMode,
@@ -148,6 +149,14 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
     [demoOpportunityOverrides, demoRemovedIds, rawOpportunities],
   );
   const members = membersQuery.data ?? [];
+  // The CRM command-center rollup reads a server snapshot that still carries a
+  // sample's account/contact/action after its opportunity was removed locally.
+  // Prune those so the rollup reflects the deletion too.
+  const crmSnapshot = useMemo(() => {
+    const base = crmSnapshotQuery.data ?? null;
+    if (!base) return null;
+    return pruneRemovedDemoCrm(base, demoRemovedIds);
+  }, [crmSnapshotQuery.data, demoRemovedIds]);
 
   useEffect(() => {
     writeDemoOpportunityOverrides(demoOpportunityOverrides);
@@ -437,7 +446,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
       <PipelineMetrics opportunities={opportunities} />
 
       <PipelineCrmOverview
-        snapshot={crmSnapshotQuery.data ?? null}
+        snapshot={crmSnapshot}
         opportunities={opportunities}
         isLoading={crmSnapshotQuery.isLoading || ensureDemoMutation.isPending}
         completingActionId={
