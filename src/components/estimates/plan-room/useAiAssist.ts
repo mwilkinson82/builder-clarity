@@ -29,7 +29,6 @@ import {
 import { useAiCredits } from "./useAiCredits";
 import {
   appendAcceptedPoint,
-  capProposalsPerSheet,
   excludeNearExistingPoints,
   exemplarSheetGeometry,
   inkMaskFromBase64,
@@ -61,6 +60,7 @@ import {
 } from "@/lib/ai-takeoff/embedding-match/embedding-match-domain";
 import { detectCandidatePeaks } from "@/lib/ai-takeoff/embedding-match/embedding-candidates-domain";
 import { embedCropsForAiCounts } from "@/lib/ai-takeoff/ai-embed.functions";
+import { planModelToVerify, planTemplateGhosts } from "@/lib/ai-takeoff/incremental-placement";
 import { activeAiEngine } from "@/lib/ai-takeoff/embedding-match/ai-engine-flag";
 import { DEFAULT_MAX_SHEETS_PER_SCAN, quoteScanCredits } from "@/lib/credits/credits-domain";
 import {
@@ -83,6 +83,27 @@ import { geometryFromPoints, geometryPoints, type ViewSize } from "./planRoomSha
 export type AiAssistPhase = "idle" | "scanning" | "review";
 export type { AiExemplar } from "./aiReferenceHarvest";
 export type AiScanScope = "sheet" | "all";
+
+// Fast first paint (AITAKEOFF13): the template ghosts render in ~12s, so the
+// model tile/verify calls that follow are best-effort enrichment. A single
+// vendor call must never hang the scan behind the results already on screen —
+// bound each one and let the loop skip a straggler. 90s clears any healthy call
+// (gpt-4o ~10s, Claude ~10s, OpenAI's own cap is 75s) while catching the
+// >170s hangs that motivated this. After this many consecutive model failures
+// the enrichment gives up for the rest of the scan instead of stalling.
+const MODEL_CALL_TIMEOUT_MS = 90_000;
+const MAX_CONSECUTIVE_MODEL_FAILURES = 3;
+
+/** Race a model server-fn call against a timeout so a hung vendor can't stall. */
+function withModelTimeout<T>(promise: Promise<T>, ms = MODEL_CALL_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("The model call timed out.")), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
 
 export interface AiScanProgress {
   sheetsDone: number;
@@ -421,6 +442,15 @@ export function useAiAssist({
       }
 
       const found: AiCountProposal[] = [];
+      // Paint whatever the scan has found so far onto the canvas mid-scan.
+      // Safe to replace the whole list because ghostsForSheet renders during
+      // "scanning" but the accept/reject bar only appears in "review", so the
+      // estimator can't be editing these while the scan is still appending.
+      const publishFound = () => setProposals(sortProposalsForReview(found.slice()));
+      // A model call somewhere failed/timed out (best-effort stage). Only
+      // matters if the scan ends up delivering nothing — then it earns a refund
+      // instead of charging for an empty result.
+      let sawModelFailure = false;
       let sheetsDone = 0;
       for (const sheet of targetSheets) {
         if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
@@ -639,84 +669,25 @@ export function useAiAssist({
         }
         if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
 
-        // Stage A (AITAKEOFF3 Task 1): coarse, recall-biased candidates in
-        // sheet space. Leads only — nothing here becomes a ghost. Skipped
-        // entirely when the template engine is the sole proposal source.
-        const sheetCoarse: AiCountCandidate[] = [];
-
-        for (let index = 0; index < tiles.length; index += 1) {
-          if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
-          const tile = tiles[index];
-          const result = await scanTileFn({
-            data: {
-              operation_id: begin.operationId,
-              sheet_id: sheet.id,
-              sheet_width_px: raster.widthPx,
-              sheet_height_px: raster.heightPx,
-              references,
-              tile: {
-                index: tile.rect.index,
-                left: tile.rect.left,
-                top: tile.rect.top,
-                width: tile.rect.width,
-                height: tile.rect.height,
-                frame: tile.frame,
-                media_type: tile.mediaType,
-                base64: tile.base64,
-              },
-              is_last_tile_of_sheet: index === tiles.length - 1,
-              existing_points: existingPoints,
-              dedupe_radius: { x: geometry.radius.x, y: geometry.radius.y },
-            },
-          });
-          if (!echo && result.exemplarDescription) {
-            echo = result.exemplarDescription;
-          }
-          sheetCoarse.push(...result.candidates);
-          setScanProgress({
-            sheetsDone,
-            sheetsTotal: targetSheets.length,
-            currentSheetLabel: sheetLabel,
-            found: found.length,
-            verifying: null,
-            references: progressReferences,
-            exemplarDescription: echo,
-          });
-        }
-
-        // Stage B (AITAKEOFF3 Task 2, union in AITAKEOFF6): both engines'
-        // candidates merge and dedupe by the canonical footprint radius
-        // FIRST — a symbol both engines found never buys two verification
-        // calls — template hits ranking by NCC score for the per-sheet cap.
-        // The near-existing suppression the server applies to model
-        // candidates covers template hits here, same helper, same radius.
-        const unioned = unionProposalCandidates(templateHits, sheetCoarse, geometry.radius);
-        const fresh = excludeNearExistingPoints(
-          unioned,
-          existingPoints,
-          geometry.radius,
-          // excludeNearExistingPoints filters without mapping, so the union
-          // entries' engine metadata survives the narrower parameter type.
-        ) as typeof unioned;
-        const toVerify = capProposalsPerSheet(fresh, begin.maxProposalsPerSheet);
         let sheetVerified = 0;
         let sheetCenterMismatch = 0;
         let sheetTemplateGhosts = 0;
 
-        // Recall-first (AITAKEOFF11): a TEMPLATE hit is a deterministic
-        // same-shape geometric match whose center is already hub-anchored
-        // (AITAKEOFF9). It becomes a review ghost DIRECTLY — the estimator
-        // accepts or rejects it, so a model veto never throttles template
-        // recall (the A-100 "0 verified" was the model rejecting big-brush
-        // variants it couldn't confirm against a small-brush reference). A
-        // free client-side ink-centroid snap centers the ghost on the actual
-        // symbol, fixing the off-hub placement the estimator flagged. No
-        // model call, no verify cost. Only MODEL-sourced candidates still
-        // run stage B, where the filter earns its keep.
-        const templateGhosts = toVerify.filter(
-          (candidate) => candidate.source === "template" && candidate.templateHit,
-        );
-        const modelToVerify = toVerify.filter((candidate) => candidate.source !== "template");
+        // Fast first paint (AITAKEOFF13): a template hit is a deterministic
+        // same-shape match with a hub-anchored center (AITAKEOFF9) that becomes
+        // a review ghost DIRECTLY (AITAKEOFF11) — no model call, no verify cost.
+        // Place these BEFORE the model tile-scan below so the estimator sees
+        // results in ~12s instead of after ~20 sequential model calls (2-3 min).
+        // A free client-side ink-centroid snap centers each ghost on the actual
+        // symbol. The model stage that follows only enriches around what is now
+        // already on the canvas.
+        const templateGhosts = planTemplateGhosts({
+          templateHits,
+          existingPoints,
+          radius: geometry.radius,
+          maxPerSheet: begin.maxProposalsPerSheet,
+        });
+        const placedGhostPoints: SheetPoint[] = [];
         for (const candidate of templateGhosts) {
           if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
           const window = renderVerifyWindow(raster, candidate, { upscale: false });
@@ -734,6 +705,7 @@ export function useAiAssist({
             ? tileLocalToSheetPoint(window.frame, snapped.x, snapped.y)
             : { x: candidate.x, y: candidate.y };
           sheetTemplateGhosts += 1;
+          placedGhostPoints.push({ x: point.x, y: point.y });
           found.push({
             id: crypto.randomUUID(),
             sheetId: sheet.id,
@@ -742,16 +714,107 @@ export function useAiAssist({
             confidence: VERIFIED_PROPOSAL_CONFIDENCE,
             status: "pending",
           });
-          setScanProgress({
-            sheetsDone,
-            sheetsTotal: targetSheets.length,
-            currentSheetLabel: sheetLabel,
-            found: found.length,
-            verifying: null,
-            references: progressReferences,
-            exemplarDescription: echo,
-          });
         }
+        // Paint the template ghosts NOW — they render during "scanning" too, so
+        // the estimator can look at real results while the model keeps searching.
+        if (sheetTemplateGhosts > 0) publishFound();
+        setScanProgress({
+          sheetsDone,
+          sheetsTotal: targetSheets.length,
+          currentSheetLabel: sheetLabel,
+          found: found.length,
+          verifying: null,
+          references: progressReferences,
+          exemplarDescription: echo,
+        });
+
+        // Model enrichment (best-effort). Stage A tiles + stage B verify run
+        // AFTER the ghosts are on screen. Each call is bounded and non-fatal: a
+        // hang or error skips that call, and after a short streak of failures
+        // the enrichment gives up for the rest of the scan — the template
+        // ghosts the estimator already has are never thrown away.
+        let consecutiveModelFailures = 0;
+
+        // Stage A (AITAKEOFF3 Task 1): coarse, recall-biased candidates in
+        // sheet space. Leads only — nothing here becomes a ghost. Skipped
+        // entirely when the template engine is the sole proposal source.
+        const sheetCoarse: AiCountCandidate[] = [];
+
+        for (let index = 0; index < tiles.length; index += 1) {
+          if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
+          const tile = tiles[index];
+          try {
+            const result = await withModelTimeout(
+              scanTileFn({
+                data: {
+                  operation_id: begin.operationId,
+                  sheet_id: sheet.id,
+                  sheet_width_px: raster.widthPx,
+                  sheet_height_px: raster.heightPx,
+                  references,
+                  tile: {
+                    index: tile.rect.index,
+                    left: tile.rect.left,
+                    top: tile.rect.top,
+                    width: tile.rect.width,
+                    height: tile.rect.height,
+                    frame: tile.frame,
+                    media_type: tile.mediaType,
+                    base64: tile.base64,
+                  },
+                  is_last_tile_of_sheet: index === tiles.length - 1,
+                  existing_points: existingPoints,
+                  dedupe_radius: { x: geometry.radius.x, y: geometry.radius.y },
+                },
+              }),
+            );
+            consecutiveModelFailures = 0;
+            if (!echo && result.exemplarDescription) {
+              echo = result.exemplarDescription;
+            }
+            sheetCoarse.push(...result.candidates);
+            setScanProgress({
+              sheetsDone,
+              sheetsTotal: targetSheets.length,
+              currentSheetLabel: sheetLabel,
+              found: found.length,
+              verifying: null,
+              references: progressReferences,
+              exemplarDescription: echo,
+            });
+          } catch (tileError) {
+            if (cancelRequestedRef.current) throw tileError;
+            // Non-fatal: skip this tile. After a streak of failures, stop the
+            // model stage — the template ghosts already on screen carry it.
+            sawModelFailure = true;
+            consecutiveModelFailures += 1;
+            if (consecutiveModelFailures >= MAX_CONSECUTIVE_MODEL_FAILURES) break;
+          }
+        }
+
+        // Stage B (AITAKEOFF3 Task 2, union in AITAKEOFF6): the funnel still
+        // reports the combined dedupe/suppression counts so diagnostics read
+        // exactly as before. Placement is split now (AITAKEOFF13): the template
+        // ghosts were already painted above, so only MODEL candidates that
+        // DON'T land on one of them still buy a stage-B verify — a symbol both
+        // engines found is still verified at most once, same radius as the
+        // union guaranteed before.
+        const unioned = unionProposalCandidates(templateHits, sheetCoarse, geometry.radius);
+        const fresh = excludeNearExistingPoints(
+          unioned,
+          existingPoints,
+          geometry.radius,
+          // excludeNearExistingPoints filters without mapping, so the union
+          // entries' engine metadata survives the narrower parameter type.
+        ) as typeof unioned;
+        const modelToVerify = planModelToVerify({
+          modelCandidates: sheetCoarse,
+          placedGhostPoints,
+          existingPoints,
+          radius: geometry.radius,
+          maxPerSheet: begin.maxProposalsPerSheet,
+          templateGhostCount: sheetTemplateGhosts,
+        });
 
         for (let index = 0; index < modelToVerify.length; index += 1) {
           if (cancelRequestedRef.current) throw new Error("Scan cancelled.");
@@ -766,58 +829,72 @@ export function useAiAssist({
           });
           const candidate = modelToVerify[index];
           const window = renderVerifyWindow(raster, candidate);
-          const verdict = await verifyCandidateFn({
-            data: {
-              operation_id: begin.operationId,
-              sheet_id: sheet.id,
-              candidate_index: index,
-              candidate: { x: candidate.x, y: candidate.y },
-              // Only MODEL candidates reach stage B now (AITAKEOFF11):
-              // template hits ghosted directly above.
-              candidate_origin: {
-                source: "model" as const,
-                score: null,
-                rotation_deg: null,
-                scale: null,
-                template_index: null,
-              },
-              references,
-              window: {
-                left: window.rect.left,
-                top: window.rect.top,
-                width: window.rect.width,
-                height: window.rect.height,
-                frame: window.frame,
-                media_type: window.mediaType,
-                base64: window.base64,
-                ink_mask_base64: window.inkMaskBase64,
-              },
-            },
-          });
-          // Verify-center sanity band (AITAKEOFF9 Task 3): a stage-B center
-          // more than half a footprint from the candidate means the crop
-          // caught a NEIGHBOR — accepting it would silently relocate a
-          // marker. Rejected and counted in the funnel.
-          const mismatchLimitPx = (geometry.footprintRasterPx ?? VERIFY_WINDOW_PX) / 2;
-          const centerMismatch =
-            verdict.match && verdict.point
-              ? Math.hypot(
-                  (verdict.point.x - candidate.x) * raster.widthPx,
-                  (verdict.point.y - candidate.y) * raster.heightPx,
-                ) > mismatchLimitPx
-              : false;
-          if (centerMismatch) {
-            sheetCenterMismatch += 1;
-          } else if (verdict.match && verdict.point) {
-            sheetVerified += 1;
-            found.push({
-              id: crypto.randomUUID(),
-              sheetId: sheet.id,
-              x: verdict.point.x,
-              y: verdict.point.y,
-              confidence: verdict.confidence,
-              status: "pending",
-            });
+          try {
+            const verdict = await withModelTimeout(
+              verifyCandidateFn({
+                data: {
+                  operation_id: begin.operationId,
+                  sheet_id: sheet.id,
+                  candidate_index: index,
+                  candidate: { x: candidate.x, y: candidate.y },
+                  // Only MODEL candidates reach stage B now (AITAKEOFF11):
+                  // template hits ghosted directly above.
+                  candidate_origin: {
+                    source: "model" as const,
+                    score: null,
+                    rotation_deg: null,
+                    scale: null,
+                    template_index: null,
+                  },
+                  references,
+                  window: {
+                    left: window.rect.left,
+                    top: window.rect.top,
+                    width: window.rect.width,
+                    height: window.rect.height,
+                    frame: window.frame,
+                    media_type: window.mediaType,
+                    base64: window.base64,
+                    ink_mask_base64: window.inkMaskBase64,
+                  },
+                },
+              }),
+            );
+            consecutiveModelFailures = 0;
+            // Verify-center sanity band (AITAKEOFF9 Task 3): a stage-B center
+            // more than half a footprint from the candidate means the crop
+            // caught a NEIGHBOR — accepting it would silently relocate a
+            // marker. Rejected and counted in the funnel.
+            const mismatchLimitPx = (geometry.footprintRasterPx ?? VERIFY_WINDOW_PX) / 2;
+            const centerMismatch =
+              verdict.match && verdict.point
+                ? Math.hypot(
+                    (verdict.point.x - candidate.x) * raster.widthPx,
+                    (verdict.point.y - candidate.y) * raster.heightPx,
+                  ) > mismatchLimitPx
+                : false;
+            if (centerMismatch) {
+              sheetCenterMismatch += 1;
+            } else if (verdict.match && verdict.point) {
+              sheetVerified += 1;
+              found.push({
+                id: crypto.randomUUID(),
+                sheetId: sheet.id,
+                x: verdict.point.x,
+                y: verdict.point.y,
+                confidence: verdict.confidence,
+                status: "pending",
+              });
+              // A bonus find — drop it onto the canvas alongside the ghosts
+              // already there instead of waiting for the whole scan to end.
+              publishFound();
+            }
+          } catch (verifyError) {
+            if (cancelRequestedRef.current) throw verifyError;
+            // Non-fatal: a failed verify just doesn't add this bonus candidate.
+            sawModelFailure = true;
+            consecutiveModelFailures += 1;
+            if (consecutiveModelFailures >= MAX_CONSECUTIVE_MODEL_FAILURES) break;
           }
           setScanProgress({
             sheetsDone,
@@ -875,6 +952,16 @@ export function useAiAssist({
           // Diagnostics only — a summary failure never fails the scan.
         }
         sheetsDone += 1;
+      }
+
+      // The template engine already renders instantly and the model stage is
+      // best-effort — but if the WHOLE scan delivered nothing AND the reason
+      // was a model-service failure (not simply an empty sheet), fail the
+      // operation so the credit is refunded rather than charging for nothing.
+      if (found.length === 0 && sawModelFailure) {
+        throw new Error(
+          "The AI search couldn't reach the model service, so nothing was found. Your credits were refunded — please try again in a moment.",
+        );
       }
 
       await completeScanFn({ data: { operation_id: begin.operationId } });
@@ -1205,8 +1292,12 @@ export function useAiAssist({
   );
 
   const ghostsForSheet = useCallback(
+    // Render ghosts during "scanning" too (AITAKEOFF13): template hits paint in
+    // ~12s and the model appends more while the estimator watches — the
+    // accept/reject bar still only arms in "review", so mid-scan ghosts are
+    // look-only until the scan finishes.
     (sheetId: string | null) =>
-      sheetId && phase === "review"
+      sheetId && (phase === "review" || phase === "scanning")
         ? proposals.filter((p) => p.sheetId === sheetId && p.status !== "rejected")
         : [],
     [phase, proposals],

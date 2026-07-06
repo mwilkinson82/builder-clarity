@@ -11,7 +11,7 @@
     "smoke:phase0": "node scripts/phase0-smoke.mjs",
     "smoke:phase0:live": "node scripts/phase0-smoke.mjs --live",
     "test:estimating": "node --experimental-strip-types scripts/estimating-beta-smoke.mjs",
-    "test:ai": "node --experimental-strip-types scripts/ai-takeoff-credits-smoke.ts && node --experimental-strip-types scripts/ai-template-match-smoke.ts && node --experimental-strip-types scripts/ai-embedding-match-smoke.ts && vitest run",
+    "test:ai": "node --experimental-strip-types scripts/ai-takeoff-credits-smoke.ts && node --experimental-strip-types scripts/ai-template-match-smoke.ts && node --experimental-strip-types scripts/ai-embedding-match-smoke.ts && node --experimental-strip-types scripts/ai-incremental-placement-smoke.ts && vitest run",
     "test:cpm": "node --experimental-strip-types scripts/constructline-cpm-smoke.ts",
     "test:crm": "node --experimental-strip-types scripts/crm-pipeline-smoke.ts",
     "test:billing": "node --experimental-strip-types scripts/billing-payments-smoke.ts",
