@@ -142,6 +142,25 @@ function drawBox(ctx: PdfCtx, x: number, y: number, width: number, height: numbe
   });
 }
 
+// Interior vertical column separators for the G703. The row/header box provides
+// the outer frame and horizontal rules; this draws the lines *between* columns
+// so the continuation sheet reads as a gridded form, not a spaced list.
+function drawColumnDividers(
+  ctx: PdfCtx,
+  columns: readonly { x: number }[],
+  topY: number,
+  bottomY: number,
+) {
+  for (const column of columns.slice(1)) {
+    ctx.page.drawLine({
+      start: { x: column.x, y: bottomY },
+      end: { x: column.x, y: topY },
+      thickness: 0.5,
+      color: HAIR,
+    });
+  }
+}
+
 function wrapText(value: string, font: PDFFont, size: number, maxWidth: number, maxLines = 2) {
   const words = clean(value).split(/\s+/).filter(Boolean);
   const lines: string[] = [];
@@ -281,6 +300,8 @@ function drawCoverSheet(
     size: 16,
   });
   text(ctx, "AIA G702-style payment application", M, ctx.y - 28, { size: 7, color: MUTED });
+  // Logo caps at 18pt tall so it stays in its band above the "Prepared" line —
+  // a taller logo used to scale down into the date and overlap it.
   drawPdfBrand({
     page,
     logo: companyLogo,
@@ -289,14 +310,14 @@ function drawCoverSheet(
     x: PORTRAIT_W - M - 170,
     y: ctx.y - 4,
     maxWidth: 170,
-    maxHeight: 26,
+    maxHeight: 18,
     color: MUTED,
   });
   text(
     ctx,
     `Prepared ${dateText(generatedAt.toISOString().slice(0, 10))}`,
     PORTRAIT_W - M - 170,
-    ctx.y - 28,
+    ctx.y - 30,
     {
       size: 7,
       color: MUTED,
@@ -693,6 +714,7 @@ function drawContinuationHeader(
 
   // Column letter strip + header row (headers repeat on every page).
   const columns = getContinuationColumns(showRetainage);
+  const headerTop = ctx.y;
   ctx.page.drawRectangle({
     x: M,
     y: ctx.y - 12,
@@ -708,9 +730,9 @@ function drawContinuationHeader(
   ctx.y -= 12;
   ctx.page.drawRectangle({
     x: M,
-    y: ctx.y - 24,
+    y: ctx.y - 36,
     width: LANDSCAPE_W - M * 2,
-    height: 24,
+    height: 36,
     color: SURFACE,
     borderColor: HAIR,
     borderWidth: 0.5,
@@ -730,11 +752,14 @@ function drawContinuationHeader(
       maxLines: 3,
     });
   });
-  ctx.y -= 31;
+  // Vertical grid lines across the two header rows.
+  drawColumnDividers(ctx, columns, headerTop, headerTop - 48);
+  ctx.y -= 43;
 }
 
 function drawContinuationRow(ctx: PdfCtx, row: G703Row, y: number, showRetainage: boolean) {
   drawBox(ctx, M, y - 8, LANDSCAPE_W - M * 2, 27, WHITE);
+  drawColumnDividers(ctx, getContinuationColumns(showRetainage), y + 19, y - 8);
   text(ctx, row.item, 36, y + 4, { size: 7 });
   drawWrappedText(ctx, row.description || "-", 76, y + 6, 140, {
     size: 7,
@@ -792,6 +817,7 @@ function drawContinuationSheets(
     addContinuationPage(ctx, project, payApp, pageNumber, showRetainage, companyLogo);
   }
   drawBox(ctx, M, ctx.y - 8, LANDSCAPE_W - M * 2, 30, SURFACE);
+  drawColumnDividers(ctx, getContinuationColumns(showRetainage), ctx.y + 22, ctx.y - 8);
   text(ctx, "GRAND TOTALS", 76, ctx.y + 4, { font: ctx.sansBold, size: 7 });
   rightText(ctx, money(totals.scheduledValueCents), 226, ctx.y + 4, 66, 7, ctx.sansBold);
   rightText(ctx, money(totals.fromPreviousCents), 300, ctx.y + 4, 60, 7, ctx.sansBold);
