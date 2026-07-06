@@ -34,6 +34,7 @@ import {
   inkIntegralImage,
   boxDensity,
 } from "../src/lib/ai-takeoff/embedding-match/embedding-candidates-domain.ts";
+import { extractEmbedding } from "../src/lib/ai-takeoff/replicate.server.ts";
 
 let checks = 0;
 const ok = (cond: unknown, msg: string) => {
@@ -233,5 +234,29 @@ ok(
 );
 const capped = detectCandidatePeaks(new Uint8Array(CW * CH).fill(0), CW, CH, 20, 8);
 ok(capped.length <= 8, "candidate count respects the max cap");
+
+// --- 8. Replicate output-shape parsing (extractEmbedding) ------------------
+// The live A-100 QA confirmed krthr/clip-embeddings returns {"embedding":[...]}.
+// Lock every shape the parser must survive so a model swap can't silently break
+// the wire without the smoke catching it.
+ok(
+  JSON.stringify(extractEmbedding([0.1, 0.2, 0.3])) === JSON.stringify([0.1, 0.2, 0.3]),
+  "extractEmbedding: flat number array",
+);
+ok(
+  JSON.stringify(extractEmbedding({ embedding: [0.4, 0.5] })) === JSON.stringify([0.4, 0.5]),
+  "extractEmbedding: {embedding:[...]} (the krthr/clip-embeddings shape)",
+);
+ok(
+  JSON.stringify(extractEmbedding([[0.6, 0.7]])) === JSON.stringify([0.6, 0.7]),
+  "extractEmbedding: nested [[...]]",
+);
+ok(
+  JSON.stringify(extractEmbedding([{ embedding: [0.8, 0.9] }])) === JSON.stringify([0.8, 0.9]),
+  "extractEmbedding: [{embedding:[...]}]",
+);
+ok(extractEmbedding(null) === null, "extractEmbedding: null on garbage");
+ok(extractEmbedding({ nope: 1 }) === null, "extractEmbedding: null on unknown object");
+ok(extractEmbedding([]) === null, "extractEmbedding: null on empty array");
 
 console.log(`ai-embedding-match smoke: ${checks} checks passed`);
