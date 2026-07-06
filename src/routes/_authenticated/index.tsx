@@ -1452,18 +1452,21 @@ function PortfolioCrmDashboard({
           icon={<BriefcaseBusiness className="h-3.5 w-3.5" />}
           label="Open opps"
           value={isLoading ? "..." : String(totals.activeOpportunityCount)}
+          compact
         />
         <PortfolioSignal
           icon={<Activity className="h-3.5 w-3.5" />}
           label="Weighted"
           value={isLoading ? "..." : fmtUSD(totals.weightedPipelineValue)}
           tone={totals.weightedPipelineValue > 0 ? "success" : undefined}
+          compact
         />
         <PortfolioSignal
           icon={<ClipboardList className="h-3.5 w-3.5" />}
           label="Open actions"
           value={isLoading ? "..." : String(totals.openActionCount)}
           tone={totals.overdueActionCount > 0 ? "danger" : "success"}
+          compact
         />
       </div>
 
@@ -1601,11 +1604,15 @@ function PortfolioSignal({
   label,
   value,
   tone,
+  compact,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   tone?: "success" | "warning" | "danger";
+  // Narrow tiles (e.g. the pipeline-intake column) hold currency that would
+  // overflow at the big size — step the value down a notch so it stays whole.
+  compact?: boolean;
 }) {
   const toneClass =
     tone === "danger"
@@ -1623,7 +1630,11 @@ function PortfolioSignal({
         <span className="mt-0.5 shrink-0">{icon}</span>
         <span>{label}</span>
       </div>
-      <div className="mt-2 max-w-full truncate text-2xl font-semibold leading-none tabular">
+      <div
+        className={`mt-2 max-w-full font-semibold leading-tight tabular [overflow-wrap:break-word] ${
+          compact ? "text-xl" : "text-2xl"
+        }`}
+      >
         {value}
       </div>
     </div>
