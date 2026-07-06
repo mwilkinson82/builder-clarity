@@ -2294,6 +2294,60 @@ await expectContains(
   "schedule risk items use the shared status chip",
 );
 
+// BUDGETENGINE Phase 1: "At Risk goes live" — exposures (E-Holds/C-Holds) become
+// allocatable across cost codes, so the budget ledger's At Risk / Contingency
+// columns read the live IOR risk register instead of a typed number.
+expectSql(
+  sql,
+  [
+    /CREATE TABLE IF NOT EXISTS public\.exposure_allocations/,
+    /exposure_id uuid NOT NULL REFERENCES public\.exposures\(id\)/,
+    /cost_bucket_id uuid REFERENCES public\.cost_buckets\(id\)/,
+    /exposure_allocations_team_insert[\s\S]*can_manage_project/,
+  ],
+  "exposure_allocations table exists (splittable exposure→cost-code) with team RLS",
+);
+await expectContains(
+  "src/lib/exposure-allocation.ts",
+  [
+    /allocatedByExposure/,
+    /unallocatedExposure/,
+    /summarizeExposure/,
+    /riskByCostCode/,
+    /"E-Hold"/,
+    /"C-Hold"/,
+    /from "\.\/payments-domain\.ts"/,
+  ],
+  "exposure allocation math splits E/C holds across cost codes, cents-safe and node-loadable",
+);
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /export const allocateExposure/,
+    /export const deleteExposureAllocation/,
+    /export const listExposureAllocations/,
+    /isMissingExposureAllocationsTable/,
+    /exposure_allocations/,
+  ],
+  "exposure allocation server fns verify ownership and degrade gracefully before the migration lands",
+);
+await expectContains(
+  "src/components/project/ExposureAllocationPanel.tsx",
+  [
+    /export function ExposureAllocationPanel/,
+    /Risk holds: allocate to cost codes/,
+    /At Risk/,
+    /Contingency/,
+    /StatusChip/,
+  ],
+  "exposure allocation panel spreads E/C holds onto cost codes and names the column each feeds",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [/ExposureAllocationPanel/, /exposureAllocationsQuery/, /allocateExposureFn/],
+  "risk-tally tab wires the exposure allocation panel and mutations",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");

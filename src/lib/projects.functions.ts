@@ -2103,6 +2103,113 @@ export const deleteChangeOrderAllocation = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+// ---------------- EXPOSURE → COST-CODE ALLOCATION (BUDGETENGINE Phase 1) ----------------
+
+export interface ExposureAllocationRow {
+  id: string;
+  project_id: string;
+  exposure_id: string;
+  cost_bucket_id: string | null;
+  cost_code: string;
+  amount: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// The exposure_allocations table ships in a migration the desk applies. Until
+// then, reads must degrade to empty so the live app never crashes.
+function isMissingExposureAllocationsTable(error: { message?: string } | null) {
+  const message = error?.message ?? "";
+  return /exposure_allocations|does not exist|schema cache|relation/i.test(message);
+}
+
+const exposureAllocationInput = z.object({
+  projectId: z.string().uuid(),
+  exposureId: z.string().uuid(),
+  costBucketId: z.string().uuid(),
+  amount: z.number().min(0),
+});
+
+export const allocateExposure = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof exposureAllocationInput>) =>
+    exposureAllocationInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    // RLS-scoped reads gate access: the bucket and the exposure must both live
+    // in a project the caller can manage. The bucket supplies the cost code;
+    // the exposure's hold_class (E/C) decides At Risk vs Contingency at rollup.
+    const bucketRes = await dynamicTable(context.supabase, "cost_buckets")
+      .select("id,project_id,cost_code")
+      .eq("id", data.costBucketId)
+      .maybeSingle();
+    if (bucketRes.error) throw new Error(bucketRes.error.message);
+    const bucket = bucketRes.data as Record<string, unknown> | null;
+    if (!bucket || (bucket.project_id as string) !== data.projectId) {
+      throw new Error("Cost code not found on this project.");
+    }
+    const exposureRes = await dynamicTable(context.supabase, "exposures")
+      .select("id,project_id")
+      .eq("id", data.exposureId)
+      .maybeSingle();
+    if (exposureRes.error) throw new Error(exposureRes.error.message);
+    const exposure = exposureRes.data as Record<string, unknown> | null;
+    if (!exposure || (exposure.project_id as string) !== data.projectId) {
+      throw new Error("Exposure not found on this project.");
+    }
+
+    const { error } = await dynamicTable(context.supabase, "exposure_allocations").insert({
+      project_id: data.projectId,
+      exposure_id: data.exposureId,
+      cost_bucket_id: data.costBucketId,
+      cost_code: str(bucket.cost_code),
+      amount: data.amount,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteExposureAllocation = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "exposure_allocations")
+      .delete()
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+const listExposureAllocationsInput = z.object({ projectId: z.string().uuid() });
+
+export const listExposureAllocations = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof listExposureAllocationsInput>) =>
+    listExposureAllocationsInput.parse(input),
+  )
+  .handler(async ({ data, context }): Promise<ExposureAllocationRow[]> => {
+    const { data: rows, error } = await dynamicTable(context.supabase, "exposure_allocations")
+      .select("id,project_id,exposure_id,cost_bucket_id,cost_code,amount,created_at,updated_at")
+      .eq("project_id", data.projectId);
+    if (error) {
+      if (isMissingExposureAllocationsTable(error)) return [];
+      throw new Error(error.message);
+    }
+    return (rows ?? []).map((row) => {
+      const record = row as Record<string, unknown>;
+      return {
+        id: str(record.id),
+        project_id: str(record.project_id),
+        exposure_id: str(record.exposure_id),
+        cost_bucket_id: (record.cost_bucket_id as string | null) ?? null,
+        cost_code: str(record.cost_code),
+        amount: num(record.amount),
+        created_at: str(record.created_at),
+        updated_at: str(record.updated_at),
+      };
+    });
+  });
+
 // ---------------- INSPECTIONS ----------------
 
 const inspectionInput = z.object({
