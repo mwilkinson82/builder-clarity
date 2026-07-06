@@ -328,3 +328,55 @@ export async function renderExemplarCrop(
     footprintClamped,
   };
 }
+
+// --- Symbol discovery helpers (SYMBOLDISCOVERY Stage 0) ---
+
+/** One discovery candidate: normalized sheet center + its crop as PNG. */
+export interface DiscoveryCandidateCrop {
+  x: number;
+  y: number;
+  base64: string;
+}
+
+/** Grayscale (luma-ish average) of a detection raster for the peak proposer. */
+export function grayscaleFromRaster(raster: DetectionSheetRaster): Uint8Array | null {
+  const context = raster.canvas.getContext("2d");
+  const pixels = context?.getImageData(0, 0, raster.widthPx, raster.heightPx);
+  if (!pixels) return null;
+  const rgba = pixels.data;
+  const gray = new Uint8Array(raster.widthPx * raster.heightPx);
+  for (let p = 0; p < gray.length; p += 1) {
+    gray[p] = (rgba[p * 4] + rgba[p * 4 + 1] + rgba[p * 4 + 2]) / 3;
+  }
+  return gray;
+}
+
+/**
+ * Crop each candidate peak (raster px) to a white-ground square PNG, centers
+ * normalized to [0,1] sheet space. One reused canvas keeps allocation flat —
+ * the same crop shape the embedding scan sends, shared so discovery and the
+ * scan can never drift apart.
+ */
+export function cropPeaksToBase64(
+  raster: DetectionSheetRaster,
+  peaks: Array<{ x: number; y: number }>,
+  cropSidePx: number,
+): DiscoveryCandidateCrop[] {
+  const side = Math.max(24, Math.round(cropSidePx));
+  const half = Math.round(side / 2);
+  const cropCanvas = document.createElement("canvas");
+  cropCanvas.width = side;
+  cropCanvas.height = side;
+  const context = cropCanvas.getContext("2d");
+  if (!context) return [];
+  return peaks.map((peak) => {
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, side, side);
+    context.drawImage(raster.canvas, peak.x - half, peak.y - half, side, side, 0, 0, side, side);
+    return {
+      x: peak.x / raster.widthPx,
+      y: peak.y / raster.heightPx,
+      base64: cropCanvas.toDataURL("image/png").split(",")[1] ?? "",
+    };
+  });
+}

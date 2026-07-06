@@ -97,6 +97,9 @@ import {
 import type { ProcessedSheetPage } from "./PdfSheetViewer";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
 import { AiAssistPanel } from "./AiAssistPanel";
+import { useSymbolDiscovery } from "./useSymbolDiscovery";
+import { SymbolDiscoveryDialog } from "./SymbolDiscoveryDialog";
+import { aiDiscoveryEnabled } from "@/lib/ai-takeoff/embedding-match/ai-engine-flag";
 import { AiReviewBar } from "./AiReviewBar";
 import { useAiAssist } from "./useAiAssist";
 import {
@@ -2131,6 +2134,13 @@ export function PlanRoomWorkspace({
     openSheet,
     onTakeoffsChanged: invalidate,
   });
+  // Symbol discovery (SYMBOLDISCOVERY Stage 0): QA-flagged via ?aiDiscover=1.
+  const symbolDiscovery = useSymbolDiscovery({
+    estimateId: estimate.id,
+    sheets,
+    planSets,
+    currentSheetId: currentSheet?.id ?? null,
+  });
   const openFirstUnscaledSheet = () => {
     const sheet = unscaledSheets[0];
     if (!sheet) return;
@@ -3118,7 +3128,12 @@ export function PlanRoomWorkspace({
             aiGhosts={aiAssist.ghostsForSheet(currentSheet?.id ?? null)}
             activeAiGhostId={aiAssist.activeProposal?.id ?? null}
             onAiGhostSelect={aiAssist.selectProposal}
-            aiPanel={<AiAssistPanel ai={aiAssist} />}
+            aiPanel={
+              <AiAssistPanel
+                ai={aiAssist}
+                onDiscoverSymbols={aiDiscoveryEnabled() ? symbolDiscovery.start : undefined}
+              />
+            }
             aiReviewBar={<AiReviewBar ai={aiAssist} />}
             hasPreviousSheet={Boolean(previousSheetNavigationItem)}
             hasNextSheet={Boolean(nextSheetNavigationItem)}
@@ -4089,6 +4104,7 @@ export function PlanRoomWorkspace({
         onCancel={() => setSyncConflict(null)}
         onConfirm={confirmSyncConflict}
       />
+      <SymbolDiscoveryDialog discovery={symbolDiscovery} />
       {verifyOutcome && (
         <Dialog open onOpenChange={(open) => !open && setVerifyOutcome(null)}>
           <DialogContent data-testid="verify-scale-discrepancy-dialog">

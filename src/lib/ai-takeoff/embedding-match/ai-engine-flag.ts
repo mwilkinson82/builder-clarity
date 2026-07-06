@@ -28,3 +28,19 @@ export function activeAiEngine(): AiEngine {
   }
   return resolveAiEngine(import.meta.env.VITE_AI_ENGINE);
 }
+
+// Symbol discovery QA flag (SYMBOLDISCOVERY Stage 0): `?aiDiscover=1` shows
+// the "Discover symbols" action and sticks for the session; `?aiDiscover=0`
+// turns it back off. Production users without the flag never see it.
+const DISCOVERY_STORAGE_KEY = "overwatch.aiDiscover";
+
+export function aiDiscoveryEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const param = new URLSearchParams(window.location.search).get("aiDiscover");
+    if (param) window.localStorage.setItem(DISCOVERY_STORAGE_KEY, param);
+    return window.localStorage.getItem(DISCOVERY_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}

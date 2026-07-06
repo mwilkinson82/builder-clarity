@@ -94,7 +94,14 @@ function CreditBalanceChip({ balance, loading }: { balance: number | null; loadi
   );
 }
 
-export function AiAssistPanel({ ai }: { ai: AiAssistController }) {
+export function AiAssistPanel({
+  ai,
+  onDiscoverSymbols,
+}: {
+  ai: AiAssistController;
+  /** QA-flagged (SYMBOLDISCOVERY Stage 0): present only with ?aiDiscover=1. */
+  onDiscoverSymbols?: () => void;
+}) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const positionRef = useRef<PanelPosition | null>(null);
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
@@ -469,6 +476,23 @@ export function AiAssistPanel({ ai }: { ai: AiAssistController }) {
                   completes.
                 </p>
               </div>
+            )}
+
+            {onDiscoverSymbols && (
+              <>
+                <Separator className="my-3" />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="w-full gap-1.5"
+                  onClick={onDiscoverSymbols}
+                  data-testid="ai-discover-symbols"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Discover symbols (preview)
+                </Button>
+              </>
             )}
 
             {isSuperAdmin && (
