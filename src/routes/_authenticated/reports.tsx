@@ -8,12 +8,14 @@ import { Button } from "@/components/ui/button";
 import {
   listPortfolioBilling,
   listPortfolioBillingHistory,
+  listPortfolioChangeOrders,
   listPortfolioJobCost,
 } from "@/lib/billing.functions";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import { WipReport } from "@/components/reports/WipReport";
 import { JobCostReport } from "@/components/reports/JobCostReport";
 import { BillingHistoryReport } from "@/components/reports/BillingHistoryReport";
+import { RetainageChangeOrderReport } from "@/components/reports/RetainageChangeOrderReport";
 
 export const Route = createFileRoute("/_authenticated/reports")({
   ssr: false,
@@ -40,7 +42,7 @@ const REPORTS: { key: ReportKey; label: string; blurb: string; ready: boolean }[
     key: "retainage-co",
     label: "Retainage & change orders",
     blurb: "Held retainage + CO log",
-    ready: false,
+    ready: true,
   },
 ];
 
@@ -49,12 +51,15 @@ function ReportsPage() {
   const listBilling = useServerFn(listPortfolioBilling);
   const listJobCost = useServerFn(listPortfolioJobCost);
   const listBillingHistory = useServerFn(listPortfolioBillingHistory);
+  const listChangeOrders = useServerFn(listPortfolioChangeOrders);
   const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
 
   const billingQuery = useQuery({
     queryKey: ["portfolio-billing"],
     queryFn: () => listBilling(),
-    enabled: activeReport === "wip",
+    // The retainage & change-order report reuses the WIP engine's net retainage,
+    // so it needs the billing data too.
+    enabled: activeReport === "wip" || activeReport === "retainage-co",
   });
   const jobCostQuery = useQuery({
     queryKey: ["portfolio-job-cost"],
@@ -65,6 +70,11 @@ function ReportsPage() {
     queryKey: ["portfolio-billing-history"],
     queryFn: () => listBillingHistory(),
     enabled: activeReport === "billing-history",
+  });
+  const changeOrderQuery = useQuery({
+    queryKey: ["portfolio-change-orders"],
+    queryFn: () => listChangeOrders(),
+    enabled: activeReport === "retainage-co",
   });
   const { data: companyContext } = useQuery({
     queryKey: ["company-workspace-context"],
@@ -87,7 +97,19 @@ function ReportsPage() {
       ? jobCostQuery
       : activeReport === "billing-history"
         ? historyQuery
-        : billingQuery;
+        : activeReport === "retainage-co"
+          ? changeOrderQuery
+          : billingQuery;
+
+  // net retainage per project, reused from the WIP/billing engine so the
+  // retainage report never disagrees with the WIP report.
+  const retainageByProject = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const project of billingQuery.data?.projects ?? []) {
+      map[project.project_id] = project.total_retainage_net;
+    }
+    return map;
+  }, [billingQuery.data?.projects]);
 
   return (
     <div className="constructline-reports-page min-h-screen bg-background text-foreground">
@@ -205,6 +227,17 @@ function ReportsPage() {
               <BillingHistoryReport
                 projects={historyQuery.data.projects}
                 totals={historyQuery.data.totals}
+                companyName={companyName}
+                generatedOn={generatedOn}
+              />
+            ) : null
+          ) : activeReport === "retainage-co" ? (
+            changeOrderQuery.data ? (
+              <RetainageChangeOrderReport
+                projects={changeOrderQuery.data.projects}
+                totals={changeOrderQuery.data.totals}
+                retainageByProject={retainageByProject}
+                portfolioRetainage={billingQuery.data?.totals.retainage_held ?? 0}
                 companyName={companyName}
                 generatedOn={generatedOn}
               />
