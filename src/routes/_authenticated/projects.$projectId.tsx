@@ -49,6 +49,7 @@ import { BudgetLedgerTable } from "@/components/project/BudgetLedgerTable";
 import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
+import { DailyWipWorkspace } from "@/components/outcome/DailyWipWorkspace";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
 import {
   InspectionsWorkspace,
@@ -185,6 +186,7 @@ const PROJECT_TAB_VALUES = [
   "client-portal",
   "ior-report",
   "daily-reports",
+  "daily-wip",
 ] as const;
 
 type ProjectTabValue = (typeof PROJECT_TAB_VALUES)[number];
@@ -201,6 +203,7 @@ const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
   "client-portal",
   "ior-report",
   "daily-reports",
+  "daily-wip",
 ]);
 
 // POLISH1 Task 3 (density): the primary financial path — Dashboard → SOV/Costs
@@ -210,6 +213,7 @@ const SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
   "inspections",
   "ior-report",
   "daily-reports",
+  "daily-wip",
 ]);
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
@@ -1375,6 +1379,12 @@ function ProjectPage() {
       detail: "Job log",
       icon: FileText,
     },
+    {
+      value: "daily-wip",
+      label: "Daily WIP",
+      detail: "Work in place",
+      icon: CalendarClock,
+    },
   ];
   const primaryNavItems = projectNavItems.filter(
     (item) => !SECONDARY_PROJECT_NAV_TABS.has(item.value as ProjectTabValue),
@@ -1827,6 +1837,10 @@ function ProjectPage() {
 
             <TabsContent value="daily-reports" className="mt-0">
               <DailyReportsWorkspace projectId={projectId} project={project} />
+            </TabsContent>
+
+            <TabsContent value="daily-wip" className="mt-0">
+              <DailyWipWorkspace projectId={projectId} buckets={buckets} />
             </TabsContent>
 
             <TabsContent value="risk-tally" className="mt-0 space-y-6">

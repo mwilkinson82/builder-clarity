@@ -15,6 +15,7 @@
     "test:cpm": "node --experimental-strip-types scripts/constructline-cpm-smoke.ts",
     "test:crm": "node --experimental-strip-types scripts/crm-pipeline-smoke.ts",
     "test:billing": "node --experimental-strip-types scripts/billing-payments-smoke.ts",
+    "test:wip": "node --experimental-strip-types scripts/daily-wip-smoke.ts",
     "test:billing:aia": "node --experimental-strip-types scripts/aia-pdf-fixture-smoke.ts",
     "test:billing:portal": "vitest run scripts/portal-view-signal.test.tsx",
     "test:roles": "node --experimental-strip-types scripts/roles-capability-parity-smoke.ts",
