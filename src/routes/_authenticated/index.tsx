@@ -1581,7 +1581,11 @@ function PortfolioMetric({
         {label}
       </div>
       <div className="mt-2 min-w-0">
-        <div className={`truncate text-lg font-semibold leading-none tabular ${toneClass}`}>
+        {/* Never clip a headline figure: show the whole number, wrap only if it
+            genuinely can't fit rather than ending in "…". */}
+        <div
+          className={`text-lg font-semibold leading-tight tabular [overflow-wrap:break-word] ${toneClass}`}
+        >
           {value}
         </div>
         <div className="mt-1 min-h-4 text-xs leading-4 tabular text-muted-foreground">

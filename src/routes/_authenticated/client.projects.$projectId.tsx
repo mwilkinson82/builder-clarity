@@ -693,7 +693,11 @@ function ClientMetric({ label, value }: { label: string; value: string }) {
       <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
         {label}
       </dt>
-      <dd className="mt-1 truncate font-serif text-2xl">{value}</dd>
+      {/* Never clip a client-facing value: dollar amounts stay whole, long text
+          (e.g. the client name) wraps instead of ending in "…". */}
+      <dd className="mt-1 font-serif text-xl leading-tight tabular-nums [overflow-wrap:break-word]">
+        {value}
+      </dd>
     </div>
   );
 }
@@ -870,7 +874,7 @@ function ClientInvoiceBackupPanel({
         ) : null}
       </div>
 
-      <dl className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <dl className="mt-5 grid gap-3 sm:grid-cols-2">
         <ClientMetric label="Invoice total" value={fmtUSDCents(invoice.total_due)} />
         <ClientMetric label="Paid" value={fmtUSDCents(invoice.paid_amount)} />
         <ClientMetric label="Open" value={fmtUSDCents(open)} />
