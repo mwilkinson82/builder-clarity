@@ -4,15 +4,42 @@
 // dynamic import inside server-function handlers (or vision.server.ts) only.
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
-// Default vision model — GPT-5.5, OpenAI's frontier multimodal model (accuracy
-// over cost per founder call; cost passes through to the user). Override with
-// OPENAI_MODEL so swapping the exact model is config, not code.
-const DEFAULT_OPENAI_MODEL = "gpt-5.5";
+// Default vision model — gpt-4o, OpenAI's fast (non-reasoning) multimodal model.
+// A live A-100 test showed gpt-5.5 (a reasoning model) spends 2-3 min PER tile
+// call; a scan is ~20 tile calls + verify, i.e. 30-60 min — unusable. gpt-4o
+// finishes in Claude's ~2 min/scan ballpark. Override with OPENAI_MODEL; the
+// reasoning-model handling below still kicks in if you point it at a gpt-5.x.
+const DEFAULT_OPENAI_MODEL = "gpt-4o";
 // gpt-5.x / o-series spend completion budget on hidden reasoning tokens.
 const isReasoningModel = (model: string): boolean => /^(gpt-5|o\d)/i.test(model);
-// One call must never hang a scan, but a frontier reasoning model needs a little
-// room: cap at 75s, then the caller fails over (auto mode) or errors cleanly.
+// One call must never hang a scan. Enforced with a hard timeout (below) that
+// rejects even if the runtime doesn't honor fetch's AbortSignal — the live test
+// showed a call running >170s past this cap.
 const OPENAI_CALL_TIMEOUT_MS = 75_000;
+
+/**
+ * Fetch with a hard timeout that the caller can rely on. Aborts the request
+ * (best effort) AND races a rejecting guard, so even in a runtime that ignores
+ * fetch's abort signal the promise still settles by `ms` — the caller (auto
+ * mode) then fails over instead of hanging. A leaked request is harmless.
+ */
+async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Promise<Response> {
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), ms);
+  let guardTimer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<never>((_, reject) => {
+    guardTimer = setTimeout(
+      () => reject(new Error(`The OpenAI model call exceeded ${Math.round(ms / 1000)}s.`)),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([fetch(url, { ...init, signal: controller.signal }), guard]);
+  } finally {
+    clearTimeout(abortTimer);
+    if (guardTimer) clearTimeout(guardTimer);
+  }
+}
 
 export function isOpenAiConfigured(): boolean {
   return Boolean(process.env.OPENAI_API_KEY?.trim());
@@ -80,15 +107,18 @@ export async function callOpenAiVision(input: {
     requestBody.reasoning_effort = process.env.OPENAI_REASONING_EFFORT?.trim() || "low";
   }
 
-  const response = await fetch(OPENAI_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
+  const response = await fetchWithTimeout(
+    OPENAI_API_URL,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
     },
-    body: JSON.stringify(requestBody),
-    signal: AbortSignal.timeout(OPENAI_CALL_TIMEOUT_MS),
-  });
+    OPENAI_CALL_TIMEOUT_MS,
+  );
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
