@@ -17,7 +17,7 @@ import { planVisionProviders, type VisionProvider } from "@/lib/ai-takeoff/visio
 export type { VisionProvider };
 
 // Kept in sync with openai.server.ts DEFAULT_OPENAI_MODEL.
-const DEFAULT_OPENAI_MODEL = "gpt-4o";
+const DEFAULT_OPENAI_MODEL = "gpt-5.5";
 
 /** Ordered list of providers to attempt, primary first, per env config. */
 export function resolveProviderPlan(): VisionProvider[] {

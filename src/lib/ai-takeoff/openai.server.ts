@@ -4,11 +4,15 @@
 // dynamic import inside server-function handlers (or vision.server.ts) only.
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
-// Default vision model; override with OPENAI_MODEL (e.g. a newer GPT). Kept in
-// env so swapping the exact model is config, not code.
-const DEFAULT_OPENAI_MODEL = "gpt-4o";
-// One call must never hang a scan: fail fast so the caller can fail over.
-const OPENAI_CALL_TIMEOUT_MS = 45_000;
+// Default vision model — GPT-5.5, OpenAI's frontier multimodal model (accuracy
+// over cost per founder call; cost passes through to the user). Override with
+// OPENAI_MODEL so swapping the exact model is config, not code.
+const DEFAULT_OPENAI_MODEL = "gpt-5.5";
+// gpt-5.x / o-series spend completion budget on hidden reasoning tokens.
+const isReasoningModel = (model: string): boolean => /^(gpt-5|o\d)/i.test(model);
+// One call must never hang a scan, but a frontier reasoning model needs a little
+// room: cap at 75s, then the caller fails over (auto mode) or errors cleanly.
+const OPENAI_CALL_TIMEOUT_MS = 75_000;
 
 export function isOpenAiConfigured(): boolean {
   return Boolean(process.env.OPENAI_API_KEY?.trim());
@@ -53,6 +57,7 @@ export async function callOpenAiVision(input: {
 }): Promise<OpenAiVisionResult> {
   const apiKey = requireOpenAiApiKey();
   const model = input.model?.trim() || resolveOpenAiModel();
+  const reasoning = isReasoningModel(model);
   // OpenAI takes images as data URLs in the same message as the instruction.
   const content: Array<Record<string, unknown>> = input.images.map((image) => ({
     type: "image_url",
@@ -60,19 +65,28 @@ export async function callOpenAiVision(input: {
   }));
   content.push({ type: "text", text: input.instruction });
 
+  // max_completion_tokens is the canonical field. For reasoning models, floor it
+  // so hidden reasoning tokens don't starve the answer (a tight verify cap would
+  // otherwise return empty); keep effort low — these are structured extraction
+  // calls, not open-ended reasoning — so it stays fast.
+  const requestBody: Record<string, unknown> = {
+    model,
+    messages: [{ role: "user", content }],
+    max_completion_tokens: reasoning
+      ? Math.max(input.maxTokens ?? 2000, 1500)
+      : (input.maxTokens ?? 2000),
+  };
+  if (reasoning) {
+    requestBody.reasoning_effort = process.env.OPENAI_REASONING_EFFORT?.trim() || "low";
+  }
+
   const response = await fetch(OPENAI_API_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "content-type": "application/json",
     },
-    // max_completion_tokens is the current canonical field (older models also
-    // accept it); kept generous by default like the Anthropic path.
-    body: JSON.stringify({
-      model,
-      max_completion_tokens: input.maxTokens ?? 2000,
-      messages: [{ role: "user", content }],
-    }),
+    body: JSON.stringify(requestBody),
     signal: AbortSignal.timeout(OPENAI_CALL_TIMEOUT_MS),
   });
 
