@@ -261,6 +261,13 @@ export function BillingLineItemsPanel({
     (line) => line.billing_application_id === selectedPayAppId,
   );
   const selectedPayApp = payApps.find((app) => app.id === selectedPayAppId);
+  // The application right before this one is where the carried-forward "previous"
+  // numbers come from — naming it makes the memory trustworthy to the biller.
+  const priorApp = useMemo(() => {
+    const ordered = [...payApps].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    const idx = ordered.findIndex((app) => app.id === selectedPayAppId);
+    return idx > 0 ? ordered[idx - 1] : null;
+  }, [payApps, selectedPayAppId]);
   const defaultRetainagePct = project.default_retainage_pct ?? 10;
   const selectedRetainagePct = selectedLines[0]?.retainage_pct ?? defaultRetainagePct;
   const hasMixedRetainagePct = selectedLines.some(
@@ -398,6 +405,29 @@ export function BillingLineItemsPanel({
           </Button>
         </div>
       </div>
+
+      {/* The memory, named: this bill starts from the last one, so the biller
+          trusts what's carried and only touches this period (BILLING P1a). */}
+      {selectedPayApp ? (
+        <div className="mt-3 rounded-md border border-hairline bg-surface px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+          {priorApp ? (
+            <>
+              <span className="font-medium text-foreground">
+                Carried forward from{" "}
+                {billingDocumentLabel(priorApp.application_number, priorApp.invoice_number)}:
+              </span>{" "}
+              {fmtUSD(totals.previous)} already certified. Enter only{" "}
+              <span className="font-medium text-foreground">this period&rsquo;s</span> work below —
+              Overwatch remembers the rest.
+            </>
+          ) : (
+            <>
+              This is the first application — nothing to carry forward yet. Enter this
+              period&rsquo;s work below.
+            </>
+          )}
+        </div>
+      ) : null}
 
       {/* Always-visible progression: format, SOV import, entries, generate —
           each actionable or disabled-with-reason, never hidden (GP3 Task 0). */}
