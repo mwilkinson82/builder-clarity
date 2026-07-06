@@ -311,15 +311,16 @@ export function ImportSOVSheet({
     >
       <SheetTrigger asChild>
         <Button variant="outline" size="sm" className="gap-1.5">
-          <Upload className="h-3.5 w-3.5" /> Import SOV
+          <Upload className="h-3.5 w-3.5" /> Import budget
         </Button>
       </SheetTrigger>
       <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto">
         <SheetHeader>
-          <SheetTitle className="font-serif text-2xl">SOV Intake Assistant</SheetTitle>
+          <SheetTitle className="font-serif text-2xl">Budget Intake Assistant</SheetTitle>
           <SheetDescription>
-            Drop in the contractor spreadsheet as-is. Overwatch maps it, stages the SOV, flags the
-            weird parts, and asks for confirmation before anything touches the job.
+            Drop in your cost spreadsheet as-is — SOV, estimate, or pay app. Overwatch maps it,
+            stages the budget, flags the weird parts, and asks for confirmation before anything
+            touches the job.
           </SheetDescription>
         </SheetHeader>
 

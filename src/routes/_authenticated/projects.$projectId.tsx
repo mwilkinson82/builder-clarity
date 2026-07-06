@@ -583,7 +583,7 @@ function ProjectPage() {
       if (mutateContext?.previous) {
         qc.setQueryData(["project", projectId], mutateContext.previous);
       }
-      toast.error("SOV line did not save", {
+      toast.error("Budget line did not save", {
         description: err instanceof Error ? err.message : "Try again.",
       });
     },
@@ -1906,7 +1906,7 @@ function ProjectPage() {
                                     (total, row) => total + row.actual_to_date + row.ftc,
                                     0,
                                   );
-                            toast.success("SOV imported", {
+                            toast.success("Budget imported", {
                               description: `${imported} created, ${updated} updated. Original cost budget is now ${fmtUSD(budget)}.`,
                             });
                             if (
@@ -1915,14 +1915,14 @@ function ProjectPage() {
                               "importHistorySaved" in result &&
                               !(result as { importHistorySaved: boolean }).importHistorySaved
                             ) {
-                              toast.warning("SOV imported, history pending", {
+                              toast.warning("Budget imported, history pending", {
                                 description:
-                                  "The buckets saved, but the import ledger table is not available yet.",
+                                  "The budget lines saved, but the import ledger table is not available yet.",
                               });
                             }
                           },
                           onError: (err) => {
-                            toast.error("SOV import did not save", {
+                            toast.error("Budget import did not save", {
                               description: err instanceof Error ? err.message : "Try again.",
                             });
                           },
@@ -1986,17 +1986,24 @@ function ProjectPage() {
                 </div>
                 <SovImportHistory imports={sovImports ?? []} />
               </div>
-              <CostBucketsTable
-                buckets={buckets}
-                onUpdate={(id, patch) => bucketUpdate.mutateAsync({ id, patch })}
-                onCreate={(input) => bucketCreate.mutate({ projectId, ...input })}
-                onDelete={(id) => bucketDelete.mutate({ id })}
-              />
               <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
                 <BudgetLedgerTable
                   buckets={buckets}
                   exposures={exposures}
                   allocations={exposureAllocationsQuery.data ?? []}
+                />
+              </div>
+              <div className="space-y-2">
+                <WorkspaceHeader
+                  title="Edit budget lines"
+                  subtitle="Set the budget, actual cost, and forecast-to-complete for each cost code. Carried from the estimate, imported, or entered by hand."
+                  compact
+                />
+                <CostBucketsTable
+                  buckets={buckets}
+                  onUpdate={(id, patch) => bucketUpdate.mutateAsync({ id, patch })}
+                  onCreate={(input) => bucketCreate.mutate({ projectId, ...input })}
+                  onDelete={(id) => bucketDelete.mutate({ id })}
                 />
               </div>
             </TabsContent>
