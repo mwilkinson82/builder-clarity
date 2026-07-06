@@ -58,6 +58,10 @@ export interface ReceivableInvoiceRow {
   id: string;
   project_id: string;
   project_name: string;
+  // Owning company — lets the portfolio receivables list tell apart invoices
+  // that share a project name/number across companies (null at company level
+  // when the org can't be resolved).
+  company_name: string | null;
   invoice_number: string;
   title: string;
   status: string;
@@ -150,6 +154,33 @@ export const getReceivablesCockpit = createServerFn({ method: "GET" })
     const projectIds = projects.map((project) => project.id);
     const projectNames = new Map(projects.map((project) => [project.id, project.name]));
 
+    // Resolve each project's owning company so the portfolio receivables list
+    // can label rows that share a name/number across companies (e.g. a demo
+    // seeded into several orgs). Degrades to no label if orgs aren't readable.
+    const orgIds = [
+      ...new Set(
+        projects
+          .map((project) => project.organization_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const companyByOrg = new Map<string, string>();
+    if (orgIds.length > 0) {
+      const orgRes = await table(ctx, "organizations").select("id,name").in("id", orgIds);
+      if (!orgRes.error) {
+        for (const row of (orgRes.data ?? []) as Record<string, unknown>[]) {
+          const name = str(row.name);
+          if (name) companyByOrg.set(String(row.id), name);
+        }
+      }
+    }
+    const projectCompanyNames = new Map(
+      projects.map((project) => [
+        project.id,
+        project.organization_id ? (companyByOrg.get(project.organization_id) ?? null) : null,
+      ]),
+    );
+
     const [invoiceRes, paymentRes, accessRes, coRes, allocationRes, lineRes, appRes] =
       await Promise.all([
         table(ctx, "billing_invoices").select("*").in("project_id", projectIds),
@@ -228,6 +259,7 @@ export const getReceivablesCockpit = createServerFn({ method: "GET" })
           id: String(row.id),
           project_id: projectId,
           project_name: projectNames.get(projectId) ?? "Project",
+          company_name: projectCompanyNames.get(projectId) ?? null,
           invoice_number: str(row.invoice_number),
           title: str(row.title),
           status: str(row.status, "draft"),

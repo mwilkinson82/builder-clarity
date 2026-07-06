@@ -437,6 +437,11 @@ export function ReceivablesCockpit({
                             {invoice.project_name}
                           </span>
                         ) : null}
+                        {showProjectColumn && invoice.company_name ? (
+                          <span className="rounded-full border border-hairline bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            {invoice.company_name}
+                          </span>
+                        ) : null}
                         {flagCollections ? (
                           <span className="inline-flex items-center gap-1 rounded-full border border-danger/40 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger">
                             <PhoneCall className="h-3 w-3" /> Start collections
