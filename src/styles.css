@@ -533,3 +533,45 @@
   }
 
 }
+
+/* Reports (WIP schedule and the rest of the suite) print clean: the app chrome
+   and report rail drop out, the print banner appears, and the table prints at
+   full width on the landscape sheet defined above. */
+@media print {
+  .constructline-reports-page {
+    min-height: auto !important;
+    background: white !important;
+  }
+
+  .constructline-reports-page [data-print-hide]:not([data-print-hide="false"]) {
+    display: none !important;
+  }
+
+  .constructline-reports-page main {
+    display: block !important;
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .constructline-reports-page .constructline-wip-print-head {
+    display: block !important;
+    margin-bottom: 10px;
+    color: #221f1b;
+  }
+
+  .constructline-reports-page .constructline-wip-scroll {
+    overflow: visible !important;
+    border: none !important;
+  }
+
+  .constructline-reports-page .constructline-wip-table {
+    min-width: 0 !important;
+    width: 100% !important;
+    font-size: 9px !important;
+  }
+
+  .constructline-reports-page .constructline-wip-table th,
+  .constructline-reports-page .constructline-wip-table td {
+    padding: 4px 6px !important;
+  }
+}

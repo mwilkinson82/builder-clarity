@@ -56,6 +56,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   BriefcaseBusiness,
   CalendarClock,
   ClipboardList,
@@ -499,6 +500,11 @@ function PortfolioPage() {
                 <Link to="/billing">
                   <ReceiptText className="h-3.5 w-3.5" /> Billing
                   <BillingFeedBadge />
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
+                <Link to="/reports">
+                  <BarChart3 className="h-3.5 w-3.5" /> Reports
                 </Link>
               </Button>
               <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">

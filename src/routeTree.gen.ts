@@ -15,6 +15,7 @@ import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/
 import { Route as EmailUnsubscribeRouteImport } from './routes/email/unsubscribe'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
+import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
 import { Route as AuthenticatedEstimatesRouteImport } from './routes/_authenticated/estimates'
 import { Route as AuthenticatedEstimateMastersRouteImport } from './routes/_authenticated/estimate-masters'
 import { Route as AuthenticatedCostLibraryRouteImport } from './routes/_authenticated/cost-library'
@@ -66,6 +67,11 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
 const AuthenticatedTeamRoute = AuthenticatedTeamRouteImport.update({
   id: '/team',
   path: '/team',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
 const AuthenticatedEstimatesRoute = AuthenticatedEstimatesRouteImport.update({
@@ -206,6 +212,7 @@ export interface FileRoutesByFullPath {
   '/cost-library': typeof AuthenticatedCostLibraryRoute
   '/estimate-masters': typeof AuthenticatedEstimateMastersRoute
   '/estimates': typeof AuthenticatedEstimatesRouteWithChildren
+  '/reports': typeof AuthenticatedReportsRoute
   '/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
@@ -235,6 +242,7 @@ export interface FileRoutesByTo {
   '/cost-library': typeof AuthenticatedCostLibraryRoute
   '/estimate-masters': typeof AuthenticatedEstimateMastersRoute
   '/estimates': typeof AuthenticatedEstimatesRouteWithChildren
+  '/reports': typeof AuthenticatedReportsRoute
   '/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
@@ -267,6 +275,7 @@ export interface FileRoutesById {
   '/_authenticated/cost-library': typeof AuthenticatedCostLibraryRoute
   '/_authenticated/estimate-masters': typeof AuthenticatedEstimateMastersRoute
   '/_authenticated/estimates': typeof AuthenticatedEstimatesRouteWithChildren
+  '/_authenticated/reports': typeof AuthenticatedReportsRoute
   '/_authenticated/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
@@ -300,6 +309,7 @@ export interface FileRouteTypes {
     | '/cost-library'
     | '/estimate-masters'
     | '/estimates'
+    | '/reports'
     | '/team'
     | '/auth/callback'
     | '/email/unsubscribe'
@@ -329,6 +339,7 @@ export interface FileRouteTypes {
     | '/cost-library'
     | '/estimate-masters'
     | '/estimates'
+    | '/reports'
     | '/team'
     | '/auth/callback'
     | '/email/unsubscribe'
@@ -360,6 +371,7 @@ export interface FileRouteTypes {
     | '/_authenticated/cost-library'
     | '/_authenticated/estimate-masters'
     | '/_authenticated/estimates'
+    | '/_authenticated/reports'
     | '/_authenticated/team'
     | '/auth/callback'
     | '/email/unsubscribe'
@@ -445,6 +457,13 @@ declare module '@tanstack/react-router' {
       path: '/team'
       fullPath: '/team'
       preLoaderRoute: typeof AuthenticatedTeamRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/reports': {
+      id: '/_authenticated/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof AuthenticatedReportsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/estimates': {
@@ -662,6 +681,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedCostLibraryRoute: typeof AuthenticatedCostLibraryRoute
   AuthenticatedEstimateMastersRoute: typeof AuthenticatedEstimateMastersRoute
   AuthenticatedEstimatesRoute: typeof AuthenticatedEstimatesRouteWithChildren
+  AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
   AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedProjectsProjectIdRoute: typeof AuthenticatedProjectsProjectIdRouteWithChildren
@@ -674,6 +694,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCostLibraryRoute: AuthenticatedCostLibraryRoute,
   AuthenticatedEstimateMastersRoute: AuthenticatedEstimateMastersRoute,
   AuthenticatedEstimatesRoute: AuthenticatedEstimatesRouteWithChildren,
+  AuthenticatedReportsRoute: AuthenticatedReportsRoute,
   AuthenticatedTeamRoute: AuthenticatedTeamRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedProjectsProjectIdRoute:
