@@ -1,7 +1,11 @@
 // Budget-vs-cost ledger (BUDGETENGINE Phase 2) — the per-cost-code accounting
-// view: Budget → Actuals → Open → At Risk → Contingency → EAC → (Over)/Under.
-// At Risk (E-Holds) and Contingency (C-Holds) come from the live exposure
-// allocations, so this reads the IOR risk register — not a typed number.
+// view. Columns read in plain English (no "EAC" jargon): Budget, Actuals, Open,
+// At Risk, Contingency, Projected cost, Over/under budget. At Risk (E-Holds) and
+// Contingency (C-Holds) come from the live exposure allocations — the IOR risk
+// register, not a typed number. Each shorthand column carries a hover
+// explanation because a PM or biller won't know our internal terms.
+import { Info } from "lucide-react";
+
 import {
   Table,
   TableBody,
@@ -11,19 +15,41 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { fmtUSD } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { computeBudgetLedger } from "@/lib/budget-ledger";
-import type { BucketRow, ExposureRow } from "@/lib/projects.functions";
-import type { ExposureAllocationRow } from "@/lib/projects.functions";
+import type { BucketRow, ExposureAllocationRow, ExposureRow } from "@/lib/projects.functions";
 
+// Over/under reads itself: "$3,000 over" in red, "$5,000 under" in green — never
+// a bare parenthesized number nobody can decode at a glance.
 function OverUnder({ value }: { value: number }) {
-  if (value === 0) return <span className="tabular text-muted-foreground">$0</span>;
-  // Positive = under budget (good), negative = over budget (bad, shown in parens).
+  if (value === 0) return <span className="tabular text-muted-foreground">On budget</span>;
   const under = value > 0;
   return (
-    <span className={`tabular font-medium ${under ? "text-success" : "text-danger"}`}>
-      {under ? fmtUSD(value) : `(${fmtUSD(Math.abs(value))})`}
+    <span className={cn("tabular font-medium", under ? "text-success" : "text-danger")}>
+      {fmtUSD(Math.abs(value))} {under ? "under" : "over"}
     </span>
+  );
+}
+
+// A column header whose plain-English meaning is one hover away — the accounting
+// shorthand means nothing to a PM or biller otherwise.
+function HelpHead({ label, help, className }: { label: string; help: string; className?: string }) {
+  return (
+    <TableHead className={className}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex cursor-help items-center gap-1">
+            {label}
+            <Info className="h-3 w-3 opacity-60" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-[260px] text-xs font-normal normal-case tracking-normal">
+          {help}
+        </TooltipContent>
+      </Tooltip>
+    </TableHead>
   );
 }
 
@@ -54,72 +80,101 @@ export function BudgetLedgerTable({
           Budget vs cost by code
         </div>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          EAC is Actuals + Open (paid + committed). At Risk (E-Holds) and Contingency (C-Holds) come
-          straight from the IOR risk register. (Over)/Under is Budget − EAC — positive is under
-          budget.
+          <strong className="font-medium text-foreground">Projected cost</strong> is what you've
+          spent plus what's still committed.{" "}
+          <strong className="font-medium text-foreground">Over / under budget</strong> is your
+          budget minus that — <span className="text-success">green</span> means you're coming in
+          under budget, <span className="text-danger">red</span> means over. At Risk and Contingency
+          come straight from your IOR risk holds. Hover any column for what it means.
         </p>
       </div>
-      <div className="overflow-x-auto rounded-lg border border-hairline bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-surface text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-              <TableHead className="w-[90px]">Cost code</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead className="text-right">Budget</TableHead>
-              <TableHead className="text-right">Actuals</TableHead>
-              <TableHead className="text-right">Open</TableHead>
-              <TableHead className="text-right">At Risk</TableHead>
-              <TableHead className="text-right">Contingency</TableHead>
-              <TableHead className="text-right">EAC</TableHead>
-              <TableHead className="text-right">(Over)/Under</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {ledger.rows.map((row) => (
-              <TableRow key={row.costBucketId ?? `general-${row.costCode}`}>
-                <TableCell className="font-mono text-xs text-muted-foreground">
-                  {row.costCode || "—"}
+      <TooltipProvider delayDuration={150}>
+        <div className="overflow-x-auto rounded-lg border border-hairline bg-card">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-surface text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                <TableHead className="w-[90px]">Cost code</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead className="text-right">Budget</TableHead>
+                <TableHead className="text-right">Actuals</TableHead>
+                <HelpHead
+                  label="Open"
+                  help="Committed cost you still owe — POs and subcontracts not yet paid."
+                  className="text-right"
+                />
+                <HelpHead
+                  label="At Risk"
+                  help="Your E-Holds (exposure holds) allocated to this cost code — live from the IOR risk register."
+                  className="text-right"
+                />
+                <HelpHead
+                  label="Contingency"
+                  help="Your C-Holds (contingency holds) allocated to this cost code — live from the IOR risk register."
+                  className="text-right"
+                />
+                <HelpHead
+                  label="Projected cost"
+                  help="Actuals + Open — everything you've spent plus everything committed. The projected final cost of this line."
+                  className="text-right"
+                />
+                <HelpHead
+                  label="Over / under budget"
+                  help="Budget minus Projected cost. Green means you're under budget; red means over."
+                  className="text-right"
+                />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {ledger.rows.map((row) => (
+                <TableRow key={row.costBucketId ?? `general-${row.costCode}`}>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {row.costCode || "—"}
+                  </TableCell>
+                  <TableCell className="font-medium">{row.description}</TableCell>
+                  <TableCell className="text-right tabular">{fmtUSD(row.budget)}</TableCell>
+                  <TableCell className="text-right tabular">{fmtUSD(row.actuals)}</TableCell>
+                  <TableCell className="text-right tabular text-muted-foreground">
+                    {fmtUSD(row.open)}
+                  </TableCell>
+                  <TableCell className="text-right tabular text-warning">
+                    {row.atRisk > 0 ? fmtUSD(row.atRisk) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular text-accent">
+                    {row.contingency > 0 ? fmtUSD(row.contingency) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular font-medium">
+                    {fmtUSD(row.eac)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <OverUnder value={row.overUnder} />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+            <TableFooter>
+              <TableRow className="bg-surface font-semibold">
+                <TableCell />
+                <TableCell>{ledger.totals.description}</TableCell>
+                <TableCell className="text-right tabular">{fmtUSD(ledger.totals.budget)}</TableCell>
+                <TableCell className="text-right tabular">
+                  {fmtUSD(ledger.totals.actuals)}
                 </TableCell>
-                <TableCell className="font-medium">{row.description}</TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(row.budget)}</TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(row.actuals)}</TableCell>
-                <TableCell className="text-right tabular text-muted-foreground">
-                  {fmtUSD(row.open)}
-                </TableCell>
+                <TableCell className="text-right tabular">{fmtUSD(ledger.totals.open)}</TableCell>
                 <TableCell className="text-right tabular text-warning">
-                  {row.atRisk > 0 ? fmtUSD(row.atRisk) : "—"}
+                  {fmtUSD(ledger.totals.atRisk)}
                 </TableCell>
                 <TableCell className="text-right tabular text-accent">
-                  {row.contingency > 0 ? fmtUSD(row.contingency) : "—"}
+                  {fmtUSD(ledger.totals.contingency)}
                 </TableCell>
-                <TableCell className="text-right tabular font-medium">{fmtUSD(row.eac)}</TableCell>
+                <TableCell className="text-right tabular">{fmtUSD(ledger.totals.eac)}</TableCell>
                 <TableCell className="text-right">
-                  <OverUnder value={row.overUnder} />
+                  <OverUnder value={ledger.totals.overUnder} />
                 </TableCell>
               </TableRow>
-            ))}
-          </TableBody>
-          <TableFooter>
-            <TableRow className="bg-surface font-semibold">
-              <TableCell />
-              <TableCell>{ledger.totals.description}</TableCell>
-              <TableCell className="text-right tabular">{fmtUSD(ledger.totals.budget)}</TableCell>
-              <TableCell className="text-right tabular">{fmtUSD(ledger.totals.actuals)}</TableCell>
-              <TableCell className="text-right tabular">{fmtUSD(ledger.totals.open)}</TableCell>
-              <TableCell className="text-right tabular text-warning">
-                {fmtUSD(ledger.totals.atRisk)}
-              </TableCell>
-              <TableCell className="text-right tabular text-accent">
-                {fmtUSD(ledger.totals.contingency)}
-              </TableCell>
-              <TableCell className="text-right tabular">{fmtUSD(ledger.totals.eac)}</TableCell>
-              <TableCell className="text-right">
-                <OverUnder value={ledger.totals.overUnder} />
-              </TableCell>
-            </TableRow>
-          </TableFooter>
-        </Table>
-      </div>
+            </TableFooter>
+          </Table>
+        </div>
+      </TooltipProvider>
     </div>
   );
 }
