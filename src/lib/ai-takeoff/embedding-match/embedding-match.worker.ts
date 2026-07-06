@@ -9,7 +9,13 @@
 // ImageNet normalize) and the CLS-token slice match the offline proof exactly; the
 // scoring/selection is the pure domain the node smoke covers.
 
-import * as ort from "onnxruntime-web";
+// CPU-only wasm build on purpose. The default "onnxruntime-web" entry is the
+// JSEP (WebGPU) build, which dynamically imports ort-wasm-simd-threaded.jsep.mjs
+// — a file we do not self-host — and 404'd in production ("no available backend
+// found"), silently degrading the scan to the model engine. The "/wasm" entry
+// loads only the base ort-wasm-simd-threaded.wasm we DO bundle. (WebGPU accel is
+// a later optimization: it would need the jsep wasm bundled too.)
+import * as ort from "onnxruntime-web/wasm";
 import {
   planEmbeddingSweep,
   sweepWindowCenters,
