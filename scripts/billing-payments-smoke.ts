@@ -56,6 +56,7 @@ import {
   unallocatedExposure,
 } from "../src/lib/exposure-allocation.ts";
 import { computeBudgetLedger } from "../src/lib/budget-ledger.ts";
+import { aggregateEstimateToBudget } from "../src/lib/estimate-budget.ts";
 import {
   agingBucketTotals,
   appendCollectionsNote,
@@ -1241,6 +1242,52 @@ assert.equal(LEDGER.totals.eac, 1_370_000); // 500k + 870k
 assert.equal(LEDGER.totals.atRisk, 12_000);
 assert.equal(LEDGER.totals.contingency, 5_000);
 assert.equal(LEDGER.totals.overUnder, -110_000); // 1.26M − 1.37M = over by 110k
+
+// --- Estimate → Budget carry (BUDGETENGINE Phase 3) ---------------------------
+
+// Budget = estimate line COSTS (material + labor) grouped by cost code, summed
+// in cents. Scope group names the bucket; a blank cost code is not dropped.
+const EST_LINES = [
+  {
+    cost_code: "1500",
+    csi_division: "15",
+    scope_group: "MEP rough-in",
+    description: "Ductwork",
+    total_extended_cents: 200_000_00,
+  },
+  {
+    cost_code: "1500",
+    csi_division: "15",
+    scope_group: "MEP rough-in",
+    description: "Piping",
+    total_extended_cents: 80_000_50,
+  },
+  {
+    cost_code: "0900",
+    csi_division: "09",
+    scope_group: "",
+    description: "Paint",
+    total_extended_cents: 45_000_00,
+  },
+  {
+    cost_code: "",
+    csi_division: "01",
+    scope_group: "General",
+    description: "Supervision",
+    total_extended_cents: 10_000_00,
+  },
+];
+const estBudget = aggregateEstimateToBudget(EST_LINES);
+assert.equal(estBudget.length, 3); // 1500, 0900, and the uncoded group
+const mepBudget = estBudget.find((b) => b.costCode === "1500");
+assert.equal(mepBudget?.budget, 280_000.5); // 200,000.00 + 80,000.50, cents-exact
+assert.equal(mepBudget?.description, "MEP rough-in"); // scope group wins
+const finBudget = estBudget.find((b) => b.costCode === "0900");
+assert.equal(finBudget?.budget, 45_000);
+assert.equal(finBudget?.description, "Paint"); // no scope group → first description
+const uncoded = estBudget.find((b) => b.costCode === "");
+assert.equal(uncoded?.budget, 10_000); // blank cost code kept, not dropped
+assert.equal(uncoded?.description, "General");
 
 // End-to-end: allocate a CO to a bucket, then build the lines — the allocated
 // value rides change_order_value_cents on that bucket's line (G702 line 2).

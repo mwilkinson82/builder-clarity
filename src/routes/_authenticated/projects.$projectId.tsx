@@ -102,6 +102,7 @@ import {
   allocateExposure,
   deleteExposureAllocation,
   listExposureAllocations,
+  buildBudgetFromEstimate,
   createInspection,
   updateInspection,
   deleteInspection,
@@ -319,6 +320,7 @@ function ProjectPage() {
   const allocateExposureFn = useServerFn(allocateExposure);
   const deleteExposureAllocationFn = useServerFn(deleteExposureAllocation);
   const listExposureAllocationsFn = useServerFn(listExposureAllocations);
+  const buildBudgetFromEstimateFn = useServerFn(buildBudgetFromEstimate);
   const createInspectionFn = useServerFn(createInspection);
   const updateInspectionFn = useServerFn(updateInspection);
   const deleteInspectionFn = useServerFn(deleteInspection);
@@ -483,6 +485,24 @@ function ProjectPage() {
     },
     onError: (err) => {
       toast.error("Allocation did not remove", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const budgetFromEstimate = useMutation({
+    mutationFn: () => buildBudgetFromEstimateFn({ data: { projectId } }),
+    onSuccess: (result) => {
+      invalidate();
+      const summary =
+        result && typeof result === "object" && "codes" in result
+          ? ` (${(result as { updated: number }).updated} updated, ${(result as { created: number }).created} added)`
+          : "";
+      toast.success("Budget built from estimate", {
+        description: `Cost codes now carry the estimate's line costs as their budget${summary}.`,
+      });
+    },
+    onError: (err) => {
+      toast.error("Could not build budget", {
         description: err instanceof Error ? err.message : "Try again.",
       });
     },
@@ -1911,6 +1931,41 @@ function ProjectPage() {
                     }
                     pending={bucketImport.isPending}
                   />
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-hairline pt-4">
+                  <span className="text-xs text-muted-foreground">
+                    Budget comes from the estimate — carry it in, or enter cost lines below by hand.
+                  </span>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        disabled={budgetFromEstimate.isPending}
+                      >
+                        <FileSpreadsheet className="h-3.5 w-3.5" />
+                        Build budget from estimate
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Build the budget from the estimate?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This carries the estimate's line costs (material + labor) onto your cost
+                          codes as the budget — markups stay as margin. Matching cost codes are
+                          overwritten; new ones are added. Actuals and forecast-to-complete are not
+                          touched.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => budgetFromEstimate.mutate()}>
+                          Build budget
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
                 <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
                   <SovMetric label="Cost buckets loaded" value={String(buckets.length)} />
