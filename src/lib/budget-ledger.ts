@@ -20,31 +20,49 @@ export interface BudgetBucketLike {
   id: string;
   cost_code: string;
   bucket: string;
+  // BUDGETVSCONTRACT1: every line carries BOTH numbers. contract_value is the
+  // billable value (what the owner pays); original_budget is the internal cost
+  // budget (what we drive the job on). The delta is the line's margin. 0 =
+  // unpriced — surfaced explicitly, never treated as zero margin.
+  contract_value: number;
   original_budget: number;
   actual_to_date: number;
   ftc: number;
 }
 
 // BUDGETLOCK1: the budget is a locked baseline — the ONLY thing that moves it
-// is an approved change order's budgeted cost. These Like shapes carry that
-// layer into the ledger.
+// is an approved change order. These Like shapes carry BOTH sides of the CO
+// layer into the ledger: contract_amount moves the contract value, cost_amount
+// moves the budget — so an approved CO's own margin flows into the delta.
 export interface BudgetChangeOrderLike {
   id: string;
-  status: string; // only "Approved" moves the budget
+  status: string; // only "Approved" moves the ledger
+  contract_amount: number; // what the owner pays for the CO
   cost_amount: number; // the CO's own budgeted cost
 }
 
 export interface BudgetChangeOrderAllocationLike {
   change_order_id: string;
   cost_bucket_id: string | null;
+  contract_amount: number; // portion of the CO's contract value on this code
   cost_amount: number; // portion of the CO's budgeted cost on this code
 }
 
 export interface BudgetLedgerRow {
-  // null bucket = a synthetic line (general job risk / unallocated CO budget).
+  // null bucket = a synthetic line (general job risk / unallocated COs).
   costBucketId: string | null;
   costCode: string;
   description: string;
+  // Contract side: what the owner pays for this line — base contract_value
+  // plus approved CO contract allocations. NEVER falls back to budget; an
+  // unpriced line reports priced=false and a null margin instead of lying.
+  contractValue: number;
+  changeOrderContract: number;
+  priced: boolean;
+  // Line margin = contractValue − budget ($ and % of contract). null when the
+  // line is unpriced — an unpriced line must never masquerade as zero-margin.
+  margin: number | null;
+  marginPct: number | null;
   // The current budget: frozen original + approved change-order cost. This is
   // the number every downstream column compares against.
   budget: number;
@@ -63,6 +81,24 @@ export interface BudgetLedgerRow {
 export interface BudgetLedger {
   rows: BudgetLedgerRow[];
   totals: BudgetLedgerRow;
+  // Lines with no contract value yet — the UI footnotes these so the totals'
+  // margin is read as "margin on priced lines", not the whole job.
+  unpricedCount: number;
+}
+
+// Single source for line-margin math (BUDGETVSCONTRACT1): margin only exists
+// on a priced line. $ = contract − budget; % is of contract.
+export function ledgerLineMargin(
+  contractValueDollars: number,
+  budgetDollars: number,
+): { margin: number; marginPct: number } | null {
+  const contractCents = dollarsToCents(contractValueDollars);
+  if (contractCents <= 0) return null;
+  const marginCents = contractCents - dollarsToCents(budgetDollars);
+  return {
+    margin: centsToDollars(marginCents),
+    marginPct: (marginCents / contractCents) * 100,
+  };
 }
 
 function eacDollars(actuals: number, open: number): number {
@@ -98,30 +134,46 @@ export function computeBudgetLedger(
     }
   }
 
-  // Only APPROVED change orders move the budget (matching the WIP/billing
-  // engine's contract-side rule). A deductive CO carries negative cost and
-  // reduces the budget — no clamping.
+  // Only APPROVED change orders move the ledger, on BOTH sides:
+  // contract_amount onto the contract value, cost_amount onto the budget — so
+  // an approved CO's own margin flows into the delta. Deductive COs carry
+  // negative amounts and reduce their side — no clamping.
   const approvedCoIds = new Set(
     changeOrders.filter((co) => co.status === "Approved").map((co) => co.id),
   );
-  const approvedCoCostCents = changeOrders
-    .filter((co) => co.status === "Approved")
-    .reduce((sum, co) => sum + dollarsToCents(co.cost_amount), 0);
+  const approvedCos = changeOrders.filter((co) => co.status === "Approved");
+  const approvedCoCostCents = approvedCos.reduce(
+    (sum, co) => sum + dollarsToCents(co.cost_amount),
+    0,
+  );
+  const approvedCoContractCents = approvedCos.reduce(
+    (sum, co) => sum + dollarsToCents(co.contract_amount),
+    0,
+  );
   const coBudgetCentsByBucket = new Map<string, number>();
+  const coContractCentsByBucket = new Map<string, number>();
   let bucketAllocatedCoCostCents = 0;
+  let bucketAllocatedCoContractCents = 0;
   for (const allocation of coAllocations) {
     if (!approvedCoIds.has(allocation.change_order_id)) continue;
     if (!allocation.cost_bucket_id) continue;
-    const cents = dollarsToCents(allocation.cost_amount);
-    bucketAllocatedCoCostCents += cents;
+    const costCents = dollarsToCents(allocation.cost_amount);
+    const contractCents = dollarsToCents(allocation.contract_amount);
+    bucketAllocatedCoCostCents += costCents;
+    bucketAllocatedCoContractCents += contractCents;
     coBudgetCentsByBucket.set(
       allocation.cost_bucket_id,
-      (coBudgetCentsByBucket.get(allocation.cost_bucket_id) ?? 0) + cents,
+      (coBudgetCentsByBucket.get(allocation.cost_bucket_id) ?? 0) + costCents,
+    );
+    coContractCentsByBucket.set(
+      allocation.cost_bucket_id,
+      (coContractCentsByBucket.get(allocation.cost_bucket_id) ?? 0) + contractCents,
     );
   }
-  // Approved CO cost not landed on a cost code (never allocated, or allocated
-  // without a bucket) — real budget that must not vanish from the totals.
+  // Approved CO money not landed on a cost code (never allocated, or allocated
+  // without a bucket) — real contract/budget that must not vanish from totals.
   const unallocatedCoCostCents = approvedCoCostCents - bucketAllocatedCoCostCents;
+  const unallocatedCoContractCents = approvedCoContractCents - bucketAllocatedCoContractCents;
 
   const rows: BudgetLedgerRow[] = buckets.map((bucket) => {
     const bucketRisk = riskByBucket.get(bucket.id) ?? { atRisk: 0, contingency: 0 };
@@ -130,10 +182,24 @@ export function computeBudgetLedger(
     const budget = centsToDollars(
       dollarsToCents(bucket.original_budget) + dollarsToCents(changeOrderBudget),
     );
+    // Contract side. NEVER falls back to budget — an unpriced line (base
+    // contract_value = 0) reports priced=false and a null margin; reusing the
+    // budget here is exactly the bug this module exists to prevent.
+    const priced = dollarsToCents(bucket.contract_value) > 0;
+    const changeOrderContract = centsToDollars(coContractCentsByBucket.get(bucket.id) ?? 0);
+    const contractValue = centsToDollars(
+      dollarsToCents(bucket.contract_value) + dollarsToCents(changeOrderContract),
+    );
+    const marginParts = priced ? ledgerLineMargin(contractValue, budget) : null;
     return {
       costBucketId: bucket.id,
       costCode: bucket.cost_code,
       description: bucket.bucket,
+      contractValue,
+      changeOrderContract,
+      priced,
+      margin: marginParts?.margin ?? null,
+      marginPct: marginParts?.marginPct ?? null,
       budget,
       originalBudget: bucket.original_budget,
       changeOrderBudget,
@@ -146,23 +212,30 @@ export function computeBudgetLedger(
     };
   });
 
-  // Approved change-order budget not yet allocated to a cost code — its own
-  // line, so the budget total is honest before the allocation pass happens.
-  if (Math.abs(unallocatedCoCostCents) > 1) {
-    const unallocated = centsToDollars(unallocatedCoCostCents);
+  // Approved change-order money not yet allocated to a cost code — its own
+  // line, so both totals stay honest before the allocation pass happens. No
+  // margin is claimed for it (allocation decides where it truly lands).
+  if (Math.abs(unallocatedCoCostCents) > 1 || Math.abs(unallocatedCoContractCents) > 1) {
+    const unallocatedCost = centsToDollars(unallocatedCoCostCents);
+    const unallocatedContract = centsToDollars(unallocatedCoContractCents);
     rows.push({
       costBucketId: null,
       costCode: "",
-      description: "Change-order budget (unallocated)",
-      budget: unallocated,
+      description: "Change orders (unallocated)",
+      contractValue: unallocatedContract,
+      changeOrderContract: unallocatedContract,
+      priced: false,
+      margin: null,
+      marginPct: null,
+      budget: unallocatedCost,
       originalBudget: 0,
-      changeOrderBudget: unallocated,
+      changeOrderBudget: unallocatedCost,
       actuals: 0,
       open: 0,
       atRisk: 0,
       contingency: 0,
       eac: 0,
-      overUnder: unallocated,
+      overUnder: unallocatedCost,
     });
   }
 
@@ -173,6 +246,11 @@ export function computeBudgetLedger(
       costBucketId: null,
       costCode: "",
       description: "General job risk (unallocated)",
+      contractValue: 0,
+      changeOrderContract: 0,
+      priced: false,
+      margin: null,
+      marginPct: null,
       budget: 0,
       originalBudget: 0,
       changeOrderBudget: 0,
@@ -185,9 +263,13 @@ export function computeBudgetLedger(
     });
   }
 
-  // Totals: accumulate every column in cents, convert once.
+  // Totals: accumulate every column in cents, convert once. The margin total
+  // is the sum of PRICED line margins only, and its % is of priced contract —
+  // unpriced lines are counted, footnoted by the UI, and never guessed at.
   const totalCents = rows.reduce(
     (acc, row) => {
+      acc.contractValue += dollarsToCents(row.contractValue);
+      acc.changeOrderContract += dollarsToCents(row.changeOrderContract);
       acc.budget += dollarsToCents(row.budget);
       acc.originalBudget += dollarsToCents(row.originalBudget);
       acc.changeOrderBudget += dollarsToCents(row.changeOrderBudget);
@@ -195,9 +277,15 @@ export function computeBudgetLedger(
       acc.open += dollarsToCents(row.open);
       acc.atRisk += dollarsToCents(row.atRisk);
       acc.contingency += dollarsToCents(row.contingency);
+      if (row.margin !== null) {
+        acc.margin += dollarsToCents(row.margin);
+        acc.pricedContract += dollarsToCents(row.contractValue);
+      }
       return acc;
     },
     {
+      contractValue: 0,
+      changeOrderContract: 0,
       budget: 0,
       originalBudget: 0,
       changeOrderBudget: 0,
@@ -205,17 +293,27 @@ export function computeBudgetLedger(
       open: 0,
       atRisk: 0,
       contingency: 0,
+      margin: 0,
+      pricedContract: 0,
     },
   );
   const totalBudget = centsToDollars(totalCents.budget);
   const totalEac = centsToDollars(totalCents.actuals + totalCents.open);
+  const anyPriced = totalCents.pricedContract > 0;
+  const unpricedCount = rows.filter((row) => row.costBucketId !== null && !row.priced).length;
 
   return {
     rows,
+    unpricedCount,
     totals: {
       costBucketId: null,
       costCode: "",
       description: "Total",
+      contractValue: centsToDollars(totalCents.contractValue),
+      changeOrderContract: centsToDollars(totalCents.changeOrderContract),
+      priced: anyPriced,
+      margin: anyPriced ? centsToDollars(totalCents.margin) : null,
+      marginPct: anyPriced ? (totalCents.margin / totalCents.pricedContract) * 100 : null,
       budget: totalBudget,
       originalBudget: centsToDollars(totalCents.originalBudget),
       changeOrderBudget: centsToDollars(totalCents.changeOrderBudget),

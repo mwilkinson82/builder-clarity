@@ -200,6 +200,13 @@ export interface BucketRow {
   project_id: string;
   cost_code: string;
   bucket: string;
+  /**
+   * BUDGETVSCONTRACT1: the billable value of this SOV line — what the owner
+   * pays for this scope. Distinct from original_budget (internal cost). 0 =
+   * unpriced; the ledger shows a "needs contract value" state, never a fake
+   * zero margin. Line margin = contract_value − original_budget.
+   */
+  contract_value: number;
   original_budget: number;
   actual_to_date: number;
   ftc: number;
@@ -1483,6 +1490,8 @@ export const getProject = createServerFn({ method: "GET" })
         project_id: o.project_id as string,
         cost_code: str(o.cost_code),
         bucket: str(o.bucket),
+        // Missing column (migration not applied yet) reads as 0 = unpriced.
+        contract_value: num(o.contract_value),
         original_budget: num(o.original_budget),
         actual_to_date: num(o.actual_to_date),
         ftc: num(o.ftc),
@@ -2571,6 +2580,7 @@ const bucketInput = z.object({
   patch: z.object({
     cost_code: z.string().max(80).optional(),
     bucket: z.string().min(1).max(100).optional(),
+    contract_value: z.number().min(0).optional(),
     original_budget: z.number().min(0).optional(),
     actual_to_date: z.number().min(0).optional(),
     ftc: z.number().min(0).optional(),
@@ -2584,25 +2594,62 @@ export const updateBucket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => bucketInput.parse(input))
   .handler(async ({ data, context }) => {
-    // BUDGETLOCK1: a locked budget refuses original_budget changes. Unchanged
-    // re-commits (blur-commit UIs resend the same value) pass through.
-    if (data.patch.original_budget !== undefined) {
-      const { data: bucketRow, error: bucketError } = await context.supabase
-        .from("cost_buckets")
-        .select("project_id,original_budget")
+    // BUDGETLOCK1 + BUDGETVSCONTRACT1: a locked baseline refuses changes to
+    // BOTH money baselines — the budget (our cost) and the contract value
+    // (what the owner pays); after lock, both move only through approved
+    // change orders. Unchanged re-commits (blur-commit UIs resend the same
+    // value) pass through.
+    if (data.patch.original_budget !== undefined || data.patch.contract_value !== undefined) {
+      // select("*") so a not-yet-migrated contract_value column can't error
+      // the read — it's simply absent and reads as 0.
+      const { data: bucketRow, error: bucketError } = await dynamicTable(
+        context.supabase,
+        "cost_buckets",
+      )
+        .select("*")
         .eq("id", data.id)
         .single();
       if (bucketError) throw new Error(bucketError.message);
-      const changed = Number(bucketRow.original_budget ?? 0) !== data.patch.original_budget;
-      if (changed && (await isProjectBudgetLocked(context.supabase, bucketRow.project_id))) {
+      const row = bucketRow as Record<string, unknown>;
+      const budgetChanged =
+        data.patch.original_budget !== undefined &&
+        num(row.original_budget) !== data.patch.original_budget;
+      const contractChanged =
+        data.patch.contract_value !== undefined &&
+        num(row.contract_value) !== data.patch.contract_value;
+      if (
+        (budgetChanged || contractChanged) &&
+        (await isProjectBudgetLocked(context.supabase, str(row.project_id)))
+      ) {
         throw new Error(BUDGET_LOCKED_MESSAGE);
       }
     }
-    const { error } = await context.supabase
-      .from("cost_buckets")
+    // dynamicTable: the generated DB types don't carry contract_value until
+    // the desk applies the migration and types regenerate. Pre-migration, a
+    // contract_value patch retries without it so the rest of the edit lands.
+    const { error } = await dynamicTable(context.supabase, "cost_buckets")
       .update(data.patch)
       .eq("id", data.id);
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (
+        data.patch.contract_value !== undefined &&
+        /contract_value|schema cache|column/i.test(error.message)
+      ) {
+        const { contract_value: _dropped, ...rest } = data.patch;
+        void _dropped;
+        if (Object.keys(rest).length > 0) {
+          const { error: retryError } = await dynamicTable(context.supabase, "cost_buckets")
+            .update(rest)
+            .eq("id", data.id);
+          if (retryError) throw new Error(retryError.message);
+          return { ok: true };
+        }
+        throw new Error(
+          "Contract value isn't enabled on this workspace yet — the cost_buckets.contract_value migration hasn't been applied.",
+        );
+      }
+      throw new Error(error.message);
+    }
     return { ok: true };
   });
 
@@ -2610,6 +2657,7 @@ const createBucketInput = z.object({
   projectId: z.string().uuid(),
   cost_code: z.string().max(80).default(""),
   bucket: z.string().min(1).max(100),
+  contract_value: z.number().min(0).default(0),
   original_budget: z.number().min(0).default(0),
   actual_to_date: z.number().min(0).default(0),
   ftc: z.number().min(0).default(0),
@@ -2622,11 +2670,12 @@ export const createBucket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof createBucketInput>) => createBucketInput.parse(input))
   .handler(async ({ data, context }) => {
-    // BUDGETLOCK1: new lines may be added under a locked budget (they hold CO
-    // allocations or track added cost), but they arrive with zero budget —
-    // budget dollars only enter through change orders.
+    // BUDGETLOCK1 + BUDGETVSCONTRACT1: new lines may be added under a locked
+    // baseline (they hold CO allocations or track added cost), but they arrive
+    // with zero budget AND zero contract value — both baselines only move
+    // through change orders after lock.
     if (
-      data.original_budget > 0 &&
+      (data.original_budget > 0 || data.contract_value > 0) &&
       (await isProjectBudgetLocked(context.supabase, data.projectId))
     ) {
       throw new Error(BUDGET_LOCKED_MESSAGE);
@@ -2639,10 +2688,11 @@ export const createBucket = createServerFn({ method: "POST" })
       .limit(1)
       .maybeSingle();
     const sort_order = ((last?.sort_order as number | undefined) ?? 0) + 1;
-    const { error } = await context.supabase.from("cost_buckets").insert({
+    const insertPayload: Record<string, unknown> = {
       project_id: data.projectId,
       cost_code: data.cost_code.trim(),
       bucket: data.bucket,
+      contract_value: data.contract_value,
       original_budget: data.original_budget,
       actual_to_date: data.actual_to_date,
       ftc: data.ftc,
@@ -2650,7 +2700,13 @@ export const createBucket = createServerFn({ method: "POST" })
       source_date: data.source_date ?? new Date().toISOString().slice(0, 10),
       source_note: data.source_note,
       sort_order,
-    });
+    };
+    let { error } = await dynamicTable(context.supabase, "cost_buckets").insert(insertPayload);
+    if (error && /contract_value|schema cache|column/i.test(error.message)) {
+      // Pre-migration grace: create the line without contract_value.
+      delete insertPayload.contract_value;
+      ({ error } = await dynamicTable(context.supabase, "cost_buckets").insert(insertPayload));
+    }
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -2659,17 +2715,21 @@ export const deleteBucket = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
-    // BUDGETLOCK1: deleting a budgeted line is a budget change. Zero-budget
-    // lines (CO receivers, added-cost tracking rows) may still be removed.
-    const { data: bucketRow, error: bucketError } = await context.supabase
-      .from("cost_buckets")
-      .select("project_id,original_budget")
+    // BUDGETLOCK1 + BUDGETVSCONTRACT1: deleting a line that carries budget or
+    // contract value changes a locked baseline. Zero/zero lines (CO receivers,
+    // added-cost tracking rows) may still be removed.
+    const { data: bucketRow, error: bucketError } = await dynamicTable(
+      context.supabase,
+      "cost_buckets",
+    )
+      .select("*")
       .eq("id", data.id)
       .single();
     if (bucketError) throw new Error(bucketError.message);
+    const row = bucketRow as Record<string, unknown>;
     if (
-      Number(bucketRow.original_budget ?? 0) !== 0 &&
-      (await isProjectBudgetLocked(context.supabase, bucketRow.project_id))
+      (num(row.original_budget) !== 0 || num(row.contract_value) !== 0) &&
+      (await isProjectBudgetLocked(context.supabase, str(row.project_id)))
     ) {
       throw new Error(BUDGET_LOCKED_MESSAGE);
     }

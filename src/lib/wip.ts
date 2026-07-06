@@ -4,6 +4,10 @@ export interface WIPBucketInput {
   cost_bucket_id: string;
   cost_code: string;
   bucket: string;
+  // BUDGETVSCONTRACT1: the line's billable value (what the owner pays).
+  // Optional for legacy fixtures; 0/absent = unpriced → contract basis falls
+  // back to original_budget (pre-contract_value behavior).
+  contract_value?: number;
   original_budget: number;
   change_order_additions: number;
   actual_to_date: number;
@@ -63,7 +67,13 @@ const clampPercent = (value: number) =>
   Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 
 export function computeWIPBucket(input: WIPBucketInput): WIPBucketResult {
-  const contract_value = input.original_budget + input.change_order_additions;
+  // BUDGETVSCONTRACT1: a priced line's contract basis is its real
+  // contract_value (what the owner pays); an unpriced legacy line falls back
+  // to the cost budget — the pre-contract_value behavior, kept so existing
+  // jobs' WIP doesn't zero out. Budget-as-contract was the user-reported bug.
+  const contractBasis =
+    (input.contract_value ?? 0) > 0 ? (input.contract_value as number) : input.original_budget;
+  const contract_value = contractBasis + input.change_order_additions;
   // An explicit 0 is a real assessment (earns nothing); only null means "not assessed".
   const assessed = input.earned_percent_complete != null;
   const earned_revenue = assessed

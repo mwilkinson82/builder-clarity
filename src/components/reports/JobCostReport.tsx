@@ -29,11 +29,14 @@ function buildCsv(project: JobCostProject): string {
   const header = [
     "Cost code",
     "Description",
+    "Contract value",
     "Budget",
     "Actual cost",
     "Committed (open)",
     "Projected cost",
     "Over/(under) budget",
+    "Margin",
+    "Margin % of contract",
     "At risk",
     "Contingency",
     "% of budget used",
@@ -43,11 +46,17 @@ function buildCsv(project: JobCostProject): string {
     return [
       csvCell(isTotal ? "TOTAL" : row.costCode),
       csvCell(isTotal ? "" : row.description),
+      // Unpriced lines export as "unpriced", never as 0.00 — a zero contract
+      // in a spreadsheet reads as zero margin, which is the exact lie this
+      // column exists to prevent.
+      row.priced || row.contractValue !== 0 ? money2(row.contractValue) : "unpriced",
       money2(row.budget),
       money2(row.actuals),
       money2(row.open),
       money2(row.eac),
       money2(row.overUnder),
+      row.margin == null ? "" : money2(row.margin),
+      row.marginPct == null ? "" : row.marginPct.toFixed(1),
       money2(row.atRisk),
       money2(row.contingency),
       pct == null ? "" : pct.toFixed(1),
@@ -58,6 +67,33 @@ function buildCsv(project: JobCostProject): string {
     ...project.ledger.rows.map((row) => line(row)),
     line(project.ledger.totals, true),
   ].join("\n");
+}
+
+// The line's profit: contract minus budget, $ over % — or an explicit unpriced
+// state so a missing contract value can't masquerade as zero margin.
+function MarginCell({ row }: { row: BudgetLedgerRow }) {
+  if (row.margin == null) {
+    if (row.costBucketId !== null && !row.priced) {
+      return (
+        <span className="rounded-sm bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-warning">
+          Unpriced
+        </span>
+      );
+    }
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const negative = row.margin < 0;
+  return (
+    <span className={negative ? "text-warning" : "text-foreground"}>
+      {negative ? "−" : ""}
+      {fmtUSD(Math.abs(row.margin))}
+      {row.marginPct != null ? (
+        <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+          {row.marginPct.toFixed(1)}%
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 // Over/(under) budget: positive = under budget (favorable, kept in default
@@ -183,10 +219,13 @@ export function JobCostReport({ projects, totals, companyName, generatedOn }: Jo
           </div>
         ) : (
           <div className="constructline-wip-scroll overflow-x-auto rounded-lg border border-hairline bg-surface">
-            <table className="constructline-wip-table w-full min-w-[1080px] border-collapse text-sm">
+            <table className="constructline-wip-table w-full min-w-[1280px] border-collapse text-sm">
               <thead className="border-b border-hairline bg-surface-elevated">
                 <tr>
                   <ColHead align="left">Cost code</ColHead>
+                  <ColHead help="What the owner pays for this line — the SOV price plus approved change-order value. NOT the budget; the difference is your margin.">
+                    Contract value
+                  </ColHead>
                   <ColHead help="The budgeted cost for this code — original budget plus any approved change-order cost.">
                     Budget
                   </ColHead>
@@ -211,6 +250,9 @@ export function JobCostReport({ projects, totals, companyName, generatedOn }: Jo
                   <ColHead help="Projected cost ÷ budget. Above 100% means the projection exceeds budget.">
                     % used
                   </ColHead>
+                  <ColHead help="Contract value minus budget — your profit on this line ($ and % of contract). A line with no contract value shows Unpriced, never zero margin.">
+                    Margin
+                  </ColHead>
                 </tr>
               </thead>
               <tbody>
@@ -226,6 +268,17 @@ export function JobCostReport({ projects, totals, companyName, generatedOn }: Jo
                       {row.costCode ? (
                         <div className="text-[11px] text-muted-foreground">{row.description}</div>
                       ) : null}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">
+                      {row.costBucketId !== null && !row.priced ? (
+                        <span className="rounded-sm bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-warning">
+                          Unpriced
+                        </span>
+                      ) : row.contractValue !== 0 ? (
+                        fmtUSD(row.contractValue)
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums">{fmtUSD(row.budget)}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums">{fmtUSD(row.actuals)}</td>
@@ -251,6 +304,9 @@ export function JobCostReport({ projects, totals, companyName, generatedOn }: Jo
                     <td className="px-3 py-2.5 text-right tabular-nums">
                       <PercentUsedCell row={row} />
                     </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">
+                      <MarginCell row={row} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -262,6 +318,9 @@ export function JobCostReport({ projects, totals, companyName, generatedOn }: Jo
                       <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">
                         {rows.length} cost code{rows.length === 1 ? "" : "s"}
                       </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">
+                      {ledgerTotals.contractValue !== 0 ? fmtUSD(ledgerTotals.contractValue) : "—"}
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums">
                       {fmtUSD(ledgerTotals.budget)}
@@ -287,6 +346,9 @@ export function JobCostReport({ projects, totals, companyName, generatedOn }: Jo
                     <td className="px-3 py-2.5 text-right tabular-nums">
                       <PercentUsedCell row={ledgerTotals} />
                     </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">
+                      <MarginCell row={ledgerTotals} />
+                    </td>
                   </tr>
                 </tfoot>
               ) : null}
@@ -295,10 +357,21 @@ export function JobCostReport({ projects, totals, companyName, generatedOn }: Jo
         )}
 
         <p className="text-[11px] text-muted-foreground">
-          Projected cost = actual cost + committed. Over/(under) budget = budget − projected. At
-          risk and contingency are live IOR exposures, shown for awareness — they are not added into
-          the projected cost.
+          Projected cost = actual cost + committed. Over/(under) budget = budget − projected. Margin
+          = contract value − budget; lines without a contract value show Unpriced and are excluded
+          from the margin total. At risk and contingency are live IOR exposures, shown for awareness
+          — they are not added into the projected cost.
         </p>
+        {active && active.ledger.unpricedCount > 0 ? (
+          <p className="text-[11px] text-muted-foreground">
+            <span className="font-medium text-warning">
+              {active.ledger.unpricedCount} line{active.ledger.unpricedCount === 1 ? "" : "s"}{" "}
+              without a contract value
+            </span>{" "}
+            on this job — enter contract values on the project's Budget tab to complete the margin
+            picture.
+          </p>
+        ) : null}
       </section>
     </TooltipProvider>
   );

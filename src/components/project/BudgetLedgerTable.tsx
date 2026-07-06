@@ -39,6 +39,35 @@ function OverUnder({ value }: { value: number }) {
   );
 }
 
+// An unpriced line says so, loudly — it must never masquerade as a $0-contract
+// or zero-margin line (BUDGETVSCONTRACT1).
+function UnpricedChip() {
+  return (
+    <span className="rounded-sm bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-warning">
+      Needs contract value
+    </span>
+  );
+}
+
+// Line margin reads itself: dollars with a percent-of-contract underneath,
+// green for profit, red for a loss. null (unpriced) renders as a quiet dash —
+// the contract column's chip carries the "why".
+function MarginCell({ margin, marginPct }: { margin: number | null; marginPct: number | null }) {
+  if (margin === null) return <span className="text-muted-foreground">—</span>;
+  const negative = margin < 0;
+  return (
+    <div className={cn("tabular font-medium", negative ? "text-danger" : "text-success")}>
+      {negative ? "−" : ""}
+      {fmtUSD(Math.abs(margin))}
+      {marginPct !== null ? (
+        <div className="text-[10px] font-normal text-muted-foreground">
+          {marginPct.toFixed(1)}% of contract
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // A column header whose plain-English meaning is one hover away — the accounting
 // shorthand means nothing to a PM or biller otherwise.
 function HelpHead({ label, help, className }: { label: string; help: string; className?: string }) {
@@ -78,10 +107,16 @@ export function BudgetLedgerTable({
     buckets,
     exposures,
     allocations,
-    changeOrders.map((co) => ({ id: co.id, status: co.status, cost_amount: co.cost_amount })),
+    changeOrders.map((co) => ({
+      id: co.id,
+      status: co.status,
+      contract_amount: co.contract_amount,
+      cost_amount: co.cost_amount,
+    })),
     changeOrderAllocations.map((allocation) => ({
       change_order_id: allocation.change_order_id,
       cost_bucket_id: allocation.cost_bucket_id,
+      contract_amount: allocation.contract_amount,
       cost_amount: allocation.cost_amount,
     })),
   );
@@ -119,8 +154,13 @@ export function BudgetLedgerTable({
                 <TableHead className="w-[90px]">Cost code</TableHead>
                 <TableHead>Description</TableHead>
                 <HelpHead
+                  label="Contract value"
+                  help="What the owner pays for this line — the SOV price plus approved change-order value. This is NOT your budget; the gap between them is your margin."
+                  className="text-right"
+                />
+                <HelpHead
                   label="Budget"
-                  help="Your locked baseline plus approved change-order cost. Once the budget is locked, the only thing that moves it is a change order."
+                  help="Your internal cost baseline plus approved change-order cost — what you drive the job on. Once locked, the only thing that moves it is a change order."
                   className="text-right"
                 />
                 <TableHead className="text-right">Actuals</TableHead>
@@ -149,6 +189,11 @@ export function BudgetLedgerTable({
                   help="Budget minus Projected cost. Green means you're under budget; red means over."
                   className="text-right"
                 />
+                <HelpHead
+                  label="Margin"
+                  help="Contract value minus budget — your profit on this line, in dollars and as a percent of contract. Only shown once the line has a contract value."
+                  className="text-right"
+                />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -158,6 +203,22 @@ export function BudgetLedgerTable({
                     {row.costCode || "—"}
                   </TableCell>
                   <TableCell className="font-medium">{row.description}</TableCell>
+                  <TableCell className="text-right tabular">
+                    {row.costBucketId !== null && !row.priced ? (
+                      <UnpricedChip />
+                    ) : row.contractValue !== 0 ? (
+                      <>
+                        {fmtUSD(row.contractValue)}
+                        {row.changeOrderContract !== 0 ? (
+                          <div className="text-[10px] font-normal text-muted-foreground">
+                            incl. {fmtUSD(row.changeOrderContract)} CO
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right tabular">
                     {fmtUSD(row.budget)}
                     {row.changeOrderBudget !== 0 ? (
@@ -182,6 +243,9 @@ export function BudgetLedgerTable({
                   <TableCell className="text-right">
                     <OverUnder value={row.overUnder} />
                   </TableCell>
+                  <TableCell className="text-right">
+                    <MarginCell margin={row.margin} marginPct={row.marginPct} />
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -189,6 +253,20 @@ export function BudgetLedgerTable({
               <TableRow className="bg-surface font-semibold">
                 <TableCell />
                 <TableCell>{ledger.totals.description}</TableCell>
+                <TableCell className="text-right tabular">
+                  {ledger.totals.contractValue !== 0 ? (
+                    <>
+                      {fmtUSD(ledger.totals.contractValue)}
+                      {ledger.totals.changeOrderContract !== 0 ? (
+                        <div className="text-[10px] font-normal text-muted-foreground">
+                          incl. {fmtUSD(ledger.totals.changeOrderContract)} CO
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
                 <TableCell className="text-right tabular">
                   {fmtUSD(ledger.totals.budget)}
                   {ledger.totals.changeOrderBudget !== 0 ? (
@@ -211,10 +289,23 @@ export function BudgetLedgerTable({
                 <TableCell className="text-right">
                   <OverUnder value={ledger.totals.overUnder} />
                 </TableCell>
+                <TableCell className="text-right">
+                  <MarginCell margin={ledger.totals.margin} marginPct={ledger.totals.marginPct} />
+                </TableCell>
               </TableRow>
             </TableFooter>
           </Table>
         </div>
+        {ledger.unpricedCount > 0 ? (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            <span className="font-medium text-warning">
+              {ledger.unpricedCount} line{ledger.unpricedCount === 1 ? "" : "s"} without a contract
+              value
+            </span>{" "}
+            — the margin total covers priced lines only. Enter each line's contract value (what the
+            owner pays) in the budget grid below to complete the picture.
+          </p>
+        ) : null}
       </TooltipProvider>
     </div>
   );

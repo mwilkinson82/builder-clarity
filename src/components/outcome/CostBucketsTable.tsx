@@ -33,6 +33,7 @@ type BucketPatch = Partial<
     | "cost_code"
     | "actual_to_date"
     | "ftc"
+    | "contract_value"
     | "original_budget"
     | "bucket"
     | "source_type"
@@ -196,7 +197,14 @@ export function CostBucketsTable({
               <TableHead>Code / Division</TableHead>
               <TableHead>Bucket</TableHead>
               <TableHead>Source</TableHead>
-              <TableHead className="text-right">Original Budget</TableHead>
+              <HelpHead
+                label="Contract value"
+                help="What the client pays for this line — your SOV price. NOT your budget: the difference between the two is your margin. 0 shows as unpriced on the ledger, never as zero margin."
+              />
+              <HelpHead
+                label="Original Budget"
+                help="What you expect this line to cost you — the internal budget you drive the job on. Distinct from contract value; billing never pulls from this."
+              />
               <TableHead className="text-right">Actual to Date</TableHead>
               <TableHead className="text-right">Forecast to Complete</TableHead>
               <HelpHead
@@ -227,6 +235,15 @@ export function CostBucketsTable({
                         {group.buckets.length} line{group.buckets.length === 1 ? "" : "s"}
                       </span>
                     </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular text-muted-foreground">
+                    {(() => {
+                      const contractSubtotal = group.buckets.reduce(
+                        (sum, bucket) => sum + (bucket.contract_value || 0),
+                        0,
+                      );
+                      return contractSubtotal > 0 ? fmtUSD(contractSubtotal) : "—";
+                    })()}
                   </TableCell>
                   <TableCell className="text-right tabular text-muted-foreground">
                     {fmtUSD(totals.budget)}
@@ -267,6 +284,27 @@ export function CostBucketsTable({
                         date={b.source_date}
                         onChange={(source_type) => onUpdate(b.id, { source_type })}
                       />
+                    </TableCell>
+                    <TableCell className="text-right tabular text-foreground/80">
+                      {budgetLocked ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex cursor-help items-center justify-end gap-1.5">
+                              <LockKeyhole className="h-3 w-3 opacity-50" />
+                              {b.contract_value > 0 ? fmtUSD(b.contract_value) : "—"}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[240px] text-xs">
+                            The baseline is locked. Contract value changes come through change
+                            orders — the approved CO's contract amount layers onto this line.
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <NumCell
+                          value={b.contract_value}
+                          onCommit={(v) => onUpdate(b.id, { contract_value: v })}
+                        />
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular text-foreground/80">
                       {budgetLocked ? (
@@ -325,7 +363,7 @@ export function CostBucketsTable({
             })}
             {buckets.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="py-8">
+                <TableCell colSpan={10} className="py-8">
                   <EmptyState
                     icon={FileSpreadsheet}
                     title="No budget lines yet"
@@ -336,14 +374,14 @@ export function CostBucketsTable({
             )}
             {buckets.length > 0 && visibleCount === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">
                   No budget lines match that search.
                 </TableCell>
               </TableRow>
             )}
             {onCreate && (
               <TableRow className="bg-surface/40">
-                <TableCell colSpan={8}>
+                <TableCell colSpan={9}>
                   <div className="flex flex-col gap-2 md:flex-row md:items-center">
                     <Input
                       value={newCode}
