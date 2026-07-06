@@ -20,7 +20,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Check, FileSpreadsheet, Plus, Search, Trash2 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Check, FileSpreadsheet, Info, Plus, Search, Trash2 } from "lucide-react";
 import { fmtUSD } from "@/lib/format";
 import { sovLineForecast, sovTotals } from "@/lib/sov-rollup";
 import type { BucketRow } from "@/lib/projects.functions";
@@ -63,6 +64,26 @@ function overUnder(value: number): { text: string; tone: string } {
     text: `${fmtUSD(Math.abs(value))} ${under ? "under" : "over"}`,
     tone: under ? "text-success" : "text-danger",
   };
+}
+
+// A right-aligned column header whose plain-English meaning is one hover away —
+// matching the budget-vs-cost ledger so the editable grid reads the same.
+function HelpHead({ label, help }: { label: string; help: string }) {
+  return (
+    <TableHead className="text-right">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex cursor-help items-center gap-1">
+            {label}
+            <Info className="h-3 w-3 opacity-60" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-[260px] text-xs font-normal normal-case leading-snug tracking-normal">
+          {help}
+        </TooltipContent>
+      </Tooltip>
+    </TableHead>
+  );
 }
 
 export function CostBucketsTable({
@@ -140,228 +161,243 @@ export function CostBucketsTable({
   };
 
   return (
-    <div className="overflow-hidden rounded-lg border border-hairline bg-card">
-      <div className="flex flex-col gap-3 border-b border-hairline bg-card px-3 py-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Grouped by code / division
+    <TooltipProvider delayDuration={150}>
+      <div className="overflow-hidden rounded-lg border border-hairline bg-card">
+        <div className="flex flex-col gap-3 border-b border-hairline bg-card px-3 py-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              Grouped by code / division
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Showing {visibleCount} of {buckets.length} budget line
+              {buckets.length === 1 ? "" : "s"}.
+            </div>
           </div>
-          <div className="text-xs text-muted-foreground">
-            Showing {visibleCount} of {buckets.length} budget line
-            {buckets.length === 1 ? "" : "s"}.
+          <div className="relative md:w-80">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search code, division, bucket, or source"
+              className="h-9 pl-8"
+            />
           </div>
         </div>
-        <div className="relative md:w-80">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search code, division, bucket, or source"
-            className="h-9 pl-8"
-          />
-        </div>
-      </div>
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-surface">
-            <TableHead>Code / Division</TableHead>
-            <TableHead>Bucket</TableHead>
-            <TableHead>Source</TableHead>
-            <TableHead className="text-right">Original Budget</TableHead>
-            <TableHead className="text-right">Actual to Date</TableHead>
-            <TableHead className="text-right">Forecast to Complete</TableHead>
-            <TableHead className="text-right">Projected cost</TableHead>
-            <TableHead className="text-right">Over / under budget</TableHead>
-            <TableHead className="w-10" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {visibleGroups.flatMap((group) => {
-            const totals = sovTotals(group.buckets);
-            const facTotal = totals.fac;
-            const varianceTotal = totals.variance;
-            const groupRows = [
-              <TableRow key={`division-${group.division.key}`} className="bg-surface/80">
-                <TableCell colSpan={3}>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      {group.division.code}
-                    </span>
-                    <span className="font-semibold text-foreground">{group.division.label}</span>
-                    <span className="rounded-full bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      {group.buckets.length} line{group.buckets.length === 1 ? "" : "s"}
-                    </span>
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-surface">
+              <TableHead>Code / Division</TableHead>
+              <TableHead>Bucket</TableHead>
+              <TableHead>Source</TableHead>
+              <TableHead className="text-right">Original Budget</TableHead>
+              <TableHead className="text-right">Actual to Date</TableHead>
+              <TableHead className="text-right">Forecast to Complete</TableHead>
+              <HelpHead
+                label="Projected cost"
+                help="Actual to date + forecast-to-complete — everything you've spent plus everything still committed. The projected final cost of this line."
+              />
+              <HelpHead
+                label="Over / under budget"
+                help="Budget minus projected cost. Green means you're coming in under budget; red means over."
+              />
+              <TableHead className="w-10" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {visibleGroups.flatMap((group) => {
+              const totals = sovTotals(group.buckets);
+              const facTotal = totals.fac;
+              const varianceTotal = totals.variance;
+              const groupRows = [
+                <TableRow key={`division-${group.division.key}`} className="bg-surface/80">
+                  <TableCell colSpan={3}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        {group.division.code}
+                      </span>
+                      <span className="font-semibold text-foreground">{group.division.label}</span>
+                      <span className="rounded-full bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {group.buckets.length} line{group.buckets.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular text-muted-foreground">
+                    {fmtUSD(totals.budget)}
+                  </TableCell>
+                  <TableCell className="text-right tabular text-muted-foreground">
+                    {fmtUSD(totals.actual)}
+                  </TableCell>
+                  <TableCell className="text-right tabular text-muted-foreground">
+                    {fmtUSD(totals.ftc)}
+                  </TableCell>
+                  <TableCell className="text-right tabular font-medium">
+                    {fmtUSD(facTotal)}
+                  </TableCell>
+                  <TableCell className={`text-right tabular ${overUnder(varianceTotal).tone}`}>
+                    {overUnder(varianceTotal).text}
+                  </TableCell>
+                  <TableCell />
+                </TableRow>,
+              ];
+
+              for (const b of group.buckets) {
+                const { fac, variance } = sovLineForecast(b);
+                const neg = variance < 0;
+                groupRows.push(
+                  <TableRow key={b.id}>
+                    <TableCell className="font-mono text-xs">
+                      <CodeCell
+                        value={b.cost_code}
+                        onCommit={(v) => onUpdate(b.id, { cost_code: v })}
+                      />
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      <NameCell value={b.bucket} onCommit={(v) => onUpdate(b.id, { bucket: v })} />
+                    </TableCell>
+                    <TableCell className="min-w-[150px]">
+                      <SourceCell
+                        value={b.source_type}
+                        date={b.source_date}
+                        onChange={(source_type) => onUpdate(b.id, { source_type })}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular text-foreground/80">
+                      <NumCell
+                        value={b.original_budget}
+                        onCommit={(v) => onUpdate(b.id, { original_budget: v })}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular">
+                      <NumCell
+                        value={b.actual_to_date}
+                        onCommit={(v) => onUpdate(b.id, { actual_to_date: v })}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right tabular">
+                      <NumCell value={b.ftc} onCommit={(v) => onUpdate(b.id, { ftc: v })} />
+                    </TableCell>
+                    <TableCell className="text-right tabular font-medium">{fmtUSD(fac)}</TableCell>
+                    <TableCell
+                      className={`text-right tabular ${overUnder(variance).tone} ${neg ? "font-medium" : ""}`}
+                    >
+                      {overUnder(variance).text}
+                    </TableCell>
+                    <TableCell>
+                      {onDelete && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 text-muted-foreground hover:text-danger"
+                          onClick={() => {
+                            if (confirm(`Delete cost bucket "${b.bucket}"?`)) onDelete(b.id);
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>,
+                );
+              }
+              return groupRows;
+            })}
+            {buckets.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={9} className="py-8">
+                  <EmptyState
+                    icon={FileSpreadsheet}
+                    title="No budget lines yet"
+                    description='Use "Build budget from estimate" or "Import budget" above to bring your cost budget in — or add the first line below.'
+                  />
+                </TableCell>
+              </TableRow>
+            )}
+            {buckets.length > 0 && visibleCount === 0 && (
+              <TableRow>
+                <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
+                  No budget lines match that search.
+                </TableCell>
+              </TableRow>
+            )}
+            {onCreate && (
+              <TableRow className="bg-surface/40">
+                <TableCell colSpan={8}>
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                    <Input
+                      value={newCode}
+                      onChange={(e) => setNewCode(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submitNew();
+                      }}
+                      placeholder="Code / division"
+                      className="h-8 md:w-28"
+                    />
+                    <Input
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submitNew();
+                      }}
+                      placeholder="Add a cost line (e.g. Owner-direct allowance, CO-cost holdback, Permits)"
+                      className="h-8 md:max-w-md"
+                    />
+                    <Select
+                      value={newSource}
+                      onValueChange={(v) => setNewSource(v as BucketSource)}
+                    >
+                      <SelectTrigger className="h-8 md:w-[170px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="original_sov">Original budget</SelectItem>
+                        <SelectItem value="change_order">Change Order</SelectItem>
+                        <SelectItem value="added_cost">Added Cost</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={submitNew}
+                      disabled={!newName.trim()}
+                      className="gap-1.5"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Add line
+                    </Button>
                   </div>
                 </TableCell>
-                <TableCell className="text-right tabular text-muted-foreground">
-                  {fmtUSD(totals.budget)}
-                </TableCell>
-                <TableCell className="text-right tabular text-muted-foreground">
-                  {fmtUSD(totals.actual)}
-                </TableCell>
-                <TableCell className="text-right tabular text-muted-foreground">
-                  {fmtUSD(totals.ftc)}
-                </TableCell>
-                <TableCell className="text-right tabular font-medium">{fmtUSD(facTotal)}</TableCell>
-                <TableCell className={`text-right tabular ${overUnder(varianceTotal).tone}`}>
-                  {overUnder(varianceTotal).text}
-                </TableCell>
                 <TableCell />
-              </TableRow>,
-            ];
-
-            for (const b of group.buckets) {
-              const { fac, variance } = sovLineForecast(b);
-              const neg = variance < 0;
-              groupRows.push(
-                <TableRow key={b.id}>
-                  <TableCell className="font-mono text-xs">
-                    <CodeCell
-                      value={b.cost_code}
-                      onCommit={(v) => onUpdate(b.id, { cost_code: v })}
-                    />
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    <NameCell value={b.bucket} onCommit={(v) => onUpdate(b.id, { bucket: v })} />
-                  </TableCell>
-                  <TableCell className="min-w-[150px]">
-                    <SourceCell
-                      value={b.source_type}
-                      date={b.source_date}
-                      onChange={(source_type) => onUpdate(b.id, { source_type })}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right tabular text-foreground/80">
-                    <NumCell
-                      value={b.original_budget}
-                      onCommit={(v) => onUpdate(b.id, { original_budget: v })}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right tabular">
-                    <NumCell
-                      value={b.actual_to_date}
-                      onCommit={(v) => onUpdate(b.id, { actual_to_date: v })}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right tabular">
-                    <NumCell value={b.ftc} onCommit={(v) => onUpdate(b.id, { ftc: v })} />
-                  </TableCell>
-                  <TableCell className="text-right tabular font-medium">{fmtUSD(fac)}</TableCell>
-                  <TableCell
-                    className={`text-right tabular ${overUnder(variance).tone} ${neg ? "font-medium" : ""}`}
-                  >
-                    {overUnder(variance).text}
-                  </TableCell>
-                  <TableCell>
-                    {onDelete && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7 text-muted-foreground hover:text-danger"
-                        onClick={() => {
-                          if (confirm(`Delete cost bucket "${b.bucket}"?`)) onDelete(b.id);
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>,
+              </TableRow>
+            )}
+          </TableBody>
+          {buckets.length > 0 &&
+            (() => {
+              const t = sovTotals(buckets);
+              const neg = t.variance < 0;
+              return (
+                <TableFooter>
+                  <TableRow className="bg-surface font-semibold">
+                    <TableCell />
+                    <TableCell>Total</TableCell>
+                    <TableCell />
+                    <TableCell className="text-right tabular">{fmtUSD(t.budget)}</TableCell>
+                    <TableCell className="text-right tabular">{fmtUSD(t.actual)}</TableCell>
+                    <TableCell className="text-right tabular">{fmtUSD(t.ftc)}</TableCell>
+                    <TableCell className="text-right tabular">{fmtUSD(t.fac)}</TableCell>
+                    <TableCell
+                      className={`text-right tabular ${neg ? "text-danger" : "text-success"}`}
+                    >
+                      {neg
+                        ? `−${fmtUSD(Math.abs(t.variance)).replace("−", "")}`
+                        : fmtUSD(t.variance)}
+                    </TableCell>
+                    <TableCell />
+                  </TableRow>
+                </TableFooter>
               );
-            }
-            return groupRows;
-          })}
-          {buckets.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={9} className="py-8">
-                <EmptyState
-                  icon={FileSpreadsheet}
-                  title="No budget lines yet"
-                  description='Use "Build budget from estimate" or "Import budget" above to bring your cost budget in — or add the first line below.'
-                />
-              </TableCell>
-            </TableRow>
-          )}
-          {buckets.length > 0 && visibleCount === 0 && (
-            <TableRow>
-              <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
-                No budget lines match that search.
-              </TableCell>
-            </TableRow>
-          )}
-          {onCreate && (
-            <TableRow className="bg-surface/40">
-              <TableCell colSpan={8}>
-                <div className="flex flex-col gap-2 md:flex-row md:items-center">
-                  <Input
-                    value={newCode}
-                    onChange={(e) => setNewCode(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") submitNew();
-                    }}
-                    placeholder="Code / division"
-                    className="h-8 md:w-28"
-                  />
-                  <Input
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") submitNew();
-                    }}
-                    placeholder="Add a cost line (e.g. Owner-direct allowance, CO-cost holdback, Permits)"
-                    className="h-8 md:max-w-md"
-                  />
-                  <Select value={newSource} onValueChange={(v) => setNewSource(v as BucketSource)}>
-                    <SelectTrigger className="h-8 md:w-[170px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="original_sov">Original budget</SelectItem>
-                      <SelectItem value="change_order">Change Order</SelectItem>
-                      <SelectItem value="added_cost">Added Cost</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={submitNew}
-                    disabled={!newName.trim()}
-                    className="gap-1.5"
-                  >
-                    <Plus className="h-3.5 w-3.5" /> Add line
-                  </Button>
-                </div>
-              </TableCell>
-              <TableCell />
-            </TableRow>
-          )}
-        </TableBody>
-        {buckets.length > 0 &&
-          (() => {
-            const t = sovTotals(buckets);
-            const neg = t.variance < 0;
-            return (
-              <TableFooter>
-                <TableRow className="bg-surface font-semibold">
-                  <TableCell />
-                  <TableCell>Total</TableCell>
-                  <TableCell />
-                  <TableCell className="text-right tabular">{fmtUSD(t.budget)}</TableCell>
-                  <TableCell className="text-right tabular">{fmtUSD(t.actual)}</TableCell>
-                  <TableCell className="text-right tabular">{fmtUSD(t.ftc)}</TableCell>
-                  <TableCell className="text-right tabular">{fmtUSD(t.fac)}</TableCell>
-                  <TableCell
-                    className={`text-right tabular ${neg ? "text-danger" : "text-success"}`}
-                  >
-                    {neg ? `−${fmtUSD(Math.abs(t.variance)).replace("−", "")}` : fmtUSD(t.variance)}
-                  </TableCell>
-                  <TableCell />
-                </TableRow>
-              </TableFooter>
-            );
-          })()}
-      </Table>
-    </div>
+            })()}
+        </Table>
+      </div>
+    </TooltipProvider>
   );
 }
 
