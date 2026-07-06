@@ -141,6 +141,14 @@ export function AiaApplicationStepper({
                 to start over.
               </span>
             ) : null}
+            {/* BILLING P1c: the SOV is the contract schedule you bill from, not
+                your cost budget — importing from the budget seeds it at cost, so
+                cue the biller to bill contract amounts, not under-bill at cost. */}
+            <span className="text-[11px] text-muted-foreground">
+              This is what you bill the owner — set it to your{" "}
+              <span className="font-medium text-foreground">contract schedule of values</span>, not
+              your cost budget.
+            </span>
           </div>
         );
       case "entries":

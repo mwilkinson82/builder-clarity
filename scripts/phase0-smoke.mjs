@@ -782,6 +782,9 @@ await expectContains(
     /Go to step/,
     // BILLING P1b: finalize + email the package to the client from the flow.
     /Email to client/,
+    // BILLING P1c: the SOV step cues the biller to bill the contract schedule,
+    // not the cost budget — so a budget-generated SOV isn't billed at cost.
+    /contract schedule of values/,
   ],
   "AIA application stepper keeps every step visible and routes blocked generate clicks",
 );
