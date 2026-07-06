@@ -34,7 +34,11 @@ import {
   inkIntegralImage,
   boxDensity,
 } from "../src/lib/ai-takeoff/embedding-match/embedding-candidates-domain.ts";
-import { extractEmbedding } from "../src/lib/ai-takeoff/replicate.server.ts";
+import {
+  extractEmbedding,
+  parseRetryAfterMs,
+  computeBackoffMs,
+} from "../src/lib/ai-takeoff/replicate.server.ts";
 import { planVisionProviders } from "../src/lib/ai-takeoff/vision-domain.ts";
 
 let checks = 0;
@@ -298,5 +302,40 @@ ok(
   planVisionProviders({ anthropicConfigured: false, openAiConfigured: false }).length === 0,
   "neither configured → empty plan (isVisionConfigured=false)",
 );
+
+// --- 10. Replicate 429 throttle resilience ---------------------------------
+// A <$5 Replicate balance trips a 6/min burst-1 limit that our 6 concurrent
+// embeds hit head-on (observed live 2026-07-06). embedOne retries on 429 with
+// exponential backoff + jitter, honoring Retry-After. Lock the two pure pieces
+// that decide the wait so the schedule can't silently regress.
+
+// Retry-After parsing: delta-seconds is the form Replicate sends.
+ok(parseRetryAfterMs("10") === 10_000, "Retry-After: '10' seconds → 10000ms");
+ok(parseRetryAfterMs("0") === 0, "Retry-After: '0' → 0ms (retry immediately)");
+ok(parseRetryAfterMs(" 5 ") === 5_000, "Retry-After: trims whitespace");
+ok(parseRetryAfterMs(null) === null, "Retry-After: absent header → null");
+ok(parseRetryAfterMs("") === null, "Retry-After: empty → null");
+ok(parseRetryAfterMs("soon") === null, "Retry-After: unparseable → null (fall back to backoff)");
+ok(
+  parseRetryAfterMs("-5") === 0,
+  "Retry-After: negative delta clamps to 0, never a negative sleep",
+);
+
+// Backoff schedule (jitter fixed for determinism; Math.random supplies it live).
+ok(computeBackoffMs(1, null, 0) === 1_000, "backoff: first retry base = 1s (no jitter)");
+ok(computeBackoffMs(2, null, 0) === 2_000, "backoff: exponential doubles each retry");
+ok(computeBackoffMs(3, null, 0) === 4_000, "backoff: retry 3 = 4s");
+ok(
+  computeBackoffMs(10, null, 0) === 20_000,
+  "backoff: capped at EMBED_RETRY_MAX_MS however deep the retry",
+);
+ok(computeBackoffMs(1, 5_000, 0) === 5_000, "backoff: Retry-After raises a short exponential wait");
+ok(computeBackoffMs(1, 999_999, 0) === 20_000, "backoff: an oversized Retry-After is still capped");
+ok(
+  computeBackoffMs(1, null, 1) === 2_000,
+  "backoff: jitter adds up to +100% (full jitter de-correlates workers)",
+);
+const jittered = computeBackoffMs(2, null, 0.5);
+ok(jittered >= 2_000 && jittered <= 4_000, `backoff: jittered wait stays in band (${jittered}ms)`);
 
 console.log(`ai-embedding-match smoke: ${checks} checks passed`);
