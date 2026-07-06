@@ -9,13 +9,13 @@
 // ImageNet normalize) and the CLS-token slice match the offline proof exactly; the
 // scoring/selection is the pure domain the node smoke covers.
 
-// CPU-only wasm build on purpose. The default "onnxruntime-web" entry is the
-// JSEP (WebGPU) build, which dynamically imports ort-wasm-simd-threaded.jsep.mjs
-// — a file we do not self-host — and 404'd in production ("no available backend
-// found"), silently degrading the scan to the model engine. The "/wasm" entry
-// loads only the base ort-wasm-simd-threaded.wasm we DO bundle. (WebGPU accel is
-// a later optimization: it would need the jsep wasm bundled too.)
-import * as ort from "onnxruntime-web/wasm";
+// WebGPU build with a CPU-wasm fallback. Live QA proved the CPU-only path loads
+// but is too slow — the single-thread wasm DINOv2 sweep of a dense sheet blew
+// past the match timeout and degraded to the model engine. This "/webgpu" entry
+// is the JSEP build: it runs the embeddings on the GPU (typically 10-50x faster)
+// and falls back to wasm where WebGPU is unavailable. Both the jsep and base wasm
+// are self-hosted in public/ort (no CDN), so a third-party outage can't break it.
+import * as ort from "onnxruntime-web/webgpu";
 import {
   planEmbeddingSweep,
   sweepWindowCenters,
@@ -37,15 +37,16 @@ import {
 } from "./embedding-match-domain.ts";
 import type { EmbeddingMatchRequest, EmbeddingMatchResponse } from "./embedding-match-protocol.ts";
 
-// Self-hosted runtime (no CDN); single-threaded avoids the cross-origin-isolation
-// (COOP/COEP) headers threaded wasm would require. WebGPU is a later optimization.
+// Self-hosted runtime (no CDN). The wasm fallback stays single-threaded so it
+// never needs cross-origin-isolation (COOP/COEP) headers; the GPU path doesn't
+// use wasm threads at all.
 ort.env.wasm.wasmPaths = EMBEDDING_ORT_WASM_PATH;
 ort.env.wasm.numThreads = 1;
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 const getSession = () => {
   sessionPromise ??= ort.InferenceSession.create(EMBEDDING_MODEL_URL, {
-    executionProviders: ["wasm"],
+    executionProviders: ["webgpu", "wasm"],
     graphOptimizationLevel: "all",
   });
   return sessionPromise;
