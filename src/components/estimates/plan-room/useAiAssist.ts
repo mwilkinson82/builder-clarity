@@ -55,10 +55,12 @@ import {
   type TemplateMatchSession,
 } from "@/lib/ai-takeoff/template-match/template-match-client";
 import {
-  createEmbeddingMatchSession,
-  type EmbeddingMatchSession,
-} from "@/lib/ai-takeoff/embedding-match/embedding-match-client";
-import { DEFAULT_EMBEDDING_MATCH_THRESHOLD } from "@/lib/ai-takeoff/embedding-match/embedding-match-domain";
+  DEFAULT_EMBEDDING_MATCH_THRESHOLD,
+  selectEmbeddingMatches,
+  topEmbeddingScores,
+} from "@/lib/ai-takeoff/embedding-match/embedding-match-domain";
+import { detectCandidatePeaks } from "@/lib/ai-takeoff/embedding-match/embedding-candidates-domain";
+import { embedCropsForAiCounts } from "@/lib/ai-takeoff/ai-embed.functions";
 import { activeAiEngine } from "@/lib/ai-takeoff/embedding-match/ai-engine-flag";
 import { DEFAULT_MAX_SHEETS_PER_SCAN, quoteScanCredits } from "@/lib/credits/credits-domain";
 import {
@@ -137,6 +139,7 @@ export function useAiAssist({
   const recordRejectionFn = useServerFn(recordAiGhostRejection);
   const createMeasurementFn = useServerFn(createTakeoffMeasurement);
   const updateMeasurementFn = useServerFn(updateTakeoffMeasurement);
+  const embedCropsFn = useServerFn(embedCropsForAiCounts);
 
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<AiAssistPhase>("idle");
@@ -279,9 +282,9 @@ export function useAiAssist({
     let templateSession: TemplateMatchSession | null = null;
     // Embedding engine (AITAKEOFF12): the learned-identity alternative to the
     // pixel matcher, selected by VITE_AI_ENGINE (default "pixel"). One session
-    // per scan, disposed in the same finally. When on it replaces the pixel
-    // sweep and its hits ride the exact same auto-ghost path.
-    let embeddingSession: EmbeddingMatchSession | null = null;
+    // per scan. When on it replaces the pixel sweep — candidate crops are
+    // embedded server-side (Replicate) and the hits ride the exact same
+    // auto-ghost path, so there is no client worker to dispose here.
     const aiEngine = activeAiEngine();
     let echo = "";
     setScanProgress({
@@ -406,8 +409,9 @@ export function useAiAssist({
           : [];
         exemplarRasterReuse = exemplarRaster;
         if (templates.length > 0) {
-          if (aiEngine === "embedding") embeddingSession = createEmbeddingMatchSession();
-          else templateSession = createTemplateMatchSession();
+          // Embedding mode embeds candidate crops server-side (Replicate) and
+          // needs no client worker; only the pixel engine spins one up.
+          if (aiEngine !== "embedding") templateSession = createTemplateMatchSession();
         }
       }
       if (proposalSource === "template" && !templateSession) {
@@ -498,21 +502,86 @@ export function useAiAssist({
         let templateMasked: boolean | null = null;
         let templateMaskCoverage: number | null = null;
         let templateThreshold: number | null = null;
-        if (embeddingSession && templates.length > 0 && geometry.footprintRasterPx !== null) {
+        if (
+          aiEngine === "embedding" &&
+          templates.length > 0 &&
+          geometry.footprintRasterPx !== null
+        ) {
+          // Server embedding engine (AITAKEOFF12): propose candidate crops from
+          // ink-density peaks on the client (cheap), embed exemplar + candidates
+          // on Replicate's GPUs (uniform speed, any device), score by cosine, and
+          // select client-side with the sheet geometry. Learned-identity hits ride
+          // the shared template-hit path so they auto-ghost like pixel hits.
           try {
-            const rasterPixels = raster.canvas
-              .getContext("2d")
-              ?.getImageData(0, 0, raster.widthPx, raster.heightPx);
-            if (!rasterPixels) throw new Error("The sheet could not be read for matching.");
-            const matched = await embeddingSession.match({
-              raster: rasterPixels,
-              exemplar: templates[0].image,
-              footprintPx: geometry.footprintRasterPx,
-              threshold: DEFAULT_EMBEDDING_MATCH_THRESHOLD,
+            const footprintPx = geometry.footprintRasterPx;
+            const rasterCtx = raster.canvas.getContext("2d");
+            const rasterPixels = rasterCtx?.getImageData(0, 0, raster.widthPx, raster.heightPx);
+            if (!rasterCtx || !rasterPixels) {
+              throw new Error("The sheet could not be read for matching.");
+            }
+            // Grayscale for the density proposer (luma-ish average is enough).
+            const rgba = rasterPixels.data;
+            const gray = new Uint8Array(raster.widthPx * raster.heightPx);
+            for (let p = 0; p < gray.length; p += 1) {
+              gray[p] = (rgba[p * 4] + rgba[p * 4 + 1] + rgba[p * 4 + 2]) / 3;
+            }
+            const peaks = detectCandidatePeaks(gray, raster.widthPx, raster.heightPx, footprintPx);
+
+            // Crop each peak to a footprint box on a white ground (edge crops
+            // stay opaque). One reused canvas keeps allocation flat.
+            const cropSide = Math.max(24, Math.round(footprintPx * 1.4));
+            const cropHalf = Math.round(cropSide / 2);
+            const cropCanvas = document.createElement("canvas");
+            cropCanvas.width = cropSide;
+            cropCanvas.height = cropSide;
+            const cropCtx = cropCanvas.getContext("2d");
+            if (!cropCtx) throw new Error("The sheet could not be cropped for matching.");
+            const toCropBase64 = (cx: number, cy: number): string => {
+              cropCtx.fillStyle = "#ffffff";
+              cropCtx.fillRect(0, 0, cropSide, cropSide);
+              cropCtx.drawImage(
+                raster.canvas,
+                cx - cropHalf,
+                cy - cropHalf,
+                cropSide,
+                cropSide,
+                0,
+                0,
+                cropSide,
+                cropSide,
+              );
+              return cropCanvas.toDataURL("image/png").split(",")[1] ?? "";
+            };
+            const candidates = peaks.map((peak) => ({
+              // Normalized [0,1] sheet-space center so cosine selection dedupes
+              // in the same space the pixel engine uses (geometry.radius).
+              x: peak.x / raster.widthPx,
+              y: peak.y / raster.heightPx,
+              scale: 1,
+              base64: toCropBase64(peak.x, peak.y),
+              mediaType: "image/png",
+            }));
+
+            // Exemplar crop → base64 PNG.
+            const exemplarCanvas = document.createElement("canvas");
+            exemplarCanvas.width = templates[0].image.width;
+            exemplarCanvas.height = templates[0].image.height;
+            exemplarCanvas.getContext("2d")?.putImageData(templates[0].image, 0, 0);
+            const exemplarBase64 = exemplarCanvas.toDataURL("image/png").split(",")[1] ?? "";
+
+            const embedResult = await embedCropsFn({
+              data: {
+                exemplar: { base64: exemplarBase64, mediaType: "image/png" },
+                candidates,
+              },
             });
-            // Learned-identity hits ride the shared template-hit path so they
-            // auto-ghost (AITAKEOFF11) exactly like pixel hits; no rotation.
-            templateHits = matched.candidates.map((candidate) => ({
+            const scored = embedResult.scored;
+            const matched = selectEmbeddingMatches(
+              scored,
+              DEFAULT_EMBEDDING_MATCH_THRESHOLD,
+              geometry.radius,
+            );
+            templateHits = matched.map((candidate) => ({
               x: candidate.x,
               y: candidate.y,
               score: candidate.score,
@@ -521,9 +590,9 @@ export function useAiAssist({
               templateIndex: 0,
             }));
             templateEngine = "ok";
-            templateElapsedMs = matched.elapsedMs;
-            templateSweeps = matched.windowCount;
-            templateTopScores = matched.topScores.map((top) => ({
+            templateElapsedMs = embedResult.elapsedMs ?? null;
+            templateSweeps = candidates.length;
+            templateTopScores = topEmbeddingScores(scored).map((top) => ({
               x: top.x,
               y: top.y,
               score: top.score,
@@ -531,7 +600,7 @@ export function useAiAssist({
               scale: top.scale,
               templateIndex: 0,
             }));
-            templateThreshold = matched.appliedThreshold;
+            templateThreshold = DEFAULT_EMBEDDING_MATCH_THRESHOLD;
           } catch (error) {
             if (proposalSource === "template") throw error;
             templateEngine = "failed";
@@ -843,11 +912,11 @@ export function useAiAssist({
     } finally {
       // The worker (and its wasm heap) never outlives the scan.
       templateSession?.dispose();
-      embeddingSession?.dispose();
     }
   }, [
     beginScanFn,
     completeScanFn,
+    embedCropsFn,
     estimateId,
     exemplar,
     existingCountPointsForSheet,
