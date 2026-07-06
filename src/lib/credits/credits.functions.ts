@@ -59,8 +59,8 @@ export const getCreditSummary = createServerFn({ method: "GET" })
   .inputValidator((input: z.input<typeof creditSummaryInput>) => creditSummaryInput.parse(input))
   .handler(async ({ context }): Promise<CreditSummary> => {
     const organizationId = await resolveOrganizationId(context);
-    const { isAiAssistConfigured, resolveConfiguredAiModel } =
-      await import("@/lib/ai-takeoff/anthropic.server");
+    const { isVisionConfigured, resolveVisionModel } =
+      await import("@/lib/ai-takeoff/vision.server");
 
     const packs = creditPacksFromEnv(process.env.CREDIT_PACKS_JSON);
 
@@ -79,8 +79,8 @@ export const getCreditSummary = createServerFn({ method: "GET" })
     const base = {
       organizationId,
       packs,
-      aiAssistConfigured: isAiAssistConfigured(),
-      aiModel: resolveConfiguredAiModel(),
+      aiAssistConfigured: isVisionConfigured(),
+      aiModel: resolveVisionModel(),
       isSuperAdmin,
     };
 

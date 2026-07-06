@@ -159,11 +159,11 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof beginScanInput>) => beginScanInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { isAiAssistConfigured, resolveConfiguredAiModel } =
-      await import("@/lib/ai-takeoff/anthropic.server");
-    if (!isAiAssistConfigured()) {
+    const { isVisionConfigured, resolveVisionModel } =
+      await import("@/lib/ai-takeoff/vision.server");
+    if (!isVisionConfigured()) {
       throw new Error(
-        "AI assist is not configured. Add ANTHROPIC_API_KEY to the server environment.",
+        "AI assist is not configured. Add ANTHROPIC_API_KEY or OPENAI_API_KEY to the server environment.",
       );
     }
 
@@ -214,7 +214,7 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
       );
     }
 
-    const model = resolveConfiguredAiModel();
+    const model = resolveVisionModel();
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const { data: operationRow, error: operationError } = await dynamicTable(
@@ -404,15 +404,16 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
       throw new Error("That sheet is not part of this AI scan.");
     }
 
-    const { callAnthropicVision } = await import("@/lib/ai-takeoff/anthropic.server");
+    const { callVision } = await import("@/lib/ai-takeoff/vision.server");
 
     let candidates: AiCountCandidate[] = [];
     let suppressedNearExisting: AiCountCandidate[] = [];
     let usage = { inputTokens: 0, outputTokens: 0 };
+    let usedModel = operation.model_used;
     let exemplarDescription = "";
     let rawResponseText = "";
     try {
-      const result = await callAnthropicVision({
+      const result = await callVision({
         model: operation.model_used,
         instruction: buildScanInstruction({
           label: data.references.label,
@@ -425,6 +426,7 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
         ],
       });
       usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens };
+      usedModel = result.model;
       rawResponseText = result.text;
       const parsed = parseScanResponse(result.text, data.tile.width, data.tile.height);
       exemplarDescription = parsed.exemplarDescription;
@@ -549,7 +551,7 @@ export const scanSheetTileForAiCounts = createServerFn({ method: "POST" })
       .update({
         input_tokens: inputTokens,
         output_tokens: outputTokens,
-        api_cost_cents: computeApiCostCents(operation.model_used, inputTokens, outputTokens),
+        api_cost_cents: computeApiCostCents(usedModel, inputTokens, outputTokens),
         sheets_completed: sheetsCompleted,
         updated_at: new Date().toISOString(),
       })
@@ -634,7 +636,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
       throw new Error("That sheet is not part of this AI scan.");
     }
 
-    const { callAnthropicVision } = await import("@/lib/ai-takeoff/anthropic.server");
+    const { callVision } = await import("@/lib/ai-takeoff/vision.server");
 
     let match = false;
     let observed = "";
@@ -646,9 +648,10 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
     let rawCenterPx: { x: number; y: number } | null = null;
     let snappedCenterPx: { x: number; y: number } | null = null;
     let usage = { inputTokens: 0, outputTokens: 0 };
+    let usedModel = operation.model_used;
     let rawResponseText = "";
     try {
-      const result = await callAnthropicVision({
+      const result = await callVision({
         model: operation.model_used,
         instruction: buildVerifyInstruction({
           label: data.references.label,
@@ -662,6 +665,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
         maxTokens: 300,
       });
       usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens };
+      usedModel = result.model;
       rawResponseText = result.text;
       const verdict = parseVerifyResponse(result.text, data.window.width, data.window.height);
       observed = verdict.observed;
@@ -765,7 +769,7 @@ export const verifyAiCountCandidate = createServerFn({ method: "POST" })
       .update({
         input_tokens: inputTokens,
         output_tokens: outputTokens,
-        api_cost_cents: computeApiCostCents(operation.model_used, inputTokens, outputTokens),
+        api_cost_cents: computeApiCostCents(usedModel, inputTokens, outputTokens),
         updated_at: new Date().toISOString(),
       })
       .eq("id", operation.id);

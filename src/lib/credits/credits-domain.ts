@@ -117,6 +117,9 @@ export const MODEL_PRICES_PER_MTOK: Record<string, ModelPricePerMTok> = {
   "claude-opus-4-6": { inputCents: 500, outputCents: 2500 },
   "claude-opus-4-7": { inputCents: 500, outputCents: 2500 },
   "claude-opus-4-8": { inputCents: 500, outputCents: 2500 },
+  // OpenAI vision (failover provider): standard per-Mtok list prices.
+  "gpt-5.5": { inputCents: 500, outputCents: 3000 },
+  "gpt-4o": { inputCents: 250, outputCents: 1000 },
 };
 
 /** Conservative fallback for models not in the table (priced at Opus tier). */
