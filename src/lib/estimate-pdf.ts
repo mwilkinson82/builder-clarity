@@ -1,4 +1,5 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, type RGB } from "pdf-lib";
+import { downloadFileBytes } from "@/lib/download-file";
 import type {
   EstimateLineItemRow,
   EstimateRow,
@@ -249,12 +250,8 @@ export async function generateEstimatePdf({
   return doc.save();
 }
 
+// Delegates to the shared safe download path (delayed blob-URL revoke —
+// synchronous revoke cancels the download in Safari/iOS).
 export function downloadPdfBytes(bytes: Uint8Array, filename: string) {
-  const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadFileBytes(bytes, filename, "application/pdf");
 }

@@ -13,6 +13,7 @@ import {
   normalizeTakeoffUnit,
 } from "@/lib/plan-room-math";
 import type { EstimateLineItemRow, EstimateRow } from "@/lib/estimates.functions";
+import { downloadTextFile as downloadTextFileShared } from "@/lib/download-file";
 
 // "ruler" is a question, not a takeoff: quick two-point (or chained) distance
 // checks that are never persisted and never reach the worksheet.
@@ -402,16 +403,10 @@ export function toCsvCell(value: unknown) {
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
+// Delegates to the shared safe download path (delayed blob-URL revoke —
+// synchronous/0ms revoke can cancel the download in Safari/iOS).
 export function downloadTextFile(filename: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  downloadTextFileShared(filename, content, type);
 }
 
 export async function copyTextToClipboard(text: string) {

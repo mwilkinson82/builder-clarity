@@ -1,16 +1,13 @@
 // Pure formatting/export helpers shared across the Reports suite (WIP schedule,
 // job cost, and the billing/retainage reports that follow). No JSX here — kept
 // as a plain module so every report downloads CSV and quotes cells the same way.
+import { downloadTextFile } from "@/lib/download-file";
 
-// Trigger a client-side file download from an in-memory string.
+// Trigger a client-side file download from an in-memory string. Delegates to
+// the shared safe download path (delayed blob-URL revoke — synchronous revoke
+// cancels the download in Safari/iOS).
 export function downloadText(filename: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadTextFile(filename, content, type);
 }
 
 // Quote a CSV cell only when it needs it, so numbers stay bare for spreadsheets.

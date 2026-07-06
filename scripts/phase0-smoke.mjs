@@ -844,6 +844,24 @@ await expectNotContains(
   "G703 from-previous column uses the standard letter D, not D+E (GETTINGPAID3)",
 );
 
+// The AIA-download field bug: revoking the blob URL synchronously after
+// anchor.click() silently cancels the download in Safari/iOS. Every download
+// helper must delegate to the shared safe path, and that path must revoke on
+// a delay. Do not let a "cleanup" reintroduce the race.
+await expectContains(
+  "src/lib/download-file.ts",
+  [
+    /setTimeout\(\(\) => URL\.revokeObjectURL\(url\), REVOKE_DELAY_MS\)/,
+    /REVOKE_DELAY_MS = 60_000/,
+  ],
+  "shared download helper revokes blob URLs on a delay (Safari/iOS download fix)",
+);
+await expectContains(
+  "src/lib/aia-pdf.ts",
+  [/downloadFileBytes\(bytes, filename, "application\/pdf"\)/],
+  "AIA package download delegates to the shared safe download path",
+);
+
 await expectContains(
   "src/lib/aia-math.ts",
   [
