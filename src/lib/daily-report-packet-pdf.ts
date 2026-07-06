@@ -1,5 +1,6 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb, type RGB } from "pdf-lib";
 import { drawPdfBrand, embedPdfLogo } from "@/lib/pdf-branding";
+import { downloadFileBytes } from "@/lib/download-file";
 
 export interface DailyReportPacketProject {
   name: string;
@@ -427,12 +428,8 @@ export async function generateDailyReportPacketPdf({
   return doc.save();
 }
 
+// Delegates to the shared safe download path (delayed blob-URL revoke —
+// synchronous/0ms revoke can cancel the download in Safari/iOS).
 export function downloadPdfBytes(pdfBytes: Uint8Array, filename: string) {
-  const blob = new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  downloadFileBytes(pdfBytes, filename, "application/pdf");
 }

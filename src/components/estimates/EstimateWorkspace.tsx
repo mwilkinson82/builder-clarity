@@ -87,6 +87,7 @@ import {
   type EstimateLineImportRow,
 } from "@/lib/estimate-import";
 import { downloadPdfBytes, generateEstimatePdf } from "@/lib/estimate-pdf";
+import { downloadTextFile } from "@/lib/download-file";
 import type { EstimateRegion } from "@/lib/estimate-seed-data";
 import { fmtUSD } from "@/lib/format";
 import { getEstimatePlanSetSummary } from "@/lib/plan-room.functions";
@@ -184,14 +185,10 @@ const safeFileName = (value: string, ext: string) =>
       .replace(/(^-|-$)/g, "") || "estimate"
   }.${ext}`;
 
+// Delegates to the shared safe download path (delayed blob-URL revoke —
+// synchronous revoke cancels the download in Safari/iOS).
 function downloadText(filename: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadTextFile(filename, content, type);
 }
 
 function toCsvCell(value: unknown) {

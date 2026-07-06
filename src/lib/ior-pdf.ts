@@ -32,6 +32,7 @@ import type {
   ScheduleRiskKind,
 } from "@/lib/schedule.functions";
 import { drawPdfBrand, embedPdfLogo } from "@/lib/pdf-branding";
+import { downloadFileBytes } from "@/lib/download-file";
 
 export type IorPdfStyle = "executive" | "structured";
 
@@ -833,14 +834,8 @@ export async function generateIorPdf(
   return await doc.save();
 }
 
+// This copy already carried the delayed-revoke fix; it now delegates to the
+// shared safe download path so every module stays in lockstep.
 export function downloadPdfBytes(bytes: Uint8Array, filename: string) {
-  const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadFileBytes(bytes, filename, "application/pdf");
 }

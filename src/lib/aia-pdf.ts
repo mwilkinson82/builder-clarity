@@ -29,6 +29,7 @@ import { billingDocumentLabel } from "./billing-labels.ts";
 import type { BillingLineItemRow } from "@/lib/billing.functions";
 import type { BillingApplicationRow, ProjectRow } from "@/lib/projects.functions";
 import { drawPdfBrand, embedPdfLogo } from "./pdf-branding.ts";
+import { downloadFileBytes } from "./download-file.ts";
 
 interface AiaPdfInput {
   project: ProjectRow;
@@ -891,16 +892,9 @@ export function aiaBillingFilename(project: ProjectRow, payApp: BillingApplicati
   return `${projectName || "project"}-${appName || "pay-app"}-aia-pay-application-package.pdf`;
 }
 
+// Delegates to the shared safe download path — the synchronous revoke that
+// used to live here silently cancelled the download in Safari/iOS (the "AIA
+// package won't download" field bug). See src/lib/download-file.ts.
 export function downloadPdfBytes(bytes: Uint8Array, filename: string) {
-  const arrayBuffer = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(arrayBuffer).set(bytes);
-  const blob = new Blob([arrayBuffer], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  downloadFileBytes(bytes, filename, "application/pdf");
 }

@@ -66,6 +66,7 @@ import {
 } from "@/lib/estimate-import";
 import { fmtUSD } from "@/lib/format";
 import { parseCsv, parsePaste, parseXlsx } from "@/lib/sov-import";
+import { downloadTextFile } from "@/lib/download-file";
 
 export const Route = createFileRoute("/_authenticated/cost-library")({
   ssr: false,
@@ -84,14 +85,10 @@ export const Route = createFileRoute("/_authenticated/cost-library")({
 const centsToDollars = (value: number) => Math.round(value) / 100;
 const dollarsToCents = (value: number) => Math.round(value * 100);
 
+// Delegates to the shared safe download path (delayed blob-URL revoke —
+// synchronous revoke cancels the download in Safari/iOS).
 function downloadText(filename: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadTextFile(filename, content, type);
 }
 
 type NewItem = {
