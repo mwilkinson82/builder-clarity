@@ -2366,8 +2366,18 @@ await expectContains(
 );
 await expectContains(
   "src/components/project/BudgetLedgerTable.tsx",
-  [/export function BudgetLedgerTable/, /Budget/, /At Risk/, /Contingency/, /\(Over\)\/Under/],
-  "budget ledger table renders the per-cost-code budget-vs-cost columns",
+  [
+    /export function BudgetLedgerTable/,
+    /At Risk/,
+    /Contingency/,
+    // Plain English, no "EAC" jargon; over/under reads itself; columns carry
+    // hover help (founder feedback 2026-07-05).
+    /Projected cost/,
+    /Over \/ under budget/,
+    /\? "under" : "over"/,
+    /HelpHead/,
+  ],
+  "budget ledger table renders plain-English columns with self-explaining over/under and hover help",
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
