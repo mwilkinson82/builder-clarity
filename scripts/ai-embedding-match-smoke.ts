@@ -29,6 +29,11 @@ import {
   EMBEDDING_DIM,
   type EmbeddingMatchCandidate,
 } from "../src/lib/ai-takeoff/embedding-match/embedding-match-domain.ts";
+import {
+  detectCandidatePeaks,
+  inkIntegralImage,
+  boxDensity,
+} from "../src/lib/ai-takeoff/embedding-match/embedding-candidates-domain.ts";
 
 let checks = 0;
 const ok = (cond: unknown, msg: string) => {
@@ -199,5 +204,34 @@ ok(
 );
 const scoredMatches = selectEmbeddingMatches(scored, DEFAULT_EMBEDDING_MATCH_THRESHOLD, radius);
 ok(scoredMatches.length === 2, "scored windows → 2 matches (self + twin), brush rejected");
+
+// --- 7. server-engine candidate proposal (density peaks) -------------------
+// A grayscale sheet that's blank white except one dense ink blob — the proposer
+// must find the blob and ignore the whitespace. This is the cheap "where are the
+// symbol-ish regions" step that keeps the server embed calls bounded.
+const CW = 120;
+const CH = 80;
+const canvasGray = new Uint8Array(CW * CH).fill(255);
+for (let yy = 30; yy < 50; yy += 1) {
+  for (let xx = 50; xx < 70; xx += 1) canvasGray[yy * CW + xx] = 0; // 20×20 black blob at (60,40)
+}
+const integral = inkIntegralImage(canvasGray, CW, CH);
+ok(
+  Math.abs(boxDensity(integral, CW, CH, 50, 30, 70, 50) - 1) < 1e-9,
+  "boxDensity of the full-ink blob = 1",
+);
+ok(boxDensity(integral, CW, CH, 0, 0, 10, 10) === 0, "boxDensity of a blank corner = 0");
+const peaks = detectCandidatePeaks(canvasGray, CW, CH, 20, 16);
+ok(peaks.length >= 1, "candidate proposer finds the dense blob");
+ok(
+  Math.abs(peaks[0].x - 60) <= 12 && Math.abs(peaks[0].y - 40) <= 12,
+  "top candidate sits on the blob",
+);
+ok(
+  detectCandidatePeaks(new Uint8Array(CW * CH).fill(255), CW, CH, 20).length === 0,
+  "blank sheet → zero candidates (no wasted embed calls)",
+);
+const capped = detectCandidatePeaks(new Uint8Array(CW * CH).fill(0), CW, CH, 20, 8);
+ok(capped.length <= 8, "candidate count respects the max cap");
 
 console.log(`ai-embedding-match smoke: ${checks} checks passed`);
