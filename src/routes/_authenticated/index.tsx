@@ -17,6 +17,10 @@ import { FirstRunChecklist, type ChecklistStep } from "@/components/onboarding/F
 import { BillingFeedBadge } from "@/components/billing/BillingFeedBadge";
 import { PipelineWorkspace } from "@/components/pipeline/PipelineWorkspace";
 import {
+  pruneRemovedDemoCrm,
+  readDemoOpportunityRemovals,
+} from "@/components/pipeline/pipeline-ui";
+import {
   assignProjectMember,
   createTeamInvite,
   getTeamWorkspace,
@@ -1404,7 +1408,22 @@ function PortfolioCrmDashboard({
   isLoading: boolean;
   onOpenCrm: () => void;
 }) {
-  const totals = buildPortfolioCrmTotals(opportunities, snapshot);
+  // Sample CRM data is client-side, so deleting a sample opportunity in the CRM
+  // tab only records a local removal. Read those removals (fresh each time this
+  // tab is shown) and prune both feeds so Pipeline intake stops counting the
+  // deleted sample's opportunity, weighted value, and open actions. Real CRM
+  // rows are untouched, so this is a no-op once a company has its own data.
+  const [removedDemoIds] = useState(readDemoOpportunityRemovals);
+  const removedDemoIdSet = useMemo(() => new Set(removedDemoIds), [removedDemoIds]);
+  const visibleOpportunities = useMemo(
+    () => opportunities.filter((opportunity) => !removedDemoIdSet.has(opportunity.id)),
+    [opportunities, removedDemoIdSet],
+  );
+  const prunedSnapshot = useMemo(
+    () => (snapshot ? pruneRemovedDemoCrm(snapshot, removedDemoIds) : null),
+    [snapshot, removedDemoIds],
+  );
+  const totals = buildPortfolioCrmTotals(visibleOpportunities, prunedSnapshot);
   return (
     <section className="rounded-lg border border-hairline bg-card p-4 shadow-card md:p-5">
       <div className="flex flex-col gap-3">

@@ -41,8 +41,10 @@ import { PipelineCrmOverview } from "./PipelineCrmOverview";
 import { OpportunityCreateDialog, QuickAddOpportunity } from "./OpportunityCreateDialog";
 import { OpportunityDetail } from "./OpportunityDetail";
 import {
+  DEMO_REMOVED_STORAGE_KEY,
   isDemoOpportunityId,
   pruneRemovedDemoCrm,
+  readDemoOpportunityRemovals,
   STAGE_LABELS,
   STAGE_ORDER,
   type PipelineSortMode,
@@ -56,7 +58,6 @@ type PipelineWorkspaceProps = {
 const EMPTY_OPPORTUNITIES: PipelineOpportunityRow[] = [];
 const DEMO_OPPORTUNITY_STORAGE_KEY = "overwatch.crm.demo-opportunity-overrides.v1";
 const DEMO_ACTIVITY_STORAGE_KEY = "overwatch.crm.demo-communications.v1";
-const DEMO_REMOVED_STORAGE_KEY = "overwatch.crm.demo-opportunity-removals.v1";
 
 type DemoOpportunityOverride = Partial<
   Pick<
@@ -705,19 +706,6 @@ function writeDemoOpportunityOverrides(overrides: Record<string, DemoOpportunity
     DEMO_OPPORTUNITY_STORAGE_KEY,
     JSON.stringify(Object.fromEntries(entries)),
   );
-}
-
-function readDemoOpportunityRemovals(): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(DEMO_REMOVED_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((id): id is string => typeof id === "string" && isDemoOpportunityId(id));
-  } catch {
-    return [];
-  }
 }
 
 function writeDemoOpportunityRemovals(removedIds: string[]) {
