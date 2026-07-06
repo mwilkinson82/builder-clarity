@@ -45,6 +45,7 @@ import {
   ExposureAllocationPanel,
   type ExposureAllocationInput,
 } from "@/components/project/ExposureAllocationPanel";
+import { BudgetLedgerTable } from "@/components/project/BudgetLedgerTable";
 import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
@@ -1936,6 +1937,13 @@ function ProjectPage() {
                 onCreate={(input) => bucketCreate.mutate({ projectId, ...input })}
                 onDelete={(id) => bucketDelete.mutate({ id })}
               />
+              <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
+                <BudgetLedgerTable
+                  buckets={buckets}
+                  exposures={exposures}
+                  allocations={exposureAllocationsQuery.data ?? []}
+                />
+              </div>
             </TabsContent>
 
             <TabsContent value="billing" className="mt-0 space-y-6">

@@ -55,6 +55,7 @@ import {
   summarizeExposure,
   unallocatedExposure,
 } from "../src/lib/exposure-allocation.ts";
+import { computeBudgetLedger } from "../src/lib/budget-ledger.ts";
 import {
   agingBucketTotals,
   appendCollectionsNote,
@@ -1191,6 +1192,55 @@ assert.equal(riskB2?.atRisk, 6_000.5);
 const generalRisk = RISK.find((r) => r.costBucketId === null);
 assert.equal(generalRisk?.contingency, 5_000); // unallocated C-Hold → general contingency
 assert.equal(generalRisk?.atRisk, 0);
+
+// --- Budget-vs-cost ledger (BUDGETENGINE Phase 2) -----------------------------
+
+// EAC = Actuals + Open; (Over)/Under = Budget − EAC; At Risk / Contingency come
+// from the exposure allocations. All summed in cents, converted once.
+const LEDGER = computeBudgetLedger(
+  [
+    {
+      id: "b-mep",
+      cost_code: "1500",
+      bucket: "MEP",
+      original_budget: 480_000,
+      actual_to_date: 260_000,
+      ftc: 240_000,
+    },
+    {
+      id: "b-fin",
+      cost_code: "0900",
+      bucket: "Finishes",
+      original_budget: 780_000,
+      actual_to_date: 180_000,
+      ftc: 690_000,
+    },
+  ],
+  [
+    { id: "e-1", dollar_exposure: 12_000, hold_class: "E-Hold" as const },
+    { id: "c-1", dollar_exposure: 5_000, hold_class: "C-Hold" as const },
+  ],
+  [
+    { exposure_id: "e-1", cost_bucket_id: "b-mep", cost_code: "1500", amount: 12_000 },
+    { exposure_id: "c-1", cost_bucket_id: null, cost_code: "", amount: 5_000 },
+  ],
+);
+const mepRow = LEDGER.rows.find((r) => r.costBucketId === "b-mep");
+assert.equal(mepRow?.eac, 500_000); // 260k actuals + 240k open
+assert.equal(mepRow?.overUnder, -20_000); // 480k budget − 500k EAC = over by 20k
+assert.equal(mepRow?.atRisk, 12_000); // E-Hold allocated to MEP
+const finRow = LEDGER.rows.find((r) => r.costBucketId === "b-fin");
+assert.equal(finRow?.eac, 870_000); // 180k + 690k
+assert.equal(finRow?.overUnder, -90_000); // 780k − 870k
+// The unallocated C-Hold surfaces as its own general-risk line.
+const generalLedgerRow = LEDGER.rows.find((r) => r.costBucketId === null);
+assert.equal(generalLedgerRow?.contingency, 5_000);
+// Totals accumulate every column in cents.
+assert.equal(LEDGER.totals.budget, 1_260_000); // 480k + 780k
+assert.equal(LEDGER.totals.eac, 1_370_000); // 500k + 870k
+assert.equal(LEDGER.totals.atRisk, 12_000);
+assert.equal(LEDGER.totals.contingency, 5_000);
+assert.equal(LEDGER.totals.overUnder, -110_000); // 1.26M − 1.37M = over by 110k
 
 // End-to-end: allocate a CO to a bucket, then build the lines — the allocated
 // value rides change_order_value_cents on that bucket's line (G702 line 2).

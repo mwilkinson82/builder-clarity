@@ -2210,11 +2210,7 @@ await expectContains(
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
-  [
-    /ChangeOrderAllocationPanel/,
-    /allocateChangeOrderFn/,
-    /deleteChangeOrderAllocationFn/,
-  ],
+  [/ChangeOrderAllocationPanel/, /allocateChangeOrderFn/, /deleteChangeOrderAllocationFn/],
   "project billing workspace wires the change-order allocation panel and mutations",
 );
 
@@ -2352,6 +2348,31 @@ await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [/ExposureAllocationPanel/, /exposureAllocationsQuery/, /allocateExposureFn/],
   "risk-tally tab wires the exposure allocation panel and mutations",
+);
+
+// BUDGETENGINE Phase 2: the budget-vs-cost ledger — a pure rollup over cost
+// buckets (Budget/Actuals/Open) + live exposure allocations (At Risk/Contingency).
+// EAC = Actuals + Open; (Over)/Under = Budget − EAC.
+await expectContains(
+  "src/lib/budget-ledger.ts",
+  [
+    /export function computeBudgetLedger/,
+    /riskByCostCode/,
+    /eac/,
+    /overUnder/,
+    /from "\.\/payments-domain\.ts"/,
+  ],
+  "budget ledger rollup composes buckets + exposure risk, cents-safe and node-loadable",
+);
+await expectContains(
+  "src/components/project/BudgetLedgerTable.tsx",
+  [/export function BudgetLedgerTable/, /Budget/, /At Risk/, /Contingency/, /\(Over\)\/Under/],
+  "budget ledger table renders the per-cost-code budget-vs-cost columns",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [/BudgetLedgerTable/],
+  "SOV/Costs tab surfaces the budget-vs-cost ledger",
 );
 
 if (live) {
