@@ -52,6 +52,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Activity,
   AlertTriangle,
@@ -59,6 +60,7 @@ import {
   CalendarClock,
   ClipboardList,
   FileText,
+  Info,
   KanbanSquare,
   LogOut,
   MailPlus,
@@ -1248,152 +1250,177 @@ function buildPortfolioCrmTotals(
 function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
   const reviewDebt = totals.staleReviewProjects + totals.neverReviewedProjects;
   return (
-    <section className="rounded-lg border border-hairline bg-card p-4 shadow-card md:p-5">
-      <div className="grid gap-4 2xl:grid-cols-[minmax(260px,0.78fr)_minmax(520px,1.22fr)] 2xl:items-start">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            <BriefcaseBusiness className="h-3.5 w-3.5" />
-            Portfolio Control Room
+    <TooltipProvider delayDuration={150}>
+      <section className="rounded-lg border border-hairline bg-card p-4 shadow-card md:p-5">
+        <div className="grid gap-4 2xl:grid-cols-[minmax(260px,0.78fr)_minmax(520px,1.22fr)] 2xl:items-start">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              <BriefcaseBusiness className="h-3.5 w-3.5" />
+              Portfolio Control Room
+            </div>
+            <h2 className="mt-2 font-serif text-3xl leading-none text-foreground lg:text-4xl">
+              Company-wide IOR posture
+            </h2>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
+              The operating truth across active jobs: margin, holds, schedule pressure, and field
+              follow-through in one view.
+            </p>
           </div>
-          <h2 className="mt-2 font-serif text-3xl leading-none text-foreground lg:text-4xl">
-            Company-wide IOR posture
-          </h2>
-          <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
-            The operating truth across active jobs: margin, holds, schedule pressure, and field
-            follow-through in one view.
-          </p>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <PortfolioMetric
+              label="Indicated GP"
+              value={fmtUSD(totals.indicatedGP)}
+              sub={fmtPct(totals.indicatedPct)}
+              tone="accent"
+              help="The gross profit you're currently on track to make across all jobs — your original expected profit, less what's now held back for risk."
+            />
+            <PortfolioMetric
+              label="GP at risk"
+              value={fmtUSD(totals.gpAtRisk)}
+              tone="danger"
+              help="How much your originally expected profit has eroded — original expected GP minus what you're now indicating. It's the profit in question you're managing back, not a booked loss, so it can be larger than indicated GP."
+            />
+            <PortfolioMetric
+              label="E-Holds"
+              value={fmtUSD(totals.exposureHolds)}
+              tone="danger"
+              help="Exposure holds — dollars set aside for specific, identified risks on your jobs (from the IOR risk register)."
+            />
+            <PortfolioMetric
+              label="C-Holds"
+              value={fmtUSD(totals.contingencyHold)}
+              tone="warning"
+              help="Contingency holds — a general set-aside for the unknowns, not tied to any one specific risk."
+            />
+          </div>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          <PortfolioMetric
-            label="Indicated GP"
-            value={fmtUSD(totals.indicatedGP)}
-            sub={fmtPct(totals.indicatedPct)}
-            tone="accent"
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+          <PortfolioSignal
+            icon={<Activity className="h-3.5 w-3.5" />}
+            label="Open projects"
+            value={String(totals.projectCount)}
           />
-          <PortfolioMetric label="GP at risk" value={fmtUSD(totals.gpAtRisk)} tone="danger" />
-          <PortfolioMetric label="E-Holds" value={fmtUSD(totals.exposureHolds)} tone="danger" />
-          <PortfolioMetric label="C-Holds" value={fmtUSD(totals.contingencyHold)} tone="warning" />
+          <PortfolioSignal
+            icon={<CalendarClock className="h-3.5 w-3.5" />}
+            label="Delayed"
+            value={String(totals.slippedProjects)}
+            tone={totals.slippedProjects > 0 ? "warning" : "success"}
+            help="Jobs tracking behind their baseline finish date."
+          />
+          <PortfolioSignal
+            icon={<AlertTriangle className="h-3.5 w-3.5" />}
+            label="At risk"
+            value={String(totals.atRiskProjects)}
+            tone={totals.atRiskProjects > 0 ? "danger" : "success"}
+            help="Jobs whose IOR reading flags margin or schedule that needs attention."
+          />
+          <PortfolioSignal
+            icon={<AlertTriangle className="h-3.5 w-3.5" />}
+            label="IOR debt"
+            value={String(reviewDebt)}
+            tone={reviewDebt > 0 ? "warning" : "success"}
+            help="Jobs whose IOR reading is stale or never run — the numbers need a fresh review before you can trust them."
+          />
+          <PortfolioSignal
+            icon={<FileText className="h-3.5 w-3.5" />}
+            label="No daily"
+            value={String(totals.projectsWithoutDailyReports)}
+            tone={totals.projectsWithoutDailyReports > 0 ? "warning" : "success"}
+            help="Jobs with no recent daily log — field activity isn't being captured."
+          />
+          <PortfolioSignal
+            icon={<ClipboardList className="h-3.5 w-3.5" />}
+            label="Overdue"
+            value={String(totals.overdueDecisionCount)}
+            tone={totals.overdueDecisionCount > 0 ? "danger" : "success"}
+            help="Open action items past their due date across all jobs."
+          />
         </div>
-      </div>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-        <PortfolioSignal
-          icon={<Activity className="h-3.5 w-3.5" />}
-          label="Open projects"
-          value={String(totals.projectCount)}
-        />
-        <PortfolioSignal
-          icon={<CalendarClock className="h-3.5 w-3.5" />}
-          label="Delayed"
-          value={String(totals.slippedProjects)}
-          tone={totals.slippedProjects > 0 ? "warning" : "success"}
-        />
-        <PortfolioSignal
-          icon={<AlertTriangle className="h-3.5 w-3.5" />}
-          label="At risk"
-          value={String(totals.atRiskProjects)}
-          tone={totals.atRiskProjects > 0 ? "danger" : "success"}
-        />
-        <PortfolioSignal
-          icon={<AlertTriangle className="h-3.5 w-3.5" />}
-          label="IOR debt"
-          value={String(reviewDebt)}
-          tone={reviewDebt > 0 ? "warning" : "success"}
-        />
-        <PortfolioSignal
-          icon={<FileText className="h-3.5 w-3.5" />}
-          label="No daily"
-          value={String(totals.projectsWithoutDailyReports)}
-          tone={totals.projectsWithoutDailyReports > 0 ? "warning" : "success"}
-        />
-        <PortfolioSignal
-          icon={<ClipboardList className="h-3.5 w-3.5" />}
-          label="Overdue"
-          value={String(totals.overdueDecisionCount)}
-          tone={totals.overdueDecisionCount > 0 ? "danger" : "success"}
-        />
-      </div>
-
-      <div className="mt-3 grid gap-3 lg:grid-cols-[1.12fr_0.88fr]">
-        <div className="rounded-md border border-danger/20 bg-danger/5 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-danger">
-              Largest exposure pressure
-            </div>
-            <div className="text-sm font-medium tabular text-danger">{fmtUSD(totals.gpAtRisk)}</div>
-          </div>
-          <div className="mt-2 divide-y divide-danger/15">
-            {totals.topExposures.length === 0 ? (
-              <div className="py-2 text-sm text-muted-foreground">
-                No live exposure is currently pulling down gross profit.
+        <div className="mt-3 grid gap-3 lg:grid-cols-[1.12fr_0.88fr]">
+          <div className="rounded-md border border-danger/20 bg-danger/5 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-danger">
+                Largest exposure pressure
               </div>
-            ) : (
-              totals.topExposures.slice(0, 3).map((exposure, index) => (
-                <a
-                  key={`${exposure.projectId}-${exposure.title}`}
-                  href={`/projects/${exposure.projectId}`}
-                  className="grid gap-2 py-2.5 transition hover:text-danger sm:grid-cols-[28px_1fr_auto]"
-                >
-                  <div className="text-xs font-semibold tabular text-danger">
-                    {String(index + 1).padStart(2, "0")}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate font-medium text-foreground">{exposure.title}</div>
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {exposure.projectName} · {exposure.jobNumber}
-                      {exposure.owner ? ` · ${exposure.owner}` : ""}
+              <div className="text-sm font-medium tabular text-danger">
+                {fmtUSD(totals.gpAtRisk)}
+              </div>
+            </div>
+            <div className="mt-2 divide-y divide-danger/15">
+              {totals.topExposures.length === 0 ? (
+                <div className="py-2 text-sm text-muted-foreground">
+                  No live exposure is currently pulling down gross profit.
+                </div>
+              ) : (
+                totals.topExposures.slice(0, 3).map((exposure, index) => (
+                  <a
+                    key={`${exposure.projectId}-${exposure.title}`}
+                    href={`/projects/${exposure.projectId}`}
+                    className="grid gap-2 py-2.5 transition hover:text-danger sm:grid-cols-[28px_1fr_auto]"
+                  >
+                    <div className="text-xs font-semibold tabular text-danger">
+                      {String(index + 1).padStart(2, "0")}
                     </div>
-                  </div>
-                  <div className="text-right font-medium tabular text-danger">
-                    {fmtUSD(exposure.value)}
-                  </div>
-                </a>
-              ))
-            )}
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-foreground">{exposure.title}</div>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {exposure.projectName} · {exposure.jobNumber}
+                        {exposure.owner ? ` · ${exposure.owner}` : ""}
+                      </div>
+                    </div>
+                    <div className="text-right font-medium tabular text-danger">
+                      {fmtUSD(exposure.value)}
+                    </div>
+                  </a>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="rounded-md border border-hairline bg-surface p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Action debt
+              </div>
+              <div
+                className={`text-sm font-medium tabular ${
+                  totals.overdueDecisionCount > 0 ? "text-danger" : "text-success"
+                }`}
+              >
+                {totals.overdueDecisionCount} overdue
+              </div>
+            </div>
+            <div className="mt-2 divide-y divide-hairline">
+              {totals.overdueProjects.length === 0 ? (
+                <div className="py-2 text-sm text-muted-foreground">
+                  No overdue project to-dos in the current view.
+                </div>
+              ) : (
+                totals.overdueProjects.slice(0, 3).map((project) => (
+                  <a
+                    key={project.id}
+                    href={`/projects/${project.id}`}
+                    className="grid gap-2 py-2.5 transition hover:text-danger sm:grid-cols-[1fr_auto]"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-foreground">{project.name}</div>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {project.project_manager || "Unassigned"} ·{" "}
+                        {project.job_number || `ID ${project.id.slice(0, 8).toUpperCase()}`}
+                      </div>
+                    </div>
+                    <div className="text-right text-sm font-medium tabular text-danger">
+                      {project.overdue_decision_count}
+                    </div>
+                  </a>
+                ))
+              )}
+            </div>
           </div>
         </div>
-        <div className="rounded-md border border-hairline bg-surface p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              Action debt
-            </div>
-            <div
-              className={`text-sm font-medium tabular ${
-                totals.overdueDecisionCount > 0 ? "text-danger" : "text-success"
-              }`}
-            >
-              {totals.overdueDecisionCount} overdue
-            </div>
-          </div>
-          <div className="mt-2 divide-y divide-hairline">
-            {totals.overdueProjects.length === 0 ? (
-              <div className="py-2 text-sm text-muted-foreground">
-                No overdue project to-dos in the current view.
-              </div>
-            ) : (
-              totals.overdueProjects.slice(0, 3).map((project) => (
-                <a
-                  key={project.id}
-                  href={`/projects/${project.id}`}
-                  className="grid gap-2 py-2.5 transition hover:text-danger sm:grid-cols-[1fr_auto]"
-                >
-                  <div className="min-w-0">
-                    <div className="truncate font-medium text-foreground">{project.name}</div>
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {project.project_manager || "Unassigned"} ·{" "}
-                      {project.job_number || `ID ${project.id.slice(0, 8).toUpperCase()}`}
-                    </div>
-                  </div>
-                  <div className="text-right text-sm font-medium tabular text-danger">
-                    {project.overdue_decision_count}
-                  </div>
-                </a>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-    </section>
+      </section>
+    </TooltipProvider>
   );
 }
 
@@ -1559,16 +1586,38 @@ function crmStageLabel(stage: PipelineStage) {
     .join(" ");
 }
 
+// A stat label that explains itself on hover. The portfolio front door is full
+// of shorthand (GP at risk, E/C-Holds, IOR debt) a first-time contractor won't
+// know — one hover says what each means in plain English.
+function StatLabel({ label, help }: { label: string; help?: string }) {
+  if (!help) return <>{label}</>;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-help items-center gap-1">
+          {label}
+          <Info className="h-3 w-3 opacity-60" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-[250px] text-xs font-normal normal-case leading-snug tracking-normal">
+        {help}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function PortfolioMetric({
   label,
   value,
   sub,
   tone,
+  help,
 }: {
   label: string;
   value: string;
   sub?: string;
   tone?: "danger" | "accent" | "warning";
+  help?: string;
 }) {
   const toneClass =
     tone === "danger"
@@ -1581,7 +1630,7 @@ function PortfolioMetric({
   return (
     <div className="flex min-h-[78px] min-w-0 flex-col justify-between rounded-md border border-hairline bg-surface px-3 py-2.5">
       <div className="text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.12em] text-muted-foreground">
-        {label}
+        <StatLabel label={label} help={help} />
       </div>
       <div className="mt-2 min-w-0">
         {/* Never clip a headline figure: show the whole number, wrap only if it
@@ -1605,6 +1654,7 @@ function PortfolioSignal({
   value,
   tone,
   compact,
+  help,
 }: {
   icon: ReactNode;
   label: string;
@@ -1613,6 +1663,7 @@ function PortfolioSignal({
   // Narrow tiles (e.g. the pipeline-intake column) hold currency that would
   // overflow at the big size — step the value down a notch so it stays whole.
   compact?: boolean;
+  help?: string;
 }) {
   const toneClass =
     tone === "danger"
@@ -1628,7 +1679,9 @@ function PortfolioSignal({
     >
       <div className="flex items-start gap-1.5 text-[10px] font-semibold uppercase leading-[1.2] tracking-[0.12em]">
         <span className="mt-0.5 shrink-0">{icon}</span>
-        <span>{label}</span>
+        <span>
+          <StatLabel label={label} help={help} />
+        </span>
       </div>
       <div
         className={`mt-2 max-w-full font-semibold leading-tight tabular [overflow-wrap:break-word] ${
