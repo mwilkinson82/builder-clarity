@@ -1670,3 +1670,127 @@ export const listPortfolioBillingHistory = createServerFn({ method: "GET" })
 
     return { projects, totals };
   });
+
+// ---------------- CHANGE ORDER LOG REPORT (REPORTS P3.4) ----------------
+
+export interface ChangeOrderEntry {
+  id: string;
+  number: string;
+  description: string;
+  contract_amount: number;
+  cost_amount: number;
+  status: string; // Approved | Pending | Denied
+  co_type: string;
+}
+
+export interface ChangeOrderProject {
+  project_id: string;
+  project_name: string;
+  job_number: string;
+  client: string;
+  original_contract: number;
+  approved_contract: number;
+  pending_contract: number;
+  // original + approved (the contract you can bill against today).
+  revised_contract: number;
+  change_orders: ChangeOrderEntry[];
+}
+
+export interface ChangeOrderReportSummary {
+  projects: ChangeOrderProject[];
+  totals: {
+    project_count: number;
+    change_order_count: number;
+    original_contract: number;
+    approved_contract: number;
+    pending_contract: number;
+    revised_contract: number;
+  };
+}
+
+// The Change order log report: every change order on a job with its contract
+// and cost impact, plus the original → approved → revised contract roll-up so
+// the contract's growth is auditable. Approved is the only status that moves
+// the revised contract, matching the WIP/billing engine (status === "Approved").
+export const listPortfolioChangeOrders = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<ChangeOrderReportSummary> => {
+    const ctx = context as unknown as BillingServerContext;
+    const projectRes = await dynamicTable(ctx.supabase, "projects")
+      .select("*")
+      .is("archived_at", null)
+      .order("name", { ascending: true });
+    if (projectRes.error) throw new Error(projectRes.error.message);
+    const projectRows = (projectRes.data ?? []) as Record<string, unknown>[];
+    const ids = projectRows.map((project) => project.id as string).filter(Boolean);
+    const emptyTotals = {
+      project_count: 0,
+      change_order_count: 0,
+      original_contract: 0,
+      approved_contract: 0,
+      pending_contract: 0,
+      revised_contract: 0,
+    };
+    if (ids.length === 0) {
+      return { projects: [], totals: emptyTotals };
+    }
+
+    const coRes = await dynamicTable(ctx.supabase, "change_orders")
+      .select("*")
+      .in("project_id", ids);
+    if (coRes.error) throw new Error(coRes.error.message);
+    const coRows = (coRes.data ?? []) as Record<string, unknown>[];
+    const cosByProject = groupRawByProject(coRows);
+
+    const projects = projectRows
+      .map((projectRow) => {
+        const pid = projectRow.id as string;
+        const rows = cosByProject.get(pid) ?? [];
+        const changeOrders: ChangeOrderEntry[] = rows
+          .map((row) => ({
+            id: str(row.id),
+            number: str(row.number),
+            description: str(row.description),
+            contract_amount: num(row.contract_amount),
+            cost_amount: num(row.cost_amount),
+            status: str(row.status, "Pending"),
+            co_type: str(row.co_type),
+          }))
+          .sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
+        const approved = changeOrders
+          .filter((co) => co.status === "Approved")
+          .reduce((sum, co) => sum + co.contract_amount, 0);
+        const pending = changeOrders
+          .filter((co) => co.status === "Pending")
+          .reduce((sum, co) => sum + co.contract_amount, 0);
+        const originalContract = num(projectRow.original_contract);
+        return {
+          project_id: pid,
+          project_name: str(projectRow.name),
+          job_number: str(projectRow.job_number),
+          client: str(projectRow.client),
+          original_contract: originalContract,
+          approved_contract: approved,
+          pending_contract: pending,
+          revised_contract: originalContract + approved,
+          change_orders: changeOrders,
+        } satisfies ChangeOrderProject;
+      })
+      // A change-order report is about jobs that actually have change orders.
+      .filter((project) => project.change_orders.length > 0);
+
+    const totals = projects.reduce(
+      (acc, project) => {
+        acc.project_count += 1;
+        acc.change_order_count += project.change_orders.length;
+        acc.original_contract += project.original_contract;
+        acc.approved_contract += project.approved_contract;
+        acc.pending_contract += project.pending_contract;
+        acc.revised_contract += project.revised_contract;
+        return acc;
+      },
+      { ...emptyTotals },
+    );
+
+    return { projects, totals };
+  });
