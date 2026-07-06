@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Check, FileSpreadsheet, Info, Plus, Search, Trash2 } from "lucide-react";
+import { Check, FileSpreadsheet, Info, LockKeyhole, Plus, Search, Trash2 } from "lucide-react";
 import { fmtUSD } from "@/lib/format";
 import { sovLineForecast, sovTotals } from "@/lib/sov-rollup";
 import type { BucketRow } from "@/lib/projects.functions";
@@ -91,6 +91,7 @@ export function CostBucketsTable({
   onUpdate,
   onCreate,
   onDelete,
+  budgetLocked = false,
 }: {
   buckets: BucketRow[];
   /**
@@ -100,6 +101,12 @@ export function CostBucketsTable({
   onUpdate: (id: string, patch: BucketPatch) => void | Promise<unknown>;
   onCreate?: (input: NewBucketInput) => void;
   onDelete?: (id: string) => void;
+  /**
+   * BUDGETLOCK1: when the project's budget baseline is locked, the budget
+   * column is read-only — budget changes come through change orders. Actuals
+   * and forecast-to-complete stay editable (they are cost, not budget).
+   */
+  budgetLocked?: boolean;
 }) {
   const [newCode, setNewCode] = useState("");
   const [newName, setNewName] = useState("");
@@ -262,10 +269,25 @@ export function CostBucketsTable({
                       />
                     </TableCell>
                     <TableCell className="text-right tabular text-foreground/80">
-                      <NumCell
-                        value={b.original_budget}
-                        onCommit={(v) => onUpdate(b.id, { original_budget: v })}
-                      />
+                      {budgetLocked ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex cursor-help items-center justify-end gap-1.5">
+                              <LockKeyhole className="h-3 w-3 opacity-50" />
+                              {fmtUSD(b.original_budget)}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[240px] text-xs">
+                            The budget is locked. Budget changes come through change orders — price
+                            the change order and its budgeted cost layers onto this baseline.
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <NumCell
+                          value={b.original_budget}
+                          onCommit={(v) => onUpdate(b.id, { original_budget: v })}
+                        />
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular">
                       <NumCell

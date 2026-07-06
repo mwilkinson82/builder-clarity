@@ -94,3 +94,30 @@ Phases (build one, sign-off, deploy, QA, next — the budget-engine cadence):
 
 Retainage default was already moved to a per-project setting (10% fallback) in
 GETTINGPAID3 — that item is done.
+
+## Addendum — founder decisions, 2026-07-06
+
+**1. The bill comes from the SOV — never from daily WIP.** This supersedes the
+"the WIP locks in and becomes the payment application" line in the dependency
+rule above. The founder's workflow ruling:
+
+> The project manager sits down and figures out what he wants to bill from his
+> schedule of values. The PM fills out the SOV — updates percent complete —
+> and hands it to accounting. Accounting takes that SOV and creates the
+> payment application (AIA or invoice), sends it, and handles the accounting:
+> lien waivers, aging, tracking, collections. Accounting doesn't know how much
+> work has been done — that's the PM's job. The SOV dictates the period's
+> billing. A pay application should NOT come from the daily project-tracking
+> WIP, because that may not be accurate.
+
+Consequence: the planned "pay-app pre-fill from WIP" slice is **dead by
+design**. Daily WIP (Workspace B) is project tracking — crew×hours×rate,
+materials, equipment, production rates. It informs the PM; it never becomes
+the bill. The rest of the dependency rule stands: billing never waits on WIP.
+
+**2. The budget is locked; only change orders move it.** Enforced in
+BUDGETLOCK1 — see the addendum in [BUDGETENGINE.md](./BUDGETENGINE.md).
+
+**3. Lien waivers named.** The founder listed lien waivers among accounting's
+send-out duties (with aging, tracking, collections). Not built today; recorded
+here as a future Workspace A item so it isn't lost.

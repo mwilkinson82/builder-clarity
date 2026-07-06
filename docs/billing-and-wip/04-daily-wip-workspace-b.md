@@ -51,19 +51,25 @@ work performed, delays) is loaded from `public.daily_reports` (via
 report AND the WIP" is one screen. Editing the daily report itself stays in the
 **Daily Reports** tab; Daily WIP only references it.
 
-## The dependency rule (load-bearing)
+## Daily WIP is tracking — the bill comes from the SOV (founder ruling)
 
-> **WIP feeds billing; billing NEVER waits on WIP.**
+Founder decision, 2026-07-06: **a pay application must never come from the
+daily WIP.** Daily tracking may not be accurate enough to bill from. The
+billing workflow is: the PM sits down with the **schedule of values**, decides
+what to bill, updates percent complete per line, and hands the SOV to
+accounting; accounting creates the pay application (AIA or invoice), sends it,
+and handles aging, tracking, collections (and, in the future, lien waivers).
+The SOV dictates the period's billing — the PM is the driving force behind it.
 
-Recording daily WIP is **optional and additive**. Nothing in the billing path
-reads `daily_wip_entries` as a precondition. When the PM records it, the
-intent (future slice) is that the pay-app builder arrives pre-filled — "the WIP
-locks in and becomes the payment application". When the PM hasn't touched it —
-the stated base case — the biller builds applications exactly as before, with
-zero degradation.
+This supersedes the earlier design note that "the WIP locks in and becomes the
+payment application" — that pre-fill idea is **dead by design**
+(see the 2026-07-06 addendum in [`docs/BILLINGDESIGN.md`](../BILLINGDESIGN.md)).
+Daily WIP informs the PM — what was spent and placed, production rates; it
+never becomes the bill.
 
-This rule is why we could ship daily WIP as a pure addition: it can't break
-billing because billing doesn't depend on it.
+The rest of the dependency rule stands: recording daily WIP is **optional and
+additive**, and nothing in the billing path reads `daily_wip_entries` as a
+precondition. It can't break billing because billing doesn't depend on it.
 
 ## Server functions & graceful degradation
 
@@ -86,8 +92,8 @@ ahead of the migration.
   procurement/buyout **commitments** object, which does not exist yet. Sub
   progress tracked against commitments is the same object the buyout arc will
   use.
-- **Pay-app pre-fill from WIP** — the "WIP becomes the payment application"
-  automation described in the dependency rule.
+- ~~Pay-app pre-fill from WIP~~ — **cancelled by founder decision 2026-07-06**:
+  the bill comes from the SOV, never from daily tracking (see above).
 
 ---
 

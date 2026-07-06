@@ -103,6 +103,8 @@ import {
   allocateExposure,
   deleteExposureAllocation,
   listExposureAllocations,
+  listChangeOrderAllocations,
+  lockProjectBudget,
   buildBudgetFromEstimate,
   createInspection,
   updateInspection,
@@ -151,6 +153,7 @@ import {
   FileSpreadsheet,
   LayoutDashboard,
   ListChecks,
+  LockKeyhole,
   LogOut,
   Archive,
   MoreHorizontal,
@@ -324,6 +327,8 @@ function ProjectPage() {
   const allocateExposureFn = useServerFn(allocateExposure);
   const deleteExposureAllocationFn = useServerFn(deleteExposureAllocation);
   const listExposureAllocationsFn = useServerFn(listExposureAllocations);
+  const listChangeOrderAllocationsFn = useServerFn(listChangeOrderAllocations);
+  const lockProjectBudgetFn = useServerFn(lockProjectBudget);
   const buildBudgetFromEstimateFn = useServerFn(buildBudgetFromEstimate);
   const createInspectionFn = useServerFn(createInspection);
   const updateInspectionFn = useServerFn(updateInspection);
@@ -465,6 +470,25 @@ function ProjectPage() {
   const exposureAllocationsQuery = useQuery({
     queryKey: ["exposure-allocations", projectId],
     queryFn: () => listExposureAllocationsFn({ data: { projectId } }),
+  });
+  // BUDGETLOCK1: the budget ledger layers approved CO cost onto the frozen
+  // baseline, so the Budget tab needs the project's CO allocations too.
+  const changeOrderAllocationsQuery = useQuery({
+    queryKey: ["change-order-allocations", projectId],
+    queryFn: () => listChangeOrderAllocationsFn({ data: { projectId } }),
+  });
+  const budgetLock = useMutation({
+    mutationFn: () => lockProjectBudgetFn({ data: { projectId } }),
+    onSuccess: () => {
+      toast.success("Budget locked", {
+        description: "From here on, budget changes come through change orders.",
+      });
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+    },
+    onError: (error) =>
+      toast.error("Budget could not be locked", {
+        description: error instanceof Error ? error.message : "Try again.",
+      }),
   });
   const exposureAllocate = useMutation({
     mutationFn: (input: ExposureAllocationInput) =>
@@ -2000,21 +2024,70 @@ function ProjectPage() {
                 </div>
                 <SovImportHistory imports={sovImports ?? []} />
               </div>
+              {/* BUDGETLOCK1: the budget is a locked baseline — the only thing
+                  that moves it is an approved change order's budgeted cost. */}
+              {project.budget_locked_at ? (
+                <div className="flex items-center gap-2 rounded-md border border-hairline bg-surface px-4 py-2.5 text-sm text-muted-foreground">
+                  <LockKeyhole className="h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Budget locked{" "}
+                    {new Date(project.budget_locked_at).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}{" "}
+                    — changes come through change orders.
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/10 px-4 py-2.5">
+                  <span className="text-sm text-foreground">
+                    <span className="font-medium">Budget not locked yet.</span> Lock it to freeze
+                    the baseline — it also locks automatically with the first pay application. After
+                    that, budget changes come through change orders.
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    disabled={budgetLock.isPending}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "Lock the budget? After locking, budget lines can't be edited — budget changes come through change orders. Unlocking requires an admin request.",
+                        )
+                      ) {
+                        budgetLock.mutate();
+                      }
+                    }}
+                  >
+                    <LockKeyhole className="h-3.5 w-3.5" />
+                    {budgetLock.isPending ? "Locking…" : "Lock budget"}
+                  </Button>
+                </div>
+              )}
               <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
                 <BudgetLedgerTable
                   buckets={buckets}
                   exposures={exposures}
                   allocations={exposureAllocationsQuery.data ?? []}
+                  changeOrders={changeOrders}
+                  changeOrderAllocations={changeOrderAllocationsQuery.data ?? []}
                 />
               </div>
               <div className="space-y-2">
                 <WorkspaceHeader
                   title="Edit budget lines"
-                  subtitle="Set the budget, actual cost, and forecast-to-complete for each cost code. Carried from the estimate, imported, or entered by hand."
+                  subtitle={
+                    project.budget_locked_at
+                      ? "The budget is locked — budget amounts change only through change orders. Actual cost and forecast-to-complete stay editable."
+                      : "Set the budget, actual cost, and forecast-to-complete for each cost code. Carried from the estimate, imported, or entered by hand."
+                  }
                   compact
                 />
                 <CostBucketsTable
                   buckets={buckets}
+                  budgetLocked={Boolean(project.budget_locked_at)}
                   onUpdate={(id, patch) => bucketUpdate.mutateAsync({ id, patch })}
                   onCreate={(input) => bucketCreate.mutate({ projectId, ...input })}
                   onDelete={(id) => bucketDelete.mutate({ id })}

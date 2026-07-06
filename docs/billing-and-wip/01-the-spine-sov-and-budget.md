@@ -66,6 +66,26 @@ the IOR exposure register (see below): **At Risk** and **Contingency**.
 This ledger is the data source for the **Job Cost report** (see
 [03](03-wip-schedule-and-reports.md)) and for the project's Budget tab.
 
+### The budget is locked; only change orders move it (BUDGETLOCK1)
+
+Founder decision, 2026-07-06, enforced in code: once a project's budget is
+**locked** (`projects.budget_locked_at` — set explicitly on the Budget tab, or
+automatically when the first pay application is created), `original_budget`
+never changes. Edits, budgeted-line deletes, nonzero-budget creates, and the
+estimate→budget carry are all refused server-side. **The only thing that moves
+a locked budget is an approved change order's budgeted cost** — priced on the
+CO, allocated to cost codes (`change_order_allocations.cost_amount`), and
+layered onto the frozen baseline by the ledger:
+
+```
+Budget (per code) = frozen original_budget + Σ approved CO cost allocations
+```
+
+Approved CO cost not yet allocated to a code shows as its own "Change-order
+budget (unallocated)" line. Deductive COs carry negative cost. Actuals and FTC
+stay editable — they are cost, not budget. There is no unlock in the product;
+unwinding a lock is a desk operation.
+
 ## Estimate → Budget carry
 
 The budget is seeded from the company's Overwatch estimate.
