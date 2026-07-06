@@ -5,7 +5,7 @@
 // blocking step instead of no-oping, and generation with overbilled lines
 // requires one explicit confirm.
 import { useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, Check, Download, FileText, Wand2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Download, FileText, Mail, Wand2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -24,8 +24,10 @@ interface AiaApplicationStepperProps {
   onSetOutputFormat: (format: BillingOutputFormat) => void;
   onImportSov: () => void;
   onGenerate: () => void;
+  onEmail?: () => void;
   canImport: boolean;
   generating?: boolean;
+  emailing?: boolean;
   savingFormat?: boolean;
 }
 
@@ -56,8 +58,10 @@ export function AiaApplicationStepper({
   onSetOutputFormat,
   onImportSov,
   onGenerate,
+  onEmail,
   canImport,
   generating,
+  emailing,
   savingFormat,
 }: AiaApplicationStepperProps) {
   const steps = aiaBuilderSteps(snapshot);
@@ -148,22 +152,38 @@ export function AiaApplicationStepper({
       case "generate":
         return (
           <div className="flex flex-col items-start gap-1">
-            <Button
-              type="button"
-              size="sm"
-              variant={gate.ready ? "default" : "outline"}
-              className={`gap-1.5 ${gate.ready ? "" : "opacity-70"}`}
-              aria-disabled={!gate.ready}
-              disabled={generating}
-              onClick={handleGenerate}
-            >
-              <Download className="h-3.5 w-3.5" />
-              {generating
-                ? "Generating..."
-                : confirmOverbilled
-                  ? "Confirm & download anyway"
-                  : "Download AIA G702/G703"}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={gate.ready ? "default" : "outline"}
+                className={`gap-1.5 ${gate.ready ? "" : "opacity-70"}`}
+                aria-disabled={!gate.ready}
+                disabled={generating}
+                onClick={handleGenerate}
+              >
+                <Download className="h-3.5 w-3.5" />
+                {generating
+                  ? "Generating..."
+                  : confirmOverbilled
+                    ? "Confirm & download anyway"
+                    : "Download AIA G702/G703"}
+              </Button>
+              {onEmail ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  aria-disabled={!gate.ready}
+                  disabled={!gate.ready || emailing}
+                  onClick={onEmail}
+                >
+                  <Mail className="h-3.5 w-3.5" />
+                  {emailing ? "Emailing..." : "Email to client"}
+                </Button>
+              ) : null}
+            </div>
             {!gate.ready ? (
               <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
                 {gate.reason}

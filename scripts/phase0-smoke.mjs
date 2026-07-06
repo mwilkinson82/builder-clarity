@@ -780,8 +780,17 @@ await expectContains(
     /Confirm & download anyway/,
     /Import from SOV/,
     /Go to step/,
+    // BILLING P1b: finalize + email the package to the client from the flow.
+    /Email to client/,
   ],
   "AIA application stepper keeps every step visible and routes blocked generate clicks",
+);
+// BILLING P1b: email the finalized application to the client via the same proven
+// transactional-send path invoices use (portal link now, PDF attachment next).
+await expectContains(
+  "src/components/billing/BillingEnhancements.tsx",
+  [/sendTransactionalEmail/, /invoice-notification/, /Application emailed/, /recipientEmails/],
+  "pay-app flow can email the finalized package to the client billing contact",
 );
 await expectContains(
   "src/lib/aia-builder-steps.ts",
