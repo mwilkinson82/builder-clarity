@@ -22,6 +22,8 @@ import {
   type DetectionTileRect,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
 import type { SheetPoint } from "@/lib/ai-takeoff/ai-takeoff-domain";
+import { isolateExemplarFootprintPx } from "@/lib/ai-takeoff/exemplar-isolation-domain";
+import { TEMPLATE_MARGIN_RATIO } from "@/lib/ai-takeoff/template-match/template-match-domain";
 import {
   exemplarCropPlan,
   tileFrameFor,
@@ -109,9 +111,21 @@ export interface DetectionExemplarImage {
   /**
    * The symbol's measured ink footprint under the marker, in PDF points
    * (AITAKEOFF5 Task 0) — drives tile overlap and dedupe radius per sheet.
+   * ISOLATED since AITAKEOFF14: the connected-component measurement is
+   * clamped to the symbol's own radial extent, so a touching neighbor or
+   * fused linework can no longer balloon it (the A-100 pair-template bug).
    * Null when nothing measurable sits under the marker.
    */
   footprintPt: number | null;
+  /**
+   * What the pixel engine will actually hunt with (AITAKEOFF14 Task 2): the
+   * isolated, footprint-sized crop as a PNG — shown in the panel at pick
+   * time so a bad exemplar costs a 2-second re-pick, not a scanned credit.
+   * Null when the footprint is unmeasurable.
+   */
+  previewBase64: string | null;
+  /** True when isolation tightened the raw component measurement. */
+  footprintClamped: boolean;
 }
 
 /** Render one PDF page at detection resolution (long edge ~3800px). */
@@ -257,17 +271,52 @@ export async function renderExemplarCrop(
   const canvas = await renderToCanvas(page, plan.widthPx, plan.heightPx, viewport);
   // Measure the symbol's ink footprint under the marker (AITAKEOFF5 Task 0):
   // crop px → PDF points through the crop's own render scale, so each
-  // sheet's detection raster can size its tile overlap from it.
+  // sheet's detection raster can size its tile overlap from it. ISOLATED
+  // since AITAKEOFF14: the component bbox swallowed touching neighbors on
+  // dense sheets ("two circular brush symbols, side by side"), collapsing
+  // template recall — the footprint is clamped to the symbol's own radial
+  // extent before anything downstream derives from it.
   let footprintPt: number | null = null;
+  let previewBase64: string | null = null;
+  let footprintClamped = false;
   const cropContext = canvas.getContext("2d");
   if (cropContext && plan.scale > 0) {
     const cropPixels = cropContext.getImageData(0, 0, canvas.width, canvas.height);
     const cropMask = inkMaskFromRgba(cropPixels.data, canvas.width, canvas.height);
-    const footprintCropPx = measureInkFootprintPx(cropMask, {
-      x: plan.markerInCropPx.px,
-      y: plan.markerInCropPx.py,
-    });
-    footprintPt = footprintCropPx !== null ? footprintCropPx / plan.scale : null;
+    const markerInCrop = { x: plan.markerInCropPx.px, y: plan.markerInCropPx.py };
+    const measuredCropPx = measureInkFootprintPx(cropMask, markerInCrop);
+    if (measuredCropPx !== null) {
+      const isolation = isolateExemplarFootprintPx(cropMask, markerInCrop, measuredCropPx);
+      footprintPt = isolation.footprintPx / plan.scale;
+      footprintClamped = isolation.clamped;
+      // The pick-time preview (Task 2): the SAME window the template crop
+      // will use — footprint × margin around the recentered hub — so what
+      // the user approves is literally what the matcher hunts with.
+      const side = Math.max(
+        24,
+        Math.min(320, Math.round(isolation.footprintPx * TEMPLATE_MARGIN_RATIO)),
+      );
+      const preview = document.createElement("canvas");
+      preview.width = side;
+      preview.height = side;
+      const previewContext = preview.getContext("2d");
+      if (previewContext) {
+        previewContext.fillStyle = "#ffffff";
+        previewContext.fillRect(0, 0, side, side);
+        previewContext.drawImage(
+          canvas,
+          Math.round(isolation.center.x - side / 2),
+          Math.round(isolation.center.y - side / 2),
+          side,
+          side,
+          0,
+          0,
+          side,
+          side,
+        );
+        previewBase64 = canvasToBase64Png(preview);
+      }
+    }
   }
   return {
     base64: canvasToBase64Png(canvas),
@@ -275,5 +324,7 @@ export async function renderExemplarCrop(
     widthPx: canvas.width,
     heightPx: canvas.height,
     footprintPt,
+    previewBase64,
+    footprintClamped,
   };
 }
