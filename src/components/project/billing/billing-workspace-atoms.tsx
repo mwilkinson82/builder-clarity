@@ -38,7 +38,7 @@ export function SovImportHistory({ imports }: { imports: SovImportRow[] }) {
   if (!latest) {
     return (
       <div className="mt-5 rounded-md border border-dashed border-hairline bg-background/60 px-3 py-3 text-sm text-muted-foreground">
-        No SOV import history yet. After the next import, Overwatch will show the source file,
+        No budget import history yet. After the next import, Overwatch will show the source file,
         mapping confidence, selected budget basis, and warnings here.
       </div>
     );
@@ -53,7 +53,10 @@ export function SovImportHistory({ imports }: { imports: SovImportRow[] }) {
       : latest.confidence === "medium"
         ? "text-warning"
         : "text-danger";
-  const source = [latest.source_name || latest.source_type || "Imported SOV", latest.source_sheet]
+  const source = [
+    latest.source_name || latest.source_type || "Imported budget",
+    latest.source_sheet,
+  ]
     .filter(Boolean)
     .join(" / ");
 
@@ -62,7 +65,7 @@ export function SovImportHistory({ imports }: { imports: SovImportRow[] }) {
       <div className="flex flex-col gap-3 border-b border-hairline px-3 py-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Latest SOV import
+            Latest budget import
           </div>
           <div className="mt-1 font-medium text-foreground">{source}</div>
           <div className="mt-1 text-xs text-muted-foreground">

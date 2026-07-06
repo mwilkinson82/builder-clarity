@@ -584,7 +584,7 @@ await expectContains(
     /toast\.success\("Invoice created/,
     /toast\.success\("Payment recorded/,
     /toast\.success\("SOV mapping saved/,
-    /toast\.success\("SOV imported/,
+    /toast\.success\("Budget imported/,
   ],
   "project route wires core Phase 0 write paths and success toasts",
 );
@@ -2258,8 +2258,8 @@ await expectContains(
 );
 await expectContains(
   "src/components/outcome/CostBucketsTable.tsx",
-  [/EmptyState/, /No cost buckets yet/, /Import SOV/],
-  "cost buckets table teaches the import/add path when empty",
+  [/EmptyState/, /No budget lines yet/, /Import budget/],
+  "budget lines table teaches the import/add path when empty",
 );
 
 // POLISH1 Task 3 (density): the rarely-opened reference tabs (inspections, IOR
@@ -2381,8 +2381,10 @@ await expectContains(
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
-  [/BudgetLedgerTable/],
-  "Budget tab surfaces the budget-vs-cost ledger",
+  // Budget-first: the budget-vs-cost ledger leads, the editable cost-code grid
+  // ("Edit budget lines") sits below it — not the reverse (no SOV framing on top).
+  [/BudgetLedgerTable[\s\S]*?title="Edit budget lines"[\s\S]*?CostBucketsTable/],
+  "Budget tab leads with the budget ledger, then the editable budget grid",
 );
 
 // BUDGETENGINE Phase 4: fold the budget-vs-cost picture into Billing so the whole

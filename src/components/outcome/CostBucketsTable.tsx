@@ -48,7 +48,7 @@ type NewBucketInput = {
 };
 
 const SOURCE_LABEL: Record<BucketSource, string> = {
-  original_sov: "Original SOV",
+  original_sov: "Original budget",
   change_order: "Change Order",
   added_cost: "Added Cost",
 };
@@ -135,7 +135,7 @@ export function CostBucketsTable({
             Grouped by code / division
           </div>
           <div className="text-xs text-muted-foreground">
-            Showing {visibleCount} of {buckets.length} SOV line
+            Showing {visibleCount} of {buckets.length} budget line
             {buckets.length === 1 ? "" : "s"}.
           </div>
         </div>
@@ -268,8 +268,8 @@ export function CostBucketsTable({
               <TableCell colSpan={9} className="py-8">
                 <EmptyState
                   icon={FileSpreadsheet}
-                  title="No cost buckets yet"
-                  description='Use "Import SOV" above to bring in your schedule of values from Excel or QuickBooks — or add the first line below.'
+                  title="No budget lines yet"
+                  description='Use "Build budget from estimate" or "Import budget" above to bring your cost budget in — or add the first line below.'
                 />
               </TableCell>
             </TableRow>
@@ -277,7 +277,7 @@ export function CostBucketsTable({
           {buckets.length > 0 && visibleCount === 0 && (
             <TableRow>
               <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
-                No SOV lines match that search.
+                No budget lines match that search.
               </TableCell>
             </TableRow>
           )}
@@ -308,7 +308,7 @@ export function CostBucketsTable({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="original_sov">Original SOV</SelectItem>
+                      <SelectItem value="original_sov">Original budget</SelectItem>
                       <SelectItem value="change_order">Change Order</SelectItem>
                       <SelectItem value="added_cost">Added Cost</SelectItem>
                     </SelectContent>
@@ -437,7 +437,7 @@ function divisionForBucket(bucket: BucketRow): DivisionInfo {
   const hintedLabel = BUCKET_LABEL_HINTS.find(([pattern]) => pattern.test(bucket.bucket))?.[1];
   const csiLabel = firstTwo ? CSI_DIVISION_LABELS[firstTwo] : "";
   const label =
-    hintedLabel ?? csiLabel ?? (firstTwo ? `Division ${firstTwo}` : "Uncoded SOV lines");
+    hintedLabel ?? csiLabel ?? (firstTwo ? `Division ${firstTwo}` : "Uncoded budget lines");
   const sort = firstTwo ? Number(firstTwo) : 999;
   const key = firstTwo ? `division-${firstTwo}` : `division-uncoded-${label}`;
   return { key, code: firstTwo ? `Div ${firstTwo}` : "No code", label, sort };
@@ -612,7 +612,7 @@ function SourceCell({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="original_sov">Original SOV</SelectItem>
+          <SelectItem value="original_sov">Original budget</SelectItem>
           <SelectItem value="change_order">Change Order</SelectItem>
           <SelectItem value="added_cost">Added Cost</SelectItem>
         </SelectContent>
