@@ -76,6 +76,7 @@ import {
   renderExemplarCrop,
   renderVerifyWindow,
   sliceDetectionTiles,
+  type DetectionExemplarImage,
 } from "./aiDetectionRender";
 import { clamp01, tileLocalToSheetPoint } from "@/lib/ai-takeoff/coord-transforms";
 import { geometryFromPoints, geometryPoints, type ViewSize } from "./planRoomShared";
@@ -174,6 +175,16 @@ export function useAiAssist({
   const [isAccepting, setIsAccepting] = useState(false);
   // Survives scan completion so the diagnostics view can open on it.
   const [lastOperationId, setLastOperationId] = useState<string | null>(null);
+  // Pick-time preview (AITAKEOFF14 Task 2): the isolated, footprint-sized
+  // crop the pixel engine will hunt with — shown in the panel the moment the
+  // exemplar is set, so a bad crop costs a 2-second re-pick, not a credit.
+  const [exemplarPreview, setExemplarPreview] = useState<{
+    base64: string;
+    clamped: boolean;
+  } | null>(null);
+  // The full render is cached so runScan reuses it instead of re-rendering
+  // the identical crop at scan start.
+  const exemplarImageCacheRef = useRef<{ key: string; image: DetectionExemplarImage } | null>(null);
   const cancelRequestedRef = useRef(false);
   const operationIdRef = useRef<string | null>(null);
   // AI measurement created per sheet during this review (id + points so far).
@@ -260,6 +271,48 @@ export function useAiAssist({
     [open, pickingExemplar],
   );
 
+  // Render the pick-time preview as soon as the exemplar is set (AITAKEOFF14
+  // Task 2). Best-effort and cached: a failure here never blocks the scan —
+  // runScan renders its own crop when the cache is cold.
+  useEffect(() => {
+    if (!exemplar) {
+      setExemplarPreview(null);
+      exemplarImageCacheRef.current = null;
+      return;
+    }
+    const sheet = sheetById.get(exemplar.sheetId);
+    const planSet = sheet ? planSetById.get(sheet.plan_set_id) : null;
+    if (!sheet || !planSet?.file_path) {
+      setExemplarPreview(null);
+      return;
+    }
+    const key = `${exemplar.sheetId}|${exemplar.point.x}|${exemplar.point.y}`;
+    if (exemplarImageCacheRef.current?.key === key) return;
+    const filePath = planSet.file_path;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await supabase.storage
+          .from(planRoomBucket)
+          .createSignedUrl(filePath, 60 * 10);
+        if (!data?.signedUrl || cancelled) return;
+        const image = await renderExemplarCrop(data.signedUrl, sheet.page_number, exemplar.point);
+        if (cancelled) return;
+        exemplarImageCacheRef.current = { key, image };
+        setExemplarPreview(
+          image.previewBase64
+            ? { base64: image.previewBase64, clamped: image.footprintClamped }
+            : null,
+        );
+      } catch {
+        if (!cancelled) setExemplarPreview(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [exemplar, sheetById, planSetById]);
+
   const endReview = useCallback(
     (options: { silent?: boolean } = {}) => {
       const accepted = proposals.filter((p) => p.status === "accepted").length;
@@ -342,13 +395,15 @@ export function useAiAssist({
 
       // Clean region render straight from the PDF around the marker — the
       // human's marker dot lives on the SVG overlay and can never leak in
-      // (AITAKEOFF2 Task 0). ~4 sheet-inches square at ~640px.
+      // (AITAKEOFF2 Task 0). ~4 sheet-inches square at ~640px. The pick-time
+      // preview (AITAKEOFF14) usually rendered this exact crop already —
+      // reuse it instead of paying the render twice.
       const exemplarSheetUrl = await signedUrlFor(exemplarSheet.plan_set_id);
-      const exemplarImage = await renderExemplarCrop(
-        exemplarSheetUrl,
-        exemplarSheet.page_number,
-        exemplar.point,
-      );
+      const exemplarCacheKey = `${exemplar.sheetId}|${exemplar.point.x}|${exemplar.point.y}`;
+      const exemplarImage =
+        exemplarImageCacheRef.current?.key === exemplarCacheKey
+          ? exemplarImageCacheRef.current.image
+          : await renderExemplarCrop(exemplarSheetUrl, exemplarSheet.page_number, exemplar.point);
       // The teaching loop (AITAKEOFF5 Task 1): other same-label markers on
       // the exemplar's sheet — accepted AI counts and hand-placed alike —
       // become additional positive references (capped at 3 total).
@@ -1311,6 +1366,7 @@ export function useAiAssist({
     pickingExemplar,
     setPickingExemplar,
     exemplar,
+    exemplarPreview,
     clearExemplar: () => setExemplar(null),
     scope,
     setScope,

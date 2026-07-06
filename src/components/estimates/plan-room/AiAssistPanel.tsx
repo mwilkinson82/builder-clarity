@@ -281,25 +281,44 @@ export function AiAssistPanel({ ai }: { ai: AiAssistController }) {
             <div className="space-y-2">
               <Label className="text-xs font-medium">Exemplar — the symbol to find</Label>
               {ai.exemplar ? (
-                <div className="flex items-center justify-between gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      className="h-3 w-3 shrink-0 rounded-full"
-                      style={{ backgroundColor: ai.exemplar.color }}
-                    />
-                    <span className="truncate text-sm" data-testid="ai-exemplar-label">
-                      {ai.exemplar.label || "Count marker"}
-                    </span>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className="h-3 w-3 shrink-0 rounded-full"
+                        style={{ backgroundColor: ai.exemplar.color }}
+                      />
+                      <span className="truncate text-sm" data-testid="ai-exemplar-label">
+                        {ai.exemplar.label || "Count marker"}
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={ai.clearExemplar}
+                    >
+                      Change
+                    </Button>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2 text-xs"
-                    onClick={ai.clearExemplar}
-                  >
-                    Change
-                  </Button>
+                  {ai.exemplarPreview && (
+                    <div
+                      className="flex items-center gap-2 rounded-md border border-hairline bg-surface px-2 py-1.5"
+                      data-testid="ai-exemplar-preview"
+                    >
+                      <img
+                        src={`data:image/png;base64,${ai.exemplarPreview.base64}`}
+                        alt="The symbol the AI will look for"
+                        className="h-14 w-14 shrink-0 rounded border border-hairline bg-white object-contain"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        This is the symbol the AI will look for. If it shows more than one symbol —
+                        or the wrong one — click Change and pick a marker centered on a clear
+                        example.
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <Button
