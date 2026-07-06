@@ -2382,7 +2382,26 @@ await expectContains(
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [/BudgetLedgerTable/],
-  "SOV/Costs tab surfaces the budget-vs-cost ledger",
+  "Budget tab surfaces the budget-vs-cost ledger",
+);
+
+// BUDGETENGINE Phase 4: fold the budget-vs-cost picture into Billing so the whole
+// financial story lives in one place, and rename the standalone tab "Budget"
+// (value stays "sov" for deep links). Billing renders the read-only ledger from
+// the same buckets + exposure allocations.
+await expectContains(
+  "src/components/project/billing/BillingWorkspace.tsx",
+  [
+    /import \{ BudgetLedgerTable \}/,
+    /value: "budget", title: "Budget vs Cost"/,
+    /<BudgetLedgerTable[\s\S]*?exposures=\{exposures\}[\s\S]*?allocations=\{exposureAllocations\}/,
+  ],
+  "billing workspace folds in the budget-vs-cost ledger tab",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [/label: "Budget"/, /title="Budget"/, /exposureAllocations=\{exposureAllocationsQuery\.data/],
+  "budget tab is renamed from SOV/Costs and feeds Billing its exposures + allocations",
 );
 
 // BUDGETENGINE Phase 3: estimate → budget carry. The budget is the estimate's

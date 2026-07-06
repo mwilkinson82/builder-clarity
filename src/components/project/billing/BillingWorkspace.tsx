@@ -79,10 +79,13 @@ import type {
   BillingOutputFormat,
   BucketRow,
   ChangeOrderRow,
+  ExposureAllocationRow,
+  ExposureRow,
   ProjectRow,
 } from "@/lib/projects.functions";
 import type { Rollup } from "@/lib/ior";
 
+import { BudgetLedgerTable } from "@/components/project/BudgetLedgerTable";
 import { BillingApplicationRowEditor } from "./BillingApplicationRowEditor";
 import { BillingInvoiceRowEditor } from "./BillingInvoiceRowEditor";
 import { MiniLedgerStat, SovMetric, WorkspaceHeader } from "./billing-workspace-atoms";
@@ -92,6 +95,8 @@ export function BillingWorkspace({
   rollup,
   changeOrders,
   buckets,
+  exposures,
+  exposureAllocations,
   billingApplications,
   billingInvoices,
   billingWorkspace,
@@ -129,6 +134,8 @@ export function BillingWorkspace({
   rollup: Rollup;
   changeOrders: ChangeOrderRow[];
   buckets: BucketRow[];
+  exposures: ExposureRow[];
+  exposureAllocations: ExposureAllocationRow[];
   billingApplications: BillingApplicationRow[];
   billingInvoices: BillingInvoiceRow[];
   billingWorkspace?: BillingWorkspaceData;
@@ -622,6 +629,7 @@ export function BillingWorkspace({
   ];
 
   const billingLedgers: BillingRailLedger[] = [
+    { value: "budget", title: "Budget vs Cost" },
     { value: "invoice-ledger", title: "Invoices & Payments" },
     { value: "pending-cos", title: "Pending COs" },
     { value: "pay-app-ledger", title: "A/R Ledger" },
@@ -944,6 +952,16 @@ export function BillingWorkspace({
               savingBucket={savingBucketBilling}
             />
           ))}
+        </TabsContent>
+
+        <TabsContent value="budget" className="mt-0">
+          <div className="rounded-lg border border-hairline bg-card p-6 shadow-card xl:col-span-2">
+            <BudgetLedgerTable
+              buckets={buckets}
+              exposures={exposures}
+              allocations={exposureAllocations}
+            />
+          </div>
         </TabsContent>
 
         <TabsContent value="invoice-ledger" className="mt-0">
