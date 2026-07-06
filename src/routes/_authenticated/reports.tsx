@@ -5,10 +5,15 @@ import { useServerFn } from "@tanstack/react-start";
 import { BarChart3, ReceiptText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { listPortfolioBilling, listPortfolioJobCost } from "@/lib/billing.functions";
+import {
+  listPortfolioBilling,
+  listPortfolioBillingHistory,
+  listPortfolioJobCost,
+} from "@/lib/billing.functions";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
 import { WipReport } from "@/components/reports/WipReport";
 import { JobCostReport } from "@/components/reports/JobCostReport";
+import { BillingHistoryReport } from "@/components/reports/BillingHistoryReport";
 
 export const Route = createFileRoute("/_authenticated/reports")({
   ssr: false,
@@ -29,7 +34,7 @@ const REPORTS: { key: ReportKey; label: string; blurb: string; ready: boolean }[
     key: "billing-history",
     label: "Billing history",
     blurb: "Every requisition, by project",
-    ready: false,
+    ready: true,
   },
   {
     key: "retainage-co",
@@ -43,6 +48,7 @@ function ReportsPage() {
   const [activeReport, setActiveReport] = useState<ReportKey>("wip");
   const listBilling = useServerFn(listPortfolioBilling);
   const listJobCost = useServerFn(listPortfolioJobCost);
+  const listBillingHistory = useServerFn(listPortfolioBillingHistory);
   const loadCompanyContext = useServerFn(getCompanyWorkspaceContext);
 
   const billingQuery = useQuery({
@@ -54,6 +60,11 @@ function ReportsPage() {
     queryKey: ["portfolio-job-cost"],
     queryFn: () => listJobCost(),
     enabled: activeReport === "job-cost",
+  });
+  const historyQuery = useQuery({
+    queryKey: ["portfolio-billing-history"],
+    queryFn: () => listBillingHistory(),
+    enabled: activeReport === "billing-history",
   });
   const { data: companyContext } = useQuery({
     queryKey: ["company-workspace-context"],
@@ -71,7 +82,12 @@ function ReportsPage() {
     [],
   );
 
-  const activeQuery = activeReport === "job-cost" ? jobCostQuery : billingQuery;
+  const activeQuery =
+    activeReport === "job-cost"
+      ? jobCostQuery
+      : activeReport === "billing-history"
+        ? historyQuery
+        : billingQuery;
 
   return (
     <div className="constructline-reports-page min-h-screen bg-background text-foreground">
@@ -180,6 +196,15 @@ function ReportsPage() {
               <JobCostReport
                 projects={jobCostQuery.data.projects}
                 totals={jobCostQuery.data.totals}
+                companyName={companyName}
+                generatedOn={generatedOn}
+              />
+            ) : null
+          ) : activeReport === "billing-history" ? (
+            historyQuery.data ? (
+              <BillingHistoryReport
+                projects={historyQuery.data.projects}
+                totals={historyQuery.data.totals}
                 companyName={companyName}
                 generatedOn={generatedOn}
               />
