@@ -381,8 +381,12 @@ export function BillingLineItemsPanel({
   // attachment is the planned follow-up.
   const emailPackage = async () => {
     if (!selectedPayApp) return;
-    const recipient = recipientEmails.find((email) => email.trim());
-    if (!recipient) {
+    // Every billing contact gets it — the owner rep, the lender, the architect —
+    // not just whoever happens to be first in the list.
+    const recipients = Array.from(
+      new Set(recipientEmails.map((email) => email.trim().toLowerCase()).filter(Boolean)),
+    );
+    if (recipients.length === 0) {
       toast.error("No client billing contact yet", {
         description:
           "Add a client contact who can view billing in the Client Portal tab, then email the application.",
@@ -399,24 +403,29 @@ export function BillingLineItemsPanel({
         selectedPayApp.application_number,
         selectedPayApp.invoice_number,
       );
-      await sendTransactionalEmail({
-        templateName: "invoice-notification",
-        recipientEmail: recipient,
-        idempotencyKey: `payapp:${selectedPayApp.id}:${recipient}:${Date.now()}`,
-        templateData: {
-          projectName: project.name,
-          clientName: project.client,
-          jobNumber: project.job_number,
-          invoiceNumber: appLabel,
-          invoiceTitle: appLabel,
-          invoiceStatus: "Sent",
-          portalUrl,
-          paymentUrl: "",
-          notes: "Your pay application is ready to review in the Overwatch client portal.",
-        },
-      });
+      for (const recipient of recipients) {
+        await sendTransactionalEmail({
+          templateName: "invoice-notification",
+          recipientEmail: recipient,
+          idempotencyKey: `payapp:${selectedPayApp.id}:${recipient}:${Date.now()}`,
+          templateData: {
+            projectName: project.name,
+            clientName: project.client,
+            jobNumber: project.job_number,
+            invoiceNumber: appLabel,
+            invoiceTitle: appLabel,
+            invoiceStatus: "Sent",
+            portalUrl,
+            paymentUrl: "",
+            notes: "Your pay application is ready to review in the Overwatch client portal.",
+          },
+        });
+      }
       toast.success("Application emailed", {
-        description: `${appLabel} sent to ${recipient} with a secure portal link.`,
+        description:
+          recipients.length === 1
+            ? `${appLabel} sent to ${recipients[0]} with a secure portal link.`
+            : `${appLabel} sent to ${recipients.length} billing contacts with a secure portal link.`,
       });
     } catch (error) {
       toast.error("Email could not be sent", {
