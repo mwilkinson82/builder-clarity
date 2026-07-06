@@ -1341,8 +1341,8 @@ function ProjectPage() {
     },
     {
       value: "sov",
-      label: "SOV / Costs",
-      detail: `${buckets.length} buckets`,
+      label: "Budget",
+      detail: `${buckets.length} cost codes`,
       icon: FileSpreadsheet,
     },
     {
@@ -1873,8 +1873,8 @@ function ProjectPage() {
               <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
                 <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                   <WorkspaceHeader
-                    title="SOV / Costs"
-                    subtitle="Imported schedule of values, cost buckets, actual cost, and forecast-to-complete."
+                    title="Budget"
+                    subtitle="Your budget by cost code — from the estimate — with actual cost and forecast-to-complete. This is the number you manage against; you bill from the SOV in Billing."
                     compact
                   />
                   <ImportSOVSheet
@@ -2014,6 +2014,8 @@ function ProjectPage() {
                   rollup={rollup}
                   changeOrders={changeOrders}
                   buckets={buckets}
+                  exposures={exposures}
+                  exposureAllocations={exposureAllocationsQuery.data ?? []}
                   billingApplications={visibleBillingApplications}
                   billingInvoices={billingInvoices ?? []}
                   billingWorkspace={billingWorkspaceQuery.data}
