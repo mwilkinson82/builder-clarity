@@ -35,6 +35,7 @@ import {
   boxDensity,
 } from "../src/lib/ai-takeoff/embedding-match/embedding-candidates-domain.ts";
 import { extractEmbedding } from "../src/lib/ai-takeoff/replicate.server.ts";
+import { planVisionProviders } from "../src/lib/ai-takeoff/vision-domain.ts";
 
 let checks = 0;
 const ok = (cond: unknown, msg: string) => {
@@ -258,5 +259,44 @@ ok(
 ok(extractEmbedding(null) === null, "extractEmbedding: null on garbage");
 ok(extractEmbedding({ nope: 1 }) === null, "extractEmbedding: null on unknown object");
 ok(extractEmbedding([]) === null, "extractEmbedding: null on empty array");
+
+// --- 9. VLM provider failover plan (vision-domain) -------------------------
+// A slow vendor must never stall a scan: "auto" returns both providers so the
+// caller can fail over. Lock the decision table.
+const vplan = (o: Parameters<typeof planVisionProviders>[0]) => planVisionProviders(o).join(",");
+ok(
+  vplan({ anthropicConfigured: true, openAiConfigured: true }) === "anthropic,openai",
+  "auto (default) → both providers, Anthropic leads (failover order)",
+);
+ok(
+  vplan({ anthropicConfigured: true, openAiConfigured: true, primary: "openai" }) ===
+    "openai,anthropic",
+  "auto + AI_VLM_PRIMARY=openai → OpenAI leads",
+);
+ok(
+  vplan({ anthropicConfigured: true, openAiConfigured: true, preference: "openai" }) === "openai",
+  "AI_VLM_PROVIDER=openai → OpenAI only (no Anthropic in the loop)",
+);
+ok(
+  vplan({ anthropicConfigured: true, openAiConfigured: true, preference: "anthropic" }) ===
+    "anthropic",
+  "AI_VLM_PROVIDER=anthropic → Anthropic only (prior behavior)",
+);
+ok(
+  vplan({ anthropicConfigured: true, openAiConfigured: false }) === "anthropic",
+  "only Anthropic configured → Anthropic",
+);
+ok(
+  vplan({ anthropicConfigured: false, openAiConfigured: true }) === "openai",
+  "only OpenAI configured → OpenAI (Anthropic-free path)",
+);
+ok(
+  vplan({ anthropicConfigured: false, openAiConfigured: true, preference: "anthropic" }) === "",
+  "prefer Anthropic but only OpenAI keyed → empty (no phantom provider)",
+);
+ok(
+  planVisionProviders({ anthropicConfigured: false, openAiConfigured: false }).length === 0,
+  "neither configured → empty plan (isVisionConfigured=false)",
+);
 
 console.log(`ai-embedding-match smoke: ${checks} checks passed`);
