@@ -132,11 +132,18 @@ export interface DetectionExemplarImage {
 export async function renderDetectionSheet(
   signedUrl: string,
   pageNumber: number,
+  // Long edge in px (SYMBOLDISCOVERY Stage 2a): the scan keeps 3800 for
+  // template matching; discovery can render lighter — its coords are
+  // normalized so ghost placement is unaffected, only embed-crop resolution
+  // changes. Fewer pixels = faster raster + far less memory pressure, the
+  // fix for the render that wedged for minutes on a session-worn browser.
+  longEdgePx: number = DETECTION_LONG_EDGE_PX,
 ): Promise<DetectionSheetRaster> {
   const page = await loadPdfPage(signedUrl, pageNumber);
   const pageSize = pageSizeOf(page);
   const longEdge = Math.max(pageSize.widthPt, pageSize.heightPt);
-  const viewport = page.getViewport({ scale: DETECTION_LONG_EDGE_PX / longEdge });
+  const target = Math.max(600, Math.round(longEdgePx));
+  const viewport = page.getViewport({ scale: target / longEdge });
   const canvas = await renderToCanvas(page, viewport.width, viewport.height, viewport);
   return { canvas, widthPx: canvas.width, heightPx: canvas.height, pageSize };
 }
