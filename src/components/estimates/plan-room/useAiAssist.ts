@@ -41,6 +41,7 @@ import {
   type AiCountCandidate,
   type AiCountProposal,
   type SheetPoint,
+  type SheetRadius,
 } from "@/lib/ai-takeoff/ai-takeoff-domain";
 import {
   DEFAULT_TEMPLATE_MATCH_THRESHOLD,
@@ -171,6 +172,14 @@ export function useAiAssist({
   const [scanProgress, setScanProgress] = useState<AiScanProgress | null>(null);
   const [scanError, setScanError] = useState("");
   const [proposals, setProposals] = useState<AiCountProposal[]>([]);
+  // Review context override (SYMBOLDISCOVERY Stage 1): a review seeded from
+  // OUTSIDE the scan flow (a labeled discovery cluster) carries its own
+  // label/color — exemplar-driven reviews are unaffected (null = prior
+  // behavior, context derives from the exemplar as always).
+  const [reviewOverride, setReviewOverride] = useState<{
+    label: string;
+    color?: string;
+  } | null>(null);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [isAccepting, setIsAccepting] = useState(false);
   // Survives scan completion so the diagnostics view can open on it.
@@ -319,6 +328,7 @@ export function useAiAssist({
       setPhase("idle");
       setProposals([]);
       setReviewIndex(0);
+      setReviewOverride(null);
       aiMeasurementsRef.current = new Map();
       if (accepted > 0) {
         onTakeoffsChanged();
@@ -348,6 +358,8 @@ export function useAiAssist({
     setPhase("scanning");
     setScanError("");
     setProposals([]);
+    // A fresh scan review always runs under the exemplar's context.
+    setReviewOverride(null);
     aiMeasurementsRef.current = new Map();
     cancelRequestedRef.current = false;
     operationIdRef.current = null;
@@ -1138,14 +1150,16 @@ export function useAiAssist({
             data: {
               estimate_id: estimateId,
               plan_sheet_id: sheetId,
-              estimate_line_item_id: exemplar?.estimateLineItemId ?? null,
-              library_item_id: exemplar?.libraryItemId ?? null,
+              // Externally-seeded reviews (a labeled discovery cluster) have
+              // no exemplar; their override supplies the label/color instead.
+              estimate_line_item_id: reviewOverride ? null : (exemplar?.estimateLineItemId ?? null),
+              library_item_id: reviewOverride ? null : (exemplar?.libraryItemId ?? null),
               tool_type: "count",
-              label: exemplar?.label || "AI-assisted count",
+              label: reviewOverride?.label || exemplar?.label || "AI-assisted count",
               unit: exemplar?.unit || "EA",
               quantity: points.length,
-              waste_pct: exemplar?.wastePct ?? 0,
-              color: exemplar?.color || "#d97706",
+              waste_pct: reviewOverride ? 0 : (exemplar?.wastePct ?? 0),
+              color: reviewOverride?.color || exemplar?.color || "#d97706",
               geometry: geometryFromPoints(points, viewSize),
               notes: `AI-assisted count — sheet ${sheetTag}. Every point was reviewed and accepted by hand.`,
               created_by_ai: true,
@@ -1173,7 +1187,15 @@ export function useAiAssist({
         }
       }
     },
-    [createMeasurementFn, estimateId, exemplar, sheetById, updateMeasurementFn, viewSize],
+    [
+      createMeasurementFn,
+      estimateId,
+      exemplar,
+      reviewOverride,
+      sheetById,
+      updateMeasurementFn,
+      viewSize,
+    ],
   );
 
   // endReview closes over `proposals`; reviews that decide the final item via
@@ -1184,6 +1206,7 @@ export function useAiAssist({
       setPhase("idle");
       setProposals([]);
       setReviewIndex(0);
+      setReviewOverride(null);
       aiMeasurementsRef.current = new Map();
       if (accepted > 0) {
         onTakeoffsChanged();
@@ -1236,8 +1259,11 @@ export function useAiAssist({
   const rejectActiveProposal = useCallback(
     (reason: GhostRejectionReason = "wrong_spot") => {
       if (!activeProposal || isAccepting) return;
-      if (exemplar) {
-        const key = `${activeProposal.sheetId}|${exemplar.label.trim().toLowerCase()}`;
+      // Rejections teach under whichever label this review runs as — the
+      // exemplar's, or an external (discovery-cluster) override's.
+      const teachLabel = reviewOverride?.label ?? exemplar?.label;
+      if (teachLabel) {
+        const key = `${activeProposal.sheetId}|${teachLabel.trim().toLowerCase()}`;
         const rejected = sessionRejectionsRef.current.get(key) ?? [];
         rejected.unshift({ x: activeProposal.x, y: activeProposal.y, reason });
         sessionRejectionsRef.current.set(key, rejected.slice(0, 10));
@@ -1259,7 +1285,7 @@ export function useAiAssist({
               index: rejectionIndex,
               point: { x: activeProposal.x, y: activeProposal.y },
               reason,
-              exemplar_label: exemplar.label,
+              exemplar_label: teachLabel,
             },
           }).catch(() => undefined);
         }
@@ -1282,6 +1308,7 @@ export function useAiAssist({
       lastOperationId,
       proposals,
       recordRejectionFn,
+      reviewOverride,
     ],
   );
 
@@ -1346,6 +1373,62 @@ export function useAiAssist({
     [proposals],
   );
 
+  /**
+   * Seed a review from OUTSIDE the scan flow (SYMBOLDISCOVERY Stage 1): a
+   * labeled discovery cluster's members become review ghosts under the given
+   * label, riding the existing accept/reject/nudge bar and measurement write
+   * path. Points already sitting on counted marks are excluded (same rule the
+   * scan applies), so re-counting a symbol is impossible. Returns how many
+   * ghosts were seeded (0 = everything was already counted).
+   */
+  const beginExternalReview = useCallback(
+    (input: {
+      label: string;
+      color?: string;
+      operationId?: string | null;
+      radius: SheetRadius;
+      points: Array<{ sheetId: string; x: number; y: number }>;
+    }): number => {
+      const bySheet = new Map<string, Array<{ x: number; y: number }>>();
+      for (const point of input.points) {
+        const list = bySheet.get(point.sheetId) ?? [];
+        list.push({ x: point.x, y: point.y });
+        bySheet.set(point.sheetId, list);
+      }
+      const seeded: AiCountProposal[] = [];
+      for (const [sheetId, sheetPoints] of bySheet) {
+        const fresh = excludeNearExistingPoints(
+          sheetPoints.map((point) => ({ ...point, confidence: VERIFIED_PROPOSAL_CONFIDENCE })),
+          existingCountPointsForSheet(sheetId),
+          input.radius,
+        );
+        for (const point of fresh) {
+          seeded.push({
+            id: crypto.randomUUID(),
+            sheetId,
+            x: point.x,
+            y: point.y,
+            confidence: VERIFIED_PROPOSAL_CONFIDENCE,
+            status: "pending",
+          });
+        }
+      }
+      if (seeded.length === 0) {
+        toast.info("Every symbol in this group is already counted on the sheet.");
+        return 0;
+      }
+      setReviewOverride({ label: input.label, color: input.color });
+      if (input.operationId) setLastOperationId(input.operationId);
+      aiMeasurementsRef.current = new Map();
+      setProposals(sortProposalsForReview(seeded));
+      setReviewIndex(0);
+      setPhase("review");
+      setOpen(true);
+      return seeded.length;
+    },
+    [existingCountPointsForSheet],
+  );
+
   const ghostsForSheet = useCallback(
     // Render ghosts during "scanning" too (AITAKEOFF13): template hits paint in
     // ~12s and the model appends more while the estimator watches — the
@@ -1394,6 +1477,7 @@ export function useAiAssist({
     isPurchasing: credits.isPurchasing,
     handleMeasurementSelected,
     ghostsForSheet,
+    beginExternalReview,
     lastOperationId,
   };
 }

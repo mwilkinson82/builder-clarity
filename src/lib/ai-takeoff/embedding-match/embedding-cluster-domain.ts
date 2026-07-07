@@ -124,3 +124,20 @@ export function clusterEmbeddings(
     return a.memberIndexes[0] - b.memberIndexes[0];
   });
 }
+
+/**
+ * A labeled cluster's member points (SYMBOLDISCOVERY Stage 1): map member
+ * indexes back to their candidate centers, medoid first so the review starts
+ * on the group's clearest example. Out-of-range indexes are skipped — a
+ * stale cluster can never crash the seeding.
+ */
+export function clusterMemberPoints<T extends { x: number; y: number }>(
+  cluster: EmbeddingCluster,
+  crops: T[],
+): T[] {
+  const ordered = [
+    cluster.medoidIndex,
+    ...cluster.memberIndexes.filter((index) => index !== cluster.medoidIndex),
+  ];
+  return ordered.filter((index) => index >= 0 && index < crops.length).map((index) => crops[index]);
+}
