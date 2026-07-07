@@ -212,12 +212,11 @@ const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
 // POLISH1 Task 3 (density): the primary financial path — Dashboard → SOV/Costs
 // → Billing → Change Orders — leads the rail; the rarely-opened reference tabs
 // collapse under a "More" menu. Deep links (?tab=…) still resolve to the tab.
-const SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
-  "inspections",
-  "ior-report",
-  "daily-reports",
-  "daily-wip",
-]);
+//
+// Daily Reports + Daily WIP are PRIMARY (founder 2026-07-07): the daily log now
+// feeds the WIP and is a working surface, not a rarely-opened reference — it
+// gets its own place on the rail, not the "More" menu.
+const SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>(["inspections", "ior-report"]);
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   ssr: false,
