@@ -211,7 +211,7 @@ export function AiAssistPanel({
           onClick={() => setReviewExpanded(true)}
           title="Expand the AI Assist panel"
         >
-          <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+          <img src="/favicon.svg" alt="" aria-hidden className="h-3.5 w-3.5" />
           Reviewing — {ai.pendingCount} left
           <ChevronsUpDown className="h-3 w-3 text-muted-foreground" />
         </button>
@@ -233,7 +233,7 @@ export function AiAssistPanel({
       >
         <div className="flex items-center gap-1.5 text-sm font-semibold">
           <GripHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
-          <Sparkles className="h-4 w-4 text-amber-600" />
+          <img src="/favicon.svg" alt="" aria-hidden className="h-4 w-4" />
           AI Assist
         </div>
         <div className="flex items-center gap-1.5">
