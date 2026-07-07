@@ -37,6 +37,7 @@ import {
   type DiscoveryCandidateCrop,
 } from "./aiDetectionRender";
 import { loadCachedDiscoveryRaster, saveCachedDiscoveryRaster } from "./discoveryRasterCache";
+import { requestServerSheetRender } from "./discoveryServerRender";
 
 // No exemplar exists at discovery time, so the proposer runs on a fixed
 // footprint guess: ~2% of the sheet's long edge (80px at the 3800px detection
@@ -178,9 +179,33 @@ export function useSymbolDiscovery({
           DISCOVERY_RENDER_LONG_EDGE_PX,
         );
         if (!raster) {
-          // First time for this sheet: render (bounded so a slow browser
-          // refunds instead of hanging), then persist for everyone after.
-          setProgress("Rendering the sheet (first time for this sheet)…");
+          // Rung 2: first time for this sheet — have the SERVER rasterize it
+          // (MuPDF, ~1-2s) and seed the same cache, so even a weak browser
+          // skips the slow local rasterize. Then read the freshly seeded cache.
+          setProgress("Preparing the sheet…");
+          const seeded = await requestServerSheetRender({
+            estimateId,
+            planSetId: planSet.id,
+            sheetId: sheet.id,
+            filePath: planSet.file_path,
+            pageNumber: sheet.page_number,
+            longEdgePx: DISCOVERY_RENDER_LONG_EDGE_PX,
+          });
+          if (seeded) {
+            raster = await loadCachedDiscoveryRaster(
+              estimateId,
+              planSet.id,
+              sheet.id,
+              DISCOVERY_RENDER_LONG_EDGE_PX,
+            );
+          }
+        }
+        if (!raster) {
+          // Fallback — the server render was unavailable: render in-browser
+          // (bounded so a slow browser refunds instead of hanging), then
+          // persist for everyone after. This is the pre-Rung-2 path, kept so
+          // discovery never depends on the edge function being reachable.
+          setProgress("Rendering the sheet…");
           const { data: signed } = await supabase.storage
             .from(planRoomBucket)
             .createSignedUrl(planSet.file_path, 60 * 10);
