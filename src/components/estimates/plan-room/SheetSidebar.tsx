@@ -54,7 +54,10 @@ export function CockpitFloatingPanelHeader({
   onClose: () => void;
 }) {
   return (
-    <div className="mb-2 flex items-center justify-between gap-3 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm">
+    // Pinned to the top of the scrolling panel (Command Center Tools/Drawings):
+    // the hide/reset/drag controls stay reachable no matter how far the body
+    // scrolls. bg-card is opaque so scrolled content passes cleanly underneath.
+    <div className="sticky top-0 z-20 mb-2 flex items-center justify-between gap-3 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm">
       <div
         className="flex min-w-0 flex-1 cursor-move touch-none items-center gap-2"
         title="Drag this panel anywhere in Command Center"
