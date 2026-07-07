@@ -15,6 +15,14 @@ const cleanPdfText = (value?: string | null) =>
     .join("")
     .trim();
 
+// A logo fetch must never be able to hang the whole PDF generation. If the
+// company's logo lives on a slow or unreachable host, an un-timed fetch would
+// leave generateAiaBillingPdf() pending forever — the package never finishes,
+// nothing downloads, and the user just sees "Generating..." with no error.
+// (A prime suspect in the "AIA download won't push through" field report.)
+// On timeout or any failure we simply skip the logo and draw the name.
+const LOGO_FETCH_TIMEOUT_MS = 6_000;
+
 export async function embedPdfLogo(
   doc: PDFDocument,
   logoUrl?: string | null,
@@ -22,8 +30,10 @@ export async function embedPdfLogo(
   const url = logoUrl?.trim();
   if (!url || typeof fetch === "undefined") return null;
 
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), LOGO_FETCH_TIMEOUT_MS) : null;
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, controller ? { signal: controller.signal } : undefined);
     if (!response.ok) return null;
     const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
     const bytes = await response.arrayBuffer();
@@ -39,6 +49,8 @@ export async function embedPdfLogo(
     }
   } catch {
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 
   return null;

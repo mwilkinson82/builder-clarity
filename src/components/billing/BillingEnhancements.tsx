@@ -22,7 +22,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { AiaApplicationStepper } from "@/components/billing/AiaApplicationStepper";
-import { aiaBillingFilename, downloadPdfBytes, generateAiaBillingPdf } from "@/lib/aia-pdf";
+import { aiaBillingFilename, generateAiaBillingPdf } from "@/lib/aia-pdf";
+import { bytesToBlob, triggerBlobDownload } from "@/lib/download-file";
 import { sendTransactionalEmail } from "@/lib/email/send";
 import { toast } from "sonner";
 import { overbilledLines } from "@/lib/aia-math";
@@ -365,11 +366,25 @@ export function BillingLineItemsPanel({
         payApp: selectedPayApp,
         lineItems: selectedLines,
       });
-      downloadPdfBytes(bytes, aiaBillingFilename(project, selectedPayApp));
+      const filename = aiaBillingFilename(project, selectedPayApp);
+      // Build the blob once and download it two ways. The automatic trigger
+      // works in browsers that honor a programmatic click after an await
+      // (Chrome). Safari/iOS silently drop the user-gesture across the await
+      // above and suppress that click — which is why the package "wouldn't
+      // download" in the field even after the blob-revoke fix. The toast's
+      // Download action is a real user tap, so it always downloads; the same
+      // blob backs both, so there is nothing left to go stale.
+      const blob = bytesToBlob(bytes, "application/pdf");
+      triggerBlobDownload(blob, filename);
+      toast.success("AIA package ready", {
+        description: "Your download should start automatically. If it didn't, tap Download.",
+        action: { label: "Download", onClick: () => triggerBlobDownload(blob, filename) },
+        duration: 12_000,
+      });
     } catch (error) {
-      window.alert(
-        error instanceof Error ? error.message : "AIA application package could not be generated.",
-      );
+      toast.error("AIA package could not be generated", {
+        description: error instanceof Error ? error.message : "Try again.",
+      });
     } finally {
       setPdfBusy(false);
     }
