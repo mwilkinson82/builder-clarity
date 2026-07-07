@@ -168,7 +168,42 @@ Implementation (BUDGETLOCK1):
   Zero-budget lines can still be added (they receive CO allocations or track
   added cost). Actuals and FTC stay editable — they are cost, not budget.
 - The ledger's **Budget column = frozen original + approved CO cost
-  allocations** (`computeBudgetLedger`, change-order layer). Approved CO cost
-  not yet allocated to a code appears as its own "Change-order budget
-  (unallocated)" line so the total never lies. Deductive COs carry negative
-  cost and reduce the budget. Pending/denied COs never touch it.
+  allocations** (`computeBudgetLedger`, change-order layer). Approved CO money
+  not yet allocated to a code appears as its own "Change orders (unallocated)"
+  line so the total never lies. Deductive COs carry negative cost and reduce
+  the budget. Pending/denied COs never touch it.
+
+## Addendum — line-level contract value (BUDGETVSCONTRACT1, 2026-07-06)
+
+A live user report exposed the gap: at the line level, `cost_buckets` had only
+`original_budget`, so every view that needed per-line contract value reused the
+budget — collapsing margin to zero, and worse, **the pay-app SOV import billed
+the owner at cost** (`billing-line-generation` seeded `scheduled_value` from
+`original_budget`; the WIP engine likewise defined contract = budget + COs).
+The founder's framing is the acceptance test:
+
+> "The budget is what we drive the job on. The contract's what they pay us.
+> The difference between the two, the delta, is our profit. The budget and the
+> contract value can't be the same."
+
+Implemented (spec: [`docs/phases/BUDGETVSCONTRACT1.md`](./phases/BUDGETVSCONTRACT1.md)):
+- **`cost_buckets.contract_value`** (migration `20260707003000`) — the billable
+  value of the line, independent of `original_budget`. **Line margin =
+  contract_value − budget** ($ and % of contract), derived, never stored.
+- **Backfill:** real projects stay `0` = **unpriced** — an explicit
+  "needs contract value" state; we never seed a client's contract from their
+  budget (that recreates the zero-margin bug). The Harbor demo seeds realistic
+  per-line contract values (Σ = its $3.2M contract vs $2.72M budget).
+- **Ledger + Job Cost report** show Contract value | Budget | … | **Margin**,
+  each side carrying its own CO layer (`contract_amount` → contract,
+  `cost_amount` → budget), so an approved CO's own margin flows into the delta.
+  Unpriced lines render a chip and a **null** margin — never $0.
+- **SOV import / billing generation** bills the line's contract value; unpriced
+  legacy lines fall back to budget so existing jobs keep billing (and the grid
+  cues pricing them). The WIP engine uses the same priced-or-fallback basis.
+- **Locks:** contract_value shares `budget_locked_at` — after lock, both
+  baselines move only through approved change orders.
+- **Estimate→budget carry** still populates cost only: estimate markups are
+  estimate-level, so distributing them to a per-line *price* would be a guess.
+  Lines arrive unpriced; the user enters the contract SOV. (Founder call if a
+  distribution rule is ever wanted.)

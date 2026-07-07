@@ -2458,8 +2458,36 @@ await expectContains(
 );
 await expectContains(
   "src/lib/budget-ledger.ts",
-  [/changeOrderBudget/, /status === "Approved"/, /Change-order budget \(unallocated\)/],
+  [/changeOrderBudget/, /status === "Approved"/, /Change orders \(unallocated\)/],
   "budget ledger layers approved change-order cost onto the frozen baseline (BUDGETLOCK1)",
+);
+
+// BUDGETVSCONTRACT1 (founder decision 2026-07-06, from a live user report):
+// every SOV line carries BOTH numbers — contract_value (what the owner pays)
+// and original_budget (our cost) — and the delta is the margin. An unpriced
+// line must never masquerade as zero margin, and the SOV import must bill the
+// contract, never the budget.
+await expectContains(
+  "src/lib/budget-ledger.ts",
+  [
+    /contract_value: number/,
+    /contractValue/,
+    /export function ledgerLineMargin/,
+    /priced: boolean/,
+    // The contract column must NEVER fall back to budget.
+    /NEVER falls back to budget/,
+  ],
+  "budget ledger carries contract value + margin per line, with an explicit unpriced state",
+);
+await expectContains(
+  "src/lib/billing-line-generation.ts",
+  [/lineScheduledBasis/, /contract_value/],
+  "SOV import bills the line's contract value, not the cost budget (BUDGETVSCONTRACT1)",
+);
+await expectContains(
+  "src/components/outcome/CostBucketsTable.tsx",
+  [/Contract value/, /contract_value: v/],
+  "budget grid captures contract value and budget as two clearly-labeled fields",
 );
 
 // BUDGETENGINE Phase 3: estimate → budget carry. The budget is the estimate's

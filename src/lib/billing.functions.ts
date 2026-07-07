@@ -182,6 +182,9 @@ type BucketRecord = {
   project_id: string;
   cost_code: string;
   bucket: string;
+  // BUDGETVSCONTRACT1: billable value of the line (0 = unpriced → downstream
+  // contract math falls back to budget, the legacy behavior).
+  contract_value: number;
   original_budget: number;
   actual_to_date: number;
   ftc: number;
@@ -285,6 +288,8 @@ const normalizeBucket = (row: Record<string, unknown>): BucketRecord => ({
   project_id: row.project_id as string,
   cost_code: str(row.cost_code),
   bucket: str(row.bucket),
+  // Missing column (migration not applied yet) reads as 0 = unpriced.
+  contract_value: num(row.contract_value),
   original_budget: num(row.original_budget),
   actual_to_date: num(row.actual_to_date),
   ftc: num(row.ftc),
@@ -459,21 +464,27 @@ function buildWIPForProject(input: {
     0,
   );
   const hasLineDetail = input.lineItems.length > 0;
+  // BUDGETVSCONTRACT1: a priced line's contract basis is its contract_value;
+  // an unpriced legacy line falls back to budget (pre-contract_value behavior).
+  const bucketContractBasis = (bucket: BucketRecord) =>
+    bucket.contract_value > 0 ? bucket.contract_value : bucket.original_budget;
   const totalBucketContract =
     input.buckets.reduce(
       (sum, bucket) =>
-        sum + bucket.original_budget + (allocatedContractByBucket.get(bucket.id) ?? 0),
+        sum + bucketContractBasis(bucket) + (allocatedContractByBucket.get(bucket.id) ?? 0),
       0,
     ) + unallocatedApprovedContract;
 
   const bucketInputs: WIPBucketInput[] = input.buckets.map((bucket) => {
     const line = latestLineByBucket.get(bucket.id);
-    const contractValue = bucket.original_budget + (allocatedContractByBucket.get(bucket.id) ?? 0);
+    const contractValue =
+      bucketContractBasis(bucket) + (allocatedContractByBucket.get(bucket.id) ?? 0);
     const fallbackShare = totalBucketContract > 0 ? contractValue / totalBucketContract : 0;
     return {
       cost_bucket_id: bucket.id,
       cost_code: bucket.cost_code,
       bucket: bucket.bucket,
+      contract_value: bucket.contract_value,
       original_budget: bucket.original_budget,
       change_order_additions: allocatedContractByBucket.get(bucket.id) ?? 0,
       actual_to_date: bucket.actual_to_date,
@@ -802,6 +813,9 @@ export const generateBillingLineItems = createServerFn({ method: "POST" })
         id: bucket.id,
         cost_code: bucket.cost_code,
         bucket: bucket.bucket,
+        // BUDGETVSCONTRACT1: priced lines bill the contract; unpriced fall
+        // back to budget inside the generator.
+        contract_value: bucket.contract_value,
         original_budget: bucket.original_budget,
         retainage_pct: bucket.retainage_pct,
         billing_method: bucket.billing_method,
@@ -1467,6 +1481,11 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       costBucketId: null,
       costCode: "",
       description: "Total",
+      contractValue: 0,
+      changeOrderContract: 0,
+      priced: false,
+      margin: null,
+      marginPct: null,
       budget: 0,
       originalBudget: 0,
       changeOrderBudget: 0,
@@ -1537,11 +1556,13 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
         (changeOrdersByProject.get(pid) ?? []).map((row) => ({
           id: str(row.id),
           status: str(row.status),
+          contract_amount: num(row.contract_amount),
           cost_amount: num(row.cost_amount),
         })),
         (coAllocationsByProject.get(pid) ?? []).map((row) => ({
           change_order_id: str(row.change_order_id),
           cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+          contract_amount: num(row.contract_amount),
           cost_amount: num(row.cost_amount),
         })),
       );
@@ -1557,10 +1578,18 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
 
     const totals = projects.reduce<BudgetLedgerRow>((acc, project) => {
       const t = project.ledger.totals;
+      const anyMargin = acc.margin !== null || t.margin !== null;
       return {
         costBucketId: null,
         costCode: "",
         description: "Total",
+        contractValue: acc.contractValue + t.contractValue,
+        changeOrderContract: acc.changeOrderContract + t.changeOrderContract,
+        priced: acc.priced || t.priced,
+        // Portfolio margin = Σ per-project priced margins; % is not meaningful
+        // across mixed priced/unpriced portfolios, so it stays null here.
+        margin: anyMargin ? (acc.margin ?? 0) + (t.margin ?? 0) : null,
+        marginPct: null,
         budget: acc.budget + t.budget,
         originalBudget: acc.originalBudget + t.originalBudget,
         changeOrderBudget: acc.changeOrderBudget + t.changeOrderBudget,

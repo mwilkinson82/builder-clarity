@@ -12,10 +12,23 @@ export interface LineGenBucket {
   id: string;
   cost_code: string;
   bucket: string;
+  // BUDGETVSCONTRACT1: the billable value of the line (what the owner pays).
+  // 0 = unpriced. Optional for legacy fixtures; absent reads as unpriced.
+  contract_value?: number;
   original_budget: number;
   retainage_pct: number;
   billing_method: string;
   sort_order: number;
+}
+
+// BUDGETVSCONTRACT1: a PRICED line bills its contract value; an unpriced
+// legacy line falls back to the cost budget (the pre-contract_value behavior,
+// kept so existing jobs keep billing) — with the entry UI cueing the user to
+// price the line. Billing the owner at cost was the user-reported bug.
+function lineScheduledBasis(bucket: LineGenBucket): number {
+  return (bucket.contract_value ?? 0) > 0
+    ? (bucket.contract_value as number)
+    : bucket.original_budget;
 }
 
 export interface LineGenChangeOrder {
@@ -91,13 +104,13 @@ export function buildBillingLinesFromBuckets(input: LineGenInput): GeneratedBill
 
   const targetThisPeriod = dollarsToCents(input.amountBilled);
   const contractTotal = input.buckets.reduce(
-    (sum, bucket) => sum + bucket.original_budget + (coByBucket.get(bucket.id) ?? 0),
+    (sum, bucket) => sum + lineScheduledBasis(bucket) + (coByBucket.get(bucket.id) ?? 0),
     0,
   );
   let remainingThisPeriod = targetThisPeriod;
 
   return input.buckets.map((bucket, index) => {
-    const lineContract = bucket.original_budget + (coByBucket.get(bucket.id) ?? 0);
+    const lineContract = lineScheduledBasis(bucket) + (coByBucket.get(bucket.id) ?? 0);
     // Spread the period target across lines by contract weight; the last
     // line absorbs the rounding remainder so the lines sum exactly.
     const thisPeriod =
@@ -114,8 +127,9 @@ export function buildBillingLinesFromBuckets(input: LineGenInput): GeneratedBill
       description: bucket.bucket,
       billing_method: bucket.billing_method,
       // Base SOV only — the change order rides the dedicated column so it
-      // reaches G702 line 2 instead of inflating line 1.
-      scheduled_value_cents: dollarsToCents(bucket.original_budget),
+      // reaches G702 line 2 instead of inflating line 1. Priced lines bill
+      // their CONTRACT value; unpriced legacy lines fall back to budget.
+      scheduled_value_cents: dollarsToCents(lineScheduledBasis(bucket)),
       change_order_value_cents: dollarsToCents(coByBucket.get(bucket.id) ?? 0),
       work_completed_previous_cents: previous?.work_completed_to_date_cents ?? 0,
       materials_stored_previous_cents: previous?.materials_stored_to_date_cents ?? 0,

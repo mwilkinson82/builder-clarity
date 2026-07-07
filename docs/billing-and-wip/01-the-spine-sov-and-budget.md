@@ -7,10 +7,16 @@ wrong.
 ## Cost codes / cost buckets — the shared rows
 
 The atomic unit is the **cost bucket** (a.k.a. cost code), stored in
-`public.cost_buckets`. Each bucket carries:
+`public.cost_buckets`. Each bucket carries **both money baselines**
+(BUDGETVSCONTRACT1, 2026-07-06 — they are never the same number):
 
 - `cost_code` + `bucket` (the code and its description, e.g. `03-300` /
   "Cast-in-place concrete"),
+- `contract_value` — the **billable** value of this line (what the owner
+  pays). `0` = unpriced: the ledger shows an explicit "needs contract value"
+  state, never a fake zero margin, and downstream contract math falls back to
+  budget only as legacy behavior. **Line margin = contract_value −
+  original_budget.**
 - `original_budget` — the budgeted **cost** for this code,
 - `actual_to_date` — cost booked so far,
 - `ftc` — forecast/cost-to-complete (the "open" commitment),
