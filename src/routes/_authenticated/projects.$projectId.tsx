@@ -518,16 +518,27 @@ function ProjectPage() {
     },
   });
   const budgetFromEstimate = useMutation({
-    mutationFn: () => buildBudgetFromEstimateFn({ data: { projectId } }),
+    mutationFn: (pricing: "unpriced" | "auto") =>
+      buildBudgetFromEstimateFn({ data: { projectId, pricing } }),
     onSuccess: (result) => {
       invalidate();
+      const r = (result ?? {}) as {
+        updated?: number;
+        created?: number;
+        priced?: boolean;
+        pricingRequested?: boolean;
+      };
       const summary =
-        result && typeof result === "object" && "codes" in result
-          ? ` (${(result as { updated: number }).updated} updated, ${(result as { created: number }).created} added)`
+        "codes" in ((result ?? {}) as object)
+          ? ` (${r.updated ?? 0} updated, ${r.created ?? 0} added)`
           : "";
-      toast.success("Budget built from estimate", {
-        description: `Cost codes now carry the estimate's line costs as their budget${summary}.`,
-      });
+      // Three honest outcomes: priced, chose-manual, or asked-to-price-but-no-markup.
+      const description = r.priced
+        ? `Cost codes carry the estimate's line costs as budget, and each line's contract value is proposed from the estimate's markup${summary}. Adjust any line.`
+        : r.pricingRequested
+          ? `Cost codes carry the estimate's line costs as budget${summary}. The estimate has no markup to distribute, so lines are left unpriced — enter each line's contract value.`
+          : `Cost codes carry the estimate's line costs as budget${summary}. Enter each line's contract value to complete the picture.`;
+      toast.success("Budget built from estimate", { description });
     },
     onError: (err) => {
       toast.error("Could not build budget", {
@@ -1991,16 +2002,42 @@ function ProjectPage() {
                         <AlertDialogTitle>Build the budget from the estimate?</AlertDialogTitle>
                         <AlertDialogDescription>
                           This carries the estimate's line costs (material + labor) onto your cost
-                          codes as the budget — markups stay as margin. Matching cost codes are
-                          overwritten; new ones are added. Actuals and forecast-to-complete are not
-                          touched.
+                          codes as the <span className="font-medium text-foreground">budget</span> —
+                          what you drive the job on. Matching cost codes are overwritten; new ones
+                          are added. Actuals and forecast-to-complete are not touched.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => budgetFromEstimate.mutate()}>
-                          Build budget
+                      {/* BUDGETVSCONTRACT2: the contract value (what the owner pays) is a
+                          separate number. Let the user choose how it gets set. */}
+                      <div className="space-y-2 rounded-md border border-hairline bg-surface p-3 text-sm">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Contract value (what the client pays)
+                        </div>
+                        <p className="text-muted-foreground">
+                          Budget is your cost; the contract is what the owner pays. How should each
+                          line's contract value be set?
+                        </p>
+                      </div>
+                      <AlertDialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
+                        <AlertDialogAction
+                          className="w-full"
+                          onClick={() => budgetFromEstimate.mutate("auto")}
+                        >
+                          Auto-price from the estimate
+                          <span className="ml-1 text-xs opacity-80">
+                            (proposes each line's contract from your markup — editable)
+                          </span>
                         </AlertDialogAction>
+                        <AlertDialogAction
+                          className="w-full bg-surface text-foreground hover:bg-surface/80"
+                          onClick={() => budgetFromEstimate.mutate("unpriced")}
+                        >
+                          I'll enter contract values myself
+                          <span className="ml-1 text-xs opacity-70">
+                            (lines come in as "needs contract value")
+                          </span>
+                        </AlertDialogAction>
+                        <AlertDialogCancel className="mt-0 w-full">Cancel</AlertDialogCancel>
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Json } from "@/integrations/supabase/types";
 import { normalizeBillingNumberLabel } from "@/lib/billing-labels";
-import { aggregateEstimateToBudget } from "@/lib/estimate-budget";
+import { aggregateEstimateToBudget, estimateHasDistributableMarkup } from "@/lib/estimate-budget";
 import {
   centsToDollars,
   dollarsToCents,
@@ -2304,16 +2304,27 @@ export const listExposureAllocations = createServerFn({ method: "GET" })
 // and write to a project the caller can manage.
 export const buildBudgetFromEstimate = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { projectId: string }) =>
-    z.object({ projectId: z.string().uuid() }).parse(input),
+  .inputValidator((input: { projectId: string; pricing?: "unpriced" | "auto" }) =>
+    z
+      .object({
+        projectId: z.string().uuid(),
+        // BUDGETVSCONTRACT2: "auto" pre-fills each line's contract value by
+        // distributing the estimate's markup pro-rata by cost (an editable
+        // starting point); "unpriced" (default) leaves contract values 0 so
+        // the user enters the contract SOV themselves.
+        pricing: z.enum(["unpriced", "auto"]).default("unpriced"),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     // BUDGETLOCK1: the carry writes original_budget — refused once locked.
     if (await isProjectBudgetLocked(context.supabase, data.projectId)) {
       throw new Error(BUDGET_LOCKED_MESSAGE);
     }
+    // Read the estimate's contract/sell total (cost + markups) so auto-pricing
+    // can distribute the markup. select("*") tolerates schema variation.
     const estRes = await dynamicTable(context.supabase, "estimates")
-      .select("id")
+      .select("*")
       .eq("project_id", data.projectId)
       .order("updated_at", { ascending: false })
       .limit(1)
@@ -2337,7 +2348,13 @@ export const buildBudgetFromEstimate = createServerFn({ method: "POST" })
       description: str(row.description),
       total_extended_cents: num(row.total_extended_cents),
     }));
-    const budgetLines = aggregateEstimateToBudget(lines);
+
+    // Only distribute a real markup. If the estimate has none (or the user
+    // chose manual), lines carry cost only and stay unpriced.
+    const contractTotalCents = num(estimate.total_with_markups_cents);
+    const wantsAuto = data.pricing === "auto";
+    const priced = wantsAuto && estimateHasDistributableMarkup(lines, contractTotalCents);
+    const budgetLines = aggregateEstimateToBudget(lines, priced ? { contractTotalCents } : {});
     if (budgetLines.length === 0) {
       throw new Error("The linked estimate has no line items to carry into the budget.");
     }
@@ -2355,22 +2372,38 @@ export const buildBudgetFromEstimate = createServerFn({ method: "POST" })
       maxSort = Math.max(maxSort, num(bucket.sort_order));
     }
 
+    // Pre-migration grace: if contract_value doesn't exist yet, fall back to
+    // writing budget only (the whole carry still succeeds, just unpriced).
+    let contractColumnMissing = false;
+    const withContract = (payload: Record<string, unknown>, contractValue?: number) =>
+      priced && contractValue !== undefined && !contractColumnMissing
+        ? { ...payload, contract_value: contractValue }
+        : payload;
+
     let updated = 0;
     let created = 0;
     for (const line of budgetLines) {
       const code = line.costCode.trim();
       const existingId = code ? idByCode.get(code) : undefined;
       if (existingId) {
-        // Only the budget baseline moves; actuals and forecast-to-complete are
-        // tracked as the job runs and must not be disturbed by a re-carry.
-        const { error } = await dynamicTable(context.supabase, "cost_buckets")
-          .update({ original_budget: line.budget })
+        // Only the budget/contract baselines move; actuals and
+        // forecast-to-complete are tracked as the job runs and must not be
+        // disturbed by a re-carry.
+        const basePayload = { original_budget: line.budget };
+        let { error } = await dynamicTable(context.supabase, "cost_buckets")
+          .update(withContract(basePayload, line.contractValue))
           .eq("id", existingId);
+        if (error && /contract_value|schema cache|column/i.test(error.message)) {
+          contractColumnMissing = true;
+          ({ error } = await dynamicTable(context.supabase, "cost_buckets")
+            .update(basePayload)
+            .eq("id", existingId));
+        }
         if (error) throw new Error(error.message);
         updated += 1;
       } else {
         maxSort += 1;
-        const { error } = await dynamicTable(context.supabase, "cost_buckets").insert({
+        const basePayload = {
           project_id: data.projectId,
           bucket: line.description,
           cost_code: code,
@@ -2378,12 +2411,28 @@ export const buildBudgetFromEstimate = createServerFn({ method: "POST" })
           actual_to_date: 0,
           ftc: line.budget,
           sort_order: maxSort,
-        });
+        };
+        let { error } = await dynamicTable(context.supabase, "cost_buckets").insert(
+          withContract(basePayload, line.contractValue),
+        );
+        if (error && /contract_value|schema cache|column/i.test(error.message)) {
+          contractColumnMissing = true;
+          ({ error } = await dynamicTable(context.supabase, "cost_buckets").insert(basePayload));
+        }
         if (error) throw new Error(error.message);
         created += 1;
       }
     }
-    return { ok: true, updated, created, codes: budgetLines.length };
+    return {
+      ok: true,
+      updated,
+      created,
+      codes: budgetLines.length,
+      priced: priced && !contractColumnMissing,
+      // Distinguishes "you asked to auto-price but the estimate has no markup"
+      // from "you chose manual" — the UI explains the former.
+      pricingRequested: wantsAuto,
+    };
   });
 
 // ---------------- INSPECTIONS ----------------

@@ -9,6 +9,10 @@ import assert from "node:assert/strict";
 import { computeBudgetLedger, ledgerLineMargin } from "../src/lib/budget-ledger.ts";
 import { computeWIPBucket } from "../src/lib/wip.ts";
 import { buildBillingLinesFromBuckets } from "../src/lib/billing-line-generation.ts";
+import {
+  aggregateEstimateToBudget,
+  estimateHasDistributableMarkup,
+} from "../src/lib/estimate-budget.ts";
 
 // ---------------------------------------------------------------------------
 // Line margin math ($ and %), cents-exact.
@@ -193,6 +197,110 @@ assert.equal(
   legacyLine.scheduled_value_cents,
   54000000,
   "unpriced legacy line keeps the budget fallback so existing jobs keep billing",
+);
+
+// ---------------------------------------------------------------------------
+// BUDGETVSCONTRACT2 — estimate carry, auto-price mode. Markup is distributed
+// pro-rata by cost and the per-line contract values reconcile to the estimate's
+// contract total to the cent; unpriced/no-markup carries stay cost-only.
+// ---------------------------------------------------------------------------
+const estLines = [
+  {
+    cost_code: "0300",
+    csi_division: "03",
+    scope_group: "Structure",
+    description: "Concrete",
+    total_extended_cents: 54000000,
+  },
+  {
+    cost_code: "0900",
+    csi_division: "09",
+    scope_group: "Finishes",
+    description: "Finishes",
+    total_extended_cents: 78000000,
+  },
+  {
+    cost_code: "0100",
+    csi_division: "01",
+    scope_group: "GC/OH",
+    description: "GC",
+    total_extended_cents: 27000000,
+  },
+];
+// Total cost 1.59M; estimate contract (cost + markup) 1.90M → 310k margin.
+const contractTotalCents = 190000000;
+
+assert.ok(
+  estimateHasDistributableMarkup(estLines, contractTotalCents),
+  "a contract total above cost is distributable",
+);
+assert.equal(
+  estimateHasDistributableMarkup(estLines, 159000000),
+  false,
+  "a contract total equal to cost is NOT distributable (would be zero margin)",
+);
+assert.equal(
+  estimateHasDistributableMarkup(estLines, 0),
+  false,
+  "no contract total → nothing to distribute",
+);
+
+// Manual/unpriced carry: budget only, no contract values.
+const manual = aggregateEstimateToBudget(estLines);
+assert.ok(
+  manual.every((line) => line.contractValue === undefined),
+  "unpriced carry leaves every line without a contract value",
+);
+assert.equal(
+  manual.reduce((sum, line) => sum + line.budget, 0),
+  1590000,
+  "budget total = Σ cost",
+);
+
+// Auto carry: contract values proposed, reconciling to the estimate total.
+const auto = aggregateEstimateToBudget(estLines, { contractTotalCents });
+assert.ok(
+  auto.every((line) => line.contractValue !== undefined),
+  "auto carry proposes a contract value for every priced line",
+);
+const autoContractTotal = auto.reduce((sum, line) => sum + (line.contractValue ?? 0), 0);
+assert.equal(
+  autoContractTotal,
+  1900000,
+  "Σ proposed contract = the estimate's contract total, exactly",
+);
+// Pro-rata by cost: Structure is 54/159 of cost → 54/159 of the 1.9M contract.
+const structure = auto.find((line) => line.costCode === "0300");
+assert.ok(structure && structure.contractValue !== undefined, "structure priced");
+assert.ok(
+  structure.contractValue > structure.budget,
+  "proposed contract exceeds budget — a real positive margin",
+);
+assert.ok(
+  Math.abs(structure.contractValue - 645283.02) < 0.02,
+  "structure contract = 540k × 1.9M/1.59M, cents-exact",
+);
+
+// A $0-cost line never gets a fabricated contract (can't divide margin onto it).
+const withZero = aggregateEstimateToBudget(
+  [
+    ...estLines,
+    {
+      cost_code: "9999",
+      csi_division: "99",
+      scope_group: "Placeholder",
+      description: "Zero",
+      total_extended_cents: 0,
+    },
+  ],
+  { contractTotalCents },
+);
+const zeroLine = withZero.find((line) => line.costCode === "9999");
+assert.equal(zeroLine?.contractValue, undefined, "a $0-cost line stays unpriced under auto");
+assert.equal(
+  withZero.reduce((sum, line) => sum + (line.contractValue ?? 0), 0),
+  1900000,
+  "totals still reconcile with a zero-cost line present",
 );
 
 console.log("budget-vs-contract smoke: all assertions passed");

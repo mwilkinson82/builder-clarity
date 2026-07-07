@@ -203,7 +203,41 @@ Implemented (spec: [`docs/phases/BUDGETVSCONTRACT1.md`](./phases/BUDGETVSCONTRAC
   cues pricing them). The WIP engine uses the same priced-or-fallback basis.
 - **Locks:** contract_value shares `budget_locked_at` — after lock, both
   baselines move only through approved change orders.
-- **Estimate→budget carry** still populates cost only: estimate markups are
-  estimate-level, so distributing them to a per-line *price* would be a guess.
-  Lines arrive unpriced; the user enters the contract SOV. (Founder call if a
-  distribution rule is ever wanted.)
+- **Estimate→budget carry** still populates cost per line (estimate markups are
+  estimate-level). The user now **chooses** how contract value gets set — see
+  the BUDGETVSCONTRACT2 addendum below.
+
+## Addendum — estimate carry: choose how contract value is set (BUDGETVSCONTRACT2, 2026-07-07)
+
+Estimate lines store only **cost** (`estimate_line_items.total_extended_cents`);
+markup lives at the estimate level (`overhead_pct`, `profit_pct`,
+`custom_markups[]`, rolled into `estimates.total_with_markups_cents`, the
+contract/sell total). So there is no per-line price to carry — a per-line
+contract can only be *proposed* by distributing the total markup. The founder's
+call: **give the user the choice.**
+
+"Build budget from estimate" now presents two options:
+
+1. **Auto-price from the estimate** — each line's `contract_value` is proposed
+   by distributing the estimate's markup **pro-rata by cost**
+   (`contract_line = cost_line × total_contract / total_cost`), cents-safe, with
+   the last positive-cost line absorbing the rounding remainder so the per-line
+   contracts sum to `total_with_markups_cents` **exactly**. It is an editable
+   starting point; the user overrides any line.
+2. **I'll enter contract values myself** — today's behavior: lines carry cost
+   only and come in as "needs contract value."
+
+Guardrails: auto-price runs only when the estimate has a **positive markup**
+(`estimateHasDistributableMarkup` — contract total > cost total); otherwise
+lines are left unpriced and the toast explains why (never fabricate a contract
+equal to cost — that is the zero-margin bug). A $0-cost line never receives a
+proposed contract. The carry respects the budget lock and the contract_value
+migration (graceful pre-migration fallback to unpriced). Code:
+`src/lib/estimate-budget.ts` (`aggregateEstimateToBudget` options +
+`estimateHasDistributableMarkup`), `buildBudgetFromEstimate` (`pricing` mode).
+Proof: `npm run test:budget`.
+
+Deliberately NOT done: a per-markup-basis distribution (applying material vs
+labor vs subtotal markups to their own bases). Pro-rata-by-cost is the honest,
+reconciling default; anything finer is a starting point the user overrides
+anyway. Revisit only if the founder asks.

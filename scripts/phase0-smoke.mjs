@@ -2521,6 +2521,26 @@ await expectContains(
   "SOV/Costs tab offers the estimate→budget carry behind a confirm",
 );
 
+// BUDGETVSCONTRACT2 (founder decision 2026-07-07): the estimate carry lets the
+// user CHOOSE how contract value gets set — auto-price (pro-rata markup
+// distribution, editable) or leave unpriced for manual entry. Auto never
+// fabricates a contract equal to cost.
+await expectContains(
+  "src/lib/estimate-budget.ts",
+  [/estimateHasDistributableMarkup/, /contractTotalCents/, /contractValue/],
+  "estimate carry can propose per-line contract by distributing markup pro-rata (BUDGETVSCONTRACT2)",
+);
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [/pricing: z\.enum\(\["unpriced", "auto"\]\)/, /estimateHasDistributableMarkup/],
+  "buildBudgetFromEstimate takes a pricing mode; auto-price only with real markup (BUDGETVSCONTRACT2)",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [/Auto-price from the estimate/, /I'll enter contract values myself/],
+  "the estimate-carry dialog offers auto-price vs manual contract entry (BUDGETVSCONTRACT2)",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");
