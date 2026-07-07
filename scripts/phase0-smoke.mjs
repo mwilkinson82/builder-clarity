@@ -826,6 +826,14 @@ await expectContains(
   [/onBillOwner/, /Create client invoice/, /Posts to Receivables/],
   "stepper renders the one-click Create-client-invoice action after generate",
 );
+// FIELD FIX (bill = open receivable): billing an owner issues a live, client-
+// visible invoice (status "sent") instead of a draft, so it ages on the A/R
+// dashboard immediately (the receivables aging hides drafts).
+await expectContains(
+  "src/components/project/billing/BillingWorkspace.tsx",
+  [/onCreateInvoiceForApp/, /status: "sent" as const/, /client_visible: true/],
+  "bill-owner issues an open, client-visible receivable so it ages, not a draft",
+);
 
 // GETTINGPAID1: the AIA package is lender-grade — G702 face with lines 1-9
 // including the retainage split, certification + notary + architect blocks,
