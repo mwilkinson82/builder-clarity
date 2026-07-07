@@ -14,30 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      _repair_results: {
-        Row: {
-          error: string | null
-          file: string
-          ok: boolean | null
-          ran_at: string | null
-          seq: number | null
-        }
-        Insert: {
-          error?: string | null
-          file: string
-          ok?: boolean | null
-          ran_at?: string | null
-          seq?: number | null
-        }
-        Update: {
-          error?: string | null
-          file?: string
-          ok?: boolean | null
-          ran_at?: string | null
-          seq?: number | null
-        }
-        Relationships: []
-      }
       ai_operations: {
         Row: {
           api_cost_cents: number
@@ -926,6 +902,7 @@ export type Database = {
           billing_method: string
           bucket: string
           contract_quantity: number
+          contract_value: number
           cost_code: string
           created_at: string
           earned_percent_complete: number
@@ -946,6 +923,7 @@ export type Database = {
           billing_method?: string
           bucket: string
           contract_quantity?: number
+          contract_value?: number
           cost_code?: string
           created_at?: string
           earned_percent_complete?: number
@@ -966,6 +944,7 @@ export type Database = {
           billing_method?: string
           bucket?: string
           contract_quantity?: number
+          contract_value?: number
           cost_code?: string
           created_at?: string
           earned_percent_complete?: number
@@ -1182,6 +1161,78 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "daily_reports_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_wip_entries: {
+        Row: {
+          activity: string
+          cost_bucket_id: string | null
+          created_at: string
+          created_by: string | null
+          crew_count: number
+          entry_date: string
+          equipment_cost: number
+          hours: number
+          id: string
+          labor_rate: number
+          material_cost: number
+          notes: string
+          project_id: string
+          quantity: number
+          unit: string
+          updated_at: string
+        }
+        Insert: {
+          activity?: string
+          cost_bucket_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          crew_count?: number
+          entry_date: string
+          equipment_cost?: number
+          hours?: number
+          id?: string
+          labor_rate?: number
+          material_cost?: number
+          notes?: string
+          project_id: string
+          quantity?: number
+          unit?: string
+          updated_at?: string
+        }
+        Update: {
+          activity?: string
+          cost_bucket_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          crew_count?: number
+          entry_date?: string
+          equipment_cost?: number
+          hours?: number
+          id?: string
+          labor_rate?: number
+          material_cost?: number
+          notes?: string
+          project_id?: string
+          quantity?: number
+          unit?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_wip_entries_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_wip_entries_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -1843,6 +1894,61 @@ export type Database = {
           },
           {
             foreignKeyName: "estimates_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exposure_allocations: {
+        Row: {
+          amount: number
+          cost_bucket_id: string | null
+          cost_code: string
+          created_at: string
+          exposure_id: string
+          id: string
+          project_id: string
+          updated_at: string
+        }
+        Insert: {
+          amount?: number
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          exposure_id: string
+          id?: string
+          project_id: string
+          updated_at?: string
+        }
+        Update: {
+          amount?: number
+          cost_bucket_id?: string | null
+          cost_code?: string
+          created_at?: string
+          exposure_id?: string
+          id?: string
+          project_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exposure_allocations_cost_bucket_id_fkey"
+            columns: ["cost_bucket_id"]
+            isOneToOne: false
+            referencedRelation: "cost_buckets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "exposure_allocations_exposure_id_fkey"
+            columns: ["exposure_id"]
+            isOneToOne: false
+            referencedRelation: "exposures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "exposure_allocations_project_id_fkey"
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
@@ -3023,8 +3129,10 @@ export type Database = {
           billing_contact_email: string
           billing_contact_name: string
           billing_frequency: string
+          budget_locked_at: string | null
           client: string
           created_at: string
+          default_output_format: string
           default_retainage_pct: number
           forecast_completion_date: string | null
           hold_variance_note: string
@@ -3052,8 +3160,10 @@ export type Database = {
           billing_contact_email?: string
           billing_contact_name?: string
           billing_frequency?: string
+          budget_locked_at?: string | null
           client?: string
           created_at?: string
+          default_output_format?: string
           default_retainage_pct?: number
           forecast_completion_date?: string | null
           hold_variance_note?: string
@@ -3081,8 +3191,10 @@ export type Database = {
           billing_contact_email?: string
           billing_contact_name?: string
           billing_frequency?: string
+          budget_locked_at?: string | null
           client?: string
           created_at?: string
+          default_output_format?: string
           default_retainage_pct?: number
           forecast_completion_date?: string | null
           hold_variance_note?: string
@@ -4257,6 +4369,10 @@ export type Database = {
       role_preset_capabilities: {
         Args: { p_role: Database["public"]["Enums"]["account_role"] }
         Returns: Json
+      }
+      seed_project_award_contingency: {
+        Args: { p_contract: number; p_pct?: number; p_project_id: string }
+        Returns: undefined
       }
       storage_estimate_id: { Args: { p_name: string }; Returns: string }
       storage_organization_id: { Args: { p_name: string }; Returns: string }
