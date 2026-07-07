@@ -113,6 +113,8 @@ export function BillingWorkspace({
   onDelete,
   onGenerateBillingLines,
   onUpdateBillingLine,
+  onSaveAllBillingLines,
+  savingAllBillingLines,
   onUpdatePayAppRetainageRate,
   onUpdateOutputFormat,
   savingOutputFormat,
@@ -160,6 +162,18 @@ export function BillingWorkspace({
       retainage_released?: number;
     },
   ) => void;
+  onSaveAllBillingLines?: (
+    items: {
+      id: string;
+      patch: {
+        work_completed_this_period?: number;
+        materials_stored_this_period?: number;
+        retainage_pct?: number;
+        retainage_released?: number;
+      };
+    }[],
+  ) => void;
+  savingAllBillingLines?: boolean;
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
   savingOutputFormat?: boolean;
@@ -920,10 +934,12 @@ export function BillingWorkspace({
               lineItems={workspace.lineItems}
               onGenerateLines={onGenerateBillingLines}
               onUpdateLine={onUpdateBillingLine}
+              onSaveAllLines={onSaveAllBillingLines}
               onUpdatePayAppRetainageRate={onUpdatePayAppRetainageRate}
               onUpdateOutputFormat={onUpdateOutputFormat}
               recipientEmails={invoiceRecipients.map((access) => access.email)}
               savingLine={savingBillingLine}
+              savingAllLines={savingAllBillingLines}
               savingRetainageRate={savingRetainageRate}
               savingOutputFormat={savingOutputFormat}
             />

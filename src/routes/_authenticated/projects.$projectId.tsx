@@ -82,6 +82,7 @@ import {
   importCostActuals,
   updateBillingApplicationRetainageRate,
   updateBillingLineItem,
+  updateBillingLineItems,
   updateCostBucketBillingSettings,
   voidCostActual,
 } from "@/lib/billing.functions";
@@ -350,6 +351,7 @@ function ProjectPage() {
   const loadBillingWorkspaceFn = useServerFn(getBillingWorkspace);
   const generateBillingLinesFn = useServerFn(generateBillingLineItems);
   const updateBillingLineFn = useServerFn(updateBillingLineItem);
+  const updateBillingLinesFn = useServerFn(updateBillingLineItems);
   const updateBillingRetainageRateFn = useServerFn(updateBillingApplicationRetainageRate);
   const createCostActualFn = useServerFn(createCostActual);
   const importCostActualsFn = useServerFn(importCostActuals);
@@ -722,6 +724,30 @@ function ProjectPage() {
     },
     onError: (err) => {
       toast.error("Billing line did not save", {
+        description: err instanceof Error ? err.message : "Check the line values and try again.",
+      });
+    },
+  });
+  const billingLinesUpdateAll = useMutation({
+    mutationFn: (input: {
+      items: {
+        id: string;
+        patch: {
+          work_completed_this_period?: number;
+          materials_stored_this_period?: number;
+          retainage_pct?: number;
+          retainage_released?: number;
+        };
+      }[];
+    }) => updateBillingLinesFn({ data: input }),
+    onSuccess: (result) => {
+      invalidate();
+      toast.success(`${result.saved_count} line${result.saved_count === 1 ? "" : "s"} saved`, {
+        description: "The application totals now reflect every line.",
+      });
+    },
+    onError: (err) => {
+      toast.error("Lines did not save", {
         description: err instanceof Error ? err.message : "Check the line values and try again.",
       });
     },
@@ -2168,6 +2194,8 @@ function ProjectPage() {
                     billingLineGenerate.mutate({ projectId, billingApplicationId })
                   }
                   onUpdateBillingLine={(id, patch) => billingLineUpdate.mutate({ id, patch })}
+                  onSaveAllBillingLines={(items) => billingLinesUpdateAll.mutate({ items })}
+                  savingAllBillingLines={billingLinesUpdateAll.isPending}
                   onUpdatePayAppRetainageRate={(billingApplicationId, retainage_pct) =>
                     billingRetainageRateUpdate.mutate({ billingApplicationId, retainage_pct })
                   }

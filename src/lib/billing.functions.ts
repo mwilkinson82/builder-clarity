@@ -851,15 +851,56 @@ export const generateBillingLineItems = createServerFn({ method: "POST" })
     return { ok: true, line_count: rows.length, created: true };
   });
 
+const lineItemPatchInput = z.object({
+  work_completed_this_period: z.number().min(0).optional(),
+  materials_stored_this_period: z.number().min(0).optional(),
+  retainage_pct: z.number().min(0).max(100).optional(),
+  retainage_released: z.number().min(0).optional(),
+});
+type LineItemPatchInput = z.infer<typeof lineItemPatchInput>;
+
 const updateLineItemInput = z.object({
   id: z.string().uuid(),
-  patch: z.object({
-    work_completed_this_period: z.number().min(0).optional(),
-    materials_stored_this_period: z.number().min(0).optional(),
-    retainage_pct: z.number().min(0).max(100).optional(),
-    retainage_released: z.number().min(0).optional(),
-  }),
+  patch: lineItemPatchInput,
 });
+
+// Builds the cents-domain DB patch for one billing line from a caller patch,
+// clamping any retainage release to what the line can actually release. Shared
+// by the single-line save and the save-all batch so both stay identical.
+function buildBillingLineDbPatch(
+  line: Record<string, unknown>,
+  input: LineItemPatchInput,
+): Record<string, number> {
+  const patch: Record<string, number> = {};
+  if (typeof input.work_completed_this_period === "number") {
+    patch.work_completed_this_period_cents = dollarsToCents(input.work_completed_this_period);
+  }
+  if (typeof input.materials_stored_this_period === "number") {
+    patch.materials_stored_this_period_cents = dollarsToCents(input.materials_stored_this_period);
+  }
+  if (typeof input.retainage_pct === "number") {
+    patch.retainage_pct = input.retainage_pct;
+  }
+  const retainagePct =
+    typeof input.retainage_pct === "number" ? input.retainage_pct : num(line.retainage_pct);
+  const retainageReleaseCap = billingLineRetainageCapCents(line, retainagePct, patch);
+  if (typeof input.retainage_released === "number") {
+    patch.retainage_released_cents = Math.min(
+      dollarsToCents(input.retainage_released),
+      retainageReleaseCap,
+    );
+  } else if (
+    typeof input.retainage_pct === "number" ||
+    typeof input.work_completed_this_period === "number" ||
+    typeof input.materials_stored_this_period === "number"
+  ) {
+    patch.retainage_released_cents = Math.min(
+      num(line.retainage_released_cents),
+      retainageReleaseCap,
+    );
+  }
+  return patch;
+}
 
 export const updateBillingLineItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -874,40 +915,7 @@ export const updateBillingLineItem = createServerFn({ method: "POST" })
     const line = lineRes.data as Record<string, unknown>;
     await requireCanManageProject(ctx, line.project_id as string);
 
-    const patch: Record<string, number> = {};
-    if (typeof data.patch.work_completed_this_period === "number") {
-      patch.work_completed_this_period_cents = dollarsToCents(
-        data.patch.work_completed_this_period,
-      );
-    }
-    if (typeof data.patch.materials_stored_this_period === "number") {
-      patch.materials_stored_this_period_cents = dollarsToCents(
-        data.patch.materials_stored_this_period,
-      );
-    }
-    if (typeof data.patch.retainage_pct === "number") {
-      patch.retainage_pct = data.patch.retainage_pct;
-    }
-    const retainagePct =
-      typeof data.patch.retainage_pct === "number"
-        ? data.patch.retainage_pct
-        : num(line.retainage_pct);
-    const retainageReleaseCap = billingLineRetainageCapCents(line, retainagePct, patch);
-    if (typeof data.patch.retainage_released === "number") {
-      patch.retainage_released_cents = Math.min(
-        dollarsToCents(data.patch.retainage_released),
-        retainageReleaseCap,
-      );
-    } else if (
-      typeof data.patch.retainage_pct === "number" ||
-      typeof data.patch.work_completed_this_period === "number" ||
-      typeof data.patch.materials_stored_this_period === "number"
-    ) {
-      patch.retainage_released_cents = Math.min(
-        num(line.retainage_released_cents),
-        retainageReleaseCap,
-      );
-    }
+    const patch = buildBillingLineDbPatch(line, data.patch);
 
     const updateRes = await dynamicTable(ctx.supabase, "billing_line_items")
       .update(patch)
@@ -918,6 +926,57 @@ export const updateBillingLineItem = createServerFn({ method: "POST" })
     });
     if (syncRes.error) throw new Error(syncRes.error.message);
     return { ok: true };
+  });
+
+const updateLineItemsInput = z.object({
+  items: z.array(updateLineItemInput).min(1).max(500),
+});
+
+// Save-all: commit every changed pay-app line in one call, then sync each
+// affected application ONCE. The field report was that per-line saves were the
+// only way work reached the rollup ("save all lines would be nice" + "if it is
+// working it is not rolling up") — this makes the whole application's entries
+// land, and the totals move, in a single action. Same per-line math as the
+// single save (shared buildBillingLineDbPatch), so the two can't diverge.
+export const updateBillingLineItems = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof updateLineItemsInput>) =>
+    updateLineItemsInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    const authedProjects = new Set<string>();
+    const applicationIds = new Set<string>();
+
+    // Sequential so a failure stops cleanly and reports which line broke,
+    // rather than leaving a half-applied batch behind concurrent writes.
+    for (const item of data.items) {
+      const lineRes = await dynamicTable(ctx.supabase, "billing_line_items")
+        .select(billingLineRetainageSelect)
+        .eq("id", item.id)
+        .single();
+      if (lineRes.error) throw new Error(lineRes.error.message);
+      const line = lineRes.data as Record<string, unknown>;
+      const projectId = line.project_id as string;
+      if (!authedProjects.has(projectId)) {
+        await requireCanManageProject(ctx, projectId);
+        authedProjects.add(projectId);
+      }
+      const patch = buildBillingLineDbPatch(line, item.patch);
+      const updateRes = await dynamicTable(ctx.supabase, "billing_line_items")
+        .update(patch)
+        .eq("id", item.id);
+      if (updateRes.error) throw new Error(updateRes.error.message);
+      applicationIds.add(line.billing_application_id as string);
+    }
+
+    for (const applicationId of applicationIds) {
+      const syncRes = await ctx.supabase.rpc("sync_billing_application_from_lines", {
+        p_billing_application_id: applicationId,
+      });
+      if (syncRes.error) throw new Error(syncRes.error.message);
+    }
+    return { ok: true, saved_count: data.items.length };
   });
 
 const updatePayAppRetainageRateInput = z.object({
