@@ -31,7 +31,9 @@ function mount(
     onGenerate?: () => void;
     onImportSov?: () => void;
     onSetOutputFormat?: (f: "invoice" | "aia_g702") => void;
+    onBillOwner?: () => void;
   } = {},
+  props: { invoiceExists?: boolean } = {},
 ) {
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -45,6 +47,9 @@ function mount(
         onSetOutputFormat={handlers.onSetOutputFormat ?? (() => {})}
         onImportSov={handlers.onImportSov ?? (() => {})}
         onGenerate={handlers.onGenerate ?? (() => {})}
+        onBillOwner={handlers.onBillOwner}
+        invoiceExists={props.invoiceExists}
+        billableAmountLabel="$1,000.00"
       />,
     );
   });
@@ -56,6 +61,15 @@ function generateButton(): HTMLButtonElement {
     /Download AIA|Confirm & download/.test(btn.textContent ?? ""),
   );
   if (!match) throw new Error("generate button not found");
+  return match;
+}
+
+function billButton(): HTMLButtonElement {
+  const buttons = Array.from(container!.querySelectorAll("button")) as HTMLButtonElement[];
+  const match = buttons.find((btn) =>
+    /Create client invoice|Creating invoice/.test(btn.textContent ?? ""),
+  );
+  if (!match) throw new Error("bill button not found");
   return match;
 }
 
@@ -119,4 +133,38 @@ test("no imported lines blocks generation with the SOV reason", () => {
   expect(container?.textContent).toMatch(/Import your schedule of values first/);
   click(generateButton());
   expect(onGenerate).not.toHaveBeenCalled();
+});
+
+// FIELD FIX (close the loop): after the package is generated the "Bill the owner"
+// step goes active with a one-click Create-client-invoice action; once an invoice
+// exists it reads "Invoiced" and the action is gone.
+test("bill step is disabled until the package is generated", () => {
+  const onBillOwner = vi.fn();
+  mount(READY, [], { onBillOwner }); // hasGenerated not set → generate first
+  expect(container?.textContent).toMatch(/Generate the package above first/);
+  click(billButton());
+  expect(onBillOwner).not.toHaveBeenCalled();
+});
+
+test("once generated, one click on Create client invoice bills the owner", () => {
+  const onBillOwner = vi.fn();
+  mount({ ...READY, hasGenerated: true }, [], { onBillOwner });
+  expect(container?.textContent).toMatch(/Create client invoice — \$1,000\.00/);
+  click(billButton());
+  expect(onBillOwner).toHaveBeenCalledTimes(1);
+});
+
+test("an already-invoiced application shows the Invoiced done state, no create action", () => {
+  const onBillOwner = vi.fn();
+  mount(
+    { ...READY, hasGenerated: true, hasInvoice: true },
+    [],
+    { onBillOwner },
+    {
+      invoiceExists: true,
+    },
+  );
+  expect(container?.textContent).toMatch(/Invoiced/);
+  expect(() => billButton()).toThrow(); // the create-invoice action is gone
+  expect(onBillOwner).not.toHaveBeenCalled();
 });

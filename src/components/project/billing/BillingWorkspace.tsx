@@ -3,7 +3,7 @@
 // payments / pending COs / A/R). Extracted from the project route during the
 // PROJECTDECOMP1 split and lazy-loaded so entering a project doesn't pay for
 // the billing tab up front. Verbatim; no behavior change.
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Plus, ReceiptText } from "lucide-react";
@@ -281,6 +281,16 @@ export function BillingWorkspace({
     ),
   );
   const clientVisibleInvoices = billingInvoices.filter((invoice) => invoice.client_visible).length;
+  // Applications that already have an active (non-void) client invoice — the
+  // pay-app "Bill the owner" step reads this to show the "Invoiced" done state
+  // and stay idempotent (createBillingInvoice also blocks a second invoice).
+  const invoicedApplicationIds = useMemo(
+    () =>
+      billingInvoices
+        .filter((invoice) => invoice.billing_application_id && invoice.status !== "void")
+        .map((invoice) => invoice.billing_application_id as string),
+    [billingInvoices],
+  );
   const today = new Date().toISOString().slice(0, 10);
   const loadClientPortal = useServerFn(getClientPortalManagement);
   const clientPortalQuery = useQuery({
@@ -937,11 +947,17 @@ export function BillingWorkspace({
               onSaveAllLines={onSaveAllBillingLines}
               onUpdatePayAppRetainageRate={onUpdatePayAppRetainageRate}
               onUpdateOutputFormat={onUpdateOutputFormat}
+              onCreateInvoiceForApp={(app) => {
+                // Fire-and-forget: invoiceCreate's onError surfaces failures.
+                void onCreateInvoice(buildInvoiceDraft(app)).catch(() => undefined);
+              }}
+              invoicedApplicationIds={invoicedApplicationIds}
               recipientEmails={invoiceRecipients.map((access) => access.email)}
               savingLine={savingBillingLine}
               savingAllLines={savingAllBillingLines}
               savingRetainageRate={savingRetainageRate}
               savingOutputFormat={savingOutputFormat}
+              savingInvoice={savingInvoice}
             />
           ))}
         </TabsContent>
