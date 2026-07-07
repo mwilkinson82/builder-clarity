@@ -2297,18 +2297,19 @@ await expectContains(
 );
 
 // POLISH1 Task 3 (density): the rarely-opened reference tabs (inspections, IOR
-// report, daily reports) collapse under a "More" menu so the financial path
-// leads the rail; deep links (?tab=…) still resolve to the demoted tabs.
+// report) collapse under a "More" menu so the financial path leads the rail;
+// deep links (?tab=…) still resolve to the demoted tabs. Daily Reports + Daily
+// WIP are PRIMARY (founder 2026-07-07) — the daily log feeds the WIP.
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [
-    /SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>\(\[\s*"inspections",\s*"ior-report",\s*"daily-reports",/,
+    /SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>\(\["inspections", "ior-report"\]\)/,
     /primaryNavItems\.map/,
     /secondaryNavItems\.map/,
     /DropdownMenuTrigger[\s\S]*More project tabs/,
     /onSelect=\{\(\) => setProjectTab\(item\.value\)\}/,
   ],
-  "project tab rail collapses rarely-used tabs under a More menu while keeping deep links",
+  "project tab rail collapses rarely-used tabs under a More menu while keeping deep links (Daily Reports + Daily WIP are primary, founder 2026-07-07)",
 );
 
 // POLISH1 Task 1: one shared state chip (empty / in-progress / complete /
