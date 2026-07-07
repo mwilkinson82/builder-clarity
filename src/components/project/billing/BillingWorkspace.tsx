@@ -948,8 +948,20 @@ export function BillingWorkspace({
               onUpdatePayAppRetainageRate={onUpdatePayAppRetainageRate}
               onUpdateOutputFormat={onUpdateOutputFormat}
               onCreateInvoiceForApp={(app) => {
+                const draft = buildInvoiceDraft(app);
+                // "Bill the owner" issues a real, open, client-visible receivable
+                // so it ages on the A/R dashboard immediately. A draft invoice is
+                // hidden from the receivables aging (ReceivablesCockpit filters
+                // status !== "draft") — that was the "billed but hasn't carried on
+                // the dashboard" report. A fresh pay app is status "draft", so its
+                // invoice would inherit "draft"; promote that to a sent, visible
+                // invoice. (An already paid/partially-paid draft keeps its status.)
+                const issued =
+                  draft.status === "draft"
+                    ? { ...draft, status: "sent" as const, client_visible: true }
+                    : draft;
                 // Fire-and-forget: invoiceCreate's onError surfaces failures.
-                void onCreateInvoice(buildInvoiceDraft(app)).catch(() => undefined);
+                void onCreateInvoice(issued).catch(() => undefined);
               }}
               invoicedApplicationIds={invoicedApplicationIds}
               recipientEmails={invoiceRecipients.map((access) => access.email)}
