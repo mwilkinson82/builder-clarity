@@ -7,7 +7,7 @@
 // the Download AIA action only appeared after Import-from-SOV, with nothing
 // to explain the invisible prerequisite.)
 
-export type AiaStepKey = "format" | "sov" | "entries" | "generate";
+export type AiaStepKey = "format" | "sov" | "entries" | "generate" | "bill";
 export type AiaStepStatus = "done" | "active" | "todo";
 
 export interface AiaBuilderSnapshot {
@@ -15,6 +15,13 @@ export interface AiaBuilderSnapshot {
   lineCount: number; // SOV lines imported onto the application
   linesWithActivity: number; // lines carrying this-period work or stored material
   overbilledCount: number; // lines over 100% (soft warning, not a gate)
+  // The package was generated (downloaded/emailed) this session — ephemeral, so
+  // it drives "generate done → now bill" without a persisted flag/migration.
+  hasGenerated?: boolean;
+  // An active client invoice already exists for this application (persisted via
+  // billing_invoices.billing_application_id). This is the durable "billed"
+  // milestone: once true, the app is invoiced and shows in Receivables.
+  hasInvoice?: boolean;
 }
 
 export interface AiaGenerateGate {
@@ -88,18 +95,40 @@ export function aiaBuilderSteps(snapshot: AiaBuilderSnapshot): AiaStepView[] {
           } with activity this period`
         : "No activity yet — a zero-period application is allowed",
   };
+  // Generated once the package has been produced this session OR an invoice
+  // already exists (which could only follow a generation). Either way the step
+  // reads "done" so the workflow visibly advances instead of parking on the
+  // download button.
+  const generated = Boolean(snapshot.hasGenerated) || Boolean(snapshot.hasInvoice);
   const generateStep: AiaStepView = {
     key: "generate",
     title: "Generate package",
-    status: gate.ready ? "active" : "todo",
-    detail: gate.ready
-      ? snapshot.overbilledCount > 0
-        ? `Ready — ${snapshot.overbilledCount} line${
-            snapshot.overbilledCount === 1 ? "" : "s"
-          } over 100%, confirm on generate`
-        : "Ready to download the G702/G703 package"
-      : gate.reason,
+    status: generated ? "done" : gate.ready ? "active" : "todo",
+    detail: generated
+      ? "Package generated — download it again any time"
+      : gate.ready
+        ? snapshot.overbilledCount > 0
+          ? `Ready — ${snapshot.overbilledCount} line${
+              snapshot.overbilledCount === 1 ? "" : "s"
+            } over 100%, confirm on generate`
+          : "Ready to download the G702/G703 package"
+        : gate.reason,
   };
 
-  return [formatStep, sovStep, entriesStep, generateStep];
+  // The step that closes the loop: turn the generated application into a client
+  // invoice so the billed amount posts to Receivables / A/R aging. "done" once
+  // an invoice exists (persisted), "active" once the package is generated.
+  const invoiced = Boolean(snapshot.hasInvoice);
+  const billStep: AiaStepView = {
+    key: "bill",
+    title: "Bill the owner",
+    status: invoiced ? "done" : generated ? "active" : "todo",
+    detail: invoiced
+      ? "Invoiced — tracking in Receivables"
+      : generated
+        ? "Create the client invoice so it posts to Receivables"
+        : "Generate the package first, then bill the owner",
+  };
+
+  return [formatStep, sovStep, entriesStep, generateStep, billStep];
 }

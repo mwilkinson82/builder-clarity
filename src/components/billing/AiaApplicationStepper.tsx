@@ -5,7 +5,16 @@
 // blocking step instead of no-oping, and generation with overbilled lines
 // requires one explicit confirm.
 import { useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, Check, Download, FileText, Mail, Wand2 } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  Check,
+  Download,
+  FileText,
+  Mail,
+  ReceiptText,
+  Wand2,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -25,9 +34,17 @@ interface AiaApplicationStepperProps {
   onImportSov: () => void;
   onGenerate: () => void;
   onEmail?: () => void;
+  // Close the loop: turn this generated application into a client invoice that
+  // posts to Receivables. Omitted (with invoiceExists) when the app is already
+  // invoiced or the consumer doesn't wire billing.
+  onBillOwner?: () => void;
+  onViewReceivables?: () => void;
+  billableAmountLabel?: string; // e.g. "$23,858.27" — shown on the create-invoice button
+  invoiceExists?: boolean; // an active invoice already exists for this application
   canImport: boolean;
   generating?: boolean;
   emailing?: boolean;
+  savingInvoice?: boolean;
   savingFormat?: boolean;
 }
 
@@ -59,9 +76,14 @@ export function AiaApplicationStepper({
   onImportSov,
   onGenerate,
   onEmail,
+  onBillOwner,
+  onViewReceivables,
+  billableAmountLabel,
+  invoiceExists,
   canImport,
   generating,
   emailing,
+  savingInvoice,
   savingFormat,
 }: AiaApplicationStepperProps) {
   const steps = aiaBuilderSteps(snapshot);
@@ -211,6 +233,52 @@ export function AiaApplicationStepper({
             ) : null}
           </div>
         );
+      case "bill": {
+        // Already invoiced → show the done state + a jump to Receivables.
+        if (invoiceExists) {
+          return (
+            <div className="flex flex-col items-start gap-1 sm:items-end">
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
+                <Check className="h-3.5 w-3.5" /> Invoiced
+              </span>
+              {onViewReceivables ? (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-0.5 text-[11px] font-medium text-accent-foreground underline"
+                  onClick={onViewReceivables}
+                >
+                  View in Receivables <ArrowRight className="h-3 w-3" />
+                </button>
+              ) : null}
+            </div>
+          );
+        }
+        // Generated but not yet invoiced → the one-click bill action.
+        const canBill = Boolean(onBillOwner) && gate.ready && Boolean(snapshot.hasGenerated);
+        return (
+          <div className="flex flex-col items-start gap-1">
+            <Button
+              type="button"
+              size="sm"
+              variant={canBill ? "default" : "outline"}
+              className={`gap-1.5 ${canBill ? "" : "opacity-70"}`}
+              aria-disabled={!canBill}
+              disabled={!canBill || savingInvoice}
+              onClick={onBillOwner}
+            >
+              <ReceiptText className="h-3.5 w-3.5" />
+              {savingInvoice
+                ? "Creating invoice..."
+                : `Create client invoice${billableAmountLabel ? ` — ${billableAmountLabel}` : ""}`}
+            </Button>
+            <span className="text-[11px] text-muted-foreground">
+              {snapshot.hasGenerated
+                ? "Posts to Receivables and starts A/R aging."
+                : "Generate the package above first."}
+            </span>
+          </div>
+        );
+      }
     }
   };
 

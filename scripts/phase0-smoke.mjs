@@ -813,6 +813,19 @@ await expectContains(
   [/aiaGenerateGate/, /blockingStep/, /Import your schedule of values first/],
   "AIA builder gate is a pure module shared by the stepper and the tests",
 );
+// FIELD FIX (close the loop): the generate step completes and a "Bill the owner"
+// step turns the application into a client invoice that posts to Receivables, so
+// the pay-app workflow no longer dead-ends on the download button.
+await expectContains(
+  "src/lib/aia-builder-steps.ts",
+  [/"bill"/, /Bill the owner/, /Invoiced — tracking in Receivables/, /hasInvoice/],
+  "pay-app stepper has a Bill-the-owner step that closes into Receivables",
+);
+await expectContains(
+  "src/components/billing/AiaApplicationStepper.tsx",
+  [/onBillOwner/, /Create client invoice/, /Posts to Receivables/],
+  "stepper renders the one-click Create-client-invoice action after generate",
+);
 
 // GETTINGPAID1: the AIA package is lender-grade — G702 face with lines 1-9
 // including the retainage split, certification + notary + architect blocks,

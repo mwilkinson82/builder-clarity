@@ -242,11 +242,14 @@ export function BillingLineItemsPanel({
   onSaveAllLines,
   onUpdatePayAppRetainageRate,
   onUpdateOutputFormat,
+  onCreateInvoiceForApp,
+  invoicedApplicationIds = [],
   recipientEmails = [],
   savingLine,
   savingAllLines,
   savingRetainageRate,
   savingOutputFormat,
+  savingInvoice,
 }: {
   project: ProjectRow;
   payApps: BillingApplicationRow[];
@@ -260,6 +263,12 @@ export function BillingLineItemsPanel({
   onSaveAllLines?: (items: { id: string; patch: LinePatch }[]) => void;
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
+  // Close the loop: turn the generated application into a client invoice so it
+  // posts to Receivables. The workspace builds the pre-filled draft from the app.
+  onCreateInvoiceForApp?: (app: BillingApplicationRow) => void;
+  // Application ids that already have an active invoice (persisted link) — drives
+  // the "Invoiced" done state so the bill step is idempotent across reloads.
+  invoicedApplicationIds?: string[];
   // Client billing contacts (can_view_billing) resolved by the workspace — used
   // to email the finalized package straight from the pay-app flow.
   recipientEmails?: string[];
@@ -267,9 +276,13 @@ export function BillingLineItemsPanel({
   savingAllLines?: boolean;
   savingRetainageRate?: boolean;
   savingOutputFormat?: boolean;
+  savingInvoice?: boolean;
 }) {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
+  // Applications whose package was generated (downloaded/emailed) this session —
+  // ephemeral; the durable "billed" milestone is the persisted invoice link.
+  const [generatedAppIds, setGeneratedAppIds] = useState<string[]>([]);
   const firstDetailedPayAppId = lineItems[0]?.billing_application_id ?? payApps[0]?.id ?? "";
   const [activePayAppId, setActivePayAppId] = useState(firstDetailedPayAppId);
   const selectedPayAppId = activePayAppId || firstDetailedPayAppId;
@@ -277,6 +290,10 @@ export function BillingLineItemsPanel({
     (line) => line.billing_application_id === selectedPayAppId,
   );
   const selectedPayApp = payApps.find((app) => app.id === selectedPayAppId);
+  const markGenerated = (appId: string) =>
+    setGeneratedAppIds((prev) => (prev.includes(appId) ? prev : [...prev, appId]));
+  const hasGeneratedSelected = generatedAppIds.includes(selectedPayAppId);
+  const hasInvoiceSelected = invoicedApplicationIds.includes(selectedPayAppId);
   // Save-all needs each line editor's live draft. Editors report their current
   // patch + whether it differs from what's saved; the ref holds the latest
   // patch per line without re-rendering on each keystroke, and dirtyCount (only
@@ -363,6 +380,8 @@ export function BillingLineItemsPanel({
     lineCount: selectedLines.length,
     linesWithActivity,
     overbilledCount: overbilled.length,
+    hasGenerated: hasGeneratedSelected,
+    hasInvoice: hasInvoiceSelected,
   };
 
   const releaseAll = () => {
@@ -406,6 +425,7 @@ export function BillingLineItemsPanel({
       // blob backs both, so there is nothing left to go stale.
       const blob = bytesToBlob(bytes, "application/pdf");
       triggerBlobDownload(blob, filename);
+      markGenerated(selectedPayApp.id);
       toast.success("AIA package ready", {
         description: "Your download should start automatically. If it didn't, tap Download.",
         action: { label: "Download", onClick: () => triggerBlobDownload(blob, filename) },
@@ -466,6 +486,7 @@ export function BillingLineItemsPanel({
           },
         });
       }
+      markGenerated(selectedPayApp.id);
       toast.success("Application emailed", {
         description:
           recipients.length === 1
@@ -557,6 +578,12 @@ export function BillingLineItemsPanel({
             onImportSov={() => onGenerateLines(selectedPayApp.id)}
             onGenerate={downloadAiaPdf}
             onEmail={emailPackage}
+            invoiceExists={hasInvoiceSelected}
+            billableAmountLabel={fmtUSD(selectedPayApp.amount_billed ?? 0)}
+            savingInvoice={savingInvoice}
+            onBillOwner={
+              onCreateInvoiceForApp ? () => onCreateInvoiceForApp(selectedPayApp) : undefined
+            }
           />
         </div>
       ) : null}
