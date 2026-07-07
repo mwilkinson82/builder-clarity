@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 120 120">
+  <title>OverWatch — master logomark, reversed for dark backgrounds</title>
+  <path d="M100.56,49.13 A42,42 0 0 0 19.44,49.13" fill="none" stroke="#F4F0E9" stroke-width="7.5" stroke-linecap="round"></path>
+  <path d="M19.44,70.87 A42,42 0 0 0 100.56,70.87" fill="none" stroke="#F4F0E9" stroke-width="7.5" stroke-linecap="round"></path>
+  <g transform="rotate(-8 60 60)">
+    <polyline points="8,48 40,48 50,86 60,58 70,86 80,48 112,48" fill="none" stroke="#D97757" stroke-width="9" stroke-linejoin="round" stroke-linecap="round"></polyline>
+  </g>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 120 120">
+  <title>OverWatch — small-use mark (closed ring, holds at tiny sizes)</title>
+  <circle cx="60" cy="60" r="42" fill="none" stroke="#1D1B19" stroke-width="7.5"></circle>
+  <g transform="rotate(-8 60 60)">
+    <polyline points="8,48 40,48 50,86 60,58 70,86 80,48 112,48" fill="none" stroke="#D97757" stroke-width="9" stroke-linejoin="round" stroke-linecap="round"></polyline>
+  </g>
+</svg>

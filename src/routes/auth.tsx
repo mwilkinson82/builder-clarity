@@ -12,8 +12,7 @@ export const Route = createFileRoute("/auth")({
       { title: "Sign in — Overwatch" },
       {
         name: "description",
-        content:
-          "Sign in to Overwatch, the IOR project management command center for contractors.",
+        content: "Sign in to Overwatch, the IOR project management command center for contractors.",
       },
     ],
   }),
@@ -132,11 +131,14 @@ function AuthForm() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6 py-12">
-        <Link
-          to="/"
-          className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground"
-        >
-          ← Overwatch
+        <Link to="/" aria-label="Overwatch home" className="inline-flex w-fit">
+          <img
+            src="/overwatch-lockup.svg"
+            alt="Overwatch"
+            className="h-9 w-auto"
+            width={311}
+            height={72}
+          />
         </Link>
         <h1 className="mt-6 font-serif text-4xl text-foreground">Sign in by magic link</h1>
         <p className="mt-2 text-sm text-muted-foreground">
