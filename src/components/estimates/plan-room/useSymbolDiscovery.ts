@@ -36,6 +36,7 @@ import {
   type DetectionSheetRaster,
   type DiscoveryCandidateCrop,
 } from "./aiDetectionRender";
+import { loadCachedDiscoveryRaster, saveCachedDiscoveryRaster } from "./discoveryRasterCache";
 
 // No exemplar exists at discovery time, so the proposer runs on a fixed
 // footprint guess: ~2% of the sheet's long edge (80px at the 3800px detection
@@ -160,21 +161,44 @@ export function useSymbolDiscovery({
       });
       operationId = begin.operationId;
 
-      // Reuse the raster when re-scanning the same sheet; else render (bounded
-      // so a slow browser refunds instead of hanging).
+      // Reuse the raster when re-scanning the same sheet in-session; else load
+      // the persisted render cache (Rung 1) before paying the render again.
       const cacheKey = `${sheet.id}|${DISCOVERY_RENDER_LONG_EDGE_PX}`;
       let raster = rasterCacheRef.current?.key === cacheKey ? rasterCacheRef.current.raster : null;
       if (!raster) {
-        setProgress("Rendering the sheet…");
-        const { data: signed } = await supabase.storage
-          .from(planRoomBucket)
-          .createSignedUrl(planSet.file_path, 60 * 10);
-        if (!signed?.signedUrl) throw new Error("The drawing file could not be opened.");
-        raster = await renderWithTimeout(
-          signed.signedUrl,
-          sheet.page_number,
+        // The finished raster is cached in storage after the first render, so
+        // later discoveries — any session, any user on this estimate — download
+        // it (~1-2s) instead of re-rasterizing the vector-dense sheet. This is
+        // the fix for the multi-minute render/wedge.
+        setProgress("Loading the sheet…");
+        raster = await loadCachedDiscoveryRaster(
+          estimateId,
+          planSet.id,
+          sheet.id,
           DISCOVERY_RENDER_LONG_EDGE_PX,
         );
+        if (!raster) {
+          // First time for this sheet: render (bounded so a slow browser
+          // refunds instead of hanging), then persist for everyone after.
+          setProgress("Rendering the sheet (first time for this sheet)…");
+          const { data: signed } = await supabase.storage
+            .from(planRoomBucket)
+            .createSignedUrl(planSet.file_path, 60 * 10);
+          if (!signed?.signedUrl) throw new Error("The drawing file could not be opened.");
+          raster = await renderWithTimeout(
+            signed.signedUrl,
+            sheet.page_number,
+            DISCOVERY_RENDER_LONG_EDGE_PX,
+          );
+          // Fire-and-forget: never blocks or fails the flow.
+          void saveCachedDiscoveryRaster(
+            estimateId,
+            planSet.id,
+            sheet.id,
+            DISCOVERY_RENDER_LONG_EDGE_PX,
+            raster,
+          );
+        }
         rasterCacheRef.current = { key: cacheKey, raster };
       }
 
