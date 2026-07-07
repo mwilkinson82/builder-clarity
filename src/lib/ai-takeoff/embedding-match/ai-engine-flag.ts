@@ -29,9 +29,10 @@ export function activeAiEngine(): AiEngine {
   return resolveAiEngine(import.meta.env.VITE_AI_ENGINE);
 }
 
-// Symbol discovery QA flag (SYMBOLDISCOVERY Stage 0): `?aiDiscover=1` shows
-// the "Discover symbols" action and sticks for the session; `?aiDiscover=0`
-// turns it back off. Production users without the flag never see it.
+// Symbol discovery (SYMBOLDISCOVERY Stage 2b — LIVE for all users). The
+// server-side render (Rung 2) removed the only blocker (the browser render that
+// timed out on dense sheets), so Discover is on by default. `?aiDiscover=0`
+// remains as a sticky per-session KILL SWITCH; `?aiDiscover=1` re-enables.
 const DISCOVERY_STORAGE_KEY = "overwatch.aiDiscover";
 
 export function aiDiscoveryEnabled(): boolean {
@@ -39,8 +40,9 @@ export function aiDiscoveryEnabled(): boolean {
   try {
     const param = new URLSearchParams(window.location.search).get("aiDiscover");
     if (param) window.localStorage.setItem(DISCOVERY_STORAGE_KEY, param);
-    return window.localStorage.getItem(DISCOVERY_STORAGE_KEY) === "1";
+    // On for everyone; only an explicit, sticky ?aiDiscover=0 opts a session out.
+    return window.localStorage.getItem(DISCOVERY_STORAGE_KEY) !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
