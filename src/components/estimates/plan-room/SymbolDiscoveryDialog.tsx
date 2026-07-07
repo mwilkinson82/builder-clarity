@@ -1,10 +1,11 @@
-// Symbol discovery results (SYMBOLDISCOVERY Stage 0, QA-flagged).
+// Symbol discovery results (SYMBOLDISCOVERY Stages 0-1, QA-flagged).
 // Shows the estimator "the kinds of symbols the AI found on this sheet" —
 // each cluster as a card: the medoid crop large, members alongside, count up
-// front. Stage 0 is eyes-on validation only: no labeling, no counting yet.
-// The gate: on A-100, a brush group holding most of the ~12-15 brushes with
-// junk self-segregated. If that fails, Stage 1 does not get built.
+// front. Stage 1: name a group and its members become review ghosts on the
+// canvas (the existing accept/reject/nudge bar counts them). Ignoring a junk
+// group costs nothing — just don't name it.
 
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +14,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ScanSearch } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ArrowRight, Loader2, RefreshCw, ScanSearch } from "lucide-react";
+import type { EmbeddingCluster } from "@/lib/ai-takeoff/embedding-match/embedding-cluster-domain";
 import type { SymbolDiscoveryController } from "./useSymbolDiscovery";
 
 function CropThumb({ base64, size }: { base64: string; size: number }) {
@@ -27,8 +31,16 @@ function CropThumb({ base64, size }: { base64: string; size: number }) {
   );
 }
 
-export function SymbolDiscoveryDialog({ discovery }: { discovery: SymbolDiscoveryController }) {
-  const { open, phase, progress, error, result, close } = discovery;
+export function SymbolDiscoveryDialog({
+  discovery,
+  onCountCluster,
+}: {
+  discovery: SymbolDiscoveryController;
+  /** Stage 1: hand a named cluster to the review flow (workspace wires it). */
+  onCountCluster?: (input: { cluster: EmbeddingCluster; label: string }) => void;
+}) {
+  const { open, phase, progress, error, result, rescan, close } = discovery;
+  const [labelDrafts, setLabelDrafts] = useState<Record<number, string>>({});
   const groups = result?.clusters.filter((cluster) => cluster.memberIndexes.length >= 2) ?? [];
   const singletonCount = result ? result.clusters.length - groups.length : 0;
 
@@ -41,8 +53,8 @@ export function SymbolDiscoveryDialog({ discovery }: { discovery: SymbolDiscover
             Symbols found{result ? ` on ${result.sheetLabel}` : ""}
           </DialogTitle>
           <DialogDescription>
-            The AI groups what it sees on the sheet; you name only the groups that matter. Preview
-            build — grouping only, counting comes next.
+            The AI groups what it sees on the sheet. Name a group and review its matches on the plan
+            — every count still needs your accept. Groups you don't name are simply ignored.
           </DialogDescription>
         </DialogHeader>
 
@@ -61,13 +73,25 @@ export function SymbolDiscoveryDialog({ discovery }: { discovery: SymbolDiscover
 
         {phase === "done" && result && (
           <div className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              {result.candidateCount} candidates → {result.clusters.length} groups ({groups.length}{" "}
-              with 2+ matches, {singletonCount} one-offs) · grouping threshold{" "}
-              {result.similarityThreshold.toFixed(2)} · embed{" "}
-              {Math.round(result.embedElapsedMs / 1000)}s · total{" "}
-              {Math.round(result.totalElapsedMs / 1000)}s
-            </p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">
+                {result.candidateCount} candidates → {result.clusters.length} groups (
+                {groups.length} with 2+ matches, {singletonCount} one-offs) · embed{" "}
+                {Math.round(result.embedElapsedMs / 1000)}s · total{" "}
+                {Math.round(result.totalElapsedMs / 1000)}s
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 shrink-0 gap-1.5 px-2 text-xs"
+                onClick={() => void rescan()}
+                title="Run discovery again on this sheet"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Re-scan (1 credit)
+              </Button>
+            </div>
             {groups.length === 0 && (
               <p className="text-sm text-muted-foreground">
                 Nothing grouped — every candidate looked unique at this threshold.
@@ -79,9 +103,11 @@ export function SymbolDiscoveryDialog({ discovery }: { discovery: SymbolDiscover
                 .filter((memberIndex) => memberIndex !== cluster.medoidIndex)
                 .slice(0, 7)
                 .map((memberIndex) => result.crops[memberIndex]);
+              const draftKey = cluster.memberIndexes[0];
+              const draft = labelDrafts[draftKey] ?? "";
               return (
                 <div
-                  key={cluster.memberIndexes[0]}
+                  key={draftKey}
                   className="flex items-start gap-3 rounded-md border border-hairline bg-surface p-3"
                   data-testid="discovery-cluster-card"
                 >
@@ -104,6 +130,33 @@ export function SymbolDiscoveryDialog({ discovery }: { discovery: SymbolDiscover
                         </span>
                       )}
                     </div>
+                    {onCountCluster && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <Input
+                          value={draft}
+                          onChange={(event) =>
+                            setLabelDrafts((current) => ({
+                              ...current,
+                              [draftKey]: event.target.value,
+                            }))
+                          }
+                          placeholder="Name this symbol, e.g. Mechanical Brush"
+                          className="h-8 text-sm"
+                          data-testid="discovery-cluster-label"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8 shrink-0 gap-1.5"
+                          disabled={!draft.trim()}
+                          onClick={() => onCountCluster({ cluster, label: draft.trim() })}
+                          data-testid="discovery-cluster-count"
+                        >
+                          Count these
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );

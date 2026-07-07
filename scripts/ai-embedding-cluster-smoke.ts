@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import {
   clusterEmbeddings,
+  clusterMemberPoints,
   DEFAULT_CLUSTER_SIMILARITY_THRESHOLD,
 } from "../src/lib/ai-takeoff/embedding-match/embedding-cluster-domain.ts";
 
@@ -100,5 +101,16 @@ assert.ok(
   DEFAULT_CLUSTER_SIMILARITY_THRESHOLD > 0.5 && DEFAULT_CLUSTER_SIMILARITY_THRESHOLD < 1,
   "default threshold stays a sane cosine similarity",
 );
+
+// clusterMemberPoints (Stage 1 seeding): medoid leads, indexes map safely.
+const crops = vectors.map((_, i) => ({ x: i / 100, y: 0.5 }));
+const seeded = clusterMemberPoints(clusterOf(0), crops);
+assert.equal(seeded.length, 5, "every member maps to a point");
+assert.equal(seeded[0].x, clusterOf(0).medoidIndex / 100, "medoid leads the review order");
+const stale = clusterMemberPoints(
+  { memberIndexes: [0, 99], medoidIndex: 99, cohesion: 1 },
+  crops.slice(0, 3),
+);
+assert.equal(stale.length, 1, "out-of-range member indexes are skipped, never crash");
 
 console.log("ai-embedding-cluster-smoke: OK");

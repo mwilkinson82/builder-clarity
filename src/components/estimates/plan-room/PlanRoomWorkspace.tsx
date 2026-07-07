@@ -100,6 +100,7 @@ import { AiAssistPanel } from "./AiAssistPanel";
 import { useSymbolDiscovery } from "./useSymbolDiscovery";
 import { SymbolDiscoveryDialog } from "./SymbolDiscoveryDialog";
 import { aiDiscoveryEnabled } from "@/lib/ai-takeoff/embedding-match/ai-engine-flag";
+import { clusterMemberPoints } from "@/lib/ai-takeoff/embedding-match/embedding-cluster-domain";
 import { AiReviewBar } from "./AiReviewBar";
 import { useAiAssist } from "./useAiAssist";
 import {
@@ -4104,7 +4105,30 @@ export function PlanRoomWorkspace({
         onCancel={() => setSyncConflict(null)}
         onConfirm={confirmSyncConflict}
       />
-      <SymbolDiscoveryDialog discovery={symbolDiscovery} />
+      <SymbolDiscoveryDialog
+        discovery={symbolDiscovery}
+        onCountCluster={({ cluster, label }) => {
+          const result = symbolDiscovery.result;
+          if (!result) return;
+          // A named group's members become review ghosts under that label —
+          // the existing accept/reject/nudge bar counts them (Stage 1).
+          const seeded = aiAssist.beginExternalReview({
+            label,
+            color: takeoffColor || TAKEOFF_COLORS[0],
+            operationId: result.operationId,
+            radius: result.dedupeRadius,
+            points: clusterMemberPoints(cluster, result.crops).map((crop) => ({
+              sheetId: result.sheetId,
+              x: crop.x,
+              y: crop.y,
+            })),
+          });
+          if (seeded > 0) {
+            symbolDiscovery.close();
+            if (currentSheet?.id !== result.sheetId) openSheet(result.sheetId);
+          }
+        }}
+      />
       {verifyOutcome && (
         <Dialog open onOpenChange={(open) => !open && setVerifyOutcome(null)}>
           <DialogContent data-testid="verify-scale-discrepancy-dialog">
