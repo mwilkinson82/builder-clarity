@@ -1,5 +1,5 @@
 import * as Papa from "papaparse";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -239,10 +239,12 @@ export function BillingLineItemsPanel({
   lineItems,
   onGenerateLines,
   onUpdateLine,
+  onSaveAllLines,
   onUpdatePayAppRetainageRate,
   onUpdateOutputFormat,
   recipientEmails = [],
   savingLine,
+  savingAllLines,
   savingRetainageRate,
   savingOutputFormat,
 }: {
@@ -251,12 +253,18 @@ export function BillingLineItemsPanel({
   lineItems: BillingLineItemRow[];
   onGenerateLines: (billingApplicationId: string) => void;
   onUpdateLine: (id: string, patch: LinePatch) => void;
+  // Save-all: commit every changed line in one action. The field report was
+  // that per-line saves were the only way work reached the rollup, so unsaved
+  // lines silently never counted. Optional so consumers that don't wire it just
+  // keep the per-line Save buttons.
+  onSaveAllLines?: (items: { id: string; patch: LinePatch }[]) => void;
   onUpdatePayAppRetainageRate: (billingApplicationId: string, retainagePct: number) => void;
   onUpdateOutputFormat: (billingApplicationId: string, format: BillingOutputFormat) => void;
   // Client billing contacts (can_view_billing) resolved by the workspace — used
   // to email the finalized package straight from the pay-app flow.
   recipientEmails?: string[];
   savingLine?: boolean;
+  savingAllLines?: boolean;
   savingRetainageRate?: boolean;
   savingOutputFormat?: boolean;
 }) {
@@ -269,6 +277,28 @@ export function BillingLineItemsPanel({
     (line) => line.billing_application_id === selectedPayAppId,
   );
   const selectedPayApp = payApps.find((app) => app.id === selectedPayAppId);
+  // Save-all needs each line editor's live draft. Editors report their current
+  // patch + whether it differs from what's saved; the ref holds the latest
+  // patch per line without re-rendering on each keystroke, and dirtyCount (only
+  // re-set when the set of dirty lines changes) drives the button. Reset when
+  // the application changes so drafts from another app never leak in.
+  const lineDraftsRef = useRef<Map<string, LinePatch>>(new Map());
+  const [dirtyCount, setDirtyCount] = useState(0);
+  useEffect(() => {
+    lineDraftsRef.current.clear();
+    setDirtyCount(0);
+  }, [selectedPayAppId]);
+  const handleLineDraft = useCallback((id: string, patch: LinePatch, dirty: boolean) => {
+    const drafts = lineDraftsRef.current;
+    if (dirty) drafts.set(id, patch);
+    else drafts.delete(id);
+    setDirtyCount((prev) => (prev === drafts.size ? prev : drafts.size));
+  }, []);
+  const saveAllLines = () => {
+    if (!onSaveAllLines) return;
+    const items = Array.from(lineDraftsRef.current.entries()).map(([id, patch]) => ({ id, patch }));
+    if (items.length > 0) onSaveAllLines(items);
+  };
   // The application right before this one is where the carried-forward "previous"
   // numbers come from — naming it makes the memory trustworthy to the biller.
   const priorApp = useMemo(() => {
@@ -615,12 +645,43 @@ export function BillingLineItemsPanel({
                 </div>
               </div>
             </div>
+            {onSaveAllLines ? (
+              <div className="flex flex-col gap-2 rounded-md border border-hairline bg-surface p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-xs text-muted-foreground">
+                  {dirtyCount > 0 ? (
+                    <>
+                      <span className="font-medium text-foreground">
+                        {dirtyCount} line{dirtyCount === 1 ? "" : "s"}
+                      </span>{" "}
+                      with unsaved entries — save all at once so the application totals roll up.
+                    </>
+                  ) : (
+                    "Every line entry is saved."
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-1.5 sm:w-auto"
+                  disabled={dirtyCount === 0 || savingAllLines}
+                  onClick={saveAllLines}
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  {savingAllLines
+                    ? "Saving all…"
+                    : dirtyCount > 0
+                      ? `Save all lines (${dirtyCount})`
+                      : "Save all lines"}
+                </Button>
+              </div>
+            ) : null}
             {selectedLines.map((line) => (
               <BillingLineItemEditor
                 key={line.id}
                 line={line}
                 saving={savingLine}
                 onSave={(patch) => onUpdateLine(line.id, patch)}
+                onDraftChange={handleLineDraft}
               />
             ))}
           </>
@@ -702,10 +763,14 @@ function BillingLineItemEditor({
   line,
   saving,
   onSave,
+  onDraftChange,
 }: {
   line: BillingLineItemRow;
   saving?: boolean;
   onSave: (patch: LinePatch) => void;
+  // Reports this line's current draft + whether it differs from what's saved,
+  // so the parent's "Save all lines" can commit every changed line at once.
+  onDraftChange?: (id: string, patch: LinePatch, dirty: boolean) => void;
 }) {
   const [work, setWork] = useState(centsToDollars(line.work_completed_this_period_cents));
   const [stored, setStored] = useState(centsToDollars(line.materials_stored_this_period_cents));
@@ -730,6 +795,26 @@ function BillingLineItemEditor({
     line.retainage_released_cents,
     line.billing_percent_complete,
   ]);
+  // The patch this line would save, and whether it differs from what's stored.
+  // Reported up (below) so "Save all lines" can commit every changed line at
+  // once — a line whose draft equals its saved values is not resent.
+  const draftPatch = useMemo<LinePatch>(
+    () => ({
+      work_completed_this_period: work,
+      materials_stored_this_period: stored,
+      retainage_pct: parsePercentInput(retainagePct),
+      retainage_released: released,
+    }),
+    [work, stored, retainagePct, released],
+  );
+  const dirty =
+    dollarsToCents(work) !== line.work_completed_this_period_cents ||
+    dollarsToCents(stored) !== line.materials_stored_this_period_cents ||
+    Math.abs(parsePercentInput(retainagePct) - line.retainage_pct) > 1e-9 ||
+    dollarsToCents(released) !== line.retainage_released_cents;
+  useEffect(() => {
+    onDraftChange?.(line.id, draftPatch, dirty);
+  }, [line.id, draftPatch, dirty, onDraftChange]);
   // All draft math runs in integer cents; dollars exist only at the edges so
   // the value the contractor sees is exactly the value that saves.
   const previousCents = line.work_completed_previous_cents + line.materials_stored_previous_cents;
@@ -888,14 +973,7 @@ function BillingLineItemEditor({
           variant="outline"
           className="h-9 gap-1.5 sm:w-auto"
           disabled={saving}
-          onClick={() =>
-            onSave({
-              work_completed_this_period: work,
-              materials_stored_this_period: stored,
-              retainage_pct: parsePercentInput(retainagePct),
-              retainage_released: released,
-            })
-          }
+          onClick={() => onSave(draftPatch)}
         >
           <Save className="h-3.5 w-3.5" /> Save line
         </Button>

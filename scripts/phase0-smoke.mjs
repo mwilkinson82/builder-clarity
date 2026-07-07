@@ -795,6 +795,19 @@ await expectContains(
   [/sendTransactionalEmail/, /invoice-notification/, /Application emailed/, /recipientEmails/],
   "pay-app flow can email the finalized package to the client billing contact",
 );
+// FIELD FIX (save all lines): every changed pay-app line saves in one action and
+// syncs each application once, so entered work reliably rolls up into the totals
+// (the "save all lines would be nice" / "not rolling up" field reports).
+await expectContains(
+  "src/lib/billing.functions.ts",
+  [/export const updateBillingLineItems/, /buildBillingLineDbPatch/, /saved_count/],
+  "save-all batch server fn commits every line and syncs the application once",
+);
+await expectContains(
+  "src/components/billing/BillingEnhancements.tsx",
+  [/onSaveAllLines/, /Save all lines/, /with unsaved entries/],
+  "pay-app panel offers a Save all lines action for changed lines",
+);
 await expectContains(
   "src/lib/aia-builder-steps.ts",
   [/aiaGenerateGate/, /blockingStep/, /Import your schedule of values first/],
