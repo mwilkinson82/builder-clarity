@@ -61,6 +61,16 @@ The package can be **downloaded** or **emailed** to the client from the generate
 step. Email goes to **all** billing contacts with `can_view_billing` (deduped),
 via the transactional email pipeline (below).
 
+**Downloading goes through the one safe path,
+[`download-file.ts`](../../src/lib/download-file.ts) — never hand-roll a blob
+download.** A field bug had the AIA package silently fail to download in
+Safari/iOS: revoking the blob URL synchronously after `anchor.click()` races the
+browser's async fetch of that blob (Chrome tolerates it; Safari cancels the
+download with no error). Every PDF/CSV/text download now delegates to
+`download-file.ts`, which revokes on a 60-second delay. If you add a download,
+call `downloadFileBytes` / `downloadTextFile` — a phase0 pin guards against a
+"cleanup" reintroducing the synchronous revoke.
+
 ## Retainage
 
 Retainage is the portion the owner withholds until closeout. It is tracked per

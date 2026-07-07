@@ -103,6 +103,20 @@ only the cost carries down. Matching cost codes update in place; new codes
 create a bucket. The math lives in
 [`estimate-budget.ts`](../../src/lib/estimate-budget.ts).
 
+**The contract value is the user's choice (BUDGETVSCONTRACT2).** Estimate lines
+store only cost; the markup is a single estimate-level number. So the carry
+dialog offers two ways to set each line's contract value:
+
+- **Auto-price from the estimate** — distribute the estimate's markup pro-rata
+  by cost (`contract_line = cost_line × total_contract / total_cost`),
+  reconciling to the estimate's contract total to the cent, as an **editable
+  starting point**. Runs only when the estimate has a positive markup
+  (`estimateHasDistributableMarkup`); never fabricates a contract equal to cost.
+- **Enter contract values manually** — lines come in **unpriced** ("needs
+  contract value") and the user enters the contract SOV.
+
+See the [BUDGETVSCONTRACT2 addendum](../BUDGETENGINE.md) for the rationale.
+
 ## Change orders grow the contract
 
 Approved change orders increase the contract (original → revised). They live in

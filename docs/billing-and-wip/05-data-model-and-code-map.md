@@ -9,7 +9,8 @@ to change something in the money system. Paths are from the repo root.
 | Table | Holds |
 |-------|-------|
 | `projects` | Job header — `original_contract`, `percent_complete`, `job_number`, `client`, `project_manager`. |
-| `cost_buckets` | **Cost codes** — `original_budget` (cost), `actual_to_date`, `ftc`, `earned_percent_complete` (nullable), billing settings. The shared rows budget and SOV both hang on. |
+| `cost_buckets` | **Cost codes** — `contract_value` (billable; 0 = unpriced), `original_budget` (cost), `actual_to_date`, `ftc`, `earned_percent_complete` (nullable), billing settings. The shared rows budget and SOV both hang on. **Line margin = contract_value − original_budget** (BUDGETVSCONTRACT1). |
+| `projects.budget_locked_at` | When the budget baseline froze (BUDGETLOCK1). null = unlocked. Once set, `original_budget` + `contract_value` edits are refused server-side — both move only through approved change orders. |
 | `sov_imports`, `sov_mapping_profiles` | Imported schedule-of-values files and column mappings. |
 
 ### Billing
@@ -41,14 +42,17 @@ to change something in the money system. Paths are from the repo root.
 
 ### Engines (pure, node-loadable, cents-safe)
 - [`wip.ts`](../../src/lib/wip.ts) — `computeProjectWIP` (the accounting WIP: billed vs earned vs cost → over/under, retainage, receivable).
-- [`budget-ledger.ts`](../../src/lib/budget-ledger.ts) — `computeBudgetLedger` (budget vs actual vs open → EAC, over/under; At Risk / Contingency).
+- [`budget-ledger.ts`](../../src/lib/budget-ledger.ts) — `computeBudgetLedger` (**contract** vs budget vs actual vs open → EAC, over/under, **margin**; At Risk / Contingency; approved-CO layer on both contract and budget sides) + `ledgerLineMargin`.
 - [`exposure-allocation.ts`](../../src/lib/exposure-allocation.ts) — exposure → cost-code math (E/C hold split).
 - [`daily-wip.ts`](../../src/lib/daily-wip.ts) — daily work-in-place math (labor = crew×hours×rate, day roll-up, production rate).
 - [`aia-math.ts`](../../src/lib/aia-math.ts) — G703 columns D/E/F/G, overbilled-line detection.
 - [`billing-line-generation.ts`](../../src/lib/billing-line-generation.ts) — generate billing lines from cost buckets (SOV, not cost).
-- [`estimate-budget.ts`](../../src/lib/estimate-budget.ts) — estimate line costs → budget by cost code.
+- [`estimate-budget.ts`](../../src/lib/estimate-budget.ts) — estimate line costs → budget by cost code + `estimateHasDistributableMarkup` (auto-price the contract by pro-rata markup distribution, BUDGETVSCONTRACT2).
 - [`sov-rollup.ts`](../../src/lib/sov-rollup.ts) / [`sov-import.ts`](../../src/lib/sov-import.ts) — SOV totals & import parsing.
 - [`payments-domain.ts`](../../src/lib/payments-domain.ts) — cents helpers, invoice/ledger reconciliation, refund reversal, Stripe readiness.
+
+### Utility
+- [`download-file.ts`](../../src/lib/download-file.ts) — **the one safe browser-download path** (`downloadFileBytes` / `downloadTextFile`). Delayed blob-URL revoke; never hand-roll `createObjectURL` + `revokeObjectURL` (a synchronous revoke silently cancels downloads in Safari/iOS). Phase0-pinned.
 
 ### Server functions (`createServerFn`, RLS-scoped)
 - [`billing.functions.ts`](../../src/lib/billing.functions.ts) — the big one. `listPortfolioBilling` (WIP data), `listPortfolioJobCost`, `listPortfolioBillingHistory`, `listPortfolioChangeOrders` (the four reports), plus pay-app CRUD, cost-actual CRUD, cost-bucket billing settings.
@@ -84,7 +88,27 @@ inputs.
 ### Honesty
 Never fabricate a number you don't have. Unassessed cost codes are excluded from
 earned totals and the total is flagged **partial**, not silently completed
-(WIPHONESTY1). Reports reuse the source screen's engine so they can't disagree.
+(WIPHONESTY1). An **unpriced** line (no contract value) shows "needs contract
+value" and a null margin — never a $0-margin line (BUDGETVSCONTRACT1). Reports
+reuse the source screen's engine so they can't disagree.
+
+### Contract ≠ budget (BUDGETVSCONTRACT1)
+Contract value (what the owner pays) and budget (your cost) are two independent
+per-line numbers; the delta is margin. Nothing may reuse `original_budget` as a
+contract/scheduled/sell value — the only allowed fallback is the explicit
+"unpriced legacy line → budget" one in the WIP engine and billing-line
+generation, and it exists solely so pre-migration jobs keep working.
+
+### Budget lock (BUDGETLOCK1)
+Once `projects.budget_locked_at` is set, `original_budget` and `contract_value`
+are frozen server-side; they move only through approved change orders. New
+mutation paths on those columns must call `isProjectBudgetLocked`.
+
+### Downloads
+Every file download (PDF/CSV/text) goes through `src/lib/download-file.ts`.
+Never hand-roll `URL.createObjectURL` + a synchronous `revokeObjectURL` — it
+silently cancels downloads in Safari/iOS. The revoke must stay on a delay
+(phase0-pinned).
 
 ### Graceful degradation before a migration
 Agents don't apply migrations (a separate desk does). New-table code must
