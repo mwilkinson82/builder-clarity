@@ -433,12 +433,23 @@ export function CostBucketsTable({
             (() => {
               const t = sovTotals(buckets);
               const neg = t.variance < 0;
+              // Contract value total mirrors the division-subtotal reduce above,
+              // so this row lines up with the Contract value column (added by
+              // BUDGETVSCONTRACT1). Without its own cell the totals rendered one
+              // column to the left of their headers — the field-reported shift.
+              const contractTotal = buckets.reduce(
+                (sum, bucket) => sum + (bucket.contract_value || 0),
+                0,
+              );
               return (
                 <TableFooter>
                   <TableRow className="bg-surface font-semibold">
                     <TableCell />
                     <TableCell>Total</TableCell>
                     <TableCell />
+                    <TableCell className="text-right tabular">
+                      {contractTotal > 0 ? fmtUSD(contractTotal) : "—"}
+                    </TableCell>
                     <TableCell className="text-right tabular">{fmtUSD(t.budget)}</TableCell>
                     <TableCell className="text-right tabular">{fmtUSD(t.actual)}</TableCell>
                     <TableCell className="text-right tabular">{fmtUSD(t.ftc)}</TableCell>
