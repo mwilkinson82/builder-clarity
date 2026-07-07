@@ -25,17 +25,24 @@ export function triggerBlobDownload(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
 }
 
+// Copies into a fresh ArrayBuffer: pdf-lib can hand back a view over a larger
+// buffer, and Blob would otherwise capture the whole thing. Returns a Blob a
+// caller can hold and hand to triggerBlobDownload more than once (e.g. an auto
+// download plus a user-tap fallback) without re-copying the bytes.
+export function bytesToBlob(bytes: Uint8Array, mimeType = "application/pdf"): Blob {
+  const arrayBuffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(arrayBuffer).set(bytes);
+  return new Blob([arrayBuffer], { type: mimeType });
+}
+
 // Bytes-first signature, matching the existing downloadPdfBytes helpers that
-// now delegate here. Copies into a fresh ArrayBuffer: pdf-lib can hand back a
-// view over a larger buffer, and Blob would otherwise capture the whole thing.
+// now delegate here.
 export function downloadFileBytes(
   bytes: Uint8Array,
   filename: string,
   mimeType = "application/pdf",
 ) {
-  const arrayBuffer = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(arrayBuffer).set(bytes);
-  triggerBlobDownload(new Blob([arrayBuffer], { type: mimeType }), filename);
+  triggerBlobDownload(bytesToBlob(bytes, mimeType), filename);
 }
 
 // Filename-first signature, matching every existing downloadText helper.
