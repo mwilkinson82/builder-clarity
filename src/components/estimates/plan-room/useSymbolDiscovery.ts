@@ -13,7 +13,7 @@
 // re-scan charges again. The shipped pick-one-symbol flow is not touched.
 
 import { useServerFn } from "@tanstack/react-start";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
   beginAiCountScan,
@@ -23,21 +23,63 @@ import {
 import { discoverSheetSymbols } from "@/lib/ai-takeoff/ai-discover.functions";
 import { detectCandidatePeaks } from "@/lib/ai-takeoff/embedding-match/embedding-candidates-domain";
 import type { EmbeddingCluster } from "@/lib/ai-takeoff/embedding-match/embedding-cluster-domain";
-import { sheetRadiusFromLongEdge, type SheetRadius } from "@/lib/ai-takeoff/ai-takeoff-domain";
+import {
+  DETECTION_LONG_EDGE_PX,
+  sheetRadiusFromLongEdge,
+  type SheetRadius,
+} from "@/lib/ai-takeoff/ai-takeoff-domain";
 import { planRoomBucket, type PlanSetRow, type PlanSheetRow } from "@/lib/plan-room.functions";
 import {
   cropPeaksToBase64,
   grayscaleFromRaster,
   renderDetectionSheet,
+  type DetectionSheetRaster,
   type DiscoveryCandidateCrop,
 } from "./aiDetectionRender";
 
 // No exemplar exists at discovery time, so the proposer runs on a fixed
-// footprint guess: ~2% of the 3800px detection long edge ≈ 80px — the same
-// scale the offline A-100 proof used (NMS 80px) when it self-grouped the
-// brushes. Calibration knob, alongside the server-side threshold.
+// footprint guess: ~2% of the sheet's long edge (80px at the 3800px detection
+// scale) — the scale the offline A-100 proof used (NMS 80px) when it
+// self-grouped the brushes. Stored as a FRACTION so it stays physically the
+// same symbol size at any render resolution.
 export const DISCOVERY_FOOTPRINT_PX = 80;
-const DISCOVERY_CROP_SIDE_PX = Math.round(DISCOVERY_FOOTPRINT_PX * 1.4);
+const DISCOVERY_FOOTPRINT_FRACTION = DISCOVERY_FOOTPRINT_PX / DETECTION_LONG_EDGE_PX;
+
+// Discovery renders LIGHTER than the scan (SYMBOLDISCOVERY Stage 2a): its
+// coords are normalized so ghost placement is identical, only the embed-crop
+// resolution drops. Far fewer pixels than 3800 = a faster raster that no
+// longer wedges a session-worn browser. Tunable; re-QA the cluster if changed.
+const DISCOVERY_RENDER_LONG_EDGE_PX = 2400;
+
+// One render can rasterize a vector-dense sheet for a long time; bound it so a
+// slow/wedged browser fails at the cap (→ refund) instead of hanging for
+// minutes. Cleared by the caller's try/catch → failAiCountScan → credit back.
+const DISCOVERY_RENDER_TIMEOUT_MS = 90_000;
+
+/** Race the sheet render against a timeout so it can never hang the flow. */
+function renderWithTimeout(
+  signedUrl: string,
+  pageNumber: number,
+  longEdgePx: number,
+): Promise<DetectionSheetRaster> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            "The sheet took too long to render. Your credit was refunded — try again, or use a lighter browser tab.",
+          ),
+        ),
+      DISCOVERY_RENDER_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([renderDetectionSheet(signedUrl, pageNumber, longEdgePx), timeout]).finally(
+    () => {
+      if (timer) clearTimeout(timer);
+    },
+  ) as Promise<DetectionSheetRaster>;
+}
 
 export type SymbolDiscoveryPhase = "idle" | "running" | "done";
 
@@ -85,6 +127,10 @@ export function useSymbolDiscovery({
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [result, setResult] = useState<SymbolDiscoveryResult | null>(null);
+  // Single-entry render cache (Stage 2a): re-scanning the same sheet reuses
+  // the raster instead of paying the render again. One entry keeps the big
+  // canvas from piling up in memory.
+  const rasterCacheRef = useRef<{ key: string; raster: DetectionSheetRaster } | null>(null);
 
   const planSetById = useMemo(
     () => new Map(planSets.map((planSet) => [planSet.id, planSet])),
@@ -114,24 +160,37 @@ export function useSymbolDiscovery({
       });
       operationId = begin.operationId;
 
-      setProgress("Rendering the sheet…");
-      const { data: signed } = await supabase.storage
-        .from(planRoomBucket)
-        .createSignedUrl(planSet.file_path, 60 * 10);
-      if (!signed?.signedUrl) throw new Error("The drawing file could not be opened.");
-      const raster = await renderDetectionSheet(signed.signedUrl, sheet.page_number);
+      // Reuse the raster when re-scanning the same sheet; else render (bounded
+      // so a slow browser refunds instead of hanging).
+      const cacheKey = `${sheet.id}|${DISCOVERY_RENDER_LONG_EDGE_PX}`;
+      let raster = rasterCacheRef.current?.key === cacheKey ? rasterCacheRef.current.raster : null;
+      if (!raster) {
+        setProgress("Rendering the sheet…");
+        const { data: signed } = await supabase.storage
+          .from(planRoomBucket)
+          .createSignedUrl(planSet.file_path, 60 * 10);
+        if (!signed?.signedUrl) throw new Error("The drawing file could not be opened.");
+        raster = await renderWithTimeout(
+          signed.signedUrl,
+          sheet.page_number,
+          DISCOVERY_RENDER_LONG_EDGE_PX,
+        );
+        rasterCacheRef.current = { key: cacheKey, raster };
+      }
 
       setProgress("Finding candidate symbols…");
       const gray = grayscaleFromRaster(raster);
       if (!gray) throw new Error("The sheet could not be read for discovery.");
-      const peaks = detectCandidatePeaks(
-        gray,
-        raster.widthPx,
-        raster.heightPx,
-        DISCOVERY_FOOTPRINT_PX,
+      // Footprint tracks the render resolution so the SAME physical symbol size
+      // is detected whatever the raster scale (the 3800px gate and a 2400px
+      // run find the same symbols; only crop pixels differ).
+      const footprintPx = Math.max(
+        16,
+        Math.round(DISCOVERY_FOOTPRINT_FRACTION * Math.max(raster.widthPx, raster.heightPx)),
       );
+      const peaks = detectCandidatePeaks(gray, raster.widthPx, raster.heightPx, footprintPx);
       if (peaks.length === 0) throw new Error("No candidate symbols were found on this sheet.");
-      const crops = cropPeaksToBase64(raster, peaks, DISCOVERY_CROP_SIDE_PX);
+      const crops = cropPeaksToBase64(raster, peaks, Math.round(footprintPx * 1.4));
 
       setProgress(`Grouping ${crops.length} candidates by what they look like…`);
       const discovered = await discoverFn({
@@ -160,7 +219,7 @@ export function useSymbolDiscovery({
         sheetId: sheet.id,
         operationId: completedOperationId,
         dedupeRadius: sheetRadiusFromLongEdge(
-          (0.75 * DISCOVERY_FOOTPRINT_PX) / Math.max(raster.widthPx, raster.heightPx),
+          (0.75 * footprintPx) / Math.max(raster.widthPx, raster.heightPx),
           raster.widthPx,
           raster.heightPx,
         ),
