@@ -197,21 +197,38 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
 
     const quote = quoteScanCredits(sheetIds.length);
 
-    // Balance pre-check with the user's own read access (RLS members-read).
-    const ledgerResult = (await dynamicTable(context.supabase, "credit_ledger")
-      .select("delta")
-      .eq("organization_id", organizationId)) as DynamicSupabaseResult<Array<{ delta: number }>>;
-    if (ledgerResult.error) {
-      if (isMissingCreditsSchema(ledgerResult.error)) {
-        throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
-      }
-      throw new Error(ledgerResult.error.message);
+    // Platform super admins (the app_super_admins list — the same gate as the
+    // scan diagnostics) run the AI features UN-METERED on their own instance:
+    // no balance check, no charge. Scoped to the platform role, so a paying
+    // customer's org meter is never affected.
+    let isSuperAdmin = false;
+    try {
+      const { data: superFlag } = await (
+        context.supabase as unknown as { rpc(fn: string): Promise<{ data: boolean | null }> }
+      ).rpc("is_super_admin");
+      isSuperAdmin = Boolean(superFlag);
+    } catch {
+      isSuperAdmin = false;
     }
-    const balance = creditBalance(ledgerResult.data ?? []);
-    if (balance < quote) {
-      throw new Error(
-        `This scan needs ${quote} credit${quote === 1 ? "" : "s"} and your company has ${balance}. Buy a credit pack to continue.`,
-      );
+    const chargedCredits = isSuperAdmin ? 0 : quote;
+
+    if (!isSuperAdmin) {
+      // Balance pre-check with the user's own read access (RLS members-read).
+      const ledgerResult = (await dynamicTable(context.supabase, "credit_ledger")
+        .select("delta")
+        .eq("organization_id", organizationId)) as DynamicSupabaseResult<Array<{ delta: number }>>;
+      if (ledgerResult.error) {
+        if (isMissingCreditsSchema(ledgerResult.error)) {
+          throw new Error(CREDITS_SCHEMA_PENDING_MESSAGE);
+        }
+        throw new Error(ledgerResult.error.message);
+      }
+      const balance = creditBalance(ledgerResult.data ?? []);
+      if (balance < quote) {
+        throw new Error(
+          `This scan needs ${quote} credit${quote === 1 ? "" : "s"} and your company has ${balance}. Buy a credit pack to continue.`,
+        );
+      }
     }
 
     const model = resolveVisionModel();
@@ -228,7 +245,7 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
         estimate_id: data.estimate_id,
         sheet_ids: sheetIds,
         model_used: model,
-        credits_charged: quote,
+        credits_charged: chargedCredits,
         status: "pending",
       })
       .select("*")
@@ -239,23 +256,25 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
     }
     const operation = normalizeOperation(operationRow as Record<string, unknown>);
 
-    const { error: spendError } = await dynamicTable(supabaseAdmin, "credit_ledger").insert({
-      organization_id: organizationId,
-      delta: -quote,
-      reason: "ai_count_scan",
-      reference: operation.id,
-      created_by: context.userId,
-    });
-    if (spendError) {
-      // No charge means no scan: close the operation instead of running free.
-      await dynamicTable(supabaseAdmin, "ai_operations")
-        .update({
-          status: "failed",
-          error: `Credit charge failed: ${spendError.message}`.slice(0, 2000),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", operation.id);
-      throw new Error("Credits could not be charged for this scan. Nothing was scanned.");
+    if (!isSuperAdmin) {
+      const { error: spendError } = await dynamicTable(supabaseAdmin, "credit_ledger").insert({
+        organization_id: organizationId,
+        delta: -quote,
+        reason: "ai_count_scan",
+        reference: operation.id,
+        created_by: context.userId,
+      });
+      if (spendError) {
+        // No charge means no scan: close the operation instead of running free.
+        await dynamicTable(supabaseAdmin, "ai_operations")
+          .update({
+            status: "failed",
+            error: `Credit charge failed: ${spendError.message}`.slice(0, 2000),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", operation.id);
+        throw new Error("Credits could not be charged for this scan. Nothing was scanned.");
+      }
     }
 
     // Transient diagnostics from earlier scans age out here (24h retention).
@@ -263,7 +282,7 @@ export const beginAiCountScan = createServerFn({ method: "POST" })
 
     return {
       operationId: operation.id,
-      creditsCharged: quote,
+      creditsCharged: chargedCredits,
       model,
       maxSheets: cap,
       minConfidence: minProposalConfidence(),
