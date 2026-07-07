@@ -7,6 +7,7 @@ import {
   Gauge,
   ShieldAlert,
   TrendingDown,
+  TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 import { fmtPct, fmtUSD } from "@/lib/format";
@@ -137,6 +138,23 @@ export function ProjectDashboard({
   const bridgeMax = Math.max(1, ...outcomeRows.map((row) => Math.abs(row.value)));
   const needsAttention = warnings.length > 0 || rollup.gpAtRisk > 0;
   const riskPosture = needsAttention ? "Management attention required" : "No active pressure";
+  // "GP at risk" is signed GP minus the GP now forecast after holds
+  // (originalGP − indicatedGP). Positive → forecasting BELOW the signed deal, so
+  // that profit is genuinely at risk. Negative → forecasting ABOVE it, which is
+  // upside, not risk. The field report ("where's it getting this 48k number")
+  // was exactly that negative case — a job indicating better than signed, shown
+  // as a confusing negative "at risk". Present it sign-aware everywhere.
+  const gpDelta = rollup.gpAtRisk;
+  const gpUpside = gpDelta < 0;
+  const gpDeltaLabel = gpUpside ? "GP upside vs signed" : "GP at risk";
+  const gpDeltaValue = fmtUSD(Math.abs(gpDelta));
+  const gpDeltaTone: "danger" | "success" | undefined =
+    gpDelta > 0 ? "danger" : gpUpside ? "success" : undefined;
+  const gpDeltaDetail = gpUpside
+    ? "Above signed GP"
+    : gpDelta > 0
+      ? "Below signed GP"
+      : "On signed GP";
 
   return (
     <section className="space-y-5" aria-label="Financial dashboard">
@@ -209,9 +227,23 @@ export function ProjectDashboard({
               <span className="font-medium tabular text-foreground">
                 {fmtUSD(rollup.indicatedGP)}
               </span>
-              , with{" "}
-              <span className="font-medium tabular text-danger">{fmtUSD(rollup.gpAtRisk)}</span> of
-              original expected profit at risk.
+              {gpUpside ? (
+                <>
+                  {" "}
+                  &mdash; <span className="font-medium tabular text-success">
+                    {gpDeltaValue}
+                  </span>{" "}
+                  above the {fmtUSD(rollup.originalGP)} gross profit you signed. That&rsquo;s upside
+                  on the original deal, not risk.
+                </>
+              ) : gpDelta > 0 ? (
+                <>
+                  , with <span className="font-medium tabular text-danger">{gpDeltaValue}</span> of
+                  the {fmtUSD(rollup.originalGP)} signed gross profit now at risk.
+                </>
+              ) : (
+                <>, exactly the {fmtUSD(rollup.originalGP)} gross profit you signed.</>
+              )}
             </p>
             {warnings.length > 0 && (
               <div className="mt-4 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-3 text-sm">
@@ -235,11 +267,12 @@ export function ProjectDashboard({
             detail={fmtPct(rollup.originalGPpct)}
           />
           <KpiCell
-            icon={TrendingDown}
-            label="GP at risk"
-            value={fmtUSD(rollup.gpAtRisk)}
-            tone="danger"
-            featured
+            icon={gpUpside ? TrendingUp : TrendingDown}
+            label={gpDeltaLabel}
+            value={gpDeltaValue}
+            detail={gpDeltaDetail}
+            tone={gpDeltaTone}
+            featured={gpDelta > 0}
           />
           <KpiCell
             icon={Gauge}
@@ -371,7 +404,7 @@ export function ProjectDashboard({
             <div className="mt-4 grid gap-2">
               <ReadingLine label="Original GP" value={fmtUSD(rollup.originalGP)} />
               <ReadingLine label="Indicated GP" value={fmtUSD(rollup.indicatedGP)} tone="accent" />
-              <ReadingLine label="GP at risk" value={fmtUSD(rollup.gpAtRisk)} tone="danger" />
+              <ReadingLine label={gpDeltaLabel} value={gpDeltaValue} tone={gpDeltaTone} />
             </div>
           </div>
         </div>
@@ -593,9 +626,16 @@ function ReadingLine({
 }: {
   label: string;
   value: string;
-  tone?: "accent" | "danger";
+  tone?: "accent" | "danger" | "success";
 }) {
-  const toneText = tone === "danger" ? "text-danger" : tone === "accent" ? "text-accent" : "";
+  const toneText =
+    tone === "danger"
+      ? "text-danger"
+      : tone === "accent"
+        ? "text-accent"
+        : tone === "success"
+          ? "text-success"
+          : "";
   return (
     <div className="flex items-baseline justify-between gap-3 border-b border-hairline pb-2 last:border-b-0 last:pb-0">
       <span className="text-sm text-muted-foreground">{label}</span>
