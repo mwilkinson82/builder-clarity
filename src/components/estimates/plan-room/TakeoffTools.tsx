@@ -8,7 +8,6 @@ import {
   Redo2,
   Ruler,
   ShieldCheck,
-  Sparkles,
   Square,
   Undo2,
   XCircle,
@@ -121,7 +120,7 @@ export function TakeoffTools({
           disabled={!backendReady}
           onClick={onOpenAiAssist}
         >
-          <Sparkles className="h-3.5 w-3.5" />
+          <img src="/favicon.svg" alt="" aria-hidden className="h-3.5 w-3.5" />
           <span className={cn(compact && "hidden 2xl:inline")}>AI Assist</span>
         </Button>
       )}
