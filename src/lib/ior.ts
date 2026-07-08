@@ -1,5 +1,6 @@
 // Pure IOR math — used both server-side (in projects.functions.ts) and client-side
 // for tooltips and warning display. No imports of anything env-dependent.
+import { subCostAddition } from "./subcontract-budget.ts";
 
 export type Phase = "Early" | "Middle" | "Late";
 export type COStatus = "Approved" | "Pending" | "Denied";
@@ -16,14 +17,12 @@ export type ExposureCategory =
 export type ResponsePath = "eliminate" | "recover" | "offset" | "accept";
 export type HoldClass = "E-Hold" | "C-Hold" | "Both" | "None";
 export type ExposureStatus =
-  | "active"
-  | "escalated"
-  | "recovered"
-  | "eliminated"
-  | "accepted"
-  | "released";
+  "active" | "escalated" | "recovered" | "eliminated" | "accepted" | "released";
 
 export interface BucketLite {
+  // Optional so existing callers/fixtures don't break; needed only to match the
+  // subcontractor layer per cost code when it's supplied.
+  id?: string;
   bucket: string;
   original_budget: number;
   actual_to_date: number;
@@ -117,6 +116,14 @@ export function computeRollup(
   buckets: BucketLite[],
   cos: ChangeOrderLite[],
   exposures: ExposureLite[],
+  // The subcontractor cost layer per cost code (paid/open/committed). Optional so
+  // existing callers are unchanged (no subs → no effect). When supplied, sub cost
+  // flows into the forecasted cost — a buyout that pops a line pulls GP down,
+  // exactly like the Budget tab — instead of the dashboard GP ignoring it.
+  subCostByBucket: ReadonlyMap<
+    string,
+    { paid: number; open: number; committed?: number }
+  > = new Map(),
 ): Rollup {
   const approved = cos.filter((c) => c.status === "Approved");
   const pending = cos.filter((c) => c.status === "Pending");
@@ -133,10 +140,16 @@ export function computeRollup(
     0,
   );
 
+  // Raw self-perform actuals/forecast (returned as-is; the Budget-tab cards add
+  // the sub layer to THESE, so they must stay raw to avoid double-counting).
   const actualToDate = buckets.reduce((s, b) => s + b.actual_to_date, 0);
   const ftc = buckets.reduce((s, b) => s + b.ftc, 0);
 
-  const bucketCostBase = buckets.length === 0 ? project.original_cost_budget : actualToDate + ftc;
+  // The subcontractor layer folds into the FORECASTED cost (and thus GP): a
+  // buyout that exceeds a line's budget pushes the projected cost up and GP down.
+  const subAdd = subCostAddition(buckets, subCostByBucket);
+  const bucketCostBase =
+    buckets.length === 0 ? project.original_cost_budget : actualToDate + ftc + subAdd;
 
   const forecastedFinalContract =
     project.original_contract + approvedCOContract + weightedPendingCOContract;

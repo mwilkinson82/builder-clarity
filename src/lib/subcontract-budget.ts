@@ -138,6 +138,41 @@ export function summarizeSubCostByBucket(
   return out;
 }
 
+// The total cost the subcontractor layer ADDS on top of the raw bucket cost base
+// (Σ actual_to_date + Σ ftc). A sub payment is real actual cost; a buyout
+// DISPLACES the code's own budgeted forecast (netted per bucket, floored at 0)
+// rather than stacking; sub cost on a code that isn't a listed bucket is added
+// raw. This is the SINGLE SOURCE used by both the IOR rollup's forecasted cost
+// and (by construction, it equals subCostTotals.paid + openAdj) the Budget-tab
+// cards, so the dashboard GP and the Budget tab can never drift on sub cost.
+export function subCostAddition(
+  buckets: readonly { id?: string; ftc: number }[],
+  subCostByBucket: ReadonlyMap<string, { paid: number; open: number; committed?: number }>,
+): number {
+  if (subCostByBucket.size === 0) return 0;
+  const listed = new Set<string>();
+  let cents = 0;
+  for (const bucket of buckets) {
+    if (!bucket.id) continue;
+    listed.add(bucket.id);
+    const sub = subCostByBucket.get(bucket.id);
+    if (!sub) continue;
+    // paid → actual; open displaces self-perform ftc: added forecast delta is
+    // open − min(ftc, committed). Total added = paid + open − min(ftc, committed).
+    cents +=
+      dollarsToCents(sub.paid) +
+      dollarsToCents(sub.open) -
+      Math.min(dollarsToCents(bucket.ftc), dollarsToCents(sub.committed ?? 0));
+  }
+  // Sub cost tied to a code that isn't a listed bucket — no self-perform ftc to
+  // displace, so paid + open, raw (matches the ledger's "unallocated" catch-all).
+  for (const [bucketId, sub] of subCostByBucket) {
+    if (listed.has(bucketId)) continue;
+    cents += dollarsToCents(sub.paid) + dollarsToCents(sub.open);
+  }
+  return centsToDollars(cents);
+}
+
 export interface SubcontractPaySummary {
   subcontract_id: string;
   committed: number; // buyout total (dollars)

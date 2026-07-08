@@ -34,6 +34,7 @@ import {
   type HoldClass,
   type ExposureStatus,
 } from "@/lib/ior";
+import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseLooseData = Record<string, unknown> & Record<string, unknown>[];
@@ -1612,7 +1613,35 @@ export const getProject = createServerFn({ method: "GET" })
           };
         });
 
-    const rollup: Rollup = computeRollup(project, buckets, changeOrders, exposures);
+    // Subcontractor cost layer → the IOR rollup, so committed sub cost moves the
+    // dashboard GP (not just the Budget tab). Degrades to empty where the
+    // subcontract tables aren't provisioned.
+    const subRows = async (relation: string) => {
+      const { data: rows, error } = await dynamicTable(context.supabase, relation)
+        .select("*")
+        .eq("project_id", pid);
+      if (error) return [] as Record<string, unknown>[];
+      return (rows ?? []) as Record<string, unknown>[];
+    };
+    const [subcontractRows, subAllocationRows, subPaymentRows] = await Promise.all([
+      subRows("subcontracts"),
+      subRows("subcontract_allocations"),
+      subRows("subcontract_payments"),
+    ]);
+    type SummarizeArgs = Parameters<typeof summarizeSubCostByBucket>;
+    const subCostByBucket = summarizeSubCostByBucket(
+      subcontractRows as unknown as SummarizeArgs[0],
+      subAllocationRows as unknown as SummarizeArgs[1],
+      subPaymentRows as unknown as SummarizeArgs[2],
+    );
+
+    const rollup: Rollup = computeRollup(
+      project,
+      buckets,
+      changeOrders,
+      exposures,
+      subCostByBucket,
+    );
     const guidance = guidanceTargets(project.phase, rollup.remainingCost);
     const warnings: Warning[] = evaluateWarnings(project, buckets, changeOrders, exposures, rollup);
     const byCategory = exposureByCategory(exposures);

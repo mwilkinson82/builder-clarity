@@ -2149,9 +2149,11 @@ function ProjectPage() {
                   />
                   <SovMetric
                     label="Forecasted final cost"
-                    value={fmtUSD(
-                      rollup.forecastedFinalCost + subCostTotals.paid + subCostTotals.openAdj,
-                    )}
+                    // rollup.forecastedFinalCost now folds in the subcontractor
+                    // layer server-side, so do NOT add subCostTotals here again
+                    // (that would double-count). Actual/Forecast cards above still
+                    // add it, because those rollup fields stay raw.
+                    value={fmtUSD(rollup.forecastedFinalCost)}
                   />
                 </div>
                 <SovImportHistory imports={sovImports ?? []} />
