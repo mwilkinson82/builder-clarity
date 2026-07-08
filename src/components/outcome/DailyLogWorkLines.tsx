@@ -13,7 +13,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { CalendarClock, Pencil, Plus, Trash2, X } from "lucide-react";
+import { CalendarClock, EyeOff, Pencil, Plus, Trash2, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -217,9 +217,15 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
   return (
     <div className="rounded-md border border-hairline bg-surface p-4">
       <div className="flex items-baseline justify-between gap-2">
-        <Label className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          Work put in place today
-        </Label>
+        <div className="flex items-center gap-2">
+          <Label className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Work put in place today
+          </Label>
+          <span className="inline-flex items-center gap-1 rounded-sm border border-hairline bg-card px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            <EyeOff className="h-3 w-3" />
+            Internal only
+          </span>
+        </div>
         {lines.length > 0 ? (
           <span className="text-[11px] text-muted-foreground">
             {lines.length} {lines.length === 1 ? "line" : "lines"}
@@ -228,7 +234,8 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
       </div>
       <p className="mt-0.5 text-[11px] text-muted-foreground">
         Log each activity you worked and what it progressed. The office adds the costs on the Daily
-        WIP tab — each line saves on its own.
+        WIP tab — each line saves on its own. This section is never shared with the client, even
+        when the day is marked client-visible.
       </p>
 
       {/* Existing lines for this day */}

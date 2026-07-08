@@ -564,13 +564,27 @@ export function DailyReportsWorkspace({
         <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
           <Field label="Attachments">
             <div className="space-y-3">
-              <Input
-                key={fileInputKey}
-                type="file"
-                multiple
-                accept="application/pdf,image/png,image/jpeg,image/webp,image/heic"
-                onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-              />
+              <label
+                htmlFor="daily-report-file-input"
+                className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-hairline bg-surface px-4 py-6 text-center transition-colors hover:border-accent/60 hover:bg-accent/5"
+              >
+                <Upload className="h-6 w-6 text-accent" />
+                <span className="text-sm font-medium text-foreground">
+                  Click to attach photos or documents
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  PDF, PNG, JPG, WebP, or HEIC · up to 25&nbsp;MB each
+                </span>
+                <input
+                  id="daily-report-file-input"
+                  key={fileInputKey}
+                  type="file"
+                  multiple
+                  accept="application/pdf,image/png,image/jpeg,image/webp,image/heic"
+                  className="sr-only"
+                  onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+                />
+              </label>
               {files.length > 0 && (
                 <AttachmentList
                   title="Ready to upload"
@@ -602,7 +616,8 @@ export function DailyReportsWorkspace({
                   Client visible
                 </Label>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Marks this day for the future client portal and client packet exports.
+                  Shares this day's log with the client portal and packet exports. The Work put in
+                  place section stays internal — the client never sees it.
                 </p>
               </div>
               <Switch
