@@ -186,7 +186,9 @@ export function CostBucketsTable({
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="overflow-hidden rounded-lg border border-hairline bg-card">
+      {/* overflow-x-clip keeps the rounded corners without creating a scroll
+          container, so the sticky header pins to the viewport as the page scrolls. */}
+      <div className="overflow-x-clip rounded-lg border border-hairline bg-card">
         <div className="flex flex-col gap-3 border-b border-hairline bg-card px-3 py-3 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -208,8 +210,8 @@ export function CostBucketsTable({
           </div>
         </div>
         <Table>
-          <TableHeader>
-            <TableRow className="bg-surface">
+          <TableHeader className="sticky top-0 z-10">
+            <TableRow className="border-b border-hairline bg-surface">
               <TableHead>Code / Division</TableHead>
               <TableHead>Bucket</TableHead>
               <TableHead>Source</TableHead>
