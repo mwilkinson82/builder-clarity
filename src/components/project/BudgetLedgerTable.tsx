@@ -160,7 +160,7 @@ export function BudgetLedgerTable({
             scroll container, so the sticky header can pin to the viewport as the
             page scrolls. */}
         <div className="overflow-x-clip rounded-lg border border-hairline bg-card">
-          <Table>
+          <Table wrapperClassName="overflow-visible">
             <TableHeader className="sticky top-0 z-10">
               <TableRow className="border-b border-hairline bg-surface text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                 <TableHead className="w-[90px]">Cost code</TableHead>

@@ -209,7 +209,7 @@ export function CostBucketsTable({
             />
           </div>
         </div>
-        <Table>
+        <Table wrapperClassName="overflow-visible">
           <TableHeader className="sticky top-0 z-10">
             <TableRow className="border-b border-hairline bg-surface">
               <TableHead>Code / Division</TableHead>
