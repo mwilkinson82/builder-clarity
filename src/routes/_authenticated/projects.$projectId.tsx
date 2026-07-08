@@ -53,6 +53,8 @@ import { DailyWipWorkspace } from "@/components/outcome/DailyWipWorkspace";
 import { SubcontractorsWorkspace } from "@/components/project/SubcontractorsWorkspace";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
+import { listDailyWipEntries } from "@/lib/daily-wip.functions";
+import { wipCostByBucket } from "@/lib/daily-wip";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
 import {
   InspectionsWorkspace,
@@ -337,6 +339,7 @@ function ProjectPage() {
   const listExposureAllocationsFn = useServerFn(listExposureAllocations);
   const listChangeOrderAllocationsFn = useServerFn(listChangeOrderAllocations);
   const listProjectSubcontractsFn = useServerFn(listProjectSubcontracts);
+  const listDailyWipEntriesFn = useServerFn(listDailyWipEntries);
   const lockProjectBudgetFn = useServerFn(lockProjectBudget);
   const buildBudgetFromEstimateFn = useServerFn(buildBudgetFromEstimate);
   const createInspectionFn = useServerFn(createInspection);
@@ -513,6 +516,18 @@ function ProjectPage() {
     }
     return { paid, open };
   }, [subCostByBucket]);
+  // Daily-WIP field cost per cost bucket — the "field cost" burn-down lens on the
+  // Budget line. Shares its query key with the Daily WIP tab so logging/pricing a
+  // day there refreshes the budget here. A SEPARATE lens (never folded into the
+  // accounting actuals) so it can't double-count once a job-cost record lands.
+  const dailyWipEntriesQuery = useQuery({
+    queryKey: ["daily-wip-entries", projectId],
+    queryFn: () => listDailyWipEntriesFn({ data: { projectId } }),
+  });
+  const fieldCostByBucket = useMemo(
+    () => wipCostByBucket(dailyWipEntriesQuery.data ?? []),
+    [dailyWipEntriesQuery.data],
+  );
   const budgetLock = useMutation({
     mutationFn: () => lockProjectBudgetFn({ data: { projectId } }),
     onSuccess: () => {
@@ -2194,6 +2209,7 @@ function ProjectPage() {
                   changeOrders={changeOrders}
                   changeOrderAllocations={changeOrderAllocationsQuery.data ?? []}
                   subCostByBucket={subCostByBucket}
+                  fieldCostByBucket={fieldCostByBucket}
                 />
               </div>
               <div className="space-y-2">
