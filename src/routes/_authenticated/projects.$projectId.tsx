@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/select";
 import type { ChangeOrderAllocationInput } from "@/components/billing/ChangeOrderAllocationPanel";
 import { fmtUSDCents } from "@/lib/billing-format";
+import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
 import { applySovBucketPatch } from "@/lib/sov-rollup";
 import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
@@ -499,20 +500,28 @@ function ProjectPage() {
     return summarizeSubCostByBucket(data.subcontracts, data.allocations, data.payments);
   }, [subcontractsQuery.data]);
   // Sub layer totals for the Budget-tab summary cards, so they match the per-code
-  // ledger below (which already folds in subs): sub payments raise Actual-to-date,
-  // remaining sub commitment raises Forecast-to-complete. Isolated to these
-  // cards — the shared IOR rollup (dashboard GP) is untouched.
+  // ledger below. A buyout DISPLACES the self-perform forecast for its scope — it
+  // doesn't stack on top — so the forecast adjustment is the remaining sub
+  // commitment MINUS the budgeted forecast it consumes (netted per bucket, capped
+  // at that bucket's own ftc, floored at 0). `paid` is real actual cost incurred
+  // and adds straight to Actual-to-date. Isolated to these cards — the shared IOR
+  // rollup (dashboard GP) is untouched.
   const subCostTotals = useMemo(() => {
-    let paid = 0;
-    let open = 0;
+    const ftcByBucket = new Map(buckets.map((b) => [b.id, b.ftc] as const));
+    let paidCents = 0;
+    let openAdjCents = 0;
     if (subCostByBucket) {
-      for (const value of subCostByBucket.values()) {
-        paid += value.paid;
-        open += value.open;
+      for (const [bucketId, value] of subCostByBucket.entries()) {
+        paidCents += dollarsToCents(value.paid);
+        const committedCents = dollarsToCents(value.committed ?? 0);
+        const bucketFtcCents = dollarsToCents(ftcByBucket.get(bucketId) ?? 0);
+        // Buyout consumes budgeted forecast up to this code's own ftc, then adds
+        // back the remaining commitment: net = open − min(ftc, committed).
+        openAdjCents += dollarsToCents(value.open) - Math.min(bucketFtcCents, committedCents);
       }
     }
-    return { paid, open };
-  }, [subCostByBucket]);
+    return { paid: centsToDollars(paidCents), openAdj: centsToDollars(openAdjCents) };
+  }, [subCostByBucket, buckets]);
   const budgetLock = useMutation({
     mutationFn: () => lockProjectBudgetFn({ data: { projectId } }),
     onSuccess: () => {
@@ -2129,7 +2138,7 @@ function ProjectPage() {
                   />
                   <SovMetric
                     label="Forecast to complete"
-                    value={fmtUSD(rollup.ftc + subCostTotals.open)}
+                    value={fmtUSD(rollup.ftc + subCostTotals.openAdj)}
                   />
                   <SovMetric
                     label="CO cost exposure"
@@ -2138,7 +2147,7 @@ function ProjectPage() {
                   <SovMetric
                     label="Forecasted final cost"
                     value={fmtUSD(
-                      rollup.forecastedFinalCost + subCostTotals.paid + subCostTotals.open,
+                      rollup.forecastedFinalCost + subCostTotals.paid + subCostTotals.openAdj,
                     )}
                   />
                 </div>

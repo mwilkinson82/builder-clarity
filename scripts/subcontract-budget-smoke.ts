@@ -134,4 +134,97 @@ import { computeBudgetLedger } from "../src/lib/budget-ledger.ts";
   assert.equal(bare?.open, 0, "no subs → no added forecast");
 }
 
+// ── REGRESSION (Darian, live QA 2026-07-08): a real cost code is seeded with
+//    ftc = budget, NOT 0. The buyout must DISPLACE that budgeted forecast, not
+//    stack on it. Buyout $142,600 on a code budgeted $221,000 (ftc 221,000).
+//    Bug was: forecast = ftc(221,000) + open → EAC ballooned to ~budget+buyout
+//    and a payment never burned it down. Correct: buyout consumes budgeted
+//    forecast, code still forecasts to its budget, payments burn it down. ──
+{
+  const subs = [{ id: "s7", contract_value: 142_600, status: "executed" }];
+  const allocs = [{ subcontract_id: "s7", cost_bucket_id: "b1", amount: 142_600 }];
+  const bucket = {
+    id: "b1",
+    cost_code: "03-8011",
+    bucket: "Dock Pit F/R/P",
+    contract_value: 221_000,
+    original_budget: 221_000,
+    actual_to_date: 0,
+    ftc: 221_000, // seeded to budget, as real cost codes are
+  };
+
+  // Buyout recorded, nothing paid yet: forecast still = budget (buyout consumed
+  // 142,600 of the 221,000 budgeted forecast, then added 142,600 back).
+  const atBuyout = summarizeSubCostByBucket(subs, allocs, []);
+  const rowBuyout = computeBudgetLedger([bucket], [], [], [], [], atBuyout).rows.find(
+    (r) => r.costBucketId === "b1",
+  );
+  assert.equal(rowBuyout?.actuals, 0, "buyout alone adds no actual");
+  assert.equal(
+    rowBuyout?.open,
+    221_000,
+    "forecast still equals budget — buyout displaced, not stacked",
+  );
+  assert.equal(rowBuyout?.eac, 221_000, "EAC = budget, NOT budget + buyout (the bug)");
+  assert.equal(rowBuyout?.overUnder, 0, "on budget, not 142,600 over");
+
+  // Pay $20,420: actual rises, forecast burns DOWN by the payment, EAC flat.
+  const afterPay = summarizeSubCostByBucket(subs, allocs, [
+    { subcontract_id: "s7", amount: 20_420 },
+  ]);
+  const rowPaid = computeBudgetLedger([bucket], [], [], [], [], afterPay).rows.find(
+    (r) => r.costBucketId === "b1",
+  );
+  assert.equal(rowPaid?.actuals, 20_420, "payment shows as actual-to-date");
+  assert.equal(rowPaid?.open, 200_580, "forecast burned down by the payment (221,000 − 20,420)");
+  assert.equal(rowPaid?.eac, 221_000, "EAC holds at budget across the payment");
+}
+
+// ── Over-buyout: a buyout larger than the code's budgeted forecast honestly
+//    shows the code going over budget (commitment exceeds the plan). ──
+{
+  const subs = [{ id: "s8", contract_value: 150_000, status: "executed" }];
+  const allocs = [{ subcontract_id: "s8", cost_bucket_id: "b1", amount: 150_000 }];
+  const bucket = {
+    id: "b1",
+    cost_code: "03-8012",
+    bucket: "Slab",
+    contract_value: 130_000,
+    original_budget: 120_000,
+    actual_to_date: 0,
+    ftc: 120_000,
+  };
+  const subCost = summarizeSubCostByBucket(subs, allocs, []);
+  const row = computeBudgetLedger([bucket], [], [], [], [], subCost).rows.find(
+    (r) => r.costBucketId === "b1",
+  );
+  // Budgeted ftc 120k fully consumed (min(120k,150k)); forecast = 0 + 150k open.
+  assert.equal(row?.open, 150_000, "forecast = the commitment when it exceeds the budgeted ftc");
+  assert.equal(row?.eac, 150_000, "EAC = the buyout");
+  assert.equal(row?.overUnder, -30_000, "over/under = 120k budget − 150k EAC = 30k OVER");
+}
+
+// ── Partial buyout: code part self-perform, part sub. Both forecasts coexist,
+//    total still equals budget while unpaid. ──
+{
+  const subs = [{ id: "s9", contract_value: 60_000, status: "executed" }];
+  const allocs = [{ subcontract_id: "s9", cost_bucket_id: "b1", amount: 60_000 }];
+  const bucket = {
+    id: "b1",
+    cost_code: "03-8013",
+    bucket: "Openings",
+    contract_value: 110_000,
+    original_budget: 100_000,
+    actual_to_date: 0,
+    ftc: 100_000,
+  };
+  const subCost = summarizeSubCostByBucket(subs, allocs, []);
+  const row = computeBudgetLedger([bucket], [], [], [], [], subCost).rows.find(
+    (r) => r.costBucketId === "b1",
+  );
+  // self-perform remaining = 100k − 60k = 40k; + sub open 60k = 100k = budget.
+  assert.equal(row?.open, 100_000, "self-perform 40k + sub 60k = budget, no double-count");
+  assert.equal(row?.eac, 100_000, "EAC = budget");
+}
+
 console.log("subcontract budget smoke: all assertions passed");
