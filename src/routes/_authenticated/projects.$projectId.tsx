@@ -6,7 +6,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -50,6 +50,9 @@ import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
 import { DailyWipWorkspace } from "@/components/outcome/DailyWipWorkspace";
+import { SubcontractorsWorkspace } from "@/components/project/SubcontractorsWorkspace";
+import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
+import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
 import {
   InspectionsWorkspace,
@@ -152,6 +155,7 @@ import {
   ExternalLink,
   FileText,
   FileSpreadsheet,
+  HardHat,
   LayoutDashboard,
   ListChecks,
   LockKeyhole,
@@ -187,6 +191,7 @@ const PROJECT_TAB_VALUES = [
   "sov",
   "billing",
   "change-orders",
+  "subcontractors",
   "client-portal",
   "ior-report",
   "daily-reports",
@@ -204,6 +209,7 @@ const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
   "sov",
   "billing",
   "change-orders",
+  "subcontractors",
   "client-portal",
   "ior-report",
   "daily-reports",
@@ -328,6 +334,7 @@ function ProjectPage() {
   const deleteExposureAllocationFn = useServerFn(deleteExposureAllocation);
   const listExposureAllocationsFn = useServerFn(listExposureAllocations);
   const listChangeOrderAllocationsFn = useServerFn(listChangeOrderAllocations);
+  const listProjectSubcontractsFn = useServerFn(listProjectSubcontracts);
   const lockProjectBudgetFn = useServerFn(lockProjectBudget);
   const buildBudgetFromEstimateFn = useServerFn(buildBudgetFromEstimate);
   const createInspectionFn = useServerFn(createInspection);
@@ -478,6 +485,17 @@ function ProjectPage() {
     queryKey: ["change-order-allocations", projectId],
     queryFn: () => listChangeOrderAllocationsFn({ data: { projectId } }),
   });
+  // Subcontractor cost layer (SUBCONTRACTORS Slice 1). Shares its query key with
+  // SubcontractorsWorkspace, so a buyout/payment there refreshes the budget here.
+  const subcontractsQuery = useQuery({
+    queryKey: ["subcontracts", projectId],
+    queryFn: () => listProjectSubcontractsFn({ data: { projectId } }),
+  });
+  const subCostByBucket = useMemo(() => {
+    const data = subcontractsQuery.data;
+    if (!data) return undefined;
+    return summarizeSubCostByBucket(data.subcontracts, data.allocations, data.payments);
+  }, [subcontractsQuery.data]);
   const budgetLock = useMutation({
     mutationFn: () => lockProjectBudgetFn({ data: { projectId } }),
     onSuccess: () => {
@@ -1431,6 +1449,12 @@ function ProjectPage() {
       icon: ClipboardList,
     },
     {
+      value: "subcontractors",
+      label: "Subcontractors",
+      detail: "Buyouts & payments",
+      icon: HardHat,
+    },
+    {
       value: "client-portal",
       label: "Client Portal",
       detail: "CO approvals",
@@ -2144,6 +2168,7 @@ function ProjectPage() {
                   allocations={exposureAllocationsQuery.data ?? []}
                   changeOrders={changeOrders}
                   changeOrderAllocations={changeOrderAllocationsQuery.data ?? []}
+                  subCostByBucket={subCostByBucket}
                 />
               </div>
               <div className="space-y-2">
@@ -2296,6 +2321,10 @@ function ProjectPage() {
                 onCreateRisk={handleCreateRiskFromChangeOrder}
                 creatingRiskId={creatingCoRiskId}
               />
+            </TabsContent>
+
+            <TabsContent value="subcontractors" className="mt-0">
+              <SubcontractorsWorkspace projectId={projectId} buckets={buckets} />
             </TabsContent>
 
             <TabsContent value="client-portal" className="mt-0">

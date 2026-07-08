@@ -117,6 +117,11 @@ export function computeBudgetLedger(
   // node smokes keep working; without COs the ledger is the frozen baseline.
   changeOrders: readonly BudgetChangeOrderLike[] = [],
   coAllocations: readonly BudgetChangeOrderAllocationLike[] = [],
+  // SUBCONTRACTORS Slice 1: the additive subcontractor cost layer, per bucket.
+  // `paid` (gross sub payments) folds into actuals; `open` (remaining sub
+  // commitment) folds into forecast-to-complete. Built by
+  // summarizeSubCostByBucket (subcontract-budget.ts). Optional — no subs → no-op.
+  subCostByBucket: ReadonlyMap<string, { paid: number; open: number }> = new Map(),
 ): BudgetLedger {
   const risk = riskByCostCode(exposures, allocations);
   const riskByBucket = new Map<string, { atRisk: number; contingency: number }>();
@@ -177,7 +182,15 @@ export function computeBudgetLedger(
 
   const rows: BudgetLedgerRow[] = buckets.map((bucket) => {
     const bucketRisk = riskByBucket.get(bucket.id) ?? { atRisk: 0, contingency: 0 };
-    const eac = eacDollars(bucket.actual_to_date, bucket.ftc);
+    // Additive subcontractor layer: a sub payment is actual cost, the remaining
+    // sub commitment is forecast-to-complete. Fold both onto the stored columns
+    // (cents-safe) so EAC/over-under follow, exactly like the CO layer above.
+    const subCost = subCostByBucket.get(bucket.id) ?? { paid: 0, open: 0 };
+    const actuals = centsToDollars(
+      dollarsToCents(bucket.actual_to_date) + dollarsToCents(subCost.paid),
+    );
+    const open = centsToDollars(dollarsToCents(bucket.ftc) + dollarsToCents(subCost.open));
+    const eac = eacDollars(actuals, open);
     const changeOrderBudget = centsToDollars(coBudgetCentsByBucket.get(bucket.id) ?? 0);
     const budget = centsToDollars(
       dollarsToCents(bucket.original_budget) + dollarsToCents(changeOrderBudget),
@@ -203,8 +216,8 @@ export function computeBudgetLedger(
       budget,
       originalBudget: bucket.original_budget,
       changeOrderBudget,
-      actuals: bucket.actual_to_date,
-      open: bucket.ftc,
+      actuals,
+      open,
       atRisk: bucketRisk.atRisk,
       contingency: bucketRisk.contingency,
       eac,
