@@ -105,26 +105,6 @@ export function dailyWipTotals(rows: readonly DailyWipRowLike[]): DailyWipTotals
   };
 }
 
-// Field cost-to-date per cost bucket (SOV line): the cents-safe sum of each
-// day's work-in-place (labor + materials + equipment) for the entries tagged to
-// that bucket. This is the "field cost" lens the Budget line burns down against —
-// deliberately kept OUT of the accounting ledger's actuals so it never double-
-// counts the same cost once a formal job-cost record lands. Untagged entries
-// (no cost_bucket_id) are skipped.
-export function wipCostByBucket(
-  rows: readonly (DailyWipRowLike & { cost_bucket_id: string | null })[],
-): Map<string, number> {
-  const cents = new Map<string, number>();
-  for (const row of rows) {
-    const bucketId = row.cost_bucket_id;
-    if (!bucketId) continue;
-    cents.set(bucketId, (cents.get(bucketId) ?? 0) + dollarsToCents(rowWorkInPlace(row)));
-  }
-  const out = new Map<string, number>();
-  for (const [id, valueCents] of cents) out.set(id, centsToDollars(valueCents));
-  return out;
-}
-
 // Production rate = quantity placed ÷ labor-hours (e.g. SF per labor-hour). Null
 // when there are no hours or no quantity — a rate needs both.
 export function productionRate(row: DailyWipRowLike): number | null {
