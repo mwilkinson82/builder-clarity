@@ -32,6 +32,20 @@ export function sumLineItems(items: readonly CostLineItem[] | null | undefined):
   );
 }
 
+// Items to load into the editor when opening a line. A line can carry a lump
+// material/equipment cost with NO itemized breakdown (rows created before
+// itemization, or otherwise). Because save recomputes the cost from the items,
+// editing such a line with empty items would silently zero the lump — so we
+// surface the lump as a single editable line, keeping it visible AND preserved.
+export function costItemsForEdit(
+  items: readonly CostLineItem[] | null | undefined,
+  lump: number,
+): CostLineItem[] {
+  const existing = Array.isArray(items) ? items : [];
+  if (existing.length > 0) return existing.map((item) => ({ ...item }));
+  return numeric(lump) > 0 ? [{ description: "", amount: numeric(lump) }] : [];
+}
+
 // crew × hours × blended $/hr, rounded to cents. Headcount × hours is total
 // labor-hours; times the blended rate is the day's labor cost for the activity.
 export function laborCost(
