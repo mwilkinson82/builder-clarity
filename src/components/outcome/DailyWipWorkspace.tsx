@@ -6,7 +6,7 @@
 //
 // The dependency rule: this FEEDS billing; billing never waits on it. Recording
 // here is optional and additive.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -15,9 +15,10 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  ClipboardList,
+  Pencil,
   Plus,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -101,24 +102,6 @@ const emptyDraft: EntryDraft = {
   notes: "",
 };
 
-// A draft nobody has touched yet — safe to auto-seed from the daily report
-// without clobbering typed input.
-function isPristineDraft(d: EntryDraft): boolean {
-  return (
-    d.cost_bucket_id === "" &&
-    d.schedule_activity_id === "" &&
-    d.activity === "" &&
-    d.crew_count === 0 &&
-    d.hours === 0 &&
-    d.labor_rate === 0 &&
-    d.material_items.length === 0 &&
-    d.equipment_items.length === 0 &&
-    d.quantity === 0 &&
-    d.unit === "" &&
-    d.notes === ""
-  );
-}
-
 // "01-010 · Form north wall" — the human-readable label for a schedule activity.
 function activityOptionLabel(a: ScheduleActivityOption): string {
   return [a.activity_id, a.name].filter(Boolean).join(" · ") || "Untitled activity";
@@ -169,6 +152,9 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
 
   const [selectedDate, setSelectedDate] = useState<string>(() => localToday());
   const [draft, setDraft] = useState<EntryDraft>(emptyDraft);
+  // When set, the form is editing an existing logged line (the PM pricing it),
+  // not creating a new one.
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const entriesQuery = useQuery({
     queryKey: ["daily-wip-entries", projectId],
@@ -198,41 +184,6 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     [reportsQuery.data, selectedDate],
   );
 
-  // The daily report is the master record: the WIP entry pulls crew count and the
-  // day's activity narrative from it, so nobody types the day twice. There's still
-  // a WIP entry to file (it carries cost/production the report doesn't) — it just
-  // starts pre-filled where the report already answered.
-  const reportHasSeed = Boolean(report && (report.crew_count > 0 || report.work_performed.trim()));
-
-  // Auto-seed once per date, and only into an untouched draft, so navigating to a
-  // day with a report pre-fills it but we never overwrite work in progress.
-  const seededDateRef = useRef<string | null>(null);
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
-  useEffect(() => {
-    if (!report || seededDateRef.current === selectedDate) return;
-    if (!isPristineDraft(draftRef.current)) return;
-    seededDateRef.current = selectedDate;
-    setDraft((prev) => ({
-      ...prev,
-      crew_count: report.crew_count || prev.crew_count,
-      activity: prev.activity.trim() ? prev.activity : report.work_performed.trim(),
-    }));
-  }, [report, selectedDate]);
-
-  // Explicit "pull from the report" — used from the report card. Unlike the
-  // auto-seed it overwrites crew + activity, because the user asked for it.
-  const seedFromReport = () => {
-    if (!report) return;
-    seededDateRef.current = selectedDate;
-    setDraft((prev) => ({
-      ...prev,
-      crew_count: report.crew_count || prev.crew_count,
-      activity: report.work_performed.trim() || prev.activity,
-    }));
-    toast.success("Pulled crew and activity from the daily report");
-  };
-
   const bucketLabel = (id: string | null) => {
     if (!id) return "Uncoded";
     const bucket = buckets.find((b) => b.id === id);
@@ -254,8 +205,10 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   const saveMutation = useMutation({
     mutationFn: (input: SaveWipInput) => saveEntry({ data: input }),
     onSuccess: () => {
+      const wasEditing = editingId !== null;
       setDraft(emptyDraft);
-      toast.success("Day's work recorded");
+      setEditingId(null);
+      toast.success(wasEditing ? "Costs saved" : "Day's work recorded");
       invalidate();
     },
     onError: (error) =>
@@ -282,7 +235,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
       .map((item) => ({ description: item.description.trim(), amount: item.amount }))
       .filter((item) => item.description !== "" || item.amount > 0);
 
-  const handleAdd = () => {
+  const handleSave = () => {
     if (!draftHasWork) {
       toast.error("Add crew, materials, equipment, or an activity before saving");
       return;
@@ -291,6 +244,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     const equipment_items = cleanItems(draft.equipment_items);
     saveMutation.mutate({
       projectId,
+      id: editingId ?? undefined,
       cost_bucket_id: draft.cost_bucket_id || null,
       schedule_activity_id: draft.schedule_activity_id || null,
       entry_date: selectedDate,
@@ -308,6 +262,30 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     });
   };
 
+  // Load a logged line into the form so the PM can price it (add rate, materials,
+  // equipment) or adjust it. entry_date comes from selectedDate on save.
+  const startEdit = (entry: DailyWipEntryRow) => {
+    setEditingId(entry.id);
+    setDraft({
+      cost_bucket_id: entry.cost_bucket_id ?? "",
+      schedule_activity_id: entry.schedule_activity_id ?? "",
+      activity: entry.activity,
+      crew_count: entry.crew_count,
+      hours: entry.hours,
+      labor_rate: entry.labor_rate,
+      material_items: entry.material_items,
+      equipment_items: entry.equipment_items,
+      quantity: entry.quantity,
+      unit: entry.unit,
+      notes: entry.notes,
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setDraft(emptyDraft);
+  };
+
   const setDraftField = <K extends keyof EntryDraft>(key: K, value: EntryDraft[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));
 
@@ -315,7 +293,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     <div className="space-y-6">
       <WorkspaceHeader
         title="Daily WIP"
-        subtitle="Record the work put in place each day — self-perform crew, materials, and equipment against a cost code. It feeds your billing; billing never waits on it."
+        subtitle="The costing view. The superintendent logs each day's work in the Daily Reports tab; here you price it — blended crew rate, materials, and equipment. It feeds your billing; billing never waits on it."
       />
 
       {/* Date navigator */}
@@ -386,8 +364,8 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                 ) : entries.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
-                      No work recorded for this day yet. Add the crew, materials, and equipment
-                      below.
+                      No work logged for this day yet. The superintendent adds work lines in the
+                      Daily Reports tab — they show here to cost. You can also add a line below.
                     </td>
                   </tr>
                 ) : (
@@ -397,6 +375,8 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                       entry={entry}
                       label={bucketLabel(entry.cost_bucket_id)}
                       activityLabel={activityLabel(entry.schedule_activity_id)}
+                      editing={editingId === entry.id}
+                      onEdit={() => startEdit(entry)}
                       onDelete={() => deleteMutation.mutate(entry.id)}
                       deleting={deleteMutation.isPending}
                     />
@@ -430,15 +410,28 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
 
           {/* Add-entry form */}
           <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              Record work in place
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                {editingId ? "Add costs to this work line" : "Add a work line"}
+              </div>
+              {editingId ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1 text-muted-foreground"
+                  onClick={cancelEdit}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Cancel
+                </Button>
+              ) : null}
             </div>
-            {reportHasSeed ? (
-              <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <ClipboardList className="h-3.5 w-3.5 shrink-0 text-accent" />
-                Crew and activity are pre-filled from today's daily report — edit as needed.
-              </p>
-            ) : null}
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {editingId
+                ? "Add the blended crew rate, materials, and equipment to price the superintendent's logged work."
+                : "The superintendent logs the day's work in the Daily Reports tab — pick a line above to add its costs, or add a line here."}
+            </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="flex flex-col gap-1 sm:col-span-2">
                 <span className="text-xs text-muted-foreground">Cost code (SOV line)</span>
@@ -577,11 +570,11 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
               <Button
                 size="sm"
                 className="gap-1.5"
-                onClick={handleAdd}
+                onClick={handleSave}
                 disabled={saveMutation.isPending}
               >
                 <Plus className="h-3.5 w-3.5" />
-                {saveMutation.isPending ? "Saving…" : "Add to this day"}
+                {saveMutation.isPending ? "Saving…" : editingId ? "Save costs" : "Add to this day"}
               </Button>
             </div>
           </div>
@@ -613,17 +606,6 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                   <p className="text-warning">
                     <span className="font-medium">Delays:</span> {report.delays}
                   </p>
-                ) : null}
-                {reportHasSeed ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="mt-1 w-full gap-1.5"
-                    onClick={seedFromReport}
-                  >
-                    <ClipboardList className="h-3.5 w-3.5" />
-                    Use crew + activity in this entry
-                  </Button>
                 ) : null}
               </div>
             ) : (
@@ -760,19 +742,24 @@ function EntryRow({
   entry,
   label,
   activityLabel,
+  editing,
+  onEdit,
   onDelete,
   deleting,
 }: {
   entry: DailyWipEntryRow;
   label: string;
   activityLabel: string | null;
+  editing: boolean;
+  onEdit: () => void;
   onDelete: () => void;
   deleting: boolean;
 }) {
   const labor = laborCost(entry);
   const workInPlace = rowWorkInPlace(entry);
+  const costed = entry.labor_rate > 0 || entry.material_cost > 0 || entry.equipment_cost > 0;
   return (
-    <tr className="border-b border-hairline/70 last:border-0">
+    <tr className={`border-b border-hairline/70 last:border-0 ${editing ? "bg-accent/10" : ""}`}>
       <td className="px-3 py-2.5 text-left">
         <div className="font-medium text-foreground">{entry.activity || label}</div>
         {entry.activity ? <div className="text-[11px] text-muted-foreground">{label}</div> : null}
@@ -811,18 +798,36 @@ function EntryRow({
           </div>
         ) : null}
       </td>
-      <td className="px-3 py-2.5 text-right font-medium tabular-nums">{fmtUSD(workInPlace)}</td>
+      <td className="px-3 py-2.5 text-right font-medium tabular-nums">
+        {fmtUSD(workInPlace)}
+        {!costed ? (
+          <div className="text-[10px] font-normal uppercase tracking-wide text-warning">
+            Needs costs
+          </div>
+        ) : null}
+      </td>
       <td className="px-3 py-2.5 text-right">
-        <Button
-          size="icon"
-          variant="ghost"
-          className="h-7 w-7 text-muted-foreground hover:text-danger"
-          aria-label="Remove entry"
-          onClick={onDelete}
-          disabled={deleting}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        <div className="flex items-center justify-end gap-1">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7 text-muted-foreground hover:text-accent"
+            aria-label={costed ? "Edit costs" : "Add costs"}
+            onClick={onEdit}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7 text-muted-foreground hover:text-danger"
+            aria-label="Remove entry"
+            onClick={onDelete}
+            disabled={deleting}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </td>
     </tr>
   );
