@@ -52,6 +52,94 @@ export function sovLineForecast(bucket: SovBucketMoney): { fac: number; variance
   };
 }
 
+// The subcontractor cost layer for one bucket (dollars), same shape the budget
+// ledger and dashboard rollup consume.
+export interface SubBucketCostLite {
+  paid: number;
+  open: number;
+  committed?: number;
+}
+
+const ZERO_SUB: SubBucketCostLite = { paid: 0, open: 0, committed: 0 };
+
+// A single line's projected cost + variance, folding the subcontractor layer in
+// with the SAME displace-not-stack model the budget ledger uses (budget-ledger.ts):
+// sub payments add to actuals, and the sub commitment displaces the code's own
+// forecast (netted out of ftc, floored at 0) with the remaining commitment added
+// back. So a bought-out line's projected cost tracks its commitment instead of
+// ignoring it — this is what corrects the grid's bogus "under budget". Passing no
+// sub cost reproduces sovLineForecast exactly.
+export function sovLineForecastWithSubs(
+  bucket: SovBucketMoney,
+  subCost: SubBucketCostLite | undefined,
+): { fac: number; variance: number } {
+  const sub = subCost ?? ZERO_SUB;
+  const actualsCents = dollarsToCents(bucket.actual_to_date) + dollarsToCents(sub.paid);
+  const selfPerformFtcCents = Math.max(
+    0,
+    dollarsToCents(bucket.ftc) - dollarsToCents(sub.committed ?? 0),
+  );
+  const facCents = actualsCents + selfPerformFtcCents + dollarsToCents(sub.open);
+  return {
+    fac: centsToDollars(facCents),
+    variance: centsToDollars(dollarsToCents(bucket.original_budget) - facCents),
+  };
+}
+
+// The subcontractor cost added ON TOP of a line's raw actual+ftc — what the row's
+// projected cost jumped by. Used to annotate the cell so projected ≠ actual+ftc
+// reads as "includes the buyout", not a math error. 0 when the line has no sub cost.
+export function subCostOnLine(
+  bucket: SovBucketMoney,
+  subCost: SubBucketCostLite | undefined,
+): number {
+  const plainCents = dollarsToCents(bucket.actual_to_date) + dollarsToCents(bucket.ftc);
+  const withCents = dollarsToCents(sovLineForecastWithSubs(bucket, subCost).fac);
+  return centsToDollars(withCents - plainCents);
+}
+
+// Totals with the subcontractor layer folded into fac/variance (budget, actual,
+// and ftc stay RAW so the editable Actual/FTC columns and their subtotals sum
+// cleanly). `includeUnallocated` adds sub cost tied to a code that isn't one of
+// `buckets` (raw paid+open, no ftc to displace) so the footer reconciles with the
+// budget ledger's "unallocated" catch-all; group subtotals pass it false.
+export function sovTotalsWithSubs(
+  buckets: readonly (SovBucketMoney & { id?: string | null })[],
+  subCostByBucket: ReadonlyMap<string, SubBucketCostLite>,
+  includeUnallocated = false,
+): SovTotals {
+  const listed = new Set<string>();
+  const cents = buckets.reduce(
+    (sum, bucket) => {
+      if (bucket.id) listed.add(bucket.id);
+      const sub = (bucket.id && subCostByBucket.get(bucket.id)) || ZERO_SUB;
+      const actualsCents = dollarsToCents(bucket.actual_to_date) + dollarsToCents(sub.paid);
+      const openCents =
+        Math.max(0, dollarsToCents(bucket.ftc) - dollarsToCents(sub.committed ?? 0)) +
+        dollarsToCents(sub.open);
+      sum.budget += dollarsToCents(bucket.original_budget);
+      sum.actual += dollarsToCents(bucket.actual_to_date);
+      sum.ftc += dollarsToCents(bucket.ftc);
+      sum.fac += actualsCents + openCents;
+      return sum;
+    },
+    { budget: 0, actual: 0, ftc: 0, fac: 0 },
+  );
+  if (includeUnallocated) {
+    for (const [id, sub] of subCostByBucket) {
+      if (listed.has(id)) continue;
+      cents.fac += dollarsToCents(sub.paid) + dollarsToCents(sub.open);
+    }
+  }
+  return {
+    budget: centsToDollars(cents.budget),
+    actual: centsToDollars(cents.actual),
+    ftc: centsToDollars(cents.ftc),
+    fac: centsToDollars(cents.fac),
+    variance: centsToDollars(cents.budget - cents.fac),
+  };
+}
+
 // Optimistic cache update for a committed SOV cell: the patched bucket list
 // is what every rollup on the page (group headers, summary cards, footer)
 // recomputes from, so the numbers move the moment the save is committed

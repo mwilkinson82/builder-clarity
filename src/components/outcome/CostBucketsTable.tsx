@@ -23,7 +23,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Check, FileSpreadsheet, Info, LockKeyhole, Plus, Search, Trash2 } from "lucide-react";
 import { fmtUSD } from "@/lib/format";
-import { sovLineForecast, sovTotals } from "@/lib/sov-rollup";
+import {
+  sovLineForecastWithSubs,
+  sovTotalsWithSubs,
+  subCostOnLine,
+  type SubBucketCostLite,
+} from "@/lib/sov-rollup";
 import type { BucketRow } from "@/lib/projects.functions";
 
 type BucketSource = BucketRow["source_type"];
@@ -54,6 +59,9 @@ const SOURCE_LABEL: Record<BucketSource, string> = {
   change_order: "Change Order",
   added_cost: "Added Cost",
 };
+
+// Stable empty fallback so an omitted subCostByBucket prop doesn't churn memos.
+const NO_SUB_COST: ReadonlyMap<string, SubBucketCostLite> = new Map();
 
 // Reads the same as the budget-vs-cost ledger: "$3,000 under" (green) /
 // "$3,000 over" (red) / "On budget" — never a bare parenthesized or signed
@@ -89,12 +97,20 @@ function HelpHead({ label, help }: { label: string; help: string }) {
 
 export function CostBucketsTable({
   buckets,
+  subCostByBucket,
   onUpdate,
   onCreate,
   onDelete,
   budgetLocked = false,
 }: {
   buckets: BucketRow[];
+  /**
+   * Subcontractor cost per cost-bucket id (buyout committed / paid / open). Folded
+   * into each line's projected cost + over/under with the same displace-not-stack
+   * model as the budget ledger, so a bought-out line stops reading a bogus "under
+   * budget". Omitted → the grid behaves exactly as before (self-perform only).
+   */
+  subCostByBucket?: ReadonlyMap<string, SubBucketCostLite>;
   /**
    * Commits one cell edit. Return the save promise so the committed cell can
    * show its saved-tick only after the write actually landed.
@@ -109,6 +125,7 @@ export function CostBucketsTable({
    */
   budgetLocked?: boolean;
 }) {
+  const subCosts = subCostByBucket ?? NO_SUB_COST;
   const [newCode, setNewCode] = useState("");
   const [newName, setNewName] = useState("");
   const [newSource, setNewSource] = useState<BucketSource>("added_cost");
@@ -209,7 +226,7 @@ export function CostBucketsTable({
               <TableHead className="text-right">Forecast to Complete</TableHead>
               <HelpHead
                 label="Projected cost"
-                help="Actual to date + forecast-to-complete — everything you've spent plus everything still committed. The projected final cost of this line."
+                help="Actual to date + forecast-to-complete — everything you've spent plus everything still committed, including any subcontractor buyout on this code. The projected final cost of this line."
               />
               <HelpHead
                 label="Over / under budget"
@@ -220,7 +237,7 @@ export function CostBucketsTable({
           </TableHeader>
           <TableBody>
             {visibleGroups.flatMap((group) => {
-              const totals = sovTotals(group.buckets);
+              const totals = sovTotalsWithSubs(group.buckets, subCosts);
               const facTotal = totals.fac;
               const varianceTotal = totals.variance;
               const groupRows = [
@@ -265,7 +282,9 @@ export function CostBucketsTable({
               ];
 
               for (const b of group.buckets) {
-                const { fac, variance } = sovLineForecast(b);
+                const subCost = b.id ? subCosts.get(b.id) : undefined;
+                const { fac, variance } = sovLineForecastWithSubs(b, subCost);
+                const subOnLine = subCostOnLine(b, subCost);
                 const neg = variance < 0;
                 groupRows.push(
                   <TableRow key={b.id}>
@@ -336,7 +355,14 @@ export function CostBucketsTable({
                     <TableCell className="text-right tabular">
                       <NumCell value={b.ftc} onCommit={(v) => onUpdate(b.id, { ftc: v })} />
                     </TableCell>
-                    <TableCell className="text-right tabular font-medium">{fmtUSD(fac)}</TableCell>
+                    <TableCell className="text-right tabular font-medium">
+                      {fmtUSD(fac)}
+                      {subOnLine > 0 ? (
+                        <div className="text-[10px] font-normal text-muted-foreground">
+                          incl. {fmtUSD(subOnLine)} sub
+                        </div>
+                      ) : null}
+                    </TableCell>
                     <TableCell
                       className={`text-right tabular ${overUnder(variance).tone} ${neg ? "font-medium" : ""}`}
                     >
@@ -431,7 +457,7 @@ export function CostBucketsTable({
           </TableBody>
           {buckets.length > 0 &&
             (() => {
-              const t = sovTotals(buckets);
+              const t = sovTotalsWithSubs(buckets, subCosts, true);
               const neg = t.variance < 0;
               // Contract value total mirrors the division-subtotal reduce above,
               // so this row lines up with the Contract value column (added by

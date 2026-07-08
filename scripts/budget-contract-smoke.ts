@@ -7,6 +7,12 @@
 // same."
 import assert from "node:assert/strict";
 import { computeBudgetLedger, ledgerLineMargin } from "../src/lib/budget-ledger.ts";
+import {
+  sovLineForecast,
+  sovLineForecastWithSubs,
+  sovTotalsWithSubs,
+  subCostOnLine,
+} from "../src/lib/sov-rollup.ts";
 import { computeWIPBucket } from "../src/lib/wip.ts";
 import { buildBillingLinesFromBuckets } from "../src/lib/billing-line-generation.ts";
 import {
@@ -302,5 +308,83 @@ assert.equal(
   1900000,
   "totals still reconcile with a zero-cost line present",
 );
+
+// ── Grid coherence (Slice C part 1): the editable cost-buckets grid now folds
+//    the subcontractor layer into projected cost + over/under with the SAME
+//    displace-not-stack math as the budget ledger, so the two tables can never
+//    disagree — the "still $X under" bug came from the grid ignoring subs. ──
+{
+  const bucket = {
+    id: "b1",
+    cost_code: "03-8011",
+    bucket: "Dock Pit F/R/P",
+    contract_value: 260000,
+    original_budget: 221000,
+    actual_to_date: 0,
+    ftc: 221000,
+  };
+  // Herrera buyout on this code: committed 142,600, paid 20,420, open 122,180.
+  const subCost = new Map([["b1", { paid: 20420, open: 122180, committed: 142600 }]]);
+
+  const grid = sovLineForecastWithSubs(bucket, subCost.get("b1"));
+  const ledgerRow = computeBudgetLedger([bucket], [], [], [], [], subCost).rows.find(
+    (r) => r.costBucketId === "b1",
+  );
+  assert.equal(grid.fac, ledgerRow?.eac, "grid projected cost == ledger EAC (no drift)");
+  assert.equal(grid.variance, ledgerRow?.overUnder, "grid over/under == ledger over/under");
+
+  // No sub cost → the grid math is byte-for-byte the old self-perform forecast.
+  assert.deepEqual(
+    sovLineForecastWithSubs(bucket, undefined),
+    sovLineForecast(bucket),
+    "no subs → grid forecast unchanged",
+  );
+
+  // The "incl. $X sub" annotation = projected − (raw actual + raw ftc).
+  assert.equal(
+    subCostOnLine(bucket, subCost.get("b1")),
+    grid.fac - (bucket.actual_to_date + bucket.ftc),
+    "annotation delta = projected − raw actual+ftc",
+  );
+
+  // Over-buyout (committed > the code's own ftc): displacement floors self-perform
+  // forecast at 0 and the grid still tracks the ledger exactly.
+  const slab = {
+    id: "s1",
+    cost_code: "03-8012",
+    bucket: "Slab",
+    contract_value: 130000,
+    original_budget: 120000,
+    actual_to_date: 0,
+    ftc: 120000,
+  };
+  const slabSub = new Map([["s1", { paid: 0, open: 150000, committed: 150000 }]]);
+  const slabGrid = sovLineForecastWithSubs(slab, slabSub.get("s1"));
+  const slabLedger = computeBudgetLedger([slab], [], [], [], [], slabSub).rows.find(
+    (r) => r.costBucketId === "s1",
+  );
+  assert.equal(slabGrid.fac, slabLedger?.eac, "over-buyout: grid projected == ledger EAC");
+  assert.equal(slabGrid.variance, slabLedger?.overUnder, "over-buyout: grid over/under == ledger");
+
+  // Footer total folds an UNALLOCATED sub (a code not in the grid) via
+  // includeUnallocated, matching the ledger's catch-all so the two totals agree.
+  const orphan = new Map([
+    ["b1", { paid: 20420, open: 122180, committed: 142600 }],
+    ["ghost", { paid: 5000, open: 7000, committed: 12000 }],
+  ]);
+  const footer = sovTotalsWithSubs([bucket], orphan, true);
+  const ledgerAll = computeBudgetLedger([bucket], [], [], [], [], orphan);
+  assert.equal(
+    footer.fac,
+    ledgerAll.totals.eac,
+    "footer projected total == ledger EAC total (incl. unallocated catch-all)",
+  );
+  // Without includeUnallocated the footer ignores the orphan (group-subtotal use).
+  assert.equal(
+    sovTotalsWithSubs([bucket], orphan, false).fac,
+    grid.fac,
+    "group subtotal folds only its own buckets' subs",
+  );
+}
 
 console.log("budget-vs-contract smoke: all assertions passed");
