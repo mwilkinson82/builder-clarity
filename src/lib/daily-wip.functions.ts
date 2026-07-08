@@ -6,7 +6,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { sumLineItems, type CostLineItem } from "@/lib/daily-wip";
+import { resolvePercentReview, sumLineItems, type CostLineItem } from "@/lib/daily-wip";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -68,7 +68,11 @@ export interface DailyWipEntryRow {
   equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
+  // The PM's reviewed value (drives WIP earned value); field_percent_complete is
+  // the super's field number; a difference / a stamp = the PM adjusted it.
   percent_complete: number;
+  field_percent_complete: number;
+  percent_overridden_at: string | null;
   notes: string;
   created_at: string;
   updated_at: string;
@@ -92,6 +96,8 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   quantity: num(row.quantity),
   unit: str(row.unit),
   percent_complete: num(row.percent_complete),
+  field_percent_complete: num(row.field_percent_complete),
+  percent_overridden_at: (row.percent_overridden_at as string | null) ?? null,
   notes: str(row.notes),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
@@ -118,6 +124,11 @@ const entryFieldsInput = z.object({
   quantity: z.number().min(0).default(0),
   unit: z.string().max(40).default(""),
   percent_complete: z.number().min(0).max(100).default(0),
+  // Who is writing the percent complete: the super in the daily log ("field")
+  // sets the field number; the PM in the WIP ("costing") sets the reviewed value
+  // and any adjustment is tracked. Defaults to "field" so plain callers (and the
+  // super's surface) record the field truth.
+  percent_source: z.enum(["field", "costing"]).default("field"),
   notes: z.string().max(4000).default(""),
 });
 
@@ -147,7 +158,9 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<DailyWipEntryRow> => {
-    const { projectId, id, ...fields } = data;
+    // percent_source is a write-time discriminator, not a column — keep it out of
+    // the DB payload.
+    const { projectId, id, percent_source, ...fields } = data;
     // Items are the source of truth: when a list is present, the lump cost is its
     // cents-safe sum so material_cost / equipment_cost can never drift from the
     // lines. An empty list falls back to the directly-supplied lump (older callers
@@ -158,8 +171,40 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
     const equipment_cost = fields.equipment_items.length
       ? sumLineItems(fields.equipment_items)
       : fields.equipment_cost;
-    const payload = { project_id: projectId, ...fields, material_cost, equipment_cost };
     const table = dynamicTable(context.supabase, "daily_wip_entries");
+    // Split the super's field % from the PM's reviewed %. On an update, the
+    // resolution depends on the row's current review state, so read it first
+    // (degrades to null — a fresh insert — if the row or columns aren't there).
+    let existingReview = null as Parameters<typeof resolvePercentReview>[2];
+    if (id) {
+      const { data: cur } = await table
+        .select("percent_complete, field_percent_complete, percent_overridden_at")
+        .eq("id", id)
+        .single();
+      if (cur) {
+        const c = cur as Record<string, unknown>;
+        existingReview = {
+          percent_complete: num(c.percent_complete),
+          field_percent_complete: num(c.field_percent_complete),
+          percent_overridden_at: (c.percent_overridden_at as string | null) ?? null,
+        };
+      }
+    }
+    const review = resolvePercentReview(
+      percent_source,
+      fields.percent_complete,
+      existingReview,
+      new Date().toISOString(),
+    );
+    const payload = {
+      project_id: projectId,
+      ...fields,
+      material_cost,
+      equipment_cost,
+      percent_complete: review.percent_complete,
+      field_percent_complete: review.field_percent_complete,
+      percent_overridden_at: review.percent_overridden_at,
+    };
     // Existing row → update; new row → insert. Not an upsert-on-conflict: a day
     // holds many activity rows, so (project, date) is not unique.
     const query = id

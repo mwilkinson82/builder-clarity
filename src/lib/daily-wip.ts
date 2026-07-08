@@ -78,6 +78,60 @@ export function subEarnedValue(commitment: number, percentComplete: number): num
   return centsToDollars(Math.round((dollarsToCents(numeric(commitment)) * pct) / 100));
 }
 
+// The percent-complete review pair: the super's field number, the PM's reviewed
+// value, and when (if ever) the PM last diverged from the field.
+export interface PercentReview {
+  field_percent_complete: number;
+  percent_complete: number;
+  percent_overridden_at: string | null;
+}
+
+// Resolve the percent-complete pair when a work line is saved, honoring who is
+// writing it:
+//   - "field" (the super, in the daily log): sets the field number. The PM's
+//     value stays in lockstep with it UNTIL the PM has overridden — after that
+//     the field number moves but the PM's reviewed value is preserved.
+//   - "costing" (the PM, in the WIP): sets the reviewed value; the field number
+//     is untouched. A value different from the field is a tracked override
+//     (stamped with `now`); a value equal to the field re-aligns (clears it).
+// `existing` is the current row on an update, or null on insert. Pure — the
+// caller supplies `now` (ISO) so this stays deterministic and testable.
+export function resolvePercentReview(
+  source: "field" | "costing",
+  inputPercent: number,
+  existing: PercentReview | null,
+  now: string,
+): PercentReview {
+  const value = Math.max(0, Math.min(100, numeric(inputPercent)));
+  if (source === "field") {
+    const overriddenAt = existing?.percent_overridden_at ?? null;
+    return {
+      field_percent_complete: value,
+      // Preserve the PM's reviewed value once they've overridden; otherwise the
+      // reviewed value tracks the field number.
+      percent_complete: overriddenAt ? numeric(existing?.percent_complete) : value,
+      percent_overridden_at: overriddenAt,
+    };
+  }
+  const field = existing ? numeric(existing.field_percent_complete) : value;
+  return {
+    field_percent_complete: field,
+    percent_complete: value,
+    percent_overridden_at: value !== field ? now : null,
+  };
+}
+
+// Whether a line's PM value diverges from the super's field number (the "PM
+// adjusted it" flag). A stamped override or a bare value mismatch both count.
+export function isPercentOverridden(review: {
+  field_percent_complete?: number;
+  percent_complete?: number;
+  percent_overridden_at?: string | null;
+}): boolean {
+  if (review.percent_overridden_at) return true;
+  return numeric(review.percent_complete) !== numeric(review.field_percent_complete);
+}
+
 // Work-in-place for one activity row. A self-perform line is labor + materials +
 // equipment. A bought-out subcontractor line (subcontractor_id set) with a known
 // commitment on its cost code is instead valued by earned value —
