@@ -175,7 +175,9 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
       hours: entry.hours,
       quantity: entry.quantity,
       unit: entry.unit,
-      percent_complete: entry.percent_complete,
+      // The daily log is the super's surface — it edits the FIELD number, not the
+      // PM's reviewed value (which the PM may have adjusted for billing in the WIP).
+      percent_complete: entry.field_percent_complete,
     });
   };
 
@@ -277,9 +279,9 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
                         {entry.quantity} {entry.unit || "qty"}
                       </span>
                     ) : null}
-                    {entry.percent_complete ? (
+                    {entry.field_percent_complete ? (
                       <span className="font-medium text-foreground">
-                        {entry.percent_complete}% complete
+                        {entry.field_percent_complete}% complete
                       </span>
                     ) : null}
                   </div>

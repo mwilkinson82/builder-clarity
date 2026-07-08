@@ -7,9 +7,11 @@ import {
   costItemsForEdit,
   dailyWipTotals,
   dailyWipWorkInPlaceTotal,
+  isPercentOverridden,
   laborCost,
   laborHours,
   productionRate,
+  resolvePercentReview,
   rowWorkInPlace,
   subCommitmentKey,
   subEarnedValue,
@@ -209,6 +211,65 @@ assert.deepEqual(
     dailyWipWorkInPlaceTotal(rows, commitmentFor),
     29_240 + 900,
     "day total blends sub earned value with self-perform work in place",
+  );
+}
+
+// ── Super-% vs PM-% review (Slice B): the super logs a field %, the PM reviews
+//    it in the WIP and may adjust it; the field number is kept and any change is
+//    tracked. resolvePercentReview is the pure engine for that. ──
+{
+  const NOW = "2026-07-09T12:00:00.000Z";
+
+  // Super logs 30% on a fresh line: field and reviewed track together, no override.
+  const superNew = resolvePercentReview("field", 30, null, NOW);
+  assert.deepEqual(
+    superNew,
+    { field_percent_complete: 30, percent_complete: 30, percent_overridden_at: null },
+    "super's field log sets both numbers in lockstep, no override",
+  );
+  assert.equal(isPercentOverridden(superNew), false, "in-lockstep line is not flagged");
+
+  // PM reviews that line down to 25% (SOV can't bill 30%): field kept, reviewed
+  // changes, override stamped.
+  const pmCap = resolvePercentReview("costing", 25, superNew, NOW);
+  assert.deepEqual(
+    pmCap,
+    { field_percent_complete: 30, percent_complete: 25, percent_overridden_at: NOW },
+    "PM cap keeps the field number, moves the reviewed value, stamps the override",
+  );
+  assert.equal(isPercentOverridden(pmCap), true, "a PM cap is flagged as adjusted");
+
+  // Super later re-logs the field to 40%: the field number moves, but the PM's
+  // reviewed 25% is preserved (their billing decision stands).
+  const superAgain = resolvePercentReview("field", 40, pmCap, NOW);
+  assert.deepEqual(
+    superAgain,
+    { field_percent_complete: 40, percent_complete: 25, percent_overridden_at: NOW },
+    "a later field update moves the field but preserves the PM override",
+  );
+
+  // PM re-aligns to the field number: the override clears.
+  const realigned = resolvePercentReview("costing", 40, superAgain, NOW);
+  assert.equal(realigned.percent_overridden_at, null, "matching the field clears the override");
+  assert.equal(isPercentOverridden(realigned), false, "re-aligned line is no longer flagged");
+
+  // A PM creating a line from scratch (no field number yet) is not an override.
+  const pmFresh = resolvePercentReview("costing", 50, null, NOW);
+  assert.deepEqual(
+    pmFresh,
+    { field_percent_complete: 50, percent_complete: 50, percent_overridden_at: null },
+    "PM-created line seeds both numbers, no override",
+  );
+
+  // Percent clamps 0..100 in the engine.
+  assert.equal(resolvePercentReview("field", 150, null, NOW).field_percent_complete, 100, "clamps");
+
+  // isPercentOverridden also catches a bare value mismatch (defensive — e.g. a
+  // legacy row with no stamp).
+  assert.equal(
+    isPercentOverridden({ field_percent_complete: 30, percent_complete: 20 }),
+    true,
+    "value mismatch alone counts as overridden",
   );
 }
 

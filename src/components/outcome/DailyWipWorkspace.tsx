@@ -43,6 +43,7 @@ import {
   costItemsForEdit,
   dailyWipTotals,
   dailyWipWorkInPlaceTotal,
+  isPercentOverridden,
   laborCost,
   productionRate,
   rowWorkInPlace,
@@ -81,6 +82,9 @@ interface SaveWipInput {
   quantity: number;
   unit: string;
   percent_complete: number;
+  // The WIP is the PM's costing surface — a % saved here is a reviewed value, and
+  // a change from the super's field number is tracked as an override.
+  percent_source: "field" | "costing";
   notes: string;
 }
 
@@ -300,6 +304,14 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
       toast.error(error instanceof Error ? error.message : "Could not remove the entry"),
   });
 
+  // The line being edited (if any) — the PM is reviewing the super's field %, so
+  // surface what the field logged next to the value they're about to save.
+  const editingEntry = editingId
+    ? ((entriesQuery.data ?? []).find((e) => e.id === editingId) ?? null)
+    : null;
+  const fieldPercent = editingEntry?.field_percent_complete ?? 0;
+  const pmAdjusting = editingEntry != null && draft.percent_complete !== fieldPercent;
+
   const draftLabor = laborCost(draft);
   const draftMaterial = sumLineItems(draft.material_items);
   const draftEquipment = sumLineItems(draft.equipment_items);
@@ -365,6 +377,9 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
       quantity: draft.quantity,
       unit: draft.unit.trim(),
       percent_complete: draft.percent_complete,
+      // Saving here is the PM reviewing/pricing — record it as a costing edit so a
+      // change from the super's field number is tracked (the field % is preserved).
+      percent_source: "costing",
       notes: draft.notes.trim(),
     });
   };
@@ -686,6 +701,15 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                     {fmtUSD(draftCommitment ?? 0)} buyout at this %.
                   </span>
                 ) : null}
+                {editingEntry ? (
+                  <span
+                    className={`text-[10px] ${pmAdjusting ? "text-warning" : "text-muted-foreground"}`}
+                  >
+                    {pmAdjusting
+                      ? `Field logged ${fieldPercent}% — you're showing ${draft.percent_complete}%. The change is recorded.`
+                      : `Field logged ${fieldPercent}%.`}
+                  </span>
+                ) : null}
               </label>
             </div>
 
@@ -935,9 +959,14 @@ function EntryRow({
             <span className="truncate">{performedBy}</span>
           </div>
         ) : null}
-        {entry.percent_complete ? (
+        {entry.percent_complete || entry.field_percent_complete ? (
           <div className="mt-0.5 text-[11px] font-medium text-foreground">
             {entry.percent_complete}% complete
+            {isPercentOverridden(entry) ? (
+              <span className="ml-1 font-normal text-warning">
+                (field logged {entry.field_percent_complete}%)
+              </span>
+            ) : null}
           </div>
         ) : null}
       </td>
