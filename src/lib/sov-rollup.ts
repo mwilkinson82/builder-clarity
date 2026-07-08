@@ -121,8 +121,10 @@ export function sovTotalsWithSubs(
         Math.max(0, dollarsToCents(bucket.ftc) - dollarsToCents(sub.committed ?? 0)) +
         dollarsToCents(sub.open);
       sum.budget += dollarsToCents(bucket.original_budget);
-      sum.actual += dollarsToCents(bucket.actual_to_date);
-      sum.ftc += dollarsToCents(bucket.ftc);
+      // Actual and ftc are SUB-INCLUSIVE so the subtotal/footer match the rows,
+      // which now show each bought-out line's sub-inclusive actual + forecast.
+      sum.actual += actualsCents;
+      sum.ftc += openCents;
       sum.fac += actualsCents + openCents;
       return sum;
     },
@@ -131,6 +133,8 @@ export function sovTotalsWithSubs(
   if (includeUnallocated) {
     for (const [id, sub] of subCostByBucket) {
       if (listed.has(id)) continue;
+      cents.actual += dollarsToCents(sub.paid);
+      cents.ftc += dollarsToCents(sub.open);
       cents.fac += dollarsToCents(sub.paid) + dollarsToCents(sub.open);
     }
   }

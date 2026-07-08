@@ -26,7 +26,6 @@ import { fmtUSD } from "@/lib/format";
 import {
   sovLineForecastWithSubs,
   sovTotalsWithSubs,
-  subCostOnLine,
   type SubBucketCostLite,
 } from "@/lib/sov-rollup";
 import type { BucketRow } from "@/lib/projects.functions";
@@ -295,8 +294,18 @@ export function CostBucketsTable({
               for (const b of group.buckets) {
                 const subCost = b.id ? subCosts.get(b.id) : undefined;
                 const { fac, variance } = sovLineForecastWithSubs(b, subCost);
-                const subOnLine = subCostOnLine(b, subCost);
                 const neg = variance < 0;
+                // A bought-out line's actual/forecast come from the subcontractor
+                // buyout, not manual entry — so show the sub-inclusive NUMBERS in
+                // the cells (read-only) instead of empty inputs, matching the top
+                // ledger. actual = manual + sub paid; forecast = the rest of the
+                // projected cost. Self-perform lines keep their editable inputs.
+                const hasSub = Boolean(
+                  subCost && ((subCost.paid ?? 0) > 0 || (subCost.committed ?? 0) > 0),
+                );
+                const actualInclusive = b.actual_to_date + (subCost?.paid ?? 0);
+                const forecastInclusive = fac - actualInclusive;
+                const subEarned = subCost?.earned ?? 0;
                 groupRows.push(
                   <TableRow key={b.id}>
                     <TableCell className="font-mono text-xs">
@@ -358,35 +367,54 @@ export function CostBucketsTable({
                       )}
                     </TableCell>
                     <TableCell className="text-right tabular">
-                      <NumCell
-                        value={b.actual_to_date}
-                        onCommit={(v) => onUpdate(b.id, { actual_to_date: v })}
-                      />
-                      {subCost && (subCost.paid > 0 || (subCost.earned ?? 0) > 0) ? (
+                      {hasSub ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help font-medium text-foreground">
+                              {fmtUSD(actualInclusive)}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[240px] text-xs">
+                            Actual cost is driven by the subcontractor buyout on this code —{" "}
+                            {fmtUSD(subCost?.paid ?? 0)} paid to date. Enter manual cost on
+                            self-perform lines only.
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <NumCell
+                          value={b.actual_to_date}
+                          onCommit={(v) => onUpdate(b.id, { actual_to_date: v })}
+                        />
+                      )}
+                      {hasSub && subEarned > (subCost?.paid ?? 0) ? (
                         <div className="mt-0.5 text-[10px] font-normal text-muted-foreground">
-                          incl. {fmtUSD(subCost.paid)} sub paid
-                          {(subCost.earned ?? 0) > subCost.paid ? (
-                            <div>{fmtUSD(subCost.earned ?? 0)} earned</div>
-                          ) : null}
+                          {fmtUSD(subEarned)} earned
                         </div>
                       ) : null}
                     </TableCell>
                     <TableCell className="text-right tabular">
-                      <NumCell value={b.ftc} onCommit={(v) => onUpdate(b.id, { ftc: v })} />
+                      {hasSub ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help font-medium text-foreground">
+                              {fmtUSD(forecastInclusive)}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-[240px] text-xs">
+                            Remaining commitment on the subcontractor buyout — the buyout (
+                            {fmtUSD(subCost?.committed ?? 0)}) less what's been paid.
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <NumCell value={b.ftc} onCommit={(v) => onUpdate(b.id, { ftc: v })} />
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular text-muted-foreground">
                       {subCost && subCost.committed && subCost.committed > 0
                         ? fmtUSD(subCost.committed)
                         : "—"}
                     </TableCell>
-                    <TableCell className="text-right tabular font-medium">
-                      {fmtUSD(fac)}
-                      {subOnLine > 0 ? (
-                        <div className="text-[10px] font-normal text-muted-foreground">
-                          incl. {fmtUSD(subOnLine)} sub
-                        </div>
-                      ) : null}
-                    </TableCell>
+                    <TableCell className="text-right tabular font-medium">{fmtUSD(fac)}</TableCell>
                     <TableCell
                       className={`text-right tabular ${overUnder(variance).tone} ${neg ? "font-medium" : ""}`}
                     >
