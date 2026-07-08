@@ -53,6 +53,11 @@ export interface SubBucketCost {
   // percent-complete, floored at what's been paid so it never understates cost.
   paid: number;
   open: number; // max(0, committed − recognized cost) = remaining commitment (forecast)
+  // Actual CASH paid-to-date (payments distributed pro-rata), dollars. Distinct
+  // from `paid` (recognized cost): when % earned exceeds cash paid, `paid` holds
+  // the earned value and this holds the smaller cash figure. Surfaced so the UI
+  // can show both "what the work is worth" and "what's been paid".
+  cashPaid: number;
 }
 
 const numeric = (value: number) => (Number.isFinite(value) ? value : 0);
@@ -114,6 +119,7 @@ export function summarizeSubCostByBucket(
 
   const committedCentsByBucket = new Map<string, number>();
   const costCentsByBucket = new Map<string, number>();
+  const cashPaidCentsByBucket = new Map<string, number>();
 
   // Group executed allocations by subcontract so payments distribute correctly.
   const allocsBySub = new Map<string, SubcontractAllocationLike[]>();
@@ -154,6 +160,10 @@ export function summarizeSubCostByBucket(
       const earnedCents = Math.round((weightsCents[i] * pct) / 100);
       const costCents = Math.max(earnedCents, paidShares[i]);
       costCentsByBucket.set(bucketId, (costCentsByBucket.get(bucketId) ?? 0) + costCents);
+      cashPaidCentsByBucket.set(
+        bucketId,
+        (cashPaidCentsByBucket.get(bucketId) ?? 0) + paidShares[i],
+      );
     }
   }
 
@@ -170,6 +180,7 @@ export function summarizeSubCostByBucket(
       committed: centsToDollars(committedCents),
       paid: centsToDollars(costCents),
       open: centsToDollars(openCents),
+      cashPaid: centsToDollars(cashPaidCentsByBucket.get(bucketId) ?? 0),
     });
   }
   return out;

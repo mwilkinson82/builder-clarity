@@ -525,9 +525,11 @@ function ProjectPage() {
     let paidCents = 0;
     let openAdjCents = 0;
     let committedTotalCents = 0;
+    let cashPaidTotalCents = 0;
     if (subCostByBucket) {
       for (const [bucketId, value] of subCostByBucket.entries()) {
         paidCents += dollarsToCents(value.paid);
+        cashPaidTotalCents += dollarsToCents(value.cashPaid ?? value.paid);
         const committedCents = dollarsToCents(value.committed ?? 0);
         committedTotalCents += committedCents;
         const bucketFtcCents = dollarsToCents(ftcByBucket.get(bucketId) ?? 0);
@@ -540,6 +542,7 @@ function ProjectPage() {
       paid: centsToDollars(paidCents),
       openAdj: centsToDollars(openAdjCents),
       committed: centsToDollars(committedTotalCents),
+      cashPaid: centsToDollars(cashPaidTotalCents),
     };
   }, [subCostByBucket, data?.buckets]);
   const budgetLock = useMutation({
@@ -2177,6 +2180,9 @@ function ProjectPage() {
                       label="Committed cost (subs)"
                       value={fmtUSD(subCostTotals.committed)}
                     />
+                  ) : null}
+                  {subCostTotals.cashPaid > 0 ? (
+                    <SovMetric label="Paid to date (subs)" value={fmtUSD(subCostTotals.cashPaid)} />
                   ) : null}
                 </div>
                 <SovImportHistory imports={sovImports ?? []} />
