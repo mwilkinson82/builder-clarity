@@ -24,7 +24,14 @@ import {
   type DailyWipEntryRow,
 } from "@/lib/daily-wip.functions";
 import { listDailyReports } from "@/lib/daily-reports.functions";
-import { dailyWipTotals, laborCost, productionRate, rowWorkInPlace } from "@/lib/daily-wip";
+import {
+  dailyWipTotals,
+  laborCost,
+  productionRate,
+  rowWorkInPlace,
+  sumLineItems,
+  type CostLineItem,
+} from "@/lib/daily-wip";
 
 interface BucketOption {
   id: string;
@@ -48,6 +55,8 @@ interface SaveWipInput {
   labor_rate: number;
   material_cost: number;
   equipment_cost: number;
+  material_items: CostLineItem[];
+  equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
   notes: string;
@@ -59,8 +68,8 @@ interface EntryDraft {
   crew_count: number;
   hours: number;
   labor_rate: number;
-  material_cost: number;
-  equipment_cost: number;
+  material_items: CostLineItem[];
+  equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
   notes: string;
@@ -72,8 +81,8 @@ const emptyDraft: EntryDraft = {
   crew_count: 0,
   hours: 0,
   labor_rate: 0,
-  material_cost: 0,
-  equipment_cost: 0,
+  material_items: [],
+  equipment_items: [],
   quantity: 0,
   unit: "",
   notes: "",
@@ -157,14 +166,25 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   });
 
   const draftLabor = laborCost(draft);
+  const draftMaterial = sumLineItems(draft.material_items);
+  const draftEquipment = sumLineItems(draft.equipment_items);
   const draftHasWork =
-    draftLabor > 0 || draft.material_cost > 0 || draft.equipment_cost > 0 || draft.activity.trim();
+    draftLabor > 0 || draftMaterial > 0 || draftEquipment > 0 || draft.activity.trim();
+
+  // Drop lines that are entirely blank (no description and no amount) before
+  // saving, so an empty "Add line" click never persists noise.
+  const cleanItems = (items: CostLineItem[]): CostLineItem[] =>
+    items
+      .map((item) => ({ description: item.description.trim(), amount: item.amount }))
+      .filter((item) => item.description !== "" || item.amount > 0);
 
   const handleAdd = () => {
     if (!draftHasWork) {
       toast.error("Add crew, materials, equipment, or an activity before saving");
       return;
     }
+    const material_items = cleanItems(draft.material_items);
+    const equipment_items = cleanItems(draft.equipment_items);
     saveMutation.mutate({
       projectId,
       cost_bucket_id: draft.cost_bucket_id || null,
@@ -173,8 +193,10 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
       crew_count: draft.crew_count,
       hours: draft.hours,
       labor_rate: draft.labor_rate,
-      material_cost: draft.material_cost,
-      equipment_cost: draft.equipment_cost,
+      material_cost: sumLineItems(material_items),
+      equipment_cost: sumLineItems(equipment_items),
+      material_items,
+      equipment_items,
       quantity: draft.quantity,
       unit: draft.unit.trim(),
       notes: draft.notes.trim(),
@@ -362,20 +384,6 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Materials</span>
-                <MoneyInput
-                  value={draft.material_cost}
-                  onValueChange={(n) => setDraftField("material_cost", n)}
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Equipment</span>
-                <MoneyInput
-                  value={draft.equipment_cost}
-                  onValueChange={(n) => setDraftField("equipment_cost", n)}
-                />
-              </label>
-              <label className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">Quantity placed</span>
                 <Input
                   type="number"
@@ -393,6 +401,25 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                 />
               </label>
             </div>
+
+            {/* Itemized materials + equipment: what it was, and how much it cost. */}
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <ItemizedCostEditor
+                label="Materials"
+                help="What you installed and its cost — e.g. rebar #5, $1,200"
+                placeholder="What material? e.g. rebar #5"
+                items={draft.material_items}
+                onChange={(items) => setDraftField("material_items", items)}
+              />
+              <ItemizedCostEditor
+                label="Equipment"
+                help="What you ran and its cost — e.g. 20T excavator, $800"
+                placeholder="What equipment? e.g. 20T excavator"
+                items={draft.equipment_items}
+                onChange={(items) => setDraftField("equipment_items", items)}
+              />
+            </div>
+
             <div className="mt-3 flex items-center justify-between gap-2">
               <span className="text-[11px] text-muted-foreground">
                 Work in place ={" "}
@@ -403,8 +430,8 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                         crew_count: draft.crew_count,
                         hours: draft.hours,
                         labor_rate: draft.labor_rate,
-                        material_cost: draft.material_cost,
-                        equipment_cost: draft.equipment_cost,
+                        material_cost: draftMaterial,
+                        equipment_cost: draftEquipment,
                         quantity: draft.quantity,
                       },
                     ]).total,
@@ -494,6 +521,94 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   );
 }
 
+// A single Materials or Equipment line list: each row says what it was and how
+// much it cost. The dollar box carries a visible $ so it reads as money, and the
+// list rolls up to a cents-safe total shown beneath.
+function ItemizedCostEditor({
+  label,
+  help,
+  placeholder,
+  items,
+  onChange,
+}: {
+  label: string;
+  help: string;
+  placeholder: string;
+  items: CostLineItem[];
+  onChange: (items: CostLineItem[]) => void;
+}) {
+  const total = sumLineItems(items);
+  const update = (index: number, patch: Partial<CostLineItem>) =>
+    onChange(items.map((item, idx) => (idx === index ? { ...item, ...patch } : item)));
+  const addLine = () => onChange([...items, { description: "", amount: 0 }]);
+  const removeLine = (index: number) => onChange(items.filter((_, idx) => idx !== index));
+
+  return (
+    <div className="rounded-md border border-hairline bg-surface p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-medium text-foreground">{label}</span>
+        {total > 0 ? (
+          <span className="text-xs font-medium tabular-nums text-foreground">{fmtUSD(total)}</span>
+        ) : null}
+      </div>
+      <p className="mt-0.5 text-[11px] text-muted-foreground">{help}</p>
+
+      <div className="mt-2 space-y-2">
+        {items.map((item, index) => (
+          <div key={index} className="flex items-center gap-2">
+            <Input
+              value={item.description}
+              placeholder={placeholder}
+              className="flex-1"
+              onChange={(event) => update(index, { description: event.target.value })}
+            />
+            <div className="relative w-[130px] shrink-0">
+              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                $
+              </span>
+              <MoneyInput
+                value={item.amount}
+                onValueChange={(n) => update(index, { amount: n })}
+                align="right"
+                className="pl-6"
+              />
+            </div>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-danger"
+              aria-label={`Remove ${label.toLowerCase()} line`}
+              onClick={() => removeLine(index)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="mt-2 gap-1.5 text-muted-foreground"
+        onClick={addLine}
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Add {label.toLowerCase()} line
+      </Button>
+    </div>
+  );
+}
+
+// Human-readable breakdown for the table cell's hover title.
+function itemsTooltip(items: CostLineItem[]): string | undefined {
+  const lines = items
+    .filter((item) => item.description.trim() || item.amount > 0)
+    .map((item) => `${item.description.trim() || "—"}: ${fmtUSD(item.amount)}`);
+  return lines.length ? lines.join("\n") : undefined;
+}
+
 function EntryRow({
   entry,
   label,
@@ -519,11 +634,27 @@ function EntryRow({
         {entry.labor_rate ? fmtUSD(entry.labor_rate) : "—"}
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums">{labor ? fmtUSD(labor) : "—"}</td>
-      <td className="px-3 py-2.5 text-right tabular-nums">
+      <td
+        className="px-3 py-2.5 text-right tabular-nums"
+        title={itemsTooltip(entry.material_items)}
+      >
         {entry.material_cost ? fmtUSD(entry.material_cost) : "—"}
+        {entry.material_items.length > 1 ? (
+          <div className="text-[10px] font-normal text-muted-foreground">
+            {entry.material_items.length} items
+          </div>
+        ) : null}
       </td>
-      <td className="px-3 py-2.5 text-right tabular-nums">
+      <td
+        className="px-3 py-2.5 text-right tabular-nums"
+        title={itemsTooltip(entry.equipment_items)}
+      >
         {entry.equipment_cost ? fmtUSD(entry.equipment_cost) : "—"}
+        {entry.equipment_items.length > 1 ? (
+          <div className="text-[10px] font-normal text-muted-foreground">
+            {entry.equipment_items.length} items
+          </div>
+        ) : null}
       </td>
       <td className="px-3 py-2.5 text-right font-medium tabular-nums">{fmtUSD(workInPlace)}</td>
       <td className="px-3 py-2.5 text-right">

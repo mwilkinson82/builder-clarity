@@ -16,6 +16,22 @@ export interface DailyWipRowLike {
   quantity: number;
 }
 
+// One itemized cost line: what it was, and how much it cost (dollars).
+export interface CostLineItem {
+  description: string;
+  amount: number;
+}
+
+// Cents-safe sum of a list of line-item amounts. This is the source of truth for
+// material_cost / equipment_cost when items are present, so the lump can never
+// drift from the lines that make it up.
+export function sumLineItems(items: readonly CostLineItem[] | null | undefined): number {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+  return centsToDollars(
+    items.reduce((cents, item) => cents + dollarsToCents(numeric(item?.amount)), 0),
+  );
+}
+
 // crew × hours × blended $/hr, rounded to cents. Headcount × hours is total
 // labor-hours; times the blended rate is the day's labor cost for the activity.
 export function laborCost(
