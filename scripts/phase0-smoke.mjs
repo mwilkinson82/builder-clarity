@@ -2637,6 +2637,11 @@ await expectContains(
   [/subcontractor_id: z\.string\(\)\.uuid\(\)\.nullable\(\)/],
   "daily-WIP entry accepts a subcontractor link (self-perform ↔ sub)",
 );
+await expectContains(
+  "src/components/outcome/DailyWipWorkspace.tsx",
+  [/Performed by/, /draft\.subcontractor_id/, /Self-perform \(in-house\)/, /subOptions/],
+  "daily-WIP workspace has the performed-by picker (self-perform ↔ sub)",
+);
 
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
