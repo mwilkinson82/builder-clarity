@@ -267,6 +267,47 @@ export function computeBudgetLedger(
     });
   }
 
+  // Subcontractor cost tied to a code that ISN'T a listed budget line (an
+  // allocation to a non-budget code, or a stale/deleted bucket). The Budget-tab
+  // summary cards sum the WHOLE sub map, so without this the table would silently
+  // drop that cost and disagree with the cards above — the "updated up top but not
+  // below" bug. Mirror the change-order catch-all: give it its own row so the two
+  // views reconcile AND orphaned sub cost is visible instead of hidden. There's
+  // no self-perform forecast to displace here (no budget line), so paid → actuals
+  // and open → forecast, raw.
+  const listedBucketIds = new Set(buckets.map((bucket) => bucket.id));
+  let unallocatedSubPaidCents = 0;
+  let unallocatedSubOpenCents = 0;
+  for (const [bucketId, value] of subCostByBucket) {
+    if (listedBucketIds.has(bucketId)) continue;
+    unallocatedSubPaidCents += dollarsToCents(value.paid);
+    unallocatedSubOpenCents += dollarsToCents(value.open);
+  }
+  if (unallocatedSubPaidCents > 1 || unallocatedSubOpenCents > 1) {
+    const actuals = centsToDollars(unallocatedSubPaidCents);
+    const open = centsToDollars(unallocatedSubOpenCents);
+    const eac = eacDollars(actuals, open);
+    rows.push({
+      costBucketId: null,
+      costCode: "",
+      description: "Subcontractor cost (unallocated to a listed code)",
+      contractValue: 0,
+      changeOrderContract: 0,
+      priced: false,
+      margin: null,
+      marginPct: null,
+      budget: 0,
+      originalBudget: 0,
+      changeOrderBudget: 0,
+      actuals,
+      open,
+      atRisk: 0,
+      contingency: 0,
+      eac,
+      overUnder: overUnderDollars(0, eac),
+    });
+  }
+
   // Risk allocated to no specific cost code is real job risk — surface it as its
   // own line so the At Risk / Contingency totals never quietly drop it.
   if (generalAtRiskCents > 0 || generalContingencyCents > 0) {

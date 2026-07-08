@@ -227,4 +227,39 @@ import { computeBudgetLedger } from "../src/lib/budget-ledger.ts";
   assert.equal(row?.eac, 100_000, "EAC = budget");
 }
 
+// ── Coherence guard (Darian: "committed cost updated up top but not below"):
+//    sub cost tied to a code that ISN'T a listed budget line (orphaned/stale
+//    allocation) must still land in the ledger TOTALS via a catch-all row, so the
+//    Budget-tab summary cards — which sum the WHOLE sub map — match the table
+//    total below. Without the catch-all the table dropped it and the two views
+//    disagreed. ──
+{
+  const bucket = {
+    id: "b1",
+    cost_code: "03-100",
+    bucket: "Concrete",
+    contract_value: 120_000,
+    original_budget: 100_000,
+    actual_to_date: 0,
+    ftc: 100_000,
+  };
+  // One listed bucket + one orphaned bucket id NOT in the buckets list.
+  const subCost = new Map([
+    ["b1", { paid: 10_000, open: 20_000, committed: 30_000 }],
+    ["orphan", { paid: 5_000, open: 7_000, committed: 12_000 }],
+  ]);
+  const ledger = computeBudgetLedger([bucket], [], [], [], [], subCost);
+  const catchAll = ledger.rows.find(
+    (r) => r.description === "Subcontractor cost (unallocated to a listed code)",
+  );
+  assert.ok(catchAll, "orphaned sub cost gets its own catch-all row");
+  assert.equal(catchAll?.actuals, 5_000, "catch-all actuals = orphaned sub paid");
+  assert.equal(catchAll?.open, 7_000, "catch-all open = orphaned sub open");
+  // Cards' "Actual to date" = Σ bucket.actual (0) + Σ ALL sub paid (10k+5k) = 15k.
+  assert.equal(ledger.totals.actuals, 15_000, "table total actuals == cards' whole-map sub sum");
+  // Cards' "Forecast to complete" = Σ bucket.ftc (100k) + Σ[subOpen − min(ftc,committed)]
+  // = 100k + (20k−30k) + (7k−0) = 97k; table = [max(0,100k−30k)=70k + 20k] + 7k = 97k.
+  assert.equal(ledger.totals.open, 97_000, "table total open == cards' netted whole-map sum");
+}
+
 console.log("subcontract budget smoke: all assertions passed");
