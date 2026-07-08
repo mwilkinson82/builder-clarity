@@ -2222,6 +2222,7 @@ function ProjectPage() {
                 />
                 <CostBucketsTable
                   buckets={buckets}
+                  subCostByBucket={subCostByBucket}
                   budgetLocked={Boolean(project.budget_locked_at)}
                   onUpdate={(id, patch) => bucketUpdate.mutateAsync({ id, patch })}
                   onCreate={(input) => bucketCreate.mutate({ projectId, ...input })}
