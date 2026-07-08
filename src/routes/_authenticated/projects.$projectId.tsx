@@ -498,6 +498,21 @@ function ProjectPage() {
     if (!data) return undefined;
     return summarizeSubCostByBucket(data.subcontracts, data.allocations, data.payments);
   }, [subcontractsQuery.data]);
+  // Sub layer totals for the Budget-tab summary cards, so they match the per-code
+  // ledger below (which already folds in subs): sub payments raise Actual-to-date,
+  // remaining sub commitment raises Forecast-to-complete. Isolated to these
+  // cards — the shared IOR rollup (dashboard GP) is untouched.
+  const subCostTotals = useMemo(() => {
+    let paid = 0;
+    let open = 0;
+    if (subCostByBucket) {
+      for (const value of subCostByBucket.values()) {
+        paid += value.paid;
+        open += value.open;
+      }
+    }
+    return { paid, open };
+  }, [subCostByBucket]);
   const budgetLock = useMutation({
     mutationFn: () => lockProjectBudgetFn({ data: { projectId } }),
     onSuccess: () => {
@@ -2108,15 +2123,23 @@ function ProjectPage() {
                     label="Original cost budget"
                     value={fmtUSD(project.original_cost_budget)}
                   />
-                  <SovMetric label="Actual to date" value={fmtUSD(rollup.actualToDate)} />
-                  <SovMetric label="Forecast to complete" value={fmtUSD(rollup.ftc)} />
+                  <SovMetric
+                    label="Actual to date"
+                    value={fmtUSD(rollup.actualToDate + subCostTotals.paid)}
+                  />
+                  <SovMetric
+                    label="Forecast to complete"
+                    value={fmtUSD(rollup.ftc + subCostTotals.open)}
+                  />
                   <SovMetric
                     label="CO cost exposure"
                     value={fmtUSD(rollup.weightedPendingCOCost)}
                   />
                   <SovMetric
                     label="Forecasted final cost"
-                    value={fmtUSD(rollup.forecastedFinalCost)}
+                    value={fmtUSD(
+                      rollup.forecastedFinalCost + subCostTotals.paid + subCostTotals.open,
+                    )}
                   />
                 </div>
                 <SovImportHistory imports={sovImports ?? []} />
