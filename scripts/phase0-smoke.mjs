@@ -243,12 +243,15 @@ await expectContains(
 await expectContains(
   "src/styles.css",
   [
-    /--accent:\s*#1b7a6e/,
-    /--ring:\s*rgb\(27 122 110 \/ 0\.4\)/,
-    /--accent:\s*#2aa99a/,
-    /--ring:\s*rgb\(42 169 154 \/ 0\.55\)/,
+    // ALP house skin (AOS-DESIGN-SYSTEM.md §2): warm clay accent for
+    // active/selected states, signal-orange focus ring. Orange is rationed to
+    // the Button variant="signal" CTA, never the global accent.
+    /--accent:\s*#d97757/,
+    /--ring:\s*rgb\(247 106 22 \/ 0\.45\)/,
+    /--signal:\s*#f76a16/,
+    /--ring:\s*rgb\(247 106 22 \/ 0\.55\)/,
   ],
-  "global highlight accent uses the deep teal trial palette",
+  "global highlight accent uses the ALP house palette (clay accent, signal-orange focus)",
 );
 
 await expectContains(

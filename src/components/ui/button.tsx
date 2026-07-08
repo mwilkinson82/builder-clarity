@@ -10,6 +10,10 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground shadow hover:bg-primary/90",
+        // The one rationed orange CTA per view (house --signal). Use sparingly:
+        // if two things on a screen are orange, one of them is wrong.
+        signal:
+          "bg-signal text-signal-foreground shadow hover:bg-signal/90 focus-visible:ring-signal",
         destructive: "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
         outline:
           "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
