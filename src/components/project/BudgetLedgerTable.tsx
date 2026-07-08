@@ -108,7 +108,7 @@ export function BudgetLedgerTable({
   // remaining forecast. Built by the route from the subcontract query.
   subCostByBucket?: ReadonlyMap<
     string,
-    { paid: number; open: number; committed?: number; cashPaid?: number }
+    { paid: number; open: number; committed?: number; earned?: number }
   >;
 }) {
   const ledger = computeBudgetLedger(
@@ -240,11 +240,12 @@ export function BudgetLedgerTable({
                     {fmtUSD(row.actuals)}
                     {(() => {
                       const sub = row.costBucketId ? subCostByBucket?.get(row.costBucketId) : null;
-                      // Show cash paid when the recognized cost is earned value
-                      // ahead of it — "of which $X paid" so earned ≠ cash is clear.
-                      return sub && sub.cashPaid != null && sub.cashPaid < sub.paid ? (
+                      // Actuals is cash paid; show the earned value alongside when the
+                      // sub has produced more work than it's been paid for, so the gap
+                      // (work done, not yet paid) is visible.
+                      return sub && (sub.earned ?? 0) > sub.paid ? (
                         <div className="text-[10px] font-normal text-muted-foreground">
-                          {fmtUSD(sub.cashPaid)} paid
+                          {fmtUSD(sub.earned ?? 0)} earned
                         </div>
                       ) : null;
                     })()}

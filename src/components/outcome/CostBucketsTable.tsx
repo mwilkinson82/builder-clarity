@@ -362,11 +362,11 @@ export function CostBucketsTable({
                         value={b.actual_to_date}
                         onCommit={(v) => onUpdate(b.id, { actual_to_date: v })}
                       />
-                      {subCost && subCost.paid > 0 ? (
+                      {subCost && (subCost.paid > 0 || (subCost.earned ?? 0) > 0) ? (
                         <div className="mt-0.5 text-[10px] font-normal text-muted-foreground">
-                          incl. {fmtUSD(subCost.paid)} sub earned
-                          {subCost.cashPaid != null && subCost.cashPaid < subCost.paid ? (
-                            <div>{fmtUSD(subCost.cashPaid)} paid</div>
+                          incl. {fmtUSD(subCost.paid)} sub paid
+                          {(subCost.earned ?? 0) > subCost.paid ? (
+                            <div>{fmtUSD(subCost.earned ?? 0)} earned</div>
                           ) : null}
                         </div>
                       ) : null}

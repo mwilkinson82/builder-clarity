@@ -47,17 +47,17 @@ export interface SubcontractPaymentLike {
 
 export interface SubBucketCost {
   committed: number; // total committed on this bucket (executed subs), dollars
-  // Recognized cost-to-date attributed to this bucket, dollars. Without an
-  // earned-value input this is paid-to-date (payments distributed pro-rata);
-  // with one it is max(earned, paid) per allocation — earned value = commitment ×
-  // percent-complete, floored at what's been paid so it never understates cost.
+  // Actual cash paid-to-date attributed to this bucket (payments distributed
+  // pro-rata), dollars. This is "actual cost" on the budget — what's actually
+  // gone out the door.
   paid: number;
-  open: number; // max(0, committed − recognized cost) = remaining commitment (forecast)
-  // Actual CASH paid-to-date (payments distributed pro-rata), dollars. Distinct
-  // from `paid` (recognized cost): when % earned exceeds cash paid, `paid` holds
-  // the earned value and this holds the smaller cash figure. Surfaced so the UI
-  // can show both "what the work is worth" and "what's been paid".
-  cashPaid: number;
+  open: number; // max(0, committed − paid) = remaining commitment (forecast)
+  // Earned value: the buyout commitment × the sub's field percent-complete on
+  // this code, dollars. What the work in place is WORTH (progress/production),
+  // distinct from what's been paid. Display-only — it never drives the ledger
+  // actuals/forecast (paid/open do); it's shown alongside so the gap between
+  // work done and cash paid is visible. 0 with no earned-value input.
+  earned: number;
 }
 
 const numeric = (value: number) => (Number.isFinite(value) ? value : 0);
@@ -90,13 +90,13 @@ export function subEarnedKey(subcontractorId: string, costBucketId: string): str
   return `${subcontractorId}:${costBucketId}`;
 }
 
-// Per cost bucket: committed = Σ executed-sub allocations; recognized cost = each
-// subcontract's payments distributed pro-rata across its allocations, then — when
-// an earned-value map is supplied — raised to max(earned, paid) per allocation
-// (earned = the allocation's commitment × the sub's field percent-complete on
-// that code); open = max(0, committed − recognized cost). Only EXECUTED
-// subcontracts contribute. Cents-safe throughout. With no earned-value map the
-// result is exactly the payments-only summary (earned = 0 → cost = paid).
+// Per cost bucket: committed = Σ executed-sub allocations; paid = each
+// subcontract's payments distributed pro-rata across its allocations (actual cash
+// out); open = max(0, committed − paid) = remaining commitment; earned = Σ
+// (allocation commitment × the sub's field percent-complete on that code) — what
+// the work in place is worth, display-only (it does NOT drive actuals/forecast).
+// Only EXECUTED subcontracts contribute. Cents-safe throughout. With no
+// earned-value map, earned is 0.
 export function summarizeSubCostByBucket(
   subcontracts: SubcontractLike[],
   allocations: SubcontractAllocationLike[],
@@ -118,8 +118,8 @@ export function summarizeSubCostByBucket(
   }
 
   const committedCentsByBucket = new Map<string, number>();
-  const costCentsByBucket = new Map<string, number>();
-  const cashPaidCentsByBucket = new Map<string, number>();
+  const paidCentsByBucket = new Map<string, number>();
+  const earnedCentsByBucket = new Map<string, number>();
 
   // Group executed allocations by subcontract so payments distribute correctly.
   const allocsBySub = new Map<string, SubcontractAllocationLike[]>();
@@ -142,9 +142,9 @@ export function summarizeSubCostByBucket(
         (committedCentsByBucket.get(bucketId) ?? 0) + weightsCents[i],
       );
     }
-    // Paid distributed across this sub's allocations by committed weight, then
-    // recognized cost = max(earned, paid) per allocation. Earned value =
-    // commitment × the sub's field % on that code, clamped 0–100.
+    // Cash paid distributed across this sub's allocations by committed weight
+    // (→ actual). Earned value = commitment × the sub's field % on that code,
+    // clamped 0–100 (→ display, alongside paid).
     const paidShares = distributeCents(paidCentsBySub.get(subId) ?? 0, weightsCents);
     for (let i = 0; i < allocs.length; i += 1) {
       const bucketId = allocs[i].cost_bucket_id as string;
@@ -158,29 +158,25 @@ export function summarizeSubCostByBucket(
           )
         : 0;
       const earnedCents = Math.round((weightsCents[i] * pct) / 100);
-      const costCents = Math.max(earnedCents, paidShares[i]);
-      costCentsByBucket.set(bucketId, (costCentsByBucket.get(bucketId) ?? 0) + costCents);
-      cashPaidCentsByBucket.set(
-        bucketId,
-        (cashPaidCentsByBucket.get(bucketId) ?? 0) + paidShares[i],
-      );
+      paidCentsByBucket.set(bucketId, (paidCentsByBucket.get(bucketId) ?? 0) + paidShares[i]);
+      earnedCentsByBucket.set(bucketId, (earnedCentsByBucket.get(bucketId) ?? 0) + earnedCents);
     }
   }
 
   const out = new Map<string, SubBucketCost>();
   const bucketIds = new Set<string>([
     ...committedCentsByBucket.keys(),
-    ...costCentsByBucket.keys(),
+    ...paidCentsByBucket.keys(),
   ]);
   for (const bucketId of bucketIds) {
     const committedCents = committedCentsByBucket.get(bucketId) ?? 0;
-    const costCents = costCentsByBucket.get(bucketId) ?? 0;
-    const openCents = Math.max(0, committedCents - costCents);
+    const paidCents = paidCentsByBucket.get(bucketId) ?? 0;
+    const openCents = Math.max(0, committedCents - paidCents);
     out.set(bucketId, {
       committed: centsToDollars(committedCents),
-      paid: centsToDollars(costCents),
+      paid: centsToDollars(paidCents),
       open: centsToDollars(openCents),
-      cashPaid: centsToDollars(cashPaidCentsByBucket.get(bucketId) ?? 0),
+      earned: centsToDollars(earnedCentsByBucket.get(bucketId) ?? 0),
     });
   }
   return out;

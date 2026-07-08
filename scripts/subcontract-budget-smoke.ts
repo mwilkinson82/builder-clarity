@@ -374,41 +374,37 @@ import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
   const pays = [{ subcontract_id: "sc1", amount: 20_420 }];
   const pct = new Map([[subEarnedKey("co1", "b1"), 20]]);
 
-  const earned = summarizeSubCostByBucket(subs, allocs, pays, pct).get("b1");
-  assert.equal(earned?.paid, 28_520, "recognized cost = earned (20% × 142,600) when it beats paid");
-  assert.equal(earned?.open, 114_080, "open = committed − recognized cost (142,600 − 28,520)");
-  assert.equal(earned?.committed, 142_600, "committed unchanged");
-  // cashPaid stays the ACTUAL cash out (Darian's $20,420) even though recognized
-  // cost is the higher earned value — so the UI can show both (C4).
-  assert.equal(
-    earned?.cashPaid,
-    20_420,
-    "cashPaid = actual payments, distinct from recognized cost",
-  );
+  const ev = summarizeSubCostByBucket(subs, allocs, pays, pct).get("b1");
+  // Actual = cash PAID (what's gone out the door); earned = the work's value
+  // (progress), shown alongside. They are distinct — the gap is work done but
+  // not yet paid.
+  assert.equal(ev?.paid, 20_420, "paid = actual cash out (Darian's $20,420)");
+  assert.equal(ev?.earned, 28_520, "earned = 20% × 142,600 = the work's value (display)");
+  assert.equal(ev?.open, 122_180, "open = committed − PAID (142,600 − 20,420), cash-based");
+  assert.equal(ev?.committed, 142_600, "committed unchanged");
 
-  // No % map → payments-only, byte-for-byte the old behaviour (backward compatible).
+  // No % map → earned is 0; paid/open unchanged (earned is purely additive display).
   const plain = summarizeSubCostByBucket(subs, allocs, pays).get("b1");
-  assert.equal(plain?.paid, 20_420, "no earned-value input → cost = paid");
-  assert.equal(plain?.open, 122_180, "no earned-value input → open = committed − paid");
+  assert.equal(plain?.paid, 20_420, "paid = cash regardless of the earned-value map");
+  assert.equal(plain?.open, 122_180, "open = committed − paid");
+  assert.equal(plain?.earned, 0, "no % map → earned 0");
 
-  // Paid exceeds earned (only 10% logged): cost floors at what's been paid, never
-  // understating cost / overstating GP.
-  const lowPct = new Map([[subEarnedKey("co1", "b1"), 10]]); // earned 14,260 < 20,420 paid
-  const floored = summarizeSubCostByBucket(subs, allocs, pays, lowPct).get("b1");
-  assert.equal(
-    floored?.paid,
-    20_420,
-    "cost floors at paid when earned is lower (max(earned,paid))",
-  );
+  // Earned value tracks % independently of cash: 10% → 14,260 earned, paid still
+  // 20,420 (you've paid ahead of production here — the gap goes the other way).
+  const lowPct = new Map([[subEarnedKey("co1", "b1"), 10]]);
+  const low = summarizeSubCostByBucket(subs, allocs, pays, lowPct).get("b1");
+  assert.equal(low?.earned, 14_260, "earned = 10% × 142,600, independent of what's paid");
+  assert.equal(low?.paid, 20_420, "paid unchanged — earned never moves actual");
 
-  // 100% complete → whole commitment recognized, forecast closes to 0.
+  // 100% complete → earned = the whole commitment; paid/open still cash-driven.
   const full = new Map([[subEarnedKey("co1", "b1"), 100]]);
   const done = summarizeSubCostByBucket(subs, allocs, pays, full).get("b1");
-  assert.equal(done?.paid, 142_600, "100% → recognized cost = full commitment");
-  assert.equal(done?.open, 0, "100% → no remaining commitment");
+  assert.equal(done?.earned, 142_600, "100% → earned = full commitment");
+  assert.equal(done?.paid, 20_420, "paid still the cash out");
+  assert.equal(done?.open, 122_180, "open still committed − paid (cash-based)");
 
-  // The recognized cost flows into the ledger's actual-to-date (EAC still the
-  // commitment — earned value moves the actual/forecast SPLIT, not the total).
+  // The CASH paid flows into the ledger's actual-to-date (earned is display-only;
+  // EAC = the commitment regardless of the paid/earned split).
   const bucket = {
     id: "b1",
     cost_code: "03-8011",
@@ -426,8 +422,8 @@ import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
     [],
     summarizeSubCostByBucket(subs, allocs, pays, pct),
   ).rows.find((r) => r.costBucketId === "b1");
-  assert.equal(row?.actuals, 28_520, "ledger actual-to-date reflects earned value");
-  assert.equal(row?.eac, 221_000, "EAC unchanged — earned value is a split, not a total change");
+  assert.equal(row?.actuals, 20_420, "ledger actual-to-date = cash paid (not earned value)");
+  assert.equal(row?.eac, 221_000, "EAC = the commitment — the paid/earned split doesn't move it");
 }
 
 // ── latestPercentBySubBucket: the recognized % per (sub, code) is the LATEST
