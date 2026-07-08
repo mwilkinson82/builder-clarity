@@ -27,6 +27,7 @@ import {
   generateDailyReportPacketPdf,
   type DailyReportPacketProject,
 } from "@/lib/daily-report-packet-pdf";
+import { DailyLogWorkLines } from "@/components/outcome/DailyLogWorkLines";
 import {
   CalendarDays,
   CheckCircle2,
@@ -156,9 +157,11 @@ function reportToDraft(report: DailyReportRow): DailyReportDraft {
 export function DailyReportsWorkspace({
   projectId,
   project,
+  buckets = [],
 }: {
   projectId: string;
   project?: DailyReportPacketProject;
+  buckets?: { id: string; cost_code: string; bucket: string }[];
 }) {
   const listFn = useServerFn(listDailyReports);
   const upsertFn = useServerFn(upsertDailyReport);
@@ -611,6 +614,14 @@ export function DailyReportsWorkspace({
               />
             </div>
           </div>
+        </div>
+
+        <div className="mt-4">
+          <DailyLogWorkLines
+            projectId={projectId}
+            reportDate={draft.report_date}
+            buckets={buckets}
+          />
         </div>
 
         <div className="mt-5 flex justify-end">
