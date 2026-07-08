@@ -6,7 +6,7 @@
 //
 // The dependency rule: this FEEDS billing; billing never waits on it. Recording
 // here is optional and additive.
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -39,13 +39,17 @@ import { listDailyReports } from "@/lib/daily-reports.functions";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 import {
+  commitmentBySubBucket,
   costItemsForEdit,
   dailyWipTotals,
+  dailyWipWorkInPlaceTotal,
   laborCost,
   productionRate,
   rowWorkInPlace,
+  subCommitmentKey,
   sumLineItems,
   type CostLineItem,
+  type DailyWipRowLike,
 } from "@/lib/daily-wip";
 
 interface BucketOption {
@@ -248,6 +252,31 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   }, [projectSubsQuery.data, subNameById]);
   const subName = (id: string | null) => (id ? (subNameById.get(id) ?? "Subcontractor") : null);
 
+  // Committed dollars per (sub company, cost code) from executed buyouts, so a
+  // sub-tagged work line can be valued by earned value: commitment × % complete.
+  const commitmentLookup = useMemo(
+    () =>
+      commitmentBySubBucket(
+        projectSubsQuery.data?.subcontracts ?? [],
+        projectSubsQuery.data?.allocations ?? [],
+      ),
+    [projectSubsQuery.data],
+  );
+  const commitmentFor = useCallback(
+    (row: Pick<DailyWipRowLike, "subcontractor_id" | "cost_bucket_id">): number | null => {
+      const key = subCommitmentKey(row.subcontractor_id, row.cost_bucket_id);
+      return key ? (commitmentLookup.get(key) ?? null) : null;
+    },
+    [commitmentLookup],
+  );
+  // Work-in-place total must include sub lines (valued by commitment × %), which
+  // the labor/materials/equipment breakdown doesn't capture. Defined after
+  // commitmentFor so it never reads it in the temporal dead zone.
+  const workInPlaceTotal = useMemo(
+    () => dailyWipWorkInPlaceTotal(entries, commitmentFor),
+    [entries, commitmentFor],
+  );
+
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["daily-wip-entries", projectId] });
 
@@ -274,8 +303,35 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   const draftLabor = laborCost(draft);
   const draftMaterial = sumLineItems(draft.material_items);
   const draftEquipment = sumLineItems(draft.equipment_items);
+  // A sub-tagged draft on a coded line is valued by its buyout commitment × %
+  // complete; self-perform by crew/materials/equipment.
+  const draftCommitment = commitmentFor({
+    subcontractor_id: draft.subcontractor_id || null,
+    cost_bucket_id: draft.cost_bucket_id || null,
+  });
+  const draftIsSub = Boolean(
+    draft.subcontractor_id && draftCommitment != null && draftCommitment > 0,
+  );
+  const draftWorkInPlace = rowWorkInPlace(
+    {
+      crew_count: draft.crew_count,
+      hours: draft.hours,
+      labor_rate: draft.labor_rate,
+      material_cost: draftMaterial,
+      equipment_cost: draftEquipment,
+      quantity: draft.quantity,
+      subcontractor_id: draft.subcontractor_id || null,
+      cost_bucket_id: draft.cost_bucket_id || null,
+      percent_complete: draft.percent_complete,
+    },
+    draftCommitment,
+  );
   const draftHasWork =
-    draftLabor > 0 || draftMaterial > 0 || draftEquipment > 0 || draft.activity.trim();
+    draftLabor > 0 ||
+    draftMaterial > 0 ||
+    draftEquipment > 0 ||
+    (draftIsSub && draft.percent_complete > 0) ||
+    draft.activity.trim();
 
   // Drop lines that are entirely blank (no description and no amount) before
   // saving, so an empty "Add line" click never persists noise.
@@ -432,6 +488,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                       label={bucketLabel(entry.cost_bucket_id)}
                       activityLabel={activityLabel(entry.schedule_activity_id)}
                       performedBy={subName(entry.subcontractor_id)}
+                      subCommitment={commitmentFor(entry)}
                       editing={editingId === entry.id}
                       onEdit={() => startEdit(entry)}
                       onDelete={() => deleteMutation.mutate(entry.id)}
@@ -457,7 +514,9 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                     <td className="px-3 py-2.5 text-right tabular-nums">
                       {fmtUSD(totals.equipment)}
                     </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">{fmtUSD(totals.total)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums">
+                      {fmtUSD(workInPlaceTotal)}
+                    </td>
                     <td />
                   </tr>
                 </tfoot>
@@ -621,6 +680,12 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                     )
                   }
                 />
+                {draftIsSub ? (
+                  <span className="text-[10px] text-muted-foreground">
+                    Sub line — earns {fmtUSD(draftWorkInPlace)} of the{" "}
+                    {fmtUSD(draftCommitment ?? 0)} buyout at this %.
+                  </span>
+                ) : null}
               </label>
             </div>
 
@@ -645,20 +710,13 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
             <div className="mt-3 flex items-center justify-between gap-2">
               <span className="text-[11px] text-muted-foreground">
                 Work in place ={" "}
-                <span className="font-medium text-foreground">
-                  {fmtUSD(
-                    dailyWipTotals([
-                      {
-                        crew_count: draft.crew_count,
-                        hours: draft.hours,
-                        labor_rate: draft.labor_rate,
-                        material_cost: draftMaterial,
-                        equipment_cost: draftEquipment,
-                        quantity: draft.quantity,
-                      },
-                    ]).total,
-                  )}
-                </span>
+                <span className="font-medium text-foreground">{fmtUSD(draftWorkInPlace)}</span>
+                {draftIsSub ? (
+                  <span className="ml-1">
+                    ({draft.percent_complete || 0}% of {fmtUSD(draftCommitment ?? 0)} sub
+                    commitment)
+                  </span>
+                ) : null}
               </span>
               <Button
                 size="sm"
@@ -836,6 +894,7 @@ function EntryRow({
   label,
   activityLabel,
   performedBy,
+  subCommitment,
   editing,
   onEdit,
   onDelete,
@@ -845,14 +904,20 @@ function EntryRow({
   label: string;
   activityLabel: string | null;
   performedBy: string | null;
+  subCommitment: number | null;
   editing: boolean;
   onEdit: () => void;
   onDelete: () => void;
   deleting: boolean;
 }) {
   const labor = laborCost(entry);
-  const workInPlace = rowWorkInPlace(entry);
-  const costed = entry.labor_rate > 0 || entry.material_cost > 0 || entry.equipment_cost > 0;
+  const workInPlace = rowWorkInPlace(entry, subCommitment);
+  // A bought-out sub line is "costed" once it has a percent complete to earn
+  // against its commitment; a self-perform line once it has rate/materials/equipment.
+  const isSubLine = Boolean(entry.subcontractor_id && subCommitment != null && subCommitment > 0);
+  const costed = isSubLine
+    ? entry.percent_complete > 0
+    : entry.labor_rate > 0 || entry.material_cost > 0 || entry.equipment_cost > 0;
   return (
     <tr className={`border-b border-hairline/70 last:border-0 ${editing ? "bg-accent/10" : ""}`}>
       <td className="px-3 py-2.5 text-left">
@@ -906,9 +971,14 @@ function EntryRow({
       </td>
       <td className="px-3 py-2.5 text-right font-medium tabular-nums">
         {fmtUSD(workInPlace)}
+        {isSubLine && costed ? (
+          <div className="text-[10px] font-normal text-muted-foreground">
+            {entry.percent_complete}% of {fmtUSD(subCommitment ?? 0)}
+          </div>
+        ) : null}
         {!costed ? (
           <div className="text-[10px] font-normal uppercase tracking-wide text-warning">
-            Needs costs
+            {isSubLine ? "Needs % complete" : "Needs costs"}
           </div>
         ) : null}
       </td>
