@@ -62,16 +62,18 @@
 :root {
   --radius: 0.5rem;
 
-  /* ALP house skin — canonical hex from AOS-DESIGN-SYSTEM.md §2. Warm &
-     light-first: cream paper ground, deep warm-charcoal ink, hairline edges. */
-  --background: #f7f2ea; /* --paper: page ground */
-  --surface: #f8f4ed; /* --surface: raised work-surfaces */
-  --surface-elevated: #fbf8f2; /* a hair lighter for elevated cards/popovers */
+  /* ALP house skin — PRODUCT/APP ground tier (AOS-DESIGN-SYSTEM.md §2, the
+     Anthropic two-tier model). Apps use the lighter warm-white ground with
+     white panels above it; marketing sites use the deeper cream tier. Only the
+     four ground values differ between tiers — ink/signal/clay/semantic are shared. */
+  --background: #faf7f0; /* --paper: app ground (warm white) */
+  --surface: #ffffff; /* --surface: panels/cards sit white above the ground */
+  --surface-elevated: #ffffff; /* white is the top of the elevation stack */
   --foreground: #1c1a17; /* --ink: primary text */
 
-  --card: #f8f4ed;
+  --card: #ffffff;
   --card-foreground: #1c1a17;
-  --popover: #fbf8f2;
+  --popover: #ffffff;
   --popover-foreground: #1c1a17;
 
   /* Default button = dark (house .btn-dark). The one orange CTA per view opts
@@ -79,10 +81,10 @@
   --primary: #1c1a17; /* --ink */
   --primary-foreground: #f8f4ed;
 
-  --secondary: #efeade; /* --paper2: inset fills, chips */
+  --secondary: #f2eee5; /* --paper2: inset fills, chips */
   --secondary-foreground: #1c1a17;
 
-  --muted: #efeade; /* --paper2 */
+  --muted: #f2eee5; /* --paper2 */
   --muted-foreground: #6b655d; /* --muted: secondary text, labels */
 
   /* Active / selected / highlight states. Warm terracotta (--clay) rather than
@@ -98,9 +100,9 @@
   --warning: #c69a3c; /* --warn: caution */
   --danger: #b5432e; /* --crit: off-goal / failure / danger */
 
-  --hairline: #dcd5c8; /* --edge */
-  --border: #dcd5c8;
-  --input: #dcd5c8;
+  --hairline: #e7e1d6; /* --edge */
+  --border: #e7e1d6;
+  --input: #e7e1d6;
   --ring: rgb(247 106 22 / 0.45); /* --signal: focus emphasis */
 
   /* House brand tokens */

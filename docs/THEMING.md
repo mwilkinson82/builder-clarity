@@ -27,14 +27,20 @@ rationed to true CTAs only.
 
 ## Token vocabulary — use these, never raw hex
 
+Grounds are **two-tier** (the Anthropic model): marketing sites use the deeper
+cream, **apps use the lighter warm-white** shown below. Overwatch is an app, so
+the four ground values (`--paper`/`--surface`/`--paper2`/`--edge`) are the
+warm-white tier — don't "correct" them back to the marketing cream. Everything
+below the grounds is identical across tiers.
+
 | House token (spec §2) | CSS var / role | Tailwind utility | Use for |
 |---|---|---|---|
-| `--paper` #F7F2EA | `--background` | `bg-background` | Page ground |
-| `--surface` #F8F4ED | `--surface` / `--card` | `bg-surface` `bg-card` | Cards, work-surfaces |
-| `--paper2` #EFEADE | `--muted` / `--secondary` | `bg-muted` `bg-secondary` | Inset fills, chips, tracks |
+| `--paper` #FAF7F0 | `--background` | `bg-background` | Page ground (app warm-white tier) |
+| `--surface` #FFFFFF | `--surface` / `--card` | `bg-surface` `bg-card` | Cards / panels (sit white above the ground) |
+| `--paper2` #F2EEE5 | `--muted` / `--secondary` | `bg-muted` `bg-secondary` | Inset fills, chips, hover rows |
 | `--ink` #1C1A17 | `--foreground` / `--primary` | `text-foreground` `bg-primary` | Text; default (dark) button |
 | `--muted` #6B655D | `--muted-foreground` | `text-muted-foreground` | Secondary text, labels |
-| `--edge` #DCD5C8 | `--border` / `--hairline` / `--input` | `border` `hairline` | Hairline rules & borders |
+| `--edge` #E7E1D6 | `--border` / `--hairline` / `--input` | `border` `hairline` | Hairline rules & borders |
 | `--signal` #F76A16 | `--signal` | `bg-signal` `text-signal` | **THE** accent — CTAs & true emphasis ONLY |
 | `--clay` #D97757 | `--clay` / `--accent` | `bg-accent` `text-clay` | Active/selected/highlight, eyebrows, small warm accents |
 | `--dark` #171310 | `--dark-panel` | `bg-dark-panel` | Dark stat tiles, media frames, pop-up graphic |

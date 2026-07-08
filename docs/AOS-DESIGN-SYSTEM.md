@@ -39,17 +39,34 @@ Reference implementations (study these before building):
 
 ## 2. Color tokens (canonical — from live code)
 
+**Two ground tiers (the Anthropic model).** Anthropic runs a deeper ivory on *marketing* (anthropic.com) and a near-white on the *product* (claude.ai). We do the same: the token *names are identical everywhere* — only the four ground values differ between the marketing build and the app build. Everything below the grounds (ink, muted, dark, signal, clay, semantic, fonts) is **identical across both tiers.**
+
 ```css
+/* ===== EDITORIAL / MARKETING tier — sites, landing pages, link-in-bio ===== */
+/* Deeper editorial cream. This is startaos.com's ground; keep it warm. */
 :root{
-  --paper:#F7F2EA;    /* page ground (warm cream) */
-  --surface:#F8F4ED;  /* cards / raised work-surfaces (a hair lighter than paper) */
+  --paper:#F7F2EA;    /* page ground (warm editorial cream) */
+  --surface:#F8F4ED;  /* cards / raised work-surfaces */
   --paper2:#EFEADE;   /* subtle inset fills, chips, toggle tracks */
+  --edge:#DCD5C8;     /* hairline borders & rules */
+}
+
+/* ===== PRODUCT / APP tier — AOS app, Overwatch app ===== */
+/* Lighter warm-white, in claude.ai's brightness league but still clearly warm. */
+:root{
+  --paper:#FAF7F0;    /* app ground (warm white) */
+  --surface:#FFFFFF;  /* raised panels/cards sit white/near-white ABOVE the ground */
+  --paper2:#F2EEE5;   /* subtle inset fills, chips, hover rows (a touch below ground) */
+  --edge:#E7E1D6;     /* hairline borders & rules (warm, reads on both ground & white) */
+}
+
+/* ===== SHARED across BOTH tiers — never fork these ===== */
+:root{
   --ink:#1C1A17;      /* primary text (warm near-black) */
   --muted:#6B655D;    /* secondary text, labels */
-  --edge:#DCD5C8;     /* hairline borders & rules */
   --dark:#171310;     /* dark panels: stat tiles, media frames, pop-up graphic */
   --signal:#F76A16;   /* THE accent — CTAs & true emphasis ONLY */
-  --clay:#D97757;     /* eyebrows & small warm accents (matches the Overwatch mark terracotta) */
+  --clay:#D97757;     /* eyebrows & small warm accents (= claude.ai's clay #D97757) */
   /* semantic (state) — separate from the brand accent: */
   --crit:#B5432E;     /* off-goal / failure / danger */
   --good:#2FA98C;     /* on-goal / success / live */
@@ -62,6 +79,8 @@ Reference implementations (study these before building):
 ```
 
 **Usage rules**
+- **Pick the ground tier by surface, not by taste:** anything marketing/editorial (sites, landing, bio) = the cream tier; anything you log into and operate (AOS app, Overwatch app) = the warm-white tier. Everything else about the two is identical, so a user never feels a brand seam moving site → app.
+- **Reference values for verification:** claude.ai product light-mode ground is `#FFFFFF` with panels at `#F8F8F6`/`#F4F4F1`, hairlines `#E2E1DA`, text `#121212`, clay `#D97757` (pulled live 2026-07-08). Our app tier deliberately sits a hair *warmer* than Claude's neutral so it stays on-brand rather than a literal copy.
 - Orange `--signal` is precious. If two things on a screen are orange, one of them is wrong.
 - `--clay` (terracotta) is for mono eyebrows and tiny accents — it's the "warm" that keeps orange rationed.
 - On dark panels, emphasis fills to orange; success/live is `--good` teal; danger is a lighter red (`#EF8A7A`) for contrast.
