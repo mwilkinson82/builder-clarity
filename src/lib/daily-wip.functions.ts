@@ -54,6 +54,7 @@ export interface DailyWipEntryRow {
   id: string;
   project_id: string;
   cost_bucket_id: string | null;
+  schedule_activity_id: string | null;
   entry_date: string;
   activity: string;
   crew_count: number;
@@ -74,6 +75,7 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   id: str(row.id),
   project_id: str(row.project_id),
   cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+  schedule_activity_id: (row.schedule_activity_id as string | null) ?? null,
   entry_date: str(row.entry_date),
   activity: str(row.activity),
   crew_count: num(row.crew_count),
@@ -97,6 +99,7 @@ const lineItemInput = z.object({
 
 const entryFieldsInput = z.object({
   cost_bucket_id: z.string().uuid().nullable().default(null),
+  schedule_activity_id: z.string().uuid().nullable().default(null),
   entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "entry_date must be YYYY-MM-DD"),
   activity: z.string().max(500).default(""),
   crew_count: z.number().min(0).default(0),
@@ -176,4 +179,47 @@ export const deleteDailyWipEntry = createServerFn({ method: "POST" })
       .eq("id", data.id);
     if (error && !isMissingDailyWipTable(error)) throw new Error(error.message);
     return { id: data.id };
+  });
+
+// A CPM schedule activity, trimmed to what the WIP activity picker needs.
+export interface ScheduleActivityOption {
+  id: string;
+  activity_id: string;
+  name: string;
+  division: string;
+}
+
+// The schedule module may not be provisioned on every workspace — degrade to an
+// empty list rather than breaking the WIP form.
+function isMissingRelation(error: DynamicSupabaseError | null) {
+  const message = error?.message ?? "";
+  return error?.code === "PGRST205" || /schema cache|does not exist|relation/i.test(message);
+}
+
+// Lean read of the CPM schedule activities, for the WIP entry's activity picker.
+// CROSS-MODULE READ: public.schedule_activities is owned by the CPM/Schedule
+// module. This only SELECTs a few label columns (no writes, no CPM files edited)
+// so a day's work can be tagged to the schedule activity it progressed; RLS still
+// scopes it to projects the caller can read. Deliberately lighter than
+// listSchedule (which fetches ~8 tables and has demo-seed side effects).
+export const listScheduleActivitiesForWip = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string }) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<ScheduleActivityOption[]> => {
+    const { data: rows, error } = await dynamicTable(context.supabase, "schedule_activities")
+      .select("id, activity_id, name, division, sort_order")
+      .eq("project_id", data.projectId)
+      .order("sort_order", { ascending: true });
+    if (error) {
+      if (isMissingRelation(error)) return [];
+      throw new Error(error.message);
+    }
+    return ((rows ?? []) as Record<string, unknown>[]).map((row) => ({
+      id: str(row.id),
+      activity_id: str(row.activity_id),
+      name: str(row.name),
+      division: str(row.division),
+    }));
   });

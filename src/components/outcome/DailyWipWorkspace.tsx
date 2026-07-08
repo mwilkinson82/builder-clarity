@@ -10,7 +10,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Plus, Trash2 } from "lucide-react";
+import {
+  CalendarClock,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,8 +28,10 @@ import { fmtUSDCents as fmtUSD, formatBillingDate } from "@/lib/billing-format";
 import {
   deleteDailyWipEntry,
   listDailyWipEntries,
+  listScheduleActivitiesForWip,
   saveDailyWipEntry,
   type DailyWipEntryRow,
+  type ScheduleActivityOption,
 } from "@/lib/daily-wip.functions";
 import { listDailyReports } from "@/lib/daily-reports.functions";
 import {
@@ -48,6 +58,7 @@ interface SaveWipInput {
   projectId: string;
   id?: string;
   cost_bucket_id: string | null;
+  schedule_activity_id: string | null;
   entry_date: string;
   activity: string;
   crew_count: number;
@@ -64,6 +75,7 @@ interface SaveWipInput {
 
 interface EntryDraft {
   cost_bucket_id: string;
+  schedule_activity_id: string;
   activity: string;
   crew_count: number;
   hours: number;
@@ -77,6 +89,7 @@ interface EntryDraft {
 
 const emptyDraft: EntryDraft = {
   cost_bucket_id: "",
+  schedule_activity_id: "",
   activity: "",
   crew_count: 0,
   hours: 0,
@@ -93,6 +106,7 @@ const emptyDraft: EntryDraft = {
 function isPristineDraft(d: EntryDraft): boolean {
   return (
     d.cost_bucket_id === "" &&
+    d.schedule_activity_id === "" &&
     d.activity === "" &&
     d.crew_count === 0 &&
     d.hours === 0 &&
@@ -103,6 +117,31 @@ function isPristineDraft(d: EntryDraft): boolean {
     d.unit === "" &&
     d.notes === ""
   );
+}
+
+// "01-010 · Form north wall" — the human-readable label for a schedule activity.
+function activityOptionLabel(a: ScheduleActivityOption): string {
+  return [a.activity_id, a.name].filter(Boolean).join(" · ") || "Untitled activity";
+}
+
+// Group activities under their CPM division for the picker's <optgroup>s, keeping
+// first-seen order (which the query already sorts by sort_order).
+function groupActivitiesByDivision(
+  activities: ScheduleActivityOption[],
+): { division: string; items: ScheduleActivityOption[] }[] {
+  const groups: { division: string; items: ScheduleActivityOption[] }[] = [];
+  const byDivision = new Map<string, ScheduleActivityOption[]>();
+  for (const activity of activities) {
+    const division = activity.division.trim() || "Schedule";
+    let items = byDivision.get(division);
+    if (!items) {
+      items = [];
+      byDivision.set(division, items);
+      groups.push({ division, items });
+    }
+    items.push(activity);
+  }
+  return groups;
 }
 
 function localToday(): string {
@@ -124,6 +163,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   const queryClient = useQueryClient();
   const listEntries = useServerFn(listDailyWipEntries);
   const listReports = useServerFn(listDailyReports);
+  const listActivities = useServerFn(listScheduleActivitiesForWip);
   const saveEntry = useServerFn(saveDailyWipEntry);
   const removeEntry = useServerFn(deleteDailyWipEntry);
 
@@ -137,6 +177,10 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   const reportsQuery = useQuery({
     queryKey: ["daily-reports", projectId],
     queryFn: () => listReports({ data: { projectId } }),
+  });
+  const activitiesQuery = useQuery({
+    queryKey: ["daily-wip-activities", projectId],
+    queryFn: () => listActivities({ data: { projectId } }),
   });
 
   const entries = useMemo(
@@ -196,6 +240,14 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     return [bucket.cost_code, bucket.bucket].filter(Boolean).join(" · ") || "Uncoded";
   };
 
+  const activities = useMemo(() => activitiesQuery.data ?? [], [activitiesQuery.data]);
+  const activityGroups = useMemo(() => groupActivitiesByDivision(activities), [activities]);
+  const activityLabel = (id: string | null) => {
+    if (!id) return null;
+    const found = activities.find((a) => a.id === id);
+    return found ? activityOptionLabel(found) : null;
+  };
+
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["daily-wip-entries", projectId] });
 
@@ -240,6 +292,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     saveMutation.mutate({
       projectId,
       cost_bucket_id: draft.cost_bucket_id || null,
+      schedule_activity_id: draft.schedule_activity_id || null,
       entry_date: selectedDate,
       activity: draft.activity.trim(),
       crew_count: draft.crew_count,
@@ -343,6 +396,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                       key={entry.id}
                       entry={entry}
                       label={bucketLabel(entry.cost_bucket_id)}
+                      activityLabel={activityLabel(entry.schedule_activity_id)}
                       onDelete={() => deleteMutation.mutate(entry.id)}
                       deleting={deleteMutation.isPending}
                     />
@@ -387,7 +441,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
             ) : null}
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="flex flex-col gap-1 sm:col-span-2">
-                <span className="text-xs text-muted-foreground">Cost code</span>
+                <span className="text-xs text-muted-foreground">Cost code (SOV line)</span>
                 <select
                   value={draft.cost_bucket_id}
                   onChange={(event) => setDraftField("cost_bucket_id", event.target.value)}
@@ -398,6 +452,30 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                     <option key={bucket.id} value={bucket.id}>
                       {[bucket.cost_code, bucket.bucket].filter(Boolean).join(" · ")}
                     </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-2">
+                <span className="text-xs text-muted-foreground">Schedule activity (CPM)</span>
+                <select
+                  value={draft.schedule_activity_id}
+                  onChange={(event) => setDraftField("schedule_activity_id", event.target.value)}
+                  disabled={activities.length === 0}
+                  className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                >
+                  <option value="">
+                    {activities.length === 0
+                      ? "No schedule activities yet"
+                      : "Not linked to the schedule"}
+                  </option>
+                  {activityGroups.map((group) => (
+                    <optgroup key={group.division} label={group.division}>
+                      {group.items.map((activity) => (
+                        <option key={activity.id} value={activity.id}>
+                          {activityOptionLabel(activity)}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </label>
@@ -681,11 +759,13 @@ function itemsTooltip(items: CostLineItem[]): string | undefined {
 function EntryRow({
   entry,
   label,
+  activityLabel,
   onDelete,
   deleting,
 }: {
   entry: DailyWipEntryRow;
   label: string;
+  activityLabel: string | null;
   onDelete: () => void;
   deleting: boolean;
 }) {
@@ -696,6 +776,12 @@ function EntryRow({
       <td className="px-3 py-2.5 text-left">
         <div className="font-medium text-foreground">{entry.activity || label}</div>
         {entry.activity ? <div className="text-[11px] text-muted-foreground">{label}</div> : null}
+        {activityLabel ? (
+          <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+            <CalendarClock className="h-3 w-3 shrink-0 text-accent" />
+            <span className="truncate">{activityLabel}</span>
+          </div>
+        ) : null}
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums">{entry.crew_count || "—"}</td>
       <td className="px-3 py-2.5 text-right tabular-nums">{entry.hours || "—"}</td>
