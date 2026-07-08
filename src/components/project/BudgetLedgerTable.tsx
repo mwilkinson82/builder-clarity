@@ -94,6 +94,7 @@ export function BudgetLedgerTable({
   allocations,
   changeOrders = [],
   changeOrderAllocations = [],
+  subCostByBucket,
 }: {
   buckets: BucketRow[];
   exposures: ExposureRow[];
@@ -102,6 +103,9 @@ export function BudgetLedgerTable({
   // locked budget — the ledger layers it onto the frozen baseline.
   changeOrders?: ChangeOrderRow[];
   changeOrderAllocations?: ChangeOrderAllocationListRow[];
+  // SUBCONTRACTORS Slice 1: the additive sub cost layer per bucket (paid →
+  // actuals, open → forecast). Built by the route from the subcontract query.
+  subCostByBucket?: ReadonlyMap<string, { paid: number; open: number }>;
 }) {
   const ledger = computeBudgetLedger(
     buckets,
@@ -119,6 +123,7 @@ export function BudgetLedgerTable({
       contract_amount: allocation.contract_amount,
       cost_amount: allocation.cost_amount,
     })),
+    subCostByBucket,
   );
 
   if (ledger.rows.length === 0) {

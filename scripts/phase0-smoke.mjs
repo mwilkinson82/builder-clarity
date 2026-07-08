@@ -2576,6 +2576,40 @@ await expectContains(
   "the estimate-carry dialog offers auto-price vs manual contract entry (BUDGETVSCONTRACT2)",
 );
 
+// SUBCONTRACTORS Slice 1 (founder green-lit 2026-07-07): buyouts are committed
+// cost, payments are actual cost, folded into the budget ledger ADDITIVELY
+// (nothing touches cost_actuals or the shared trigger).
+await expectContains(
+  "src/lib/subcontract-budget.ts",
+  [/summarizeSubCostByBucket/, /committed/, /paid/, /open/, /distributeCents/],
+  "subcontract layer summarizes committed/paid/open per bucket, cents-safe",
+);
+await expectContains(
+  "src/lib/budget-ledger.ts",
+  [/subCostByBucket/, /subCost\.paid/, /subCost\.open/],
+  "computeBudgetLedger folds the additive subcontractor cost layer (paid→actuals, open→forecast)",
+);
+await expectContains(
+  "src/components/project/SubcontractorsWorkspace.tsx",
+  [/summarizeSubPayments/, /Buy out/, /Record payment/, /Retainage held/],
+  "Subcontractors workspace: directory, buyout, allocations, and progress payments",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [/"subcontractors"/, /SubcontractorsWorkspace/, /summarizeSubCostByBucket/],
+  "project route wires the Subcontractors tab and feeds the sub layer into the Budget ledger",
+);
+await expectContains(
+  "supabase/migrations/20260708000000_subcontractors.sql",
+  [
+    /CREATE TABLE IF NOT EXISTS public\.subcontractors/,
+    /CREATE TABLE IF NOT EXISTS public\.subcontracts/,
+    /CREATE TABLE IF NOT EXISTS public\.subcontract_allocations/,
+    /CREATE TABLE IF NOT EXISTS public\.subcontract_payments/,
+  ],
+  "subcontractors migration ships all four tables (desk applies)",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");

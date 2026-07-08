@@ -10,6 +10,7 @@ import {
 } from "@/lib/wip";
 import { buildBillingLinesFromBuckets } from "@/lib/billing-line-generation";
 import { computeBudgetLedger, type BudgetLedger, type BudgetLedgerRow } from "@/lib/budget-ledger";
+import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
 import type { ExposureLike, ExposureAllocationLike, HoldClass } from "@/lib/exposure-allocation";
 
 type DynamicSupabaseError = { code?: string; message: string };
@@ -1559,14 +1560,25 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       return { projects: [], totals: emptyLedgerRow };
     }
 
-    const [bucketRes, exposureRes, allocationRes, changeOrderRes, coAllocationRes] =
-      await Promise.all([
-        dynamicTable(ctx.supabase, "cost_buckets").select("*").in("project_id", ids),
-        dynamicTable(ctx.supabase, "exposures").select("*").in("project_id", ids),
-        dynamicTable(ctx.supabase, "exposure_allocations").select("*").in("project_id", ids),
-        dynamicTable(ctx.supabase, "change_orders").select("*").in("project_id", ids),
-        dynamicTable(ctx.supabase, "change_order_allocations").select("*").in("project_id", ids),
-      ]);
+    const [
+      bucketRes,
+      exposureRes,
+      allocationRes,
+      changeOrderRes,
+      coAllocationRes,
+      subRes,
+      subAllocRes,
+      subPayRes,
+    ] = await Promise.all([
+      dynamicTable(ctx.supabase, "cost_buckets").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "exposures").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "exposure_allocations").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "change_orders").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "change_order_allocations").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "subcontracts").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "subcontract_allocations").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "subcontract_payments").select("*").in("project_id", ids),
+    ]);
     if (bucketRes.error) throw new Error(bucketRes.error.message);
     // Exposures / allocations power the At Risk + Contingency columns only; if
     // either table isn't present yet, the ledger still stands on budget/actuals.
@@ -1600,14 +1612,48 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
         ? []
         : (coAllocationRes.data as Record<string, unknown>[]);
 
+    // SUBCONTRACTORS Slice 1: the additive sub cost layer. Degrade to no layer
+    // if the tables aren't present yet, exactly like the CO allocations above.
+    const rawSubs =
+      isMissingRestRelation(subRes.error, "subcontracts") || !subRes.data
+        ? []
+        : (subRes.data as Record<string, unknown>[]);
+    const rawSubAllocs =
+      isMissingRestRelation(subAllocRes.error, "subcontract_allocations") || !subAllocRes.data
+        ? []
+        : (subAllocRes.data as Record<string, unknown>[]);
+    const rawSubPays =
+      isMissingRestRelation(subPayRes.error, "subcontract_payments") || !subPayRes.data
+        ? []
+        : (subPayRes.data as Record<string, unknown>[]);
+
     const bucketsByProject = groupRawByProject(rawBuckets);
     const exposuresByProject = groupRawByProject(rawExposures);
     const allocationsByProject = groupRawByProject(rawAllocations);
     const changeOrdersByProject = groupRawByProject(rawChangeOrders);
     const coAllocationsByProject = groupRawByProject(rawCoAllocations);
+    const subsByProject = groupRawByProject(rawSubs);
+    const subAllocsByProject = groupRawByProject(rawSubAllocs);
+    const subPaysByProject = groupRawByProject(rawSubPays);
 
     const projects = projectRows.map((projectRow) => {
       const pid = projectRow.id as string;
+      const subCostByBucket = summarizeSubCostByBucket(
+        (subsByProject.get(pid) ?? []).map((row) => ({
+          id: str(row.id),
+          contract_value: num(row.contract_value),
+          status: str(row.status),
+        })),
+        (subAllocsByProject.get(pid) ?? []).map((row) => ({
+          subcontract_id: str(row.subcontract_id),
+          cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+          amount: num(row.amount),
+        })),
+        (subPaysByProject.get(pid) ?? []).map((row) => ({
+          subcontract_id: str(row.subcontract_id),
+          amount: num(row.amount),
+        })),
+      );
       const ledger = computeBudgetLedger(
         (bucketsByProject.get(pid) ?? []).map(normalizeBucket),
         (exposuresByProject.get(pid) ?? []).map(normalizeExposure),
@@ -1624,6 +1670,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
           contract_amount: num(row.contract_amount),
           cost_amount: num(row.cost_amount),
         })),
+        subCostByBucket,
       );
       return {
         project_id: pid,
