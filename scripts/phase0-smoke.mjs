@@ -2609,6 +2609,34 @@ await expectContains(
   ],
   "subcontractors migration ships all four tables (desk applies)",
 );
+// SUBCONTRACTORS Slice 2 (founder 2026-07-08): executed-contract upload +
+// daily-WIP × subs data link. (The daily-WIP dropdown UI is a fast-follow after
+// the parallel daily-WIP PR settles, to avoid a merge collision.)
+await expectContains(
+  "supabase/migrations/20260708060000_subcontracts_slice2.sql",
+  [
+    /executed_contract_path text/,
+    /storage\.buckets/,
+    /'subcontract-docs'/,
+    /ALTER TABLE public\.daily_wip_entries[\s\S]*subcontractor_id uuid/,
+  ],
+  "Slice 2 migration ships the executed-contract bucket + daily_wip subcontractor link (desk applies)",
+);
+await expectContains(
+  "src/lib/subcontracts.functions.ts",
+  [/attachSubcontractDocument/, /removeSubcontractDocument/, /executed_contract_path/],
+  "subcontract server fns record the executed-contract file",
+);
+await expectContains(
+  "src/components/project/SubcontractorsWorkspace.tsx",
+  [/Upload executed contract/, /subcontract-docs/, /createSignedUrl/],
+  "Subcontractors workspace uploads + views the executed contract",
+);
+await expectContains(
+  "src/lib/daily-wip.functions.ts",
+  [/subcontractor_id: z\.string\(\)\.uuid\(\)\.nullable\(\)/],
+  "daily-WIP entry accepts a subcontractor link (self-perform ↔ sub)",
+);
 
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");

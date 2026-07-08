@@ -51,6 +51,9 @@ export interface SubcontractRow {
   retainage_pct: number;
   status: string;
   executed_at: string | null;
+  executed_contract_path: string;
+  executed_contract_name: string;
+  executed_contract_uploaded_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -89,6 +92,9 @@ const normalizeSubcontract = (row: Record<string, unknown>): SubcontractRow => (
   retainage_pct: num(row.retainage_pct),
   status: str(row.status, "draft"),
   executed_at: (row.executed_at as string | null) ?? null,
+  executed_contract_path: str(row.executed_contract_path),
+  executed_contract_name: str(row.executed_contract_name),
+  executed_contract_uploaded_at: (row.executed_contract_uploaded_at as string | null) ?? null,
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
 });
@@ -192,6 +198,57 @@ export const deleteSubcontract = createServerFn({ method: "POST" })
       .eq("id", data.id);
     if (error && !isMissingSubcontractTable(error)) throw new Error(error.message);
     return { id: data.id };
+  });
+
+// Record the executed-contract file on a subcontract. The bytes are uploaded to
+// the 'subcontract-docs' storage bucket client-side (like daily reports); this
+// only records the storage path + display name + upload time.
+export const attachSubcontractDocument = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        path: z.string().min(1).max(500),
+        name: z.string().min(1).max(300),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SubcontractRow> => {
+    const { data: row, error } = await dynamicTable(context.supabase, "subcontracts")
+      .update({
+        executed_contract_path: data.path,
+        executed_contract_name: data.name,
+        executed_contract_uploaded_at: new Date().toISOString(),
+      })
+      .eq("id", data.id)
+      .select("*")
+      .single();
+    if (error) {
+      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
+      throw new Error(error.message);
+    }
+    return normalizeSubcontract(row as Record<string, unknown>);
+  });
+
+export const removeSubcontractDocument = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }): Promise<SubcontractRow> => {
+    const { data: row, error } = await dynamicTable(context.supabase, "subcontracts")
+      .update({
+        executed_contract_path: "",
+        executed_contract_name: "",
+        executed_contract_uploaded_at: null,
+      })
+      .eq("id", data.id)
+      .select("*")
+      .single();
+    if (error) {
+      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
+      throw new Error(error.message);
+    }
+    return normalizeSubcontract(row as Record<string, unknown>);
   });
 
 export const allocateSubcontract = createServerFn({ method: "POST" })

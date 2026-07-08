@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { HardHat, Plus, ReceiptText, Trash2 } from "lucide-react";
+import { FileText, HardHat, Plus, ReceiptText, Trash2, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,14 +22,17 @@ import {
 } from "@/lib/subcontractors.functions";
 import {
   allocateSubcontract,
+  attachSubcontractDocument,
   deleteSubcontract,
   deleteSubcontractAllocation,
   deleteSubcontractPayment,
   listProjectSubcontracts,
   recordSubcontractPayment,
+  removeSubcontractDocument,
   saveSubcontract,
 } from "@/lib/subcontracts.functions";
 import { summarizeSubPayments } from "@/lib/subcontract-budget";
+import { supabase } from "@/integrations/supabase/client";
 
 interface BucketOption {
   id: string;
@@ -55,6 +58,8 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const deleteAllocFn = useServerFn(deleteSubcontractAllocation);
   const payFn = useServerFn(recordSubcontractPayment);
   const deletePayFn = useServerFn(deleteSubcontractPayment);
+  const attachDocFn = useServerFn(attachSubcontractDocument);
+  const removeDocFn = useServerFn(removeSubcontractDocument);
 
   const directoryQuery = useQuery({
     queryKey: ["subcontractors-directory"],
@@ -189,6 +194,52 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     const map = new Map(directory.map((d) => [d.id, d.name]));
     return (id: string) => map.get(id) ?? "Subcontractor";
   }, [directory]);
+
+  // Executed-contract upload: the bytes go straight to the private
+  // 'subcontract-docs' bucket (path = <projectId>/<subId>/<file>, so the
+  // project-owner storage RLS applies); the row records the path + name.
+  const uploadDoc = async (subId: string, file: File) => {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+    const path = `${projectId}/${subId}/${crypto.randomUUID()}-${safeName}`;
+    const { error } = await supabase.storage
+      .from("subcontract-docs")
+      .upload(path, file, { contentType: file.type || "application/pdf", upsert: false });
+    if (error) {
+      toast.error("Upload failed", { description: error.message });
+      return;
+    }
+    try {
+      await attachDocFn({ data: { id: subId, path, name: file.name } });
+      invalidate();
+      toast.success("Executed contract uploaded");
+    } catch (err) {
+      toast.error("Could not save the document", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    }
+  };
+  const viewDoc = async (path: string) => {
+    const { data, error } = await supabase.storage
+      .from("subcontract-docs")
+      .createSignedUrl(path, 600);
+    if (error || !data?.signedUrl) {
+      toast.error("Could not open the document");
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+  const removeDoc = async (subId: string, path: string) => {
+    if (path) await supabase.storage.from("subcontract-docs").remove([path]);
+    try {
+      await removeDocFn({ data: { id: subId } });
+      invalidate();
+      toast.success("Document removed");
+    } catch (err) {
+      toast.error("Could not remove the document", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    }
+  };
 
   return (
     <section className="space-y-5">
@@ -349,6 +400,11 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               }
               onRemovePayment={(id) => removePayment.mutate(id)}
               onRemoveSub={() => removeSub.mutate(sub.id)}
+              docName={sub.executed_contract_name}
+              docPath={sub.executed_contract_path}
+              onUploadDoc={(file) => uploadDoc(sub.id, file)}
+              onViewDoc={() => viewDoc(sub.executed_contract_path)}
+              onRemoveDoc={() => removeDoc(sub.id, sub.executed_contract_path)}
             />
           );
         })
@@ -387,6 +443,11 @@ interface CardProps {
   onPay: (amount: number, retainageHeld: number) => void;
   onRemovePayment: (id: string) => void;
   onRemoveSub: () => void;
+  docName: string;
+  docPath: string;
+  onUploadDoc: (file: File) => void;
+  onViewDoc: () => void;
+  onRemoveDoc: () => void;
 }
 
 function SubcontractCard({
@@ -402,6 +463,11 @@ function SubcontractCard({
   onPay,
   onRemovePayment,
   onRemoveSub,
+  docName,
+  docPath,
+  onUploadDoc,
+  onViewDoc,
+  onRemoveDoc,
 }: CardProps) {
   const [allocBucket, setAllocBucket] = useState("");
   const [allocAmount, setAllocAmount] = useState(0);
@@ -413,14 +479,51 @@ function SubcontractCard({
     <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="font-serif text-lg text-foreground">{subLabel}</div>
-        <button
-          type="button"
-          className="text-muted-foreground hover:text-danger"
-          onClick={onRemoveSub}
-          aria-label="Remove subcontract"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-3">
+          {docPath ? (
+            <span className="inline-flex items-center gap-1 text-xs">
+              <FileText className="h-3.5 w-3.5 text-accent-foreground" />
+              <button
+                type="button"
+                className="max-w-[180px] truncate font-medium text-accent-foreground underline"
+                onClick={onViewDoc}
+                title={docName}
+              >
+                {docName || "Executed contract"}
+              </button>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-danger"
+                onClick={onRemoveDoc}
+                aria-label="Remove executed contract"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </span>
+          ) : (
+            <label className="inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+              <Upload className="h-3.5 w-3.5" /> Upload executed contract
+              <input
+                type="file"
+                accept="application/pdf,image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onUploadDoc(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          )}
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-danger"
+            onClick={onRemoveSub}
+            aria-label="Remove subcontract"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
