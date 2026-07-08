@@ -225,6 +225,10 @@ export function CostBucketsTable({
               <TableHead className="text-right">Actual to Date</TableHead>
               <TableHead className="text-right">Forecast to Complete</TableHead>
               <HelpHead
+                label="Committed (subs)"
+                help="Subcontractor buyout committed on this cost code — the total you've bought this scope out for. It's already folded into Actual to Date (earned) and Forecast to Complete (remaining)."
+              />
+              <HelpHead
                 label="Projected cost"
                 help="Actual to date + forecast-to-complete — everything you've spent plus everything still committed, including any subcontractor buyout on this code. The projected final cost of this line."
               />
@@ -240,6 +244,10 @@ export function CostBucketsTable({
               const totals = sovTotalsWithSubs(group.buckets, subCosts);
               const facTotal = totals.fac;
               const varianceTotal = totals.variance;
+              const committedSubtotal = group.buckets.reduce(
+                (sum, bucket) => sum + (bucket.id ? (subCosts.get(bucket.id)?.committed ?? 0) : 0),
+                0,
+              );
               const groupRows = [
                 <TableRow key={`division-${group.division.key}`} className="bg-surface/80">
                   <TableCell colSpan={3}>
@@ -270,6 +278,9 @@ export function CostBucketsTable({
                   </TableCell>
                   <TableCell className="text-right tabular text-muted-foreground">
                     {fmtUSD(totals.ftc)}
+                  </TableCell>
+                  <TableCell className="text-right tabular text-muted-foreground">
+                    {committedSubtotal > 0 ? fmtUSD(committedSubtotal) : "—"}
                   </TableCell>
                   <TableCell className="text-right tabular font-medium">
                     {fmtUSD(facTotal)}
@@ -360,6 +371,11 @@ export function CostBucketsTable({
                     <TableCell className="text-right tabular">
                       <NumCell value={b.ftc} onCommit={(v) => onUpdate(b.id, { ftc: v })} />
                     </TableCell>
+                    <TableCell className="text-right tabular text-muted-foreground">
+                      {subCost && subCost.committed && subCost.committed > 0
+                        ? fmtUSD(subCost.committed)
+                        : "—"}
+                    </TableCell>
                     <TableCell className="text-right tabular font-medium">
                       {fmtUSD(fac)}
                       {subOnLine > 0 ? (
@@ -394,7 +410,7 @@ export function CostBucketsTable({
             })}
             {buckets.length === 0 && (
               <TableRow>
-                <TableCell colSpan={10} className="py-8">
+                <TableCell colSpan={11} className="py-8">
                   <EmptyState
                     icon={FileSpreadsheet}
                     title="No budget lines yet"
@@ -405,14 +421,14 @@ export function CostBucketsTable({
             )}
             {buckets.length > 0 && visibleCount === 0 && (
               <TableRow>
-                <TableCell colSpan={10} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell colSpan={11} className="py-8 text-center text-sm text-muted-foreground">
                   No budget lines match that search.
                 </TableCell>
               </TableRow>
             )}
             {onCreate && (
               <TableRow className="bg-surface/40">
-                <TableCell colSpan={9}>
+                <TableCell colSpan={10}>
                   <div className="flex flex-col gap-2 md:flex-row md:items-center">
                     <Input
                       value={newCode}
@@ -472,6 +488,10 @@ export function CostBucketsTable({
                 (sum, bucket) => sum + (bucket.contract_value || 0),
                 0,
               );
+              const committedTotal = buckets.reduce(
+                (sum, bucket) => sum + (bucket.id ? (subCosts.get(bucket.id)?.committed ?? 0) : 0),
+                0,
+              );
               return (
                 <TableFooter>
                   <TableRow className="bg-surface font-semibold">
@@ -484,6 +504,9 @@ export function CostBucketsTable({
                     <TableCell className="text-right tabular">{fmtUSD(t.budget)}</TableCell>
                     <TableCell className="text-right tabular">{fmtUSD(t.actual)}</TableCell>
                     <TableCell className="text-right tabular">{fmtUSD(t.ftc)}</TableCell>
+                    <TableCell className="text-right tabular">
+                      {committedTotal > 0 ? fmtUSD(committedTotal) : "—"}
+                    </TableCell>
                     <TableCell className="text-right tabular">{fmtUSD(t.fac)}</TableCell>
                     <TableCell
                       className={`text-right tabular ${neg ? "text-danger" : "text-success"}`}
