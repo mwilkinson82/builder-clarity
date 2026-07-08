@@ -21,15 +21,17 @@ import {
   saveSubcontractor,
 } from "@/lib/subcontractors.functions";
 import {
+  addSubcontractDocument,
   allocateSubcontract,
-  attachSubcontractDocument,
   deleteSubcontract,
   deleteSubcontractAllocation,
+  deleteSubcontractDocument,
   deleteSubcontractPayment,
   listProjectSubcontracts,
   recordSubcontractPayment,
-  removeSubcontractDocument,
   saveSubcontract,
+  setActiveSubcontractDocument,
+  type SubcontractDocumentRow,
 } from "@/lib/subcontracts.functions";
 import { summarizeSubPayments } from "@/lib/subcontract-budget";
 import { supabase } from "@/integrations/supabase/client";
@@ -58,8 +60,9 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const deleteAllocFn = useServerFn(deleteSubcontractAllocation);
   const payFn = useServerFn(recordSubcontractPayment);
   const deletePayFn = useServerFn(deleteSubcontractPayment);
-  const attachDocFn = useServerFn(attachSubcontractDocument);
-  const removeDocFn = useServerFn(removeSubcontractDocument);
+  const addDocFn = useServerFn(addSubcontractDocument);
+  const setActiveDocFn = useServerFn(setActiveSubcontractDocument);
+  const deleteDocFn = useServerFn(deleteSubcontractDocument);
 
   const directoryQuery = useQuery({
     queryKey: ["subcontractors-directory"],
@@ -72,7 +75,12 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   });
 
   const directory = useMemo(() => directoryQuery.data ?? [], [directoryQuery.data]);
-  const project = projectQuery.data ?? { subcontracts: [], allocations: [], payments: [] };
+  const project = projectQuery.data ?? {
+    subcontracts: [],
+    allocations: [],
+    payments: [],
+    documents: [],
+  };
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["subcontracts", projectId] });
     qc.invalidateQueries({ queryKey: ["subcontractors-directory"] });
@@ -195,9 +203,11 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     return (id: string) => map.get(id) ?? "Subcontractor";
   }, [directory]);
 
-  // Executed-contract upload: the bytes go straight to the private
-  // 'subcontract-docs' bucket (path = <projectId>/<subId>/<file>, so the
-  // project-owner storage RLS applies); the row records the path + name.
+  // Contract upload: the bytes go straight to the private 'subcontract-docs'
+  // bucket (path = <projectId>/<subId>/<file>, so the team storage RLS applies);
+  // a new subcontract_documents row records the path + name and becomes the
+  // active version. Prior versions are kept (flagged inactive) for the paper
+  // trail — this never overwrites.
   const uploadDoc = async (subId: string, file: File) => {
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
     const path = `${projectId}/${subId}/${crypto.randomUUID()}-${safeName}`;
@@ -209,9 +219,9 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       return;
     }
     try {
-      await attachDocFn({ data: { id: subId, path, name: file.name } });
+      await addDocFn({ data: { subcontractId: subId, projectId, path, name: file.name } });
       invalidate();
-      toast.success("Executed contract uploaded");
+      toast.success("Contract uploaded");
     } catch (err) {
       toast.error("Could not save the document", {
         description: err instanceof Error ? err.message : "Try again.",
@@ -228,12 +238,23 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     }
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
-  const removeDoc = async (subId: string, path: string) => {
+  const setActiveDoc = async (docId: string, subId: string) => {
+    try {
+      await setActiveDocFn({ data: { id: docId, subcontractId: subId } });
+      invalidate();
+      toast.success("Active contract updated");
+    } catch (err) {
+      toast.error("Could not update the active contract", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    }
+  };
+  const removeDoc = async (docId: string, path: string) => {
     if (path) await supabase.storage.from("subcontract-docs").remove([path]);
     try {
-      await removeDocFn({ data: { id: subId } });
+      await deleteDocFn({ data: { id: docId } });
       invalidate();
-      toast.success("Document removed");
+      toast.success("Contract removed");
     } catch (err) {
       toast.error("Could not remove the document", {
         description: err instanceof Error ? err.message : "Try again.",
@@ -400,11 +421,11 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               }
               onRemovePayment={(id) => removePayment.mutate(id)}
               onRemoveSub={() => removeSub.mutate(sub.id)}
-              docName={sub.executed_contract_name}
-              docPath={sub.executed_contract_path}
+              documents={project.documents.filter((d) => d.subcontract_id === sub.id)}
               onUploadDoc={(file) => uploadDoc(sub.id, file)}
-              onViewDoc={() => viewDoc(sub.executed_contract_path)}
-              onRemoveDoc={() => removeDoc(sub.id, sub.executed_contract_path)}
+              onViewDoc={(path) => viewDoc(path)}
+              onSetActiveDoc={(docId) => setActiveDoc(docId, sub.id)}
+              onRemoveDoc={(docId, path) => removeDoc(docId, path)}
             />
           );
         })
@@ -443,11 +464,11 @@ interface CardProps {
   onPay: (amount: number, retainageHeld: number) => void;
   onRemovePayment: (id: string) => void;
   onRemoveSub: () => void;
-  docName: string;
-  docPath: string;
+  documents: SubcontractDocumentRow[];
   onUploadDoc: (file: File) => void;
-  onViewDoc: () => void;
-  onRemoveDoc: () => void;
+  onViewDoc: (path: string) => void;
+  onSetActiveDoc: (docId: string) => void;
+  onRemoveDoc: (docId: string, path: string) => void;
 }
 
 function SubcontractCard({
@@ -463,10 +484,10 @@ function SubcontractCard({
   onPay,
   onRemovePayment,
   onRemoveSub,
-  docName,
-  docPath,
+  documents,
   onUploadDoc,
   onViewDoc,
+  onSetActiveDoc,
   onRemoveDoc,
 }: CardProps) {
   const [allocBucket, setAllocBucket] = useState("");
@@ -474,59 +495,95 @@ function SubcontractCard({
   const [payAmount, setPayAmount] = useState(0);
   const unallocated = summary.committed - allocatedTotal;
   const retainageHeld = Math.round(payAmount * defaultRetainagePct) / 100;
+  // Active version first, then newest — the current contract sits on top, the
+  // superseded ones stay below as the paper trail.
+  const orderedDocs = [...documents].sort(
+    (a, b) =>
+      Number(b.is_active) - Number(a.is_active) || b.uploaded_at.localeCompare(a.uploaded_at),
+  );
 
   return (
     <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="font-serif text-lg text-foreground">{subLabel}</div>
-        <div className="flex items-center gap-3">
-          {docPath ? (
-            <span className="inline-flex items-center gap-1 text-xs">
-              <FileText className="h-3.5 w-3.5 text-accent-foreground" />
-              <button
-                type="button"
-                className="max-w-[180px] truncate font-medium text-accent-foreground underline"
-                onClick={onViewDoc}
-                title={docName}
-              >
-                {docName || "Executed contract"}
-              </button>
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-danger"
-                onClick={onRemoveDoc}
-                aria-label="Remove executed contract"
-              >
-                <Trash2 className="h-3 w-3" />
-              </button>
-            </span>
-          ) : (
-            <label className="inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-              <Upload className="h-3.5 w-3.5" /> Upload executed contract
-              <input
-                type="file"
-                accept="application/pdf,image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) onUploadDoc(file);
-                  e.target.value = "";
-                }}
-              />
-            </label>
-          )}
-          <button
-            type="button"
-            className="text-muted-foreground hover:text-danger"
-            onClick={onRemoveSub}
-            aria-label="Remove subcontract"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        </div>
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-danger"
+          onClick={onRemoveSub}
+          aria-label="Remove subcontract"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      {/* Contracts — the versioned paper trail; exactly one is the active contract */}
+      <div className="mt-4">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Contracts
+        </div>
+        {orderedDocs.length > 0 ? (
+          <ul className="mt-2 divide-y divide-hairline text-sm">
+            {orderedDocs.map((d) => (
+              <li key={d.id} className="flex items-center justify-between gap-2 py-1.5">
+                <span className="flex min-w-0 items-center gap-2">
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-accent-foreground" />
+                  <button
+                    type="button"
+                    className="max-w-[240px] truncate font-medium text-foreground underline"
+                    onClick={() => onViewDoc(d.storage_path)}
+                    title={d.file_name}
+                  >
+                    {d.file_name || "Contract"}
+                  </button>
+                  {d.is_active ? (
+                    <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
+                      Active
+                    </span>
+                  ) : null}
+                </span>
+                <span className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                  <span className="tabular-nums">{d.uploaded_at.slice(0, 10)}</span>
+                  {!d.is_active ? (
+                    <button
+                      type="button"
+                      className="font-medium text-accent-foreground hover:underline"
+                      onClick={() => onSetActiveDoc(d.id)}
+                    >
+                      Make active
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-danger"
+                    onClick={() => onRemoveDoc(d.id, d.storage_path)}
+                    aria-label={`Remove ${d.file_name || "contract"}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-[11px] text-muted-foreground">No contract on file yet.</p>
+        )}
+        <label className="mt-2 inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+          <Upload className="h-3.5 w-3.5" />
+          {orderedDocs.length > 0 ? "Upload amendment / new version" : "Upload executed contract"}
+          <input
+            type="file"
+            accept="application/pdf,image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onUploadDoc(file);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="Buyout" value={fmtUSD(summary.committed)} />
         <Stat label="Paid to date" value={fmtUSD(summary.paid)} />
         <Stat label="Retainage held" value={fmtUSD(summary.retainageHeld)} tone="warn" />

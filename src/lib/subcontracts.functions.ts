@@ -76,10 +76,23 @@ export interface SubcontractPaymentRow {
   reference: string;
   notes: string;
 }
+// One version of a subcontract's paper — original, an amendment, a re-negotiated
+// copy. Many per subcontract; exactly one is_active = the current contract.
+export interface SubcontractDocumentRow {
+  id: string;
+  project_id: string;
+  subcontract_id: string;
+  storage_path: string;
+  file_name: string;
+  note: string;
+  is_active: boolean;
+  uploaded_at: string;
+}
 export interface ProjectSubcontracts {
   subcontracts: SubcontractRow[];
   allocations: SubcontractAllocationRow[];
   payments: SubcontractPaymentRow[];
+  documents: SubcontractDocumentRow[];
 }
 
 const normalizeSubcontract = (row: Record<string, unknown>): SubcontractRow => ({
@@ -117,6 +130,16 @@ const normalizePayment = (row: Record<string, unknown>): SubcontractPaymentRow =
   reference: str(row.reference),
   notes: str(row.notes),
 });
+const normalizeDocument = (row: Record<string, unknown>): SubcontractDocumentRow => ({
+  id: str(row.id),
+  project_id: str(row.project_id),
+  subcontract_id: str(row.subcontract_id),
+  storage_path: str(row.storage_path),
+  file_name: str(row.file_name),
+  note: str(row.note),
+  is_active: Boolean(row.is_active),
+  uploaded_at: str(row.uploaded_at),
+});
 
 const projectIdInput = z.object({ projectId: z.string().uuid() });
 
@@ -137,15 +160,17 @@ export const listProjectSubcontracts = createServerFn({ method: "GET" })
       }
       return (rows ?? []) as Record<string, unknown>[];
     };
-    const [subs, allocs, pays] = await Promise.all([
+    const [subs, allocs, pays, docs] = await Promise.all([
       readList("subcontracts", "created_at"),
       readList("subcontract_allocations", "created_at"),
       readList("subcontract_payments", "payment_date"),
+      readList("subcontract_documents", "uploaded_at"),
     ]);
     return {
       subcontracts: subs.map(normalizeSubcontract),
       allocations: allocs.map(normalizeAllocation),
       payments: pays.map(normalizePayment),
+      documents: docs.map(normalizeDocument),
     };
   });
 
@@ -200,55 +225,84 @@ export const deleteSubcontract = createServerFn({ method: "POST" })
     return { id: data.id };
   });
 
-// Record the executed-contract file on a subcontract. The bytes are uploaded to
-// the 'subcontract-docs' storage bucket client-side (like daily reports); this
-// only records the storage path + display name + upload time.
-export const attachSubcontractDocument = createServerFn({ method: "POST" })
+// Deactivate every document on a subcontract, so the caller can then flag exactly
+// one active (uploading a new version, or re-tagging an older one). Single-active
+// is enforced here rather than by a DB constraint because the REST client can
+// only touch one row-set per call.
+async function deactivateSubcontractDocuments(supabase: unknown, subcontractId: string) {
+  const { error } = await dynamicTable(supabase, "subcontract_documents")
+    .update({ is_active: false })
+    .eq("subcontract_id", subcontractId);
+  if (error && !isMissingSubcontractTable(error)) throw new Error(error.message);
+}
+
+// Add a contract version to a subcontract's paper trail and make it the active
+// one (the prior active version stays, just flagged inactive). The bytes are
+// uploaded to the 'subcontract-docs' bucket client-side (like daily reports);
+// this records the storage path + display name and flips the active flag.
+export const addSubcontractDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
     z
       .object({
-        id: z.string().uuid(),
+        subcontractId: z.string().uuid(),
+        projectId: z.string().uuid(),
         path: z.string().min(1).max(500),
         name: z.string().min(1).max(300),
+        note: z.string().max(300).default(""),
       })
       .parse(input),
   )
-  .handler(async ({ data, context }): Promise<SubcontractRow> => {
-    const { data: row, error } = await dynamicTable(context.supabase, "subcontracts")
-      .update({
-        executed_contract_path: data.path,
-        executed_contract_name: data.name,
-        executed_contract_uploaded_at: new Date().toISOString(),
+  .handler(async ({ data, context }): Promise<SubcontractDocumentRow> => {
+    await deactivateSubcontractDocuments(context.supabase, data.subcontractId);
+    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_documents")
+      .insert({
+        subcontract_id: data.subcontractId,
+        project_id: data.projectId,
+        storage_path: data.path,
+        file_name: data.name,
+        note: data.note,
+        is_active: true,
       })
-      .eq("id", data.id)
       .select("*")
       .single();
     if (error) {
       if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
       throw new Error(error.message);
     }
-    return normalizeSubcontract(row as Record<string, unknown>);
+    return normalizeDocument(row as Record<string, unknown>);
   });
 
-export const removeSubcontractDocument = createServerFn({ method: "POST" })
+// Re-tag which stored version is the active contract (point back to an older one,
+// or forward again). Deactivates the siblings first so exactly one stays active.
+export const setActiveSubcontractDocument = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
-  .handler(async ({ data, context }): Promise<SubcontractRow> => {
-    const { data: row, error } = await dynamicTable(context.supabase, "subcontracts")
-      .update({
-        executed_contract_path: "",
-        executed_contract_name: "",
-        executed_contract_uploaded_at: null,
-      })
-      .eq("id", data.id)
-      .select("*")
-      .single();
+  .inputValidator((input) =>
+    z.object({ id: z.string().uuid(), subcontractId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<{ id: string }> => {
+    await deactivateSubcontractDocuments(context.supabase, data.subcontractId);
+    const { error } = await dynamicTable(context.supabase, "subcontract_documents")
+      .update({ is_active: true })
+      .eq("id", data.id);
     if (error) {
       if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
       throw new Error(error.message);
     }
-    return normalizeSubcontract(row as Record<string, unknown>);
+    return { id: data.id };
+  });
+
+// Remove one stored version (for a genuine mistake — the paper trail is meant to
+// be kept). Storage bytes are removed client-side.
+export const deleteSubcontractDocument = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "subcontract_documents")
+      .delete()
+      .eq("id", data.id);
+    if (error && !isMissingSubcontractTable(error)) throw new Error(error.message);
+    return { id: data.id };
   });
 
 export const allocateSubcontract = createServerFn({ method: "POST" })

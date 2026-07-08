@@ -2622,15 +2622,32 @@ await expectContains(
   ],
   "Slice 2 migration ships the executed-contract bucket + daily_wip subcontractor link (desk applies)",
 );
+// SUBCONTRACTORS Slice 3 (founder 2026-07-08): versioned contract paper trail —
+// many documents per subcontract, one active, prior versions kept for reference.
+await expectContains(
+  "supabase/migrations/20260708150000_subcontract_documents.sql",
+  [
+    /CREATE TABLE IF NOT EXISTS public\.subcontract_documents/,
+    /is_active boolean/,
+    /public\.can_read_project\(project_id\)/,
+    /INSERT INTO public\.subcontract_documents/,
+  ],
+  "Slice 3 migration ships the versioned subcontract_documents table (desk applies)",
+);
 await expectContains(
   "src/lib/subcontracts.functions.ts",
-  [/attachSubcontractDocument/, /removeSubcontractDocument/, /executed_contract_path/],
-  "subcontract server fns record the executed-contract file",
+  [
+    /addSubcontractDocument/,
+    /setActiveSubcontractDocument/,
+    /deleteSubcontractDocument/,
+    /documents:/,
+  ],
+  "subcontract server fns manage the versioned contract paper trail",
 );
 await expectContains(
   "src/components/project/SubcontractorsWorkspace.tsx",
-  [/Upload executed contract/, /subcontract-docs/, /createSignedUrl/],
-  "Subcontractors workspace uploads + views the executed contract",
+  [/Upload amendment \/ new version/, /Make active/, /subcontract-docs/, /createSignedUrl/],
+  "Subcontractors workspace shows the contract versions + active tag",
 );
 await expectContains(
   "src/lib/daily-wip.functions.ts",
