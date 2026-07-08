@@ -8,8 +8,13 @@
 //
 // Run: node --experimental-strip-types scripts/subcontract-budget-smoke.ts
 import assert from "node:assert/strict";
-import { summarizeSubCostByBucket, summarizeSubPayments } from "../src/lib/subcontract-budget.ts";
+import {
+  summarizeSubCostByBucket,
+  summarizeSubPayments,
+  subCostAddition,
+} from "../src/lib/subcontract-budget.ts";
 import { computeBudgetLedger } from "../src/lib/budget-ledger.ts";
+import { computeRollup } from "../src/lib/ior.ts";
 
 // ── Darian's scenario: $145k buyout on one cost code, pay $20k → 20/145 ──
 {
@@ -260,6 +265,98 @@ import { computeBudgetLedger } from "../src/lib/budget-ledger.ts";
   // Cards' "Forecast to complete" = Σ bucket.ftc (100k) + Σ[subOpen − min(ftc,committed)]
   // = 100k + (20k−30k) + (7k−0) = 97k; table = [max(0,100k−30k)=70k + 20k] + 7k = 97k.
   assert.equal(ledger.totals.open, 97_000, "table total open == cards' netted whole-map sum");
+}
+
+// ── subCostAddition: the single number both the dashboard rollup and the
+//    Budget-tab cards use for the sub layer. Displaces self-perform ftc per code
+//    (floored at 0), adds orphaned-code cost raw — must equal what the Budget
+//    cards add (Σ paid + Σ[open − min(ftc, committed)]). ──
+{
+  // No subs → adds nothing (backwards compatible).
+  assert.equal(subCostAddition([{ id: "b1", ftc: 100_000 }], new Map()), 0, "no subs → 0 added");
+
+  // Buyout within a code's budgeted forecast displaces it, adds nothing net.
+  const withinBudget = new Map([["b1", { paid: 0, open: 120_000, committed: 120_000 }]]);
+  assert.equal(
+    subCostAddition([{ id: "b1", ftc: 150_000 }], withinBudget),
+    0,
+    "buyout under the budgeted ftc displaces it — 0 net added",
+  );
+
+  // Over-buyout pops the line: adds (committed − ftc) on top.
+  const overBudget = new Map([["b1", { paid: 0, open: 150_000, committed: 150_000 }]]);
+  assert.equal(
+    subCostAddition([{ id: "b1", ftc: 120_000 }], overBudget),
+    30_000,
+    "over-buyout adds committed − budgeted ftc (150k − 120k)",
+  );
+
+  // Listed code + orphaned code: listed displaces, orphan adds raw.
+  const mixed = new Map([
+    ["b1", { paid: 10_000, open: 20_000, committed: 30_000 }],
+    ["orphan", { paid: 5_000, open: 7_000, committed: 12_000 }],
+  ]);
+  // b1: 10k + 20k − min(100k, 30k)=30k → 0; orphan: 5k + 7k → 12k. Total 12k.
+  assert.equal(
+    subCostAddition([{ id: "b1", ftc: 100_000 }], mixed),
+    12_000,
+    "orphaned-code sub cost adds raw; listed code displaces",
+  );
+
+  // subCostAddition equals what the Budget cards add — the anti-drift guarantee.
+  const paidSum = 10_000 + 5_000;
+  const openAdj = 20_000 - Math.min(100_000, 30_000) + (7_000 - 0); // b1 netted + orphan raw
+  assert.equal(
+    subCostAddition([{ id: "b1", ftc: 100_000 }], mixed),
+    paidSum + openAdj,
+    "subCostAddition == cards' (Σ paid + Σ openAdj) — dashboard & Budget tab can't drift",
+  );
+}
+
+// ── computeRollup (dashboard GP) now folds the sub layer: an over-buyout that
+//    pops a line pulls the dashboard's Indicated GP down by exactly the added
+//    cost — the Ryder fix (subs were invisible to the dashboard, faking upside). ──
+{
+  const project = {
+    original_contract: 1_000_000,
+    original_cost_budget: 800_000,
+    phase: "Middle" as const,
+    percent_complete: 40,
+    schedule_variance_weeks: 0,
+  };
+  const buckets = [
+    { id: "b1", bucket: "Slab", original_budget: 120_000, actual_to_date: 0, ftc: 120_000 },
+    { id: "b2", bucket: "Other", original_budget: 680_000, actual_to_date: 0, ftc: 680_000 },
+  ];
+
+  // Baseline: no subs → forecast cost = Σ ftc = 800k, GP = 200k (20%).
+  const bare = computeRollup(project, buckets, [], []);
+  assert.equal(bare.forecastedFinalCost, 800_000, "no subs → forecast = self-perform budget");
+  assert.equal(bare.indicatedGP, 200_000, "no subs → GP = contract − budget");
+
+  // A $150k sub buyout on the $120k Slab line pops it by $30k.
+  const subs = [{ id: "s1", contract_value: 150_000, status: "executed" }];
+  const allocs = [{ subcontract_id: "s1", cost_bucket_id: "b1", amount: 150_000 }];
+  const subCost = summarizeSubCostByBucket(subs, allocs, []);
+  const withSubs = computeRollup(project, buckets, [], [], subCost);
+  assert.equal(
+    withSubs.forecastedFinalCost,
+    830_000,
+    "over-buyout adds 30k to the dashboard's forecasted cost",
+  );
+  assert.equal(withSubs.indicatedGP, 170_000, "dashboard Indicated GP drops by the popped 30k");
+  assert.equal(withSubs.gpAtRisk, 30_000, "the 30k pop shows up as GP at risk vs the original 20%");
+
+  // actualToDate / ftc stay RAW so the Budget cards (which add subs to these) and
+  // the sub-inclusive forecastedFinalCost reconcile to one number, not two.
+  assert.equal(withSubs.actualToDate, 0, "rollup.actualToDate stays raw (cards add subs to it)");
+  assert.equal(withSubs.ftc, 800_000, "rollup.ftc stays raw (cards add subs to it)");
+  const openAdj = 150_000 - Math.min(120_000, 150_000); // sub open − displaced self-perform ftc
+  assert.equal(
+    withSubs.actualToDate + 0 + (withSubs.ftc + openAdj),
+    withSubs.forecastedFinalCost,
+    "Budget cards' (actual+subPaid)+(ftc+openAdj) == dashboard forecastedFinalCost",
+  );
 }
 
 console.log("subcontract budget smoke: all assertions passed");
