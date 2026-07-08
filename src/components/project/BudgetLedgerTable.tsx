@@ -39,6 +39,27 @@ function OverUnder({ value }: { value: number }) {
   );
 }
 
+// Field cost (WIP) burns the budget down: the daily field cost tagged to this
+// line, with the budget left after it (green) or the overrun (red) beneath.
+function FieldCostCell({ fieldCost, budget }: { fieldCost: number; budget: number }) {
+  if (fieldCost <= 0) return <span className="tabular text-muted-foreground">—</span>;
+  const remaining = budget - fieldCost;
+  return (
+    <div>
+      <div className="tabular font-medium">{fmtUSD(fieldCost)}</div>
+      {budget > 0 ? (
+        <div
+          className={cn("text-[10px] font-normal", remaining >= 0 ? "text-success" : "text-danger")}
+        >
+          {remaining >= 0 ? `${fmtUSD(remaining)} left` : `${fmtUSD(Math.abs(remaining))} over`}
+        </div>
+      ) : (
+        <div className="text-[10px] font-normal text-muted-foreground">no budget set</div>
+      )}
+    </div>
+  );
+}
+
 // An unpriced line says so, loudly — it must never masquerade as a $0-contract
 // or zero-margin line (BUDGETVSCONTRACT1).
 function UnpricedChip() {
@@ -106,7 +127,15 @@ export function BudgetLedgerTable({
   // SUBCONTRACTORS Slice 1: the additive sub cost layer per bucket (paid →
   // actuals, open → forecast). Built by the route from the subcontract query.
   subCostByBucket?: ReadonlyMap<string, { paid: number; open: number }>;
+  // Daily-WIP field cost tagged to each cost bucket. A SEPARATE lens (not folded
+  // into actuals) so it never double-counts once a formal job-cost record lands.
+  // When provided, the table shows a "Field cost (WIP)" column that burns the
+  // budget down; omitted → the column is hidden entirely.
+  fieldCostByBucket?: ReadonlyMap<string, number>;
 }) {
+  const showFieldCost = fieldCostByBucket !== undefined;
+  const fieldCostFor = (bucketId: string | null) =>
+    bucketId && fieldCostByBucket ? (fieldCostByBucket.get(bucketId) ?? 0) : 0;
   const ledger = computeBudgetLedger(
     buckets,
     exposures,
@@ -169,6 +198,13 @@ export function BudgetLedgerTable({
                   className="text-right"
                 />
                 <TableHead className="text-right">Actuals</TableHead>
+                {showFieldCost ? (
+                  <HelpHead
+                    label="Field cost (WIP)"
+                    help="Cost logged in the daily field WIP and tagged to this line — labor + materials + equipment. A real-time field figure, kept separate from Actuals (which come from job-cost entries) so it never double-counts. Beneath it: budget left after this field cost, or the overrun in red."
+                    className="text-right"
+                  />
+                ) : null}
                 <HelpHead
                   label="Open"
                   help="Committed cost you still owe — POs and subcontracts not yet paid."
@@ -233,6 +269,14 @@ export function BudgetLedgerTable({
                     ) : null}
                   </TableCell>
                   <TableCell className="text-right tabular">{fmtUSD(row.actuals)}</TableCell>
+                  {showFieldCost ? (
+                    <TableCell className="text-right">
+                      <FieldCostCell
+                        fieldCost={fieldCostFor(row.costBucketId)}
+                        budget={row.budget}
+                      />
+                    </TableCell>
+                  ) : null}
                   <TableCell className="text-right tabular text-muted-foreground">
                     {fmtUSD(row.open)}
                   </TableCell>
@@ -283,6 +327,17 @@ export function BudgetLedgerTable({
                 <TableCell className="text-right tabular">
                   {fmtUSD(ledger.totals.actuals)}
                 </TableCell>
+                {showFieldCost ? (
+                  <TableCell className="text-right">
+                    <FieldCostCell
+                      fieldCost={ledger.rows.reduce(
+                        (sum, row) => sum + fieldCostFor(row.costBucketId),
+                        0,
+                      )}
+                      budget={ledger.totals.budget}
+                    />
+                  </TableCell>
+                ) : null}
                 <TableCell className="text-right tabular">{fmtUSD(ledger.totals.open)}</TableCell>
                 <TableCell className="text-right tabular text-warning">
                   {fmtUSD(ledger.totals.atRisk)}

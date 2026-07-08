@@ -10,6 +10,7 @@ import {
   productionRate,
   rowWorkInPlace,
   sumLineItems,
+  wipCostByBucket,
 } from "../src/lib/daily-wip.ts";
 
 const row = (over: Partial<Parameters<typeof rowWorkInPlace>[0]> = {}) => ({
@@ -104,5 +105,50 @@ assert.deepEqual(
   [{ description: "rebar #5", amount: 500 }],
   "existing line items are kept as-is (lump ignored)",
 );
+
+// Field cost per cost bucket = cents-safe sum of work-in-place, tagged lines
+// only. The first line mirrors the real screenshot: 4 crew × 6h × $110 = $2,640
+// labor + $500 materials + $1,000 equipment = $4,140.
+const wipByBucket = wipCostByBucket([
+  {
+    cost_bucket_id: "b1",
+    crew_count: 4,
+    hours: 6,
+    labor_rate: 110,
+    material_cost: 500,
+    equipment_cost: 1000,
+    quantity: 0,
+  },
+  {
+    cost_bucket_id: "b1",
+    crew_count: 0,
+    hours: 0,
+    labor_rate: 0,
+    material_cost: 250,
+    equipment_cost: 0,
+    quantity: 0,
+  },
+  {
+    cost_bucket_id: "b2",
+    crew_count: 2,
+    hours: 8,
+    labor_rate: 50,
+    material_cost: 0,
+    equipment_cost: 0,
+    quantity: 0,
+  },
+  {
+    cost_bucket_id: null,
+    crew_count: 5,
+    hours: 5,
+    labor_rate: 100,
+    material_cost: 999,
+    equipment_cost: 0,
+    quantity: 0,
+  },
+]);
+assert.equal(wipByBucket.get("b1"), 4390, "b1 field cost = 4140 + 250");
+assert.equal(wipByBucket.get("b2"), 800, "b2 field cost = 2×8×50");
+assert.equal(wipByBucket.size, 2, "untagged (no cost_bucket_id) lines are skipped");
 
 console.log("daily WIP smoke: all assertions passed");
