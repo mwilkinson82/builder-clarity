@@ -364,7 +364,10 @@ export function CostBucketsTable({
                       />
                       {subCost && subCost.paid > 0 ? (
                         <div className="mt-0.5 text-[10px] font-normal text-muted-foreground">
-                          incl. {fmtUSD(subCost.paid)} sub
+                          incl. {fmtUSD(subCost.paid)} sub earned
+                          {subCost.cashPaid != null && subCost.cashPaid < subCost.paid ? (
+                            <div>{fmtUSD(subCost.cashPaid)} paid</div>
+                          ) : null}
                         </div>
                       ) : null}
                     </TableCell>

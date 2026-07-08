@@ -378,6 +378,13 @@ import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
   assert.equal(earned?.paid, 28_520, "recognized cost = earned (20% × 142,600) when it beats paid");
   assert.equal(earned?.open, 114_080, "open = committed − recognized cost (142,600 − 28,520)");
   assert.equal(earned?.committed, 142_600, "committed unchanged");
+  // cashPaid stays the ACTUAL cash out (Darian's $20,420) even though recognized
+  // cost is the higher earned value — so the UI can show both (C4).
+  assert.equal(
+    earned?.cashPaid,
+    20_420,
+    "cashPaid = actual payments, distinct from recognized cost",
+  );
 
   // No % map → payments-only, byte-for-byte the old behaviour (backward compatible).
   const plain = summarizeSubCostByBucket(subs, allocs, pays).get("b1");

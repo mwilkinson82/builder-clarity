@@ -58,6 +58,9 @@ export interface SubBucketCostLite {
   paid: number;
   open: number;
   committed?: number;
+  // Actual cash paid-to-date (≤ paid when earned value exceeds it). Optional so
+  // callers that don't track it are unaffected.
+  cashPaid?: number;
 }
 
 const ZERO_SUB: SubBucketCostLite = { paid: 0, open: 0, committed: 0 };

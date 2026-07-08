@@ -106,7 +106,10 @@ export function BudgetLedgerTable({
   // SUBCONTRACTORS Slice 1: the sub cost layer per bucket. `committed` (the
   // buyout) displaces the code's own forecast, `paid` → actuals, `open` → the
   // remaining forecast. Built by the route from the subcontract query.
-  subCostByBucket?: ReadonlyMap<string, { paid: number; open: number; committed?: number }>;
+  subCostByBucket?: ReadonlyMap<
+    string,
+    { paid: number; open: number; committed?: number; cashPaid?: number }
+  >;
 }) {
   const ledger = computeBudgetLedger(
     buckets,
@@ -233,7 +236,19 @@ export function BudgetLedgerTable({
                       </div>
                     ) : null}
                   </TableCell>
-                  <TableCell className="text-right tabular">{fmtUSD(row.actuals)}</TableCell>
+                  <TableCell className="text-right tabular">
+                    {fmtUSD(row.actuals)}
+                    {(() => {
+                      const sub = row.costBucketId ? subCostByBucket?.get(row.costBucketId) : null;
+                      // Show cash paid when the recognized cost is earned value
+                      // ahead of it — "of which $X paid" so earned ≠ cash is clear.
+                      return sub && sub.cashPaid != null && sub.cashPaid < sub.paid ? (
+                        <div className="text-[10px] font-normal text-muted-foreground">
+                          {fmtUSD(sub.cashPaid)} paid
+                        </div>
+                      ) : null;
+                    })()}
+                  </TableCell>
                   <TableCell className="text-right tabular text-muted-foreground">
                     {fmtUSD(row.open)}
                   </TableCell>
