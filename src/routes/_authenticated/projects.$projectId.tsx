@@ -507,7 +507,10 @@ function ProjectPage() {
   // and adds straight to Actual-to-date. Isolated to these cards — the shared IOR
   // rollup (dashboard GP) is untouched.
   const subCostTotals = useMemo(() => {
-    const ftcByBucket = new Map(buckets.map((b) => [b.id, b.ftc] as const));
+    // Read buckets from the query data (in scope here), NOT the `buckets` const
+    // destructured below the loading/error early-return — this hook runs before
+    // that declaration, so referencing it would be a use-before-init (TDZ) crash.
+    const ftcByBucket = new Map((data?.buckets ?? []).map((b) => [b.id, b.ftc] as const));
     let paidCents = 0;
     let openAdjCents = 0;
     if (subCostByBucket) {
@@ -521,7 +524,7 @@ function ProjectPage() {
       }
     }
     return { paid: centsToDollars(paidCents), openAdj: centsToDollars(openAdjCents) };
-  }, [subCostByBucket, buckets]);
+  }, [subCostByBucket, data?.buckets]);
   const budgetLock = useMutation({
     mutationFn: () => lockProjectBudgetFn({ data: { projectId } }),
     onSuccess: () => {
