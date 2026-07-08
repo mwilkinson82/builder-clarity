@@ -140,7 +140,7 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
   };
 
   const saveMutation = useMutation({
-    mutationFn: (input: Parameters<typeof saveDailyWipEntry>[0]["data"]) =>
+    mutationFn: (input: NonNullable<Parameters<typeof saveEntry>[0]>["data"]) =>
       saveEntry({ data: input }),
     onSuccess: () => {
       const wasEditing = Boolean(editing);
