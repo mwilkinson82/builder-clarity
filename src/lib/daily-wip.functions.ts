@@ -6,6 +6,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { sumLineItems, type CostLineItem } from "@/lib/daily-wip";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -30,6 +31,16 @@ const num = (value: unknown) => {
 };
 const str = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback);
 
+// Coerce a stored jsonb array into clean { description, amount } line items,
+// dropping anything malformed so a bad row can never crash a read.
+const normalizeItems = (value: unknown): CostLineItem[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => {
+    const item = (entry ?? {}) as Record<string, unknown>;
+    return { description: str(item.description), amount: num(item.amount) };
+  });
+};
+
 // The migration hasn't been applied yet — treat as "no entries" for reads.
 function isMissingDailyWipTable(error: DynamicSupabaseError | null) {
   const message = error?.message ?? "";
@@ -50,6 +61,8 @@ export interface DailyWipEntryRow {
   labor_rate: number;
   material_cost: number;
   equipment_cost: number;
+  material_items: CostLineItem[];
+  equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
   notes: string;
@@ -68,11 +81,18 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   labor_rate: num(row.labor_rate),
   material_cost: num(row.material_cost),
   equipment_cost: num(row.equipment_cost),
+  material_items: normalizeItems(row.material_items),
+  equipment_items: normalizeItems(row.equipment_items),
   quantity: num(row.quantity),
   unit: str(row.unit),
   notes: str(row.notes),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
+});
+
+const lineItemInput = z.object({
+  description: z.string().max(200).default(""),
+  amount: z.number().min(0).default(0),
 });
 
 const entryFieldsInput = z.object({
@@ -84,6 +104,8 @@ const entryFieldsInput = z.object({
   labor_rate: z.number().min(0).default(0),
   material_cost: z.number().min(0).default(0),
   equipment_cost: z.number().min(0).default(0),
+  material_items: z.array(lineItemInput).max(100).default([]),
+  equipment_items: z.array(lineItemInput).max(100).default([]),
   quantity: z.number().min(0).default(0),
   unit: z.string().max(40).default(""),
   notes: z.string().max(4000).default(""),
@@ -116,7 +138,17 @@ export const saveDailyWipEntry = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }): Promise<DailyWipEntryRow> => {
     const { projectId, id, ...fields } = data;
-    const payload = { project_id: projectId, ...fields };
+    // Items are the source of truth: when a list is present, the lump cost is its
+    // cents-safe sum so material_cost / equipment_cost can never drift from the
+    // lines. An empty list falls back to the directly-supplied lump (older callers
+    // and rows predating itemization).
+    const material_cost = fields.material_items.length
+      ? sumLineItems(fields.material_items)
+      : fields.material_cost;
+    const equipment_cost = fields.equipment_items.length
+      ? sumLineItems(fields.equipment_items)
+      : fields.equipment_cost;
+    const payload = { project_id: projectId, ...fields, material_cost, equipment_cost };
     const table = dynamicTable(context.supabase, "daily_wip_entries");
     // Existing row → update; new row → insert. Not an upsert-on-conflict: a day
     // holds many activity rows, so (project, date) is not unique.
