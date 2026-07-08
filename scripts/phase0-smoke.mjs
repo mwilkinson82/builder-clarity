@@ -2586,13 +2586,32 @@ await expectContains(
 );
 await expectContains(
   "src/lib/budget-ledger.ts",
-  [/subCostByBucket/, /subCost\.paid/, /subCost\.open/],
-  "computeBudgetLedger folds the additive subcontractor cost layer (paid→actuals, open→forecast)",
+  [
+    /subCostByBucket/,
+    /subCost\.paid/,
+    /subCost\.open/,
+    /selfPerformFtcCents/,
+    /subCost\.committed/,
+  ],
+  "computeBudgetLedger folds the sub layer with the buyout DISPLACING (not stacking on) the code's forecast",
 );
 await expectContains(
   "src/components/project/SubcontractorsWorkspace.tsx",
-  [/summarizeSubPayments/, /Buy out/, /Record payment/, /Retainage held/],
-  "Subcontractors workspace: directory, buyout, allocations, and progress payments",
+  [/summarizeSubPayments/, /Buy out/, /SubcontractCard/],
+  "Subcontractors workspace: directory, buyout, and the per-sub card",
+);
+await expectContains(
+  "src/components/project/SubcontractCard.tsx",
+  [
+    /Record payment/,
+    /Retainage held/,
+    /New commitment/,
+    /onUpdatePayment/,
+    /onEditBuyout/,
+    /Upload amendment \/ new version/,
+    /Make active/,
+  ],
+  "Subcontract card: versioned contracts, payments (date + description), edit-in-place, change-the-commitment",
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
@@ -2646,8 +2665,8 @@ await expectContains(
 );
 await expectContains(
   "src/components/project/SubcontractorsWorkspace.tsx",
-  [/Upload amendment \/ new version/, /Make active/, /subcontract-docs/, /createSignedUrl/],
-  "Subcontractors workspace shows the contract versions + active tag",
+  [/subcontract-docs/, /createSignedUrl/],
+  "Subcontractors workspace uploads + views the contract versions (storage side)",
 );
 await expectContains(
   "src/lib/daily-wip.functions.ts",

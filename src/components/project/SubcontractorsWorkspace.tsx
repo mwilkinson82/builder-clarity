@@ -8,13 +8,13 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { FileText, HardHat, Plus, ReceiptText, Trash2, Upload } from "lucide-react";
+import { HardHat, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { WorkspaceHeader } from "@/components/project/billing/billing-workspace-atoms";
-import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
+import { SubcontractCard, type PaymentEdit } from "@/components/project/SubcontractCard";
 import {
   deleteSubcontractor,
   listSubcontractors,
@@ -31,7 +31,8 @@ import {
   recordSubcontractPayment,
   saveSubcontract,
   setActiveSubcontractDocument,
-  type SubcontractDocumentRow,
+  updateSubcontractAllocation,
+  updateSubcontractPayment,
 } from "@/lib/subcontracts.functions";
 import { summarizeSubPayments } from "@/lib/subcontract-budget";
 import { supabase } from "@/integrations/supabase/client";
@@ -57,8 +58,10 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const saveSubFn = useServerFn(saveSubcontract);
   const deleteSubFn = useServerFn(deleteSubcontract);
   const allocateFn = useServerFn(allocateSubcontract);
+  const updateAllocFn = useServerFn(updateSubcontractAllocation);
   const deleteAllocFn = useServerFn(deleteSubcontractAllocation);
   const payFn = useServerFn(recordSubcontractPayment);
+  const updatePayFn = useServerFn(updateSubcontractPayment);
   const deletePayFn = useServerFn(deleteSubcontractPayment);
   const addDocFn = useServerFn(addSubcontractDocument);
   const setActiveDocFn = useServerFn(setActiveSubcontractDocument);
@@ -157,6 +160,35 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     },
     onError: onError("remove subcontract"),
   });
+  // Change the commitment — a change order (raise) or credit (lower). Reuses the
+  // upsert-by-id save; the full sub is re-sent with the new value/retainage.
+  const editBuyout = useMutation({
+    mutationFn: (input: {
+      sub: (typeof project.subcontracts)[number];
+      contractValue: number;
+      retainagePct: number;
+    }) =>
+      saveSubFn({
+        data: {
+          projectId,
+          id: input.sub.id,
+          subcontractor_id: input.sub.subcontractor_id,
+          title: input.sub.title,
+          scope: input.sub.scope,
+          contract_value: input.contractValue,
+          retainage_pct: input.retainagePct,
+          status: input.sub.status === "draft" ? "draft" : "executed",
+          executed_at: input.sub.executed_at,
+        },
+      }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Commitment updated", {
+        description: "Re-allocate to cost codes so the committed cost matches.",
+      });
+    },
+    onError: onError("update the commitment"),
+  });
   const allocate = useMutation({
     mutationFn: (input: { subcontractId: string; costBucketId: string; amount: number }) =>
       allocateFn({ data: { projectId, ...input } }),
@@ -166,22 +198,36 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     },
     onError: onError("allocate the buyout"),
   });
+  const updateAlloc = useMutation({
+    mutationFn: (input: { id: string; amount: number }) => updateAllocFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Allocation updated");
+    },
+    onError: onError("update the allocation"),
+  });
   const removeAlloc = useMutation({
     mutationFn: (id: string) => deleteAllocFn({ data: { id } }),
     onSuccess: () => invalidate(),
     onError: onError("remove allocation"),
   });
   const recordPayment = useMutation({
-    mutationFn: (input: { subcontractId: string; amount: number; retainage_held: number }) =>
+    mutationFn: (input: {
+      subcontractId: string;
+      amount: number;
+      retainage_held: number;
+      payment_date: string;
+      notes: string;
+    }) =>
       payFn({
         data: {
           projectId,
           subcontractId: input.subcontractId,
           amount: input.amount,
           retainage_held: input.retainage_held,
-          payment_date: today(),
+          payment_date: input.payment_date,
           reference: "",
-          notes: "",
+          notes: input.notes,
         },
       }),
     onSuccess: () => {
@@ -191,6 +237,24 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       });
     },
     onError: onError("record the payment"),
+  });
+  const updatePayment = useMutation({
+    mutationFn: (input: { id: string; edit: PaymentEdit }) =>
+      updatePayFn({
+        data: {
+          id: input.id,
+          amount: input.edit.amount,
+          retainage_held: input.edit.retainageHeld,
+          payment_date: input.edit.paymentDate,
+          reference: "",
+          notes: input.edit.notes,
+        },
+      }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Payment updated");
+    },
+    onError: onError("update the payment"),
   });
   const removePayment = useMutation({
     mutationFn: (id: string) => deletePayFn({ data: { id } }),
@@ -412,13 +476,24 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               buckets={buckets}
               allocatedTotal={allocatedTotal}
               defaultRetainagePct={sub.retainage_pct}
+              onEditBuyout={(contractValue, retainagePct) =>
+                editBuyout.mutate({ sub, contractValue, retainagePct })
+              }
               onAllocate={(costBucketId, amount) =>
                 allocate.mutate({ subcontractId: sub.id, costBucketId, amount })
               }
+              onUpdateAllocation={(id, amount) => updateAlloc.mutate({ id, amount })}
               onRemoveAllocation={(id) => removeAlloc.mutate(id)}
-              onPay={(amount, retainage_held) =>
-                recordPayment.mutate({ subcontractId: sub.id, amount, retainage_held })
+              onPay={(amount, retainage_held, payment_date, notes) =>
+                recordPayment.mutate({
+                  subcontractId: sub.id,
+                  amount,
+                  retainage_held,
+                  payment_date,
+                  notes,
+                })
               }
+              onUpdatePayment={(id, edit) => updatePayment.mutate({ id, edit })}
               onRemovePayment={(id) => removePayment.mutate(id)}
               onRemoveSub={() => removeSub.mutate(sub.id)}
               documents={project.documents.filter((d) => d.subcontract_id === sub.id)}
@@ -431,283 +506,5 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
         })
       )}
     </section>
-  );
-}
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: "good" | "warn" }) {
-  return (
-    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-        {label}
-      </div>
-      <div
-        className={`mt-0.5 text-sm font-semibold tabular-nums ${
-          tone === "good" ? "text-success" : tone === "warn" ? "text-warning" : "text-foreground"
-        }`}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-interface CardProps {
-  subLabel: string;
-  summary: ReturnType<typeof summarizeSubPayments>;
-  allocations: { id: string; cost_code: string; description: string; amount: number }[];
-  payments: { id: string; amount: number; retainage_held: number; payment_date: string }[];
-  buckets: BucketOption[];
-  allocatedTotal: number;
-  defaultRetainagePct: number;
-  onAllocate: (costBucketId: string, amount: number) => void;
-  onRemoveAllocation: (id: string) => void;
-  onPay: (amount: number, retainageHeld: number) => void;
-  onRemovePayment: (id: string) => void;
-  onRemoveSub: () => void;
-  documents: SubcontractDocumentRow[];
-  onUploadDoc: (file: File) => void;
-  onViewDoc: (path: string) => void;
-  onSetActiveDoc: (docId: string) => void;
-  onRemoveDoc: (docId: string, path: string) => void;
-}
-
-function SubcontractCard({
-  subLabel,
-  summary,
-  allocations,
-  payments,
-  buckets,
-  allocatedTotal,
-  defaultRetainagePct,
-  onAllocate,
-  onRemoveAllocation,
-  onPay,
-  onRemovePayment,
-  onRemoveSub,
-  documents,
-  onUploadDoc,
-  onViewDoc,
-  onSetActiveDoc,
-  onRemoveDoc,
-}: CardProps) {
-  const [allocBucket, setAllocBucket] = useState("");
-  const [allocAmount, setAllocAmount] = useState(0);
-  const [payAmount, setPayAmount] = useState(0);
-  const unallocated = summary.committed - allocatedTotal;
-  const retainageHeld = Math.round(payAmount * defaultRetainagePct) / 100;
-  // Active version first, then newest — the current contract sits on top, the
-  // superseded ones stay below as the paper trail.
-  const orderedDocs = [...documents].sort(
-    (a, b) =>
-      Number(b.is_active) - Number(a.is_active) || b.uploaded_at.localeCompare(a.uploaded_at),
-  );
-
-  return (
-    <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="font-serif text-lg text-foreground">{subLabel}</div>
-        <button
-          type="button"
-          className="text-muted-foreground hover:text-danger"
-          onClick={onRemoveSub}
-          aria-label="Remove subcontract"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </div>
-
-      {/* Contracts — the versioned paper trail; exactly one is the active contract */}
-      <div className="mt-4">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Contracts
-        </div>
-        {orderedDocs.length > 0 ? (
-          <ul className="mt-2 divide-y divide-hairline text-sm">
-            {orderedDocs.map((d) => (
-              <li key={d.id} className="flex items-center justify-between gap-2 py-1.5">
-                <span className="flex min-w-0 items-center gap-2">
-                  <FileText className="h-3.5 w-3.5 shrink-0 text-accent-foreground" />
-                  <button
-                    type="button"
-                    className="max-w-[240px] truncate font-medium text-foreground underline"
-                    onClick={() => onViewDoc(d.storage_path)}
-                    title={d.file_name}
-                  >
-                    {d.file_name || "Contract"}
-                  </button>
-                  {d.is_active ? (
-                    <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success">
-                      Active
-                    </span>
-                  ) : null}
-                </span>
-                <span className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                  <span className="tabular-nums">{d.uploaded_at.slice(0, 10)}</span>
-                  {!d.is_active ? (
-                    <button
-                      type="button"
-                      className="font-medium text-accent-foreground hover:underline"
-                      onClick={() => onSetActiveDoc(d.id)}
-                    >
-                      Make active
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-danger"
-                    onClick={() => onRemoveDoc(d.id, d.storage_path)}
-                    aria-label={`Remove ${d.file_name || "contract"}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-2 text-[11px] text-muted-foreground">No contract on file yet.</p>
-        )}
-        <label className="mt-2 inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-          <Upload className="h-3.5 w-3.5" />
-          {orderedDocs.length > 0 ? "Upload amendment / new version" : "Upload executed contract"}
-          <input
-            type="file"
-            accept="application/pdf,image/*"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) onUploadDoc(file);
-              e.target.value = "";
-            }}
-          />
-        </label>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat label="Buyout" value={fmtUSD(summary.committed)} />
-        <Stat label="Paid to date" value={fmtUSD(summary.paid)} />
-        <Stat label="Retainage held" value={fmtUSD(summary.retainageHeld)} tone="warn" />
-        <Stat label="Net paid" value={fmtUSD(summary.netPaid)} />
-        <Stat label="Remaining" value={fmtUSD(summary.remaining)} tone="good" />
-        <Stat label="% paid" value={`${summary.paidPct.toFixed(1)}%`} />
-      </div>
-
-      {/* Allocations */}
-      <div className="mt-4">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Cost codes (buyout = committed cost on these codes)
-        </div>
-        {allocations.length > 0 ? (
-          <ul className="mt-2 divide-y divide-hairline text-sm">
-            {allocations.map((a) => (
-              <li key={a.id} className="flex items-center justify-between py-1.5">
-                <span className="text-foreground">
-                  <span className="font-medium">{a.cost_code || "No code"}</span>
-                  <span className="ml-2 text-muted-foreground">{a.description}</span>
-                </span>
-                <span className="flex items-center gap-3">
-                  <span className="font-semibold tabular-nums">{fmtUSD(a.amount)}</span>
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-danger"
-                    onClick={() => onRemoveAllocation(a.id)}
-                    aria-label="Remove allocation"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {unallocated > 0.005 ? (
-          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <select
-              value={allocBucket}
-              onChange={(e) => setAllocBucket(e.target.value)}
-              className="min-w-[220px] rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
-            >
-              <option value="">Allocate to cost code…</option>
-              {buckets.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.cost_code} · {b.bucket}
-                </option>
-              ))}
-            </select>
-            <MoneyInput value={allocAmount} onValueChange={setAllocAmount} align="right" />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              disabled={!allocBucket || allocAmount <= 0}
-              onClick={() => {
-                onAllocate(allocBucket, allocAmount);
-                setAllocBucket("");
-                setAllocAmount(0);
-              }}
-            >
-              <Plus className="h-3.5 w-3.5" /> Allocate
-            </Button>
-            <span className="text-[11px] text-muted-foreground">
-              {fmtUSD(unallocated)} left to allocate
-            </span>
-          </div>
-        ) : null}
-      </div>
-
-      {/* Payments */}
-      <div className="mt-4">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Progress payments
-        </div>
-        {payments.length > 0 ? (
-          <ul className="mt-2 divide-y divide-hairline text-sm">
-            {payments.map((p) => (
-              <li key={p.id} className="flex items-center justify-between py-1.5">
-                <span className="text-muted-foreground">{p.payment_date}</span>
-                <span className="flex items-center gap-3">
-                  <span className="font-semibold tabular-nums text-foreground">
-                    {fmtUSD(p.amount)}
-                  </span>
-                  {p.retainage_held > 0 ? (
-                    <span className="text-[11px] text-warning">
-                      −{fmtUSD(p.retainage_held)} ret.
-                    </span>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-danger"
-                    onClick={() => onRemovePayment(p.id)}
-                    aria-label="Remove payment"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <ReceiptText className="hidden h-4 w-4 text-muted-foreground sm:block" />
-          <MoneyInput value={payAmount} onValueChange={setPayAmount} align="right" />
-          <span className="text-[11px] text-muted-foreground">
-            holds {fmtUSD(retainageHeld)} retainage ({defaultRetainagePct}%)
-          </span>
-          <Button
-            type="button"
-            size="sm"
-            className="gap-1.5"
-            disabled={payAmount <= 0}
-            onClick={() => {
-              onPay(payAmount, retainageHeld);
-              setPayAmount(0);
-            }}
-          >
-            <Plus className="h-3.5 w-3.5" /> Record payment
-          </Button>
-        </div>
-      </div>
-    </div>
   );
 }

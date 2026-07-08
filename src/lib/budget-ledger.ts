@@ -117,11 +117,18 @@ export function computeBudgetLedger(
   // node smokes keep working; without COs the ledger is the frozen baseline.
   changeOrders: readonly BudgetChangeOrderLike[] = [],
   coAllocations: readonly BudgetChangeOrderAllocationLike[] = [],
-  // SUBCONTRACTORS Slice 1: the additive subcontractor cost layer, per bucket.
-  // `paid` (gross sub payments) folds into actuals; `open` (remaining sub
-  // commitment) folds into forecast-to-complete. Built by
-  // summarizeSubCostByBucket (subcontract-budget.ts). Optional — no subs → no-op.
-  subCostByBucket: ReadonlyMap<string, { paid: number; open: number }> = new Map(),
+  // SUBCONTRACTORS: the subcontractor cost layer, per bucket. A buyout is not
+  // extra cost heaped on top of the budget — it BUYS OUT scope the budget
+  // already carries. So the fold DISPLACES, it doesn't stack: `paid` (gross sub
+  // payments) moves into actuals, and the remaining sub commitment REPLACES the
+  // code's own forecast for the bought-out portion — `committed` is netted out
+  // of bucket.ftc (floored at 0) and `open` (= committed − paid) added back.
+  // Built by summarizeSubCostByBucket (subcontract-budget.ts). No subs → no-op;
+  // a caller that omits `committed` gets the old purely-additive behaviour.
+  subCostByBucket: ReadonlyMap<
+    string,
+    { paid: number; open: number; committed?: number }
+  > = new Map(),
 ): BudgetLedger {
   const risk = riskByCostCode(exposures, allocations);
   const riskByBucket = new Map<string, { atRisk: number; contingency: number }>();
@@ -182,14 +189,22 @@ export function computeBudgetLedger(
 
   const rows: BudgetLedgerRow[] = buckets.map((bucket) => {
     const bucketRisk = riskByBucket.get(bucket.id) ?? { atRisk: 0, contingency: 0 };
-    // Additive subcontractor layer: a sub payment is actual cost, the remaining
-    // sub commitment is forecast-to-complete. Fold both onto the stored columns
-    // (cents-safe) so EAC/over-under follow, exactly like the CO layer above.
-    const subCost = subCostByBucket.get(bucket.id) ?? { paid: 0, open: 0 };
+    // Subcontractor layer. A sub payment is actual cost incurred, so it adds to
+    // actual-to-date. A buyout, though, REPLACES the self-perform forecast for
+    // the scope it covers — it does not stack on top of it. So net the committed
+    // buyout out of the code's own forecast-to-complete (never below 0), then add
+    // back the remaining sub commitment. A fully bought-out code thus forecasts
+    // to its budget, not budget + buyout, and each payment burns the forecast
+    // down. Cents-safe; a missing `committed` makes the netting a no-op.
+    const subCost = subCostByBucket.get(bucket.id) ?? { paid: 0, open: 0, committed: 0 };
     const actuals = centsToDollars(
       dollarsToCents(bucket.actual_to_date) + dollarsToCents(subCost.paid),
     );
-    const open = centsToDollars(dollarsToCents(bucket.ftc) + dollarsToCents(subCost.open));
+    const selfPerformFtcCents = Math.max(
+      0,
+      dollarsToCents(bucket.ftc) - dollarsToCents(subCost.committed ?? 0),
+    );
+    const open = centsToDollars(selfPerformFtcCents + dollarsToCents(subCost.open));
     const eac = eacDollars(actuals, open);
     const changeOrderBudget = centsToDollars(coBudgetCentsByBucket.get(bucket.id) ?? 0);
     const budget = centsToDollars(

@@ -353,6 +353,27 @@ export const allocateSubcontract = createServerFn({ method: "POST" })
     return normalizeAllocation(row as Record<string, unknown>);
   });
 
+// Re-price a buyout's allocation on a cost code — the lever for a change order or
+// credit that moves the committed cost on that code up or down. Only the dollar
+// amount changes; the code it lands on is fixed (delete + re-add to move codes).
+export const updateSubcontractAllocation = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ id: z.string().uuid(), amount: z.number().min(0) }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SubcontractAllocationRow> => {
+    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_allocations")
+      .update({ amount: data.amount })
+      .eq("id", data.id)
+      .select("*")
+      .single();
+    if (error) {
+      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
+      throw new Error(error.message);
+    }
+    return normalizeAllocation(row as Record<string, unknown>);
+  });
+
 export const deleteSubcontractAllocation = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
@@ -383,6 +404,36 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
     const { projectId, subcontractId, ...fields } = data;
     const { data: row, error } = await dynamicTable(context.supabase, "subcontract_payments")
       .insert({ project_id: projectId, subcontract_id: subcontractId, ...fields })
+      .select("*")
+      .single();
+    if (error) {
+      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
+      throw new Error(error.message);
+    }
+    return normalizePayment(row as Record<string, unknown>);
+  });
+
+// Edit a recorded payment after the fact — fix the date, the amount, the
+// retainage held, or add a description. Same validated shape as recording one.
+export const updateSubcontractPayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        amount: z.number().min(0),
+        retainage_held: z.number().min(0).default(0),
+        payment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "payment_date must be YYYY-MM-DD"),
+        reference: z.string().max(200).default(""),
+        notes: z.string().max(4000).default(""),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
+    const { id, ...fields } = data;
+    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_payments")
+      .update(fields)
+      .eq("id", id)
       .select("*")
       .single();
     if (error) {
