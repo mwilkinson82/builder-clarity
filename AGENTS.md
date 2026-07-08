@@ -34,7 +34,7 @@ module's files, stop and flag it in the PR description instead of editing.
 | CRM         | `src/components/pipeline/`, pipeline-related functions in `src/lib/`                                     |
 | Billing     | `src/components/billing/`, billing-related functions in `src/lib/`                                       |
 | IOR/Project | `src/routes/_authenticated/projects.$projectId.tsx`, `src/components/outcome/`                            |
-| Shared      | `src/components/ui/`, `src/lib/auth/`, `src/routes/__root.tsx`, config files                              |
+| Shared      | `src/components/ui/`, `src/lib/auth/`, `src/routes/__root.tsx`, `src/styles.css` (theme layer), config files |
 
 Shared territory: only with an explicit task assignment, and never concurrently
 with another active agent. UI/UX polish tasks cut across territories — they run in
@@ -71,6 +71,26 @@ npm run build
 Plus module-specific suites where they exist: `npm run test:estimating`,
 `npm run test:cpm`, `npm run test:cpm:layout`. Browser-QA any changed user flow.
 A PR that has not passed the gate does not get opened.
+
+## Design & theming
+
+Overwatch wears the **ALP house design system** — one skin shared with the
+sibling AOS app and every ALP surface. **Before any visual work, read
+[`docs/THEMING.md`](docs/THEMING.md)** (canonical spec: `docs/AOS-DESIGN-SYSTEM.md`).
+The essentials:
+
+- **Use tokens, never hardcoded hex.** All colors live as CSS vars in
+  `src/styles.css` (Tailwind v4, CSS-first — no `tailwind.config.js`). Reach for
+  `bg-signal` / `variant="signal"` / `.eyebrow` / `--clay` / `--dark-panel` /
+  `text-muted-foreground`, not `#hex` or `bg-[#...]`.
+- **One skin, no second accent.** No "Overwatch blue." Warm clay (`#D97757`) for
+  active/selected states; the orange (`--signal #F76A16`) is rationed to the one
+  true CTA per view (`<Button variant="signal">`). Default button is ink.
+- **Type carries the page, hairlines not boxes.** Mono eyebrow → serif headline
+  → muted sub. Structure with `border`/`hairline` + whitespace.
+- **`src/styles.css` is the theme layer (Shared territory)** — never edit it in a
+  feature task; palette changes are their own dedicated task.
+- Honor `prefers-reduced-motion`; design the 375px column first.
 
 ## Code standards
 
