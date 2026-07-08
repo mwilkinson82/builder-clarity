@@ -522,14 +522,16 @@ function ProjectPage() {
     // destructured below the loading/error early-return — this hook runs before
     // that declaration, so referencing it would be a use-before-init (TDZ) crash.
     const ftcByBucket = new Map((data?.buckets ?? []).map((b) => [b.id, b.ftc] as const));
+    // `paid` is actual cash out (drives Actual to date); `earned` is the work's
+    // value (progress), shown as its own total.
     let paidCents = 0;
     let openAdjCents = 0;
     let committedTotalCents = 0;
-    let cashPaidTotalCents = 0;
+    let earnedTotalCents = 0;
     if (subCostByBucket) {
       for (const [bucketId, value] of subCostByBucket.entries()) {
         paidCents += dollarsToCents(value.paid);
-        cashPaidTotalCents += dollarsToCents(value.cashPaid ?? value.paid);
+        earnedTotalCents += dollarsToCents(value.earned ?? 0);
         const committedCents = dollarsToCents(value.committed ?? 0);
         committedTotalCents += committedCents;
         const bucketFtcCents = dollarsToCents(ftcByBucket.get(bucketId) ?? 0);
@@ -542,7 +544,7 @@ function ProjectPage() {
       paid: centsToDollars(paidCents),
       openAdj: centsToDollars(openAdjCents),
       committed: centsToDollars(committedTotalCents),
-      cashPaid: centsToDollars(cashPaidTotalCents),
+      earned: centsToDollars(earnedTotalCents),
     };
   }, [subCostByBucket, data?.buckets]);
   const budgetLock = useMutation({
@@ -2149,7 +2151,7 @@ function ProjectPage() {
                     </AlertDialogContent>
                   </AlertDialog>
                 </div>
-                <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+                <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-4">
                   <SovMetric label="Cost buckets loaded" value={String(buckets.length)} />
                   <SovMetric
                     label="Original cost budget"
@@ -2181,8 +2183,8 @@ function ProjectPage() {
                       value={fmtUSD(subCostTotals.committed)}
                     />
                   ) : null}
-                  {subCostTotals.cashPaid > 0 ? (
-                    <SovMetric label="Paid to date (subs)" value={fmtUSD(subCostTotals.cashPaid)} />
+                  {subCostTotals.paid > 0 ? (
+                    <SovMetric label="Paid to date (subs)" value={fmtUSD(subCostTotals.paid)} />
                   ) : null}
                 </div>
                 <SovImportHistory imports={sovImports ?? []} />
