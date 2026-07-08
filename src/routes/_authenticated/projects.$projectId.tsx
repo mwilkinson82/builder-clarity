@@ -1411,8 +1411,17 @@ function ProjectPage() {
     },
     {
       value: "billing",
+      // Show a real billing figure — the pay-application count, parallel to the
+      // Budget tab's "N cost codes". Previously this reused project.percent_complete
+      // (the project's overall progress, ~0 on new jobs), so it read "Billing 0%
+      // complete" even after real billing — confusing and unrelated to billing.
       label: "Billing",
-      detail: `${project.percent_complete}% complete`,
+      detail:
+        billingApplications.length > 0
+          ? `${billingApplications.length} pay application${
+              billingApplications.length === 1 ? "" : "s"
+            }`
+          : "No pay applications yet",
       icon: ReceiptText,
     },
     {
