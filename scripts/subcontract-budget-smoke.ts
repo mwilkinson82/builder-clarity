@@ -12,9 +12,11 @@ import {
   summarizeSubCostByBucket,
   summarizeSubPayments,
   subCostAddition,
+  subEarnedKey,
 } from "../src/lib/subcontract-budget.ts";
 import { computeBudgetLedger } from "../src/lib/budget-ledger.ts";
 import { computeRollup } from "../src/lib/ior.ts";
+import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
 
 // ── Darian's scenario: $145k buyout on one cost code, pay $20k → 20/145 ──
 {
@@ -357,6 +359,104 @@ import { computeRollup } from "../src/lib/ior.ts";
     withSubs.forecastedFinalCost,
     "Budget cards' (actual+subPaid)+(ftc+openAdj) == dashboard forecastedFinalCost",
   );
+}
+
+// ── Earned value drives recognized cost (Slice C part 2): a sub's cost-to-date
+//    = max(earned, paid), earned = commitment × the field %-complete on that code.
+//    Payments become a floor, not the driver — "% drives cost". ──
+{
+  // Darian's Dock Pit, % now logged on the buyout's own code: committed 142,600,
+  // paid 20,420, 20% complete → earned 28,520 > paid → recognized cost 28,520.
+  const subs = [
+    { id: "sc1", contract_value: 142_600, status: "executed", subcontractor_id: "co1" },
+  ];
+  const allocs = [{ subcontract_id: "sc1", cost_bucket_id: "b1", amount: 142_600 }];
+  const pays = [{ subcontract_id: "sc1", amount: 20_420 }];
+  const pct = new Map([[subEarnedKey("co1", "b1"), 20]]);
+
+  const earned = summarizeSubCostByBucket(subs, allocs, pays, pct).get("b1");
+  assert.equal(earned?.paid, 28_520, "recognized cost = earned (20% × 142,600) when it beats paid");
+  assert.equal(earned?.open, 114_080, "open = committed − recognized cost (142,600 − 28,520)");
+  assert.equal(earned?.committed, 142_600, "committed unchanged");
+
+  // No % map → payments-only, byte-for-byte the old behaviour (backward compatible).
+  const plain = summarizeSubCostByBucket(subs, allocs, pays).get("b1");
+  assert.equal(plain?.paid, 20_420, "no earned-value input → cost = paid");
+  assert.equal(plain?.open, 122_180, "no earned-value input → open = committed − paid");
+
+  // Paid exceeds earned (only 10% logged): cost floors at what's been paid, never
+  // understating cost / overstating GP.
+  const lowPct = new Map([[subEarnedKey("co1", "b1"), 10]]); // earned 14,260 < 20,420 paid
+  const floored = summarizeSubCostByBucket(subs, allocs, pays, lowPct).get("b1");
+  assert.equal(
+    floored?.paid,
+    20_420,
+    "cost floors at paid when earned is lower (max(earned,paid))",
+  );
+
+  // 100% complete → whole commitment recognized, forecast closes to 0.
+  const full = new Map([[subEarnedKey("co1", "b1"), 100]]);
+  const done = summarizeSubCostByBucket(subs, allocs, pays, full).get("b1");
+  assert.equal(done?.paid, 142_600, "100% → recognized cost = full commitment");
+  assert.equal(done?.open, 0, "100% → no remaining commitment");
+
+  // The recognized cost flows into the ledger's actual-to-date (EAC still the
+  // commitment — earned value moves the actual/forecast SPLIT, not the total).
+  const bucket = {
+    id: "b1",
+    cost_code: "03-8011",
+    bucket: "Dock Pit F/R/P",
+    contract_value: 221_000,
+    original_budget: 221_000,
+    actual_to_date: 0,
+    ftc: 221_000,
+  };
+  const row = computeBudgetLedger(
+    [bucket],
+    [],
+    [],
+    [],
+    [],
+    summarizeSubCostByBucket(subs, allocs, pays, pct),
+  ).rows.find((r) => r.costBucketId === "b1");
+  assert.equal(row?.actuals, 28_520, "ledger actual-to-date reflects earned value");
+  assert.equal(row?.eac, 221_000, "EAC unchanged — earned value is a split, not a total change");
+}
+
+// ── latestPercentBySubBucket: the recognized % per (sub, code) is the LATEST
+//    entry's value (cumulative), keyed to match subEarnedKey. ──
+{
+  const entries = [
+    {
+      subcontractor_id: "co1",
+      cost_bucket_id: "b1",
+      percent_complete: 20,
+      entry_date: "2026-07-06",
+      updated_at: "2026-07-06T10:00:00Z",
+    },
+    {
+      subcontractor_id: "co1",
+      cost_bucket_id: "b1",
+      percent_complete: 35,
+      entry_date: "2026-07-08",
+      updated_at: "2026-07-08T10:00:00Z",
+    },
+    // self-perform (no sub) and uncoded lines are ignored.
+    {
+      subcontractor_id: null,
+      cost_bucket_id: "b1",
+      percent_complete: 99,
+      entry_date: "2026-07-09",
+      updated_at: "",
+    },
+  ];
+  const map = latestPercentBySubBucket(entries);
+  assert.equal(
+    map.get(subEarnedKey("co1", "b1")),
+    35,
+    "latest entry's % wins (cumulative, not summed)",
+  );
+  assert.equal(map.size, 1, "self-perform / uncoded entries excluded");
 }
 
 console.log("subcontract budget smoke: all assertions passed");

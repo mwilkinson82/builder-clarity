@@ -132,6 +132,39 @@ export function isPercentOverridden(review: {
   return numeric(review.percent_complete) !== numeric(review.field_percent_complete);
 }
 
+// A daily-WIP entry trimmed to what the earned-value % rollup needs.
+export interface WipPercentRowLike {
+  subcontractor_id: string | null;
+  cost_bucket_id: string | null;
+  percent_complete: number;
+  entry_date: string; // YYYY-MM-DD
+  updated_at?: string | null; // tiebreaker when two entries share a date
+}
+
+// The PM-reviewed percent-complete to recognize per (subcontractor company, cost
+// code) = the LATEST entry's `percent_complete` (cumulative field completion, not
+// summed day-over-day), keyed `${subcontractor_id}:${cost_bucket_id}`. "Latest" =
+// highest entry_date, then highest updated_at as a same-day tiebreaker. Feeds
+// summarizeSubCostByBucket's earned-value input (subEarnedKey matches this key).
+export function latestPercentBySubBucket(
+  entries: readonly WipPercentRowLike[],
+): Map<string, number> {
+  const latest = new Map<string, { pct: number; date: string; updated: string }>();
+  for (const e of entries) {
+    if (!e.subcontractor_id || !e.cost_bucket_id) continue;
+    const key = `${e.subcontractor_id}:${e.cost_bucket_id}`;
+    const date = e.entry_date ?? "";
+    const updated = e.updated_at ?? "";
+    const prev = latest.get(key);
+    if (!prev || date > prev.date || (date === prev.date && updated >= prev.updated)) {
+      latest.set(key, { pct: numeric(e.percent_complete), date, updated });
+    }
+  }
+  const out = new Map<string, number>();
+  for (const [key, v] of latest) out.set(key, v.pct);
+  return out;
+}
+
 // Work-in-place for one activity row. A self-perform line is labor + materials +
 // equipment. A bought-out subcontractor line (subcontractor_id set) with a known
 // commitment on its cost code is instead valued by earned value —
