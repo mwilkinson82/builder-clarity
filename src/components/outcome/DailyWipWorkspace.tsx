@@ -6,11 +6,11 @@
 //
 // The dependency rule: this FEEDS billing; billing never waits on it. Recording
 // here is optional and additive.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { CalendarDays, ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,6 +88,23 @@ const emptyDraft: EntryDraft = {
   notes: "",
 };
 
+// A draft nobody has touched yet — safe to auto-seed from the daily report
+// without clobbering typed input.
+function isPristineDraft(d: EntryDraft): boolean {
+  return (
+    d.cost_bucket_id === "" &&
+    d.activity === "" &&
+    d.crew_count === 0 &&
+    d.hours === 0 &&
+    d.labor_rate === 0 &&
+    d.material_items.length === 0 &&
+    d.equipment_items.length === 0 &&
+    d.quantity === 0 &&
+    d.unit === "" &&
+    d.notes === ""
+  );
+}
+
 function localToday(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
@@ -136,6 +153,41 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     () => (reportsQuery.data ?? []).find((r) => r.report_date === selectedDate) ?? null,
     [reportsQuery.data, selectedDate],
   );
+
+  // The daily report is the master record: the WIP entry pulls crew count and the
+  // day's activity narrative from it, so nobody types the day twice. There's still
+  // a WIP entry to file (it carries cost/production the report doesn't) — it just
+  // starts pre-filled where the report already answered.
+  const reportHasSeed = Boolean(report && (report.crew_count > 0 || report.work_performed.trim()));
+
+  // Auto-seed once per date, and only into an untouched draft, so navigating to a
+  // day with a report pre-fills it but we never overwrite work in progress.
+  const seededDateRef = useRef<string | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  useEffect(() => {
+    if (!report || seededDateRef.current === selectedDate) return;
+    if (!isPristineDraft(draftRef.current)) return;
+    seededDateRef.current = selectedDate;
+    setDraft((prev) => ({
+      ...prev,
+      crew_count: report.crew_count || prev.crew_count,
+      activity: prev.activity.trim() ? prev.activity : report.work_performed.trim(),
+    }));
+  }, [report, selectedDate]);
+
+  // Explicit "pull from the report" — used from the report card. Unlike the
+  // auto-seed it overwrites crew + activity, because the user asked for it.
+  const seedFromReport = () => {
+    if (!report) return;
+    seededDateRef.current = selectedDate;
+    setDraft((prev) => ({
+      ...prev,
+      crew_count: report.crew_count || prev.crew_count,
+      activity: report.work_performed.trim() || prev.activity,
+    }));
+    toast.success("Pulled crew and activity from the daily report");
+  };
 
   const bucketLabel = (id: string | null) => {
     if (!id) return "Uncoded";
@@ -327,6 +379,12 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               Record work in place
             </div>
+            {reportHasSeed ? (
+              <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <ClipboardList className="h-3.5 w-3.5 shrink-0 text-accent" />
+                Crew and activity are pre-filled from today's daily report — edit as needed.
+              </p>
+            ) : null}
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="flex flex-col gap-1 sm:col-span-2">
                 <span className="text-xs text-muted-foreground">Cost code</span>
@@ -477,6 +535,17 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                   <p className="text-warning">
                     <span className="font-medium">Delays:</span> {report.delays}
                   </p>
+                ) : null}
+                {reportHasSeed ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-1 w-full gap-1.5"
+                    onClick={seedFromReport}
+                  >
+                    <ClipboardList className="h-3.5 w-3.5" />
+                    Use crew + activity in this entry
+                  </Button>
                 ) : null}
               </div>
             ) : (
