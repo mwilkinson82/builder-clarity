@@ -1929,7 +1929,7 @@ function ProjectPage() {
             </TabsContent>
 
             <TabsContent value="daily-reports" className="mt-0">
-              <DailyReportsWorkspace projectId={projectId} project={project} />
+              <DailyReportsWorkspace projectId={projectId} project={project} buckets={buckets} />
             </TabsContent>
 
             <TabsContent value="daily-wip" className="mt-0">
