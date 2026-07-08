@@ -379,6 +379,11 @@ assert.equal(
     ledgerAll.totals.eac,
     "footer projected total == ledger EAC total (incl. unallocated catch-all)",
   );
+  // Grid rows now show sub-inclusive actual/forecast, so the footer's actual +
+  // ftc must be sub-inclusive too and reconcile with the ledger's actuals/open.
+  assert.equal(footer.actual, ledgerAll.totals.actuals, "footer actual == ledger actuals total");
+  assert.equal(footer.ftc, ledgerAll.totals.open, "footer forecast == ledger open total");
+  assert.equal(footer.actual + footer.ftc, footer.fac, "actual + forecast reconcile to projected");
   // Without includeUnallocated the footer ignores the orphan (group-subtotal use).
   assert.equal(
     sovTotalsWithSubs([bucket], orphan, false).fac,
