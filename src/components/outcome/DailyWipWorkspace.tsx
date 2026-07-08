@@ -15,6 +15,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  HardHat,
   Pencil,
   Plus,
   Trash2,
@@ -35,6 +36,8 @@ import {
   type ScheduleActivityOption,
 } from "@/lib/daily-wip.functions";
 import { listDailyReports } from "@/lib/daily-reports.functions";
+import { listSubcontractors } from "@/lib/subcontractors.functions";
+import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 import {
   dailyWipTotals,
   laborCost,
@@ -60,6 +63,7 @@ interface SaveWipInput {
   id?: string;
   cost_bucket_id: string | null;
   schedule_activity_id: string | null;
+  subcontractor_id: string | null;
   entry_date: string;
   activity: string;
   crew_count: number;
@@ -77,6 +81,7 @@ interface SaveWipInput {
 interface EntryDraft {
   cost_bucket_id: string;
   schedule_activity_id: string;
+  subcontractor_id: string;
   activity: string;
   crew_count: number;
   hours: number;
@@ -91,6 +96,7 @@ interface EntryDraft {
 const emptyDraft: EntryDraft = {
   cost_bucket_id: "",
   schedule_activity_id: "",
+  subcontractor_id: "",
   activity: "",
   crew_count: 0,
   hours: 0,
@@ -149,6 +155,8 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   const listActivities = useServerFn(listScheduleActivitiesForWip);
   const saveEntry = useServerFn(saveDailyWipEntry);
   const removeEntry = useServerFn(deleteDailyWipEntry);
+  const listDirectory = useServerFn(listSubcontractors);
+  const listProjectSubs = useServerFn(listProjectSubcontracts);
 
   const [selectedDate, setSelectedDate] = useState<string>(() => localToday());
   const [draft, setDraft] = useState<EntryDraft>(emptyDraft);
@@ -167,6 +175,20 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   const activitiesQuery = useQuery({
     queryKey: ["daily-wip-activities", projectId],
     queryFn: () => listActivities({ data: { projectId } }),
+  });
+  // Subcontractors on this job, so a logged line can be tagged to whoever put the
+  // work in place — self-perform crew or a specific sub. The directory gives the
+  // company names; the project subcontracts tell us which subs are actually
+  // bought out here. Both reads degrade to empty before the subcontractor tables
+  // exist, so the picker simply offers "Self-perform" until a sub is bought out.
+  const directoryQuery = useQuery({
+    queryKey: ["subcontractors-directory"],
+    queryFn: () => listDirectory(),
+    staleTime: 30_000,
+  });
+  const projectSubsQuery = useQuery({
+    queryKey: ["subcontracts", projectId],
+    queryFn: () => listProjectSubs({ data: { projectId } }),
   });
 
   const entries = useMemo(
@@ -198,6 +220,29 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     const found = activities.find((a) => a.id === id);
     return found ? activityOptionLabel(found) : null;
   };
+
+  const subNameById = useMemo(
+    () => new Map((directoryQuery.data ?? []).map((d) => [d.id, d.name] as const)),
+    [directoryQuery.data],
+  );
+  // Subs bought out on this project, deduped by company — the WIP line's
+  // subcontractor_id references the directory company, not a specific buyout, so
+  // one entry per company (labelled with its first scope title as a hint).
+  const subOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const options: { id: string; label: string }[] = [];
+    for (const sub of projectSubsQuery.data?.subcontracts ?? []) {
+      if (seen.has(sub.subcontractor_id)) continue;
+      seen.add(sub.subcontractor_id);
+      const name = subNameById.get(sub.subcontractor_id) ?? "Subcontractor";
+      options.push({
+        id: sub.subcontractor_id,
+        label: sub.title ? `${name} — ${sub.title}` : name,
+      });
+    }
+    return options;
+  }, [projectSubsQuery.data, subNameById]);
+  const subName = (id: string | null) => (id ? (subNameById.get(id) ?? "Subcontractor") : null);
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["daily-wip-entries", projectId] });
@@ -247,6 +292,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
       id: editingId ?? undefined,
       cost_bucket_id: draft.cost_bucket_id || null,
       schedule_activity_id: draft.schedule_activity_id || null,
+      subcontractor_id: draft.subcontractor_id || null,
       entry_date: selectedDate,
       activity: draft.activity.trim(),
       crew_count: draft.crew_count,
@@ -269,6 +315,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     setDraft({
       cost_bucket_id: entry.cost_bucket_id ?? "",
       schedule_activity_id: entry.schedule_activity_id ?? "",
+      subcontractor_id: entry.subcontractor_id ?? "",
       activity: entry.activity,
       crew_count: entry.crew_count,
       hours: entry.hours,
@@ -375,6 +422,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                       entry={entry}
                       label={bucketLabel(entry.cost_bucket_id)}
                       activityLabel={activityLabel(entry.schedule_activity_id)}
+                      performedBy={subName(entry.subcontractor_id)}
                       editing={editingId === entry.id}
                       onEdit={() => startEdit(entry)}
                       onDelete={() => deleteMutation.mutate(entry.id)}
@@ -469,6 +517,26 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                         </option>
                       ))}
                     </optgroup>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-2">
+                <span className="text-xs text-muted-foreground">Performed by</span>
+                <select
+                  value={draft.subcontractor_id}
+                  onChange={(event) => setDraftField("subcontractor_id", event.target.value)}
+                  disabled={subOptions.length === 0}
+                  className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                >
+                  <option value="">
+                    {subOptions.length === 0
+                      ? "Self-perform (no subs bought out yet)"
+                      : "Self-perform (in-house)"}
+                  </option>
+                  {subOptions.map((sub) => (
+                    <option key={sub.id} value={sub.id}>
+                      {sub.label}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -742,6 +810,7 @@ function EntryRow({
   entry,
   label,
   activityLabel,
+  performedBy,
   editing,
   onEdit,
   onDelete,
@@ -750,6 +819,7 @@ function EntryRow({
   entry: DailyWipEntryRow;
   label: string;
   activityLabel: string | null;
+  performedBy: string | null;
   editing: boolean;
   onEdit: () => void;
   onDelete: () => void;
@@ -767,6 +837,12 @@ function EntryRow({
           <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
             <CalendarClock className="h-3 w-3 shrink-0 text-accent" />
             <span className="truncate">{activityLabel}</span>
+          </div>
+        ) : null}
+        {performedBy ? (
+          <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+            <HardHat className="h-3 w-3 shrink-0 text-accent" />
+            <span className="truncate">{performedBy}</span>
           </div>
         ) : null}
       </td>
