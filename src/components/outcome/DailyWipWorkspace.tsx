@@ -76,6 +76,7 @@ interface SaveWipInput {
   equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
+  percent_complete: number;
   notes: string;
 }
 
@@ -91,6 +92,7 @@ interface EntryDraft {
   equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
+  percent_complete: number;
   notes: string;
 }
 
@@ -106,6 +108,7 @@ const emptyDraft: EntryDraft = {
   equipment_items: [],
   quantity: 0,
   unit: "",
+  percent_complete: 0,
   notes: "",
 };
 
@@ -305,6 +308,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
       equipment_items,
       quantity: draft.quantity,
       unit: draft.unit.trim(),
+      percent_complete: draft.percent_complete,
       notes: draft.notes.trim(),
     });
   };
@@ -328,6 +332,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
       equipment_items: costItemsForEdit(entry.equipment_items, entry.equipment_cost),
       quantity: entry.quantity,
       unit: entry.unit,
+      percent_complete: entry.percent_complete,
       notes: entry.notes,
     });
   };
@@ -601,6 +606,22 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                   placeholder="SF, CY, LF…"
                 />
               </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">% complete</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={draft.percent_complete || ""}
+                  placeholder="from the field — adjust if needed"
+                  onChange={(event) =>
+                    setDraftField(
+                      "percent_complete",
+                      Math.min(100, Math.max(0, Number(event.target.value) || 0)),
+                    )
+                  }
+                />
+              </label>
             </div>
 
             {/* Itemized materials + equipment: what it was, and how much it cost. */}
@@ -847,6 +868,11 @@ function EntryRow({
           <div className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
             <HardHat className="h-3 w-3 shrink-0 text-accent" />
             <span className="truncate">{performedBy}</span>
+          </div>
+        ) : null}
+        {entry.percent_complete ? (
+          <div className="mt-0.5 text-[11px] font-medium text-foreground">
+            {entry.percent_complete}% complete
           </div>
         ) : null}
       </td>

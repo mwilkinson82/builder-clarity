@@ -68,6 +68,7 @@ export interface DailyWipEntryRow {
   equipment_items: CostLineItem[];
   quantity: number;
   unit: string;
+  percent_complete: number;
   notes: string;
   created_at: string;
   updated_at: string;
@@ -90,6 +91,7 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   equipment_items: normalizeItems(row.equipment_items),
   quantity: num(row.quantity),
   unit: str(row.unit),
+  percent_complete: num(row.percent_complete),
   notes: str(row.notes),
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
@@ -115,6 +117,7 @@ const entryFieldsInput = z.object({
   equipment_items: z.array(lineItemInput).max(100).default([]),
   quantity: z.number().min(0).default(0),
   unit: z.string().max(40).default(""),
+  percent_complete: z.number().min(0).max(100).default(0),
   notes: z.string().max(4000).default(""),
 });
 

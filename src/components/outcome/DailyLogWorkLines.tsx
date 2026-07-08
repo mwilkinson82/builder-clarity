@@ -49,6 +49,7 @@ interface LineDraft {
   hours: number;
   quantity: number;
   unit: string;
+  percent_complete: number;
 }
 
 const emptyLine: LineDraft = {
@@ -59,6 +60,7 @@ const emptyLine: LineDraft = {
   hours: 0,
   quantity: 0,
   unit: "",
+  percent_complete: 0,
 };
 
 function activityOptionLabel(a: ScheduleActivityOption): string {
@@ -173,6 +175,7 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
       hours: entry.hours,
       quantity: entry.quantity,
       unit: entry.unit,
+      percent_complete: entry.percent_complete,
     });
   };
 
@@ -202,6 +205,7 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
       hours: draft.hours,
       quantity: draft.quantity,
       unit: draft.unit.trim(),
+      percent_complete: draft.percent_complete,
       labor_rate: money?.labor_rate ?? 0,
       material_cost: money?.material_cost ?? 0,
       equipment_cost: money?.equipment_cost ?? 0,
@@ -271,6 +275,11 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
                     {entry.quantity ? (
                       <span>
                         {entry.quantity} {entry.unit || "qty"}
+                      </span>
+                    ) : null}
+                    {entry.percent_complete ? (
+                      <span className="font-medium text-foreground">
+                        {entry.percent_complete}% complete
                       </span>
                     ) : null}
                   </div>
@@ -405,6 +414,22 @@ export function DailyLogWorkLines({ projectId, reportDate, buckets }: DailyLogWo
               value={draft.unit}
               placeholder="SF, CY, LF…"
               onChange={(event) => setField("unit", event.target.value)}
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">% complete</span>
+            <Input
+              type="number"
+              min={0}
+              max={100}
+              value={draft.percent_complete || ""}
+              placeholder="0–100"
+              onChange={(event) =>
+                setField(
+                  "percent_complete",
+                  Math.min(100, Math.max(0, Number(event.target.value) || 0)),
+                )
+              }
             />
           </label>
         </div>
