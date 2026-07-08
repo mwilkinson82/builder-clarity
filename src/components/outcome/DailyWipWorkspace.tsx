@@ -39,6 +39,7 @@ import { listDailyReports } from "@/lib/daily-reports.functions";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 import {
+  costItemsForEdit,
   dailyWipTotals,
   laborCost,
   productionRate,
@@ -320,8 +321,11 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
       crew_count: entry.crew_count,
       hours: entry.hours,
       labor_rate: entry.labor_rate,
-      material_items: entry.material_items,
-      equipment_items: entry.equipment_items,
+      // Surface any lump cost with no line items as a single editable line, so
+      // editing this row never silently zeroes already-recorded material /
+      // equipment dollars (save recomputes the cost from these items).
+      material_items: costItemsForEdit(entry.material_items, entry.material_cost),
+      equipment_items: costItemsForEdit(entry.equipment_items, entry.equipment_cost),
       quantity: entry.quantity,
       unit: entry.unit,
       notes: entry.notes,

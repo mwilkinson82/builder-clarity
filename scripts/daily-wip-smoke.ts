@@ -3,11 +3,13 @@
 // cents-exact and that labor is always crew × hours × rate.
 import assert from "node:assert/strict";
 import {
+  costItemsForEdit,
   dailyWipTotals,
   laborCost,
   laborHours,
   productionRate,
   rowWorkInPlace,
+  sumLineItems,
 } from "../src/lib/daily-wip.ts";
 
 const row = (over: Partial<Parameters<typeof rowWorkInPlace>[0]> = {}) => ({
@@ -81,6 +83,26 @@ assert.equal(
   rowWorkInPlace(row({ crew_count: Number.NaN, hours: 8, labor_rate: 50, material_cost: 10 })),
   10,
   "NaN crew → labor 0, still counts materials",
+);
+
+// Opening a line for editing must never silently drop an already-recorded cost.
+// A lump material/equipment cost with no line items is surfaced as one editable
+// line so that save (which recomputes cost from the items) preserves it.
+assert.deepEqual(
+  costItemsForEdit([], 900),
+  [{ description: "", amount: 900 }],
+  "lump with no items → one editable line",
+);
+assert.equal(
+  sumLineItems(costItemsForEdit([], 900)),
+  900,
+  "lump round-trips through save (no wipe)",
+);
+assert.deepEqual(costItemsForEdit([], 0), [], "no items and no lump → empty");
+assert.deepEqual(
+  costItemsForEdit([{ description: "rebar #5", amount: 500 }], 999),
+  [{ description: "rebar #5", amount: 500 }],
+  "existing line items are kept as-is (lump ignored)",
 );
 
 console.log("daily WIP smoke: all assertions passed");
