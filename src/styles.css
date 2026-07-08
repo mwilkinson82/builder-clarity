@@ -87,7 +87,7 @@
 
   /* Active / selected / highlight states. Warm terracotta (--clay) rather than
      a second brand accent, so the signal orange stays reserved for true CTAs. */
-  --accent: #c0673c; /* --clay */
+  --accent: #d97757; /* --clay */
   --accent-foreground: #ffffff;
 
   --destructive: #b5432e; /* --crit */
@@ -106,7 +106,7 @@
   /* House brand tokens */
   --signal: #f76a16; /* THE accent — CTAs & true emphasis ONLY */
   --signal-foreground: #ffffff;
-  --clay: #c0673c; /* eyebrows & small warm accents */
+  --clay: #d97757; /* eyebrows & small warm accents (Overwatch mark terracotta) */
   --dark-panel: #171310; /* --dark: stat tiles, media frames, pop-up graphic */
   --dark-panel-foreground: #f8f4ed;
 }
@@ -128,7 +128,7 @@
   --secondary-foreground: #f5f0e8;
   --muted: #241f1a;
   --muted-foreground: #a8a096;
-  --accent: #c0673c; /* --clay holds on dark too */
+  --accent: #d97757; /* --clay holds on dark too */
   --accent-foreground: #ffffff;
   --destructive: #ef8a7a; /* lighter red for contrast on dark (§2 usage rule) */
   --destructive-foreground: #171310;
@@ -141,7 +141,7 @@
   --ring: rgb(247 106 22 / 0.55); /* --signal focus */
   --signal: #f76a16;
   --signal-foreground: #ffffff;
-  --clay: #c0673c;
+  --clay: #d97757;
   --dark-panel: #0b0906; /* deeper tile ground on an already-dark surface */
   --dark-panel-foreground: #f5f0e8;
 }

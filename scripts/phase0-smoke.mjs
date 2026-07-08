@@ -246,7 +246,7 @@ await expectContains(
     // ALP house skin (AOS-DESIGN-SYSTEM.md §2): warm clay accent for
     // active/selected states, signal-orange focus ring. Orange is rationed to
     // the Button variant="signal" CTA, never the global accent.
-    /--accent:\s*#c0673c/,
+    /--accent:\s*#d97757/,
     /--ring:\s*rgb\(247 106 22 \/ 0\.45\)/,
     /--signal:\s*#f76a16/,
     /--ring:\s*rgb\(247 106 22 \/ 0\.55\)/,
