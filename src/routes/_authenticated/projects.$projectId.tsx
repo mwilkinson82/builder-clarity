@@ -222,8 +222,10 @@ const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
 //
 // Daily Reports + Daily WIP are PRIMARY (founder 2026-07-07): the daily log now
 // feeds the WIP and is a working surface, not a rarely-opened reference — it
-// gets its own place on the rail, not the "More" menu.
-const SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>(["inspections", "ior-report"]);
+// gets its own place on the rail, not the "More" menu. Inspections joined the
+// primary rail too (founder 2026-07-08) — it's an active field surface, not a
+// reference tab. Only the IOR report stays under "More".
+const SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>(["ior-report"]);
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   ssr: false,

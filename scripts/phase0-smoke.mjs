@@ -2337,13 +2337,13 @@ await expectContains(
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [
-    /SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>\(\["inspections", "ior-report"\]\)/,
+    /SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>\(\["ior-report"\]\)/,
     /primaryNavItems\.map/,
     /secondaryNavItems\.map/,
     /DropdownMenuTrigger[\s\S]*More project tabs/,
     /onSelect=\{\(\) => setProjectTab\(item\.value\)\}/,
   ],
-  "project tab rail collapses rarely-used tabs under a More menu while keeping deep links (Daily Reports + Daily WIP are primary, founder 2026-07-07)",
+  "project tab rail keeps only the IOR report under More; Inspections + Daily Reports/WIP are primary (founder 2026-07-08)",
 );
 
 // POLISH1 Task 1: one shared state chip (empty / in-progress / complete /
