@@ -156,10 +156,13 @@ export function BudgetLedgerTable({
         </p>
       </div>
       <TooltipProvider delayDuration={150}>
-        <div className="overflow-x-auto rounded-lg border border-hairline bg-card">
+        {/* overflow-x-clip (not -auto) keeps the rounded corners without creating a
+            scroll container, so the sticky header can pin to the viewport as the
+            page scrolls. */}
+        <div className="overflow-x-clip rounded-lg border border-hairline bg-card">
           <Table>
-            <TableHeader>
-              <TableRow className="bg-surface text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+            <TableHeader className="sticky top-0 z-10">
+              <TableRow className="border-b border-hairline bg-surface text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                 <TableHead className="w-[90px]">Cost code</TableHead>
                 <TableHead>Description</TableHead>
                 <HelpHead

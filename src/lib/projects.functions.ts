@@ -1051,7 +1051,16 @@ export const listProjects = createServerFn({ method: "GET" })
       new Set(projects.map((p) => p.organization_id).filter((id): id is string => Boolean(id))),
     );
 
-    const [expRes, cosRes, bucketsRes, decisionsRes, organizationsRes] = await Promise.all([
+    const [
+      expRes,
+      cosRes,
+      bucketsRes,
+      decisionsRes,
+      organizationsRes,
+      subRes,
+      subAllocRes,
+      subPayRes,
+    ] = await Promise.all([
       context.supabase.from("exposures").select("*").in("project_id", ids),
       context.supabase
         .from("change_orders")
@@ -1059,7 +1068,7 @@ export const listProjects = createServerFn({ method: "GET" })
         .in("project_id", ids),
       context.supabase
         .from("cost_buckets")
-        .select("project_id,bucket,original_budget,actual_to_date,ftc")
+        .select("id,project_id,bucket,original_budget,actual_to_date,ftc")
         .in("project_id", ids),
       context.supabase
         .from("decisions")
@@ -1070,6 +1079,12 @@ export const listProjects = createServerFn({ method: "GET" })
         : dynamicTable(context.supabase, "organizations")
             .select("id,name,logo_url,updated_at")
             .in("id", organizationIds),
+      // Subcontractor layer so the portfolio GP matches each project's own
+      // dashboard (a buyout that pops a code pulls GP down here too). Degrades to
+      // empty where the subcontract tables aren't provisioned.
+      dynamicTable(context.supabase, "subcontracts").select("*").in("project_id", ids),
+      dynamicTable(context.supabase, "subcontract_allocations").select("*").in("project_id", ids),
+      dynamicTable(context.supabase, "subcontract_payments").select("*").in("project_id", ids),
     ]);
     if (expRes.error) throw new Error(expRes.error.message);
     if (cosRes.error) throw new Error(cosRes.error.message);
@@ -1122,6 +1137,21 @@ export const listProjects = createServerFn({ method: "GET" })
     const bByP = groupBy<{ project_id: string } & Record<string, unknown>>(bucketsRes.data ?? []);
     const dByP = groupBy<{ project_id: string } & Record<string, unknown>>(decisionsRes.data ?? []);
     const drByP = groupBy<{ project_id: string } & Record<string, unknown>>(dailyReportRows);
+    // Subcontractor rows degrade to empty when the tables aren't provisioned, so
+    // the portfolio never breaks ahead of the subcontract migrations.
+    const subDegrade = (res: { data: unknown; error: unknown }, relation: string) =>
+      res.error && isMissingRestRelation(res.error as { code?: string; message: string }, relation)
+        ? []
+        : ((res.data ?? []) as ({ project_id: string } & Record<string, unknown>)[]);
+    const scByP = groupBy<{ project_id: string } & Record<string, unknown>>(
+      subDegrade(subRes, "subcontracts"),
+    );
+    const saByP = groupBy<{ project_id: string } & Record<string, unknown>>(
+      subDegrade(subAllocRes, "subcontract_allocations"),
+    );
+    const spByP = groupBy<{ project_id: string } & Record<string, unknown>>(
+      subDegrade(subPayRes, "subcontract_payments"),
+    );
     const organizationsById = new Map(
       organizationRows.map((organization) => {
         const organizationId = str(organization.id);
@@ -1156,13 +1186,35 @@ export const listProjects = createServerFn({ method: "GET" })
         probability: num(c.probability),
       }));
       const buckets = (bByP[p.id] ?? []).map((b) => ({
+        // id is needed to match the subcontractor layer to its cost code.
+        id: str(b.id),
         cost_code: str(b.cost_code),
         bucket: str(b.bucket),
         original_budget: num(b.original_budget),
         actual_to_date: num(b.actual_to_date),
         ftc: num(b.ftc),
       }));
-      const r = computeRollup(p, buckets, cos, exposures);
+      // Sub cost per bucket → the rollup, so a buyout that pops a code pulls the
+      // portfolio GP down exactly as it does on the project's own dashboard.
+      // GP depends only on the committed displacement (split-independent), so the
+      // payments-only summary is sufficient here — no daily-WIP % needed.
+      const subCostByBucket = summarizeSubCostByBucket(
+        (scByP[p.id] ?? []).map((row) => ({
+          id: str(row.id),
+          contract_value: num(row.contract_value),
+          status: str(row.status),
+        })),
+        (saByP[p.id] ?? []).map((row) => ({
+          subcontract_id: str(row.subcontract_id),
+          cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+          amount: num(row.amount),
+        })),
+        (spByP[p.id] ?? []).map((row) => ({
+          subcontract_id: str(row.subcontract_id),
+          amount: num(row.amount),
+        })),
+      );
+      const r = computeRollup(p, buckets, cos, exposures, subCostByBucket);
       const warnings = evaluateWarnings(p, buckets, cos, exposures, r);
       const lastReview = p.last_reviewed_at ? new Date(p.last_reviewed_at).getTime() : null;
       const daysSinceReview = lastReview ? Math.floor((Date.now() - lastReview) / 86400000) : null;

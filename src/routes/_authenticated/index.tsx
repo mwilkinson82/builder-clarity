@@ -918,10 +918,10 @@ function PortfolioProjectLedger({
                     tone={project.indicated_gp_pct < project.original_gp_pct ? "warning" : "accent"}
                   />
                   <PortfolioLedgerStat
-                    label="GP risk"
-                    value={fmtUSD(project.gp_at_risk)}
-                    sub="Margin erosion"
-                    tone={project.gp_at_risk > 0 ? "danger" : undefined}
+                    label={project.gp_at_risk > 0 ? "GP risk" : "GP upside"}
+                    value={fmtUSD(Math.abs(project.gp_at_risk))}
+                    sub={project.gp_at_risk > 0 ? "Margin erosion" : "Above signed"}
+                    tone={project.gp_at_risk > 0 ? "danger" : "accent"}
                   />
                   <PortfolioLedgerStat
                     label="Allocated"
@@ -1281,10 +1281,17 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
               help="The gross profit you're currently on track to make across all jobs — your original expected profit, less what's now held back for risk."
             />
             <PortfolioMetric
-              label="GP at risk"
-              value={fmtUSD(totals.gpAtRisk)}
-              tone="danger"
-              help="How much your originally expected profit has eroded — original expected GP minus what you're now indicating. It's the profit in question you're managing back, not a booked loss, so it can be larger than indicated GP."
+              label={totals.gpAtRisk > 0 ? "GP at risk" : "GP upside"}
+              // gpAtRisk = original GP − indicated GP. Positive = erosion (risk);
+              // negative = indicating ABOVE signed (upside) — show that as upside,
+              // never as a red negative "at risk", matching the project dashboard.
+              value={fmtUSD(Math.abs(totals.gpAtRisk))}
+              tone={totals.gpAtRisk > 0 ? "danger" : "accent"}
+              help={
+                totals.gpAtRisk > 0
+                  ? "How much your originally expected profit has eroded — original expected GP minus what you're now indicating. It's the profit in question you're managing back, not a booked loss, so it can be larger than indicated GP."
+                  : "How much you're indicating ABOVE the gross profit you originally signed — upside on the book across your jobs, not risk."
+              }
             />
             <PortfolioMetric
               label="E-Holds"
@@ -1350,8 +1357,11 @@ function PortfolioDashboard({ totals }: { totals: PortfolioTotals }) {
               <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-danger">
                 Largest exposure pressure
               </div>
+              {/* The live risk holds pulling on GP (E + C holds) — this box is
+                  about exposures, so show their total, not gpAtRisk (which can be
+                  negative when the book is running to upside). */}
               <div className="text-sm font-medium tabular text-danger">
-                {fmtUSD(totals.gpAtRisk)}
+                {fmtUSD(totals.exposureHolds + totals.contingencyHold)}
               </div>
             </div>
             <div className="mt-2 divide-y divide-danger/15">
