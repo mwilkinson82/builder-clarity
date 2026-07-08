@@ -524,17 +524,23 @@ function ProjectPage() {
     const ftcByBucket = new Map((data?.buckets ?? []).map((b) => [b.id, b.ftc] as const));
     let paidCents = 0;
     let openAdjCents = 0;
+    let committedTotalCents = 0;
     if (subCostByBucket) {
       for (const [bucketId, value] of subCostByBucket.entries()) {
         paidCents += dollarsToCents(value.paid);
         const committedCents = dollarsToCents(value.committed ?? 0);
+        committedTotalCents += committedCents;
         const bucketFtcCents = dollarsToCents(ftcByBucket.get(bucketId) ?? 0);
         // Buyout consumes budgeted forecast up to this code's own ftc, then adds
         // back the remaining commitment: net = open − min(ftc, committed).
         openAdjCents += dollarsToCents(value.open) - Math.min(bucketFtcCents, committedCents);
       }
     }
-    return { paid: centsToDollars(paidCents), openAdj: centsToDollars(openAdjCents) };
+    return {
+      paid: centsToDollars(paidCents),
+      openAdj: centsToDollars(openAdjCents),
+      committed: centsToDollars(committedTotalCents),
+    };
   }, [subCostByBucket, data?.buckets]);
   const budgetLock = useMutation({
     mutationFn: () => lockProjectBudgetFn({ data: { projectId } }),
@@ -2166,6 +2172,12 @@ function ProjectPage() {
                     // add it, because those rollup fields stay raw.
                     value={fmtUSD(rollup.forecastedFinalCost)}
                   />
+                  {subCostTotals.committed > 0 ? (
+                    <SovMetric
+                      label="Committed cost (subs)"
+                      value={fmtUSD(subCostTotals.committed)}
+                    />
+                  ) : null}
                 </div>
                 <SovImportHistory imports={sovImports ?? []} />
               </div>
