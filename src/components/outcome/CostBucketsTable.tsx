@@ -351,6 +351,11 @@ export function CostBucketsTable({
                         value={b.actual_to_date}
                         onCommit={(v) => onUpdate(b.id, { actual_to_date: v })}
                       />
+                      {subCost && subCost.paid > 0 ? (
+                        <div className="mt-0.5 text-[10px] font-normal text-muted-foreground">
+                          incl. {fmtUSD(subCost.paid)} sub
+                        </div>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-right tabular">
                       <NumCell value={b.ftc} onCommit={(v) => onUpdate(b.id, { ftc: v })} />

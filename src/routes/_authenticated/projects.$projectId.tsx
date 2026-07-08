@@ -54,6 +54,8 @@ import { DailyWipWorkspace } from "@/components/outcome/DailyWipWorkspace";
 import { SubcontractorsWorkspace } from "@/components/project/SubcontractorsWorkspace";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
+import { latestPercentBySubBucket } from "@/lib/daily-wip";
+import { listDailyWipEntries } from "@/lib/daily-wip.functions";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
 import {
   InspectionsWorkspace,
@@ -338,6 +340,7 @@ function ProjectPage() {
   const listExposureAllocationsFn = useServerFn(listExposureAllocations);
   const listChangeOrderAllocationsFn = useServerFn(listChangeOrderAllocations);
   const listProjectSubcontractsFn = useServerFn(listProjectSubcontracts);
+  const listDailyWipEntriesFn = useServerFn(listDailyWipEntries);
   const lockProjectBudgetFn = useServerFn(lockProjectBudget);
   const buildBudgetFromEstimateFn = useServerFn(buildBudgetFromEstimate);
   const createInspectionFn = useServerFn(createInspection);
@@ -494,11 +497,19 @@ function ProjectPage() {
     queryKey: ["subcontracts", projectId],
     queryFn: () => listProjectSubcontractsFn({ data: { projectId } }),
   });
+  // Daily-WIP entries drive earned value: the sub's latest field %-complete per
+  // cost code × its buyout commitment = recognized cost (Slice C part 2). Shares
+  // the query key with DailyWipWorkspace so a field update reflects here.
+  const dailyWipEntriesQuery = useQuery({
+    queryKey: ["daily-wip-entries", projectId],
+    queryFn: () => listDailyWipEntriesFn({ data: { projectId } }),
+  });
   const subCostByBucket = useMemo(() => {
     const data = subcontractsQuery.data;
     if (!data) return undefined;
-    return summarizeSubCostByBucket(data.subcontracts, data.allocations, data.payments);
-  }, [subcontractsQuery.data]);
+    const currentPct = latestPercentBySubBucket(dailyWipEntriesQuery.data ?? []);
+    return summarizeSubCostByBucket(data.subcontracts, data.allocations, data.payments, currentPct);
+  }, [subcontractsQuery.data, dailyWipEntriesQuery.data]);
   // Sub layer totals for the Budget-tab summary cards, so they match the per-code
   // ledger below. A buyout DISPLACES the self-perform forecast for its scope — it
   // doesn't stack on top — so the forecast adjustment is the remaining sub

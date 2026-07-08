@@ -23,6 +23,10 @@ export interface SubcontractLike {
   // Only 'executed' subcontracts commit real cost; a 'draft' buyout does not
   // move the budget yet.
   status: string;
+  // The directory company that owns this buyout. Optional — only needed to look
+  // up the sub's field percent-complete for earned-value recognition (Slice C
+  // part 2); omit for the plain payments-only summary.
+  subcontractor_id?: string;
 }
 
 export interface SubcontractAllocationLike {
@@ -43,8 +47,12 @@ export interface SubcontractPaymentLike {
 
 export interface SubBucketCost {
   committed: number; // total committed on this bucket (executed subs), dollars
-  paid: number; // paid-to-date attributed to this bucket, dollars
-  open: number; // max(0, committed − paid) = remaining commitment (forecast)
+  // Recognized cost-to-date attributed to this bucket, dollars. Without an
+  // earned-value input this is paid-to-date (payments distributed pro-rata);
+  // with one it is max(earned, paid) per allocation — earned value = commitment ×
+  // percent-complete, floored at what's been paid so it never understates cost.
+  paid: number;
+  open: number; // max(0, committed − recognized cost) = remaining commitment (forecast)
 }
 
 const numeric = (value: number) => (Number.isFinite(value) ? value : 0);
@@ -70,16 +78,31 @@ function distributeCents(totalCents: number, weightsCents: number[]): number[] {
   return out;
 }
 
-// Per cost bucket: committed = Σ executed-sub allocations; paid = each
-// subcontract's total payments distributed pro-rata across its allocations by
-// allocation share; open = max(0, committed − paid). Only EXECUTED subcontracts
-// contribute (a draft buyout has not committed cost yet). Cents-safe throughout.
+// The lookup key for a subcontractor company's field percent-complete on a cost
+// code: `${subcontractor_id}:${cost_bucket_id}`. Matches what the callers build
+// from daily_wip_entries (latestPercentBySubBucket in daily-wip.ts).
+export function subEarnedKey(subcontractorId: string, costBucketId: string): string {
+  return `${subcontractorId}:${costBucketId}`;
+}
+
+// Per cost bucket: committed = Σ executed-sub allocations; recognized cost = each
+// subcontract's payments distributed pro-rata across its allocations, then — when
+// an earned-value map is supplied — raised to max(earned, paid) per allocation
+// (earned = the allocation's commitment × the sub's field percent-complete on
+// that code); open = max(0, committed − recognized cost). Only EXECUTED
+// subcontracts contribute. Cents-safe throughout. With no earned-value map the
+// result is exactly the payments-only summary (earned = 0 → cost = paid).
 export function summarizeSubCostByBucket(
   subcontracts: SubcontractLike[],
   allocations: SubcontractAllocationLike[],
   payments: SubcontractPaymentLike[],
+  // Latest field percent-complete (0–100) per `${subcontractor_id}:${cost_bucket_id}`
+  // (see subEarnedKey). Optional; empty → payments-only behaviour.
+  currentPctByCompanyCode: ReadonlyMap<string, number> = new Map(),
 ): Map<string, SubBucketCost> {
-  const executed = new Set(subcontracts.filter((s) => s.status === "executed").map((s) => s.id));
+  const executedSubs = subcontracts.filter((s) => s.status === "executed");
+  const executed = new Set(executedSubs.map((s) => s.id));
+  const companyBySub = new Map(executedSubs.map((s) => [s.id, s.subcontractor_id] as const));
   const paidCentsBySub = new Map<string, number>();
   for (const p of payments) {
     if (!executed.has(p.subcontract_id)) continue;
@@ -90,7 +113,7 @@ export function summarizeSubCostByBucket(
   }
 
   const committedCentsByBucket = new Map<string, number>();
-  const paidCentsByBucket = new Map<string, number>();
+  const costCentsByBucket = new Map<string, number>();
 
   // Group executed allocations by subcontract so payments distribute correctly.
   const allocsBySub = new Map<string, SubcontractAllocationLike[]>();
@@ -103,6 +126,7 @@ export function summarizeSubCostByBucket(
   }
 
   for (const [subId, allocs] of allocsBySub) {
+    const company = companyBySub.get(subId);
     const weightsCents = allocs.map((a) => dollarsToCents(numeric(a.amount)));
     // Committed on each bucket = its allocation amount.
     for (let i = 0; i < allocs.length; i += 1) {
@@ -112,26 +136,39 @@ export function summarizeSubCostByBucket(
         (committedCentsByBucket.get(bucketId) ?? 0) + weightsCents[i],
       );
     }
-    // Paid distributed across this sub's allocations by committed weight.
+    // Paid distributed across this sub's allocations by committed weight, then
+    // recognized cost = max(earned, paid) per allocation. Earned value =
+    // commitment × the sub's field % on that code, clamped 0–100.
     const paidShares = distributeCents(paidCentsBySub.get(subId) ?? 0, weightsCents);
     for (let i = 0; i < allocs.length; i += 1) {
       const bucketId = allocs[i].cost_bucket_id as string;
-      paidCentsByBucket.set(bucketId, (paidCentsByBucket.get(bucketId) ?? 0) + paidShares[i]);
+      const pct = company
+        ? Math.max(
+            0,
+            Math.min(
+              100,
+              numeric(currentPctByCompanyCode.get(subEarnedKey(company, bucketId)) ?? 0),
+            ),
+          )
+        : 0;
+      const earnedCents = Math.round((weightsCents[i] * pct) / 100);
+      const costCents = Math.max(earnedCents, paidShares[i]);
+      costCentsByBucket.set(bucketId, (costCentsByBucket.get(bucketId) ?? 0) + costCents);
     }
   }
 
   const out = new Map<string, SubBucketCost>();
   const bucketIds = new Set<string>([
     ...committedCentsByBucket.keys(),
-    ...paidCentsByBucket.keys(),
+    ...costCentsByBucket.keys(),
   ]);
   for (const bucketId of bucketIds) {
     const committedCents = committedCentsByBucket.get(bucketId) ?? 0;
-    const paidCents = paidCentsByBucket.get(bucketId) ?? 0;
-    const openCents = Math.max(0, committedCents - paidCents);
+    const costCents = costCentsByBucket.get(bucketId) ?? 0;
+    const openCents = Math.max(0, committedCents - costCents);
     out.set(bucketId, {
       committed: centsToDollars(committedCents),
-      paid: centsToDollars(paidCents),
+      paid: centsToDollars(costCents),
       open: centsToDollars(openCents),
     });
   }

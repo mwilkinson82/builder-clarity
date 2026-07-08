@@ -11,6 +11,7 @@ import {
 import { buildBillingLinesFromBuckets } from "@/lib/billing-line-generation";
 import { computeBudgetLedger, type BudgetLedger, type BudgetLedgerRow } from "@/lib/budget-ledger";
 import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
+import { latestPercentBySubBucket } from "@/lib/daily-wip";
 import type { ExposureLike, ExposureAllocationLike, HoldClass } from "@/lib/exposure-allocation";
 
 type DynamicSupabaseError = { code?: string; message: string };
@@ -1569,6 +1570,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       subRes,
       subAllocRes,
       subPayRes,
+      dailyWipRes,
     ] = await Promise.all([
       dynamicTable(ctx.supabase, "cost_buckets").select("*").in("project_id", ids),
       dynamicTable(ctx.supabase, "exposures").select("*").in("project_id", ids),
@@ -1578,6 +1580,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       dynamicTable(ctx.supabase, "subcontracts").select("*").in("project_id", ids),
       dynamicTable(ctx.supabase, "subcontract_allocations").select("*").in("project_id", ids),
       dynamicTable(ctx.supabase, "subcontract_payments").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "daily_wip_entries").select("*").in("project_id", ids),
     ]);
     if (bucketRes.error) throw new Error(bucketRes.error.message);
     // Exposures / allocations power the At Risk + Contingency columns only; if
@@ -1626,6 +1629,12 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       isMissingRestRelation(subPayRes.error, "subcontract_payments") || !subPayRes.data
         ? []
         : (subPayRes.data as Record<string, unknown>[]);
+    // Daily-WIP entries feed earned value (latest field % per sub+code). Degrade
+    // to no layer if the table isn't present, like the sub tables above.
+    const rawDailyWip =
+      isMissingRestRelation(dailyWipRes.error, "daily_wip_entries") || !dailyWipRes.data
+        ? []
+        : (dailyWipRes.data as Record<string, unknown>[]);
 
     const bucketsByProject = groupRawByProject(rawBuckets);
     const exposuresByProject = groupRawByProject(rawExposures);
@@ -1635,14 +1644,27 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
     const subsByProject = groupRawByProject(rawSubs);
     const subAllocsByProject = groupRawByProject(rawSubAllocs);
     const subPaysByProject = groupRawByProject(rawSubPays);
+    const dailyWipByProject = groupRawByProject(rawDailyWip);
 
     const projects = projectRows.map((projectRow) => {
       const pid = projectRow.id as string;
+      // Earned-value input: latest field % per (sub company, cost code), so the
+      // job-cost report recognizes sub cost the same way the budget tab does.
+      const currentPct = latestPercentBySubBucket(
+        (dailyWipByProject.get(pid) ?? []).map((row) => ({
+          subcontractor_id: (row.subcontractor_id as string | null) ?? null,
+          cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+          percent_complete: num(row.percent_complete),
+          entry_date: str(row.entry_date),
+          updated_at: (row.updated_at as string | null) ?? null,
+        })),
+      );
       const subCostByBucket = summarizeSubCostByBucket(
         (subsByProject.get(pid) ?? []).map((row) => ({
           id: str(row.id),
           contract_value: num(row.contract_value),
           status: str(row.status),
+          subcontractor_id: str(row.subcontractor_id),
         })),
         (subAllocsByProject.get(pid) ?? []).map((row) => ({
           subcontract_id: str(row.subcontract_id),
@@ -1653,6 +1675,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
           subcontract_id: str(row.subcontract_id),
           amount: num(row.amount),
         })),
+        currentPct,
       );
       const ledger = computeBudgetLedger(
         (bucketsByProject.get(pid) ?? []).map(normalizeBucket),
