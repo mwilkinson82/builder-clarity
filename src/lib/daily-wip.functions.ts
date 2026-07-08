@@ -55,6 +55,8 @@ export interface DailyWipEntryRow {
   project_id: string;
   cost_bucket_id: string | null;
   schedule_activity_id: string | null;
+  // SUBCONTRACTORS Slice 2: tag a daily-WIP line to a sub (self-perform ↔ sub).
+  subcontractor_id: string | null;
   entry_date: string;
   activity: string;
   crew_count: number;
@@ -76,6 +78,7 @@ const normalizeEntry = (row: Record<string, unknown>): DailyWipEntryRow => ({
   project_id: str(row.project_id),
   cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
   schedule_activity_id: (row.schedule_activity_id as string | null) ?? null,
+  subcontractor_id: (row.subcontractor_id as string | null) ?? null,
   entry_date: str(row.entry_date),
   activity: str(row.activity),
   crew_count: num(row.crew_count),
@@ -100,6 +103,7 @@ const lineItemInput = z.object({
 const entryFieldsInput = z.object({
   cost_bucket_id: z.string().uuid().nullable().default(null),
   schedule_activity_id: z.string().uuid().nullable().default(null),
+  subcontractor_id: z.string().uuid().nullable().default(null),
   entry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "entry_date must be YYYY-MM-DD"),
   activity: z.string().max(500).default(""),
   crew_count: z.number().min(0).default(0),
