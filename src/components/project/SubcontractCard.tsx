@@ -11,7 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
-import type { summarizeSubPayments } from "@/lib/subcontract-budget";
+import {
+  allocatePaymentAcrossCodes,
+  reviseSubSummary,
+  sumChangeOrders,
+  type summarizeSubPayments,
+} from "@/lib/subcontract-budget";
 import type { SubcontractDocumentRow } from "@/lib/subcontracts.functions";
 
 interface BucketOption {
@@ -24,6 +29,13 @@ export interface CardAllocation {
   cost_code: string;
   description: string;
   amount: number;
+}
+export interface CardChangeOrder {
+  id: string;
+  cost_code: string;
+  description: string;
+  amount: number; // signed dollars: change order +, credit −
+  co_date: string;
 }
 export interface CardPayment {
   id: string;
@@ -70,6 +82,14 @@ interface CardProps {
   onAllocate: (costBucketId: string, amount: number) => void;
   onUpdateAllocation: (id: string, amount: number) => void;
   onRemoveAllocation: (id: string) => void;
+  changeOrders: CardChangeOrder[];
+  onRecordChangeOrder: (
+    costBucketId: string | null,
+    description: string,
+    amount: number,
+    coDate: string,
+  ) => void;
+  onRemoveChangeOrder: (id: string) => void;
   onPay: (amount: number, retainageHeld: number, paymentDate: string, notes: string) => void;
   onUpdatePayment: (id: string, edit: PaymentEdit) => void;
   onRemovePayment: (id: string) => void;
@@ -96,6 +116,9 @@ export function SubcontractCard({
   onAllocate,
   onUpdateAllocation,
   onRemoveAllocation,
+  changeOrders,
+  onRecordChangeOrder,
+  onRemoveChangeOrder,
   onPay,
   onUpdatePayment,
   onRemovePayment,
@@ -126,6 +149,20 @@ export function SubcontractCard({
     paymentDate: today(),
     notes: "",
   });
+
+  // CO/credit entry form
+  const [coKind, setCoKind] = useState<"co" | "credit">("co");
+  const [coAmount, setCoAmount] = useState(0);
+  const [coDesc, setCoDesc] = useState("");
+  const [coBucket, setCoBucket] = useState("");
+  const [coDate, setCoDate] = useState(today);
+  // Which payments show their per-cost-code split
+  const [splitOpen, setSplitOpen] = useState<Record<string, boolean>>({});
+
+  // Change orders live SEPARATE from the base contract; the revised numbers are
+  // derived, never written back onto the buyout.
+  const revised = reviseSubSummary(summary, sumChangeOrders(changeOrders));
+  const hasChangeOrders = changeOrders.length > 0;
 
   const unallocated = summary.committed - allocatedTotal;
   const retainageHeld = Math.round(payAmount * defaultRetainagePct) / 100;
@@ -238,22 +275,35 @@ export function SubcontractCard({
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         <div className="relative">
-          <Stat label="Buyout" value={fmtUSD(summary.committed)} />
+          <Stat
+            label={hasChangeOrders ? "Base contract" : "Buyout"}
+            value={fmtUSD(summary.committed)}
+          />
           <button
             type="button"
             className="absolute right-1.5 top-1.5 text-muted-foreground hover:text-foreground"
             onClick={openBuyoutEditor}
-            aria-label="Change the commitment (change order / credit)"
-            title="Change the commitment — for a change order or credit"
+            aria-label="Edit the base contract amount"
+            title="Edit the base contract amount"
           >
             <Pencil className="h-3 w-3" />
           </button>
         </div>
+        {hasChangeOrders ? (
+          <>
+            <Stat
+              label="Change orders"
+              value={`${revised.changeOrders < 0 ? "−" : "+"}${fmtUSD(Math.abs(revised.changeOrders))}`}
+              tone={revised.changeOrders < 0 ? "warn" : undefined}
+            />
+            <Stat label="Revised contract" value={fmtUSD(revised.revised)} />
+          </>
+        ) : null}
         <Stat label="Paid to date" value={fmtUSD(summary.paid)} />
         <Stat label="Retainage held" value={fmtUSD(summary.retainageHeld)} tone="warn" />
         <Stat label="Net paid" value={fmtUSD(summary.netPaid)} />
-        <Stat label="Remaining" value={fmtUSD(summary.remaining)} tone="good" />
-        <Stat label="% paid" value={`${summary.paidPct.toFixed(1)}%`} />
+        <Stat label="Remaining" value={fmtUSD(revised.remaining)} tone="good" />
+        <Stat label="% paid" value={`${revised.paidPct.toFixed(1)}%`} />
       </div>
 
       {/* Change-the-commitment editor — a change order or credit moves the buyout */}
@@ -300,6 +350,113 @@ export function SubcontractCard({
           </div>
         </div>
       ) : null}
+
+      {/* Change orders & credits — their own trail, separate from the base contract */}
+      <div className="mt-4">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Change orders &amp; credits (kept separate from the contracted amount)
+        </div>
+        {changeOrders.length > 0 ? (
+          <ul className="mt-2 divide-y divide-hairline text-sm">
+            {changeOrders.map((co) => (
+              <li key={co.id} className="flex items-center justify-between gap-2 py-1.5">
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-foreground">
+                    <span className="font-medium">{co.amount < 0 ? "Credit" : "Change order"}</span>
+                    {co.description ? (
+                      <span className="ml-2 text-muted-foreground">{co.description}</span>
+                    ) : null}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {co.co_date}
+                    {co.cost_code ? ` · ${co.cost_code}` : ""}
+                  </span>
+                </span>
+                <span className="flex items-center gap-3">
+                  <span
+                    className={`font-semibold tabular-nums ${
+                      co.amount < 0 ? "text-warning" : "text-foreground"
+                    }`}
+                  >
+                    {co.amount < 0 ? "−" : "+"}
+                    {fmtUSD(Math.abs(co.amount))}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-danger"
+                    onClick={() => onRemoveChangeOrder(co.id)}
+                    aria-label="Remove change order"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <div className="mt-2 flex flex-col gap-2 lg:flex-row lg:items-center">
+          <select
+            value={coKind}
+            onChange={(e) => setCoKind(e.target.value as "co" | "credit")}
+            className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+            aria-label="Change order or credit"
+          >
+            <option value="co">Change order (adds)</option>
+            <option value="credit">Credit (deducts)</option>
+          </select>
+          <Input
+            value={coDesc}
+            onChange={(e) => setCoDesc(e.target.value)}
+            placeholder="What changed (e.g. Added 2 dock pits)"
+            className="flex-1"
+          />
+          <select
+            value={coBucket}
+            onChange={(e) => setCoBucket(e.target.value)}
+            className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+            aria-label="Cost code (optional)"
+          >
+            <option value="">Cost code (optional)…</option>
+            {buckets.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.cost_code} · {b.bucket}
+              </option>
+            ))}
+          </select>
+          <Input
+            type="date"
+            value={coDate}
+            onChange={(e) => setCoDate(e.target.value)}
+            className="w-40"
+            aria-label="Change order date"
+          />
+          <MoneyInput value={coAmount} onValueChange={setCoAmount} align="right" />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            disabled={coAmount <= 0 || !coDate}
+            onClick={() => {
+              onRecordChangeOrder(
+                coBucket || null,
+                coDesc.trim(),
+                coKind === "credit" ? -coAmount : coAmount,
+                coDate,
+              );
+              setCoAmount(0);
+              setCoDesc("");
+              setCoBucket("");
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" /> Add
+          </Button>
+        </div>
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          The base contract stays untouched — the revised total is shown above. To carry a change
+          order into the job budget, adjust the cost-code allocation below to match.
+        </p>
+      </div>
 
       {/* Allocations */}
       <div className="mt-4">
@@ -485,6 +642,15 @@ export function SubcontractCard({
                           {p.notes}
                         </span>
                       ) : null}
+                      {allocations.length > 0 ? (
+                        <button
+                          type="button"
+                          className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
+                          onClick={() => setSplitOpen((open) => ({ ...open, [p.id]: !open[p.id] }))}
+                        >
+                          {splitOpen[p.id] ? "Hide cost codes" : "Where this payment goes"}
+                        </button>
+                      ) : null}
                     </span>
                     <span className="flex items-center gap-3">
                       <span className="font-semibold tabular-nums text-foreground">
@@ -514,6 +680,23 @@ export function SubcontractCard({
                     </span>
                   </div>
                 )}
+                {editPayId !== p.id && splitOpen[p.id] ? (
+                  // Derived pro-rata from the buyout's cost-code split — the
+                  // same distribution the budget ledger uses for this payment.
+                  <ul className="mb-1 ml-4 mt-1 space-y-0.5 border-l border-hairline pl-3 text-[12px]">
+                    {allocatePaymentAcrossCodes(p.amount, allocations).map((split, index) => (
+                      <li key={`${split.cost_code}-${index}`} className="flex justify-between">
+                        <span className="text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            {split.cost_code || "No code"}
+                          </span>
+                          {split.description ? ` · ${split.description}` : ""}
+                        </span>
+                        <span className="tabular-nums text-foreground">{fmtUSD(split.amount)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </li>
             ))}
           </ul>

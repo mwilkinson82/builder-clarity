@@ -34,9 +34,11 @@ import {
   allocateSubcontract,
   deleteSubcontract,
   deleteSubcontractAllocation,
+  deleteSubcontractChangeOrder,
   deleteSubcontractDocument,
   deleteSubcontractPayment,
   listProjectSubcontracts,
+  recordSubcontractChangeOrder,
   recordSubcontractPayment,
   saveSubcontract,
   setActiveSubcontractDocument,
@@ -69,6 +71,8 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const allocateFn = useServerFn(allocateSubcontract);
   const updateAllocFn = useServerFn(updateSubcontractAllocation);
   const deleteAllocFn = useServerFn(deleteSubcontractAllocation);
+  const recordCoFn = useServerFn(recordSubcontractChangeOrder);
+  const deleteCoFn = useServerFn(deleteSubcontractChangeOrder);
   const payFn = useServerFn(recordSubcontractPayment);
   const updatePayFn = useServerFn(updateSubcontractPayment);
   const deletePayFn = useServerFn(deleteSubcontractPayment);
@@ -102,6 +106,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     allocations: [],
     payments: [],
     documents: [],
+    change_orders: [],
   };
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["subcontracts", projectId] });
@@ -264,6 +269,37 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     mutationFn: (id: string) => deleteAllocFn({ data: { id } }),
     onSuccess: () => invalidate(),
     onError: onError("remove allocation"),
+  });
+  const recordCo = useMutation({
+    mutationFn: (input: {
+      subcontractId: string;
+      costBucketId: string | null;
+      description: string;
+      amount: number;
+      coDate: string;
+    }) =>
+      recordCoFn({
+        data: {
+          projectId,
+          subcontractId: input.subcontractId,
+          costBucketId: input.costBucketId,
+          description: input.description,
+          amount: input.amount,
+          co_date: input.coDate,
+        },
+      }),
+    onSuccess: (row) => {
+      invalidate();
+      toast.success(row.amount < 0 ? "Credit recorded" : "Change order recorded", {
+        description: "Kept separate from the contracted amount — the revised total updates above.",
+      });
+    },
+    onError: onError("record the change order"),
+  });
+  const removeCo = useMutation({
+    mutationFn: (id: string) => deleteCoFn({ data: { id } }),
+    onSuccess: () => invalidate(),
+    onError: onError("remove the change order"),
   });
   const recordPayment = useMutation({
     mutationFn: (input: {
@@ -543,6 +579,9 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
         project.subcontracts.map((sub) => {
           const pays = project.payments.filter((p) => p.subcontract_id === sub.id);
           const allocs = project.allocations.filter((a) => a.subcontract_id === sub.id);
+          const subChangeOrders = project.change_orders.filter(
+            (co) => co.subcontract_id === sub.id,
+          );
           const summary = summarizeSubPayments(sub, pays);
           const allocatedTotal = allocs.reduce((s, a) => s + a.amount, 0);
           return (
@@ -563,6 +602,17 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               }
               onUpdateAllocation={(id, amount) => updateAlloc.mutate({ id, amount })}
               onRemoveAllocation={(id) => removeAlloc.mutate(id)}
+              changeOrders={subChangeOrders}
+              onRecordChangeOrder={(costBucketId, description, amount, coDate) =>
+                recordCo.mutate({
+                  subcontractId: sub.id,
+                  costBucketId,
+                  description,
+                  amount,
+                  coDate,
+                })
+              }
+              onRemoveChangeOrder={(id) => removeCo.mutate(id)}
               onPay={(amount, retainage_held, payment_date, notes) =>
                 recordPayment.mutate({
                   subcontractId: sub.id,

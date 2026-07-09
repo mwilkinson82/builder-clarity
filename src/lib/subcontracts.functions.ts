@@ -77,6 +77,19 @@ export interface SubcontractPaymentRow {
   reference: string;
   notes: string;
 }
+// A change order or credit against a subcontract, kept SEPARATE from the base
+// contracted amount (field request 2026-07-09). amount is signed dollars:
+// change order positive, credit negative. Optional cost-code tag for context.
+export interface SubcontractChangeOrderRow {
+  id: string;
+  project_id: string;
+  subcontract_id: string;
+  cost_bucket_id: string | null;
+  cost_code: string;
+  description: string;
+  amount: number;
+  co_date: string;
+}
 // One version of a subcontract's paper — original, an amendment, a re-negotiated
 // copy. Many per subcontract; exactly one is_active = the current contract.
 export interface SubcontractDocumentRow {
@@ -94,6 +107,7 @@ export interface ProjectSubcontracts {
   allocations: SubcontractAllocationRow[];
   payments: SubcontractPaymentRow[];
   documents: SubcontractDocumentRow[];
+  change_orders: SubcontractChangeOrderRow[];
 }
 
 const normalizeSubcontract = (row: Record<string, unknown>): SubcontractRow => ({
@@ -131,6 +145,16 @@ const normalizePayment = (row: Record<string, unknown>): SubcontractPaymentRow =
   reference: str(row.reference),
   notes: str(row.notes),
 });
+const normalizeChangeOrder = (row: Record<string, unknown>): SubcontractChangeOrderRow => ({
+  id: str(row.id),
+  project_id: str(row.project_id),
+  subcontract_id: str(row.subcontract_id),
+  cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+  cost_code: str(row.cost_code),
+  description: str(row.description),
+  amount: num(row.amount),
+  co_date: str(row.co_date),
+});
 const normalizeDocument = (row: Record<string, unknown>): SubcontractDocumentRow => ({
   id: str(row.id),
   project_id: str(row.project_id),
@@ -161,17 +185,19 @@ export const listProjectSubcontracts = createServerFn({ method: "GET" })
       }
       return (rows ?? []) as Record<string, unknown>[];
     };
-    const [subs, allocs, pays, docs] = await Promise.all([
+    const [subs, allocs, pays, docs, changeOrders] = await Promise.all([
       readList("subcontracts", "created_at"),
       readList("subcontract_allocations", "created_at"),
       readList("subcontract_payments", "payment_date"),
       readList("subcontract_documents", "uploaded_at"),
+      readList("subcontract_change_orders", "co_date"),
     ]);
     return {
       subcontracts: subs.map(normalizeSubcontract),
       allocations: allocs.map(normalizeAllocation),
       payments: pays.map(normalizePayment),
       documents: docs.map(normalizeDocument),
+      change_orders: changeOrders.map(normalizeChangeOrder),
     };
   });
 
@@ -380,6 +406,79 @@ export const deleteSubcontractAllocation = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { error } = await dynamicTable(context.supabase, "subcontract_allocations")
+      .delete()
+      .eq("id", data.id);
+    if (error && !isMissingSubcontractTable(error)) throw new Error(error.message);
+    return { id: data.id };
+  });
+
+// Record a change order (positive) or credit (negative) against a subcontract —
+// its own line item, deliberately NOT an edit to contract_value: the base
+// contract and the CO/credit trail stay separate, and the app derives the
+// revised total. Optional cost-code tag stamped off the bucket for context
+// (mirrors allocateSubcontract).
+export const recordSubcontractChangeOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        projectId: z.string().uuid(),
+        subcontractId: z.string().uuid(),
+        costBucketId: z.string().uuid().nullable().default(null),
+        description: z.string().max(500).default(""),
+        amount: z
+          .number()
+          .refine((value) => value !== 0, "Enter the change order or credit amount."),
+        co_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "co_date must be YYYY-MM-DD"),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SubcontractChangeOrderRow> => {
+    let costCode = "";
+    let bucketLabel = "";
+    if (data.costBucketId) {
+      const { data: bucket, error: bucketError } = await dynamicTable(
+        context.supabase,
+        "cost_buckets",
+      )
+        .select("id,project_id,cost_code,bucket")
+        .eq("id", data.costBucketId)
+        .single();
+      if (bucketError) {
+        if (isMissingSubcontractTable(bucketError)) throw new Error(NOT_ENABLED);
+        throw new Error(bucketError.message);
+      }
+      const bucketRow = bucket as Record<string, unknown>;
+      if (str(bucketRow.project_id) !== data.projectId) {
+        throw new Error("That cost code belongs to a different project.");
+      }
+      costCode = str(bucketRow.cost_code);
+      bucketLabel = str(bucketRow.bucket);
+    }
+    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_change_orders")
+      .insert({
+        project_id: data.projectId,
+        subcontract_id: data.subcontractId,
+        cost_bucket_id: data.costBucketId,
+        cost_code: costCode,
+        description: data.description || bucketLabel,
+        amount: data.amount,
+        co_date: data.co_date,
+      })
+      .select("*")
+      .single();
+    if (error) {
+      if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
+      throw new Error(error.message);
+    }
+    return normalizeChangeOrder(row as Record<string, unknown>);
+  });
+
+export const deleteSubcontractChangeOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "subcontract_change_orders")
       .delete()
       .eq("id", data.id);
     if (error && !isMissingSubcontractTable(error)) throw new Error(error.message);

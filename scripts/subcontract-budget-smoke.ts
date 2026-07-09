@@ -9,10 +9,13 @@
 // Run: node --experimental-strip-types scripts/subcontract-budget-smoke.ts
 import assert from "node:assert/strict";
 import {
-  summarizeSubCostByBucket,
-  summarizeSubPayments,
+  allocatePaymentAcrossCodes,
+  reviseSubSummary,
   subCostAddition,
   subEarnedKey,
+  sumChangeOrders,
+  summarizeSubCostByBucket,
+  summarizeSubPayments,
 } from "../src/lib/subcontract-budget.ts";
 import { computeBudgetLedger } from "../src/lib/budget-ledger.ts";
 import { computeRollup } from "../src/lib/ior.ts";
@@ -460,6 +463,51 @@ import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
     "latest entry's % wins (cumulative, not summed)",
   );
   assert.equal(map.size, 1, "self-perform / uncoded entries excluded");
+}
+
+// ── Change orders & credits stay separate from the base contract ────────────
+{
+  const sub = { id: "s1", contract_value: 123672.88, status: "executed" };
+  const summary = summarizeSubPayments(sub, [{ amount: 108173, retainage_held: 0 }]);
+  const coTotal = sumChangeOrders([
+    { subcontract_id: "s1", amount: 11500 }, // change order adds
+    { subcontract_id: "s1", amount: -2500.5 }, // credit deducts
+  ]);
+  assert.equal(coTotal, 8999.5, "signed COs/credits sum cents-exact");
+  const revised = reviseSubSummary(summary, coTotal);
+  assert.equal(revised.base, 123672.88, "the base contract is never mutated");
+  assert.equal(revised.revised, 132672.38, "revised = base + change orders");
+  assert.equal(revised.remaining, 24499.38, "remaining measures against the revised total");
+  assert.ok(
+    Math.abs(revised.paidPct - (108173 / 132672.38) * 100) < 0.001,
+    "% paid measures against the revised total",
+  );
+  // No change orders → revised mirrors the base numbers.
+  const flat = reviseSubSummary(summary, 0);
+  assert.equal(flat.revised, flat.base, "no COs → revised equals base");
+}
+
+// ── Payment splits pro-rata across the buyout's cost codes, cents-exact ─────
+{
+  const allocations = [
+    { cost_code: "03-8009", description: "Saw Cutting: Dock Pits", amount: 98372.88 },
+    { cost_code: "03-8010", description: "Saw Cutting: Plumbing", amount: 25300 },
+    { cost_code: "03-8009", description: "Saw Cutting: Dock Pits 2", amount: 11500 },
+  ];
+  const split = allocatePaymentAcrossCodes(108173, allocations);
+  assert.equal(split.length, 3, "every coded allocation gets a share");
+  const total = split.reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+  assert.equal(total, 10817300, "the split sums cents-exact to the payment");
+  assert.ok(
+    split[0].amount > split[1].amount && split[1].amount > split[2].amount,
+    "shares are proportional to the allocation sizes",
+  );
+  assert.deepEqual(
+    allocatePaymentAcrossCodes(5000, []),
+    [],
+    "no coded allocations → no derived split",
+  );
+  assert.deepEqual(allocatePaymentAcrossCodes(0, allocations), [], "zero payment → no split");
 }
 
 console.log("subcontract budget smoke: all assertions passed");
