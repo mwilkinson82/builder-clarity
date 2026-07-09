@@ -649,22 +649,29 @@ await expectContains(
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [
-    /const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>/,
-    /"schedule"[\s\S]*"inspections"[\s\S]*"risk-tally"[\s\S]*"todos"[\s\S]*"sov"[\s\S]*"billing"[\s\S]*"change-orders"[\s\S]*"client-portal"[\s\S]*"ior-report"[\s\S]*"daily-reports"/,
-    /const compactProjectNav = COMPACT_PROJECT_NAV_TABS\.has\(activeProjectTab\)/,
+    // NAVLABELS: the rail leads with the text label (not an icon-only compact
+    // collapse) and groups all 13 destinations into four mono-eyebrow clusters.
+    /const PROJECT_NAV_GROUPS: ProjectNavGroup\[\] = \[/,
+    /label: "Money"[\s\S]*label: "Field"[\s\S]*label: "Risk"[\s\S]*label: "Parties"/,
+    /"dashboard", "sov", "billing", "change-orders"/,
+    /"schedule", "daily-reports", "daily-wip", "inspections"/,
+    /"subcontractors", "client-portal", "ior-report"/,
     /const companyName = project\.organization_name \|\| "Overwatch company"/,
     /const headerStats = \[/,
     /"Original Contract"[\s\S]*"Forecasted Final"/,
     /bg-surface-elevated\/95 shadow-\[0_10px_30px_rgb/,
-    /flex max-w-\[1760px\] flex-col gap-2 px-4 py-2\.5/,
-    /max-w-\[1760px\]/,
-    /lg:grid-cols-\[76px_minmax\(0,1fr\)\]/,
-    /PROJECT_NAV_RAIL_CLASS[\s\S]*bg-accent\/\[0\.07\][\s\S]*shadow-\[0_18px_42px_rgb/,
+    // Grouped vertical rail (labels are the default; no icon-only collapse).
+    /lg:grid-cols-\[248px_minmax\(0,1fr\)\]/,
+    // Rail glow retargeted off the pre-reskin teal onto the --accent (clay) token.
+    /PROJECT_NAV_RAIL_CLASS[\s\S]*bg-accent\/\[0\.07\][\s\S]*shadow-\[0_18px_42px_color-mix\(in_srgb,var\(--color-accent\)/,
     /projectNavItemClass/,
+    // Detail sub-line turns the rail into a status board; alarming ones go danger.
+    /projectNavDetailClass/,
     /const isActive = activeProjectTab === item\.value/,
-    /active: isActive/,
-    /ProjectNavTooltip/,
-    /TooltipProvider delayDuration=\{120\}/,
+    /className=\{projectNavItemClass\(\{ active: isActive \}\)\}/,
+    // Persistent "you are here" section title (group · label) atop the stage.
+    /\{activeNavGroup\.label\} · \{activeNavItem\.label\}/,
+    /className="eyebrow px-1/,
     /aria-label=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
     /title=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
     // Billing is lazy-loaded (PROJECTDECOMP1 part 3): the rail hosts a Suspense
@@ -672,7 +679,7 @@ await expectContains(
     /const BillingWorkspace = lazy\(/,
     /<Suspense/,
   ],
-  "workspace-heavy project tabs open a wide rail layout with labeled icon tooltips",
+  "project nav rail leads with labels, grouped into Money/Field/Risk/Parties clusters with a status sub-line (NAVLABELS)",
 );
 
 // PROJECTDECOMP1 part 3: the billing workspace — stage rail (overview / costs /
@@ -2333,20 +2340,20 @@ await expectContains(
   "budget lines table teaches the import/add path when empty",
 );
 
-// POLISH1 Task 3 (density): the rarely-opened reference tabs (inspections, IOR
-// report) collapse under a "More" menu so the financial path leads the rail;
-// deep links (?tab=…) still resolve to the demoted tabs. Daily Reports + Daily
-// WIP are PRIMARY (founder 2026-07-07) — the daily log feeds the WIP.
+// NAVLABELS: the "More" overflow menu is retired — all 13 destinations live on
+// the labeled, grouped rail. IOR Reports sits in the Parties cluster; deep links
+// (?tab=…) still resolve via setProjectTab / the search-sync effect.
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [
-    /SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>\(\["ior-report"\]\)/,
-    /primaryNavItems\.map/,
-    /secondaryNavItems\.map/,
-    /DropdownMenuTrigger[\s\S]*More project tabs/,
-    /onSelect=\{\(\) => setProjectTab\(item\.value\)\}/,
+    // Every destination is rendered from its group; nothing is demoted to "More".
+    /group\.values\.map\(\(value\) => \{/,
+    /const item = navItemByValue\.get\(value\);/,
+    /key: "parties", label: "Parties", values: \["subcontractors", "client-portal", "ior-report"\]/,
+    // Deep-link resolution is unchanged.
+    /if \(search\.tab\) setProjectTab\(search\.tab\)/,
   ],
-  "project tab rail keeps only the IOR report under More; Inspections + Daily Reports/WIP are primary (founder 2026-07-08)",
+  "project nav rail renders all 13 tabs from their groups (no More menu); IOR Reports is in Parties, deep links still resolve (NAVLABELS)",
 );
 
 // POLISH1 Task 1: one shared state chip (empty / in-progress / complete /
