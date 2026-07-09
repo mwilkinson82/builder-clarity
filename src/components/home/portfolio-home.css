@@ -35,10 +35,9 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  /* Full-bleed page, not a floating card: sides + bottom run to the screen
-     edge and the footer sits flush to the bottom. Top keeps a small paper gap
-     for now (removed in a follow-up). */
-  padding: 28px 0 0;
+  /* Full-bleed page, not a floating card: the header meets the very top and the
+     footer's dark bar runs to the very bottom, edge to edge. */
+  padding: 0;
 }
 
 .ow-shell {
@@ -897,7 +896,7 @@
 /* ---------- responsive: keep it usable down to 375 (full mobile polish = Phase 2) ---------- */
 @media (max-width: 900px) {
   .ow-home {
-    padding: 12px 0 0;
+    padding: 0;
   }
   .ow-header {
     flex-wrap: wrap;
