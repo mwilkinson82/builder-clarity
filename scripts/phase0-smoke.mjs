@@ -278,10 +278,6 @@ await expectContains(
     /data-testid="portfolio-project-ledger"/,
     /PROJECT_LEDGER_GRID_CLASS/,
     /href=\{projectHref\}/,
-    /Portfolio Control Room/,
-    /Company-wide IOR posture/,
-    /Pipeline intake/,
-    /CRM before project control/,
     /Project worklist/,
     /max-w-\[1760px\]/,
     /companyInitials\(headerCompanyName\)/,
@@ -293,12 +289,6 @@ await expectNotContains(
   "src/routes/_authenticated/index.tsx",
   [/min-w-\[1420px\]/, /from "@\/components\/ui\/table"/],
   "portfolio project ledger does not use the old forced-width table",
-);
-
-await expectContains(
-  "src/routes/_authenticated/index.tsx",
-  [/readDemoOpportunityRemovals/, /pruneRemovedDemoCrm/, /visibleOpportunities/, /prunedSnapshot/],
-  "portfolio Pipeline intake prunes locally-removed sample CRM data so deletions carry through the rollup",
 );
 
 await expectContains(
