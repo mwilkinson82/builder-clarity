@@ -20,6 +20,7 @@
     "test:wip": "node --experimental-strip-types scripts/daily-wip-smoke.ts",
     "test:billing:aia": "node --experimental-strip-types scripts/aia-pdf-fixture-smoke.ts",
     "test:billing:portal": "vitest run scripts/portal-view-signal.test.tsx",
+    "test:webhook": "vitest run scripts/stripe-webhook-idempotency.test.tsx",
     "test:roles": "node --experimental-strip-types scripts/roles-capability-parity-smoke.ts",
     "test:schedule": "node --experimental-strip-types scripts/schedule-spine-smoke.ts",
     "test:schedule:import": "node --experimental-strip-types scripts/schedule-import-smoke.ts",

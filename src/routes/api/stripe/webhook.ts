@@ -5,6 +5,7 @@ import {
   isMissingAnySupabaseColumn,
   jsonError,
   jsonOk,
+  readServerEnv,
   RouteError,
   verifyStripeWebhookPayload,
 } from "@/lib/stripe.server";
@@ -13,6 +14,12 @@ import {
   planChargeRefund,
   planCheckoutCompletion,
 } from "@/lib/payments-domain";
+import {
+  claimWebhookEvent,
+  createSupabaseWebhookEventStore,
+  DEFAULT_WEBHOOK_STALE_SECONDS,
+  type WebhookEventStore,
+} from "@/lib/stripe-webhook-idempotency";
 
 type StripeObject = Record<string, unknown> & {
   id?: string;
@@ -76,38 +83,13 @@ function isMissingRelationError(error: DynamicQueryError | null) {
 }
 
 /**
- * Event-id idempotency: claim the event before processing by inserting into
- * stripe_webhook_events. A duplicate delivery loses the insert (PK conflict)
- * and the whole webhook no-ops with a 2xx so Stripe stops retrying. Returns
- * false when this delivery is a duplicate. Pre-migration (table missing) we
- * process without the guard — same behavior as before this phase.
+ * Stale-claim window (seconds). A row left `processing` this long is assumed
+ * to belong to a delivery that died mid-flight, and the next retry re-takes it.
+ * Overridable via STRIPE_WEBHOOK_STALE_SECONDS.
  */
-async function claimWebhookEvent(eventId: string, eventType: string): Promise<boolean> {
-  const admin = createSupabaseAdminClient();
-  const { error } = await dynamicTable(admin, "stripe_webhook_events").insert({
-    event_id: eventId,
-    event_type: eventType,
-  });
-  if (!error) return true;
-  if (error.code === "23505" || (error.message ?? "").toLowerCase().includes("duplicate")) {
-    return false;
-  }
-  if (isMissingRelationError(error)) return true;
-  throw new Error(error.message);
-}
-
-/**
- * Processing failed after the claim: release it so Stripe's retry is not
- * swallowed as a duplicate.
- */
-async function releaseWebhookEvent(eventId: string) {
-  try {
-    const admin = createSupabaseAdminClient();
-    await dynamicTable(admin, "stripe_webhook_events").delete().eq("event_id", eventId);
-  } catch {
-    // Best-effort: an orphaned claim only suppresses a retry of a failed
-    // event; the failure already returned non-2xx and is visible in Stripe.
-  }
+function webhookStaleSeconds() {
+  const raw = Number.parseInt(readServerEnv("STRIPE_WEBHOOK_STALE_SECONDS"), 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_WEBHOOK_STALE_SECONDS;
 }
 
 function sessionMetadata(object: StripeObject) {
@@ -523,65 +505,105 @@ async function markConnectAccountUpdated(object: StripeObject) {
   }
 }
 
+// Exported for direct testing (STRIPEIDEMPOTENCY1 Task 3). The route below is a
+// thin wrapper so the full claim -> process -> mark-processed/release flow can
+// be driven with a fake Supabase and a stubbed signature verifier.
+export async function handleStripeWebhook(request: Request): Promise<Response> {
+  // Set only once we own processing of a fresh/re-taken claim. It carries
+  // the store so success marks the row `processed` and failure releases
+  // it (best-effort). A duplicate or a concurrent in-flight claim leaves
+  // this null -- we never touch a row we do not own.
+  let completion: { store: WebhookEventStore; eventId: string } | null = null;
+  try {
+    const rawBody = await request.text();
+    const event = await verifyStripeWebhookPayload(
+      rawBody,
+      request.headers.get("stripe-signature"),
+    );
+    const object = (event.data?.object ?? {}) as StripeObject;
+
+    // Idempotency records OUTCOME, not sighting: a row is `processed` only
+    // once its handler completes. `already_processed` is a true duplicate
+    // (200). `in_flight` is a concurrent, still-fresh delivery that may
+    // yet fail -- return non-2xx so Stripe retries, never a 200.
+    if (event.id) {
+      const store = createSupabaseWebhookEventStore(createSupabaseAdminClient());
+      const claim = await claimWebhookEvent(store, event.id, event.type, {
+        nowMs: Date.now(),
+        staleSeconds: webhookStaleSeconds(),
+      });
+      if (claim === "already_processed") {
+        return jsonOk({ received: true, duplicate: true, eventId: event.id });
+      }
+      if (claim === "in_flight") {
+        throw new RouteError(
+          "webhook_event_in_flight",
+          "Another delivery of this event is still processing. Stripe will retry.",
+          409,
+        );
+      }
+      // "fresh" | "retry_stale": we own it and must mark it `processed` on
+      // success. "no_store" (pre-migration): process without the guard.
+      if (claim !== "no_store") {
+        completion = { store, eventId: event.id };
+      }
+    }
+
+    switch (event.type) {
+      case "checkout.session.completed":
+        await handleCheckoutCompleted(object);
+        break;
+      case "checkout.session.async_payment_succeeded":
+        await handleCheckoutAsyncSucceeded(object);
+        break;
+      case "checkout.session.async_payment_failed":
+        await markInvoiceAsyncFailed(object);
+        break;
+      case "checkout.session.expired":
+        await handleCheckoutExpired(object);
+        break;
+      case "payment_intent.payment_failed":
+        await markInvoiceFailed(object);
+        break;
+      case "charge.refunded":
+        await markChargeRefunded(object);
+        break;
+      case "customer.subscription.created":
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted":
+        await markSubscriptionUpdated(object);
+        break;
+      case "account.updated":
+        await markConnectAccountUpdated(object);
+        break;
+      default:
+        // Well-formed but unhandled (e.g. payout.*, balance.available):
+        // fall through, mark processed, and 200. Never 400 these.
+        break;
+    }
+
+    // Handler ran to completion -- the ONLY place a row becomes
+    // `processed`. If this write fails it throws, the row stays
+    // `processing`, and the next retry re-processes: the invariant holds.
+    if (completion) {
+      await completion.store.markProcessed(completion.eventId, new Date().toISOString());
+    }
+
+    return jsonOk({ received: true, eventId: event.id, eventType: event.type });
+  } catch (error) {
+    // Failures return non-2xx (jsonError) so Stripe retries. Best-effort
+    // release deletes the claim so the retry need not wait out the stale
+    // window -- but if it fails, the row stays `processing` and the retry
+    // still re-processes. The delete is no longer load-bearing.
+    if (completion) await completion.store.release(completion.eventId);
+    return jsonError(error);
+  }
+}
+
 export const Route = createFileRoute("/api/stripe/webhook")({
   server: {
     handlers: {
-      POST: async ({ request }) => {
-        let claimedEventId = "";
-        try {
-          const rawBody = await request.text();
-          const event = await verifyStripeWebhookPayload(
-            rawBody,
-            request.headers.get("stripe-signature"),
-          );
-          const object = (event.data?.object ?? {}) as StripeObject;
-
-          // Idempotency: processed event ids are stored; duplicates no-op
-          // with a 2xx so Stripe stops retrying a delivery we already took.
-          if (event.id && !(await claimWebhookEvent(event.id, event.type))) {
-            return jsonOk({ received: true, duplicate: true, eventId: event.id });
-          }
-          claimedEventId = event.id ?? "";
-
-          switch (event.type) {
-            case "checkout.session.completed":
-              await handleCheckoutCompleted(object);
-              break;
-            case "checkout.session.async_payment_succeeded":
-              await handleCheckoutAsyncSucceeded(object);
-              break;
-            case "checkout.session.async_payment_failed":
-              await markInvoiceAsyncFailed(object);
-              break;
-            case "checkout.session.expired":
-              await handleCheckoutExpired(object);
-              break;
-            case "payment_intent.payment_failed":
-              await markInvoiceFailed(object);
-              break;
-            case "charge.refunded":
-              await markChargeRefunded(object);
-              break;
-            case "customer.subscription.created":
-            case "customer.subscription.updated":
-            case "customer.subscription.deleted":
-              await markSubscriptionUpdated(object);
-              break;
-            case "account.updated":
-              await markConnectAccountUpdated(object);
-              break;
-            default:
-              break;
-          }
-
-          return jsonOk({ received: true, eventId: event.id, eventType: event.type });
-        } catch (error) {
-          // Failures return non-2xx (jsonError) so Stripe retries; release
-          // the claim so the retry is not swallowed as a duplicate.
-          if (claimedEventId) await releaseWebhookEvent(claimedEventId);
-          return jsonError(error);
-        }
-      },
+      POST: ({ request }) => handleStripeWebhook(request),
     },
   },
 });
