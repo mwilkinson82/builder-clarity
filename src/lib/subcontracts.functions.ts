@@ -7,6 +7,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { canPaySubcontract, subcontractInsuranceStatus } from "@/lib/compliance-domain";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -385,6 +386,59 @@ export const deleteSubcontractAllocation = createServerFn({ method: "POST" })
     return { id: data.id };
   });
 
+// COMPLIANCE GATE (docs/compliance arc, module 2). Unless the project has opted
+// out (require_compliance_gating = false, or the column/tables aren't there yet),
+// a sub can't be paid without a valid COI as of the payment date AND an unused
+// lien waiver on file. Fails OPEN on any read error — a DB hiccup must never trap
+// a legitimate payment; a genuinely MISSING cert/waiver (clean empty read) still
+// blocks, which is the whole point. Returns the waiver id to consume on success.
+async function evaluateSubPaymentGate(
+  supabase: unknown,
+  projectId: string,
+  subcontractId: string,
+  paymentDate: string,
+): Promise<{ allowed: boolean; blockers: string[]; consumeWaiverId: string | null }> {
+  const OPEN = { allowed: true, blockers: [] as string[], consumeWaiverId: null };
+  const projRes = await dynamicTable(supabase, "projects")
+    .select("require_compliance_gating")
+    .eq("id", projectId)
+    .maybeSingle();
+  // Absent column / read error → feature not enabled → no gate.
+  if (projRes.error || !projRes.data) return OPEN;
+  const gatingEnabled =
+    (projRes.data as Record<string, unknown>).require_compliance_gating !== false;
+  if (!gatingEnabled) return OPEN;
+
+  const certsRes = await dynamicTable(supabase, "insurance_certificates")
+    .select("*")
+    .eq("subcontract_id", subcontractId);
+  if (certsRes.error) return OPEN; // tables not provisioned / read error → don't trap
+  const certs = ((certsRes.data ?? []) as Record<string, unknown>[]).map((c) => ({
+    verified: c.verified === true,
+    effective_date: (c.effective_date as string | null) ?? null,
+    expiry_date: (c.expiry_date as string | null) ?? null,
+  }));
+  const status = subcontractInsuranceStatus(certs, paymentDate);
+
+  const waiversRes = await dynamicTable(supabase, "lien_waivers")
+    .select("*")
+    .eq("subcontract_id", subcontractId);
+  if (waiversRes.error) return OPEN;
+  const unconsumed = ((waiversRes.data ?? []) as Record<string, unknown>[]).filter(
+    (w) => !w.payment_id,
+  );
+  const result = canPaySubcontract({
+    gatingEnabled: true,
+    insuranceStatus: status,
+    hasCoveringWaiver: unconsumed.length > 0,
+  });
+  return {
+    ...result,
+    consumeWaiverId:
+      result.allowed && unconsumed.length > 0 ? str(unconsumed[unconsumed.length - 1].id) : null,
+  };
+}
+
 export const recordSubcontractPayment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
@@ -402,6 +456,19 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
     const { projectId, subcontractId, ...fields } = data;
+
+    const gate = await evaluateSubPaymentGate(
+      context.supabase,
+      projectId,
+      subcontractId,
+      fields.payment_date,
+    );
+    if (!gate.allowed) {
+      throw new Error(
+        `Payment blocked — compliance not met. ${gate.blockers.join(" ")} Add the missing item, or turn off "Require lien waivers + insurance" for this project.`,
+      );
+    }
+
     const { data: row, error } = await dynamicTable(context.supabase, "subcontract_payments")
       .insert({ project_id: projectId, subcontract_id: subcontractId, ...fields })
       .select("*")
@@ -410,7 +477,15 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
       if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
       throw new Error(error.message);
     }
-    return normalizePayment(row as Record<string, unknown>);
+    const payment = normalizePayment(row as Record<string, unknown>);
+    // Consume the waiver that cleared the gate — link it so it can't clear a
+    // second payment (best-effort; the payment already succeeded).
+    if (gate.consumeWaiverId) {
+      await dynamicTable(context.supabase, "lien_waivers")
+        .update({ payment_id: payment.id })
+        .eq("id", gate.consumeWaiverId);
+    }
+    return payment;
   });
 
 // Edit a recorded payment after the fact — fix the date, the amount, the
