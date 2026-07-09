@@ -2697,6 +2697,30 @@ await expectContains(
   "daily-WIP workspace has the performed-by picker (self-perform ↔ sub)",
 );
 
+// PROJECTFILEROOM1: the project file room — one home for the job's paper. Storage
+// mirrors subcontract-docs (private bucket, client upload + signed URL); the
+// server fn owns the metadata row; the tab is wired onto the project nav rail.
+await expectContains(
+  "src/lib/project-documents.functions.ts",
+  [
+    /export const listProjectDocuments/,
+    /export const recordProjectDocument/,
+    /export const archiveProjectDocument/,
+    /PROJECT_DOC_CATEGORIES/,
+  ],
+  "file room server fns list/record/archive documents with a category vocabulary",
+);
+await expectContains(
+  "src/components/project/ProjectFileRoom.tsx",
+  [/project-docs/, /createSignedUrl/, /Upload document/, /prime_contract/],
+  "file room uploads to the private bucket + views via signed URL",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [/value: "file-room"/, /<ProjectFileRoom projectId=\{projectId\}/, /label: "Docs"/],
+  "file-room tab is wired onto the project nav rail",
+);
+
 if (live) {
   await expectLiveRoute("/", [200, 302, 307, 308], "custom domain root responds");
   await expectLiveRoute("/auth", [200, 302, 307, 308], "custom domain auth route responds");
