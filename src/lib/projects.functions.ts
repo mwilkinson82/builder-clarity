@@ -141,6 +141,11 @@ export interface ExposureRow {
   opened_at: string;
   resolved_at: string | null;
   notes: string;
+  /**
+   * CO↔RISK link: the change order this exposure is tagged to (or that was
+   * spun off from it), or null. Reference only — no rollup effect.
+   */
+  linked_change_order_id: string | null;
 }
 
 export type COType =
@@ -169,6 +174,11 @@ export interface ChangeOrderRow {
   client_notes: string;
   client_sent_at: string | null;
   client_decided_at: string | null;
+  /**
+   * CO↔RISK link: the risk-tally exposure this change order is tagged to (or
+   * that was spun off from it), or null. Reference only — no rollup effect.
+   */
+  linked_exposure_id: string | null;
 }
 
 export type InspectionStatus =
@@ -1034,6 +1044,7 @@ const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
   opened_at: str(e.opened_at, new Date().toISOString()),
   resolved_at: (e.resolved_at as string | null) ?? null,
   notes: str(e.notes),
+  linked_change_order_id: (e.linked_change_order_id as string | null) ?? null,
 });
 
 // ---------------- LIST + GET ----------------
@@ -1594,6 +1605,7 @@ export const getProject = createServerFn({ method: "GET" })
         client_notes: str(o.client_notes),
         client_sent_at: (o.client_sent_at as string | null) ?? null,
         client_decided_at: (o.client_decided_at as string | null) ?? null,
+        linked_exposure_id: (o.linked_exposure_id as string | null) ?? null,
       };
     });
 
@@ -2187,11 +2199,13 @@ export const createChangeOrder = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
-    const { error } = await context.supabase
+    const { data: inserted, error } = await context.supabase
       .from("change_orders")
-      .insert({ project_id: projectId, ...rest });
+      .insert({ project_id: projectId, ...rest })
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
-    return { ok: true };
+    return { ok: true, id: (inserted as { id: string } | null)?.id ?? "" };
   });
 
 export const updateChangeOrder = createServerFn({ method: "POST" })
@@ -2212,6 +2226,57 @@ export const deleteChangeOrder = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { error } = await context.supabase.from("change_orders").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ---------------- CO ↔ RISK LINK ----------------
+// Cross-reference a change order and a risk-tally exposure both ways. Pure
+// pointer wiring — money is untouched. The columns land with the CO↔RISK
+// migration; until it applies the update no-ops gracefully (linked=false) so the
+// CO/exposure it was created alongside still stands, just unlinked.
+
+const coExposureLinkInput = z.object({
+  changeOrderId: z.string().uuid(),
+  exposureId: z.string().uuid(),
+});
+
+export const linkChangeOrderExposure = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof coExposureLinkInput>) => coExposureLinkInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { changeOrderId, exposureId } = data;
+    const { error: coErr } = await context.supabase
+      .from("change_orders")
+      .update({ linked_exposure_id: exposureId } as never)
+      .eq("id", changeOrderId);
+    if (coErr && !isMissingRestColumn(coErr, "linked_exposure_id")) throw new Error(coErr.message);
+    const { error: expErr } = await context.supabase
+      .from("exposures")
+      .update({ linked_change_order_id: changeOrderId } as never)
+      .eq("id", exposureId);
+    if (expErr && !isMissingRestColumn(expErr, "linked_change_order_id")) {
+      throw new Error(expErr.message);
+    }
+    return { ok: true, linked: !coErr && !expErr };
+  });
+
+export const unlinkChangeOrderExposure = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof coExposureLinkInput>) => coExposureLinkInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { changeOrderId, exposureId } = data;
+    const { error: coErr } = await context.supabase
+      .from("change_orders")
+      .update({ linked_exposure_id: null } as never)
+      .eq("id", changeOrderId);
+    if (coErr && !isMissingRestColumn(coErr, "linked_exposure_id")) throw new Error(coErr.message);
+    const { error: expErr } = await context.supabase
+      .from("exposures")
+      .update({ linked_change_order_id: null } as never)
+      .eq("id", exposureId);
+    if (expErr && !isMissingRestColumn(expErr, "linked_change_order_id")) {
+      throw new Error(expErr.message);
+    }
     return { ok: true };
   });
 

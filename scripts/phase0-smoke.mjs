@@ -934,6 +934,55 @@ await expectContains(
   "change order table exposes a risk-tally action",
 );
 
+// CO ↔ RISK TWO-WAY LINK (Claims/CO/Risk arc — slice 1): a change order and a
+// risk-tally exposure cross-reference both ways (tag either as the other), with
+// a dup guard and a value prompt. Reference only — no rollup math changes.
+await expectContains(
+  "supabase/migrations/20260709160000_co_risk_two_way_link.sql",
+  [
+    /ALTER TABLE public\.change_orders\s+ADD COLUMN IF NOT EXISTS linked_exposure_id uuid/,
+    /ALTER TABLE public\.exposures\s+ADD COLUMN IF NOT EXISTS linked_change_order_id uuid/,
+    /ON DELETE SET NULL/,
+  ],
+  "CO↔risk migration adds the two-way link columns (desk applies)",
+);
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /export const linkChangeOrderExposure/,
+    /export const unlinkChangeOrderExposure/,
+    /linked_change_order_id: \(e\.linked_change_order_id/,
+    /linked_exposure_id: \(o\.linked_exposure_id/,
+  ],
+  "server layer links a change order and an exposure both ways",
+);
+await expectContains(
+  "src/components/outcome/ChangeOrdersTable.tsx",
+  [/c\.linked_exposure_id/, /Already in the risk tally/],
+  "change order table shows the linked state (dup guard)",
+);
+await expectContains(
+  "src/components/outcome/ExposuresTable.tsx",
+  [
+    /onCreateChangeOrder/,
+    /Tag as change order/,
+    /linked_change_order_id/,
+    /Already in change orders/,
+  ],
+  "risk tally exposes the reverse tag-as-change-order action + linked state",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [
+    /handleCreateChangeOrderFromExposure/,
+    /changeOrderTypeFromExposure/,
+    /setCoRiskPrompt/,
+    /Carry the full change-order value/,
+    /Add to risk tally/,
+  ],
+  "project route wires the two-way link handlers + the carry-value prompt",
+);
+
 await expectContains(
   "src/routes/_authenticated/team.tsx",
   [
