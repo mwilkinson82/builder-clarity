@@ -156,11 +156,12 @@ export function BudgetLedgerTable({
         </p>
       </div>
       <TooltipProvider delayDuration={150}>
-        {/* overflow-x-clip (not -auto) keeps the rounded corners without creating a
-            scroll container, so the sticky header can pin to the viewport as the
-            page scrolls. */}
+        {/* The Table wrapper gets a max-height so it becomes its own vertical scroll
+            box; the sticky header then pins to the top of that box as the rows scroll
+            inside it. (Pinning to the page scroll is unreliable — the app shell's
+            overflow ancestors capture the stickiness first.) */}
         <div className="overflow-x-clip rounded-lg border border-hairline bg-card">
-          <Table wrapperClassName="overflow-visible">
+          <Table wrapperClassName="max-h-[70vh]">
             <TableHeader className="sticky top-0 z-10">
               <TableRow className="border-b border-hairline bg-surface text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                 <TableHead className="w-[90px]">Cost code</TableHead>

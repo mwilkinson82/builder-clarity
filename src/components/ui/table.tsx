@@ -6,10 +6,11 @@ const Table = React.forwardRef<
   HTMLTableElement,
   React.HTMLAttributes<HTMLTableElement> & { wrapperClassName?: string }
 >(({ className, wrapperClassName, ...props }, ref) => (
-  // The wrapper defaults to overflow-auto (horizontal scroll). Pass
-  // wrapperClassName="overflow-visible" to opt out — needed for a sticky <thead>,
-  // since this scroll container would otherwise capture the stickiness instead of
-  // letting it pin to the page as it scrolls.
+  // The wrapper defaults to overflow-auto (its own scroll container). For a sticky
+  // <thead>, give the wrapper a max-height (wrapperClassName="max-h-[70vh]") so it
+  // becomes an internal vertical scroll box: the header then pins to the top of this
+  // box. (Trying to pin to the page instead is unreliable — ancestor overflow in the
+  // app shell captures the stickiness before it reaches the page scroll container.)
   <div className={cn("relative w-full min-w-0 max-w-full overflow-auto", wrapperClassName)}>
     <table ref={ref} className={cn("w-full caption-bottom text-sm", className)} {...props} />
   </div>
