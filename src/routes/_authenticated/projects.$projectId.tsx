@@ -134,6 +134,8 @@ import {
   updateBillingInvoice,
   deleteBillingInvoice,
   archiveProject,
+  closeProject,
+  reopenProject,
   deleteProject,
   reconcileInvoicePayments,
   recordInvoicePayment,
@@ -173,6 +175,8 @@ import {
   LockKeyhole,
   LogOut,
   Archive,
+  CheckCircle2,
+  RotateCcw,
   ReceiptText,
   ShieldAlert,
   Trash2,
@@ -469,6 +473,34 @@ function ProjectPage() {
     },
     onError: (err) =>
       toast.error("Archive failed", {
+        description: err instanceof Error ? err.message : "Try again.",
+      }),
+  });
+  const closeProjectFn = useServerFn(closeProject);
+  const reopenProjectFn = useServerFn(reopenProject);
+  const closeMutation = useMutation({
+    mutationFn: () => closeProjectFn({ data: { projectId } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project closed out", {
+        description: "It moved to Closed jobs and dropped out of the active portfolio.",
+      });
+    },
+    onError: (err) =>
+      toast.error("Could not close the project", {
+        description: err instanceof Error ? err.message : "Try again.",
+      }),
+  });
+  const reopenMutation = useMutation({
+    mutationFn: () => reopenProjectFn({ data: { projectId } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Project reopened");
+    },
+    onError: (err) =>
+      toast.error("Could not reopen the project", {
         description: err instanceof Error ? err.message : "Try again.",
       }),
   });
@@ -1853,6 +1885,48 @@ function ProjectPage() {
                 onSave={(patch) => finUpdate.mutate({ projectId, patch })}
                 pending={finUpdate.isPending}
               />
+              {project.closed_at ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={reopenMutation.isPending}
+                  onClick={() => reopenMutation.mutate()}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  {reopenMutation.isPending ? "Reopening…" : "Reopen job"}
+                </Button>
+              ) : (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1.5">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Close project
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Close “{project.name}” out?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Marks the job complete. It moves to Closed jobs on the home and drops out of
+                        the active portfolio and its numbers. Nothing is deleted — you can reopen it
+                        anytime.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        disabled={closeMutation.isPending}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          closeMutation.mutate();
+                        }}
+                      >
+                        {closeMutation.isPending ? "Closing…" : "Close project"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button variant="outline" size="sm" className="gap-1.5">

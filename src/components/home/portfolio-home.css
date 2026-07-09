@@ -760,6 +760,54 @@
 .ow-bg-warn {
   background: var(--warn);
 }
+.ow-tone-muted {
+  color: var(--muted);
+}
+.ow-bg-muted {
+  background: var(--muted);
+}
+
+/* ---------- close action + closed-jobs section ---------- */
+.ow-jobrow__close {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.ow-jobrow__close:hover {
+  color: var(--crit);
+  border-color: rgb(181 67 46 / 0.4);
+}
+.ow-closed {
+  margin-top: 18px;
+}
+.ow-closed__summary {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 8px 0;
+  list-style: none;
+}
+.ow-closed__summary::-webkit-details-marker {
+  display: none;
+}
+.ow-closed__summary::before {
+  content: "▸ ";
+}
+.ow-closed[open] .ow-closed__summary::before {
+  content: "▾ ";
+}
 
 /* ---------- rail ---------- */
 .ow-rail {

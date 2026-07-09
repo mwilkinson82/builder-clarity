@@ -25,6 +25,7 @@ export type HomeMetrics = {
   handoffName: string | null;
   posture: PostureTile[];
   worklist: WorklistJob[];
+  closedJobs: WorklistJob[];
   pursuits: Pursuit[];
   pmAlert: { kicker: string; body: string };
   pmStats: HeroStat[];
@@ -162,21 +163,26 @@ export function buildHomeMetrics(
   opportunities: PipelineOpportunityRow[],
   snapshot: PipelineCrmSnapshot | null,
 ): HomeMetrics {
+  // Closed-out jobs drop out of the active portfolio + all its aggregates; they
+  // live only in the collapsed "Closed jobs" section.
+  const openProjects = projects.filter((p) => !p.closed_at);
+  const closedProjects = projects.filter((p) => p.closed_at);
+
   // ---- project aggregates (mirror buildPortfolioTotals) ----
-  const sum = (fn: (p: HomeProject) => number) => projects.reduce((t, p) => t + fn(p), 0);
+  const sum = (fn: (p: HomeProject) => number) => openProjects.reduce((t, p) => t + fn(p), 0);
   const indicatedGP = sum((p) => p.indicated_gp);
   const gpAtRisk = sum((p) => p.gp_at_risk);
   const forecastedContract = sum((p) => p.forecasted_final_contract);
   const overdueActions = sum((p) => p.overdue_decision_count);
-  const projectCount = projects.length;
-  const atRiskCount = projects.filter(
+  const projectCount = openProjects.length;
+  const atRiskCount = openProjects.filter(
     (p) => riskLabel(p.original_gp_pct, p.indicated_gp_pct) === "At Risk",
   ).length;
-  const slippedCount = projects.filter(
+  const slippedCount = openProjects.filter(
     (p) => p.schedule_variance_weeks > 0 || p.schedule_risk_count > 0,
   ).length;
-  const jobsWaiting = projects.filter((p) => p.overdue_decision_count > 0).length;
-  const logsDue = projects.filter(
+  const jobsWaiting = openProjects.filter((p) => p.overdue_decision_count > 0).length;
+  const logsDue = openProjects.filter(
     (p) => dailyLabel(p.daily_report_count, p.days_since_daily_report) !== "Current",
   ).length;
   const indicatedPct = forecastedContract ? (indicatedGP / forecastedContract) * 100 : 0;
@@ -196,11 +202,26 @@ export function buildHomeMetrics(
     (o) => o.stage === "bid_submitted" || o.stage === "negotiating",
   ).length;
 
-  // ---- worklist ---- (all jobs, worst-first; not capped, so the posture-tile
+  // ---- worklist ---- (all OPEN jobs, worst-first; not capped, so the posture-tile
   // filter counts match the rows shown)
-  const allJobs = projects.map(toJob).sort((a, b) => severity(a) - severity(b));
+  const allJobs = openProjects.map(toJob).sort((a, b) => severity(a) - severity(b));
   const worklist = allJobs;
   const pmJobs = allJobs;
+  // Closed jobs, newest-closed first — the collapsed section.
+  const closedJobs: WorklistJob[] = [...closedProjects]
+    .sort((a, b) => (b.closed_at ?? "").localeCompare(a.closed_at ?? ""))
+    .map((p) => ({
+      id: p.id,
+      tag: "CLOSED",
+      tone: "muted",
+      name: p.name,
+      desc: `Closed ${shortDate((p.closed_at ?? "").slice(0, 10))}`.trim(),
+      value: "",
+      atRisk: false,
+      overdue: false,
+      logoUrl: p.organization_logo_url,
+      orgName: p.organization_name,
+    }));
 
   // ---- pipeline cards ----
   const pipeline: StageCard[] = DISPLAY_STAGES.map((stage) => {
@@ -246,7 +267,7 @@ export function buildHomeMetrics(
     { label: "Jobs at risk", value: String(atRiskCount), valueTone: "crit" },
     { label: "Overdue actions", value: String(overdueActions), valueTone: "crit" },
   ];
-  const pmAttention = projects.filter((p) => {
+  const pmAttention = openProjects.filter((p) => {
     const risk = riskLabel(p.original_gp_pct, p.indicated_gp_pct);
     return (
       risk === "At Risk" ||
@@ -326,6 +347,7 @@ export function buildHomeMetrics(
     handoffName: wonOpps.length > 0 ? (wonOpps[0]?.name ?? null) : null,
     posture,
     worklist,
+    closedJobs,
     pursuits,
     pmAlert: { kicker: "Needs you · today", body: pmBody },
     pmStats,

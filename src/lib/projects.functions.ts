@@ -111,6 +111,8 @@ export interface ProjectRow {
   project_manager: string;
   source_opportunity_id: string | null;
   archived_at: string | null;
+  /** Close-out: null = open/active; a timestamp = the job was closed out. */
+  closed_at: string | null;
   /**
    * BUDGETLOCK1: when the cost-budget baseline was frozen. null = unlocked
    * (setup). Once locked, original_budget edits are refused — budget changes
@@ -816,6 +818,8 @@ const normalizeProject = (p: Record<string, unknown>): ProjectRow => ({
   project_manager: str(p.project_manager),
   source_opportunity_id: (p.source_opportunity_id as string | null) ?? null,
   archived_at: (p.archived_at as string | null) ?? null,
+  // Missing column (migration not applied yet) reads as open/active.
+  closed_at: (p.closed_at as string | null | undefined) ?? null,
   // Missing column (migration not applied yet) reads as unlocked.
   budget_locked_at: (p.budget_locked_at as string | null) ?? null,
 });
@@ -2008,6 +2012,33 @@ export const unarchiveProject = createServerFn({ method: "POST" })
     const { error } = await context.supabase
       .from("projects")
       .update({ archived_at: null } as never)
+      .eq("id", data.projectId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// Close-out lifecycle (separate from archive): a closed job is done but stays
+// viewable in the collapsed "Closed jobs" section. RLS bounds the update to
+// projects the caller can manage.
+export const closeProject = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => projectIdInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("projects")
+      .update({ closed_at: new Date().toISOString() } as never)
+      .eq("id", data.projectId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const reopenProject = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => projectIdInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("projects")
+      .update({ closed_at: null } as never)
       .eq("id", data.projectId);
     if (error) throw new Error(error.message);
     return { ok: true };
