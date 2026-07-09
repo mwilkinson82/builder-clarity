@@ -4,8 +4,9 @@
 // Contingency (C-Holds) come from the live exposure allocations — the IOR risk
 // register, not a typed number. Each shorthand column carries a hover
 // explanation because a PM or biller won't know our internal terms.
-import { Info } from "lucide-react";
+import { Info, PencilLine, Plus } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -95,6 +96,9 @@ export function BudgetLedgerTable({
   changeOrders = [],
   changeOrderAllocations = [],
   subCostByBucket,
+  onOpenLine,
+  onAddLine,
+  editedBucketIds,
 }: {
   buckets: BucketRow[];
   exposures: ExposureRow[];
@@ -110,6 +114,14 @@ export function BudgetLedgerTable({
     string,
     { paid: number; open: number; committed?: number; earned?: number }
   >;
+  // BUDGETCONSOLIDATE1: when provided, the ledger becomes the single editable
+  // Budget table — click a line to open its editor, "Add line" to create one.
+  // Omitted (e.g. the read-only billing usage) → the ledger stays display-only.
+  onOpenLine?: (bucketId: string) => void;
+  onAddLine?: () => void;
+  // Cost-bucket ids that carry a manual override, marked so a hand-touched line
+  // is never invisible.
+  editedBucketIds?: ReadonlySet<string>;
 }) {
   const ledger = computeBudgetLedger(
     buckets,
@@ -132,28 +144,42 @@ export function BudgetLedgerTable({
 
   if (ledger.rows.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        No budget lines yet. Import or add cost codes to your budget, then allocate risk to see the
-        At Risk column go live.
-      </p>
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          No budget lines yet. Import or add cost codes to your budget, then allocate risk to see
+          the At Risk column go live.
+        </p>
+        {onAddLine ? (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={onAddLine}>
+            <Plus className="h-3.5 w-3.5" /> Add line
+          </Button>
+        ) : null}
+      </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      <div>
-        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-          Budget vs cost by code
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Budget vs cost by code
+          </div>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            <strong className="font-medium text-foreground">Projected cost</strong> is what you've
+            spent plus what's still committed.{" "}
+            <strong className="font-medium text-foreground">Over / under budget</strong> is your
+            budget minus that — <span className="text-success">green</span> means you're coming in
+            under budget, <span className="text-danger">red</span> means over. Budget is your locked
+            baseline plus approved change-order cost; At Risk and Contingency come straight from
+            your IOR risk holds. Hover any column for what it means.
+          </p>
         </div>
-        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          <strong className="font-medium text-foreground">Projected cost</strong> is what you've
-          spent plus what's still committed.{" "}
-          <strong className="font-medium text-foreground">Over / under budget</strong> is your
-          budget minus that — <span className="text-success">green</span> means you're coming in
-          under budget, <span className="text-danger">red</span> means over. Budget is your locked
-          baseline plus approved change-order cost; At Risk and Contingency come straight from your
-          IOR risk holds. Hover any column for what it means.
-        </p>
+        {onAddLine ? (
+          <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={onAddLine}>
+            <Plus className="h-3.5 w-3.5" /> Add line
+          </Button>
+        ) : null}
       </div>
       <TooltipProvider delayDuration={150}>
         {/* The Table wrapper gets a max-height so it becomes its own vertical scroll
@@ -210,70 +236,95 @@ export function BudgetLedgerTable({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {ledger.rows.map((row) => (
-                <TableRow key={row.costBucketId ?? `general-${row.costCode}`}>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
-                    {row.costCode || "—"}
-                  </TableCell>
-                  <TableCell className="font-medium">{row.description}</TableCell>
-                  <TableCell className="text-right tabular">
-                    {row.costBucketId !== null && !row.priced ? (
-                      <UnpricedChip />
-                    ) : row.contractValue !== 0 ? (
-                      <>
-                        {fmtUSD(row.contractValue)}
-                        {row.changeOrderContract !== 0 ? (
-                          <div className="text-[10px] font-normal text-muted-foreground">
-                            incl. {fmtUSD(row.changeOrderContract)} CO
-                          </div>
-                        ) : null}
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
+              {ledger.rows.map((row) => {
+                const clickable = Boolean(onOpenLine && row.costBucketId);
+                const edited = Boolean(row.costBucketId && editedBucketIds?.has(row.costBucketId));
+                return (
+                  <TableRow
+                    key={row.costBucketId ?? `general-${row.costCode}`}
+                    className={cn(
+                      clickable && "cursor-pointer transition-colors hover:bg-surface/70",
                     )}
-                  </TableCell>
-                  <TableCell className="text-right tabular">
-                    {fmtUSD(row.budget)}
-                    {row.changeOrderBudget !== 0 ? (
-                      <div className="text-[10px] font-normal text-muted-foreground">
-                        incl. {fmtUSD(row.changeOrderBudget)} CO
-                      </div>
-                    ) : null}
-                  </TableCell>
-                  <TableCell className="text-right tabular">
-                    {fmtUSD(row.actuals)}
-                    {(() => {
-                      const sub = row.costBucketId ? subCostByBucket?.get(row.costBucketId) : null;
-                      // Actuals is cash paid; show the earned value alongside when the
-                      // sub has produced more work than it's been paid for, so the gap
-                      // (work done, not yet paid) is visible.
-                      return sub && (sub.earned ?? 0) > sub.paid ? (
+                    onClick={clickable ? () => onOpenLine!(row.costBucketId as string) : undefined}
+                  >
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {row.costCode || "—"}
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        {row.description}
+                        {edited ? (
+                          <span
+                            title="Manually overridden — see the line editor"
+                            className="inline-flex items-center gap-0.5 rounded-sm bg-accent/10 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-accent"
+                          >
+                            <PencilLine className="h-2.5 w-2.5" />
+                            edited
+                          </span>
+                        ) : null}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right tabular">
+                      {row.costBucketId !== null && !row.priced ? (
+                        <UnpricedChip />
+                      ) : row.contractValue !== 0 ? (
+                        <>
+                          {fmtUSD(row.contractValue)}
+                          {row.changeOrderContract !== 0 ? (
+                            <div className="text-[10px] font-normal text-muted-foreground">
+                              incl. {fmtUSD(row.changeOrderContract)} CO
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right tabular">
+                      {fmtUSD(row.budget)}
+                      {row.changeOrderBudget !== 0 ? (
                         <div className="text-[10px] font-normal text-muted-foreground">
-                          {fmtUSD(sub.earned ?? 0)} earned
+                          incl. {fmtUSD(row.changeOrderBudget)} CO
                         </div>
-                      ) : null;
-                    })()}
-                  </TableCell>
-                  <TableCell className="text-right tabular text-muted-foreground">
-                    {fmtUSD(row.open)}
-                  </TableCell>
-                  <TableCell className="text-right tabular text-warning">
-                    {row.atRisk > 0 ? fmtUSD(row.atRisk) : "—"}
-                  </TableCell>
-                  <TableCell className="text-right tabular text-accent">
-                    {row.contingency > 0 ? fmtUSD(row.contingency) : "—"}
-                  </TableCell>
-                  <TableCell className="text-right tabular font-medium">
-                    {fmtUSD(row.eac)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <OverUnder value={row.overUnder} />
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <MarginCell margin={row.margin} marginPct={row.marginPct} />
-                  </TableCell>
-                </TableRow>
-              ))}
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="text-right tabular">
+                      {fmtUSD(row.actuals)}
+                      {(() => {
+                        const sub = row.costBucketId
+                          ? subCostByBucket?.get(row.costBucketId)
+                          : null;
+                        // Actuals is cash paid; show the earned value alongside when the
+                        // sub has produced more work than it's been paid for, so the gap
+                        // (work done, not yet paid) is visible.
+                        return sub && (sub.earned ?? 0) > sub.paid ? (
+                          <div className="text-[10px] font-normal text-muted-foreground">
+                            {fmtUSD(sub.earned ?? 0)} earned
+                          </div>
+                        ) : null;
+                      })()}
+                    </TableCell>
+                    <TableCell className="text-right tabular text-muted-foreground">
+                      {fmtUSD(row.open)}
+                    </TableCell>
+                    <TableCell className="text-right tabular text-warning">
+                      {row.atRisk > 0 ? fmtUSD(row.atRisk) : "—"}
+                    </TableCell>
+                    <TableCell className="text-right tabular text-accent">
+                      {row.contingency > 0 ? fmtUSD(row.contingency) : "—"}
+                    </TableCell>
+                    <TableCell className="text-right tabular font-medium">
+                      {fmtUSD(row.eac)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <OverUnder value={row.overUnder} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <MarginCell margin={row.margin} marginPct={row.marginPct} />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
             <TableFooter>
               <TableRow className="bg-surface font-semibold">
@@ -328,8 +379,10 @@ export function BudgetLedgerTable({
               {ledger.unpricedCount} line{ledger.unpricedCount === 1 ? "" : "s"} without a contract
               value
             </span>{" "}
-            — the margin total covers priced lines only. Enter each line's contract value (what the
-            owner pays) in the budget grid below to complete the picture.
+            — the margin total covers priced lines only.{" "}
+            {onOpenLine
+              ? "Open each line to set its contract value (what the owner pays) and complete the picture."
+              : "Enter each line's contract value (what the owner pays) to complete the picture."}
           </p>
         ) : null}
       </TooltipProvider>

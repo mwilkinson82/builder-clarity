@@ -1,0 +1,476 @@
+// BUDGETCONSOLIDATE1 — the Budget tab's single line editor.
+//
+// The Budget tab used to be two tables: a read-only ledger and an
+// always-editable grid showing the same lines. That was redundant and made the
+// editable cells read as a spreadsheet you were meant to fill in. Now the ledger
+// is the one table, and you open a line here to edit it — deliberately, with a
+// Save button, not per-keystroke.
+//
+// The framing matters: a line's cost figures are normally DERIVED — budget moves
+// only through change orders, actuals roll up from the daily log, and a
+// bought-out scope's actual/forecast come from the subcontract ledger. So typing
+// a number here is a manual OVERRIDE, and every override is recorded (old -> new)
+// so it's never invisible.
+import { useEffect, useMemo, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
+import { LockKeyhole, Trash2 } from "lucide-react";
+import { fmtUSD } from "@/lib/format";
+import { sovLineForecastWithSubs, type SubBucketCostLite } from "@/lib/sov-rollup";
+import type { BucketRow, BudgetOverrideRow } from "@/lib/projects.functions";
+
+type BucketSource = BucketRow["source_type"];
+
+export type BucketPatch = Partial<
+  Pick<
+    BucketRow,
+    | "cost_code"
+    | "actual_to_date"
+    | "ftc"
+    | "contract_value"
+    | "original_budget"
+    | "bucket"
+    | "source_type"
+    | "source_date"
+    | "source_note"
+  >
+>;
+
+export type NewBucketInput = {
+  cost_code: string;
+  bucket: string;
+  source_type: BucketSource;
+  source_date: string;
+  source_note: string;
+};
+
+// The four money fields whose manual edits count as an override worth logging.
+export type OverrideField = "actual_to_date" | "ftc" | "contract_value" | "original_budget";
+
+const SOURCE_LABEL: Record<BucketSource, string> = {
+  original_sov: "Original budget",
+  change_order: "Change Order",
+  added_cost: "Added Cost",
+};
+
+const OVERRIDE_LABEL: Record<OverrideField, string> = {
+  actual_to_date: "Actual to date",
+  ftc: "Forecast to complete",
+  contract_value: "Contract value",
+  original_budget: "Budget",
+};
+
+// A labeled field row inside the drawer — label + helper on the left, control on
+// the right — so the editor reads as a form, not a grid.
+function Field({
+  label,
+  help,
+  children,
+}: {
+  label: string;
+  help?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[1fr_auto] items-start gap-3 py-2.5">
+      <div>
+        <div className="text-sm font-medium text-foreground">{label}</div>
+        {help ? <div className="mt-0.5 text-xs text-muted-foreground">{help}</div> : null}
+      </div>
+      <div className="min-w-[9rem] text-right">{children}</div>
+    </div>
+  );
+}
+
+// A read-only money value with a lock icon and a "why" line — used for figures
+// that are driven elsewhere (change orders, the subcontract ledger).
+function DrivenValue({ value, note }: { value: string; note: string }) {
+  return (
+    <div>
+      <div className="inline-flex items-center justify-end gap-1.5 font-medium tabular text-foreground">
+        <LockKeyhole className="h-3 w-3 opacity-50" />
+        {value}
+      </div>
+      <div className="mt-0.5 max-w-[12rem] text-[11px] font-normal leading-snug text-muted-foreground">
+        {note}
+      </div>
+    </div>
+  );
+}
+
+export function BudgetLineDrawer({
+  open,
+  onOpenChange,
+  mode,
+  bucket,
+  subCost,
+  budgetLocked,
+  overrides,
+  onSave,
+  onCreate,
+  onDelete,
+  onRecordOverride,
+  saving = false,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  mode: "edit" | "create";
+  /** The line being edited. Null in create mode. */
+  bucket: BucketRow | null;
+  subCost?: SubBucketCostLite;
+  budgetLocked: boolean;
+  /** Override history for this line, newest first. */
+  overrides: BudgetOverrideRow[];
+  onSave: (id: string, patch: BucketPatch) => Promise<unknown>;
+  onCreate: (input: NewBucketInput) => Promise<unknown> | void;
+  onDelete?: (id: string) => void;
+  /** Records one money-field override (old -> new) alongside the save. */
+  onRecordOverride: (
+    bucketId: string,
+    field: OverrideField,
+    oldValue: number,
+    newValue: number,
+  ) => void;
+  saving?: boolean;
+}) {
+  const isCreate = mode === "create";
+
+  // Draft state — reset whenever the drawer opens on a different line.
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [source, setSource] = useState<BucketSource>("added_cost");
+  const [contractValue, setContractValue] = useState(0);
+  const [budget, setBudget] = useState(0);
+  const [actual, setActual] = useState(0);
+  const [ftc, setFtc] = useState(0);
+
+  useEffect(() => {
+    if (!open) return;
+    setCode(bucket?.cost_code ?? "");
+    setName(bucket?.bucket ?? "");
+    setSource(bucket?.source_type ?? "added_cost");
+    setContractValue(bucket?.contract_value ?? 0);
+    setBudget(bucket?.original_budget ?? 0);
+    setActual(bucket?.actual_to_date ?? 0);
+    setFtc(bucket?.ftc ?? 0);
+  }, [open, bucket]);
+
+  // A bought-out line's actual/forecast are the subcontract ledger's, not
+  // manual — shown read-only, matching the top ledger row you clicked.
+  const hasSub = Boolean(subCost && ((subCost.paid ?? 0) > 0 || (subCost.committed ?? 0) > 0));
+  const { fac } = bucket ? sovLineForecastWithSubs(bucket, subCost) : { fac: 0 };
+  const actualInclusive = (bucket?.actual_to_date ?? 0) + (subCost?.paid ?? 0);
+  const forecastInclusive = fac - actualInclusive;
+  const subEarned = subCost?.earned ?? 0;
+
+  const dirty = useMemo(() => {
+    if (isCreate) return name.trim().length > 0;
+    if (!bucket) return false;
+    return (
+      code.trim() !== bucket.cost_code ||
+      name.trim() !== bucket.bucket ||
+      source !== bucket.source_type ||
+      (!budgetLocked && contractValue !== bucket.contract_value) ||
+      (!budgetLocked && budget !== bucket.original_budget) ||
+      (!hasSub && actual !== bucket.actual_to_date) ||
+      (!hasSub && ftc !== bucket.ftc)
+    );
+  }, [
+    isCreate,
+    bucket,
+    code,
+    name,
+    source,
+    budgetLocked,
+    contractValue,
+    budget,
+    hasSub,
+    actual,
+    ftc,
+  ]);
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const handleSave = async () => {
+    if (isCreate) {
+      const n = name.trim();
+      if (!n) return;
+      await onCreate({
+        cost_code: code.trim(),
+        bucket: n,
+        source_type: source,
+        source_date: today,
+        source_note: SOURCE_LABEL[source],
+      });
+      onOpenChange(false);
+      return;
+    }
+    if (!bucket) return;
+
+    const patch: BucketPatch = {};
+    if (code.trim() !== bucket.cost_code) patch.cost_code = code.trim();
+    if (name.trim() && name.trim() !== bucket.bucket) patch.bucket = name.trim();
+    if (source !== bucket.source_type) patch.source_type = source;
+
+    // Money overrides — only when the field is editable for this line.
+    const overrideEdits: Array<{ field: OverrideField; from: number; to: number }> = [];
+    if (!budgetLocked && contractValue !== bucket.contract_value) {
+      patch.contract_value = contractValue;
+      overrideEdits.push({
+        field: "contract_value",
+        from: bucket.contract_value,
+        to: contractValue,
+      });
+    }
+    if (!budgetLocked && budget !== bucket.original_budget) {
+      patch.original_budget = budget;
+      overrideEdits.push({ field: "original_budget", from: bucket.original_budget, to: budget });
+    }
+    if (!hasSub && actual !== bucket.actual_to_date) {
+      patch.actual_to_date = actual;
+      overrideEdits.push({ field: "actual_to_date", from: bucket.actual_to_date, to: actual });
+    }
+    if (!hasSub && ftc !== bucket.ftc) {
+      patch.ftc = ftc;
+      overrideEdits.push({ field: "ftc", from: bucket.ftc, to: ftc });
+    }
+
+    if (Object.keys(patch).length === 0) {
+      onOpenChange(false);
+      return;
+    }
+    await onSave(bucket.id, patch);
+    for (const edit of overrideEdits) {
+      onRecordOverride(bucket.id, edit.field, edit.from, edit.to);
+    }
+    onOpenChange(false);
+  };
+
+  const lineOverrides = bucket
+    ? overrides.filter((o) => o.cost_bucket_id === bucket.id).slice(0, 8)
+    : [];
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md">
+        <SheetHeader className="text-left">
+          <SheetTitle>
+            {isCreate
+              ? "Add a budget line"
+              : `${bucket?.cost_code || "—"} · ${bucket?.bucket ?? ""}`}
+          </SheetTitle>
+          <SheetDescription>
+            {isCreate
+              ? "Add a manual cost line — an allowance, a CO-cost holdback, permits. Budget and cost stay at zero until entered or a change order lands."
+              : "Budget moves through change orders; actuals roll up from the daily log; a bought-out scope comes from the subcontract ledger. Edit here only to override, and every override is recorded."}
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="flex-1 divide-y divide-hairline">
+          {/* Identity */}
+          <div className="py-1">
+            <Field label="Cost code">
+              <Input
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="e.g. 03-8011"
+                className="h-9 w-36 text-right font-mono text-xs"
+              />
+            </Field>
+            <Field label="Description">
+              <Textarea
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                rows={2}
+                placeholder="Line description"
+                className="min-h-[44px] w-56 resize-y text-sm"
+              />
+            </Field>
+            <Field label="Source">
+              <Select value={source} onValueChange={(v) => setSource(v as BucketSource)}>
+                <SelectTrigger className="h-9 w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="original_sov">Original budget</SelectItem>
+                  <SelectItem value="change_order">Change Order</SelectItem>
+                  <SelectItem value="added_cost">Added Cost</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+
+          {/* Baseline (contract value + budget) */}
+          {!isCreate ? (
+            <div className="py-1">
+              <div className="pt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Baseline
+              </div>
+              <Field
+                label="Contract value"
+                help="What the owner pays for this line — your SOV price."
+              >
+                {budgetLocked ? (
+                  <DrivenValue
+                    value={contractValue > 0 ? fmtUSD(contractValue) : "—"}
+                    note="Locked. Changes come through change orders."
+                  />
+                ) : (
+                  <MoneyInput
+                    value={contractValue}
+                    onValueChange={setContractValue}
+                    align="right"
+                    className="h-9 w-36"
+                  />
+                )}
+              </Field>
+              <Field label="Budget" help="Your internal cost baseline for this line.">
+                {budgetLocked ? (
+                  <DrivenValue
+                    value={fmtUSD(budget)}
+                    note="Locked. Changes come through change orders."
+                  />
+                ) : (
+                  <MoneyInput
+                    value={budget}
+                    onValueChange={setBudget}
+                    align="right"
+                    className="h-9 w-36"
+                  />
+                )}
+              </Field>
+            </div>
+          ) : null}
+
+          {/* Cost to date */}
+          {!isCreate ? (
+            <div className="py-1">
+              <div className="pt-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Cost
+              </div>
+              <Field
+                label="Actual to date"
+                help={
+                  hasSub
+                    ? undefined
+                    : "Normally rolls up from the daily log. Enter a figure only to override."
+                }
+              >
+                {hasSub ? (
+                  <div>
+                    <DrivenValue
+                      value={fmtUSD(actualInclusive)}
+                      note={`Driven by the subcontractor buyout — ${fmtUSD(subCost?.paid ?? 0)} paid to date. Record payments in the Subcontractors tab.`}
+                    />
+                    {subEarned > (subCost?.paid ?? 0) ? (
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {fmtUSD(subEarned)} earned
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <MoneyInput
+                    value={actual}
+                    onValueChange={setActual}
+                    align="right"
+                    className="h-9 w-36"
+                  />
+                )}
+              </Field>
+              <Field
+                label="Forecast to complete"
+                help={hasSub ? undefined : "Remaining cost you expect on this line."}
+              >
+                {hasSub ? (
+                  <DrivenValue
+                    value={fmtUSD(forecastInclusive)}
+                    note={`Remaining commitment on the buyout — ${fmtUSD(subCost?.committed ?? 0)} committed, less what's been paid.`}
+                  />
+                ) : (
+                  <MoneyInput
+                    value={ftc}
+                    onValueChange={setFtc}
+                    align="right"
+                    className="h-9 w-36"
+                  />
+                )}
+              </Field>
+            </div>
+          ) : null}
+
+          {/* Override history */}
+          {lineOverrides.length > 0 ? (
+            <div className="py-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Recent changes
+              </div>
+              <ul className="mt-2 space-y-1.5">
+                {lineOverrides.map((o) => (
+                  <li key={o.id} className="text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">
+                      {OVERRIDE_LABEL[o.field as OverrideField] ?? o.field}
+                    </span>{" "}
+                    {fmtUSD(o.old_value)} → {fmtUSD(o.new_value)}
+                    <span className="text-muted-foreground/70">
+                      {" · "}
+                      {new Date(o.created_at).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+
+        <SheetFooter className="mt-2 flex-row items-center justify-between gap-2 border-t border-hairline pt-4">
+          {!isCreate && onDelete && bucket ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-danger"
+              onClick={() => {
+                if (confirm(`Delete budget line "${bucket.bucket}"?`)) {
+                  onDelete(bucket.id);
+                  onOpenChange(false);
+                }
+              }}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete line
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={saving || !dirty}>
+              {isCreate ? "Add line" : saving ? "Saving…" : "Save changes"}
+            </Button>
+          </div>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  );
+}

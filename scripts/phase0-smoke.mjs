@@ -2337,9 +2337,9 @@ await expectContains(
   "risk table teaches and offers add when empty",
 );
 await expectContains(
-  "src/components/outcome/CostBucketsTable.tsx",
-  [/EmptyState/, /No budget lines yet/, /Import budget/],
-  "budget lines table teaches the import/add path when empty",
+  "src/components/project/BudgetLedgerTable.tsx",
+  [/No budget lines yet/, /Add line/],
+  "budget ledger teaches the import/add path when empty",
 );
 
 // NAVLABELS: the "More" overflow menu is retired — all 13 destinations live on
@@ -2462,10 +2462,11 @@ await expectContains(
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
-  // Budget-first: the budget-vs-cost ledger leads, the editable cost-code grid
-  // ("Edit budget lines") sits below it — not the reverse (no SOV framing on top).
-  [/BudgetLedgerTable[\s\S]*?title="Edit budget lines"[\s\S]*?CostBucketsTable/],
-  "Budget tab leads with the budget ledger, then the editable budget grid",
+  // BUDGETCONSOLIDATE1: the Budget tab is ONE table — the budget-vs-cost ledger,
+  // made clickable — and its line editor drawer. The old redundant "Edit budget
+  // lines" grid is gone; you open a line to edit it.
+  [/<BudgetLedgerTable[\s\S]*?onOpenLine=[\s\S]*?<BudgetLineDrawer/],
+  "Budget tab is one clickable ledger with a line-editor drawer",
 );
 
 // BUDGETENGINE Phase 4: fold the budget-vs-cost picture into Billing so the whole
@@ -2532,9 +2533,9 @@ await expectContains(
   "SOV import bills the line's contract value, not the cost budget (BUDGETVSCONTRACT1)",
 );
 await expectContains(
-  "src/components/outcome/CostBucketsTable.tsx",
-  [/Contract value/, /contract_value: v/],
-  "budget grid captures contract value and budget as two clearly-labeled fields",
+  "src/components/outcome/BudgetLineDrawer.tsx",
+  [/Contract value/, /patch\.contract_value = contractValue/],
+  "budget line editor captures contract value and budget as two clearly-labeled fields",
 );
 
 // BUDGETENGINE Phase 3: estimate → budget carry. The budget is the estimate's

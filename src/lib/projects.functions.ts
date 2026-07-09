@@ -2868,6 +2868,88 @@ export const deleteBucket = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+// -------- BUDGETCONSOLIDATE1: budget line override audit log --------
+// The Budget tab is one ledger you open a line to edit. A line's cost figures
+// are normally derived (actuals from the daily log, forecast/commitment from the
+// sub buyout, budget from change orders), so a manual edit in the line editor is
+// an OVERRIDE — recorded here so it's never invisible.
+
+export interface BudgetOverrideRow {
+  id: string;
+  project_id: string;
+  cost_bucket_id: string | null;
+  field: string;
+  old_value: number;
+  new_value: number;
+  note: string | null;
+  changed_by: string | null;
+  created_at: string;
+}
+
+const OVERRIDE_FIELDS = ["actual_to_date", "ftc", "contract_value", "original_budget"] as const;
+
+const recordBudgetOverrideInput = z.object({
+  projectId: z.string().uuid(),
+  costBucketId: z.string().uuid(),
+  field: z.enum(OVERRIDE_FIELDS),
+  oldValue: z.number(),
+  newValue: z.number(),
+  note: z.string().max(500).optional(),
+});
+
+export const recordBudgetOverride = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof recordBudgetOverrideInput>) =>
+    recordBudgetOverrideInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "budget_line_overrides").insert({
+      project_id: data.projectId,
+      cost_bucket_id: data.costBucketId,
+      field: data.field,
+      old_value: data.oldValue,
+      new_value: data.newValue,
+      note: data.note ?? null,
+      changed_by: context.userId,
+    });
+    if (error) {
+      // The edit itself already landed via updateBucket; if the audit table
+      // isn't applied yet, swallow the log miss rather than fail the save.
+      if (isMissingRestRelation(error, "budget_line_overrides")) return { ok: true, logged: false };
+      throw new Error(error.message);
+    }
+    return { ok: true, logged: true };
+  });
+
+export const listBudgetOverrides = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string }) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<BudgetOverrideRow[]> => {
+    const { data: rows, error } = await dynamicTable(context.supabase, "budget_line_overrides")
+      .select("id,project_id,cost_bucket_id,field,old_value,new_value,note,changed_by,created_at")
+      .eq("project_id", data.projectId)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) {
+      // Audit table ships in a desk migration; degrade to empty if absent.
+      if (isMissingRestRelation(error, "budget_line_overrides")) return [];
+      throw new Error(error.message);
+    }
+    return ((rows ?? []) as Record<string, unknown>[]).map((row) => ({
+      id: str(row.id),
+      project_id: str(row.project_id),
+      cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+      field: str(row.field),
+      old_value: num(row.old_value),
+      new_value: num(row.new_value),
+      note: (row.note as string | null) ?? null,
+      changed_by: (row.changed_by as string | null) ?? null,
+      created_at: str(row.created_at),
+    }));
+  });
+
 // ---------------- DECISIONS ----------------
 
 const DECISION_STATUSES = ["open", "in_progress", "resolved", "overdue"] as const;
