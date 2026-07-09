@@ -303,7 +303,7 @@ export function BillingInvoiceRowEditor({
   return (
     <div className="rounded-md border border-hairline bg-surface p-4">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-        <div className="grid min-w-0 flex-1 gap-3 lg:grid-cols-[minmax(180px,1fr)_minmax(160px,0.8fr)_minmax(220px,1fr)]">
+        <div className="grid min-w-0 flex-1 gap-3 lg:grid-cols-[minmax(180px,1fr)_minmax(160px,0.8fr)_minmax(300px,1.1fr)]">
           <div className="space-y-1.5">
             <Label>Invoice</Label>
             <EditableText
@@ -339,7 +339,7 @@ export function BillingInvoiceRowEditor({
                 type="date"
                 value={invoice.issue_date ?? ""}
                 onChange={(e) => onPatch({ issue_date: e.target.value || null })}
-                className="h-8 w-full"
+                className="h-8 w-full min-w-[8.5rem]"
               />
             </div>
             <div className="space-y-1.5">
@@ -348,7 +348,7 @@ export function BillingInvoiceRowEditor({
                 type="date"
                 value={invoice.due_date ?? ""}
                 onChange={(e) => onPatch({ due_date: e.target.value || null })}
-                className="h-8 w-full"
+                className="h-8 w-full min-w-[8.5rem]"
               />
             </div>
           </div>
