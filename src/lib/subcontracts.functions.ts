@@ -399,11 +399,22 @@ async function evaluateSubPaymentGate(
   paymentDate: string,
 ): Promise<{ allowed: boolean; blockers: string[]; consumeWaiverId: string | null }> {
   const OPEN = { allowed: true, blockers: [] as string[], consumeWaiverId: null };
+  // Couldn't verify a hard money gate → FAIL CLOSED: block with a retry so a
+  // transient DB error can't let an uncompliant payment slip through. (This only
+  // fires once gating is confirmed ON below — pre-migration stays open.)
+  const CLOSED = {
+    allowed: false,
+    blockers: ["Couldn't verify insurance/lien-waiver status right now — try again in a moment."],
+    consumeWaiverId: null,
+  };
   const projRes = await dynamicTable(supabase, "projects")
     .select("require_compliance_gating")
     .eq("id", projectId)
     .maybeSingle();
-  // Absent column / read error → feature not enabled → no gate.
+  // Absent column / read error here is indistinguishable from "feature not
+  // provisioned yet" (pre-migration), so stay OPEN — never block a project that
+  // hasn't turned this on. Once we can read the toggle, the same migration has
+  // provisioned the cert/waiver tables, so errors past this point are transient.
   if (projRes.error || !projRes.data) return OPEN;
   const gatingEnabled =
     (projRes.data as Record<string, unknown>).require_compliance_gating !== false;
@@ -412,7 +423,7 @@ async function evaluateSubPaymentGate(
   const certsRes = await dynamicTable(supabase, "insurance_certificates")
     .select("*")
     .eq("subcontract_id", subcontractId);
-  if (certsRes.error) return OPEN; // tables not provisioned / read error → don't trap
+  if (certsRes.error) return CLOSED; // gating is ON but we couldn't check → block
   const certs = ((certsRes.data ?? []) as Record<string, unknown>[]).map((c) => ({
     verified: c.verified === true,
     effective_date: (c.effective_date as string | null) ?? null,
@@ -423,7 +434,7 @@ async function evaluateSubPaymentGate(
   const waiversRes = await dynamicTable(supabase, "lien_waivers")
     .select("*")
     .eq("subcontract_id", subcontractId);
-  if (waiversRes.error) return OPEN;
+  if (waiversRes.error) return CLOSED;
   const unconsumed = ((waiversRes.data ?? []) as Record<string, unknown>[]).filter(
     (w) => !w.payment_id,
   );
