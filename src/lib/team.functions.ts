@@ -884,6 +884,43 @@ export const getMyProfile = createServerFn({ method: "GET" })
     };
   });
 
+// The signed-in user's home-screen access: which view they get. The Owner view
+// (company-wide posture + the CRM/new-business track) is for users who can see
+// all company projects OR work the pipeline (or a super admin); everyone else is
+// scoped to their own jobs (the PM view). Lightweight — just the current
+// membership row + the super-admin check.
+export const getMyHomeAccess = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const organizationId = await ensureCurrentOrganization(context);
+    const { data, error } = await context.supabase
+      .from("organization_memberships")
+      .select("role,status,capabilities")
+      .eq("organization_id", organizationId)
+      .eq("user_id", context.userId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    const row = (data ?? null) as {
+      role?: string;
+      status?: string;
+      capabilities?: unknown;
+    } | null;
+    const role = (row?.role as AccountRole) ?? "member";
+    const active = (row?.status ?? "active") === "active";
+    const capabilities = effectiveCapabilities({ role, capabilities: row?.capabilities });
+
+    const superAdminRes = await context.supabase.rpc("is_super_admin");
+    const isSuperAdmin = !superAdminRes.error && Boolean(superAdminRes.data);
+
+    const canSeeOwnerView =
+      isSuperAdmin ||
+      (active &&
+        (hasCapability(capabilities, "projects.view_all") ||
+          hasCapability(capabilities, "crm.manage")));
+
+    return { role, isSuperAdmin, canSeeOwnerView };
+  });
+
 export const updateMyProfile = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof profileUpdateInput>) => profileUpdateInput.parse(input))
