@@ -53,6 +53,7 @@ import {
   FileText,
   Info,
   KanbanSquare,
+  LayoutDashboard,
   LogOut,
   MailPlus,
   Plus,
@@ -231,7 +232,9 @@ function PortfolioPage() {
   );
   const headerCompanyName =
     companyFilter !== "all" ? companyFilter : companyContext?.name || companyNames[0] || "Company";
-  const headerTitle = portfolioTab === "pipeline" ? "CRM" : "Portfolio";
+  // "Portfolio" is now the 6a home at /; this tabbed page is the Projects/CRM
+  // drill-down, so its heading mirrors the active tab (no name collision).
+  const headerTitle = portfolioTab === "pipeline" ? "CRM" : "Projects";
   const headerLogoUrl =
     companyContext?.logo_url &&
     failedCompanyLogoUrl !== companyContext.logo_url &&
@@ -477,6 +480,11 @@ function PortfolioPage() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
+                <Link to="/">
+                  <LayoutDashboard className="h-3.5 w-3.5" /> Portfolio
+                </Link>
+              </Button>
               <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
                 <a href="/?tab=crm">
                   <BriefcaseBusiness className="h-3.5 w-3.5" /> CRM
