@@ -11,7 +11,22 @@
 // hex tints are kept verbatim — the one place the house system allows literal hex.
 import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { toast } from "sonner";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { closeProject } from "@/lib/projects.functions";
 import { type HeroStat, type WorklistJob } from "./portfolio-home-data";
 import { homeInitials, useHomeAccess, useHomeIdentity, type HomeIdentity } from "./home-identity";
 import { useHomeMetrics } from "./use-home-metrics";
@@ -30,7 +45,7 @@ function boldParts(text: string) {
 }
 
 function toneClass(prefix: "ow-tone" | "ow-bg", tone: WorklistJob["tone"]) {
-  return `${prefix}-${tone === "muted" ? "" : tone}`.trim();
+  return `${prefix}-${tone}`;
 }
 
 // CRM / projects live as tabs on the portfolio route; the cutover keeps these
@@ -44,6 +59,49 @@ function JobLogo({ url, name }: { url: string; name: string }) {
     <span className="ow-jobrow__logo" title={name}>
       {url ? <img src={url} alt="" /> : homeInitials(name, "•")}
     </span>
+  );
+}
+
+// A worklist row action to close a job out — always behind a confirm so nobody
+// closes a live job by accident.
+function CloseJobButton({ projectId, name }: { projectId: string; name: string }) {
+  const qc = useQueryClient();
+  const closeFn = useServerFn(closeProject);
+  const mutation = useMutation({
+    mutationFn: () => closeFn({ data: { projectId } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      toast.success("Job closed out");
+    },
+    onError: (err) => {
+      toast.error("Could not close the job", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <button type="button" className="ow-jobrow__close" title="Close this job out">
+          Close
+        </button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Close {name} out?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This marks the job complete and moves it to Closed jobs. It drops out of your active
+            portfolio and its numbers — you can reopen it anytime.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+            {mutation.isPending ? "Closing…" : "Close job"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -383,6 +441,7 @@ function OwnerView({
                       {job.value}
                     </div>
                   ) : null}
+                  <CloseJobButton projectId={job.id} name={job.name} />
                   <Link
                     to="/projects/$projectId"
                     params={{ projectId: job.id }}
@@ -394,6 +453,34 @@ function OwnerView({
               ))
             )}
           </div>
+
+          {metrics.closedJobs.length > 0 ? (
+            <details className="ow-closed">
+              <summary className="ow-closed__summary">
+                Closed jobs ({metrics.closedJobs.length})
+              </summary>
+              <div className="ow-worklist" style={{ marginTop: 12 }}>
+                {metrics.closedJobs.map((job) => (
+                  <div className="ow-jobrow" key={job.id}>
+                    <span className="ow-jobrow__dot ow-bg-muted" />
+                    <div className="ow-jobrow__tag ow-tone-muted">{job.tag}</div>
+                    <JobLogo url={job.logoUrl} name={job.orgName} />
+                    <div className="ow-jobrow__body">
+                      <div className="ow-jobrow__name">{job.name}</div>
+                      <div className="ow-jobrow__desc">{job.desc}</div>
+                    </div>
+                    <Link
+                      to="/projects/$projectId"
+                      params={{ projectId: job.id }}
+                      className="ow-jobrow__open"
+                    >
+                      Open →
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ) : null}
         </div>
 
         {/* rail: pursuits needing a move + company card */}
