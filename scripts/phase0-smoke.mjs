@@ -1120,6 +1120,50 @@ await expectContains(
   "project route wires claim-doc upload/view/remove against the claim-docs bucket",
 );
 
+// CLAIM ↔ RISK / CO TWO-WAY TAGGING (Claims/CO/Risk arc — slice 5, final): a
+// claim and its risk / change order cross-reference both ways (reverse pointers
+// linked_claim_id), same tag-not-math model as slice 1's CO↔risk.
+await expectContains(
+  "supabase/migrations/20260709230000_claim_risk_co_reverse_links.sql",
+  [
+    /ALTER TABLE public\.exposures\s+ADD COLUMN IF NOT EXISTS linked_claim_id uuid/,
+    /ALTER TABLE public\.change_orders\s+ADD COLUMN IF NOT EXISTS linked_claim_id uuid/,
+    /ON DELETE SET NULL/,
+  ],
+  "claim↔risk/CO migration adds the reverse linked_claim_id pointers (desk applies)",
+);
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /export const linkClaimExposure/,
+    /export const linkClaimChangeOrder/,
+    /linked_claim_id: \(e\.linked_claim_id/,
+    /linked_claim_id: \(o\.linked_claim_id/,
+  ],
+  "server layer links a claim to its risk + change order both ways",
+);
+await expectContains(
+  "src/components/outcome/ExposuresTable.tsx",
+  [/onCreateClaim/, /Track as claim/, /linked_claim_id/, /Already tracked as a claim/],
+  "risk tally exposes the track-as-claim action + linked state",
+);
+await expectContains(
+  "src/components/outcome/ClaimsWorkspace.tsx",
+  [/onSendToRisk/, /onPromoteToChangeOrder/, /Send to risk tally/, /Promote to change order/],
+  "claims workspace offers send-to-risk + promote-to-change-order with linked state",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [
+    /handleSendClaimToRisk/,
+    /handleTrackExposureAsClaim/,
+    /handlePromoteClaimToChangeOrder/,
+    /exposureCategoryFromClaim/,
+    /setClaimRiskPrompt/,
+  ],
+  "project route wires the claim↔risk/CO handlers + the carry-value prompt",
+);
+
 await expectContains(
   "src/routes/_authenticated/team.tsx",
   [

@@ -148,6 +148,8 @@ export interface ExposureRow {
    * spun off from it), or null. Reference only — no rollup effect.
    */
   linked_change_order_id: string | null;
+  /** CLAIM↔RISK link: the claim this risk is tracked as, or null. */
+  linked_claim_id: string | null;
 }
 
 export type COType =
@@ -181,6 +183,8 @@ export interface ChangeOrderRow {
    * that was spun off from it), or null. Reference only — no rollup effect.
    */
   linked_exposure_id: string | null;
+  /** CLAIM↔CO link: the claim this change order was promoted from, or null. */
+  linked_claim_id: string | null;
 }
 
 export type InspectionStatus =
@@ -1225,6 +1229,7 @@ const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
   resolved_at: (e.resolved_at as string | null) ?? null,
   notes: str(e.notes),
   linked_change_order_id: (e.linked_change_order_id as string | null) ?? null,
+  linked_claim_id: (e.linked_claim_id as string | null) ?? null,
 });
 
 // ---------------- LIST + GET ----------------
@@ -1827,6 +1832,7 @@ export const getProject = createServerFn({ method: "GET" })
         client_sent_at: (o.client_sent_at as string | null) ?? null,
         client_decided_at: (o.client_decided_at as string | null) ?? null,
         linked_exposure_id: (o.linked_exposure_id as string | null) ?? null,
+        linked_claim_id: (o.linked_claim_id as string | null) ?? null,
       };
     });
 
@@ -2544,6 +2550,55 @@ export const unlinkChangeOrderExposure = createServerFn({ method: "POST" })
       throw new Error(expErr.message);
     }
     return { ok: true };
+  });
+
+// ---------------- CLAIM ↔ RISK / CO LINKS ----------------
+// Cross-reference a claim with the risk it's tracked as, and the CO it was
+// promoted into. Pure pointer wiring — the claim keeps its outgoing pointer
+// (project_claims.risk_exposure_id / change_order_id, added in slice 2), and
+// these set the REVERSE pointer on exposures/change_orders (added in slice 5).
+// Reverse column may be a migration behind → that side no-ops gracefully.
+
+export const linkClaimExposure = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { claimId: string; exposureId: string }) =>
+    z.object({ claimId: z.string().uuid(), exposureId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { claimId, exposureId } = data;
+    const { error: claimErr } = await dynamicTable(context.supabase, "project_claims")
+      .update({ risk_exposure_id: exposureId })
+      .eq("id", claimId);
+    if (claimErr && !isMissingRestColumn(claimErr, "risk_exposure_id")) {
+      throw new Error(claimErr.message);
+    }
+    const { error: expErr } = await context.supabase
+      .from("exposures")
+      .update({ linked_claim_id: claimId } as never)
+      .eq("id", exposureId);
+    if (expErr && !isMissingRestColumn(expErr, "linked_claim_id")) throw new Error(expErr.message);
+    return { ok: true, linked: !claimErr && !expErr };
+  });
+
+export const linkClaimChangeOrder = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { claimId: string; changeOrderId: string }) =>
+    z.object({ claimId: z.string().uuid(), changeOrderId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { claimId, changeOrderId } = data;
+    const { error: claimErr } = await dynamicTable(context.supabase, "project_claims")
+      .update({ change_order_id: changeOrderId })
+      .eq("id", claimId);
+    if (claimErr && !isMissingRestColumn(claimErr, "change_order_id")) {
+      throw new Error(claimErr.message);
+    }
+    const { error: coErr } = await context.supabase
+      .from("change_orders")
+      .update({ linked_claim_id: claimId } as never)
+      .eq("id", changeOrderId);
+    if (coErr && !isMissingRestColumn(coErr, "linked_claim_id")) throw new Error(coErr.message);
+    return { ok: true, linked: !claimErr && !coErr };
   });
 
 // ---------------- CHANGE ORDER ALLOCATIONS ----------------

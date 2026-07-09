@@ -49,6 +49,7 @@ export function RiskAllocationWorkbench({
   onDeleteExposure,
   onCreateTodo,
   onCreateChangeOrder,
+  onCreateClaim,
 }: {
   exposures: ExposureRow[];
   rollup: Rollup;
@@ -60,6 +61,7 @@ export function RiskAllocationWorkbench({
   onDeleteExposure: (id: string) => void;
   onCreateTodo?: (exposure: ExposureRow) => void;
   onCreateChangeOrder?: (exposure: ExposureRow) => void;
+  onCreateClaim?: (exposure: ExposureRow) => void;
 }) {
   const carrying = exposures.filter(carriesRemainingRisk);
   const releasedRows = exposures.filter((e) => released(e) > 0);
@@ -225,6 +227,7 @@ export function RiskAllocationWorkbench({
             onDelete={onDeleteExposure}
             onCreateTodo={onCreateTodo}
             onCreateChangeOrder={onCreateChangeOrder}
+            onCreateClaim={onCreateClaim}
           />
         </div>
 
