@@ -28,7 +28,25 @@ import {
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MoneyInput } from "@/components/ui/money-input";
-import { History, Gavel, Paperclip, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  FileCheck,
+  FileText,
+  History,
+  Gavel,
+  MoreHorizontal,
+  Paperclip,
+  Pencil,
+  Plus,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { fmtUSD } from "@/lib/format";
 import {
   ClaimCycleLogDialog,
@@ -162,6 +180,8 @@ export function ClaimsWorkspace({
   onUploadDocument,
   onViewDocument,
   onDeleteDocument,
+  onSendToRisk,
+  onPromoteToChangeOrder,
   uploadingDocument = false,
   saving = false,
 }: {
@@ -176,6 +196,8 @@ export function ClaimsWorkspace({
   onUploadDocument?: (claimId: string, file: File, docType: ClaimDocType, note: string) => void;
   onViewDocument?: (path: string) => void;
   onDeleteDocument?: (id: string, path: string) => void;
+  onSendToRisk?: (claim: ClaimRow) => void;
+  onPromoteToChangeOrder?: (claim: ClaimRow) => void;
   uploadingDocument?: boolean;
   saving?: boolean;
 }) {
@@ -241,7 +263,7 @@ export function ClaimsWorkspace({
               <TableHead className="text-right">Amount sought</TableHead>
               <TableHead className="text-right">Time sought</TableHead>
               <TableHead className="hidden md:table-cell">Submitted</TableHead>
-              <TableHead className="w-[160px] text-right">Actions</TableHead>
+              <TableHead className="w-[190px] text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -320,6 +342,42 @@ export function ClaimsWorkspace({
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
+                    {(onSendToRisk || onPromoteToChangeOrder) && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            aria-label={`Link actions for ${c.title}`}
+                          >
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {onSendToRisk &&
+                            (c.risk_exposure_id ? (
+                              <DropdownMenuItem disabled>
+                                <ShieldCheck className="mr-2 h-3.5 w-3.5" /> In the risk tally
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem onClick={() => onSendToRisk(c)}>
+                                <ShieldAlert className="mr-2 h-3.5 w-3.5" /> Send to risk tally
+                              </DropdownMenuItem>
+                            ))}
+                          {onPromoteToChangeOrder &&
+                            (c.change_order_id ? (
+                              <DropdownMenuItem disabled>
+                                <FileCheck className="mr-2 h-3.5 w-3.5" /> In change orders
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem onClick={() => onPromoteToChangeOrder(c)}>
+                                <FileText className="mr-2 h-3.5 w-3.5" /> Promote to change order
+                              </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>

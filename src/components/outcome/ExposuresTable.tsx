@@ -17,7 +17,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FileCheck, FileText, ListChecks, Plus, Pencil, ShieldAlert, Trash2 } from "lucide-react";
+import {
+  FileCheck,
+  FileText,
+  Gavel,
+  ListChecks,
+  Plus,
+  Pencil,
+  ShieldAlert,
+  Trash2,
+} from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
@@ -132,6 +141,7 @@ export function ExposuresTable({
   onDelete,
   onCreateTodo,
   onCreateChangeOrder,
+  onCreateClaim,
 }: {
   exposures: ExposureRow[];
   focusedExposureId?: string | null;
@@ -141,6 +151,7 @@ export function ExposuresTable({
   onDelete: (id: string) => void;
   onCreateTodo?: (exposure: ExposureRow) => void;
   onCreateChangeOrder?: (exposure: ExposureRow) => void;
+  onCreateClaim?: (exposure: ExposureRow) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [viewing, setViewing] = useState<ExposureRow | null>(null);
@@ -289,6 +300,7 @@ export function ExposuresTable({
               onDelete={onDelete}
               onCreateTodo={onCreateTodo}
               onCreateChangeOrder={onCreateChangeOrder}
+              onCreateClaim={onCreateClaim}
             />
           ))}
           <RiskGroupRow
@@ -307,6 +319,7 @@ export function ExposuresTable({
               onDelete={onDelete}
               onCreateTodo={onCreateTodo}
               onCreateChangeOrder={onCreateChangeOrder}
+              onCreateClaim={onCreateClaim}
             />
           ))}
           {unclassifiedLive.length > 0 && (
@@ -327,6 +340,7 @@ export function ExposuresTable({
               onDelete={onDelete}
               onCreateTodo={onCreateTodo}
               onCreateChangeOrder={onCreateChangeOrder}
+              onCreateClaim={onCreateClaim}
             />
           ))}
           {closed.length > 0 && (
@@ -346,6 +360,7 @@ export function ExposuresTable({
               onDelete={onDelete}
               onCreateTodo={onCreateTodo}
               onCreateChangeOrder={onCreateChangeOrder}
+              onCreateClaim={onCreateClaim}
             />
           ))}
           {exposures.length === 0 && (
@@ -866,6 +881,7 @@ function RiskRow({
   onDelete,
   onCreateTodo,
   onCreateChangeOrder,
+  onCreateClaim,
 }: {
   exposure: ExposureRow;
   highlightLabel?: string;
@@ -875,6 +891,7 @@ function RiskRow({
   onDelete: (id: string) => void;
   onCreateTodo?: (exposure: ExposureRow) => void;
   onCreateChangeOrder?: (exposure: ExposureRow) => void;
+  onCreateClaim?: (exposure: ExposureRow) => void;
 }) {
   const closed = remainingValue(exposure) === 0;
   const highlighted = Boolean(highlightLabel);
@@ -1020,6 +1037,33 @@ function RiskRow({
             }}
           >
             <FileText className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
+        {exposure.linked_claim_id ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7 text-accent-foreground"
+            disabled
+            title="Already tracked as a claim"
+            aria-label={`${exposure.title} is already tracked as a claim`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Gavel className="h-3.5 w-3.5" />
+          </Button>
+        ) : onCreateClaim ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7"
+            title="Track as claim"
+            aria-label={`Track risk ${exposure.title} as a claim`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onCreateClaim(exposure);
+            }}
+          >
+            <Gavel className="h-3.5 w-3.5" />
           </Button>
         ) : null}
         {onCreateTodo && (

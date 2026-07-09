@@ -120,6 +120,8 @@ import {
   deleteClaimEvent,
   addClaimDocument,
   deleteClaimDocument,
+  linkClaimExposure,
+  linkClaimChangeOrder,
   allocateChangeOrder,
   deleteChangeOrderAllocation,
   allocateExposure,
@@ -344,6 +346,20 @@ function changeOrderTypeFromExposure(category: ExposureCategory): ChangeOrderRow
   }
 }
 
+function exposureCategoryFromClaim(claimType: ClaimRow["claim_type"]): ExposureCategory {
+  switch (claimType) {
+    case "delay":
+    case "extension_of_time":
+    case "delay_damages":
+    case "acceleration":
+      return "schedule_compression";
+    case "disruption":
+      return "trade_performance";
+    default:
+      return "other";
+  }
+}
+
 function ProjectRoute() {
   const childMatches = useChildMatches();
   return childMatches.length > 0 ? <Outlet /> : <ProjectPage />;
@@ -358,6 +374,10 @@ function ProjectPage() {
   const [creatingCoRiskId, setCreatingCoRiskId] = useState<string | null>(null);
   // CO→risk value prompt: which CO is being sent, and the amount to carry.
   const [coRiskPrompt, setCoRiskPrompt] = useState<{ co: ChangeOrderRow; value: number } | null>(
+    null,
+  );
+  // Claim→risk value prompt: which claim, and the amount to carry as the risk.
+  const [claimRiskPrompt, setClaimRiskPrompt] = useState<{ claim: ClaimRow; value: number } | null>(
     null,
   );
   const [creatingInspectionRiskId, setCreatingInspectionRiskId] = useState<string | null>(null);
@@ -417,6 +437,8 @@ function ProjectPage() {
   const deleteClaimEventFn = useServerFn(deleteClaimEvent);
   const addClaimDocumentFn = useServerFn(addClaimDocument);
   const deleteClaimDocumentFn = useServerFn(deleteClaimDocument);
+  const linkClaimExposureFn = useServerFn(linkClaimExposure);
+  const linkClaimChangeOrderFn = useServerFn(linkClaimChangeOrder);
   const updateBucketFn = useServerFn(updateBucket);
   const createBucketFn = useServerFn(createBucket);
   const deleteBucketFn = useServerFn(deleteBucket);
@@ -1432,6 +1454,169 @@ function ProjectPage() {
     );
   };
 
+  // CLAIM ↔ RISK / CO (slice 5). Same tag/reference model as CO↔risk: creating
+  // the counterpart and cross-linking, never moving money on its own.
+  const runCreateRiskFromClaim = (claim: ClaimRow, dollarExposure: number) => {
+    const weeks =
+      claim.time_claimed_days > 0 ? Math.max(1, Math.round(claim.time_claimed_days / 7)) : null;
+    expCreate.mutate(
+      {
+        projectId,
+        title: `${claim.claim_number ? `${claim.claim_number} - ` : ""}${claim.title}`,
+        description: claim.description || claim.title,
+        category: exposureCategoryFromClaim(claim.claim_type),
+        dollar_exposure: dollarExposure,
+        probability: 100,
+        schedule_impact_weeks: weeks,
+        owner: claim.owner || "PM",
+        response_path: "recover",
+        hold_class: "E-Hold",
+        status: "active",
+        due_date: null,
+        next_review_at: null,
+        release_condition: `Claim ${claim.claim_number || claim.title} is resolved (awarded, settled, denied, or withdrawn).`,
+        notes: [
+          `Created from Claims.`,
+          `Claim status: ${claim.status}.`,
+          `Risk carried: ${fmtUSD(dollarExposure)}.`,
+          claim.time_claimed_days > 0 ? `Time sought: ${claim.time_claimed_days} days.` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      },
+      {
+        onSuccess: async (data) => {
+          const exposureId = (data as { id?: string } | undefined)?.id ?? "";
+          if (exposureId) {
+            try {
+              await linkClaimExposureFn({ data: { claimId: claim.id, exposureId } });
+              invalidate();
+            } catch {
+              // Best-effort link; the exposure still stands if the reverse
+              // column is a migration behind.
+            }
+          }
+          toast.success("Claim sent to risk tally", {
+            description: `${claim.claim_number || "Claim"} is now an E-Hold exposure to recover.`,
+          });
+        },
+        onError: (err) => {
+          toast.error("Claim risk allocation did not save", {
+            description: err instanceof Error ? err.message : "Try again.",
+          });
+        },
+      },
+    );
+  };
+
+  const handleSendClaimToRisk = (claim: ClaimRow) => {
+    if (claim.risk_exposure_id) {
+      toast.info("This claim is already in the risk tally", {
+        description: "Open the Risk Tally tab to update the linked exposure.",
+      });
+      return;
+    }
+    // Default to the amount sought; a time-only claim starts at 0 and the PM
+    // sets a nominal dollar in the prompt.
+    setClaimRiskPrompt({ claim, value: claim.money_claimed > 0 ? claim.money_claimed : 0 });
+  };
+
+  const handleTrackExposureAsClaim = (exposure: ExposureRow) => {
+    if (exposure.linked_claim_id) {
+      toast.info("This risk is already tracked as a claim", {
+        description: "Open the Claims tab to update it.",
+      });
+      return;
+    }
+    const weeks = exposure.schedule_impact_weeks ?? 0;
+    (
+      createClaimFn as (i: {
+        data: Record<string, unknown>;
+      }) => Promise<{ ok: boolean; id?: string }>
+    )({
+      data: {
+        projectId,
+        title: exposure.title,
+        description: exposure.description || "",
+        claim_type: "delay",
+        status: "in_preparation",
+        money_claimed: exposure.dollar_exposure,
+        time_claimed_days: weeks > 0 ? Math.round(weeks * 7) : 0,
+        owner: exposure.owner || "PM",
+      },
+    })
+      .then(async (res) => {
+        const claimId = res?.id ?? "";
+        if (claimId) {
+          try {
+            await linkClaimExposureFn({ data: { claimId, exposureId: exposure.id } });
+          } catch {
+            // best-effort link
+          }
+        }
+        invalidate();
+        toast.success("Risk tracked as a claim", {
+          description: "It's now a claim in preparation — open the Claims tab to build it out.",
+        });
+      })
+      .catch((err: unknown) => {
+        toast.error("Claim was not created", {
+          description: err instanceof Error ? err.message : "Try again.",
+        });
+      });
+  };
+
+  const handlePromoteClaimToChangeOrder = (claim: ClaimRow) => {
+    if (claim.change_order_id) {
+      toast.info("This claim is already in change orders", {
+        description: "Open the Change Orders tab to update it.",
+      });
+      return;
+    }
+    const amount = claim.money_awarded > 0 ? claim.money_awarded : claim.money_claimed;
+    coCreate.mutate(
+      {
+        projectId,
+        number: "",
+        description: `${claim.claim_number ? `${claim.claim_number} - ` : ""}${claim.title}`,
+        contract_amount: amount,
+        cost_amount: 0,
+        status: "Pending",
+        probability: 100,
+        owner: claim.owner || "PM",
+        notes: [
+          `Promoted from a claim.`,
+          `Claim status: ${claim.status}.`,
+          claim.outcome ? `Outcome: ${claim.outcome}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        co_type: "owner_change",
+      },
+      {
+        onSuccess: async (data) => {
+          const changeOrderId = (data as { id?: string } | undefined)?.id ?? "";
+          if (changeOrderId) {
+            try {
+              await linkClaimChangeOrderFn({ data: { claimId: claim.id, changeOrderId } });
+              invalidate();
+            } catch {
+              // best-effort link
+            }
+          }
+          toast.success("Claim promoted to a change order", {
+            description: "It's now a pending CO — open the Change Orders tab to price it.",
+          });
+        },
+        onError: (err) => {
+          toast.error("Change order was not created", {
+            description: err instanceof Error ? err.message : "Try again.",
+          });
+        },
+      },
+    );
+  };
+
   const handleCreateRiskFromInspection = (inspection: InspectionRow) => {
     if (inspection.risk_exposure_id) {
       toast.info("Inspection already has a linked risk", {
@@ -2337,6 +2522,7 @@ function ProjectPage() {
                 focusedExposureId={focusedRiskExposureId}
                 onFocusExposureHandled={handleRiskFocusHandled}
                 onCreateChangeOrder={handleCreateChangeOrderFromExposure}
+                onCreateClaim={handleTrackExposureAsClaim}
                 onCreateExposure={(d) => expCreate.mutate({ projectId, ...d })}
                 onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
                 onDeleteExposure={handleDeleteExposure}
@@ -2371,6 +2557,8 @@ function ProjectPage() {
                 onUploadDocument={uploadClaimDocument}
                 onViewDocument={viewClaimDocument}
                 onDeleteDocument={removeClaimDocument}
+                onSendToRisk={handleSendClaimToRisk}
+                onPromoteToChangeOrder={handlePromoteClaimToChangeOrder}
                 uploadingDocument={uploadingClaimDoc}
                 saving={claimCreate.isPending || claimUpdate.isPending}
               />
@@ -2822,6 +3010,52 @@ function ProjectPage() {
                   if (!coRiskPrompt || coRiskPrompt.value <= 0) return;
                   runCreateRiskFromChangeOrder(coRiskPrompt.co, coRiskPrompt.value);
                   setCoRiskPrompt(null);
+                }}
+              >
+                Add to risk tally
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog
+          open={claimRiskPrompt !== null}
+          onOpenChange={(next) => {
+            if (!next) setClaimRiskPrompt(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Add this claim to the risk tally</AlertDialogTitle>
+              <AlertDialogDescription>
+                {claimRiskPrompt
+                  ? `Carry the amount sought${
+                      claimRiskPrompt.claim.money_claimed > 0
+                        ? ` (${fmtUSD(claimRiskPrompt.claim.money_claimed)})`
+                        : ""
+                    } as the risk, or set your own amount below. This only creates a linked risk — it does not move any money on its own.`
+                  : ""}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="claim-risk-value">Risk value to carry</Label>
+              <MoneyInput
+                id="claim-risk-value"
+                value={claimRiskPrompt?.value ?? 0}
+                onValueChange={(value) =>
+                  setClaimRiskPrompt((current) => (current ? { ...current, value } : current))
+                }
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={!claimRiskPrompt || claimRiskPrompt.value <= 0}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (!claimRiskPrompt || claimRiskPrompt.value <= 0) return;
+                  runCreateRiskFromClaim(claimRiskPrompt.claim, claimRiskPrompt.value);
+                  setClaimRiskPrompt(null);
                 }}
               >
                 Add to risk tally
