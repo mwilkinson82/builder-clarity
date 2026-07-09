@@ -34,18 +34,18 @@ GRANT ALL ON public.budget_line_overrides TO service_role;
 
 ALTER TABLE public.budget_line_overrides ENABLE ROW LEVEL SECURITY;
 
--- Mirror cost_buckets_owner_via_project: access is scoped to the owning project.
+-- Team-based access, matching the rest of the schema. cost_buckets grants access
+-- through BOTH an owner-only policy AND four can_read_project / can_manage_project
+-- team policies (RLS policies OR together), so a non-owner PM who can edit a
+-- budget line gets in via the team policies. An owner-only policy here would deny
+-- that PM's override INSERT — and because logging is best-effort, it would fail
+-- silently, leaving invisible holes in the audit trail for every non-owner. So we
+-- gate on the same team helpers: read for SELECT, manage for INSERT. Immutable —
+-- no UPDATE / DELETE policies (and none granted), so the trail can't be rewritten.
 DROP POLICY IF EXISTS budget_line_overrides_owner_via_project ON public.budget_line_overrides;
-CREATE POLICY budget_line_overrides_owner_via_project ON public.budget_line_overrides
-  FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM public.projects p
-      WHERE p.id = budget_line_overrides.project_id AND p.owner_id = auth.uid()
-    )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.projects p
-      WHERE p.id = budget_line_overrides.project_id AND p.owner_id = auth.uid()
-    )
-  );
+DROP POLICY IF EXISTS budget_line_overrides_team_select ON public.budget_line_overrides;
+CREATE POLICY budget_line_overrides_team_select ON public.budget_line_overrides
+  FOR SELECT USING (public.can_read_project(project_id));
+DROP POLICY IF EXISTS budget_line_overrides_team_insert ON public.budget_line_overrides;
+CREATE POLICY budget_line_overrides_team_insert ON public.budget_line_overrides
+  FOR INSERT WITH CHECK (public.can_manage_project(project_id));
