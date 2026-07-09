@@ -213,6 +213,45 @@ export interface InspectionRow {
   updated_at: string;
 }
 
+export type ClaimType =
+  "delay" | "extension_of_time" | "delay_damages" | "acceleration" | "disruption" | "other";
+
+export type ClaimStatus =
+  | "in_preparation"
+  | "submitted"
+  | "pending_review"
+  | "under_review"
+  | "reviewed"
+  | "resolved"
+  | "rejected"
+  | "withdrawn";
+
+export interface ClaimRow {
+  id: string;
+  project_id: string;
+  seed_key: string;
+  claim_number: string;
+  title: string;
+  description: string;
+  claim_type: ClaimType;
+  status: ClaimStatus;
+  money_claimed: number;
+  time_claimed_days: number;
+  money_awarded: number;
+  time_awarded_days: number;
+  outcome: string;
+  owner: string;
+  submitted_at: string | null;
+  resolved_at: string | null;
+  /** The risk-tally exposure this claim came from / is tracked against. */
+  risk_exposure_id: string | null;
+  /** The change order this claim resolved into, if any. */
+  change_order_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BucketRow {
   id: string;
   project_id: string;
@@ -533,6 +572,56 @@ const normalizeInspection = (row: Record<string, unknown>): InspectionRow => {
     notes: str(row.notes),
     corrective_action: str(row.corrective_action),
     risk_exposure_id: (row.risk_exposure_id as string | null) ?? null,
+    created_by: (row.created_by as string | null) ?? null,
+    created_at: str(row.created_at),
+    updated_at: str(row.updated_at),
+  };
+};
+
+const CLAIM_TYPES = [
+  "delay",
+  "extension_of_time",
+  "delay_damages",
+  "acceleration",
+  "disruption",
+  "other",
+] as const;
+
+const CLAIM_STATUSES = [
+  "in_preparation",
+  "submitted",
+  "pending_review",
+  "under_review",
+  "reviewed",
+  "resolved",
+  "rejected",
+  "withdrawn",
+] as const;
+
+const normalizeClaim = (row: Record<string, unknown>): ClaimRow => {
+  const claimType = str(row.claim_type, "delay");
+  const status = str(row.status, "in_preparation");
+  return {
+    id: row.id as string,
+    project_id: row.project_id as string,
+    seed_key: str(row.seed_key),
+    claim_number: str(row.claim_number),
+    title: str(row.title),
+    description: str(row.description),
+    claim_type: CLAIM_TYPES.includes(claimType as ClaimType) ? (claimType as ClaimType) : "delay",
+    status: CLAIM_STATUSES.includes(status as ClaimStatus)
+      ? (status as ClaimStatus)
+      : "in_preparation",
+    money_claimed: num(row.money_claimed),
+    time_claimed_days: Math.trunc(num(row.time_claimed_days)),
+    money_awarded: num(row.money_awarded),
+    time_awarded_days: Math.trunc(num(row.time_awarded_days)),
+    outcome: str(row.outcome),
+    owner: str(row.owner),
+    submitted_at: (row.submitted_at as string | null) ?? null,
+    resolved_at: (row.resolved_at as string | null) ?? null,
+    risk_exposure_id: (row.risk_exposure_id as string | null) ?? null,
+    change_order_id: (row.change_order_id as string | null) ?? null,
     created_by: (row.created_by as string | null) ?? null,
     created_at: str(row.created_at),
     updated_at: str(row.updated_at),
@@ -1466,6 +1555,10 @@ export const getProject = createServerFn({ method: "GET" })
       .eq("project_id", pid)
       .order("scheduled_date", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: false });
+    const claimRes = await dynamicTable(context.supabase, "project_claims")
+      .select("*")
+      .eq("project_id", pid)
+      .order("created_at", { ascending: false });
     if (eRes.error) throw new Error(eRes.error.message);
     if (cRes.error) throw new Error(cRes.error.message);
     if (bRes.error) throw new Error(bRes.error.message);
@@ -1493,6 +1586,14 @@ export const getProject = createServerFn({ method: "GET" })
         inspectionRes.error.message.includes("schema cache"));
     if (inspectionRes.error && !inspectionsTableMissing) {
       throw new Error(inspectionRes.error.message);
+    }
+    const claimsTableMissing =
+      claimRes.error &&
+      (isMissingRestRelation(claimRes.error, "project_claims") ||
+        claimRes.error.message.includes("project_claims") ||
+        claimRes.error.message.includes("schema cache"));
+    if (claimRes.error && !claimsTableMissing) {
+      throw new Error(claimRes.error.message);
     }
 
     let billingEventRows: BillingApplicationEventRow[] = [];
@@ -1684,6 +1785,11 @@ export const getProject = createServerFn({ method: "GET" })
           !tableInspectionRiskIds.has(inspection.risk_exposure_id ?? ""),
       ),
     ];
+    const claims: ClaimRow[] = claimsTableMissing
+      ? []
+      : ((claimRes.data ?? []) as unknown[]).map((row) =>
+          normalizeClaim(row as Record<string, unknown>),
+        );
     const decisions: DecisionRow[] = (dRes.data ?? []).map((d) =>
       normalizeDecision(d as Record<string, unknown>),
     );
@@ -1798,6 +1904,7 @@ export const getProject = createServerFn({ method: "GET" })
       billingApplications,
       billingInvoices,
       inspections,
+      claims,
       rollup,
       guidance,
       warnings,
@@ -2826,6 +2933,71 @@ export const deleteInspection = createServerFn({ method: "POST" })
       throw new Error(error.message);
     }
     if (!deleted) return deleteFallbackInspectionExposure(context.supabase, data.id);
+    return { ok: true, id: data.id };
+  });
+
+// ---------------- CLAIMS ----------------
+// A claim is the formal dispute-resolution record (extension of time / delay
+// damages / etc.). CRUD mirrors inspections; money is numeric whole-dollars to
+// match exposures/change_orders. No fallback shim — if the table is a migration
+// behind, getProject already returns [] and these fns surface the error.
+
+const claimInput = z.object({
+  seed_key: z.string().max(120).default(""),
+  claim_number: z.string().max(50).default(""),
+  title: z.string().min(1).max(200),
+  description: z.string().max(4000).default(""),
+  claim_type: z.enum(CLAIM_TYPES).default("delay"),
+  status: z.enum(CLAIM_STATUSES).default("in_preparation"),
+  money_claimed: z.number().min(0).default(0),
+  time_claimed_days: z.number().int().min(0).default(0),
+  money_awarded: z.number().min(0).default(0),
+  time_awarded_days: z.number().int().min(0).default(0),
+  outcome: z.string().max(4000).default(""),
+  owner: z.string().max(200).default(""),
+  submitted_at: z.string().nullable().optional(),
+  resolved_at: z.string().nullable().optional(),
+  risk_exposure_id: z.string().uuid().nullable().optional(),
+  change_order_id: z.string().uuid().nullable().optional(),
+});
+
+export const createClaim = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string } & z.input<typeof claimInput>) =>
+    z.object({ projectId: z.string().uuid() }).merge(claimInput).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { projectId, ...rest } = data;
+    const { data: inserted, error } = await dynamicTable(context.supabase, "project_claims")
+      .insert({ project_id: projectId, ...rest, created_by: context.userId })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    return { ok: true, id: (inserted as { id?: string } | null)?.id ?? "" };
+  });
+
+export const updateClaim = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string } & Partial<z.input<typeof claimInput>>) =>
+    z.object({ id: z.string().uuid() }).merge(claimInput.partial()).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { id, ...patch } = data;
+    const { error } = await dynamicTable(context.supabase, "project_claims")
+      .update(patch)
+      .eq("id", id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteClaim = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "project_claims")
+      .delete()
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
     return { ok: true, id: data.id };
   });
 
