@@ -120,7 +120,18 @@ function toJob(p: HomeProject): WorklistJob {
 
   const value = p.gp_at_risk > 0 ? compactUSD(p.gp_at_risk) : tone === "good" ? "On plan" : "";
 
-  return { id: p.id, tag, tone, name: p.name, desc, value, atRisk, overdue };
+  return {
+    id: p.id,
+    tag,
+    tone,
+    name: p.name,
+    desc,
+    value,
+    atRisk,
+    overdue,
+    logoUrl: p.organization_logo_url,
+    orgName: p.organization_name,
+  };
 }
 
 // severity for sorting: crit worst, then warn, then good; tie-break by GP at risk.
@@ -169,7 +180,8 @@ export function buildHomeMetrics(
     (p) => dailyLabel(p.daily_report_count, p.days_since_daily_report) !== "Current",
   ).length;
   const indicatedPct = forecastedContract ? (indicatedGP / forecastedContract) * 100 : 0;
-  const gpAtRiskPct = indicatedGP + gpAtRisk > 0 ? (gpAtRisk / (indicatedGP + gpAtRisk)) * 100 : 0;
+  // Share of the company's indicated GP that's exposed (matches the design's read).
+  const gpAtRiskPct = indicatedGP > 0 ? (gpAtRisk / indicatedGP) * 100 : 0;
 
   // ---- CRM aggregates (mirror buildPortfolioCrmTotals) ----
   const activeOpps = opportunities.filter(
@@ -178,7 +190,11 @@ export function buildHomeMetrics(
   const weighted = activeOpps.reduce((t, o) => t + o.estimated_contract * (o.probability / 100), 0);
   const wonOpps = opportunities.filter((o) => o.stage === "won");
   const openActions = snapshot?.openActions ?? [];
-  const pursuitsWaiting = openActions.filter((a) => isPast(a.due_date)).length;
+  // Pursuits genuinely awaiting a call: bids submitted (awaiting award) + deals in
+  // negotiation. (The old "overdue actions" read gave 0 even with live opps.)
+  const pursuitsWaiting = activeOpps.filter(
+    (o) => o.stage === "bid_submitted" || o.stage === "negotiating",
+  ).length;
 
   // ---- worklist ---- (all jobs, worst-first; not capped, so the posture-tile
   // filter counts match the rows shown)

@@ -13,7 +13,7 @@ import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { type HeroStat, type WorklistJob } from "./portfolio-home-data";
-import { useHomeIdentity, type HomeIdentity } from "./home-identity";
+import { homeInitials, useHomeIdentity, type HomeIdentity } from "./home-identity";
 import { useHomeMetrics } from "./use-home-metrics";
 import { type HomeMetrics } from "./portfolio-home-metrics";
 import { AvatarMenu } from "./home-avatar-menu";
@@ -31,6 +31,15 @@ function boldParts(text: string) {
 
 function toneClass(prefix: "ow-tone" | "ow-bg", tone: WorklistJob["tone"]) {
   return `${prefix}-${tone === "muted" ? "" : tone}`.trim();
+}
+
+/** The owning company's logo (initials fallback), shown left of a job's name. */
+function JobLogo({ url, name }: { url: string; name: string }) {
+  return (
+    <span className="ow-jobrow__logo" title={name}>
+      {url ? <img src={url} alt="" /> : homeInitials(name, "•")}
+    </span>
+  );
 }
 
 function HeroStats({ stats }: { stats: HeroStat[] }) {
@@ -351,6 +360,7 @@ function OwnerView({
                   <div className={`ow-jobrow__tag ${toneClass("ow-tone", job.tone)}`}>
                     {job.tag}
                   </div>
+                  <JobLogo url={job.logoUrl} name={job.orgName} />
                   <div className="ow-jobrow__body">
                     <div className="ow-jobrow__name">{job.name}</div>
                     <div className="ow-jobrow__desc">{job.desc}</div>
@@ -476,6 +486,7 @@ function PmView({ identity, metrics }: { identity: HomeIdentity; metrics: HomeMe
             <div className="ow-jobrow" key={job.id}>
               <span className={`ow-jobrow__dot ${toneClass("ow-bg", job.tone)}`} />
               <div className={`ow-jobrow__tag ${toneClass("ow-tone", job.tone)}`}>{job.tag}</div>
+              <JobLogo url={job.logoUrl} name={job.orgName} />
               <div className="ow-jobrow__body">
                 <div className="ow-jobrow__name">{job.name}</div>
                 <div className="ow-jobrow__desc">{job.desc}</div>
