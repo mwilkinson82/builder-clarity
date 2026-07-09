@@ -13,6 +13,7 @@ import type {
 } from "@/lib/pipeline.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AccountPicker } from "@/components/pipeline/AccountPicker";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
 import {
@@ -78,6 +79,7 @@ type OpportunityDetailProps = {
   opportunity: PipelineOpportunityRow | null;
   activity: PipelineActivityRow[];
   members: PipelineMember[];
+  accounts: string[];
   isLoading: boolean;
   isSaving: boolean;
   isAddingNote: boolean;
@@ -99,6 +101,7 @@ export function OpportunityDetail({
   opportunity,
   activity,
   members,
+  accounts,
   isLoading,
   isSaving,
   isAddingNote,
@@ -328,9 +331,23 @@ export function OpportunityDetail({
                     <Field label="Stage">
                       <Select
                         value={draft.stage ?? opportunity.stage}
-                        onValueChange={(stage) => {
-                          updateDraft("stage", stage as PipelineStage);
-                          onUpdate({ stage: stage as PipelineStage });
+                        onValueChange={(value) => {
+                          const nextStage = value as PipelineStage;
+                          // Decided stages settle probability (Won 100%,
+                          // Lost/No-bid 0%); active stages leave it alone.
+                          const settledProbability =
+                            nextStage === "won"
+                              ? 100
+                              : nextStage === "lost" || nextStage === "no_bid"
+                                ? 0
+                                : null;
+                          updateDraft("stage", nextStage);
+                          if (settledProbability !== null) {
+                            updateDraft("probability", settledProbability);
+                            onUpdate({ stage: nextStage, probability: settledProbability });
+                          } else {
+                            onUpdate({ stage: nextStage });
+                          }
                         }}
                       >
                         <SelectTrigger>
@@ -441,9 +458,10 @@ export function OpportunityDetail({
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <Field label="Client">
-                      <Input
+                      <AccountPicker
                         value={draft.client ?? ""}
-                        onChange={(event) => updateDraft("client", event.target.value)}
+                        accounts={accounts}
+                        onChange={(name) => updateDraft("client", name)}
                       />
                     </Field>
                     <Field label="Contact name">

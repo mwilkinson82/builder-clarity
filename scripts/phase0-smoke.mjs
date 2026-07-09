@@ -360,6 +360,35 @@ await expectContains(
   "CRM opportunity delete confirms with a dialog that names the record and archives instead of erasing",
 );
 
+// CRM feedback (DB3T 2026-07-09): moving a deal to a decided stage settles its
+// probability, and the Client field is a pick-or-add dropdown off the account
+// directory instead of a free-text box.
+await expectContains(
+  "src/components/pipeline/PipelineWorkspace.tsx",
+  [
+    /stage === "won"\) patch\.probability = 100/,
+    /stage === "lost" \|\| stage === "no_bid"\) patch\.probability = 0/,
+    /const accountNames = useMemo/,
+    /accounts={accountNames}/,
+  ],
+  "CRM: Won auto-sets 100% / Lost+No-bid 0%, and the account directory feeds the client picker",
+);
+await expectContains(
+  "src/components/pipeline/OpportunityDetail.tsx",
+  [/settledProbability/, /nextStage === "won"/, /AccountPicker/],
+  "CRM detail: changing stage settles probability + client field is a picker",
+);
+await expectContains(
+  "src/components/pipeline/AccountPicker.tsx",
+  [
+    /export function AccountPicker/,
+    /shouldFilter={false}/,
+    /Add “\{trimmed\}”/,
+    /accounts: string\[\]/,
+  ],
+  "AccountPicker offers existing clients + add-new from typed text",
+);
+
 await expectContains(
   "src/lib/pipeline.functions.ts",
   [

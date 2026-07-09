@@ -23,9 +23,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { AccountPicker } from "@/components/pipeline/AccountPicker";
 
 type OpportunityCreateDialogProps = {
   members: PipelineMember[];
+  accounts: string[];
   isCreating: boolean;
   onCreate: (input: CreateOpportunityInput) => Promise<void>;
 };
@@ -50,6 +52,7 @@ const emptyDraft: CreateOpportunityInput = {
 
 export function OpportunityCreateDialog({
   members,
+  accounts,
   isCreating,
   onCreate,
 }: OpportunityCreateDialogProps) {
@@ -91,9 +94,10 @@ export function OpportunityCreateDialog({
             <Input value={draft.name} onChange={(event) => update("name", event.target.value)} />
           </Field>
           <Field label="Client">
-            <Input
+            <AccountPicker
               value={draft.client}
-              onChange={(event) => update("client", event.target.value)}
+              accounts={accounts}
+              onChange={(name) => update("client", name)}
             />
           </Field>
           <Field label="Project type">
