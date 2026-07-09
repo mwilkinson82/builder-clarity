@@ -125,16 +125,16 @@ export function SubcontractCompliance({
   const cleared = insuranceClears(status);
   const openWaivers = waivers.filter((w) => !w.payment_id);
 
-  // Insurance capture form (the latest cert seeds it for editing/renewal).
-  const latest = certificates[0];
-  const [carrier, setCarrier] = useState(latest?.carrier ?? "");
-  const [effective, setEffective] = useState(latest?.effective_date ?? "");
-  const [expiry, setExpiry] = useState(latest?.expiry_date ?? "");
-  const [verified, setVerified] = useState(latest?.verified ?? false);
-  const [gl, setGl] = useState(latest?.gl_limit ?? 0);
-  const [wc, setWc] = useState(latest?.wc_limit ?? 0);
-  const [auto, setAuto] = useState(latest?.auto_limit ?? 0);
-  const [umbrella, setUmbrella] = useState(latest?.umbrella_limit ?? 0);
+  // Insurance capture form — a clean ADD each time (renewals stack in the list
+  // above; corrections use the list's remove button). Starts empty.
+  const [carrier, setCarrier] = useState("");
+  const [effective, setEffective] = useState("");
+  const [expiry, setExpiry] = useState("");
+  const [verified, setVerified] = useState(false);
+  const [gl, setGl] = useState(0);
+  const [wc, setWc] = useState(0);
+  const [auto, setAuto] = useState(0);
+  const [umbrella, setUmbrella] = useState(0);
   const [certFile, setCertFile] = useState<{ path: string; name: string } | null>(null);
   const [savingCert, setSavingCert] = useState(false);
 
@@ -150,11 +150,20 @@ export function SubcontractCompliance({
         wc_limit: wc,
         auto_limit: auto,
         umbrella_limit: umbrella,
-        storage_path: certFile?.path ?? latest?.storage_path ?? "",
-        file_name: certFile?.name ?? latest?.file_name ?? "",
+        storage_path: certFile?.path ?? "",
+        file_name: certFile?.name ?? "",
       });
+      // Reset for the next entry.
+      setCarrier("");
+      setEffective("");
+      setExpiry("");
+      setVerified(false);
+      setGl(0);
+      setWc(0);
+      setAuto(0);
+      setUmbrella(0);
       setCertFile(null);
-      toast.success("Insurance saved");
+      toast.success("Certificate saved");
     } finally {
       setSavingCert(false);
     }
@@ -215,6 +224,53 @@ export function SubcontractCompliance({
             .join(" and ")}
           .
         </p>
+      ) : null}
+
+      {/* Certificates on file — each removable (renewals stack up over the job) */}
+      {certificates.length > 0 ? (
+        <ul className="mt-3 divide-y divide-hairline text-xs">
+          {certificates.map((c) => (
+            <li key={c.id} className="flex items-center justify-between py-1.5">
+              <span className="text-foreground">
+                {c.carrier || "Certificate"}
+                {c.effective_date || c.expiry_date ? (
+                  <span className="ml-2 text-muted-foreground">
+                    {c.effective_date || "—"} → {c.expiry_date || "—"}
+                  </span>
+                ) : null}
+                {c.verified ? (
+                  <span className="ml-2 text-success">· verified</span>
+                ) : (
+                  <span className="ml-2 text-warning">· unverified</span>
+                )}
+              </span>
+              <span className="flex items-center gap-2">
+                {c.storage_path ? (
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground"
+                    onClick={() => viewFile(c.storage_path)}
+                    aria-label="View certificate"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-danger"
+                  onClick={() => {
+                    if (confirm(`Remove the ${c.carrier || "insurance"} certificate?`)) {
+                      onDeleteCertificate(c.id);
+                    }
+                  }}
+                  aria-label="Remove certificate"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
       ) : null}
 
       {/* Insurance */}
@@ -278,7 +334,7 @@ export function SubcontractCompliance({
           </label>
           <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-accent">
             <Upload className="h-3.5 w-3.5" />
-            {certFile ? certFile.name : latest?.file_name ? "Replace COI" : "Attach COI"}
+            {certFile ? certFile.name : "Attach COI"}
             <input
               type="file"
               className="hidden"
@@ -291,15 +347,6 @@ export function SubcontractCompliance({
               }}
             />
           </label>
-          {latest?.storage_path ? (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => viewFile(latest.storage_path)}
-            >
-              <FileText className="h-3.5 w-3.5" /> View current COI
-            </button>
-          ) : null}
           <Button
             type="button"
             size="sm"
@@ -307,7 +354,7 @@ export function SubcontractCompliance({
             disabled={savingCert}
             onClick={saveCert}
           >
-            {latest ? "Update insurance" : "Save insurance"}
+            Save certificate
           </Button>
         </div>
       </div>
