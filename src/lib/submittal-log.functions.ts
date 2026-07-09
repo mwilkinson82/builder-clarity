@@ -174,6 +174,47 @@ export const saveSubmittalLogEntry = createServerFn({ method: "POST" })
     return normalize(res.data as Record<string, unknown>);
   });
 
+// Partial per-field update. Only the fields actually provided are written, so
+// concurrent inline-cell edits (one save per blur) never clobber each other's
+// columns — the full-row save was overwriting sibling fields with stale values.
+const patchInput = z.object({
+  id: z.string().uuid(),
+  number: z.string().max(60).optional(),
+  spec_section: z.string().max(60).optional(),
+  sub_rev: z.string().max(30).optional(),
+  item: z.string().max(120).optional(),
+  description: z.string().max(1000).optional(),
+  mfgr_supplier: z.string().max(200).optional(),
+  date_submitted: z.string().nullable().optional(),
+  date_returned: z.string().nullable().optional(),
+  status: z.enum(["", "a", "aan", "rar", "ur"]).optional(),
+  comments: z.string().max(2000).optional(),
+  storage_path: z.string().max(500).optional(),
+  file_name: z.string().max(300).optional(),
+});
+
+export const patchSubmittalLogEntry = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof patchInput>) => patchInput.parse(input))
+  .handler(async ({ data, context }): Promise<SubmittalLogEntryRow> => {
+    const { id, ...rest } = data;
+    const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const [k, v] of Object.entries(rest)) {
+      if (v === undefined) continue;
+      update[k] = k === "date_submitted" || k === "date_returned" ? dateOrNull(v) : v;
+    }
+    const { data: row, error } = await dynamicTable(context.supabase, "submittal_log_entries")
+      .update(update)
+      .eq("id", id)
+      .select("*")
+      .single();
+    if (error || !row) {
+      if (isMissingLogTable(error)) throw new Error(NOT_ENABLED);
+      throw new Error(error?.message ?? "Could not save the change");
+    }
+    return normalize(row as Record<string, unknown>);
+  });
+
 export const deleteSubmittalLogEntry = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))

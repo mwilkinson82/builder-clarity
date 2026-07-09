@@ -18,6 +18,7 @@ import {
   deleteSubmittalLogEntry,
   getProjectLetterhead,
   listSubmittalLog,
+  patchSubmittalLogEntry,
   saveSubmittalLogEntry,
   type SubmittalLogEntryRow,
   type SubmittalLogKind,
@@ -63,6 +64,7 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
   const qc = useQueryClient();
   const listFn = useServerFn(listSubmittalLog);
   const saveFn = useServerFn(saveSubmittalLogEntry);
+  const patchFn = useServerFn(patchSubmittalLogEntry);
   const deleteFn = useServerFn(deleteSubmittalLogEntry);
   const letterheadFn = useServerFn(getProjectLetterhead);
 
@@ -76,6 +78,15 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
   const save = useMutation({
     mutationFn: (input: Record<string, unknown>) =>
       saveFn({ data: { projectId, ...input } as never }),
+    onSuccess: invalidate,
+    onError: (e) =>
+      toast.error("Could not save", { description: e instanceof Error ? e.message : "" }),
+  });
+  // One field at a time — a partial update, so two quick cell edits never
+  // overwrite each other's columns.
+  const patch = useMutation({
+    mutationFn: (input: { id: string } & Record<string, unknown>) =>
+      patchFn({ data: input as never }),
     onSuccess: invalidate,
     onError: (e) =>
       toast.error("Could not save", { description: e instanceof Error ? e.message : "" }),
@@ -266,7 +277,7 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
                 pickable={txOpen && kind === "submittal"}
                 picked={txPicked.has(entry.id)}
                 onPick={() => togglePick(entry.id)}
-                onSave={(patch) => save.mutate({ ...entry, ...patch })}
+                onPatch={(p) => patch.mutate({ id: entry.id, ...p })}
                 onDelete={() => {
                   if (confirm("Delete this row?")) remove.mutate(entry.id);
                 }}
@@ -301,7 +312,7 @@ function LogRow({
   pickable,
   picked,
   onPick,
-  onSave,
+  onPatch,
   onDelete,
 }: {
   entry: SubmittalLogEntryRow;
@@ -309,17 +320,16 @@ function LogRow({
   pickable: boolean;
   picked: boolean;
   onPick: () => void;
-  onSave: (patch: Partial<SubmittalLogEntryRow>) => void;
+  onPatch: (patch: Partial<SubmittalLogEntryRow>) => void;
   onDelete: () => void;
 }) {
   const [d, setD] = useState(entry);
-  // Keep local edits, but pick up server changes when not mid-edit isn't needed
-  // here — the row remounts on refetch via its stable id key + value props.
+  // Each field commits as its OWN partial update (see patchSubmittalLogEntry), so
+  // a second cell edit never overwrites the first with a stale full-row payload.
   const commit = (field: keyof SubmittalLogEntryRow, value: string) => {
     if (String(d[field] ?? "") === value) return;
-    const next = { ...d, [field]: value };
-    setD(next);
-    onSave({ [field]: value } as Partial<SubmittalLogEntryRow>);
+    setD({ ...d, [field]: value });
+    onPatch({ [field]: value } as Partial<SubmittalLogEntryRow>);
   };
   const cell = (field: keyof SubmittalLogEntryRow, w = "") => (
     <td className="px-1 py-1">
@@ -394,7 +404,7 @@ function LogRow({
                   const f = e.target.files?.[0];
                   if (!f) return;
                   const up = await uploadLogFile(projectId, f);
-                  if (up) onSave({ storage_path: up.path, file_name: up.name });
+                  if (up) onPatch({ storage_path: up.path, file_name: up.name });
                 }}
               />
             </label>
