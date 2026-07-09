@@ -60,6 +60,7 @@ import {
   statedScaleFeetPerPixel,
   type SheetIdentityPage,
 } from "@/lib/plan-room-math";
+import { inkSnapOnCanvas } from "@/lib/plan-room-ink-snap-raster";
 import { DraftShape, MeasurementShape, TakeoffDraftHud } from "./TakeoffTools";
 import { TakeoffRunPreview, type RunCursorState } from "./TakeoffRunPreview";
 import { PlanMiniMap } from "./SheetSidebar";
@@ -953,8 +954,8 @@ export function PlanCanvas({
   // Where the next click will land: Alt bypasses snapping, a nearby committed
   // vertex beats the ortho magnet, Shift hard-constrains to 45s.
   const resolveDrawCursor = useCallback(
-    (cursor: Point, altKey: boolean, shiftKey: boolean): RunCursorState =>
-      resolveTakeoffDrawPoint({
+    (cursor: Point, altKey: boolean, shiftKey: boolean): RunCursorState => {
+      const base = resolveTakeoffDrawPoint({
         anchor: pendingPoints.length > 0 ? pendingPoints[pendingPoints.length - 1] : null,
         cursor,
         viewSize,
@@ -962,8 +963,19 @@ export function PlanCanvas({
         candidates: snapCandidates,
         altKey,
         shiftKey,
-      }),
-    [pendingPoints, snapCandidates, viewSize, zoom],
+      });
+      // Magnetic ink-snap (SMARTTRACE Slice 1): while tracing linear/area, snap
+      // the point onto the nearest wall line in the drawing. Alt bypasses it, a
+      // committed-vertex snap always wins, otherwise the wall beats the ortho
+      // magnet. Falls back to `base` when nothing wall-like is near the cursor.
+      if (!altKey && (tool === "linear" || tool === "area") && !base.geometrySnapped) {
+        const canvas = canvasRef.current;
+        const inked = canvas ? inkSnapOnCanvas(canvas, cursor) : null;
+        if (inked) return { ...base, point: inked, orthoSnapped: false };
+      }
+      return base;
+    },
+    [pendingPoints, snapCandidates, viewSize, zoom, tool],
   );
 
   // Re-resolves the rubber band from the last known pointer position after
