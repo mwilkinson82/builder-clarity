@@ -1364,11 +1364,19 @@ export function ProjectCostTrackingPanel({
         </div>
         <div className="mt-4 grid gap-3">
           {buckets.map((bucket) => {
+            // BUDGETVSCONTRACT1: cost-code health is contract value vs projected
+            // cost (the margin the code realizes). The basis is the line's
+            // contract_value — the owner-facing SOV value — falling back to the
+            // cost budget only for unpriced legacy lines (mirrors the costBasis in
+            // billing.functions). Reading original_budget here made "Contract
+            // value" mirror projected cost and pinned every variance to $0.
+            const contractBasis =
+              bucket.contract_value > 0 ? bucket.contract_value : bucket.original_budget;
             const forecast = centsToDollars(
               dollarsToCents(bucket.actual_to_date) + dollarsToCents(bucket.ftc),
             );
             const variance = centsToDollars(
-              dollarsToCents(bucket.original_budget) - dollarsToCents(forecast),
+              dollarsToCents(contractBasis) - dollarsToCents(forecast),
             );
             const spentPct =
               bucket.original_budget > 0
@@ -1400,7 +1408,7 @@ export function ProjectCostTrackingPanel({
                 <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
                   <BillingDetail
                     label="Contract value"
-                    value={fmtUSD(bucket.original_budget)}
+                    value={fmtUSD(contractBasis)}
                     sub="Owner-facing SOV value"
                   />
                   <BillingDetail

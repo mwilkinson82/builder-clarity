@@ -763,6 +763,11 @@ await expectContains(
     /Overwatch remembers the rest/,
     /Cost ledger: job-cost backup/,
     /Cost code health/,
+    // BUDGETVSCONTRACT1: the cost-code health card compares CONTRACT VALUE
+    // against projected cost — it reads contract_value (owner-facing SOV),
+    // falling back to budget only for unpriced legacy lines. Reading
+    // original_budget made "Contract value" mirror projected cost (variance $0).
+    /bucket\.contract_value > 0 \? bucket\.contract_value : bucket\.original_budget/,
     /Cost transaction backup/,
     /WIP review \(Work in Progress\)/,
     /Revenue timing/,
