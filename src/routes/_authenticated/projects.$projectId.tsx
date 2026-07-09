@@ -118,6 +118,8 @@ import {
   deleteClaim,
   createClaimEvent,
   deleteClaimEvent,
+  addClaimDocument,
+  deleteClaimDocument,
   allocateChangeOrder,
   deleteChangeOrderAllocation,
   allocateExposure,
@@ -158,6 +160,7 @@ import {
   type ExposureRow,
   type InspectionRow,
   type ClaimRow,
+  type ClaimDocType,
   type SovImportRow,
   type BucketRow,
 } from "@/lib/projects.functions";
@@ -412,6 +415,8 @@ function ProjectPage() {
   const deleteClaimFn = useServerFn(deleteClaim);
   const createClaimEventFn = useServerFn(createClaimEvent);
   const deleteClaimEventFn = useServerFn(deleteClaimEvent);
+  const addClaimDocumentFn = useServerFn(addClaimDocument);
+  const deleteClaimDocumentFn = useServerFn(deleteClaimDocument);
   const updateBucketFn = useServerFn(updateBucket);
   const createBucketFn = useServerFn(createBucket);
   const deleteBucketFn = useServerFn(deleteBucket);
@@ -834,6 +839,60 @@ function ProjectPage() {
       });
     },
   });
+  // Claim documents: bytes go straight to the private 'claim-docs' bucket
+  // (path <projectId>/<claimId>/<file>, team storage RLS), then a row records
+  // the path + name. View via a short-lived signed URL; remove drops both.
+  const [uploadingClaimDoc, setUploadingClaimDoc] = useState(false);
+  const uploadClaimDocument = async (
+    claimId: string,
+    file: File,
+    docType: ClaimDocType,
+    note: string,
+  ) => {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+    const path = `${projectId}/${claimId}/${crypto.randomUUID()}-${safeName}`;
+    setUploadingClaimDoc(true);
+    try {
+      const { error } = await supabase.storage
+        .from("claim-docs")
+        .upload(path, file, { contentType: file.type || "application/pdf", upsert: false });
+      if (error) {
+        toast.error("Upload failed", { description: error.message });
+        return;
+      }
+      await addClaimDocumentFn({
+        data: { claimId, projectId, path, name: file.name, doc_type: docType, note },
+      });
+      invalidate();
+      toast.success("Document attached");
+    } catch (err) {
+      toast.error("Could not save the document", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    } finally {
+      setUploadingClaimDoc(false);
+    }
+  };
+  const viewClaimDocument = async (path: string) => {
+    const { data, error } = await supabase.storage.from("claim-docs").createSignedUrl(path, 600);
+    if (error || !data?.signedUrl) {
+      toast.error("Could not open the document");
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+  const removeClaimDocument = async (id: string, path: string) => {
+    if (path) await supabase.storage.from("claim-docs").remove([path]);
+    try {
+      await deleteClaimDocumentFn({ data: { id } });
+      invalidate();
+      toast.success("Document removed");
+    } catch (err) {
+      toast.error("Could not remove the document", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    }
+  };
   // SOV cell commits patch the cached bucket list immediately (group headers,
   // summary cards, and the footer recompute from it), then the settled
   // invalidate pulls the server truth including the IOR-facing rollup. The
@@ -1141,6 +1200,7 @@ function ProjectPage() {
     inspections = [],
     claims = [],
     claimEvents = [],
+    claimDocuments = [],
     rollup,
     guidance,
     warnings,
@@ -2302,11 +2362,16 @@ function ProjectPage() {
               <ClaimsWorkspace
                 claims={claims}
                 events={claimEvents}
+                documents={claimDocuments}
                 onCreate={(input) => claimCreate.mutate(input)}
                 onUpdate={(id, patch) => claimUpdate.mutate({ id, patch })}
                 onDelete={(id) => claimDelete.mutate({ id })}
                 onCreateEvent={(claimId, draft) => claimEventCreate.mutate({ claimId, ...draft })}
                 onDeleteEvent={(id) => claimEventDelete.mutate({ id })}
+                onUploadDocument={uploadClaimDocument}
+                onViewDocument={viewClaimDocument}
+                onDeleteDocument={removeClaimDocument}
+                uploadingDocument={uploadingClaimDoc}
                 saving={claimCreate.isPending || claimUpdate.isPending}
               />
             </TabsContent>

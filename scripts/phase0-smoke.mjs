@@ -1087,6 +1087,49 @@ await expectContains(
   "project route wires the claim cycle-log mutations into the Claims tab",
 );
 
+// CLAIM DOCUMENTS (Claims/CO/Risk arc — slice 4): attach the claim package +
+// supporting docs to a private 'claim-docs' bucket, recorded per-claim.
+await expectContains(
+  "supabase/migrations/20260709210000_project_claim_documents.sql",
+  [
+    /CREATE TABLE IF NOT EXISTS public\.project_claim_documents/,
+    /claim_id uuid NOT NULL REFERENCES public\.project_claims\(id\) ON DELETE CASCADE/,
+    /project_claim_documents_type_check/,
+    /INSERT INTO storage\.buckets/,
+    /'claim-docs'/,
+    /claim_docs_storage_insert/,
+    /public\.can_manage_project\(\(storage\.foldername\(name\)\)\[1\]::uuid\)/,
+  ],
+  "claim documents migration ships the table + private claim-docs bucket + team storage RLS (desk applies)",
+);
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /export interface ClaimDocumentRow/,
+    /const normalizeClaimDocument/,
+    /export const addClaimDocument/,
+    /export const deleteClaimDocument/,
+    /claimDocuments,/,
+  ],
+  "server layer defines claim-document add/delete + folds claimDocuments into getProject",
+);
+await expectContains(
+  "src/components/outcome/ClaimDocumentsDialog.tsx",
+  [/export function ClaimDocumentsDialog/, /Attach a document/, /Claim document/, /Supporting/],
+  "claim documents dialog uploads/lists/views attachments by type",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [
+    /uploadClaimDocument/,
+    /viewClaimDocument/,
+    /removeClaimDocument/,
+    /from\("claim-docs"\)/,
+    /createSignedUrl/,
+  ],
+  "project route wires claim-doc upload/view/remove against the claim-docs bucket",
+);
+
 await expectContains(
   "src/routes/_authenticated/team.tsx",
   [

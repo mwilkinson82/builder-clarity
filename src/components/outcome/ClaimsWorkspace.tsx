@@ -28,13 +28,21 @@ import {
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MoneyInput } from "@/components/ui/money-input";
-import { History, Gavel, Pencil, Plus, Trash2 } from "lucide-react";
+import { History, Gavel, Paperclip, Pencil, Plus, Trash2 } from "lucide-react";
 import { fmtUSD } from "@/lib/format";
 import {
   ClaimCycleLogDialog,
   type ClaimEventDraft,
 } from "@/components/outcome/ClaimCycleLogDialog";
-import type { ClaimEventRow, ClaimRow, ClaimStatus, ClaimType } from "@/lib/projects.functions";
+import { ClaimDocumentsDialog } from "@/components/outcome/ClaimDocumentsDialog";
+import type {
+  ClaimDocType,
+  ClaimDocumentRow,
+  ClaimEventRow,
+  ClaimRow,
+  ClaimStatus,
+  ClaimType,
+} from "@/lib/projects.functions";
 
 export type { ClaimEventDraft };
 
@@ -145,32 +153,50 @@ const fmtDays = (days: number) => (days > 0 ? `${days} d` : "—");
 export function ClaimsWorkspace({
   claims,
   events = [],
+  documents = [],
   onCreate,
   onUpdate,
   onDelete,
   onCreateEvent,
   onDeleteEvent,
+  onUploadDocument,
+  onViewDocument,
+  onDeleteDocument,
+  uploadingDocument = false,
   saving = false,
 }: {
   claims: ClaimRow[];
   events?: ClaimEventRow[];
+  documents?: ClaimDocumentRow[];
   onCreate: (draft: ClaimDraft) => void;
   onUpdate: (id: string, patch: ClaimPatch) => void;
   onDelete: (id: string) => void;
   onCreateEvent?: (claimId: string, draft: ClaimEventDraft) => void;
   onDeleteEvent?: (id: string) => void;
+  onUploadDocument?: (claimId: string, file: File, docType: ClaimDocType, note: string) => void;
+  onViewDocument?: (path: string) => void;
+  onDeleteDocument?: (id: string, path: string) => void;
+  uploadingDocument?: boolean;
   saving?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<ClaimDraft>(() => emptyDraft());
   const [cycleLogClaimId, setCycleLogClaimId] = useState<string | null>(null);
+  const [docsClaimId, setDocsClaimId] = useState<string | null>(null);
   const cycleLogClaim = claims.find((c) => c.id === cycleLogClaimId) ?? null;
+  const docsClaim = claims.find((c) => c.id === docsClaimId) ?? null;
   const eventsByClaim = new Map<string, ClaimEventRow[]>();
   for (const event of events) {
     const list = eventsByClaim.get(event.claim_id) ?? [];
     list.push(event);
     eventsByClaim.set(event.claim_id, list);
+  }
+  const docsByClaim = new Map<string, ClaimDocumentRow[]>();
+  for (const doc of documents) {
+    const list = docsByClaim.get(doc.claim_id) ?? [];
+    list.push(doc);
+    docsByClaim.set(doc.claim_id, list);
   }
 
   const openNew = () => {
@@ -215,7 +241,7 @@ export function ClaimsWorkspace({
               <TableHead className="text-right">Amount sought</TableHead>
               <TableHead className="text-right">Time sought</TableHead>
               <TableHead className="hidden md:table-cell">Submitted</TableHead>
-              <TableHead className="w-[130px] text-right">Actions</TableHead>
+              <TableHead className="w-[160px] text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -258,6 +284,21 @@ export function ClaimsWorkspace({
                       {(eventsByClaim.get(c.id)?.length ?? 0) > 0 && (
                         <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold leading-none text-accent-foreground">
                           {eventsByClaim.get(c.id)?.length}
+                        </span>
+                      )}
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="relative h-7 w-7"
+                      onClick={() => setDocsClaimId(c.id)}
+                      title="Documents"
+                      aria-label={`Open documents for ${c.title}`}
+                    >
+                      <Paperclip className="h-3.5 w-3.5" />
+                      {(docsByClaim.get(c.id)?.length ?? 0) > 0 && (
+                        <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold leading-none text-accent-foreground">
+                          {docsByClaim.get(c.id)?.length}
                         </span>
                       )}
                     </Button>
@@ -501,6 +542,16 @@ export function ClaimsWorkspace({
         onClose={() => setCycleLogClaimId(null)}
         onCreateEvent={onCreateEvent}
         onDeleteEvent={onDeleteEvent}
+      />
+
+      <ClaimDocumentsDialog
+        claim={docsClaim}
+        documents={docsClaim ? (docsByClaim.get(docsClaim.id) ?? []) : []}
+        onClose={() => setDocsClaimId(null)}
+        onUpload={onUploadDocument}
+        onView={onViewDocument}
+        onDelete={onDeleteDocument}
+        uploading={uploadingDocument}
       />
     </div>
   );

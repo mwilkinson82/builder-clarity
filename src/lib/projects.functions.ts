@@ -278,6 +278,20 @@ export interface ClaimEventRow {
   updated_at: string;
 }
 
+export type ClaimDocType = "claim" | "supporting" | "correspondence" | "other";
+
+export interface ClaimDocumentRow {
+  id: string;
+  claim_id: string;
+  project_id: string;
+  storage_path: string;
+  file_name: string;
+  doc_type: ClaimDocType;
+  note: string;
+  uploaded_at: string;
+  created_by: string | null;
+}
+
 export interface BucketRow {
   id: string;
   project_id: string;
@@ -681,6 +695,25 @@ const normalizeClaimEvent = (row: Record<string, unknown>): ClaimEventRow => {
     created_by: (row.created_by as string | null) ?? null,
     created_at: str(row.created_at),
     updated_at: str(row.updated_at),
+  };
+};
+
+const CLAIM_DOC_TYPES = ["claim", "supporting", "correspondence", "other"] as const;
+
+const normalizeClaimDocument = (row: Record<string, unknown>): ClaimDocumentRow => {
+  const docType = str(row.doc_type, "supporting");
+  return {
+    id: row.id as string,
+    claim_id: row.claim_id as string,
+    project_id: row.project_id as string,
+    storage_path: str(row.storage_path),
+    file_name: str(row.file_name),
+    doc_type: CLAIM_DOC_TYPES.includes(docType as ClaimDocType)
+      ? (docType as ClaimDocType)
+      : "supporting",
+    note: str(row.note),
+    uploaded_at: str(row.uploaded_at),
+    created_by: (row.created_by as string | null) ?? null,
   };
 };
 
@@ -1626,6 +1659,10 @@ export const getProject = createServerFn({ method: "GET" })
       .eq("project_id", pid)
       .order("event_date", { ascending: true, nullsFirst: true })
       .order("created_at", { ascending: true });
+    const claimDocumentRes = await dynamicTable(context.supabase, "project_claim_documents")
+      .select("*")
+      .eq("project_id", pid)
+      .order("uploaded_at", { ascending: false });
     if (eRes.error) throw new Error(eRes.error.message);
     if (cRes.error) throw new Error(cRes.error.message);
     if (bRes.error) throw new Error(bRes.error.message);
@@ -1669,6 +1706,14 @@ export const getProject = createServerFn({ method: "GET" })
         claimEventRes.error.message.includes("schema cache"));
     if (claimEventRes.error && !claimEventsTableMissing) {
       throw new Error(claimEventRes.error.message);
+    }
+    const claimDocumentsTableMissing =
+      claimDocumentRes.error &&
+      (isMissingRestRelation(claimDocumentRes.error, "project_claim_documents") ||
+        claimDocumentRes.error.message.includes("project_claim_documents") ||
+        claimDocumentRes.error.message.includes("schema cache"));
+    if (claimDocumentRes.error && !claimDocumentsTableMissing) {
+      throw new Error(claimDocumentRes.error.message);
     }
 
     let billingEventRows: BillingApplicationEventRow[] = [];
@@ -1870,6 +1915,11 @@ export const getProject = createServerFn({ method: "GET" })
       : ((claimEventRes.data ?? []) as unknown[]).map((row) =>
           normalizeClaimEvent(row as Record<string, unknown>),
         );
+    const claimDocuments: ClaimDocumentRow[] = claimDocumentsTableMissing
+      ? []
+      : ((claimDocumentRes.data ?? []) as unknown[]).map((row) =>
+          normalizeClaimDocument(row as Record<string, unknown>),
+        );
     const decisions: DecisionRow[] = (dRes.data ?? []).map((d) =>
       normalizeDecision(d as Record<string, unknown>),
     );
@@ -1986,6 +2036,7 @@ export const getProject = createServerFn({ method: "GET" })
       inspections,
       claims,
       claimEvents,
+      claimDocuments,
       rollup,
       guidance,
       warnings,
@@ -3172,6 +3223,53 @@ export const deleteClaimEvent = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { error } = await dynamicTable(context.supabase, "project_claim_events")
+      .delete()
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true, id: data.id };
+  });
+
+// ---------------- CLAIM DOCUMENTS ----------------
+// Attachments on a claim (the claim package + supporting docs). Bytes are
+// uploaded to the private 'claim-docs' bucket client-side (path
+// <projectId>/<claimId>/<file>, team storage RLS); this records the path + name.
+
+export const addClaimDocument = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        claimId: z.string().uuid(),
+        projectId: z.string().uuid(),
+        path: z.string().min(1).max(500),
+        name: z.string().min(1).max(300),
+        doc_type: z.enum(["claim", "supporting", "correspondence", "other"]).default("supporting"),
+        note: z.string().max(300).default(""),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<ClaimDocumentRow> => {
+    const { data: row, error } = await dynamicTable(context.supabase, "project_claim_documents")
+      .insert({
+        claim_id: data.claimId,
+        project_id: data.projectId,
+        storage_path: data.path,
+        file_name: data.name,
+        doc_type: data.doc_type,
+        note: data.note,
+        created_by: context.userId,
+      })
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return normalizeClaimDocument(row as Record<string, unknown>);
+  });
+
+export const deleteClaimDocument = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "project_claim_documents")
       .delete()
       .eq("id", data.id);
     if (error) throw new Error(error.message);
