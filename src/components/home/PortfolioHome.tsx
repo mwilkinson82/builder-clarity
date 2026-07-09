@@ -55,9 +55,16 @@ const PROJECTS_HREF = "/?tab=projects";
 
 /** The owning company's logo (initials fallback), shown left of a job's name. */
 function JobLogo({ url, name }: { url: string; name: string }) {
+  // Fall back to the company's initials when there's no logo URL *or* the image
+  // fails to load — a broken <img> placeholder is worse than clean initials.
+  const [failed, setFailed] = useState(false);
   return (
     <span className="ow-jobrow__logo" title={name}>
-      {url ? <img src={url} alt="" /> : homeInitials(name, "•")}
+      {url && !failed ? (
+        <img src={url} alt="" onError={() => setFailed(true)} />
+      ) : (
+        homeInitials(name, "•")
+      )}
     </span>
   );
 }
