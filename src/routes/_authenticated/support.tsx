@@ -40,7 +40,7 @@ function SupportPage() {
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto w-full max-w-3xl px-6 py-14">
         <Link
-          to="/home-preview"
+          to="/"
           className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:text-foreground"
         >
           ← Home

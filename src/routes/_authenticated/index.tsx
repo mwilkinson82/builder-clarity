@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -14,6 +14,7 @@ import {
 import { createProject, listProjects, seedDemoIfEmpty } from "@/lib/projects.functions";
 import { getOnboardingStatus } from "@/lib/onboarding.functions";
 import { FirstRunChecklist, type ChecklistStep } from "@/components/onboarding/FirstRunChecklist";
+import { PortfolioHome } from "@/components/home/PortfolioHome";
 import { BillingFeedBadge } from "@/components/billing/BillingFeedBadge";
 import { PipelineWorkspace } from "@/components/pipeline/PipelineWorkspace";
 import {
@@ -110,8 +111,18 @@ export const Route = createFileRoute("/_authenticated/")({
       },
     ],
   }),
-  component: PortfolioPage,
+  component: PortfolioIndex,
 });
+
+// Cutover: the redesigned home (6a) IS the portfolio landing. The classic tabbed
+// views — the full projects table (?tab=projects) and CRM (?tab=crm / ?tab=pipeline)
+// — stay reachable on this same route, so every existing /?tab=… deep link (incl.
+// the CRM &opportunity= links) keeps resolving here unchanged. Bare / renders 6a.
+function PortfolioIndex() {
+  const tab = useLocation({ select: (l) => (l.search as { tab?: unknown }).tab });
+  const hasTab = typeof tab === "string" && tab.length > 0;
+  return hasTab ? <PortfolioPage /> : <PortfolioHome />;
+}
 
 function statusFor(originalPct: number, indicatedPct: number) {
   const erosion = originalPct - indicatedPct;
@@ -354,7 +365,9 @@ function PortfolioPage() {
     if (nextTab === "pipeline") {
       url.searchParams.set("tab", "crm");
     } else {
-      url.searchParams.delete("tab");
+      // Keep an explicit ?tab=projects — bare / now renders the 6a home, so the
+      // classic table needs a param to stay put across refresh/deep-link.
+      url.searchParams.set("tab", "projects");
       url.searchParams.delete("opportunity");
     }
     window.history.replaceState({}, "", url.toString());
