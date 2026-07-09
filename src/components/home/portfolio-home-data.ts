@@ -25,6 +25,8 @@ export type PipelineStage = {
   highlight?: "clay" | "good";
   dim?: boolean;
   estimatesLink?: boolean;
+  /** The stage's top opportunity — deep-links the card into the CRM board. */
+  oppId?: string;
 };
 
 export type PostureTile = {
@@ -54,4 +56,11 @@ export type WorklistJob = {
   orgName: string;
 };
 
-export type Pursuit = { title: string; due: string; dueTone?: "crit"; context: string };
+export type Pursuit = {
+  title: string;
+  due: string;
+  dueTone?: "crit";
+  context: string;
+  /** The opportunity this action belongs to — deep-links into the CRM board. */
+  oppId?: string;
+};

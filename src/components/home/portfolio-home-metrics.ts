@@ -223,6 +223,7 @@ export function buildHomeMetrics(
       dim: opps.length === 0,
       highlight: stage === "estimating" ? "clay" : isWon ? "good" : undefined,
       estimatesLink: stage === "estimating",
+      oppId: top?.id,
     };
   });
 
@@ -235,6 +236,7 @@ export function buildHomeMetrics(
       due: shortDate(a.due_date) || "—",
       dueTone: isPast(a.due_date) ? "crit" : undefined,
       context: a.opportunity_name || a.account_name || "Pursuit",
+      oppId: a.opportunity_id ?? undefined,
     }));
 
   // ---- hero stats ----
