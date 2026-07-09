@@ -253,3 +253,87 @@ export function summarizeSubPayments(
     paidPct,
   };
 }
+
+// ── Change orders & credits (kept separate from the contracted amount) ──────
+// Field request (2026-07-09): a sub CO or credit is its own line item, NOT an
+// edit to the base contract. The app derives revised = base + Σ change orders
+// (credits are negative). All math in integer cents.
+
+export interface SubChangeOrderLike {
+  subcontract_id: string;
+  // Signed dollars: a change order is positive, a credit is negative.
+  amount: number;
+}
+
+export function sumChangeOrders(changeOrders: SubChangeOrderLike[]): number {
+  let cents = 0;
+  for (const co of changeOrders) cents += dollarsToCents(co.amount);
+  return centsToDollars(cents);
+}
+
+export interface RevisedSubSummary {
+  base: number; // the contracted amount, untouched (dollars)
+  changeOrders: number; // Σ signed COs/credits (dollars)
+  revised: number; // base + change orders (dollars)
+  remaining: number; // max(0, revised − paid) (dollars)
+  paidPct: number; // paid / revised, 0..100
+}
+
+// Layer the change-order total onto a payment summary. The base commitment is
+// never mutated — that separation is the whole point.
+export function reviseSubSummary(
+  summary: SubcontractPaySummary,
+  changeOrderTotal: number,
+): RevisedSubSummary {
+  const baseCents = dollarsToCents(summary.committed);
+  const coCents = dollarsToCents(changeOrderTotal);
+  const revisedCents = baseCents + coCents;
+  const paidCents = dollarsToCents(summary.paid);
+  return {
+    base: centsToDollars(baseCents),
+    changeOrders: centsToDollars(coCents),
+    revised: centsToDollars(revisedCents),
+    remaining: centsToDollars(Math.max(0, revisedCents - paidCents)),
+    paidPct: revisedCents > 0 ? (paidCents / revisedCents) * 100 : 0,
+  };
+}
+
+export interface PaymentCodeSplit {
+  cost_code: string;
+  description: string;
+  amount: number; // dollars
+}
+
+// Field request (2026-07-09): "when payment is recorded to a sub we should be
+// able to see how much gets allocated to each cost code." The split is derived
+// pro-rata from the buyout's cost-code allocations (the same distribution the
+// budget layer uses), cents-exact via largest-remainder so the rows always sum
+// to the payment. No allocations → empty (the caller shows "not coded yet").
+export function allocatePaymentAcrossCodes(
+  paymentAmount: number,
+  allocations: { cost_code: string; description: string; amount: number }[],
+): PaymentCodeSplit[] {
+  const basis = allocations.filter((allocation) => allocation.amount > 0);
+  const basisCents = basis.map((allocation) => dollarsToCents(allocation.amount));
+  const basisTotal = basisCents.reduce((sum, cents) => sum + cents, 0);
+  const paymentCents = dollarsToCents(paymentAmount);
+  if (basisTotal <= 0 || paymentCents <= 0) return [];
+
+  const exact = basisCents.map((cents) => (paymentCents * cents) / basisTotal);
+  const floors = exact.map((value) => Math.floor(value));
+  let shortfall = paymentCents - floors.reduce((sum, value) => sum + value, 0);
+  // Hand the leftover cents to the largest remainders, stable by input order.
+  const order = exact
+    .map((value, index) => ({ index, remainder: value - Math.floor(value) }))
+    .sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+  for (const entry of order) {
+    if (shortfall <= 0) break;
+    floors[entry.index] += 1;
+    shortfall -= 1;
+  }
+  return basis.map((allocation, index) => ({
+    cost_code: allocation.cost_code,
+    description: allocation.description,
+    amount: centsToDollars(floors[index]),
+  }));
+}
