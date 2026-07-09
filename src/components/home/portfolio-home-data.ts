@@ -48,6 +48,10 @@ export type WorklistJob = {
   value: string;
   atRisk: boolean;
   overdue: boolean;
+  /** The owning company's logo + name — shown left of the project name to keep
+   *  the list personal to the customer. */
+  logoUrl: string;
+  orgName: string;
 };
 
 export type Pursuit = { title: string; due: string; dueTone?: "crit"; context: string };
