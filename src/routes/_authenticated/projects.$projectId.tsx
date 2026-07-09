@@ -34,7 +34,7 @@ import type { ChangeOrderAllocationInput } from "@/components/billing/ChangeOrde
 import { fmtUSDCents } from "@/lib/billing-format";
 import { centsToDollars, dollarsToCents } from "@/lib/payments-domain";
 import { applySovBucketPatch } from "@/lib/sov-rollup";
-import { CostBucketsTable } from "@/components/outcome/CostBucketsTable";
+import { BudgetLineDrawer } from "@/components/outcome/BudgetLineDrawer";
 import { ChangeOrdersTable } from "@/components/outcome/ChangeOrdersTable";
 import { ScheduleRisk } from "@/components/schedule";
 import { ProjectTruthReview } from "@/components/outcome/ProjectTruthReview";
@@ -118,6 +118,8 @@ import {
   updateBucket,
   createBucket,
   deleteBucket,
+  listBudgetOverrides,
+  recordBudgetOverride,
   submitReview,
   updateReview,
   importCostBuckets,
@@ -360,6 +362,8 @@ function ProjectPage() {
   const updateBucketFn = useServerFn(updateBucket);
   const createBucketFn = useServerFn(createBucket);
   const deleteBucketFn = useServerFn(deleteBucket);
+  const listBudgetOverridesFn = useServerFn(listBudgetOverrides);
+  const recordBudgetOverrideFn = useServerFn(recordBudgetOverride);
   const submitReviewFn = useServerFn(submitReview);
   const updateReviewFn = useServerFn(updateReview);
   const importBucketsFn = useServerFn(importCostBuckets);
@@ -388,6 +392,7 @@ function ProjectPage() {
     qc.invalidateQueries({ queryKey: ["billing-workspace", projectId] });
     qc.invalidateQueries({ queryKey: ["portfolio-billing"] });
     qc.invalidateQueries({ queryKey: ["exposure-allocations", projectId] });
+    qc.invalidateQueries({ queryKey: ["budget-overrides", projectId] });
   };
   const useServerMutation = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
     useMutation({ mutationFn: (input: I) => fn({ data: input }), onSuccess: invalidate });
@@ -515,6 +520,24 @@ function ProjectPage() {
     queryKey: ["daily-wip-entries", projectId],
     queryFn: () => listDailyWipEntriesFn({ data: { projectId } }),
   });
+  // BUDGETCONSOLIDATE1: the manual-override audit log for budget lines. Powers
+  // the "edited" marker on the ledger and the "recent changes" list in the line
+  // editor. Degrades to [] where the audit table isn't applied yet.
+  const budgetOverridesQuery = useQuery({
+    queryKey: ["budget-overrides", projectId],
+    queryFn: () => listBudgetOverridesFn({ data: { projectId } }),
+  });
+  const budgetOverrides = useMemo(
+    () => budgetOverridesQuery.data ?? [],
+    [budgetOverridesQuery.data],
+  );
+  const overriddenBucketIds = useMemo(
+    () =>
+      new Set(
+        budgetOverrides.map((o) => o.cost_bucket_id).filter((id): id is string => Boolean(id)),
+      ),
+    [budgetOverrides],
+  );
   const subCostByBucket = useMemo(() => {
     const data = subcontractsQuery.data;
     if (!data) return undefined;
@@ -711,6 +734,21 @@ function ProjectPage() {
   });
   const bucketCreate = useServerMutation<Record<string, unknown>>(createBucketFn as never);
   const bucketDelete = useServerMutation<{ id: string }>(deleteBucketFn);
+  // Best-effort audit write — the bucket edit already landed; a log miss must
+  // never surface an error to the user.
+  const overrideRecord = useMutation({
+    mutationFn: (input: {
+      projectId: string;
+      costBucketId: string;
+      field: "actual_to_date" | "ftc" | "contract_value" | "original_budget";
+      oldValue: number;
+      newValue: number;
+    }) => recordBudgetOverrideFn({ data: input }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["budget-overrides", projectId] }),
+  });
+  // BUDGETCONSOLIDATE1: the single Budget table opens a line editor drawer.
+  const [editingBucketId, setEditingBucketId] = useState<string | null>(null);
+  const [addingLine, setAddingLine] = useState(false);
   const reviewSubmit = useServerMutation<Record<string, unknown>>(submitReviewFn as never);
   const reviewUpdate = useServerMutation<Record<string, unknown>>(updateReviewFn as never);
   const bucketImport = useServerMutation<Record<string, unknown>>(importBucketsFn as never);
@@ -2189,27 +2227,38 @@ function ProjectPage() {
                   changeOrders={changeOrders}
                   changeOrderAllocations={changeOrderAllocationsQuery.data ?? []}
                   subCostByBucket={subCostByBucket}
+                  onOpenLine={(id) => {
+                    setAddingLine(false);
+                    setEditingBucketId(id);
+                  }}
+                  onAddLine={() => {
+                    setEditingBucketId(null);
+                    setAddingLine(true);
+                  }}
+                  editedBucketIds={overriddenBucketIds}
                 />
               </div>
-              <div className="space-y-2">
-                <WorkspaceHeader
-                  title="Edit budget lines"
-                  subtitle={
-                    project.budget_locked_at
-                      ? "The budget is locked — budget amounts change only through change orders. Actual cost and forecast-to-complete stay editable."
-                      : "Set the budget, actual cost, and forecast-to-complete for each cost code. Carried from the estimate, imported, or entered by hand."
+              <BudgetLineDrawer
+                open={addingLine || editingBucketId !== null}
+                onOpenChange={(next) => {
+                  if (!next) {
+                    setEditingBucketId(null);
+                    setAddingLine(false);
                   }
-                  compact
-                />
-                <CostBucketsTable
-                  buckets={buckets}
-                  subCostByBucket={subCostByBucket}
-                  budgetLocked={Boolean(project.budget_locked_at)}
-                  onUpdate={(id, patch) => bucketUpdate.mutateAsync({ id, patch })}
-                  onCreate={(input) => bucketCreate.mutate({ projectId, ...input })}
-                  onDelete={(id) => bucketDelete.mutate({ id })}
-                />
-              </div>
+                }}
+                mode={addingLine ? "create" : "edit"}
+                bucket={addingLine ? null : (buckets.find((b) => b.id === editingBucketId) ?? null)}
+                subCost={editingBucketId ? subCostByBucket?.get(editingBucketId) : undefined}
+                budgetLocked={Boolean(project.budget_locked_at)}
+                overrides={budgetOverrides}
+                onSave={(id, patch) => bucketUpdate.mutateAsync({ id, patch })}
+                onCreate={(input) => bucketCreate.mutate({ projectId, ...input })}
+                onDelete={(id) => bucketDelete.mutate({ id })}
+                onRecordOverride={(costBucketId, field, oldValue, newValue) =>
+                  overrideRecord.mutate({ projectId, costBucketId, field, oldValue, newValue })
+                }
+                saving={bucketUpdate.isPending}
+              />
             </TabsContent>
 
             <TabsContent value="billing" className="mt-0 space-y-6">
