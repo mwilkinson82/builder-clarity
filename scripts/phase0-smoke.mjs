@@ -1073,14 +1073,13 @@ await expectContains(
 );
 await expectContains(
   "src/components/outcome/ClaimsWorkspace.tsx",
-  [
-    /ClaimCycleLogDialog/,
-    /Returned for revision/,
-    /Log an event/,
-    /onCreateEvent/,
-    /onDeleteEvent/,
-  ],
+  [/ClaimCycleLogDialog/, /onCreateEvent/, /onDeleteEvent/, /setCycleLogClaimId/],
   "claims workspace opens a per-claim cycle log with add/delete events",
+);
+await expectContains(
+  "src/components/outcome/ClaimCycleLogDialog.tsx",
+  [/export function ClaimCycleLogDialog/, /Returned for revision/, /Log an event/],
+  "claim cycle-log dialog renders the event timeline + log-an-event form",
 );
 await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
