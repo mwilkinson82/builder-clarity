@@ -15,7 +15,9 @@ import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/
 import { Route as EmailUnsubscribeRouteImport } from './routes/email/unsubscribe'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthenticatedTeamRouteImport } from './routes/_authenticated/team'
+import { Route as AuthenticatedSupportRouteImport } from './routes/_authenticated/support'
 import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
+import { Route as AuthenticatedHomePreviewRouteImport } from './routes/_authenticated/home-preview'
 import { Route as AuthenticatedEstimatesRouteImport } from './routes/_authenticated/estimates'
 import { Route as AuthenticatedEstimateMastersRouteImport } from './routes/_authenticated/estimate-masters'
 import { Route as AuthenticatedCostLibraryRouteImport } from './routes/_authenticated/cost-library'
@@ -69,11 +71,22 @@ const AuthenticatedTeamRoute = AuthenticatedTeamRouteImport.update({
   path: '/team',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedSupportRoute = AuthenticatedSupportRouteImport.update({
+  id: '/support',
+  path: '/support',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedReportsRoute = AuthenticatedReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedHomePreviewRoute =
+  AuthenticatedHomePreviewRouteImport.update({
+    id: '/home-preview',
+    path: '/home-preview',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedEstimatesRoute = AuthenticatedEstimatesRouteImport.update({
   id: '/estimates',
   path: '/estimates',
@@ -212,7 +225,9 @@ export interface FileRoutesByFullPath {
   '/cost-library': typeof AuthenticatedCostLibraryRoute
   '/estimate-masters': typeof AuthenticatedEstimateMastersRoute
   '/estimates': typeof AuthenticatedEstimatesRouteWithChildren
+  '/home-preview': typeof AuthenticatedHomePreviewRoute
   '/reports': typeof AuthenticatedReportsRoute
+  '/support': typeof AuthenticatedSupportRoute
   '/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
@@ -242,7 +257,9 @@ export interface FileRoutesByTo {
   '/cost-library': typeof AuthenticatedCostLibraryRoute
   '/estimate-masters': typeof AuthenticatedEstimateMastersRoute
   '/estimates': typeof AuthenticatedEstimatesRouteWithChildren
+  '/home-preview': typeof AuthenticatedHomePreviewRoute
   '/reports': typeof AuthenticatedReportsRoute
+  '/support': typeof AuthenticatedSupportRoute
   '/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
@@ -275,7 +292,9 @@ export interface FileRoutesById {
   '/_authenticated/cost-library': typeof AuthenticatedCostLibraryRoute
   '/_authenticated/estimate-masters': typeof AuthenticatedEstimateMastersRoute
   '/_authenticated/estimates': typeof AuthenticatedEstimatesRouteWithChildren
+  '/_authenticated/home-preview': typeof AuthenticatedHomePreviewRoute
   '/_authenticated/reports': typeof AuthenticatedReportsRoute
+  '/_authenticated/support': typeof AuthenticatedSupportRoute
   '/_authenticated/team': typeof AuthenticatedTeamRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/email/unsubscribe': typeof EmailUnsubscribeRoute
@@ -309,7 +328,9 @@ export interface FileRouteTypes {
     | '/cost-library'
     | '/estimate-masters'
     | '/estimates'
+    | '/home-preview'
     | '/reports'
+    | '/support'
     | '/team'
     | '/auth/callback'
     | '/email/unsubscribe'
@@ -339,7 +360,9 @@ export interface FileRouteTypes {
     | '/cost-library'
     | '/estimate-masters'
     | '/estimates'
+    | '/home-preview'
     | '/reports'
+    | '/support'
     | '/team'
     | '/auth/callback'
     | '/email/unsubscribe'
@@ -371,7 +394,9 @@ export interface FileRouteTypes {
     | '/_authenticated/cost-library'
     | '/_authenticated/estimate-masters'
     | '/_authenticated/estimates'
+    | '/_authenticated/home-preview'
     | '/_authenticated/reports'
+    | '/_authenticated/support'
     | '/_authenticated/team'
     | '/auth/callback'
     | '/email/unsubscribe'
@@ -459,11 +484,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedTeamRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/support': {
+      id: '/_authenticated/support'
+      path: '/support'
+      fullPath: '/support'
+      preLoaderRoute: typeof AuthenticatedSupportRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/reports': {
       id: '/_authenticated/reports'
       path: '/reports'
       fullPath: '/reports'
       preLoaderRoute: typeof AuthenticatedReportsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/home-preview': {
+      id: '/_authenticated/home-preview'
+      path: '/home-preview'
+      fullPath: '/home-preview'
+      preLoaderRoute: typeof AuthenticatedHomePreviewRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/estimates': {
@@ -681,7 +720,9 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedCostLibraryRoute: typeof AuthenticatedCostLibraryRoute
   AuthenticatedEstimateMastersRoute: typeof AuthenticatedEstimateMastersRoute
   AuthenticatedEstimatesRoute: typeof AuthenticatedEstimatesRouteWithChildren
+  AuthenticatedHomePreviewRoute: typeof AuthenticatedHomePreviewRoute
   AuthenticatedReportsRoute: typeof AuthenticatedReportsRoute
+  AuthenticatedSupportRoute: typeof AuthenticatedSupportRoute
   AuthenticatedTeamRoute: typeof AuthenticatedTeamRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedProjectsProjectIdRoute: typeof AuthenticatedProjectsProjectIdRouteWithChildren
@@ -694,7 +735,9 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCostLibraryRoute: AuthenticatedCostLibraryRoute,
   AuthenticatedEstimateMastersRoute: AuthenticatedEstimateMastersRoute,
   AuthenticatedEstimatesRoute: AuthenticatedEstimatesRouteWithChildren,
+  AuthenticatedHomePreviewRoute: AuthenticatedHomePreviewRoute,
   AuthenticatedReportsRoute: AuthenticatedReportsRoute,
+  AuthenticatedSupportRoute: AuthenticatedSupportRoute,
   AuthenticatedTeamRoute: AuthenticatedTeamRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedProjectsProjectIdRoute:
@@ -737,3 +780,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
