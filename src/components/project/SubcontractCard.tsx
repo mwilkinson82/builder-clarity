@@ -79,6 +79,9 @@ interface CardProps {
   onViewDoc: (path: string) => void;
   onSetActiveDoc: (docId: string) => void;
   onRemoveDoc: (docId: string, path: string) => void;
+  // COMPLIANCE (module 2): the insurance + lien-waiver panel for this sub,
+  // rendered by the workspace so the card stays payment/paper-trail focused.
+  complianceSlot?: React.ReactNode;
 }
 
 export function SubcontractCard({
@@ -102,6 +105,7 @@ export function SubcontractCard({
   onViewDoc,
   onSetActiveDoc,
   onRemoveDoc,
+  complianceSlot,
 }: CardProps) {
   const [allocBucket, setAllocBucket] = useState("");
   const [allocAmount, setAllocAmount] = useState(0);
@@ -549,6 +553,8 @@ export function SubcontractCard({
           </Button>
         </div>
       </div>
+
+      {complianceSlot}
     </div>
   );
 }

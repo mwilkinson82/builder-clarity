@@ -15,6 +15,15 @@ import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { WorkspaceHeader } from "@/components/project/billing/billing-workspace-atoms";
 import { SubcontractCard, type PaymentEdit } from "@/components/project/SubcontractCard";
+import { SubcontractCompliance } from "@/components/project/SubcontractCompliance";
+import {
+  deleteInsuranceCertificate,
+  deleteLienWaiver,
+  listProjectCompliance,
+  recordLienWaiver,
+  saveInsuranceCertificate,
+  setProjectComplianceGating,
+} from "@/lib/compliance.functions";
 import {
   deleteSubcontractor,
   listSubcontractors,
@@ -66,6 +75,12 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const addDocFn = useServerFn(addSubcontractDocument);
   const setActiveDocFn = useServerFn(setActiveSubcontractDocument);
   const deleteDocFn = useServerFn(deleteSubcontractDocument);
+  const listComplianceFn = useServerFn(listProjectCompliance);
+  const saveCertFn = useServerFn(saveInsuranceCertificate);
+  const deleteCertFn = useServerFn(deleteInsuranceCertificate);
+  const recordWaiverFn = useServerFn(recordLienWaiver);
+  const deleteWaiverFn = useServerFn(deleteLienWaiver);
+  const setGatingFn = useServerFn(setProjectComplianceGating);
 
   const directoryQuery = useQuery({
     queryKey: ["subcontractors-directory"],
@@ -75,6 +90,10 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const projectQuery = useQuery({
     queryKey: ["subcontracts", projectId],
     queryFn: () => listProjFn({ data: { projectId } }),
+  });
+  const complianceQuery = useQuery({
+    queryKey: ["compliance", projectId],
+    queryFn: () => listComplianceFn({ data: { projectId } }),
   });
 
   const directory = useMemo(() => directoryQuery.data ?? [], [directoryQuery.data]);
@@ -87,6 +106,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["subcontracts", projectId] });
     qc.invalidateQueries({ queryKey: ["subcontractors-directory"] });
+    qc.invalidateQueries({ queryKey: ["compliance", projectId] });
     // The buyout/payment moves the budget ledger — refresh the Budget/Job-cost
     // views too so Actual-to-date / Forecast-to-complete reflect it.
     qc.invalidateQueries({ queryKey: ["project", projectId] });
@@ -95,6 +115,40 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     toast.error(`Could not ${verb}`, {
       description: err instanceof Error ? err.message : "Try again.",
     });
+
+  // ── Compliance (module 2): insurance + lien waivers, and the gating toggle ──
+  const compliance = complianceQuery.data ?? {
+    certificates: [],
+    waivers: [],
+    gatingEnabled: true,
+  };
+  const saveCert = useMutation({
+    mutationFn: (input: { subcontractId: string } & Record<string, unknown>) =>
+      saveCertFn({ data: { projectId, ...input } as never }),
+    onSuccess: invalidate,
+    onError: onError("save the certificate"),
+  });
+  const deleteCert = useMutation({
+    mutationFn: (id: string) => deleteCertFn({ data: { id } }),
+    onSuccess: invalidate,
+    onError: onError("delete the certificate"),
+  });
+  const recordWaiver = useMutation({
+    mutationFn: (input: { subcontractId: string } & Record<string, unknown>) =>
+      recordWaiverFn({ data: { projectId, ...input } as never }),
+    onSuccess: invalidate,
+    onError: onError("record the lien waiver"),
+  });
+  const removeWaiver = useMutation({
+    mutationFn: (id: string) => deleteWaiverFn({ data: { id } }),
+    onSuccess: invalidate,
+    onError: onError("delete the lien waiver"),
+  });
+  const setGating = useMutation({
+    mutationFn: (enabled: boolean) => setGatingFn({ data: { projectId, enabled } }),
+    onSuccess: invalidate,
+    onError: onError("update the compliance setting"),
+  });
 
   // ── Directory add form ──
   const [dirName, setDirName] = useState("");
@@ -333,6 +387,31 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
         subtitle="Load your subs, buy out their scope, and pay against it. A buyout is committed cost; each progress payment moves it to actual — your Budget's Actual-to-date and Forecast-to-complete follow automatically."
       />
 
+      {/* Compliance gating toggle — default ON: no pay without a valid COI + a
+          lien waiver. Off = the GC self-manages compliance (never blocks). */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-hairline bg-card px-4 py-3 shadow-card">
+        <div className="text-sm">
+          <span className="font-medium text-foreground">
+            Require lien waivers + insurance to pay subs
+          </span>
+          <span className="ml-2 text-xs text-muted-foreground">
+            {compliance.gatingEnabled
+              ? "On — a sub can't be paid without a valid COI and a lien waiver on file."
+              : "Off — you're managing compliance yourself; payments are never blocked."}
+          </span>
+        </div>
+        <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-foreground">
+          <input
+            type="checkbox"
+            checked={compliance.gatingEnabled}
+            disabled={setGating.isPending}
+            onChange={(e) => setGating.mutate(e.target.checked)}
+            className="h-4 w-4"
+          />
+          {compliance.gatingEnabled ? "Enforced" : "Not enforced"}
+        </label>
+      </div>
+
       {/* Directory */}
       <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
@@ -501,6 +580,22 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               onViewDoc={(path) => viewDoc(path)}
               onSetActiveDoc={(docId) => setActiveDoc(docId, sub.id)}
               onRemoveDoc={(docId, path) => removeDoc(docId, path)}
+              complianceSlot={
+                <SubcontractCompliance
+                  projectId={projectId}
+                  gatingEnabled={compliance.gatingEnabled}
+                  certificates={compliance.certificates.filter((c) => c.subcontract_id === sub.id)}
+                  waivers={compliance.waivers.filter((w) => w.subcontract_id === sub.id)}
+                  onSaveCertificate={(input) =>
+                    saveCert.mutateAsync({ subcontractId: sub.id, ...input })
+                  }
+                  onDeleteCertificate={(id) => deleteCert.mutate(id)}
+                  onRecordWaiver={(input) =>
+                    recordWaiver.mutateAsync({ subcontractId: sub.id, ...input })
+                  }
+                  onDeleteWaiver={(id) => removeWaiver.mutate(id)}
+                />
+              }
             />
           );
         })
