@@ -7,7 +7,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 
-import { getCompanyWorkspaceContext, getMyProfile } from "@/lib/team.functions";
+import { getCompanyWorkspaceContext, getMyHomeAccess, getMyProfile } from "@/lib/team.functions";
 
 export type HomeIdentity = {
   loading: boolean;
@@ -28,6 +28,23 @@ export function homeInitials(source: string, fallback = "?") {
   const first = parts[0][0] ?? "";
   const last = parts.length > 1 ? (parts[parts.length - 1][0] ?? "") : "";
   return (first + last).toUpperCase() || fallback;
+}
+
+export type HomeAccess = { loading: boolean; canSeeOwnerView: boolean; isSuperAdmin: boolean };
+
+// Which view the user gets. Defaults to PM-scoped until access resolves, so the
+// company-wide framing never shows before we've confirmed the user can see it.
+export function useHomeAccess(): HomeAccess {
+  const loadAccess = useServerFn(getMyHomeAccess);
+  const { data, isLoading } = useQuery({
+    queryKey: ["my-home-access"],
+    queryFn: () => loadAccess(),
+  });
+  return {
+    loading: isLoading,
+    canSeeOwnerView: data?.canSeeOwnerView ?? false,
+    isSuperAdmin: data?.isSuperAdmin ?? false,
+  };
 }
 
 export function useHomeIdentity(): HomeIdentity {

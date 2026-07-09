@@ -13,7 +13,7 @@ import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { type HeroStat, type WorklistJob } from "./portfolio-home-data";
-import { homeInitials, useHomeIdentity, type HomeIdentity } from "./home-identity";
+import { homeInitials, useHomeAccess, useHomeIdentity, type HomeIdentity } from "./home-identity";
 import { useHomeMetrics } from "./use-home-metrics";
 import { type HomeMetrics } from "./portfolio-home-metrics";
 import { AvatarMenu } from "./home-avatar-menu";
@@ -70,9 +70,14 @@ function HeroStats({ stats }: { stats: HeroStat[] }) {
 
 export function PortfolioHome() {
   const identity = useHomeIdentity();
+  const access = useHomeAccess();
   const { metrics } = useHomeMetrics();
   const [view, setView] = useState<HomeView>("owner");
   const [filter, setFilter] = useState<WorklistFilter>("all");
+
+  // PM-scoped users only ever see the PM view; the Owner⇄PM switch is theirs to
+  // flip only when they can see the company-wide track.
+  const effectiveView: HomeView = access.canSeeOwnerView ? view : "pm";
 
   const filteredJobs = useMemo(() => {
     if (filter === "at-risk") return metrics.worklist.filter((j) => j.atRisk);
@@ -116,7 +121,7 @@ export function PortfolioHome() {
             <a className="is-active" href="/home-preview" aria-current="page">
               Portfolio
             </a>
-            <a href="/?tab=crm">CRM</a>
+            {access.canSeeOwnerView ? <a href="/?tab=crm">CRM</a> : null}
             <Link to="/estimates">Estimates</Link>
             <Link to="/billing">Billing</Link>
             <Link to="/reports">Reports</Link>
@@ -139,31 +144,35 @@ export function PortfolioHome() {
             <span className="ow-levelpill__dot" />
             Portfolio level
           </span>
-          <span className="ow-levelbar__hint">Try the switch →</span>
-          <span className="ow-viewas">
-            <span className="ow-viewas__label">View as</span>
-            <span className="ow-toggle" role="group" aria-label="View as">
-              <button
-                type="button"
-                className={`ow-seg${view === "owner" ? " is-active" : ""}`}
-                aria-pressed={view === "owner"}
-                onClick={() => setView("owner")}
-              >
-                ◔ Owner
-              </button>
-              <button
-                type="button"
-                className={`ow-seg${view === "pm" ? " is-active" : ""}`}
-                aria-pressed={view === "pm"}
-                onClick={() => setView("pm")}
-              >
-                ◱ PM
-              </button>
-            </span>
-          </span>
+          {access.canSeeOwnerView ? (
+            <>
+              <span className="ow-levelbar__hint">Try the switch →</span>
+              <span className="ow-viewas">
+                <span className="ow-viewas__label">View as</span>
+                <span className="ow-toggle" role="group" aria-label="View as">
+                  <button
+                    type="button"
+                    className={`ow-seg${view === "owner" ? " is-active" : ""}`}
+                    aria-pressed={view === "owner"}
+                    onClick={() => setView("owner")}
+                  >
+                    ◔ Owner
+                  </button>
+                  <button
+                    type="button"
+                    className={`ow-seg${view === "pm" ? " is-active" : ""}`}
+                    aria-pressed={view === "pm"}
+                    onClick={() => setView("pm")}
+                  >
+                    ◱ PM
+                  </button>
+                </span>
+              </span>
+            </>
+          ) : null}
         </div>
 
-        {view === "owner" ? (
+        {effectiveView === "owner" ? (
           <OwnerView
             identity={identity}
             metrics={metrics}
