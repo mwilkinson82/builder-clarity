@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ListChecks, Plus, Pencil, ShieldAlert, Trash2 } from "lucide-react";
+import { FileCheck, FileText, ListChecks, Plus, Pencil, ShieldAlert, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
@@ -131,6 +131,7 @@ export function ExposuresTable({
   onUpdate,
   onDelete,
   onCreateTodo,
+  onCreateChangeOrder,
 }: {
   exposures: ExposureRow[];
   focusedExposureId?: string | null;
@@ -139,6 +140,7 @@ export function ExposuresTable({
   onUpdate: (id: string, patch: Partial<ExposureDraft>) => void;
   onDelete: (id: string) => void;
   onCreateTodo?: (exposure: ExposureRow) => void;
+  onCreateChangeOrder?: (exposure: ExposureRow) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [viewing, setViewing] = useState<ExposureRow | null>(null);
@@ -286,6 +288,7 @@ export function ExposuresTable({
               onEdit={openEdit}
               onDelete={onDelete}
               onCreateTodo={onCreateTodo}
+              onCreateChangeOrder={onCreateChangeOrder}
             />
           ))}
           <RiskGroupRow
@@ -303,6 +306,7 @@ export function ExposuresTable({
               onEdit={openEdit}
               onDelete={onDelete}
               onCreateTodo={onCreateTodo}
+              onCreateChangeOrder={onCreateChangeOrder}
             />
           ))}
           {unclassifiedLive.length > 0 && (
@@ -322,6 +326,7 @@ export function ExposuresTable({
               onEdit={openEdit}
               onDelete={onDelete}
               onCreateTodo={onCreateTodo}
+              onCreateChangeOrder={onCreateChangeOrder}
             />
           ))}
           {closed.length > 0 && (
@@ -340,6 +345,7 @@ export function ExposuresTable({
               onEdit={openEdit}
               onDelete={onDelete}
               onCreateTodo={onCreateTodo}
+              onCreateChangeOrder={onCreateChangeOrder}
             />
           ))}
           {exposures.length === 0 && (
@@ -859,6 +865,7 @@ function RiskRow({
   onEdit,
   onDelete,
   onCreateTodo,
+  onCreateChangeOrder,
 }: {
   exposure: ExposureRow;
   highlightLabel?: string;
@@ -867,6 +874,7 @@ function RiskRow({
   onEdit: (exposure: ExposureRow) => void;
   onDelete: (id: string) => void;
   onCreateTodo?: (exposure: ExposureRow) => void;
+  onCreateChangeOrder?: (exposure: ExposureRow) => void;
 }) {
   const closed = remainingValue(exposure) === 0;
   const highlighted = Boolean(highlightLabel);
@@ -987,6 +995,33 @@ function RiskRow({
       </div>
 
       <div className="flex items-start justify-end gap-1 lg:justify-end">
+        {exposure.linked_change_order_id ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7 text-accent-foreground"
+            disabled
+            title="Already in change orders"
+            aria-label={`${exposure.title} is already in change orders`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <FileCheck className="h-3.5 w-3.5" />
+          </Button>
+        ) : onCreateChangeOrder ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7"
+            title="Tag as change order"
+            aria-label={`Tag risk ${exposure.title} as a change order`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onCreateChangeOrder(exposure);
+            }}
+          >
+            <FileText className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
         {onCreateTodo && (
           <Button
             size="icon"

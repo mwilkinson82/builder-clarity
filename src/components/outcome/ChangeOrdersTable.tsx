@@ -27,7 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FileText, Plus, Pencil, ShieldAlert, Trash2 } from "lucide-react";
+import { FileText, Plus, Pencil, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
 import type { ChangeOrderRow, COStatus, COType } from "@/lib/projects.functions";
@@ -202,17 +202,30 @@ export function ChangeOrdersTable({
 
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => onCreateRisk?.(c)}
-                      disabled={!onCreateRisk || creatingRiskId === c.id}
-                      title="Send to risk tally"
-                      aria-label={`Send ${c.number || c.description} to risk tally`}
-                    >
-                      <ShieldAlert className="h-3.5 w-3.5" />
-                    </Button>
+                    {c.linked_exposure_id ? (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 text-accent-foreground"
+                        disabled
+                        title="Already in the risk tally"
+                        aria-label={`${c.number || c.description} is already in the risk tally`}
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        onClick={() => onCreateRisk?.(c)}
+                        disabled={!onCreateRisk || creatingRiskId === c.id}
+                        title="Send to risk tally"
+                        aria-label={`Send ${c.number || c.description} to risk tally`}
+                      >
+                        <ShieldAlert className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                     <Button
                       size="icon"
                       variant="ghost"

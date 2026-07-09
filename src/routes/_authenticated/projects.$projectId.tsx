@@ -106,6 +106,7 @@ import {
   createChangeOrder,
   updateChangeOrder,
   deleteChangeOrder,
+  linkChangeOrderExposure,
   allocateChangeOrder,
   deleteChangeOrderAllocation,
   allocateExposure,
@@ -149,6 +150,8 @@ import {
 import { isHarborDemoProject } from "@/lib/demo-seed";
 import { listSchedule } from "@/lib/schedule.functions";
 import { fmtUSD, fmtPct } from "@/lib/format";
+import { MoneyInput } from "@/components/ui/money-input";
+import { Label } from "@/components/ui/label";
 import { remainingExposureValue, type Phase, type ExposureCategory } from "@/lib/ior";
 import { cn } from "@/lib/utils";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
@@ -304,6 +307,22 @@ function exposureCategoryFromChangeOrder(coType: ChangeOrderRow["co_type"]): Exp
   }
 }
 
+function changeOrderTypeFromExposure(category: ExposureCategory): ChangeOrderRow["co_type"] {
+  switch (category) {
+    case "owner_decision":
+      return "owner_change";
+    case "design_drift":
+      return "design_error";
+    case "field_change":
+      return "unforeseen_condition";
+    case "trade_performance":
+    case "procurement":
+      return "sub_issued";
+    default:
+      return "other";
+  }
+}
+
 function ProjectRoute() {
   const childMatches = useChildMatches();
   return childMatches.length > 0 ? <Outlet /> : <ProjectPage />;
@@ -316,6 +335,10 @@ function ProjectPage() {
   const list = useServerFn(listProjects);
   const qc = useQueryClient();
   const [creatingCoRiskId, setCreatingCoRiskId] = useState<string | null>(null);
+  // CO→risk value prompt: which CO is being sent, and the amount to carry.
+  const [coRiskPrompt, setCoRiskPrompt] = useState<{ co: ChangeOrderRow; value: number } | null>(
+    null,
+  );
   const [creatingInspectionRiskId, setCreatingInspectionRiskId] = useState<string | null>(null);
   const [activeProjectTab, setActiveProjectTab] = useState<ProjectTabValue>(
     search.tab ?? "dashboard",
@@ -352,6 +375,7 @@ function ProjectPage() {
   const createCoFn = useServerFn(createChangeOrder);
   const updateCoFn = useServerFn(updateChangeOrder);
   const deleteCoFn = useServerFn(deleteChangeOrder);
+  const linkCoExposureFn = useServerFn(linkChangeOrderExposure);
   const allocateChangeOrderFn = useServerFn(allocateChangeOrder);
   const deleteChangeOrderAllocationFn = useServerFn(deleteChangeOrderAllocation);
   const allocateExposureFn = useServerFn(allocateExposure);
@@ -1100,24 +1124,10 @@ function ProjectPage() {
     // PDF was already downloaded by the wizard itself.
   };
 
-  const handleCreateRiskFromChangeOrder = (co: ChangeOrderRow) => {
-    const dollarExposure = co.cost_amount > 0 ? co.cost_amount : co.contract_amount;
-
-    if (co.status === "Approved") {
-      toast.info("Approved CO already affects the forecast", {
-        description:
-          "Use this action for pending or denied change orders that still need to be protected in the risk tally.",
-      });
-      return;
-    }
-
-    if (dollarExposure <= 0) {
-      toast.error("CO needs a dollar value before it can become a risk", {
-        description: "Add a cost amount or contract amount, then send it to the risk tally.",
-      });
-      return;
-    }
-
+  // The actual CO→risk create, run after the value prompt is confirmed. The
+  // carried dollar value is the user's choice (full CO value or their own).
+  const runCreateRiskFromChangeOrder = (co: ChangeOrderRow, dollarExposure: number) => {
+    const probability = co.status === "Pending" ? co.probability : 100;
     setCreatingCoRiskId(co.id);
     expCreate.mutate(
       {
@@ -1126,7 +1136,7 @@ function ProjectPage() {
         description: co.notes || co.description,
         category: exposureCategoryFromChangeOrder(co.co_type),
         dollar_exposure: dollarExposure,
-        probability: co.status === "Pending" ? co.probability : 100,
+        probability,
         schedule_impact_weeks: null,
         owner: co.owner || "PM",
         response_path: "recover",
@@ -1143,14 +1153,24 @@ function ProjectPage() {
           `CO status: ${co.status}.`,
           `Contract value: ${fmtUSD(co.contract_amount)}.`,
           `Cost exposure: ${fmtUSD(co.cost_amount)}.`,
-          `Likely exposure: ${fmtUSD(dollarExposure * ((co.status === "Pending" ? co.probability : 100) / 100))}.`,
+          `Risk carried: ${fmtUSD(dollarExposure)} (${fmtUSD((dollarExposure * probability) / 100)} likely).`,
           co.notes ? `CO notes: ${co.notes}` : "",
         ]
           .filter(Boolean)
           .join("\n"),
       },
       {
-        onSuccess: () => {
+        onSuccess: async (data) => {
+          const exposureId = (data as { id?: string } | undefined)?.id ?? "";
+          if (exposureId) {
+            try {
+              await linkCoExposureFn({ data: { changeOrderId: co.id, exposureId } });
+              invalidate();
+            } catch {
+              // The link column may be a migration behind; the exposure still
+              // stands on its own. Fail quiet — don't undercut the success toast.
+            }
+          }
           toast.success("CO sent to risk tally", {
             description: `${co.number || "Change order"} is now an E-Hold exposure to recover.`,
           });
@@ -1161,6 +1181,87 @@ function ProjectPage() {
           });
         },
         onSettled: () => setCreatingCoRiskId(null),
+      },
+    );
+  };
+
+  const handleCreateRiskFromChangeOrder = (co: ChangeOrderRow) => {
+    if (co.linked_exposure_id) {
+      toast.info("This change order is already in the risk tally", {
+        description: "Open the Risk Tally tab to update the linked exposure.",
+      });
+      return;
+    }
+    if (co.status === "Approved") {
+      toast.info("Approved CO already affects the forecast", {
+        description:
+          "Use this action for pending or denied change orders that still need to be protected in the risk tally.",
+      });
+      return;
+    }
+    const dollarExposure = co.cost_amount > 0 ? co.cost_amount : co.contract_amount;
+    if (dollarExposure <= 0) {
+      toast.error("CO needs a dollar value before it can become a risk", {
+        description: "Add a cost amount or contract amount, then send it to the risk tally.",
+      });
+      return;
+    }
+    // Ask before carrying the value: full CO value, or the PM's own number.
+    setCoRiskPrompt({ co, value: dollarExposure });
+  };
+
+  const handleCreateChangeOrderFromExposure = (exposure: ExposureRow) => {
+    if (exposure.linked_change_order_id) {
+      toast.info("This risk is already tracked as a change order", {
+        description: "Open the Change Orders tab to update it.",
+      });
+      return;
+    }
+    if (exposure.dollar_exposure <= 0) {
+      toast.error("Risk needs a dollar value before it becomes a change order", {
+        description: "Set the exposure amount first, then tag it as a change order.",
+      });
+      return;
+    }
+    coCreate.mutate(
+      {
+        projectId,
+        number: "",
+        description: exposure.title,
+        contract_amount: exposure.dollar_exposure,
+        cost_amount: 0,
+        status: "Pending",
+        probability: exposure.probability,
+        owner: exposure.owner || "PM",
+        notes: [
+          `Created from the risk tally.`,
+          exposure.description ? `Risk detail: ${exposure.description}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        co_type: changeOrderTypeFromExposure(exposure.category),
+      },
+      {
+        onSuccess: async (data) => {
+          const changeOrderId = (data as { id?: string } | undefined)?.id ?? "";
+          if (changeOrderId) {
+            try {
+              await linkCoExposureFn({ data: { changeOrderId, exposureId: exposure.id } });
+              invalidate();
+            } catch {
+              // Best-effort link; the pending CO still stands if the link
+              // column is a migration behind.
+            }
+          }
+          toast.success("Risk tagged as a change order", {
+            description: "It's now a pending CO — open the Change Orders tab to price it.",
+          });
+        },
+        onError: (err) => {
+          toast.error("Change order was not created", {
+            description: err instanceof Error ? err.message : "Try again.",
+          });
+        },
       },
     );
   };
@@ -2018,6 +2119,7 @@ function ProjectPage() {
                 guidance={guidance}
                 focusedExposureId={focusedRiskExposureId}
                 onFocusExposureHandled={handleRiskFocusHandled}
+                onCreateChangeOrder={handleCreateChangeOrderFromExposure}
                 onCreateExposure={(d) => expCreate.mutate({ projectId, ...d })}
                 onUpdateExposure={(id, patch) => expUpdate.mutate({ id, ...patch })}
                 onDeleteExposure={handleDeleteExposure}
@@ -2442,6 +2544,52 @@ function ProjectPage() {
             </TabsContent>
           </div>
         </Tabs>
+
+        <AlertDialog
+          open={coRiskPrompt !== null}
+          onOpenChange={(next) => {
+            if (!next) setCoRiskPrompt(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Add this change order to the risk tally</AlertDialogTitle>
+              <AlertDialogDescription>
+                {coRiskPrompt
+                  ? `Carry the full change-order value of ${fmtUSD(
+                      coRiskPrompt.co.cost_amount > 0
+                        ? coRiskPrompt.co.cost_amount
+                        : coRiskPrompt.co.contract_amount,
+                    )} as the risk, or set your own amount below. This only creates a linked risk — it does not move any money on its own.`
+                  : ""}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="co-risk-value">Risk value to carry</Label>
+              <MoneyInput
+                id="co-risk-value"
+                value={coRiskPrompt?.value ?? 0}
+                onValueChange={(value) =>
+                  setCoRiskPrompt((current) => (current ? { ...current, value } : current))
+                }
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={!coRiskPrompt || coRiskPrompt.value <= 0}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (!coRiskPrompt || coRiskPrompt.value <= 0) return;
+                  runCreateRiskFromChangeOrder(coRiskPrompt.co, coRiskPrompt.value);
+                  setCoRiskPrompt(null);
+                }}
+              >
+                Add to risk tally
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </main>
     </div>
   );
