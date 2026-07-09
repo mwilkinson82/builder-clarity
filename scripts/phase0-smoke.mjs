@@ -1044,6 +1044,50 @@ await expectContains(
   "Harbor demo project seeds claims at runtime alongside inspections",
 );
 
+// CLAIM CYCLE LOG (Claims/CO/Risk arc — slice 3): the dated back-and-forth on a
+// claim (submitted → received → reviewed → meeting → returned → resubmitted →
+// resolved), one row per event, with revision numbers.
+await expectContains(
+  "supabase/migrations/20260709200000_project_claim_events.sql",
+  [
+    /CREATE TABLE IF NOT EXISTS public\.project_claim_events/,
+    /claim_id uuid NOT NULL REFERENCES public\.project_claims\(id\) ON DELETE CASCADE/,
+    /revision_number integer NOT NULL DEFAULT 0/,
+    /project_claim_events_type_check/,
+    /returned_for_revision/,
+    /public\.can_manage_project\(project_id\)/,
+  ],
+  "claim cycle-log migration ships project_claim_events with the event pipeline (desk applies)",
+);
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /export interface ClaimEventRow/,
+    /const normalizeClaimEvent/,
+    /export const createClaimEvent/,
+    /export const deleteClaimEvent/,
+    /claimEvents,/,
+    /const seedHarborDemoClaimEvents/,
+  ],
+  "server layer defines claim-event CRUD + folds claimEvents into getProject + seeds the demo cycle",
+);
+await expectContains(
+  "src/components/outcome/ClaimsWorkspace.tsx",
+  [
+    /ClaimCycleLogDialog/,
+    /Returned for revision/,
+    /Log an event/,
+    /onCreateEvent/,
+    /onDeleteEvent/,
+  ],
+  "claims workspace opens a per-claim cycle log with add/delete events",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [/claimEventCreate/, /claimEventDelete/, /events={claimEvents}/],
+  "project route wires the claim cycle-log mutations into the Claims tab",
+);
+
 await expectContains(
   "src/routes/_authenticated/team.tsx",
   [

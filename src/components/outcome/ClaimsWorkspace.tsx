@@ -28,9 +28,15 @@ import {
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MoneyInput } from "@/components/ui/money-input";
-import { Gavel, Pencil, Plus, Trash2 } from "lucide-react";
+import { History, Gavel, Pencil, Plus, Trash2 } from "lucide-react";
 import { fmtUSD } from "@/lib/format";
-import type { ClaimRow, ClaimStatus, ClaimType } from "@/lib/projects.functions";
+import type {
+  ClaimEventRow,
+  ClaimEventType,
+  ClaimRow,
+  ClaimStatus,
+  ClaimType,
+} from "@/lib/projects.functions";
 
 const CLAIM_TYPE_LABELS: Record<ClaimType, string> = {
   delay: "Delay",
@@ -73,6 +79,28 @@ const CLAIM_TYPE_ORDER: ClaimType[] = [
   "other",
 ];
 
+const EVENT_TYPE_LABELS: Record<ClaimEventType, string> = {
+  submitted: "Submitted",
+  received: "Received",
+  reviewed: "Reviewed",
+  meeting: "Meeting",
+  returned_for_revision: "Returned for revision",
+  resubmitted: "Resubmitted",
+  resolved: "Resolved",
+  other: "Other",
+};
+
+const EVENT_TYPE_ORDER: ClaimEventType[] = [
+  "submitted",
+  "received",
+  "reviewed",
+  "meeting",
+  "returned_for_revision",
+  "resubmitted",
+  "resolved",
+  "other",
+];
+
 const statusStyles: Record<ClaimStatus, string> = {
   in_preparation: "border-hairline bg-surface text-muted-foreground",
   submitted: "border-info/30 bg-info/10 text-info",
@@ -101,6 +129,13 @@ export type ClaimDraft = {
 };
 
 export type ClaimPatch = Partial<ClaimDraft>;
+
+export type ClaimEventDraft = {
+  event_type: ClaimEventType;
+  event_date: string | null;
+  revision_number: number;
+  note: string;
+};
 
 const emptyDraft = (): ClaimDraft => ({
   claim_number: "",
@@ -138,20 +173,34 @@ const fmtDays = (days: number) => (days > 0 ? `${days} d` : "—");
 
 export function ClaimsWorkspace({
   claims,
+  events = [],
   onCreate,
   onUpdate,
   onDelete,
+  onCreateEvent,
+  onDeleteEvent,
   saving = false,
 }: {
   claims: ClaimRow[];
+  events?: ClaimEventRow[];
   onCreate: (draft: ClaimDraft) => void;
   onUpdate: (id: string, patch: ClaimPatch) => void;
   onDelete: (id: string) => void;
+  onCreateEvent?: (claimId: string, draft: ClaimEventDraft) => void;
+  onDeleteEvent?: (id: string) => void;
   saving?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<ClaimDraft>(() => emptyDraft());
+  const [cycleLogClaimId, setCycleLogClaimId] = useState<string | null>(null);
+  const cycleLogClaim = claims.find((c) => c.id === cycleLogClaimId) ?? null;
+  const eventsByClaim = new Map<string, ClaimEventRow[]>();
+  for (const event of events) {
+    const list = eventsByClaim.get(event.claim_id) ?? [];
+    list.push(event);
+    eventsByClaim.set(event.claim_id, list);
+  }
 
   const openNew = () => {
     setEditingId(null);
@@ -195,7 +244,7 @@ export function ClaimsWorkspace({
               <TableHead className="text-right">Amount sought</TableHead>
               <TableHead className="text-right">Time sought</TableHead>
               <TableHead className="hidden md:table-cell">Submitted</TableHead>
-              <TableHead className="w-[90px] text-right">Actions</TableHead>
+              <TableHead className="w-[130px] text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -226,6 +275,21 @@ export function ClaimsWorkspace({
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="relative h-7 w-7"
+                      onClick={() => setCycleLogClaimId(c.id)}
+                      title="Cycle log"
+                      aria-label={`Open cycle log for ${c.title}`}
+                    >
+                      <History className="h-3.5 w-3.5" />
+                      {(eventsByClaim.get(c.id)?.length ?? 0) > 0 && (
+                        <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold leading-none text-accent-foreground">
+                          {eventsByClaim.get(c.id)?.length}
+                        </span>
+                      )}
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"
@@ -459,6 +523,192 @@ export function ClaimsWorkspace({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ClaimCycleLogDialog
+        claim={cycleLogClaim}
+        events={cycleLogClaim ? (eventsByClaim.get(cycleLogClaim.id) ?? []) : []}
+        onClose={() => setCycleLogClaimId(null)}
+        onCreateEvent={onCreateEvent}
+        onDeleteEvent={onDeleteEvent}
+      />
     </div>
+  );
+}
+
+const emptyEventDraft = (): ClaimEventDraft => ({
+  event_type: "submitted",
+  event_date: null,
+  revision_number: 0,
+  note: "",
+});
+
+function ClaimCycleLogDialog({
+  claim,
+  events,
+  onClose,
+  onCreateEvent,
+  onDeleteEvent,
+}: {
+  claim: ClaimRow | null;
+  events: ClaimEventRow[];
+  onClose: () => void;
+  onCreateEvent?: (claimId: string, draft: ClaimEventDraft) => void;
+  onDeleteEvent?: (id: string) => void;
+}) {
+  const [eventDraft, setEventDraft] = useState<ClaimEventDraft>(() => emptyEventDraft());
+
+  // Oldest → newest, undated entries last, so the log reads as a timeline.
+  const ordered = [...events].sort((a, b) => {
+    if (!a.event_date && !b.event_date) return 0;
+    if (!a.event_date) return 1;
+    if (!b.event_date) return -1;
+    return a.event_date.localeCompare(b.event_date);
+  });
+
+  const addEvent = () => {
+    if (!claim || !onCreateEvent) return;
+    onCreateEvent(claim.id, {
+      ...eventDraft,
+      event_date: eventDraft.event_date || null,
+    });
+    setEventDraft(emptyEventDraft());
+  };
+
+  return (
+    <Dialog
+      open={claim !== null}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>
+            Cycle log{claim ? ` — ${claim.claim_number || claim.title}` : ""}
+          </DialogTitle>
+          <DialogDescription>
+            The dated back-and-forth on this claim — sent, received, reviewed, meetings, kickbacks,
+            and revised resubmissions.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          {ordered.length === 0 && (
+            <p className="rounded-md border border-dashed border-hairline bg-surface px-3 py-6 text-center text-sm text-muted-foreground">
+              No cycle events yet. Log the first one below.
+            </p>
+          )}
+          {ordered.map((event) => (
+            <div
+              key={event.id}
+              className="flex items-start justify-between gap-3 rounded-md border border-hairline bg-card px-3 py-2"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">{EVENT_TYPE_LABELS[event.event_type]}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {event.event_date || "No date"}
+                  </span>
+                  {event.revision_number > 0 && (
+                    <span className="rounded-full border border-hairline bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Rev {event.revision_number}
+                    </span>
+                  )}
+                </div>
+                {event.note && <p className="mt-1 text-sm text-foreground/80">{event.note}</p>}
+              </div>
+              {onDeleteEvent && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 shrink-0"
+                  onClick={() => onDeleteEvent(event.id)}
+                  aria-label="Delete cycle event"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {onCreateEvent && (
+          <div className="mt-2 space-y-3 rounded-lg border border-hairline bg-surface/50 p-3">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Log an event
+            </p>
+            <div className="grid gap-3 sm:grid-cols-[1fr_140px_90px]">
+              <div className="space-y-1.5">
+                <Label>Event</Label>
+                <Select
+                  value={eventDraft.event_type}
+                  onValueChange={(v) =>
+                    setEventDraft({ ...eventDraft, event_type: v as ClaimEventType })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EVENT_TYPE_ORDER.map((t) => (
+                      <SelectItem key={t} value={t}>
+                        {EVENT_TYPE_LABELS[t]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="event-date">Date</Label>
+                <Input
+                  id="event-date"
+                  type="date"
+                  value={eventDraft.event_date ?? ""}
+                  onChange={(e) =>
+                    setEventDraft({ ...eventDraft, event_date: e.target.value || null })
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="event-rev">Rev</Label>
+                <Input
+                  id="event-rev"
+                  type="number"
+                  min={0}
+                  value={eventDraft.revision_number || ""}
+                  onChange={(e) =>
+                    setEventDraft({
+                      ...eventDraft,
+                      revision_number: Math.max(0, Number(e.target.value) || 0),
+                    })
+                  }
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="event-note">Note</Label>
+              <Textarea
+                id="event-note"
+                value={eventDraft.note}
+                onChange={(e) => setEventDraft({ ...eventDraft, note: e.target.value })}
+                rows={2}
+                placeholder="What happened at this step."
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button size="sm" className="gap-1.5" onClick={addEvent}>
+                <Plus className="h-4 w-4" /> Log event
+              </Button>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

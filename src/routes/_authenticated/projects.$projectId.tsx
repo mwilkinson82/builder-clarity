@@ -67,6 +67,7 @@ import {
   ClaimsWorkspace,
   type ClaimDraft,
   type ClaimPatch,
+  type ClaimEventDraft,
 } from "@/components/outcome/ClaimsWorkspace";
 import { billingDocumentLabel } from "@/lib/billing-labels";
 import {
@@ -115,6 +116,8 @@ import {
   createClaim,
   updateClaim,
   deleteClaim,
+  createClaimEvent,
+  deleteClaimEvent,
   allocateChangeOrder,
   deleteChangeOrderAllocation,
   allocateExposure,
@@ -407,6 +410,8 @@ function ProjectPage() {
   const createClaimFn = useServerFn(createClaim);
   const updateClaimFn = useServerFn(updateClaim);
   const deleteClaimFn = useServerFn(deleteClaim);
+  const createClaimEventFn = useServerFn(createClaimEvent);
+  const deleteClaimEventFn = useServerFn(deleteClaimEvent);
   const updateBucketFn = useServerFn(updateBucket);
   const createBucketFn = useServerFn(createBucket);
   const deleteBucketFn = useServerFn(deleteBucket);
@@ -810,6 +815,25 @@ function ProjectPage() {
       });
     },
   });
+  const claimEventCreate = useMutation({
+    mutationFn: (input: { claimId: string } & ClaimEventDraft) =>
+      createClaimEventFn({ data: { projectId, ...input } }),
+    onSuccess: () => invalidate(),
+    onError: (err) => {
+      toast.error("Cycle event did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const claimEventDelete = useMutation({
+    mutationFn: (input: { id: string }) => deleteClaimEventFn({ data: input }),
+    onSuccess: () => invalidate(),
+    onError: (err) => {
+      toast.error("Cycle event did not delete", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
   // SOV cell commits patch the cached bucket list immediately (group headers,
   // summary cards, and the footer recompute from it), then the settled
   // invalidate pulls the server truth including the IOR-facing rollup. The
@@ -1116,6 +1140,7 @@ function ProjectPage() {
     billingInvoices,
     inspections = [],
     claims = [],
+    claimEvents = [],
     rollup,
     guidance,
     warnings,
@@ -2276,9 +2301,12 @@ function ProjectPage() {
               />
               <ClaimsWorkspace
                 claims={claims}
+                events={claimEvents}
                 onCreate={(input) => claimCreate.mutate(input)}
                 onUpdate={(id, patch) => claimUpdate.mutate({ id, patch })}
                 onDelete={(id) => claimDelete.mutate({ id })}
+                onCreateEvent={(claimId, draft) => claimEventCreate.mutate({ claimId, ...draft })}
+                onDeleteEvent={(id) => claimEventDelete.mutate({ id })}
                 saving={claimCreate.isPending || claimUpdate.isPending}
               />
             </TabsContent>
