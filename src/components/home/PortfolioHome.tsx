@@ -12,18 +12,10 @@
 import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
-import {
-  OWNER_HERO,
-  PM_HERO,
-  PM_JOBS,
-  PIPELINE_STAGES,
-  POSTURE_TILES,
-  PURSUITS,
-  WORKLIST_JOBS,
-  type HeroStat,
-  type WorklistJob,
-} from "./portfolio-home-data";
+import { type HeroStat, type WorklistJob } from "./portfolio-home-data";
 import { useHomeIdentity, type HomeIdentity } from "./home-identity";
+import { useHomeMetrics } from "./use-home-metrics";
+import { type HomeMetrics } from "./portfolio-home-metrics";
 import { AvatarMenu } from "./home-avatar-menu";
 import "./portfolio-home.css";
 
@@ -69,14 +61,15 @@ function HeroStats({ stats }: { stats: HeroStat[] }) {
 
 export function PortfolioHome() {
   const identity = useHomeIdentity();
+  const { metrics } = useHomeMetrics();
   const [view, setView] = useState<HomeView>("owner");
   const [filter, setFilter] = useState<WorklistFilter>("all");
 
   const filteredJobs = useMemo(() => {
-    if (filter === "at-risk") return WORKLIST_JOBS.filter((j) => j.atRisk);
-    if (filter === "overdue") return WORKLIST_JOBS.filter((j) => j.overdue);
-    return WORKLIST_JOBS;
-  }, [filter]);
+    if (filter === "at-risk") return metrics.worklist.filter((j) => j.atRisk);
+    if (filter === "overdue") return metrics.worklist.filter((j) => j.overdue);
+    return metrics.worklist;
+  }, [filter, metrics.worklist]);
 
   const shownLabel =
     filter === "at-risk"
@@ -164,13 +157,14 @@ export function PortfolioHome() {
         {view === "owner" ? (
           <OwnerView
             identity={identity}
+            metrics={metrics}
             filter={filter}
             setFilter={setFilter}
             filteredJobs={filteredJobs}
             shownLabel={shownLabel}
           />
         ) : (
-          <PmView identity={identity} />
+          <PmView identity={identity} metrics={metrics} />
         )}
 
         <HomeFooter />
@@ -181,12 +175,14 @@ export function PortfolioHome() {
 
 function OwnerView({
   identity,
+  metrics,
   filter,
   setFilter,
   filteredJobs,
   shownLabel,
 }: {
   identity: HomeIdentity;
+  metrics: HomeMetrics;
   filter: WorklistFilter;
   setFilter: (f: WorklistFilter) => void;
   filteredJobs: WorklistJob[];
@@ -209,12 +205,12 @@ function OwnerView({
         <div className="ow-hero__alert">
           <span className="ow-hero__alert-kicker">
             <span />
-            {OWNER_HERO.alertKicker}
+            {metrics.ownerAlert.kicker}
           </span>
           <span className="ow-hero__alert-div" />
-          <span className="ow-hero__alert-body">{boldParts(OWNER_HERO.alertBody)}</span>
+          <span className="ow-hero__alert-body">{boldParts(metrics.ownerAlert.body)}</span>
         </div>
-        <HeroStats stats={OWNER_HERO.stats} />
+        <HeroStats stats={metrics.ownerStats} />
         <div className="ow-hero__cta">
           <Link to="/" className="ow-btn ow-btn--light">
             Open {identity.companyName} projects →
@@ -233,11 +229,11 @@ function OwnerView({
             <div className="ow-lead">Pipeline &amp; pursuits</div>
           </div>
           <a href="/?tab=crm" className="ow-btn ow-btn--dark">
-            Open Summit CRM board →
+            Open {identity.companyName} CRM board →
           </a>
         </div>
         <div className="ow-pipeline">
-          {PIPELINE_STAGES.map((stage) => (
+          {metrics.pipeline.map((stage) => (
             <div
               key={stage.key}
               className={`ow-stage${stage.dim ? " is-dim" : ""}${
@@ -274,19 +270,21 @@ function OwnerView({
         </div>
       </section>
 
-      {/* handoff: won → managed project */}
-      <div className="ow-handoff">
-        <span className="ow-handoff__arrow">↓</span>
-        <div style={{ flex: 1 }}>
-          <div className="ow-handoff__title">Won pursuits convert to managed projects.</div>
-          <div className="ow-handoff__sub">
-            Harbor Residence just crossed over — it now lives in the delivery track below.
+      {/* handoff: won → managed project (only when a pursuit has actually crossed over) */}
+      {metrics.handoffName ? (
+        <div className="ow-handoff">
+          <span className="ow-handoff__arrow">↓</span>
+          <div style={{ flex: 1 }}>
+            <div className="ow-handoff__title">Won pursuits convert to managed projects.</div>
+            <div className="ow-handoff__sub">
+              {metrics.handoffName} just crossed over — it now lives in the delivery track below.
+            </div>
           </div>
+          <a href="/?tab=crm" className="ow-btn ow-btn--dark">
+            See pursuit conversions →
+          </a>
         </div>
-        <a href="/?tab=crm" className="ow-btn ow-btn--dark">
-          See pursuit conversions →
-        </a>
-      </div>
+      ) : null}
 
       {/* delivery: posture tiles + worklist + rail */}
       <div className="ow-delivery">
@@ -296,7 +294,7 @@ function OwnerView({
           <div className="ow-delivery__hint">Click a tile to filter the worklist.</div>
 
           <div className="ow-tiles">
-            {POSTURE_TILES.map((tile) => {
+            {metrics.posture.map((tile) => {
               if (tile.variant === "dark") {
                 return (
                   <div className="ow-tile ow-tile--dark" key={tile.key}>
@@ -362,9 +360,13 @@ function OwnerView({
                       {job.value}
                     </div>
                   ) : null}
-                  <button type="button" className="ow-jobrow__open">
+                  <Link
+                    to="/projects/$projectId"
+                    params={{ projectId: job.id }}
+                    className="ow-jobrow__open"
+                  >
                     Open →
-                  </button>
+                  </Link>
                 </div>
               ))
             )}
@@ -374,11 +376,16 @@ function OwnerView({
         {/* rail: pursuits needing a move + company card */}
         <aside className="ow-rail">
           <div className="ow-rail__title">Pursuits needing a move</div>
-          {PURSUITS.map((pursuit) => (
+          {metrics.pursuits.length === 0 ? (
+            <div className="ow-pursuit__context" style={{ padding: "8px 0" }}>
+              No pursuits waiting on a move.
+            </div>
+          ) : null}
+          {metrics.pursuits.map((pursuit, i) => (
             <button
               type="button"
               className="ow-pursuit"
-              key={pursuit.title}
+              key={`${pursuit.title}-${i}`}
               style={{ width: "100%", textAlign: "left", background: "none" }}
             >
               <span className="ow-pursuit__row">
@@ -428,7 +435,7 @@ function OwnerView({
   );
 }
 
-function PmView({ identity }: { identity: HomeIdentity }) {
+function PmView({ identity, metrics }: { identity: HomeIdentity; metrics: HomeMetrics }) {
   return (
     <>
       <section className="ow-hero">
@@ -440,12 +447,12 @@ function PmView({ identity }: { identity: HomeIdentity }) {
         <div className="ow-hero__alert">
           <span className="ow-hero__alert-kicker">
             <span />
-            {PM_HERO.alertKicker}
+            {metrics.pmAlert.kicker}
           </span>
           <span className="ow-hero__alert-div" />
-          <span className="ow-hero__alert-body">{boldParts(PM_HERO.alertBody)}</span>
+          <span className="ow-hero__alert-body">{boldParts(metrics.pmAlert.body)}</span>
         </div>
-        <HeroStats stats={PM_HERO.stats} />
+        <HeroStats stats={metrics.pmStats} />
         <div className="ow-hero__cta">
           <Link to="/" className="ow-btn ow-btn--light">
             Start today's logs →
@@ -462,7 +469,10 @@ function PmView({ identity }: { identity: HomeIdentity }) {
           <span className="ow-rule" />
         </div>
         <div className="ow-worklist">
-          {PM_JOBS.map((job, i) => (
+          {metrics.pmJobs.length === 0 ? (
+            <div className="ow-worklist__empty">No jobs yet.</div>
+          ) : null}
+          {metrics.pmJobs.map((job, i) => (
             <div className="ow-jobrow" key={job.id}>
               <span className={`ow-jobrow__dot ${toneClass("ow-bg", job.tone)}`} />
               <div className={`ow-jobrow__tag ${toneClass("ow-tone", job.tone)}`}>{job.tag}</div>
@@ -471,17 +481,22 @@ function PmView({ identity }: { identity: HomeIdentity }) {
                 <div className="ow-jobrow__desc">{job.desc}</div>
               </div>
               {i < 3 ? (
-                <button
-                  type="button"
+                <Link
+                  to="/projects/$projectId"
+                  params={{ projectId: job.id }}
                   className="ow-btn ow-btn--dark"
                   style={{ fontSize: 12, padding: "9px 15px" }}
                 >
                   Open job →
-                </button>
+                </Link>
               ) : (
-                <button type="button" className="ow-jobrow__open">
+                <Link
+                  to="/projects/$projectId"
+                  params={{ projectId: job.id }}
+                  className="ow-jobrow__open"
+                >
                   Open →
-                </button>
+                </Link>
               )}
             </div>
           ))}
