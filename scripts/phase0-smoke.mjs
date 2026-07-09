@@ -769,6 +769,9 @@ await expectContains(
     // original_budget made "Contract value" mirror projected cost (variance $0).
     /bucket\.contract_value > 0 \? bucket\.contract_value : bucket\.original_budget/,
     /Cost transaction backup/,
+    // Open commitments → paid: each cost row can flip committed↔paid in place.
+    /Mark paid/,
+    /onSetCostActualStatus\(actual\.id, "paid"\)/,
     /WIP review \(Work in Progress\)/,
     /Revenue timing/,
     /Profit forecast/,
@@ -819,6 +822,14 @@ await expectContains(
   "src/lib/billing.functions.ts",
   [/export const updateBillingLineItems/, /buildBillingLineDbPatch/, /saved_count/],
   "save-all batch server fn commits every line and syncs the application once",
+);
+// Open commitments → paid: a server fn flips a cost actual's status between
+// committed and paid (void stays terminal). The rollup trigger counts both
+// equally, so cost-to-date/WIP are unchanged — it's a pure cash-flow flag.
+await expectContains(
+  "src/lib/billing.functions.ts",
+  [/export const setCostActualStatus/, /status: z\.enum\(\["committed", "paid"\]\)/, /=== "void"/],
+  "cost actuals can move committed↔paid via a dedicated status server fn",
 );
 await expectContains(
   "src/components/billing/BillingEnhancements.tsx",

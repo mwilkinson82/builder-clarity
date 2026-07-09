@@ -85,6 +85,7 @@ import {
   generateBillingLineItems,
   getBillingWorkspace,
   importCostActuals,
+  setCostActualStatus,
   updateBillingApplicationRetainageRate,
   updateBillingLineItem,
   updateBillingLineItems,
@@ -384,6 +385,7 @@ function ProjectPage() {
   const createCostActualFn = useServerFn(createCostActual);
   const importCostActualsFn = useServerFn(importCostActuals);
   const voidCostActualFn = useServerFn(voidCostActual);
+  const setCostActualStatusFn = useServerFn(setCostActualStatus);
   const updateBucketBillingSettingsFn = useServerFn(updateCostBucketBillingSettings);
 
   const invalidate = () => {
@@ -921,6 +923,19 @@ function ProjectPage() {
     },
     onError: (err) => {
       toast.error("Cost actual did not void", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const costActualSetStatus = useMutation({
+    mutationFn: (input: { id: string; status: "committed" | "paid" }) =>
+      setCostActualStatusFn({ data: input }),
+    onSuccess: (_result, input) => {
+      invalidate();
+      toast.success(input.status === "paid" ? "Marked paid" : "Moved back to committed");
+    },
+    onError: (err) => {
+      toast.error("Cost status did not change", {
         description: err instanceof Error ? err.message : "Try again.",
       });
     },
@@ -2288,7 +2303,8 @@ function ProjectPage() {
                   savingCostActual={
                     costActualCreate.isPending ||
                     costActualImport.isPending ||
-                    costActualVoid.isPending
+                    costActualVoid.isPending ||
+                    costActualSetStatus.isPending
                   }
                   savingBucketBilling={bucketBillingUpdate.isPending}
                   onCreate={handleCreatePayApp}
@@ -2315,6 +2331,7 @@ function ProjectPage() {
                   }
                   onImportCostActuals={(input) => costActualImport.mutate({ projectId, ...input })}
                   onVoidCostActual={(id, notes) => costActualVoid.mutate({ id, notes })}
+                  onSetCostActualStatus={(id, status) => costActualSetStatus.mutate({ id, status })}
                   onUpdateBucketBillingSettings={(id, patch) =>
                     bucketBillingUpdate.mutate({ id, patch })
                   }

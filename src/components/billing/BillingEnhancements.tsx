@@ -97,6 +97,7 @@ type BillingEnhancementProps = {
   onCreateCostActual: (input: CostActualDraft) => void;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
+  onSetCostActualStatus: (id: string, status: "committed" | "paid") => void;
   onUpdateBucketSettings: (id: string, patch: BucketSettingsPatch) => void;
 };
 
@@ -181,6 +182,7 @@ export function BillingEnhancementPanels({
   onCreateCostActual,
   onImportCostActuals,
   onVoidCostActual,
+  onSetCostActualStatus,
   onUpdateBucketSettings,
 }: BillingEnhancementProps) {
   if (isLoading) {
@@ -221,6 +223,7 @@ export function BillingEnhancementPanels({
         onCreateCostActual={onCreateCostActual}
         onImportCostActuals={onImportCostActuals}
         onVoidCostActual={onVoidCostActual}
+        onSetCostActualStatus={onSetCostActualStatus}
         savingCost={savingCost}
       />
       <WipAnalysisPanel
@@ -1016,6 +1019,7 @@ export function ProjectCostTrackingPanel({
   onCreateCostActual,
   onImportCostActuals,
   onVoidCostActual,
+  onSetCostActualStatus,
   savingCost,
 }: {
   projectId: string;
@@ -1024,6 +1028,7 @@ export function ProjectCostTrackingPanel({
   onCreateCostActual: (input: CostActualDraft) => void;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
+  onSetCostActualStatus: (id: string, status: "committed" | "paid") => void;
   savingCost?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -1480,10 +1485,34 @@ export function ProjectCostTrackingPanel({
                       {actual.vendor ? ` · ${actual.vendor}` : ""}
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-3 sm:justify-end">
+                  <div className="flex items-center justify-between gap-2 sm:justify-end">
                     <div className="text-right text-sm tabular font-medium">
                       {fmtUSD(actual.amount)}
                     </div>
+                    {actual.status === "committed" && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        disabled={savingCost}
+                        onClick={() => onSetCostActualStatus(actual.id, "paid")}
+                      >
+                        Mark paid
+                      </Button>
+                    )}
+                    {actual.status === "paid" && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-muted-foreground"
+                        disabled={savingCost}
+                        onClick={() => onSetCostActualStatus(actual.id, "committed")}
+                      >
+                        Undo paid
+                      </Button>
+                    )}
                     {actual.status !== "void" && (
                       <Button
                         type="button"

@@ -1299,6 +1299,40 @@ export const voidCostActual = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const setCostActualStatusInput = z.object({
+  id: z.string().uuid(),
+  status: z.enum(["committed", "paid"]),
+});
+
+// Move an open commitment to paid (or back), answering "how do we turn open
+// commitments into paid costs?". The rollup trigger counts committed and paid
+// identically (only 'void' is excluded), so this is a pure cash-flow flag flip:
+// Open-commitments/Paid-cost tallies move, but cost-to-date, projected cost, and
+// WIP are unchanged. Voided rows are terminal and cannot be reopened this way.
+export const setCostActualStatus = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof setCostActualStatusInput>) =>
+    setCostActualStatusInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    const actualRes = await dynamicTable(ctx.supabase, "cost_actuals")
+      .select("id,project_id,status")
+      .eq("id", data.id)
+      .single();
+    if (actualRes.error) throw new Error(actualRes.error.message);
+    const actual = actualRes.data as Record<string, unknown>;
+    await requireCanManageProject(ctx, actual.project_id as string);
+    if (str(actual.status) === "void") {
+      throw new Error("This cost is voided — re-enter it to record a new commitment or payment.");
+    }
+    const updateRes = await dynamicTable(ctx.supabase, "cost_actuals")
+      .update({ status: data.status })
+      .eq("id", data.id);
+    if (updateRes.error) throw new Error(updateRes.error.message);
+    return { ok: true };
+  });
+
 export const listPortfolioBilling = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
