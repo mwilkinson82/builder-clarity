@@ -1553,6 +1553,7 @@ export const getProject = createServerFn({ method: "GET" })
     ) {
       await seedHarborDemoCpmActivities(context.supabase, pid, []);
       await seedHarborDemoInspections(context.supabase, pid, []);
+      await seedHarborDemoClaims(context.supabase, pid, []);
     }
     const inspectionRes = await dynamicTable(context.supabase, "project_inspections")
       .select("*")
@@ -5077,6 +5078,99 @@ const seedHarborDemoInspections = async (
   return { insertedCount: rowsToInsert.length };
 };
 
+// Runtime Harbor demo claims — the counterpart to harborDemoInspections. The
+// project_claims migration seeds STATIC harbor rows; demo projects are created
+// per-org at runtime, so getProject seeds these the same way it seeds
+// inspections. Keep in sync with the migration's demo_claims.
+const harborDemoClaims = [
+  {
+    seed_key: "harbor-demo:claim:electrical-delay",
+    claim_number: "CLM-001",
+    title: "Electrical rework — extension of time & delay damages",
+    description:
+      "Failed electrical rough-in and the corrective reinspection cycle held drywall release. Seeking an extension of time plus the extended general-conditions cost the delay caused.",
+    claim_type: "extension_of_time",
+    status: "submitted",
+    money_claimed: 48200,
+    time_claimed_days: 12,
+    money_awarded: 0,
+    time_awarded_days: 0,
+    outcome: "",
+    owner: "PM",
+    submitted_at: "2026-06-18",
+    resolved_at: null,
+  },
+  {
+    seed_key: "harbor-demo:claim:weather-delay",
+    claim_number: "CLM-002",
+    title: "Weather delay — extension of time",
+    description:
+      "A run of storms stopped exterior work. Documenting the lost days now; likely a time-only extension request once the weather logs are compiled.",
+    claim_type: "delay",
+    status: "in_preparation",
+    money_claimed: 0,
+    time_claimed_days: 6,
+    money_awarded: 0,
+    time_awarded_days: 0,
+    outcome: "",
+    owner: "PM",
+    submitted_at: null,
+    resolved_at: null,
+  },
+] as const;
+
+const isProjectClaimsSchemaError = (error: DynamicSupabaseError | null) => {
+  const message = (error?.message ?? "").toLowerCase();
+  return (
+    isMissingRestRelation(error, "project_claims") ||
+    message.includes("project_claims") ||
+    message.includes("schema cache")
+  );
+};
+
+const seedHarborDemoClaims = async (
+  supabase: unknown,
+  projectId: string,
+  seedWarnings: string[],
+) => {
+  const { data: existingRows, error: lookupError } = await dynamicTable(supabase, "project_claims")
+    .select("id,seed_key")
+    .eq("project_id", projectId)
+    .limit(50);
+
+  if (lookupError) {
+    if (isProjectClaimsSchemaError(lookupError)) {
+      seedWarnings.push(`Claim demo skipped: ${lookupError.message}`);
+      return { insertedCount: 0 };
+    }
+    throw new Error(lookupError.message);
+  }
+
+  const rows = Array.isArray(existingRows)
+    ? (existingRows as Array<{ seed_key?: string | null }>)
+    : [];
+  const existingSeedKeys = new Set(
+    rows.map((row) => row.seed_key).filter((key): key is string => Boolean(key)),
+  );
+  const rowsToInsert = harborDemoClaims.filter((claim) => !existingSeedKeys.has(claim.seed_key));
+
+  if (rowsToInsert.length === 0) return { insertedCount: 0 };
+
+  const { error: insertError } = await dynamicTable(supabase, "project_claims").insert(
+    rowsToInsert.map((claim) => ({ project_id: projectId, ...claim })),
+  );
+
+  if (insertError) {
+    if (isProjectClaimsSchemaError(insertError)) {
+      seedWarnings.push(`Claim demo insert skipped: ${insertError.message}`);
+      return { insertedCount: 0 };
+    }
+    throw new Error(insertError.message);
+  }
+
+  return { insertedCount: rowsToInsert.length };
+};
+
 const seedHarborDemoCpmActivities = async (
   supabase: unknown,
   projectId: string,
@@ -5295,6 +5389,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
       );
       await seedHarborDemoCpmActivities(context.supabase, existingDemo.id as string, seedWarnings);
       await seedHarborDemoInspections(context.supabase, existingDemo.id as string, seedWarnings);
+      await seedHarborDemoClaims(context.supabase, existingDemo.id as string, seedWarnings);
       return {
         seeded: false as const,
         exists: true,
@@ -5333,6 +5428,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         seedWarnings,
       );
       await seedHarborDemoInspections(context.supabase, existingHarbor.id as string, seedWarnings);
+      await seedHarborDemoClaims(context.supabase, existingHarbor.id as string, seedWarnings);
       return {
         seeded: false as const,
         exists: true,
@@ -5380,6 +5476,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
         if (harborDemoSeedAction(retryDemo) !== "skip") {
           await seedHarborDemoCpmActivities(context.supabase, retryDemo.id as string, seedWarnings);
           await seedHarborDemoInspections(context.supabase, retryDemo.id as string, seedWarnings);
+          await seedHarborDemoClaims(context.supabase, retryDemo.id as string, seedWarnings);
         }
         return {
           seeded: false as const,
@@ -5584,6 +5681,7 @@ export const seedDemoIfEmpty = createServerFn({ method: "POST" })
 
     await seedHarborDemoCpmActivities(context.supabase, projectId, seedWarnings);
     await seedHarborDemoInspections(context.supabase, projectId, seedWarnings);
+    await seedHarborDemoClaims(context.supabase, projectId, seedWarnings);
 
     const { error: scheduleRiskError } = await context.supabase.from("schedule_risks").insert([
       {
