@@ -6,12 +6,11 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -151,8 +150,10 @@ import { cn } from "@/lib/utils";
 import { generateIorPdf, downloadPdfBytes, type IorPdfStyle } from "@/lib/ior-pdf";
 import { toast } from "sonner";
 import {
+  Activity,
   CalendarClock,
   BriefcaseBusiness,
+  ClipboardCheck,
   ClipboardList,
   Download,
   ExternalLink,
@@ -164,18 +165,12 @@ import {
   LockKeyhole,
   LogOut,
   Archive,
-  MoreHorizontal,
   ReceiptText,
   ShieldAlert,
   Trash2,
   Users,
 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import type { LucideIcon } from "lucide-react";
 
 // Lazy-loaded so entering a project doesn't pay for the billing tab's bundle
 // up front (PROJECTDECOMP1) — it's fetched the first time the Billing tab opens.
@@ -203,32 +198,32 @@ const PROJECT_TAB_VALUES = [
 
 type ProjectTabValue = (typeof PROJECT_TAB_VALUES)[number];
 
-const COMPACT_PROJECT_NAV_TABS = new Set<ProjectTabValue>([
-  "dashboard",
-  "schedule",
-  "inspections",
-  "risk-tally",
-  "todos",
-  "sov",
-  "billing",
-  "change-orders",
-  "subcontractors",
-  "client-portal",
-  "ior-report",
-  "daily-reports",
-  "daily-wip",
-]);
+// NAVLABELS: the rail leads with the text label, not the icon — 13 icon-only
+// destinations were indistinguishable ("where am I?"). All 13 tabs stay on the
+// rail, grouped into four clusters under mono `.eyebrow` group headers so the
+// rail reads as a status board. Grouping is display-only: deep links (?tab=…)
+// resolve unchanged, and every tab keeps its existing `value`.
+type ProjectNavGroup = { key: string; label: string; values: ProjectTabValue[] };
 
-// POLISH1 Task 3 (density): the primary financial path — Dashboard → SOV/Costs
-// → Billing → Change Orders — leads the rail; the rarely-opened reference tabs
-// collapse under a "More" menu. Deep links (?tab=…) still resolve to the tab.
-//
-// Daily Reports + Daily WIP are PRIMARY (founder 2026-07-07): the daily log now
-// feeds the WIP and is a working surface, not a rarely-opened reference — it
-// gets its own place on the rail, not the "More" menu. Inspections joined the
-// primary rail too (founder 2026-07-08) — it's an active field surface, not a
-// reference tab. Only the IOR report stays under "More".
-const SECONDARY_PROJECT_NAV_TABS = new Set<ProjectTabValue>(["ior-report"]);
+type ProjectNavItem = {
+  value: ProjectTabValue;
+  label: string;
+  detail: string;
+  icon: LucideIcon;
+  // Alarming counts (live risk, slipped schedule) render the detail in --crit.
+  alert?: boolean;
+};
+
+const PROJECT_NAV_GROUPS: ProjectNavGroup[] = [
+  { key: "money", label: "Money", values: ["dashboard", "sov", "billing", "change-orders"] },
+  {
+    key: "field",
+    label: "Field",
+    values: ["schedule", "daily-reports", "daily-wip", "inspections"],
+  },
+  { key: "risk", label: "Risk", values: ["risk-tally", "todos"] },
+  { key: "parties", label: "Parties", values: ["subcontractors", "client-portal", "ior-report"] },
+];
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   ssr: false,
@@ -244,25 +239,37 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   component: ProjectRoute,
 });
 
+// Warm-clay glow tuned to the shipped skin. Shadows reference the `--accent`
+// (clay) and `--foreground` (ink) tokens via color-mix — no hardcoded hex, no
+// leftover pre-reskin teal (was rgb(27 122 110 …)).
 const PROJECT_NAV_RAIL_CLASS =
-  "h-auto w-full justify-start gap-1.5 overflow-x-auto rounded-lg border border-accent/25 bg-accent/[0.07] p-1.5 shadow-[0_18px_42px_rgb(27_122_110_/_0.16),0_4px_12px_rgb(31_28_23_/_0.10)] ring-1 ring-accent/15 backdrop-blur-sm lg:-translate-y-1 lg:flex-col lg:items-stretch lg:overflow-visible";
+  "flex h-auto w-full items-stretch justify-start gap-4 overflow-x-auto rounded-lg border border-accent/25 bg-accent/[0.07] p-2 shadow-[0_18px_42px_color-mix(in_srgb,var(--color-accent)_16%,transparent),0_4px_12px_color-mix(in_srgb,var(--color-foreground)_10%,transparent)] ring-1 ring-accent/15 backdrop-blur-sm lg:flex-col lg:gap-5 lg:overflow-visible";
 
-function projectNavItemClass({ compact, active }: { compact: boolean; active?: boolean }) {
+function projectNavItemClass({ active }: { active?: boolean }) {
   return cn(
-    "group relative min-h-[46px] min-w-[148px] overflow-hidden rounded-md border px-3 py-3 text-left transition duration-200 focus-visible:ring-2 focus-visible:ring-ring lg:w-full",
+    "group relative flex min-w-[168px] items-start gap-2.5 overflow-hidden rounded-md border px-3 py-2.5 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:min-w-0",
     active
-      ? "border-accent/75 bg-accent text-accent-foreground shadow-[0_12px_26px_rgb(27_122_110_/_0.30)] ring-1 ring-accent/35"
+      ? "border-accent/70 bg-accent text-accent-foreground shadow-[0_12px_26px_color-mix(in_srgb,var(--color-accent)_30%,transparent)] ring-1 ring-accent/35"
       : "border-transparent bg-card/45 text-muted-foreground hover:border-accent/35 hover:bg-card/85 hover:text-foreground hover:shadow-sm",
-    compact ? "lg:min-w-0 lg:justify-center lg:px-2 lg:py-3.5" : "justify-start",
-    compact && active ? "lg:scale-[1.04]" : "",
   );
 }
 
-function projectNavIconClass({ compact, active }: { compact: boolean; active?: boolean }) {
+function projectNavIconClass({ active }: { active?: boolean }) {
   return cn(
-    "h-4 w-4 shrink-0 transition",
-    compact ? "lg:mr-0" : "mr-2",
-    active ? "text-accent-foreground drop-shadow-sm" : "text-current group-hover:text-accent",
+    "mt-0.5 h-4 w-4 shrink-0 transition",
+    active
+      ? "text-accent-foreground drop-shadow-sm"
+      : "text-muted-foreground group-hover:text-clay",
+  );
+}
+
+// Detail sub-line under each label. Alarming counts (e.g. live risk exposures,
+// a slipped schedule) go `text-danger`; on the filled-clay active item the
+// sub-line stays light so it reads against the accent fill.
+function projectNavDetailClass({ active, alert }: { active?: boolean; alert?: boolean }) {
+  return cn(
+    "mt-0.5 block truncate font-mono text-[11px] leading-tight",
+    active ? "text-accent-foreground/85" : alert ? "text-danger" : "text-muted-foreground",
   );
 }
 
@@ -1446,25 +1453,28 @@ function ProjectPage() {
     generatedAt: r ? new Date(r.reviewed_at) : new Date(),
   });
 
-  const projectNavItems = [
+  const projectNavItems: ProjectNavItem[] = [
     { value: "dashboard", label: "Dashboard", detail: "Financial IOR", icon: LayoutDashboard },
     {
       value: "schedule",
       label: "Schedule",
       detail: `${project.schedule_variance_weeks > 0 ? `+${project.schedule_variance_weeks} wk` : "On plan"}`,
       icon: CalendarClock,
+      alert: project.schedule_variance_weeks > 0,
     },
     {
       value: "inspections",
       label: "Inspections",
       detail: `${openInspectionCount} open`,
-      icon: ClipboardList,
+      // ClipboardCheck (pass/fail) — distinct from Change Orders' ClipboardList.
+      icon: ClipboardCheck,
     },
     {
       value: "risk-tally",
       label: "Risk Tally",
       detail: `${liveExposureCount} live`,
       icon: ShieldAlert,
+      alert: liveExposureCount > 0,
     },
     {
       value: "todos",
@@ -1527,17 +1537,17 @@ function ProjectPage() {
       value: "daily-wip",
       label: "Daily WIP",
       detail: "Work in place",
-      icon: CalendarClock,
+      // Activity (running work-in-place) — distinct from Schedule's CalendarClock.
+      icon: Activity,
     },
   ];
-  const primaryNavItems = projectNavItems.filter(
-    (item) => !SECONDARY_PROJECT_NAV_TABS.has(item.value as ProjectTabValue),
+  const navItemByValue = new Map(projectNavItems.map((item) => [item.value, item] as const));
+  // Persistent "you are here" title for the content stage: the active tab's
+  // group + label (e.g. "Money · Billing").
+  const activeNavGroup = PROJECT_NAV_GROUPS.find((group) =>
+    group.values.includes(activeProjectTab),
   );
-  const secondaryNavItems = projectNavItems.filter((item) =>
-    SECONDARY_PROJECT_NAV_TABS.has(item.value as ProjectTabValue),
-  );
-  const isSecondaryTabActive = SECONDARY_PROJECT_NAV_TABS.has(activeProjectTab);
-  const activeSecondaryNavItem = secondaryNavItems.find((item) => item.value === activeProjectTab);
+  const activeNavItem = navItemByValue.get(activeProjectTab);
   const companyLogoUrl =
     project.organization_logo_url && project.organization_logo_url !== companyLogoFailedUrl
       ? project.organization_logo_url
@@ -1558,7 +1568,6 @@ function ProjectPage() {
     { label: "Original Contract", value: fmtUSD(project.original_contract), tabular: true },
     { label: "Forecasted Final", value: fmtUSD(rollup.forecastedFinalContract), tabular: true },
   ];
-  const compactProjectNav = COMPACT_PROJECT_NAV_TABS.has(activeProjectTab);
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-background text-foreground">
@@ -1787,157 +1796,97 @@ function ProjectPage() {
         </div>
       </header>
 
-      <main
-        className={`mx-auto w-full min-w-0 px-4 py-6 sm:px-6 lg:px-8 ${
-          compactProjectNav ? "max-w-[1760px]" : "max-w-[1500px]"
-        }`}
-      >
+      <main className="mx-auto w-full min-w-0 max-w-[1640px] px-4 py-6 sm:px-6 lg:px-8">
         <Tabs
           value={activeProjectTab}
           onValueChange={setProjectTab}
-          className={`grid min-w-0 gap-6 lg:items-start ${
-            compactProjectNav
-              ? "lg:grid-cols-[76px_minmax(0,1fr)] xl:grid-cols-[84px_minmax(0,1fr)]"
-              : "lg:grid-cols-[238px_minmax(0,1fr)]"
-          }`}
+          className="grid min-w-0 gap-6 lg:grid-cols-[248px_minmax(0,1fr)] lg:items-start"
         >
           <aside className="min-w-0 lg:sticky lg:top-6">
-            <TooltipProvider delayDuration={120}>
-              <TabsList className={PROJECT_NAV_RAIL_CLASS}>
-                <ProjectNavTooltip enabled={compactProjectNav} label="CRM" detail="Relationships">
-                  <a
-                    href="/?tab=crm"
-                    aria-label="CRM: Relationships"
-                    title="CRM: Relationships"
-                    className={cn(
-                      "inline-flex items-center",
-                      projectNavItemClass({ compact: compactProjectNav }),
-                    )}
-                  >
-                    <BriefcaseBusiness
-                      className={projectNavIconClass({ compact: compactProjectNav })}
-                    />
-                    <span className={`min-w-0 ${compactProjectNav ? "lg:sr-only" : ""}`}>
-                      <span className="block text-sm font-medium leading-tight">CRM</span>
-                      <span className="mt-0.5 block truncate text-[11px] font-normal opacity-80">
-                        Relationships
-                      </span>
-                    </span>
-                  </a>
-                </ProjectNavTooltip>
-                {primaryNavItems.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = activeProjectTab === item.value;
-                  return (
-                    <ProjectNavTooltip
-                      key={item.value}
-                      enabled={compactProjectNav}
-                      label={item.label}
-                      detail={item.detail}
-                    >
-                      <TabsTrigger
-                        value={item.value}
-                        aria-label={`${item.label}: ${item.detail}`}
-                        title={`${item.label}: ${item.detail}`}
-                        className={projectNavItemClass({
-                          compact: compactProjectNav,
-                          active: isActive,
-                        })}
-                      >
-                        {isActive && (
-                          <span
-                            aria-hidden="true"
-                            className="absolute inset-y-2 left-1 w-1 rounded-full bg-accent-foreground/90 shadow-[0_0_14px_rgb(255_255_255_/_0.75)]"
-                          />
-                        )}
-                        <Icon
-                          className={projectNavIconClass({
-                            compact: compactProjectNav,
-                            active: isActive,
-                          })}
-                        />
-                        <span className={`min-w-0 ${compactProjectNav ? "lg:sr-only" : ""}`}>
-                          <span className="block text-sm font-medium leading-tight">
-                            {item.label}
-                          </span>
-                          <span
-                            className={`mt-0.5 block truncate text-[11px] font-normal ${
-                              isActive ? "opacity-85" : "opacity-70"
-                            }`}
-                          >
-                            {item.detail}
-                          </span>
-                        </span>
-                      </TabsTrigger>
-                    </ProjectNavTooltip>
-                  );
-                })}
-                {secondaryNavItems.length > 0 && (
-                  <DropdownMenu>
-                    <ProjectNavTooltip
-                      enabled={compactProjectNav}
-                      label="More"
-                      detail="Reports & inspections"
-                    >
-                      <DropdownMenuTrigger
-                        aria-label="More project tabs: reports and inspections"
-                        title="More project tabs"
-                        className={cn(
-                          "relative inline-flex items-center",
-                          projectNavItemClass({
-                            compact: compactProjectNav,
-                            active: isSecondaryTabActive,
-                          }),
-                        )}
-                      >
-                        {isSecondaryTabActive && (
-                          <span
-                            aria-hidden="true"
-                            className="absolute inset-y-2 left-1 w-1 rounded-full bg-accent-foreground/90 shadow-[0_0_14px_rgb(255_255_255_/_0.75)]"
-                          />
-                        )}
-                        <MoreHorizontal
-                          className={projectNavIconClass({
-                            compact: compactProjectNav,
-                            active: isSecondaryTabActive,
-                          })}
-                        />
-                        <span className={`min-w-0 ${compactProjectNav ? "lg:sr-only" : ""}`}>
-                          <span className="block text-sm font-medium leading-tight">More</span>
-                          <span
-                            className={`mt-0.5 block truncate text-[11px] font-normal ${
-                              isSecondaryTabActive ? "opacity-85" : "opacity-70"
-                            }`}
-                          >
-                            {activeSecondaryNavItem?.label ?? "Reports & inspections"}
-                          </span>
-                        </span>
-                      </DropdownMenuTrigger>
-                    </ProjectNavTooltip>
-                    <DropdownMenuContent align="start" side="right" className="w-56">
-                      {secondaryNavItems.map((item) => {
-                        const Icon = item.icon;
-                        const isActive = activeProjectTab === item.value;
-                        return (
-                          <DropdownMenuItem
-                            key={item.value}
-                            onSelect={() => setProjectTab(item.value)}
-                            className={cn("gap-2", isActive && "bg-accent/10 text-foreground")}
-                          >
-                            <Icon className="h-4 w-4 text-muted-foreground" />
-                            <span className="flex-1">{item.label}</span>
-                            <span className="text-[11px] text-muted-foreground">{item.detail}</span>
-                          </DropdownMenuItem>
-                        );
-                      })}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+            <TabsList className={PROJECT_NAV_RAIL_CLASS}>
+              {/* Cross-module jump back to the CRM / relationships surface. */}
+              <a
+                href="/?tab=crm"
+                aria-label="CRM: Relationships"
+                title="CRM: Relationships"
+                className={cn(
+                  projectNavItemClass({}),
+                  "shrink-0 self-start lg:shrink lg:self-auto",
                 )}
-              </TabsList>
-            </TooltipProvider>
+              >
+                <BriefcaseBusiness className={projectNavIconClass({})} />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium leading-tight">CRM</span>
+                  <span className={projectNavDetailClass({})}>Relationships</span>
+                </span>
+              </a>
+              {PROJECT_NAV_GROUPS.map((group) => (
+                <div key={group.key} className="flex shrink-0 flex-col gap-1.5 lg:w-full lg:shrink">
+                  <p className="eyebrow px-1 text-[10px] leading-none">{group.label}</p>
+                  <div className="flex gap-1.5 lg:flex-col">
+                    {group.values.map((value) => {
+                      const item = navItemByValue.get(value);
+                      if (!item) return null;
+                      const Icon = item.icon;
+                      const isActive = activeProjectTab === item.value;
+                      return (
+                        <TabsTrigger
+                          key={item.value}
+                          value={item.value}
+                          aria-label={`${item.label}: ${item.detail}`}
+                          title={`${item.label}: ${item.detail}`}
+                          className={projectNavItemClass({ active: isActive })}
+                        >
+                          {isActive && (
+                            <span
+                              aria-hidden="true"
+                              className="absolute inset-y-2 left-0.5 w-1 rounded-full bg-accent-foreground/90"
+                            />
+                          )}
+                          <Icon className={projectNavIconClass({ active: isActive })} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-medium leading-tight">
+                              {item.label}
+                            </span>
+                            <span
+                              className={projectNavDetailClass({
+                                active: isActive,
+                                alert: item.alert,
+                              })}
+                            >
+                              {item.detail}
+                            </span>
+                          </span>
+                        </TabsTrigger>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </TabsList>
           </aside>
 
           <div className="min-w-0">
+            {activeNavGroup && activeNavItem && (
+              <div className="mb-6 flex items-end justify-between gap-4 border-b border-hairline pb-4">
+                <div className="min-w-0">
+                  <p className="eyebrow">
+                    {activeNavGroup.label} · {activeNavItem.label}
+                  </p>
+                  <h1 className="mt-1 truncate font-serif text-3xl leading-tight text-foreground">
+                    {activeNavItem.label}
+                  </h1>
+                </div>
+                <span
+                  className={cn(
+                    "shrink-0 whitespace-nowrap font-mono text-xs",
+                    activeNavItem.alert ? "text-danger" : "text-muted-foreground",
+                  )}
+                >
+                  {activeNavItem.detail}
+                </span>
+              </div>
+            )}
             <TabsContent value="dashboard" className="mt-0">
               <ProjectDashboard
                 project={project}
@@ -2405,30 +2354,6 @@ function ProjectPage() {
         </Tabs>
       </main>
     </div>
-  );
-}
-
-function ProjectNavTooltip({
-  enabled,
-  label,
-  detail,
-  children,
-}: {
-  enabled: boolean;
-  label: string;
-  detail: string;
-  children: ReactNode;
-}) {
-  if (!enabled) return <>{children}</>;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side="right" align="center" className="max-w-[220px]">
-        <div className="font-medium">{label}</div>
-        <div className="mt-0.5 text-[11px] opacity-80">{detail}</div>
-      </TooltipContent>
-    </Tooltip>
   );
 }
 
