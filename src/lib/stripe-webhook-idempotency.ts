@@ -115,7 +115,16 @@ type StoreQuery = PromiseLike<StoreQueryResult> & {
   ): StoreQuery;
 };
 
-/** Table-missing (pre-migration) so the route can process without the guard. */
+/**
+ * Table-missing so the route can process without the guard. Only the whole
+ * relation being absent qualifies -- NOT a missing status/claimed_at column.
+ * The migration is a HARD prerequisite: if the code deploys before the desk
+ * applies it, the status/claimed_at write errors, this claim throws, and the
+ * webhook returns non-2xx. That is intentional -- Stripe holds the events and
+ * retries for days, so once the columns are live every delivery recovers with
+ * zero loss and no false `processed` rows. Silently degrading (processing with
+ * the guard off) would defeat the very guarantee this module exists to make.
+ */
 function isMissingWebhookEventsRelation(error: StoreQueryError | null) {
   const message = (error?.message ?? "").toLowerCase();
   return (
@@ -124,24 +133,6 @@ function isMissingWebhookEventsRelation(error: StoreQueryError | null) {
     message.includes("does not exist") ||
     message.includes("could not find the table")
   );
-}
-
-/**
- * Deploy-ordering guard: Lovable ships code from `main` immediately, but the
- * status/claimed_at columns land later when the desk applies the migration. In
- * that window the table exists WITHOUT the new columns, so writing them errors
- * on the column, not the relation. Treat that exactly like a missing table --
- * fall back to processing without the guard (handlers stay individually
- * idempotent) rather than 500 on every event.
- */
-function isMissingProcessingStateColumn(error: StoreQueryError | null) {
-  const text = `${error?.message ?? ""} ${error?.details ?? ""} ${error?.hint ?? ""}`.toLowerCase();
-  const looksLikeMissingColumn =
-    error?.code === "PGRST204" ||
-    error?.code === "42703" ||
-    text.includes("does not exist") ||
-    text.includes("could not find");
-  return looksLikeMissingColumn && (text.includes("status") || text.includes("claimed_at"));
 }
 
 /** Builds the real store from a Supabase admin client. */
@@ -165,9 +156,10 @@ export function createSupabaseWebhookEventStore(admin: unknown): WebhookEventSto
         )
         .select("event_id");
       if (error) {
-        if (isMissingWebhookEventsRelation(error) || isMissingProcessingStateColumn(error)) {
-          return "no_store";
-        }
+        if (isMissingWebhookEventsRelation(error)) return "no_store";
+        // A missing status/claimed_at column (migration not yet applied) is
+        // deliberately NOT swallowed: it throws -> non-2xx -> Stripe retries
+        // until the columns are live. The migration is a hard prerequisite.
         throw new Error(error.message);
       }
       const rows = Array.isArray(data) ? data : data ? [data] : [];

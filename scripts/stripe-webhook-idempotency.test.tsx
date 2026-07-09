@@ -36,9 +36,6 @@ class FakeSupabase {
   tables: Record<string, Row[]> = {};
   missing = new Set<string>();
   failDelete = new Set<string>();
-  // Columns that do not exist yet (pre-migration window): a write touching one
-  // errors on the column, PostgREST-style.
-  missingColumns: Record<string, Set<string>> = {};
   fromCalls: Record<string, number> = {};
 
   from(name: string) {
@@ -124,21 +121,6 @@ class FakeQuery {
         error: { code: "42P01", message: `relation "${this.table}" does not exist` },
       };
     }
-    const absent = this.db.missingColumns[this.table];
-    if (absent && (this.kind === "insert" || this.kind === "update" || this.kind === "upsert")) {
-      const payload = this.values as Row;
-      const hit = Object.keys(payload).find((k) => absent.has(k));
-      if (hit) {
-        return {
-          data: null,
-          error: {
-            code: "PGRST204",
-            message: `Could not find the '${hit}' column of '${this.table}' in the schema cache`,
-          },
-        };
-      }
-    }
-
     const rows = this.db.rows(this.table);
 
     if (this.kind === "select") return this.shape(rows.filter((r) => this.matches(r)));
@@ -380,22 +362,6 @@ describe("handleStripeWebhook idempotency", () => {
     // A later duplicate delivery must not grant a second pack.
     const dup = await post();
     expect((await dup.json()).duplicate).toBe(true);
-    expect(purchaseRows(db)).toHaveLength(1);
-  });
-
-  it("degrades gracefully in the pre-migration window: missing status column still processes (no 500)", async () => {
-    const db = new FakeSupabase();
-    h.db = db;
-    h.event = creditPackEvent("evt_premigration");
-    // Code deployed, migration not yet applied: the table exists but the new
-    // columns don't. The claim write must fall back to processing without the
-    // guard rather than 500.
-    db.missingColumns["stripe_webhook_events"] = new Set(["status", "claimed_at"]);
-
-    const res = await post();
-    expect(res.status).toBe(200);
-    // No guard row was written (fell back to no_store), but the work still ran.
-    expect(webhookRow(db, "evt_premigration")).toBeUndefined();
     expect(purchaseRows(db)).toHaveLength(1);
   });
 
