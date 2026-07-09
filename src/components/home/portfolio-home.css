@@ -33,18 +33,26 @@
   color: var(--ink);
   background: var(--paper);
   min-height: 100vh;
-  padding: 28px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  /* Full-bleed page, not a floating card: sides + bottom run to the screen
+     edge and the footer sits flush to the bottom. Top keeps a small paper gap
+     for now (removed in a follow-up). */
+  padding: 28px 0 0;
 }
 
 .ow-shell {
   width: 100%;
-  max-width: 1240px;
-  margin: 0 auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   background: var(--paper);
-  border: 1px solid var(--edge);
-  border-radius: 20px;
-  box-shadow: 0 30px 70px -50px rgb(26 19 14 / 0.35);
-  overflow: hidden;
+}
+
+/* The footer is the last block; push it to the bottom so its dark bar meets the
+   screen edge even when the content is shorter than the viewport. */
+.ow-shell > footer {
+  margin-top: auto;
 }
 
 /* ---------- header ---------- */
@@ -889,7 +897,7 @@
 /* ---------- responsive: keep it usable down to 375 (full mobile polish = Phase 2) ---------- */
 @media (max-width: 900px) {
   .ow-home {
-    padding: 12px 10px 28px;
+    padding: 12px 0 0;
   }
   .ow-header {
     flex-wrap: wrap;
