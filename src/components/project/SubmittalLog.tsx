@@ -13,6 +13,7 @@ import { FileDown, FileText, Plus, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { WorkspaceHeader } from "@/components/project/billing/billing-workspace-atoms";
+import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import {
   deleteSubmittalLogEntry,
@@ -155,25 +156,50 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
         subtitle="Track every RFI and submittal the way you already do in Excel — spec section, dates out and back, and the architect's action. From the submittals log, generate a branded letter of transmittal to send for approval."
       />
 
-      <div className="flex items-center gap-2">
-        {(["submittal", "rfi"] as SubmittalLogKind[]).map((k) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setKind(k)}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
-              kind === k
-                ? "bg-accent text-accent-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        {/* Segmented switch — makes it obvious these are two separate logs you
+            pick between (the plain-text tabs read as non-clickable labels). */}
+        <div>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Which log
+          </div>
+          <div
+            role="tablist"
+            aria-label="Choose log"
+            className="inline-flex rounded-lg border border-hairline bg-surface p-1"
           >
-            {k === "submittal" ? "Submittals" : "RFIs"}
-            <span className="ml-1.5 text-xs opacity-70">
-              {(entriesQuery.data ?? []).filter((e) => e.kind === k).length}
-            </span>
-          </button>
-        ))}
-        <div className="ml-auto flex items-center gap-2">
+            {(["submittal", "rfi"] as SubmittalLogKind[]).map((k) => {
+              const active = kind === k;
+              const count = (entriesQuery.data ?? []).filter((e) => e.kind === k).length;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setKind(k)}
+                  className={cn(
+                    "cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-accent text-accent-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-background hover:text-foreground",
+                  )}
+                >
+                  {k === "submittal" ? "Submittals" : "RFIs"}
+                  <span
+                    className={cn(
+                      "ml-2 rounded-full px-1.5 py-0.5 text-[11px] tabular-nums",
+                      active ? "bg-white/25" : "bg-hairline/70 text-muted-foreground",
+                    )}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
           {kind === "submittal" ? (
             <Button
               type="button"
