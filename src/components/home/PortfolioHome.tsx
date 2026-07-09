@@ -181,7 +181,7 @@ export function PortfolioHome() {
             </Link>
           </div>
           <nav className="ow-nav">
-            <a className="is-active" href="/home-preview" aria-current="page">
+            <a className="is-active" href="/" aria-current="page">
               Portfolio
             </a>
             {access.canSeeOwnerView ? <a href="/?tab=crm">CRM</a> : null}
