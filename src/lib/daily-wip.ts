@@ -301,6 +301,64 @@ export function priorSubPercent(
   return best ? best.pct : 0;
 }
 
+// Self-perform work-in-place cost per cost code, summed across ALL daily WIP
+// entries. Self-perform cost (crew×hours×rate + materials + equipment) is
+// incurred as-worked, so it SUMS day over day — no cumulative-% telescoping. A
+// bought-out sub line (a resolved commitment on its code) is valued by earned %
+// and flows through the subcontractor cost layer instead, so it's excluded here.
+// Keyed by cost_bucket_id; uncoded rows are dropped (no line to cost). Cents-safe.
+export function selfPerformCostByBucket(
+  rows: readonly DailyWipRowLike[],
+  commitmentFor: (row: DailyWipRowLike) => number | null | undefined,
+): Map<string, number> {
+  const cents = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.cost_bucket_id) continue;
+    const commitment = commitmentFor(row);
+    // Bought-out sub line → the sub cost layer owns it, not here.
+    if (row.subcontractor_id && commitment != null && commitment > 0) continue;
+    // Pass null commitment so rowWorkInPlace uses the self-perform formula
+    // (labor + materials + equipment), never the earned-% branch.
+    const wipCents = dollarsToCents(rowWorkInPlace(row, null));
+    if (wipCents === 0) continue;
+    cents.set(row.cost_bucket_id, (cents.get(row.cost_bucket_id) ?? 0) + wipCents);
+  }
+  const out = new Map<string, number>();
+  for (const [key, c] of cents) out.set(key, centsToDollars(c));
+  return out;
+}
+
+// A cost bucket trimmed to the fields the self-perform fold touches. The fold is
+// generic over the concrete row type (server BucketRow, ledger input, etc.).
+export interface SelfPerformFoldable {
+  id?: string | null;
+  actual_to_date: number;
+  ftc: number;
+}
+
+// Fold self-perform daily WIP cost into a bucket's actual/forecast: work put in
+// place is real actual cost, so it ADDS to actual_to_date and DISPLACES the
+// code's own forecast (ftc reduced by the same amount, floored at 0) rather than
+// stacking — mirroring the subcontractor buyout's displacement. So projected cost
+// (actual + ftc) is UNCHANGED while the work is within forecast, and only grows
+// once the logged cost exceeds the remaining forecast (a real overrun). Returns
+// NEW bucket objects; the originals (and their raw actual_to_date, which the
+// budget-line drawer still edits) are untouched. Cents-safe.
+export function applySelfPerformToBuckets<T extends SelfPerformFoldable>(
+  buckets: readonly T[],
+  selfPerformByBucket: ReadonlyMap<string, number>,
+): T[] {
+  if (selfPerformByBucket.size === 0) return buckets.map((b) => ({ ...b }));
+  return buckets.map((b) => {
+    const wip = b.id ? (selfPerformByBucket.get(b.id) ?? 0) : 0;
+    if (wip === 0) return { ...b };
+    const wipCents = dollarsToCents(wip);
+    const actualCents = dollarsToCents(numeric(b.actual_to_date)) + wipCents;
+    const ftcCents = Math.max(0, dollarsToCents(numeric(b.ftc)) - wipCents);
+    return { ...b, actual_to_date: centsToDollars(actualCents), ftc: centsToDollars(ftcCents) };
+  });
+}
+
 export interface DailyWipTotals {
   labor: number;
   material: number;

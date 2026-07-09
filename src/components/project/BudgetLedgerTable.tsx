@@ -96,6 +96,7 @@ export function BudgetLedgerTable({
   changeOrders = [],
   changeOrderAllocations = [],
   subCostByBucket,
+  selfPerformByBucket,
   onOpenLine,
   onAddLine,
   editedBucketIds,
@@ -114,6 +115,10 @@ export function BudgetLedgerTable({
     string,
     { paid: number; open: number; committed?: number; earned?: number }
   >;
+  // Self-perform daily WIP cost per bucket (id → dollars) already folded into the
+  // buckets' actuals — passed here only so a rolled-up line can show how much of
+  // its actual came from the daily log.
+  selfPerformByBucket?: ReadonlyMap<string, number>;
   // BUDGETCONSOLIDATE1: when provided, the ledger becomes the single editable
   // Budget table — click a line to open its editor, "Add line" to create one.
   // Omitted (e.g. the read-only billing usage) → the ledger stays display-only.
@@ -300,6 +305,18 @@ export function BudgetLedgerTable({
                         return sub && (sub.earned ?? 0) > sub.paid ? (
                           <div className="text-[10px] font-normal text-muted-foreground">
                             {fmtUSD(sub.earned ?? 0)} earned
+                          </div>
+                        ) : null;
+                      })()}
+                      {(() => {
+                        // Self-perform daily WIP folded into this line's actual — show
+                        // how much, so the roll-up from the daily log is visible.
+                        const wip = row.costBucketId
+                          ? (selfPerformByBucket?.get(row.costBucketId) ?? 0)
+                          : 0;
+                        return wip > 0 ? (
+                          <div className="text-[10px] font-normal text-muted-foreground">
+                            incl. {fmtUSD(wip)} from daily WIP
                           </div>
                         ) : null;
                       })()}

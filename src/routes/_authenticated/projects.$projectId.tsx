@@ -53,7 +53,7 @@ import { DailyWipWorkspace } from "@/components/outcome/DailyWipWorkspace";
 import { SubcontractorsWorkspace } from "@/components/project/SubcontractorsWorkspace";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
-import { latestPercentBySubBucket } from "@/lib/daily-wip";
+import { applySelfPerformToBuckets, latestPercentBySubBucket } from "@/lib/daily-wip";
 import { listDailyWipEntries } from "@/lib/daily-wip.functions";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
 import {
@@ -1008,7 +1008,13 @@ function ProjectPage() {
     rollup,
     guidance,
     warnings,
+    selfPerformByBucket: selfPerformRaw = {},
   } = data;
+  // Self-perform daily WIP per cost code (server-computed), folded into the ledger
+  // + Budget cards the SAME way the server folded it into `rollup`. Raw `buckets`
+  // stay unadjusted for the budget-line drawer, which edits actual_to_date itself.
+  const selfPerformByBucket = new Map(Object.entries(selfPerformRaw as Record<string, number>));
+  const ledgerBuckets = applySelfPerformToBuckets(buckets, selfPerformByBucket);
   const billingApplicationIds = new Set(billingApplications.map((app) => app.id));
   const visibleBillingApplications = sortBillingApplications([
     ...billingApplications,
@@ -2221,12 +2227,13 @@ function ProjectPage() {
               )}
               <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
                 <BudgetLedgerTable
-                  buckets={buckets}
+                  buckets={ledgerBuckets}
                   exposures={exposures}
                   allocations={exposureAllocationsQuery.data ?? []}
                   changeOrders={changeOrders}
                   changeOrderAllocations={changeOrderAllocationsQuery.data ?? []}
                   subCostByBucket={subCostByBucket}
+                  selfPerformByBucket={selfPerformByBucket}
                   onOpenLine={(id) => {
                     setAddingLine(false);
                     setEditingBucketId(id);
@@ -2249,6 +2256,9 @@ function ProjectPage() {
                 mode={addingLine ? "create" : "edit"}
                 bucket={addingLine ? null : (buckets.find((b) => b.id === editingBucketId) ?? null)}
                 subCost={editingBucketId ? subCostByBucket?.get(editingBucketId) : undefined}
+                selfPerformWip={
+                  editingBucketId ? (selfPerformByBucket.get(editingBucketId) ?? 0) : 0
+                }
                 budgetLocked={Boolean(project.budget_locked_at)}
                 overrides={budgetOverrides}
                 onSave={(id, patch) => bucketUpdate.mutateAsync({ id, patch })}

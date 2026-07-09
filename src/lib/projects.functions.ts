@@ -35,6 +35,13 @@ import {
   type ExposureStatus,
 } from "@/lib/ior";
 import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
+import {
+  applySelfPerformToBuckets,
+  commitmentBySubBucket,
+  selfPerformCostByBucket,
+  subCommitmentKey,
+  type DailyWipRowLike,
+} from "@/lib/daily-wip";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseLooseData = Record<string, unknown> & Record<string, unknown>[];
@@ -1031,6 +1038,45 @@ const normalizeExposure = (e: Record<string, unknown>): ExposureRow => ({
 
 // ---------------- LIST + GET ----------------
 
+// Self-perform daily WIP cost per cost-bucket, resolving each line's sub
+// commitment (to exclude bought-out lines) from the raw subcontract rows. Shared
+// by getProject and listProjects so the dashboard and the portfolio fold the same
+// way. Tolerates the raw REST row shapes (num/str coerce).
+function buildSelfPerformByBucket(
+  wipRows: Record<string, unknown>[],
+  subcontractRows: Record<string, unknown>[],
+  subAllocationRows: Record<string, unknown>[],
+): Map<string, number> {
+  const commitmentLookup = commitmentBySubBucket(
+    subcontractRows.map((r) => ({
+      id: str(r.id),
+      subcontractor_id: str(r.subcontractor_id),
+      status: str(r.status),
+    })),
+    subAllocationRows.map((r) => ({
+      subcontract_id: str(r.subcontract_id),
+      cost_bucket_id: (r.cost_bucket_id as string | null) ?? null,
+      amount: num(r.amount),
+    })),
+  );
+  const rows: DailyWipRowLike[] = wipRows.map((r) => ({
+    crew_count: num(r.crew_count),
+    hours: num(r.hours),
+    labor_rate: num(r.labor_rate),
+    material_cost: num(r.material_cost),
+    equipment_cost: num(r.equipment_cost),
+    quantity: num(r.quantity),
+    subcontractor_id: (r.subcontractor_id as string | null) ?? null,
+    cost_bucket_id: (r.cost_bucket_id as string | null) ?? null,
+    percent_complete: num(r.percent_complete),
+  }));
+  const commitmentFor = (row: DailyWipRowLike) => {
+    const key = subCommitmentKey(row.subcontractor_id, row.cost_bucket_id);
+    return key ? (commitmentLookup.get(key) ?? null) : null;
+  };
+  return selfPerformCostByBucket(rows, commitmentFor);
+}
+
 export const listProjects = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -1060,6 +1106,7 @@ export const listProjects = createServerFn({ method: "GET" })
       subRes,
       subAllocRes,
       subPayRes,
+      wipRes,
     ] = await Promise.all([
       context.supabase.from("exposures").select("*").in("project_id", ids),
       context.supabase
@@ -1085,6 +1132,9 @@ export const listProjects = createServerFn({ method: "GET" })
       dynamicTable(context.supabase, "subcontracts").select("*").in("project_id", ids),
       dynamicTable(context.supabase, "subcontract_allocations").select("*").in("project_id", ids),
       dynamicTable(context.supabase, "subcontract_payments").select("*").in("project_id", ids),
+      // Self-perform daily WIP so the portfolio GP folds self-perform cost the
+      // same way each project's dashboard does. Degrades to empty if absent.
+      dynamicTable(context.supabase, "daily_wip_entries").select("*").in("project_id", ids),
     ]);
     if (expRes.error) throw new Error(expRes.error.message);
     if (cosRes.error) throw new Error(cosRes.error.message);
@@ -1152,6 +1202,9 @@ export const listProjects = createServerFn({ method: "GET" })
     const spByP = groupBy<{ project_id: string } & Record<string, unknown>>(
       subDegrade(subPayRes, "subcontract_payments"),
     );
+    const wipByP = groupBy<{ project_id: string } & Record<string, unknown>>(
+      subDegrade(wipRes, "daily_wip_entries"),
+    );
     const organizationsById = new Map(
       organizationRows.map((organization) => {
         const organizationId = str(organization.id);
@@ -1214,7 +1267,15 @@ export const listProjects = createServerFn({ method: "GET" })
           amount: num(row.amount),
         })),
       );
-      const r = computeRollup(p, buckets, cos, exposures, subCostByBucket);
+      // Self-perform daily WIP folds into actual + forecast the same way as on the
+      // project dashboard, so the portfolio GP never drifts from it.
+      const selfPerformByBucket = buildSelfPerformByBucket(
+        wipByP[p.id] ?? [],
+        scByP[p.id] ?? [],
+        saByP[p.id] ?? [],
+      );
+      const rollupBuckets = applySelfPerformToBuckets(buckets, selfPerformByBucket);
+      const r = computeRollup(p, rollupBuckets, cos, exposures, subCostByBucket);
       const warnings = evaluateWarnings(p, buckets, cos, exposures, r);
       const lastReview = p.last_reviewed_at ? new Date(p.last_reviewed_at).getTime() : null;
       const daysSinceReview = lastReview ? Math.floor((Date.now() - lastReview) / 86400000) : null;
@@ -1675,10 +1736,13 @@ export const getProject = createServerFn({ method: "GET" })
       if (error) return [] as Record<string, unknown>[];
       return (rows ?? []) as Record<string, unknown>[];
     };
-    const [subcontractRows, subAllocationRows, subPaymentRows] = await Promise.all([
+    const [subcontractRows, subAllocationRows, subPaymentRows, wipEntryRows] = await Promise.all([
       subRows("subcontracts"),
       subRows("subcontract_allocations"),
       subRows("subcontract_payments"),
+      // Self-perform daily WIP → the rollup, so work put in place by the GC's own
+      // crew reflects on the dashboard GP (not just subcontractor progress).
+      subRows("daily_wip_entries"),
     ]);
     type SummarizeArgs = Parameters<typeof summarizeSubCostByBucket>;
     const subCostByBucket = summarizeSubCostByBucket(
@@ -1687,9 +1751,19 @@ export const getProject = createServerFn({ method: "GET" })
       subPaymentRows as unknown as SummarizeArgs[2],
     );
 
+    // Self-perform WIP cost per code, folded into actual + forecast (displacement,
+    // like a buyout). A bought-out sub line is excluded — its commitment resolves,
+    // so it flows through the sub layer instead.
+    const selfPerformByBucket = buildSelfPerformByBucket(
+      wipEntryRows,
+      subcontractRows,
+      subAllocationRows,
+    );
+    const rollupBuckets = applySelfPerformToBuckets(buckets, selfPerformByBucket);
+
     const rollup: Rollup = computeRollup(
       project,
-      buckets,
+      rollupBuckets,
       changeOrders,
       exposures,
       subCostByBucket,
@@ -1717,6 +1791,10 @@ export const getProject = createServerFn({ method: "GET" })
       warnings,
       byCategory,
       aging,
+      // Self-perform WIP per cost-bucket (id → dollars), so the client ledger and
+      // Budget cards fold it the SAME way the rollup above did. Raw `buckets` keep
+      // their unadjusted actual_to_date/ftc — the budget-line drawer edits those.
+      selfPerformByBucket: Object.fromEntries(selfPerformByBucket),
     };
   });
 

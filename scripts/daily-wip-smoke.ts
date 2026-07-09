@@ -3,6 +3,7 @@
 // cents-exact and that labor is always crew × hours × rate.
 import assert from "node:assert/strict";
 import {
+  applySelfPerformToBuckets,
   commitmentBySubBucket,
   costItemsForEdit,
   dailyWipTotals,
@@ -14,6 +15,7 @@ import {
   productionRate,
   resolvePercentReview,
   rowWorkInPlace,
+  selfPerformCostByBucket,
   subCommitmentKey,
   subEarnedIncrement,
   subEarnedValue,
@@ -371,6 +373,85 @@ assert.deepEqual(
     true,
     "value mismatch alone counts as overridden",
   );
+}
+
+// ── SELF-PERFORM ROLL-UP (Darian, 2026-07-09): self-perform daily WIP is real
+//    actual cost and must reflect on the budget + dashboard. "this didn't reflect
+//    on the budget??" — $1,720 logged on 03-8010 (crew 5 × 8h × $33 = $1,320 labor
+//    + $400 materials) never reached actuals. It ADDS to actual and DISPLACES the
+//    forecast, so projected cost holds until it exceeds the remaining forecast. ──
+{
+  const selfRow = (over: Record<string, unknown> = {}) => ({
+    crew_count: 0,
+    hours: 0,
+    labor_rate: 0,
+    material_cost: 0,
+    equipment_cost: 0,
+    quantity: 0,
+    subcontractor_id: null,
+    cost_bucket_id: "saw-cutting",
+    percent_complete: 0,
+    ...over,
+  });
+  const commitmentFor = (r: { subcontractor_id?: string | null; cost_bucket_id?: string | null }) =>
+    // Only the bought-out sub line resolves a commitment.
+    r.subcontractor_id === "herrera" && r.cost_bucket_id === "dock-pit" ? 142_600 : null;
+
+  const rows = [
+    // Darian's exact self-perform line: 5 × 8 × 33 = 1,320 labor + 400 materials.
+    selfRow({ crew_count: 5, hours: 8, labor_rate: 33, material_cost: 400 }),
+    // Another self-perform day on the same code, materials only.
+    selfRow({ material_cost: 250 }),
+    // A DIFFERENT self-perform code.
+    selfRow({ cost_bucket_id: "slab", crew_count: 2, hours: 8, labor_rate: 50 }), // 800
+    // A bought-out sub line — excluded (the sub layer owns it), never in self-perform.
+    selfRow({ subcontractor_id: "herrera", cost_bucket_id: "dock-pit", percent_complete: 30 }),
+  ];
+  const byBucket = selfPerformCostByBucket(rows, commitmentFor);
+  assert.equal(
+    byBucket.get("saw-cutting"),
+    1_970,
+    "self-perform sums per code (1,320 + 400 + 250)",
+  );
+  assert.equal(byBucket.get("slab"), 800, "second self-perform code totals its own work");
+  assert.equal(
+    byBucket.get("dock-pit"),
+    undefined,
+    "bought-out sub line excluded from self-perform",
+  );
+
+  // Fold displaces forecast: actual += WIP, ftc floored at 0, projected steady.
+  const buckets = [
+    { id: "saw-cutting", actual_to_date: 4_300, ftc: 11_801 },
+    { id: "slab", actual_to_date: 0, ftc: 500 }, // WIP 800 > ftc 500 → overrun
+    { id: "untouched", actual_to_date: 1_000, ftc: 2_000 },
+  ];
+  const folded = applySelfPerformToBuckets(buckets, byBucket);
+  const saw = folded.find((b) => b.id === "saw-cutting")!;
+  assert.equal(
+    saw.actual_to_date,
+    6_270,
+    "actual = 4,300 + 1,970 WIP (Darian's line now on the budget)",
+  );
+  assert.equal(saw.ftc, 9_831, "forecast displaced: 11,801 − 1,970");
+  assert.equal(
+    saw.actual_to_date + saw.ftc,
+    4_300 + 11_801,
+    "projected cost unchanged (within forecast)",
+  );
+  const slab = folded.find((b) => b.id === "slab")!;
+  assert.equal(slab.actual_to_date, 800, "overrun: actual = 0 + 800");
+  assert.equal(slab.ftc, 0, "forecast floored at 0, not negative");
+  assert.equal(
+    slab.actual_to_date + slab.ftc,
+    800,
+    "projected grows past budget on a real overrun",
+  );
+  const untouched = folded.find((b) => b.id === "untouched")!;
+  assert.equal(untouched.actual_to_date, 1_000, "a code with no WIP is unchanged");
+  assert.equal(untouched.ftc, 2_000, "…and its forecast holds");
+  // The originals are never mutated (the drawer still edits raw actual_to_date).
+  assert.equal(buckets[0].actual_to_date, 4_300, "fold returns new objects — raw bucket untouched");
 }
 
 console.log("daily WIP smoke: all assertions passed");
