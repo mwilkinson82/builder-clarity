@@ -159,6 +159,19 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
     return pruneRemovedDemoCrm(base, demoRemovedIds);
   }, [crmSnapshotQuery.data, demoRemovedIds]);
 
+  // Client directory for the pick-or-add field: existing CRM accounts, unioned
+  // with any client names already on opportunities, deduped + sorted.
+  const accountNames = useMemo(() => {
+    const names = new Map<string, string>();
+    const add = (raw: string | null | undefined) => {
+      const name = (raw ?? "").trim();
+      if (name) names.set(name.toLowerCase(), name);
+    };
+    for (const account of crmSnapshot?.accounts ?? []) add(account.name);
+    for (const opportunity of opportunities) add(opportunity.client);
+    return Array.from(names.values()).sort((a, b) => a.localeCompare(b));
+  }, [crmSnapshot, opportunities]);
+
   useEffect(() => {
     writeDemoOpportunityOverrides(demoOpportunityOverrides);
   }, [demoOpportunityOverrides]);
@@ -412,8 +425,14 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   };
 
   const handleStageChange = (id: string, stage: PipelineStage) => {
-    applyLocalDemoPatch(id, { stage });
-    updateMutation.mutate({ id, patch: { stage } });
+    // Moving a deal to a decided stage settles its probability: Won is a lock at
+    // 100%, Lost/No-bid drop to 0%. Active stages keep whatever probability the
+    // user set. Saves the "why is Won still at 60%?" manual fixup.
+    const patch: { stage: PipelineStage; probability?: number } = { stage };
+    if (stage === "won") patch.probability = 100;
+    else if (stage === "lost" || stage === "no_bid") patch.probability = 0;
+    applyLocalDemoPatch(id, patch);
+    updateMutation.mutate({ id, patch });
   };
 
   const selected = detailQuery.data?.opportunity
@@ -562,6 +581,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
             />
             <OpportunityCreateDialog
               members={members}
+              accounts={accountNames}
               isCreating={createMutation.isPending}
               onCreate={(input) => createMutation.mutateAsync(input).then(() => undefined)}
             />
@@ -596,6 +616,7 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
         opportunity={selected}
         activity={selectedActivity}
         members={members}
+        accounts={accountNames}
         isLoading={detailQuery.isLoading}
         isSaving={updateMutation.isPending}
         isAddingNote={noteMutation.isPending}
