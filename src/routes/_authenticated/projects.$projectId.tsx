@@ -50,6 +50,7 @@ import { ProjectDashboard } from "@/components/outcome/ProjectDashboard";
 import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
 import { DailyWipWorkspace } from "@/components/outcome/DailyWipWorkspace";
+import { ProjectFileRoom } from "@/components/project/ProjectFileRoom";
 import { SubcontractorsWorkspace } from "@/components/project/SubcontractorsWorkspace";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
@@ -161,6 +162,7 @@ import {
   ExternalLink,
   FileText,
   FileSpreadsheet,
+  FolderOpen,
   HardHat,
   LayoutDashboard,
   ListChecks,
@@ -196,6 +198,7 @@ const PROJECT_TAB_VALUES = [
   "ior-report",
   "daily-reports",
   "daily-wip",
+  "file-room",
 ] as const;
 
 type ProjectTabValue = (typeof PROJECT_TAB_VALUES)[number];
@@ -225,6 +228,7 @@ const PROJECT_NAV_GROUPS: ProjectNavGroup[] = [
   },
   { key: "risk", label: "Risk", values: ["risk-tally", "todos"] },
   { key: "parties", label: "Parties", values: ["subcontractors", "client-portal", "ior-report"] },
+  { key: "docs", label: "Docs", values: ["file-room"] },
 ];
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
@@ -1588,6 +1592,12 @@ function ProjectPage() {
       // Activity (running work-in-place) — distinct from Schedule's CalendarClock.
       icon: Activity,
     },
+    {
+      value: "file-room",
+      label: "File Room",
+      detail: "Contracts, specs, docs",
+      icon: FolderOpen,
+    },
   ];
   const navItemByValue = new Map(projectNavItems.map((item) => [item.value, item] as const));
   // Persistent "you are here" title for the content stage: the active tab's
@@ -1979,6 +1989,10 @@ function ProjectPage() {
 
             <TabsContent value="daily-wip" className="mt-0">
               <DailyWipWorkspace projectId={projectId} buckets={buckets} />
+            </TabsContent>
+
+            <TabsContent value="file-room" className="mt-0">
+              <ProjectFileRoom projectId={projectId} />
             </TabsContent>
 
             <TabsContent value="risk-tally" className="mt-0 space-y-6">
