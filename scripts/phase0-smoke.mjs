@@ -1029,6 +1029,20 @@ await expectContains(
   [/ClaimsWorkspace/, /claimCreate/, /claimUpdate/, /claimDelete/, /openClaimCount/, /"claims"/],
   "project route wires the Claims tab + CRUD mutations",
 );
+// CLAIMS demo parity: the Harbor demo project is seeded at runtime per-org, so
+// claims need a runtime seeder next to seedHarborDemoInspections (the migration
+// seed only covers static harbor rows, which don't exist on prod).
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /const harborDemoClaims = \[/,
+    /const seedHarborDemoClaims = async/,
+    /seed_key: "harbor-demo:claim:electrical-delay"/,
+    /seed_key: "harbor-demo:claim:weather-delay"/,
+    /await seedHarborDemoClaims\(context\.supabase, pid/,
+  ],
+  "Harbor demo project seeds claims at runtime alongside inspections",
+);
 
 await expectContains(
   "src/routes/_authenticated/team.tsx",
