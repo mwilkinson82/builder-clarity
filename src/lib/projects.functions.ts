@@ -1454,6 +1454,9 @@ export const listProjects = createServerFn({ method: "GET" })
         client: p.client,
         project_manager: p.project_manager,
         source_opportunity_id: p.source_opportunity_id,
+        // Close-out flag — the home buckets active vs closed on this. (archived
+        // rows are already filtered out at the query above.)
+        closed_at: p.closed_at,
         phase: p.phase,
         percent_complete: p.percent_complete,
         schedule_variance_weeks: p.schedule_variance_weeks,
