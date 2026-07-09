@@ -45,9 +45,11 @@ import {
   dailyWipWorkInPlaceTotal,
   isPercentOverridden,
   laborCost,
+  priorSubPercent,
   productionRate,
   rowWorkInPlace,
   subCommitmentKey,
+  subEarnedValue,
   sumLineItems,
   type CostLineItem,
   type DailyWipRowLike,
@@ -273,12 +275,36 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     },
     [commitmentLookup],
   );
+  // A sub line's %-complete is cumulative and logged fresh each day, so its work
+  // put in place on a given day is the increment since the prior log — not its
+  // whole to-date amount. This resolves that prior cumulative % from ALL entries
+  // (the baseline came from an earlier day, not the day on screen).
+  const priorPercentFor = useCallback(
+    (row: {
+      subcontractor_id: string | null;
+      cost_bucket_id: string | null;
+      entry_date?: string;
+      updated_at?: string | null;
+      id?: string | null;
+    }) =>
+      priorSubPercent(
+        {
+          subcontractor_id: row.subcontractor_id,
+          cost_bucket_id: row.cost_bucket_id,
+          entry_date: row.entry_date ?? selectedDate,
+          updated_at: row.updated_at,
+          id: row.id,
+        },
+        entriesQuery.data ?? [],
+      ),
+    [entriesQuery.data, selectedDate],
+  );
   // Work-in-place total must include sub lines (valued by commitment × %), which
   // the labor/materials/equipment breakdown doesn't capture. Defined after
   // commitmentFor so it never reads it in the temporal dead zone.
   const workInPlaceTotal = useMemo(
-    () => dailyWipWorkInPlaceTotal(entries, commitmentFor),
-    [entries, commitmentFor],
+    () => dailyWipWorkInPlaceTotal(entries, commitmentFor, priorPercentFor),
+    [entries, commitmentFor, priorPercentFor],
   );
 
   const invalidate = () =>
@@ -324,6 +350,20 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   const draftIsSub = Boolean(
     draft.subcontractor_id && draftCommitment != null && draftCommitment > 0,
   );
+  // The cumulative % already logged for this sub line before this draft, so the
+  // preview values the draft at the increment it adds (20% → 30% earns 10%, not
+  // 30% again). Exclude the entry being edited so it isn't its own predecessor;
+  // the max-sentinel updated_at makes any same-day existing entry count as prior.
+  const draftPrior = priorSubPercent(
+    {
+      subcontractor_id: draft.subcontractor_id || null,
+      cost_bucket_id: draft.cost_bucket_id || null,
+      entry_date: selectedDate,
+      updated_at: "9999-12-31T23:59:59.999Z",
+      id: editingId,
+    },
+    entriesQuery.data ?? [],
+  );
   const draftWorkInPlace = rowWorkInPlace(
     {
       crew_count: draft.crew_count,
@@ -337,6 +377,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
       percent_complete: draft.percent_complete,
     },
     draftCommitment,
+    draftPrior,
   );
   const draftHasWork =
     draftLabor > 0 ||
@@ -504,6 +545,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                       activityLabel={activityLabel(entry.schedule_activity_id)}
                       performedBy={subName(entry.subcontractor_id)}
                       subCommitment={commitmentFor(entry)}
+                      priorPercent={priorPercentFor(entry)}
                       editing={editingId === entry.id}
                       onEdit={() => startEdit(entry)}
                       onDelete={() => deleteMutation.mutate(entry.id)}
@@ -697,8 +739,19 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                 />
                 {draftIsSub ? (
                   <span className="text-[10px] text-muted-foreground">
-                    Sub line — earns {fmtUSD(draftWorkInPlace)} of the{" "}
-                    {fmtUSD(draftCommitment ?? 0)} buyout at this %.
+                    {draftPrior > 0 ? (
+                      <>
+                        Sub line — earns {fmtUSD(draftWorkInPlace)} this update ({draftPrior}% →{" "}
+                        {draft.percent_complete || 0}%).{" "}
+                        {fmtUSD(subEarnedValue(draftCommitment ?? 0, draft.percent_complete))} of
+                        the {fmtUSD(draftCommitment ?? 0)} buyout earned to date.
+                      </>
+                    ) : (
+                      <>
+                        Sub line — earns {fmtUSD(draftWorkInPlace)} at {draft.percent_complete || 0}
+                        % of the {fmtUSD(draftCommitment ?? 0)} buyout.
+                      </>
+                    )}
                   </span>
                 ) : null}
                 {editingEntry ? (
@@ -737,8 +790,9 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                 <span className="font-medium text-foreground">{fmtUSD(draftWorkInPlace)}</span>
                 {draftIsSub ? (
                   <span className="ml-1">
-                    ({draft.percent_complete || 0}% of {fmtUSD(draftCommitment ?? 0)} sub
-                    commitment)
+                    {draftPrior > 0
+                      ? `(+${(draft.percent_complete || 0) - draftPrior}% this update, ${draftPrior}→${draft.percent_complete || 0}% of the sub commitment)`
+                      : `(${draft.percent_complete || 0}% of ${fmtUSD(draftCommitment ?? 0)} sub commitment)`}
                   </span>
                 ) : null}
               </span>
@@ -919,6 +973,7 @@ function EntryRow({
   activityLabel,
   performedBy,
   subCommitment,
+  priorPercent,
   editing,
   onEdit,
   onDelete,
@@ -929,13 +984,16 @@ function EntryRow({
   activityLabel: string | null;
   performedBy: string | null;
   subCommitment: number | null;
+  // Cumulative % logged for this sub line before this entry, so its work in place
+  // is the increment since the prior log (not the whole to-date amount).
+  priorPercent: number;
   editing: boolean;
   onEdit: () => void;
   onDelete: () => void;
   deleting: boolean;
 }) {
   const labor = laborCost(entry);
-  const workInPlace = rowWorkInPlace(entry, subCommitment);
+  const workInPlace = rowWorkInPlace(entry, subCommitment, priorPercent);
   // A bought-out sub line is "costed" once it has a percent complete to earn
   // against its commitment; a self-perform line once it has rate/materials/equipment.
   const isSubLine = Boolean(entry.subcontractor_id && subCommitment != null && subCommitment > 0);
@@ -1002,7 +1060,9 @@ function EntryRow({
         {fmtUSD(workInPlace)}
         {isSubLine && costed ? (
           <div className="text-[10px] font-normal text-muted-foreground">
-            {entry.percent_complete}% of {fmtUSD(subCommitment ?? 0)}
+            {priorPercent > 0
+              ? `+${entry.percent_complete - priorPercent}% (${priorPercent}→${entry.percent_complete}%)`
+              : `${entry.percent_complete}% of ${fmtUSD(subCommitment ?? 0)}`}
           </div>
         ) : null}
         {!costed ? (

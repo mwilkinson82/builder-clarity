@@ -78,6 +78,21 @@ export function subEarnedValue(commitment: number, percentComplete: number): num
   return centsToDollars(Math.round((dollarsToCents(numeric(commitment)) * pct) / 100));
 }
 
+// Earned value ADDED by moving a bought-out sub line from `priorPercent` to
+// `percentComplete` on its commitment. The field %-complete is CUMULATIVE ("we're
+// at 30% now"), logged fresh each day — so a single day's work put in place is the
+// increment since the last log, not the whole to-date amount. 20% Monday then 30%
+// Tuesday means Tuesday put 10% ($commitment × 10%) in place, not 30% again. A
+// downward correction yields a negative increment (over-reported work pulled back).
+// Cents-safe: the difference of two rounded cumulative values.
+export function subEarnedIncrement(
+  commitment: number,
+  priorPercent: number,
+  percentComplete: number,
+): number {
+  return subEarnedValue(commitment, percentComplete) - subEarnedValue(commitment, priorPercent);
+}
+
 // The percent-complete review pair: the super's field number, the PM's reviewed
 // value, and when (if ever) the PM last diverged from the field.
 export interface PercentReview {
@@ -170,9 +185,17 @@ export function latestPercentBySubBucket(
 // commitment on its cost code is instead valued by earned value —
 // commitment × percent complete — because the sub owns its own labor, materials,
 // and equipment; the GC's crew/hours/rate don't apply to it.
-export function rowWorkInPlace(row: DailyWipRowLike, subCommitment?: number | null): number {
+export function rowWorkInPlace(
+  row: DailyWipRowLike,
+  subCommitment?: number | null,
+  // Cumulative % already logged for this sub line BEFORE this entry — the
+  // baseline its increment is measured from (see subEarnedIncrement). Defaults to
+  // 0 so a first entry (or any caller that doesn't track history) earns its full
+  // cumulative %, preserving prior behavior.
+  priorPercent = 0,
+): number {
   if (row.subcontractor_id && subCommitment != null && subCommitment > 0) {
-    return subEarnedValue(subCommitment, numeric(row.percent_complete));
+    return subEarnedIncrement(subCommitment, priorPercent, numeric(row.percent_complete));
   }
   return centsToDollars(
     dollarsToCents(laborCost(row)) +
@@ -230,14 +253,52 @@ export function commitmentBySubBucket(
 }
 
 // Total work-in-place across rows, resolving each sub line's commitment via the
-// lookup; self-perform rows fall back to labor + materials + equipment. Cents-safe.
+// lookup; self-perform rows fall back to labor + materials + equipment. A sub
+// line is valued by its increment since the last log, so `priorPercentFor`
+// supplies the cumulative % logged before each row (0 = no history). Summing
+// increments telescopes to the latest cumulative earned, so a day-over-day log
+// never re-earns the same work. Cents-safe.
 export function dailyWipWorkInPlaceTotal(
   rows: readonly DailyWipRowLike[],
   commitmentFor: (row: DailyWipRowLike) => number | null | undefined,
+  priorPercentFor: (row: DailyWipRowLike) => number = () => 0,
 ): number {
   return centsToDollars(
-    rows.reduce((cents, row) => cents + dollarsToCents(rowWorkInPlace(row, commitmentFor(row))), 0),
+    rows.reduce(
+      (cents, row) =>
+        cents + dollarsToCents(rowWorkInPlace(row, commitmentFor(row), priorPercentFor(row))),
+      0,
+    ),
   );
+}
+
+// The cumulative %-complete logged for a sub line's (company, cost code) as of the
+// entry IMMEDIATELY BEFORE `target` — by entry_date, then updated_at — or 0 if
+// it's the first. This is the baseline `target`'s earned increment is measured
+// from, so each day's log recognizes only the work put in place since the prior
+// log. `target.id` (when set) is excluded so an entry never counts as its own
+// predecessor while being edited.
+export function priorSubPercent(
+  target: WipPercentRowLike & { id?: string | null },
+  entries: readonly (WipPercentRowLike & { id?: string | null })[],
+): number {
+  const key = subCommitmentKey(target.subcontractor_id, target.cost_bucket_id);
+  if (!key) return 0;
+  const tDate = target.entry_date ?? "";
+  const tUpd = target.updated_at ?? "";
+  let best: { date: string; upd: string; pct: number } | null = null;
+  for (const e of entries) {
+    if (target.id != null && e.id != null && e.id === target.id) continue;
+    if (subCommitmentKey(e.subcontractor_id, e.cost_bucket_id) !== key) continue;
+    const eDate = e.entry_date ?? "";
+    const eUpd = e.updated_at ?? "";
+    const earlier = eDate < tDate || (eDate === tDate && eUpd < tUpd);
+    if (!earlier) continue;
+    if (!best || eDate > best.date || (eDate === best.date && eUpd > best.upd)) {
+      best = { date: eDate, upd: eUpd, pct: numeric(e.percent_complete) };
+    }
+  }
+  return best ? best.pct : 0;
 }
 
 export interface DailyWipTotals {

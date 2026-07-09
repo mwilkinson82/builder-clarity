@@ -10,10 +10,12 @@ import {
   isPercentOverridden,
   laborCost,
   laborHours,
+  priorSubPercent,
   productionRate,
   resolvePercentReview,
   rowWorkInPlace,
   subCommitmentKey,
+  subEarnedIncrement,
   subEarnedValue,
   sumLineItems,
 } from "../src/lib/daily-wip.ts";
@@ -161,6 +163,104 @@ assert.deepEqual(
     rowWorkInPlace(row({ crew_count: 2, hours: 8, labor_rate: 50 })),
     800,
     "self-perform line still crew × hours × rate",
+  );
+}
+
+// ── EARNED-VALUE INCREMENT (Darian, 2026-07-09): the field %-complete is
+//    CUMULATIVE, logged fresh each day. Herrera on Dock Pit ($142,600 buyout) was
+//    at 20% Monday; Tuesday he's at 30%. Tuesday's log put 10% in place ($14,260),
+//    NOT 30% again ($42,780). "it should just be another 10." ──
+{
+  // Cumulative → incremental: the dollars ADDED by moving 20% → 30%.
+  assert.equal(
+    subEarnedValue(142_600, 20),
+    28_520,
+    "20% of $142,600 = $28,520 (Monday, cumulative)",
+  );
+  assert.equal(
+    subEarnedValue(142_600, 30),
+    42_780,
+    "30% of $142,600 = $42,780 (Tuesday, cumulative)",
+  );
+  assert.equal(
+    subEarnedIncrement(142_600, 20, 30),
+    14_260,
+    "20% → 30% earns another $14,260, not $42,780 (Darian's 'another 10')",
+  );
+  assert.equal(
+    subEarnedIncrement(142_600, 0, 20),
+    28_520,
+    "first log (0 → 20%) earns the full 20%",
+  );
+  assert.equal(
+    subEarnedIncrement(142_600, 30, 20),
+    -14_260,
+    "a downward correction is a negative increment",
+  );
+
+  // rowWorkInPlace with a prior % values the day's increment.
+  const tuesday = {
+    crew_count: 0,
+    hours: 0,
+    labor_rate: 0,
+    material_cost: 0,
+    equipment_cost: 0,
+    quantity: 0,
+    subcontractor_id: "herrera",
+    cost_bucket_id: "dock-pit",
+    percent_complete: 30,
+  };
+  assert.equal(
+    rowWorkInPlace(tuesday, 142_600, 20),
+    14_260,
+    "Tuesday's entry earns the 10% increment",
+  );
+  assert.equal(
+    rowWorkInPlace(tuesday, 142_600),
+    42_780,
+    "no prior % (default 0) → full cumulative, unchanged",
+  );
+
+  // priorSubPercent finds the cumulative % as of the entry before each one.
+  const entries = [
+    {
+      id: "mon",
+      subcontractor_id: "herrera",
+      cost_bucket_id: "dock-pit",
+      percent_complete: 20,
+      entry_date: "2026-07-07",
+      updated_at: "2026-07-07T18:00:00Z",
+    },
+    {
+      id: "tue",
+      subcontractor_id: "herrera",
+      cost_bucket_id: "dock-pit",
+      percent_complete: 30,
+      entry_date: "2026-07-08",
+      updated_at: "2026-07-08T18:00:00Z",
+    },
+  ];
+  assert.equal(priorSubPercent(entries[0], entries), 0, "Monday is the first log — no prior");
+  assert.equal(priorSubPercent(entries[1], entries), 20, "Tuesday's prior is Monday's 20%");
+  // Different cost code / company shares no history.
+  assert.equal(
+    priorSubPercent({ ...entries[1], cost_bucket_id: "slab" }, entries),
+    0,
+    "a different cost code carries no prior %",
+  );
+
+  // Summing the daily increments telescopes to the latest cumulative earned —
+  // the whole point: two days never re-earn the same work.
+  const commitmentFor = () => 142_600;
+  const priorFor = (r: (typeof entries)[number]) => priorSubPercent(r, entries);
+  const monTotal = dailyWipWorkInPlaceTotal([entries[0]], commitmentFor, priorFor);
+  const tueTotal = dailyWipWorkInPlaceTotal([entries[1]], commitmentFor, priorFor);
+  assert.equal(monTotal, 28_520, "Monday's work in place = 20% increment");
+  assert.equal(tueTotal, 14_260, "Tuesday's work in place = 10% increment");
+  assert.equal(
+    monTotal + tueTotal,
+    42_780,
+    "increments telescope to 30% cumulative — no double-count",
   );
 }
 
