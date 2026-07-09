@@ -983,6 +983,53 @@ await expectContains(
   "project route wires the two-way link handlers + the carry-value prompt",
 );
 
+// CLAIMS MODULE (Claims/CO/Risk arc — slice 2): a dispute-resolution record with
+// its own pipeline status, money/time sought vs. awarded, and outgoing links to
+// the risk it came from + the CO it may resolve into.
+await expectContains(
+  "supabase/migrations/20260709170000_project_claims.sql",
+  [
+    /CREATE TABLE IF NOT EXISTS public\.project_claims/,
+    /claim_type text NOT NULL DEFAULT 'delay'/,
+    /status text NOT NULL DEFAULT 'in_preparation'/,
+    /project_claims_status_check/,
+    /risk_exposure_id uuid REFERENCES public\.exposures\(id\) ON DELETE SET NULL/,
+    /change_order_id uuid REFERENCES public\.change_orders\(id\) ON DELETE SET NULL/,
+    /public\.can_manage_project\(project_id\)/,
+  ],
+  "claims migration ships project_claims with pipeline status + risk/CO links (desk applies)",
+);
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [
+    /export interface ClaimRow/,
+    /const normalizeClaim/,
+    /export const createClaim/,
+    /export const updateClaim/,
+    /export const deleteClaim/,
+    /project_claims/,
+    /claims,/,
+  ],
+  "server layer defines claim CRUD + folds claims into getProject",
+);
+await expectContains(
+  "src/components/outcome/ClaimsWorkspace.tsx",
+  [
+    /export function ClaimsWorkspace/,
+    /Extension of time/,
+    /Delay damages/,
+    /In preparation/,
+    /Amount sought/,
+    /Time sought/,
+  ],
+  "claims workspace renders the claim list + create/edit dialog with type/status/amounts",
+);
+await expectContains(
+  "src/routes/_authenticated/projects.$projectId.tsx",
+  [/ClaimsWorkspace/, /claimCreate/, /claimUpdate/, /claimDelete/, /openClaimCount/, /"claims"/],
+  "project route wires the Claims tab + CRUD mutations",
+);
+
 await expectContains(
   "src/routes/_authenticated/team.tsx",
   [

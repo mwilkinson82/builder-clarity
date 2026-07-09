@@ -63,6 +63,11 @@ import {
   type InspectionDraft,
   type InspectionPatch,
 } from "@/components/outcome/InspectionsWorkspace";
+import {
+  ClaimsWorkspace,
+  type ClaimDraft,
+  type ClaimPatch,
+} from "@/components/outcome/ClaimsWorkspace";
 import { billingDocumentLabel } from "@/lib/billing-labels";
 import {
   LOCAL_BILLING_ID_PREFIX,
@@ -107,6 +112,9 @@ import {
   updateChangeOrder,
   deleteChangeOrder,
   linkChangeOrderExposure,
+  createClaim,
+  updateClaim,
+  deleteClaim,
   allocateChangeOrder,
   deleteChangeOrderAllocation,
   allocateExposure,
@@ -144,6 +152,7 @@ import {
   type BillingInvoiceRow,
   type ExposureRow,
   type InspectionRow,
+  type ClaimRow,
   type SovImportRow,
   type BucketRow,
 } from "@/lib/projects.functions";
@@ -175,6 +184,7 @@ import {
   Archive,
   ReceiptText,
   ShieldAlert,
+  Gavel,
   Trash2,
   Users,
 } from "lucide-react";
@@ -193,6 +203,7 @@ const PROJECT_TAB_VALUES = [
   "schedule",
   "inspections",
   "risk-tally",
+  "claims",
   "todos",
   "sov",
   "billing",
@@ -231,7 +242,7 @@ const PROJECT_NAV_GROUPS: ProjectNavGroup[] = [
     label: "Field",
     values: ["schedule", "daily-reports", "daily-wip", "inspections"],
   },
-  { key: "risk", label: "Risk", values: ["risk-tally", "todos"] },
+  { key: "risk", label: "Risk", values: ["risk-tally", "claims", "todos"] },
   { key: "parties", label: "Parties", values: ["subcontractors", "client-portal", "ior-report"] },
   { key: "docs", label: "Docs", values: ["file-room", "rfi-submittals"] },
 ];
@@ -389,6 +400,9 @@ function ProjectPage() {
   const createInspectionFn = useServerFn(createInspection);
   const updateInspectionFn = useServerFn(updateInspection);
   const deleteInspectionFn = useServerFn(deleteInspection);
+  const createClaimFn = useServerFn(createClaim);
+  const updateClaimFn = useServerFn(updateClaim);
+  const deleteClaimFn = useServerFn(deleteClaim);
   const updateBucketFn = useServerFn(updateBucket);
   const createBucketFn = useServerFn(createBucket);
   const deleteBucketFn = useServerFn(deleteBucket);
@@ -730,6 +744,40 @@ function ProjectPage() {
       });
     },
   });
+  const claimCreate = useMutation({
+    mutationFn: (input: ClaimDraft) => createClaimFn({ data: { projectId, ...input } }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Claim added", { description: "It's now tracked in the Claims log." });
+    },
+    onError: (err) => {
+      toast.error("Claim did not save", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const claimUpdate = useMutation({
+    mutationFn: (input: { id: string; patch: ClaimPatch }) =>
+      updateClaimFn({ data: { id: input.id, ...input.patch } }),
+    onSuccess: () => invalidate(),
+    onError: (err) => {
+      toast.error("Claim did not update", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
+  const claimDelete = useMutation({
+    mutationFn: (input: { id: string }) => deleteClaimFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Claim deleted");
+    },
+    onError: (err) => {
+      toast.error("Claim did not delete", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    },
+  });
   // SOV cell commits patch the cached bucket list immediately (group headers,
   // summary cards, and the footer recompute from it), then the settled
   // invalidate pulls the server truth including the IOR-facing rollup. The
@@ -1035,6 +1083,7 @@ function ProjectPage() {
     billingApplications,
     billingInvoices,
     inspections = [],
+    claims = [],
     rollup,
     guidance,
     warnings,
@@ -1368,6 +1417,9 @@ function ProjectPage() {
   const openInspectionCount = inspections.filter(
     (inspection) => !["passed", "cancelled"].includes(inspection.status),
   ).length;
+  const openClaimCount = claims.filter(
+    (claim) => !["resolved", "rejected", "withdrawn"].includes(claim.status),
+  ).length;
 
   const createTodoForRisk = (exposure: ExposureRow) => {
     const impact =
@@ -1630,6 +1682,12 @@ function ProjectPage() {
       detail: `${liveExposureCount} live`,
       icon: ShieldAlert,
       alert: liveExposureCount > 0,
+    },
+    {
+      value: "claims",
+      label: "Claims",
+      detail: `${openClaimCount} open`,
+      icon: Gavel,
     },
     {
       value: "todos",
@@ -2135,6 +2193,20 @@ function ProjectPage() {
                   saving={exposureAllocate.isPending || exposureAllocationRemove.isPending}
                 />
               </div>
+            </TabsContent>
+
+            <TabsContent value="claims" className="mt-0 space-y-6">
+              <WorkspaceHeader
+                title="Claims"
+                subtitle="Delay claims, extension-of-time and delay-damages claims — tracked through the dispute-resolution process from preparation to resolution."
+              />
+              <ClaimsWorkspace
+                claims={claims}
+                onCreate={(input) => claimCreate.mutate(input)}
+                onUpdate={(id, patch) => claimUpdate.mutate({ id, patch })}
+                onDelete={(id) => claimDelete.mutate({ id })}
+                saving={claimCreate.isPending || claimUpdate.isPending}
+              />
             </TabsContent>
 
             <TabsContent value="todos" className="mt-0 space-y-6">
