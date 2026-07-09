@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -27,6 +27,14 @@ import {
   generateDailyReportPacketPdf,
   type DailyReportPacketProject,
 } from "@/lib/daily-report-packet-pdf";
+import {
+  DAILY_REPORT_MAX_FILE_BYTES,
+  inferAttachmentType,
+  isAllowedAttachmentType,
+  mergeAttachmentManifest,
+  prepareAttachmentForUpload,
+  uploadFilesWithRetry,
+} from "@/lib/daily-report-uploads";
 import { DailyLogWorkLines } from "@/components/outcome/DailyLogWorkLines";
 import {
   CalendarDays,
@@ -46,14 +54,6 @@ import {
 } from "lucide-react";
 
 const BUCKET = "daily-reports";
-const MAX_FILE_SIZE = 25 * 1024 * 1024;
-const ALLOWED_TYPES = new Set([
-  "application/pdf",
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/heic",
-]);
 
 type VisibilityFilter = "all" | "client" | "internal";
 
@@ -174,6 +174,9 @@ export function DailyReportsWorkspace({
   const [removedAttachmentPaths, setRemovedAttachmentPaths] = useState<string[]>([]);
   const [filters, setFilters] = useState<ReportFilters>(() => emptyFilters());
   const [exportingPacket, setExportingPacket] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(
+    null,
+  );
 
   const {
     data: reports = [],
@@ -241,75 +244,167 @@ export function DailyReportsWorkspace({
     setEditingId(null);
   };
 
-  const uploadAttachments = async () => {
-    if (files.length === 0) return draft.attachment_manifest;
-
-    for (const file of files) {
-      if (!ALLOWED_TYPES.has(file.type)) {
-        throw new Error("Daily report uploads must be PDF, PNG, JPG, WebP, or HEIC.");
-      }
-      if (file.size > MAX_FILE_SIZE) {
-        throw new Error("Daily report uploads must be 25 MB or smaller.");
-      }
-    }
-
-    const uploaded: DailyReportAttachment[] = [];
-    for (const file of files) {
-      const safeName = sanitizeFileName(file.name) || "daily-report";
-      const path = `${projectId}/${draft.report_date}/${crypto.randomUUID()}-${safeName}`;
-      const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, file, {
-        contentType: file.type,
-        upsert: false,
-      });
-      if (uploadError) throw new Error(uploadError.message);
-      uploaded.push({
-        name: file.name,
-        path,
-        type: file.type,
-        size: file.size,
-        uploaded_at: new Date().toISOString(),
+  // The save is two-phase so a photo can never take the typed log down with
+  // it (field reality: 10 MB camera photos over job-site cellular used to
+  // hold the whole report hostage for minutes, and one blip lost everything):
+  //   1. the report row upserts immediately — the text is durable in ~1s
+  //   2. photos compress and upload through a retrying pool with progress,
+  //      then the manifest folds in whatever landed; anything that failed
+  //      stays selected so "Save" retries just those files.
+  const upsertReport = (manifest: DailyReportAttachment[]) => {
+    const primaryAttachment = manifest[0];
+    return upsertFn({
+      data: {
+        projectId,
+        report_date: draft.report_date,
+        author: draft.author,
+        weather: draft.weather,
+        crew_count: Number(draft.crew_count) || 0,
+        manpower: draft.manpower,
+        work_performed: draft.work_performed,
+        delays: draft.delays,
+        safety_notes: draft.safety_notes,
+        visitors: draft.visitors,
+        quality_notes: draft.quality_notes,
+        notes: draft.notes,
         client_visible: draft.client_visible,
-      });
-    }
+        attachment_manifest: manifest,
+        attachment_name: primaryAttachment?.name ?? "",
+        attachment_path: primaryAttachment?.path ?? "",
+        attachment_type: primaryAttachment?.type ?? "",
+      },
+    });
+  };
 
-    return [...draft.attachment_manifest, ...uploaded];
+  const uploadOneAttachment = async (file: File): Promise<DailyReportAttachment> => {
+    const prepared = await prepareAttachmentForUpload(file);
+    const safeName = sanitizeFileName(prepared.uploadName) || "daily-report";
+    const path = `${projectId}/${draft.report_date}/${crypto.randomUUID()}-${safeName}`;
+    const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, prepared.blob, {
+      contentType: prepared.contentType,
+      upsert: false,
+    });
+    if (uploadError) throw new Error(uploadError.message);
+    return {
+      name: file.name,
+      path,
+      type: prepared.contentType,
+      size: prepared.bytes,
+      uploaded_at: new Date().toISOString(),
+      client_visible: draft.client_visible,
+    };
   };
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (): Promise<{ report: DailyReportRow; failedFiles: File[] }> => {
       if (!draft.report_date) throw new Error("Choose a report date.");
-      const attachmentManifest = await uploadAttachments();
-      const primaryAttachment = attachmentManifest[0];
-      const report = await upsertFn({
-        data: {
-          projectId,
-          report_date: draft.report_date,
-          author: draft.author,
-          weather: draft.weather,
-          crew_count: Number(draft.crew_count) || 0,
-          manpower: draft.manpower,
-          work_performed: draft.work_performed,
-          delays: draft.delays,
-          safety_notes: draft.safety_notes,
-          visitors: draft.visitors,
-          quality_notes: draft.quality_notes,
-          notes: draft.notes,
-          client_visible: draft.client_visible,
-          attachment_manifest: attachmentManifest,
-          attachment_name: primaryAttachment?.name ?? "",
-          attachment_path: primaryAttachment?.path ?? "",
-          attachment_type: primaryAttachment?.type ?? "",
-        },
-      });
 
-      if (removedAttachmentPaths.length > 0) {
-        await supabase.storage.from(BUCKET).remove([...new Set(removedAttachmentPaths)]);
+      // Local checks first — instant, nothing saved or uploaded yet.
+      for (const file of files) {
+        const type = inferAttachmentType(file.name, file.type);
+        if (!isAllowedAttachmentType(type)) {
+          throw new Error(`${file.name} isn't a supported file. Use PDF, PNG, JPG, WebP, or HEIC.`);
+        }
+        if (file.size > DAILY_REPORT_MAX_FILE_BYTES) {
+          throw new Error(`${file.name} is over 25 MB. Remove it and save again.`);
+        }
       }
 
-      return report;
+      // Saving onto a date that already has a report UPDATES that day, so the
+      // carry decision (keep that day's stored photos) must come from the
+      // SERVER's view — a still-loading or stale client cache would silently
+      // detach (or resurrect) stored photos. If this read fails, stop before
+      // anything is written: the typed log is still in the form.
+      let freshReports: DailyReportRow[];
+      try {
+        freshReports = await qc.fetchQuery({
+          queryKey: ["daily-reports", projectId],
+          queryFn: () => listFn({ data: { projectId } }),
+        });
+      } catch {
+        throw new Error(
+          "Could not check this day's saved photos — check your connection and press Save again. Nothing was lost.",
+        );
+      }
+      // Carry the target day's stored photos unless they already live in this
+      // draft (editing that very report — removals there are deliberate).
+      // Also covers editing a report onto a DIFFERENT day that has its own
+      // photos: those must survive the move too.
+      const sameDayOther = freshReports.find(
+        (existing) => existing.report_date === draft.report_date && existing.id !== editingId,
+      );
+
+      // Phase 1: the typed log is durable before any photo touches the wire.
+      let report = await upsertReport(
+        sameDayOther
+          ? mergeAttachmentManifest(sameDayOther.attachment_manifest, draft.attachment_manifest)
+          : draft.attachment_manifest,
+      );
+
+      // Phase 2: compress + upload photos; a failed file never sinks the rest.
+      let failedFiles: File[] = [];
+      if (files.length > 0) {
+        const outcome = await uploadFilesWithRetry(files, uploadOneAttachment, {
+          onProgress: (done, total) => setUploadProgress({ done, total }),
+        });
+        failedFiles = outcome.failed.map((failure) => failure.file);
+        if (outcome.ok.length > 0) {
+          // The photos are in storage; one blip on this last small write must
+          // not turn a saved log plus landed photos into a false "did not
+          // save" — retry it, and on defeat hand every file to the retry flow.
+          let folded = false;
+          for (let attempt = 1; attempt <= 3 && !folded; attempt += 1) {
+            try {
+              report = await upsertReport(
+                mergeAttachmentManifest(report.attachment_manifest, outcome.ok),
+              );
+              folded = true;
+            } catch {
+              if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+            }
+          }
+          if (!folded) {
+            const alreadyFailed = new Set(failedFiles);
+            failedFiles = [...failedFiles, ...files.filter((file) => !alreadyFailed.has(file))];
+          }
+        }
+      }
+
+      // Cleaning up attachments the user removed is best-effort — never turn
+      // an already-saved report into a "did not save" error over cleanup.
+      if (removedAttachmentPaths.length > 0) {
+        try {
+          await supabase.storage.from(BUCKET).remove([...new Set(removedAttachmentPaths)]);
+        } catch {
+          // The saved report wins; orphaned files are harmless.
+        }
+      }
+
+      return { report, failedFiles };
     },
-    onSuccess: async (report) => {
+    onSuccess: async ({ report, failedFiles }) => {
       await qc.invalidateQueries({ queryKey: ["daily-reports", projectId] });
+      if (failedFiles.length > 0) {
+        // The log is saved; keep the leftover photos selected on that day so
+        // one more press of Save retries only what's missing.
+        setDraft(reportToDraft(report));
+        setEditingId(report.id);
+        setFiles(failedFiles);
+        setRemovedAttachmentPaths([]);
+        setFileInputKey((key) => key + 1);
+        const names = failedFiles.map((file) => file.name).join(", ");
+        toast.error(
+          failedFiles.length === 1
+            ? "1 photo didn't finish uploading"
+            : `${failedFiles.length} photos didn't finish uploading`,
+          {
+            description: `Your log for ${formatDate(report.report_date)} is saved. ${names} ${
+              failedFiles.length === 1 ? "is" : "are"
+            } still selected — press Save to retry.`,
+          },
+        );
+        return;
+      }
       toast.success(editingId ? "Daily report updated" : "Daily report saved", {
         description: `${formatDate(report.report_date)} is stored on this job.`,
       });
@@ -320,7 +415,21 @@ export function DailyReportsWorkspace({
         description: err instanceof Error ? err.message : "Check the fields and try again.",
       });
     },
+    onSettled: () => {
+      setUploadProgress(null);
+    },
   });
+
+  // Leaving the page mid-save is how logs used to vanish — warn first.
+  useEffect(() => {
+    if (!saveMutation.isPending) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [saveMutation.isPending]);
 
   const deleteMutation = useMutation({
     mutationFn: async (report: DailyReportRow) => {
@@ -456,180 +565,207 @@ export function DailyReportsWorkspace({
             </p>
           </div>
           {editingId && (
-            <Button variant="outline" size="sm" onClick={resetForm}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={resetForm}
+              disabled={saveMutation.isPending}
+            >
               Cancel edit
             </Button>
           )}
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[1fr_1fr_120px]">
-          <Field label="Report date">
-            <Input
-              type="date"
-              value={draft.report_date}
-              onChange={(e) => setDraft((current) => ({ ...current, report_date: e.target.value }))}
-            />
-          </Field>
-          <Field label="Author / PM">
-            <Input
-              value={draft.author}
-              placeholder="PM, superintendent, or field lead"
-              onChange={(e) => setDraft((current) => ({ ...current, author: e.target.value }))}
-            />
-          </Field>
-          <Field label="Crew count">
-            <Input
-              type="number"
-              min={0}
-              value={draft.crew_count}
-              onChange={(e) => setDraft((current) => ({ ...current, crew_count: e.target.value }))}
-            />
-          </Field>
-        </div>
-
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <Field label="Weather / site conditions">
-            <Input
-              value={draft.weather}
-              placeholder="Clear, rain delay, high heat, site access, etc."
-              onChange={(e) => setDraft((current) => ({ ...current, weather: e.target.value }))}
-            />
-          </Field>
-          <Field label="Manpower by trade">
-            <Input
-              value={draft.manpower}
-              placeholder="3 carpenters, 2 electricians, 1 painter"
-              onChange={(e) => setDraft((current) => ({ ...current, manpower: e.target.value }))}
-            />
-          </Field>
-        </div>
-
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <Field label="Work performed">
-            <Textarea
-              rows={4}
-              value={draft.work_performed}
-              placeholder="What happened on site today?"
-              onChange={(e) =>
-                setDraft((current) => ({ ...current, work_performed: e.target.value }))
-              }
-            />
-          </Field>
-          <Field label="Delays / blockers">
-            <Textarea
-              rows={4}
-              value={draft.delays}
-              placeholder="Schedule slippage, missing information, trade issues, owner decisions, inspections."
-              onChange={(e) => setDraft((current) => ({ ...current, delays: e.target.value }))}
-            />
-          </Field>
-          <Field label="Visitors / inspections">
-            <Textarea
-              rows={3}
-              value={draft.visitors}
-              placeholder="Client visits, inspectors, consultants, vendors, deliveries."
-              onChange={(e) => setDraft((current) => ({ ...current, visitors: e.target.value }))}
-            />
-          </Field>
-          <Field label="Safety notes">
-            <Textarea
-              rows={3}
-              value={draft.safety_notes}
-              placeholder="Incidents, inspections, toolbox talks, safety holds."
-              onChange={(e) =>
-                setDraft((current) => ({ ...current, safety_notes: e.target.value }))
-              }
-            />
-          </Field>
-          <Field label="Quality notes">
-            <Textarea
-              rows={3}
-              value={draft.quality_notes}
-              placeholder="Defects, punch items, rework, inspection quality notes."
-              onChange={(e) =>
-                setDraft((current) => ({ ...current, quality_notes: e.target.value }))
-              }
-            />
-          </Field>
-          <Field label="Internal notes">
-            <Textarea
-              rows={3}
-              value={draft.notes}
-              placeholder="Private PM notes that should stay in the project record."
-              onChange={(e) => setDraft((current) => ({ ...current, notes: e.target.value }))}
-            />
-          </Field>
-        </div>
-
-        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-          <Field label="Attachments">
-            <div className="space-y-3">
-              <label
-                htmlFor="daily-report-file-input"
-                className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-hairline bg-surface px-4 py-6 text-center transition-colors hover:border-accent/60 hover:bg-accent/5"
-              >
-                <Upload className="h-6 w-6 text-accent" />
-                <span className="text-sm font-medium text-foreground">
-                  Click to attach photos or documents
-                </span>
-                <span className="text-[11px] text-muted-foreground">
-                  PDF, PNG, JPG, WebP, or HEIC · up to 25&nbsp;MB each
-                </span>
-                <input
-                  id="daily-report-file-input"
-                  key={fileInputKey}
-                  type="file"
-                  multiple
-                  accept="application/pdf,image/png,image/jpeg,image/webp,image/heic"
-                  className="sr-only"
-                  onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
-                />
-              </label>
-              {files.length > 0 && (
-                <AttachmentList
-                  title="Ready to upload"
-                  attachments={files.map((file) => ({
-                    name: file.name,
-                    path: file.name,
-                    type: file.type,
-                    size: file.size,
-                    uploaded_at: "",
-                    client_visible: draft.client_visible,
-                  }))}
-                  onRemove={(_, index) => removePendingFile(index)}
-                />
-              )}
-              {draft.attachment_manifest.length > 0 && (
-                <AttachmentList
-                  title="Stored on this report"
-                  attachments={draft.attachment_manifest}
-                  onRemove={(attachment) => removeExistingAttachment(attachment.path)}
-                />
-              )}
-            </div>
-          </Field>
-
-          <div className="rounded-md border border-hairline bg-surface p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <Label htmlFor="client-visible-daily-log" className="text-sm font-medium">
-                  Client visible
-                </Label>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Shares this day's log with the client portal and packet exports. The Work put in
-                  place section stays internal — the client never sees it.
-                </p>
-              </div>
-              <Switch
-                id="client-visible-daily-log"
-                checked={draft.client_visible}
-                onCheckedChange={(checked) =>
-                  setDraft((current) => ({ ...current, client_visible: checked }))
+        {/* Everything in this fieldset is captured when Save is pressed —
+            lock it while the save runs so nothing typed or picked mid-flight
+            can be silently thrown away when the save settles. */}
+        <fieldset disabled={saveMutation.isPending} className="contents">
+          <div className="grid gap-4 lg:grid-cols-[1fr_1fr_120px]">
+            <Field label="Report date">
+              <Input
+                type="date"
+                value={draft.report_date}
+                onChange={(e) =>
+                  setDraft((current) => ({ ...current, report_date: e.target.value }))
                 }
               />
+            </Field>
+            <Field label="Author / PM">
+              <Input
+                value={draft.author}
+                placeholder="PM, superintendent, or field lead"
+                onChange={(e) => setDraft((current) => ({ ...current, author: e.target.value }))}
+              />
+            </Field>
+            <Field label="Crew count">
+              <Input
+                type="number"
+                min={0}
+                value={draft.crew_count}
+                onChange={(e) =>
+                  setDraft((current) => ({ ...current, crew_count: e.target.value }))
+                }
+              />
+            </Field>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <Field label="Weather / site conditions">
+              <Input
+                value={draft.weather}
+                placeholder="Clear, rain delay, high heat, site access, etc."
+                onChange={(e) => setDraft((current) => ({ ...current, weather: e.target.value }))}
+              />
+            </Field>
+            <Field label="Manpower by trade">
+              <Input
+                value={draft.manpower}
+                placeholder="3 carpenters, 2 electricians, 1 painter"
+                onChange={(e) => setDraft((current) => ({ ...current, manpower: e.target.value }))}
+              />
+            </Field>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <Field label="Work performed">
+              <Textarea
+                rows={4}
+                value={draft.work_performed}
+                placeholder="What happened on site today?"
+                onChange={(e) =>
+                  setDraft((current) => ({ ...current, work_performed: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="Delays / blockers">
+              <Textarea
+                rows={4}
+                value={draft.delays}
+                placeholder="Schedule slippage, missing information, trade issues, owner decisions, inspections."
+                onChange={(e) => setDraft((current) => ({ ...current, delays: e.target.value }))}
+              />
+            </Field>
+            <Field label="Visitors / inspections">
+              <Textarea
+                rows={3}
+                value={draft.visitors}
+                placeholder="Client visits, inspectors, consultants, vendors, deliveries."
+                onChange={(e) => setDraft((current) => ({ ...current, visitors: e.target.value }))}
+              />
+            </Field>
+            <Field label="Safety notes">
+              <Textarea
+                rows={3}
+                value={draft.safety_notes}
+                placeholder="Incidents, inspections, toolbox talks, safety holds."
+                onChange={(e) =>
+                  setDraft((current) => ({ ...current, safety_notes: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="Quality notes">
+              <Textarea
+                rows={3}
+                value={draft.quality_notes}
+                placeholder="Defects, punch items, rework, inspection quality notes."
+                onChange={(e) =>
+                  setDraft((current) => ({ ...current, quality_notes: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="Internal notes">
+              <Textarea
+                rows={3}
+                value={draft.notes}
+                placeholder="Private PM notes that should stay in the project record."
+                onChange={(e) => setDraft((current) => ({ ...current, notes: e.target.value }))}
+              />
+            </Field>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+            <Field label="Attachments">
+              <div className="space-y-3">
+                <label
+                  htmlFor="daily-report-file-input"
+                  className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-hairline bg-surface px-4 py-6 text-center transition-colors hover:border-accent/60 hover:bg-accent/5"
+                >
+                  <Upload className="h-6 w-6 text-accent" />
+                  <span className="text-sm font-medium text-foreground">
+                    Click to attach photos or documents
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    PDF, PNG, JPG, WebP, or HEIC · up to 25&nbsp;MB each · big photos are shrunk
+                    automatically for faster upload
+                  </span>
+                  <input
+                    id="daily-report-file-input"
+                    key={fileInputKey}
+                    type="file"
+                    multiple
+                    accept="application/pdf,image/png,image/jpeg,image/webp,image/heic"
+                    className="sr-only"
+                    onChange={(e) => {
+                      // Picking again ADDS to the list (supers attach photos in
+                      // batches); dedupe so the same pick twice can't double up.
+                      const picked = Array.from(e.target.files ?? []);
+                      if (picked.length === 0) return;
+                      const fileKey = (file: File) =>
+                        `${file.name}|${file.size}|${file.lastModified}`;
+                      setFiles((current) => {
+                        const seen = new Set(current.map(fileKey));
+                        return [...current, ...picked.filter((file) => !seen.has(fileKey(file)))];
+                      });
+                      setFileInputKey((key) => key + 1);
+                    }}
+                  />
+                </label>
+                {files.length > 0 && (
+                  <AttachmentList
+                    title="Ready to upload"
+                    attachments={files.map((file) => ({
+                      name: file.name,
+                      path: file.name,
+                      type: file.type,
+                      size: file.size,
+                      uploaded_at: "",
+                      client_visible: draft.client_visible,
+                    }))}
+                    onRemove={(_, index) => removePendingFile(index)}
+                  />
+                )}
+                {draft.attachment_manifest.length > 0 && (
+                  <AttachmentList
+                    title="Stored on this report"
+                    attachments={draft.attachment_manifest}
+                    onRemove={(attachment) => removeExistingAttachment(attachment.path)}
+                  />
+                )}
+              </div>
+            </Field>
+
+            <div className="rounded-md border border-hairline bg-surface p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label htmlFor="client-visible-daily-log" className="text-sm font-medium">
+                    Client visible
+                  </Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Shares this day's log with the client portal and packet exports. The Work put in
+                    place section stays internal — the client never sees it.
+                  </p>
+                </div>
+                <Switch
+                  id="client-visible-daily-log"
+                  checked={draft.client_visible}
+                  onCheckedChange={(checked) =>
+                    setDraft((current) => ({ ...current, client_visible: checked }))
+                  }
+                />
+              </div>
             </div>
           </div>
-        </div>
+        </fieldset>
 
         <div className="mt-4">
           <DailyLogWorkLines
@@ -639,7 +775,7 @@ export function DailyReportsWorkspace({
           />
         </div>
 
-        <div className="mt-5 flex justify-end">
+        <div className="mt-5 flex flex-col items-end gap-1.5">
           <Button
             onClick={() => saveMutation.mutate()}
             disabled={saveMutation.isPending}
@@ -651,11 +787,20 @@ export function DailyReportsWorkspace({
               <Save className="h-3.5 w-3.5" />
             )}
             {saveMutation.isPending
-              ? "Saving..."
+              ? uploadProgress && uploadProgress.total > 0
+                ? `Uploading photo ${Math.min(uploadProgress.done + 1, uploadProgress.total)} of ${
+                    uploadProgress.total
+                  }...`
+                : "Saving..."
               : editingId
                 ? "Save changes"
                 : "Save daily report"}
           </Button>
+          {saveMutation.isPending && uploadProgress ? (
+            <p className="text-[11px] text-muted-foreground">
+              Your log is saved — photos are still uploading. Keep this page open until they finish.
+            </p>
+          ) : null}
         </div>
       </section>
 
