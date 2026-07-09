@@ -863,6 +863,27 @@ const profileUpdateInput = z.object({
   company_title: z.string().max(120).default(""),
 });
 
+// The signed-in user's own profile — feeds the avatar / greeting / profile menu
+// on the home screen without loading the whole team roster.
+export const getMyProfile = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("profiles")
+      .select("id,email,full_name,avatar_url,company_title")
+      .eq("id", context.userId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    const row = (data ?? {}) as Record<string, unknown>;
+    return {
+      id: context.userId,
+      email: str(row.email),
+      full_name: str(row.full_name),
+      avatar_url: str(row.avatar_url),
+      company_title: str(row.company_title),
+    };
+  });
+
 export const updateMyProfile = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof profileUpdateInput>) => profileUpdateInput.parse(input))
