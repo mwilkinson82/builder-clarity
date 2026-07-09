@@ -254,6 +254,30 @@ export interface ClaimRow {
   updated_at: string;
 }
 
+export type ClaimEventType =
+  | "submitted"
+  | "received"
+  | "reviewed"
+  | "meeting"
+  | "returned_for_revision"
+  | "resubmitted"
+  | "resolved"
+  | "other";
+
+export interface ClaimEventRow {
+  id: string;
+  claim_id: string;
+  project_id: string;
+  seed_key: string;
+  event_type: ClaimEventType;
+  event_date: string | null;
+  revision_number: number;
+  note: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BucketRow {
   id: string;
   project_id: string;
@@ -624,6 +648,36 @@ const normalizeClaim = (row: Record<string, unknown>): ClaimRow => {
     resolved_at: (row.resolved_at as string | null) ?? null,
     risk_exposure_id: (row.risk_exposure_id as string | null) ?? null,
     change_order_id: (row.change_order_id as string | null) ?? null,
+    created_by: (row.created_by as string | null) ?? null,
+    created_at: str(row.created_at),
+    updated_at: str(row.updated_at),
+  };
+};
+
+const CLAIM_EVENT_TYPES = [
+  "submitted",
+  "received",
+  "reviewed",
+  "meeting",
+  "returned_for_revision",
+  "resubmitted",
+  "resolved",
+  "other",
+] as const;
+
+const normalizeClaimEvent = (row: Record<string, unknown>): ClaimEventRow => {
+  const eventType = str(row.event_type, "submitted");
+  return {
+    id: row.id as string,
+    claim_id: row.claim_id as string,
+    project_id: row.project_id as string,
+    seed_key: str(row.seed_key),
+    event_type: CLAIM_EVENT_TYPES.includes(eventType as ClaimEventType)
+      ? (eventType as ClaimEventType)
+      : "other",
+    event_date: (row.event_date as string | null) ?? null,
+    revision_number: Math.max(0, Math.trunc(num(row.revision_number))),
+    note: str(row.note),
     created_by: (row.created_by as string | null) ?? null,
     created_at: str(row.created_at),
     updated_at: str(row.updated_at),
@@ -1564,6 +1618,11 @@ export const getProject = createServerFn({ method: "GET" })
       .select("*")
       .eq("project_id", pid)
       .order("created_at", { ascending: false });
+    const claimEventRes = await dynamicTable(context.supabase, "project_claim_events")
+      .select("*")
+      .eq("project_id", pid)
+      .order("event_date", { ascending: true, nullsFirst: true })
+      .order("created_at", { ascending: true });
     if (eRes.error) throw new Error(eRes.error.message);
     if (cRes.error) throw new Error(cRes.error.message);
     if (bRes.error) throw new Error(bRes.error.message);
@@ -1599,6 +1658,14 @@ export const getProject = createServerFn({ method: "GET" })
         claimRes.error.message.includes("schema cache"));
     if (claimRes.error && !claimsTableMissing) {
       throw new Error(claimRes.error.message);
+    }
+    const claimEventsTableMissing =
+      claimEventRes.error &&
+      (isMissingRestRelation(claimEventRes.error, "project_claim_events") ||
+        claimEventRes.error.message.includes("project_claim_events") ||
+        claimEventRes.error.message.includes("schema cache"));
+    if (claimEventRes.error && !claimEventsTableMissing) {
+      throw new Error(claimEventRes.error.message);
     }
 
     let billingEventRows: BillingApplicationEventRow[] = [];
@@ -1795,6 +1862,11 @@ export const getProject = createServerFn({ method: "GET" })
       : ((claimRes.data ?? []) as unknown[]).map((row) =>
           normalizeClaim(row as Record<string, unknown>),
         );
+    const claimEvents: ClaimEventRow[] = claimEventsTableMissing
+      ? []
+      : ((claimEventRes.data ?? []) as unknown[]).map((row) =>
+          normalizeClaimEvent(row as Record<string, unknown>),
+        );
     const decisions: DecisionRow[] = (dRes.data ?? []).map((d) =>
       normalizeDecision(d as Record<string, unknown>),
     );
@@ -1910,6 +1982,7 @@ export const getProject = createServerFn({ method: "GET" })
       billingInvoices,
       inspections,
       claims,
+      claimEvents,
       rollup,
       guidance,
       warnings,
@@ -3027,6 +3100,75 @@ export const deleteClaim = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { error } = await dynamicTable(context.supabase, "project_claims")
+      .delete()
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true, id: data.id };
+  });
+
+// ---------------- CLAIM CYCLE LOG ----------------
+// The dated back-and-forth on a claim (sent → received → reviewed → meeting →
+// kicked back → resubmitted → resolved). project_id rides on the row so RLS +
+// getProject can filter by project; claim_id ties it to its claim.
+
+const claimEventInput = z.object({
+  claimId: z.string().uuid(),
+  event_type: z
+    .enum([
+      "submitted",
+      "received",
+      "reviewed",
+      "meeting",
+      "returned_for_revision",
+      "resubmitted",
+      "resolved",
+      "other",
+    ])
+    .default("submitted"),
+  event_date: z.string().nullable().optional(),
+  revision_number: z.number().int().min(0).default(0),
+  note: z.string().max(2000).default(""),
+  seed_key: z.string().max(120).default(""),
+});
+
+export const createClaimEvent = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string } & z.input<typeof claimEventInput>) =>
+    z.object({ projectId: z.string().uuid() }).merge(claimEventInput).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { projectId, claimId, ...rest } = data;
+    const { data: inserted, error } = await dynamicTable(context.supabase, "project_claim_events")
+      .insert({ project_id: projectId, claim_id: claimId, ...rest, created_by: context.userId })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    return { ok: true, id: (inserted as { id?: string } | null)?.id ?? "" };
+  });
+
+export const updateClaimEvent = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator(
+    (input: { id: string } & Partial<Omit<z.input<typeof claimEventInput>, "claimId">>) =>
+      z
+        .object({ id: z.string().uuid() })
+        .merge(claimEventInput.omit({ claimId: true }).partial())
+        .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { id, ...patch } = data;
+    const { error } = await dynamicTable(context.supabase, "project_claim_events")
+      .update(patch)
+      .eq("id", id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteClaimEvent = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "project_claim_events")
       .delete()
       .eq("id", data.id);
     if (error) throw new Error(error.message);
@@ -5128,6 +5270,117 @@ const isProjectClaimsSchemaError = (error: DynamicSupabaseError | null) => {
   );
 };
 
+const isProjectClaimEventsSchemaError = (error: DynamicSupabaseError | null) => {
+  const message = (error?.message ?? "").toLowerCase();
+  return (
+    isMissingRestRelation(error, "project_claim_events") ||
+    message.includes("project_claim_events") ||
+    message.includes("schema cache")
+  );
+};
+
+// A full cycle on the electrical extension-of-time claim (CLM-001): sent →
+// received → meeting → kicked back → resubmitted revised. Shows the cycle log
+// end to end in the demo.
+const harborDemoClaimEvents = [
+  {
+    seed_key: "harbor-demo:claim-event:electrical-submitted",
+    event_type: "submitted",
+    event_date: "2026-06-18",
+    revision_number: 0,
+    note: "Claim package submitted to the owner's rep with the delay analysis and cost backup.",
+  },
+  {
+    seed_key: "harbor-demo:claim-event:electrical-received",
+    event_type: "received",
+    event_date: "2026-06-20",
+    revision_number: 0,
+    note: "Owner's rep acknowledged receipt and opened review.",
+  },
+  {
+    seed_key: "harbor-demo:claim-event:electrical-meeting",
+    event_type: "meeting",
+    event_date: "2026-06-27",
+    revision_number: 0,
+    note: "Review meeting — owner questioned the extended GC rate and the critical-path tie.",
+  },
+  {
+    seed_key: "harbor-demo:claim-event:electrical-returned",
+    event_type: "returned_for_revision",
+    event_date: "2026-07-01",
+    revision_number: 0,
+    note: "Kicked back: tighten the critical-path narrative and itemize the extended general conditions.",
+  },
+  {
+    seed_key: "harbor-demo:claim-event:electrical-resubmitted",
+    event_type: "resubmitted",
+    event_date: "2026-07-08",
+    revision_number: 1,
+    note: "Revised claim resubmitted with the reworked schedule analysis and itemized GCs.",
+  },
+] as const;
+
+// Seed the electrical claim's cycle log. Separate from the claims seed because a
+// second open may find the claims already there but the events table freshly
+// migrated in — so this always runs and dedupes on its own seed keys.
+const seedHarborDemoClaimEvents = async (
+  supabase: unknown,
+  projectId: string,
+  seedWarnings: string[],
+) => {
+  const { data: claimRows, error: claimLookupError } = await dynamicTable(
+    supabase,
+    "project_claims",
+  )
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("seed_key", "harbor-demo:claim:electrical-delay")
+    .limit(1);
+  if (claimLookupError) {
+    if (isProjectClaimsSchemaError(claimLookupError)) return { insertedCount: 0 };
+    throw new Error(claimLookupError.message);
+  }
+  const claimId =
+    Array.isArray(claimRows) && claimRows[0] ? (claimRows[0] as { id?: string }).id : undefined;
+  if (!claimId) return { insertedCount: 0 };
+
+  const { data: existingEventRows, error: eventLookupError } = await dynamicTable(
+    supabase,
+    "project_claim_events",
+  )
+    .select("seed_key")
+    .eq("project_id", projectId)
+    .limit(100);
+  if (eventLookupError) {
+    if (isProjectClaimEventsSchemaError(eventLookupError)) {
+      seedWarnings.push(`Claim cycle demo skipped: ${eventLookupError.message}`);
+      return { insertedCount: 0 };
+    }
+    throw new Error(eventLookupError.message);
+  }
+  const existingSeedKeys = new Set(
+    (Array.isArray(existingEventRows) ? existingEventRows : [])
+      .map((row) => (row as { seed_key?: string | null }).seed_key)
+      .filter((key): key is string => Boolean(key)),
+  );
+  const rowsToInsert = harborDemoClaimEvents.filter(
+    (event) => !existingSeedKeys.has(event.seed_key),
+  );
+  if (rowsToInsert.length === 0) return { insertedCount: 0 };
+
+  const { error: insertError } = await dynamicTable(supabase, "project_claim_events").insert(
+    rowsToInsert.map((event) => ({ project_id: projectId, claim_id: claimId, ...event })),
+  );
+  if (insertError) {
+    if (isProjectClaimEventsSchemaError(insertError)) {
+      seedWarnings.push(`Claim cycle demo insert skipped: ${insertError.message}`);
+      return { insertedCount: 0 };
+    }
+    throw new Error(insertError.message);
+  }
+  return { insertedCount: rowsToInsert.length };
+};
+
 const seedHarborDemoClaims = async (
   supabase: unknown,
   projectId: string,
@@ -5154,19 +5407,23 @@ const seedHarborDemoClaims = async (
   );
   const rowsToInsert = harborDemoClaims.filter((claim) => !existingSeedKeys.has(claim.seed_key));
 
-  if (rowsToInsert.length === 0) return { insertedCount: 0 };
+  if (rowsToInsert.length > 0) {
+    const { error: insertError } = await dynamicTable(supabase, "project_claims").insert(
+      rowsToInsert.map((claim) => ({ project_id: projectId, ...claim })),
+    );
 
-  const { error: insertError } = await dynamicTable(supabase, "project_claims").insert(
-    rowsToInsert.map((claim) => ({ project_id: projectId, ...claim })),
-  );
-
-  if (insertError) {
-    if (isProjectClaimsSchemaError(insertError)) {
-      seedWarnings.push(`Claim demo insert skipped: ${insertError.message}`);
-      return { insertedCount: 0 };
+    if (insertError) {
+      if (isProjectClaimsSchemaError(insertError)) {
+        seedWarnings.push(`Claim demo insert skipped: ${insertError.message}`);
+        return { insertedCount: 0 };
+      }
+      throw new Error(insertError.message);
     }
-    throw new Error(insertError.message);
   }
+
+  // Always attempt the cycle log — the events table may have landed after the
+  // claims did, and this dedupes on its own seed keys.
+  await seedHarborDemoClaimEvents(supabase, projectId, seedWarnings);
 
   return { insertedCount: rowsToInsert.length };
 };
