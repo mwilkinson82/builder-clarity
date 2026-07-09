@@ -122,6 +122,7 @@ export function BudgetLineDrawer({
   mode,
   bucket,
   subCost,
+  selfPerformWip = 0,
   budgetLocked,
   overrides,
   onSave,
@@ -136,6 +137,9 @@ export function BudgetLineDrawer({
   /** The line being edited. Null in create mode. */
   bucket: BucketRow | null;
   subCost?: SubBucketCostLite;
+  /** Self-perform daily WIP cost folded into this line's actual on the ledger. The
+   * field below edits the manual base; this is added on top from the daily log. */
+  selfPerformWip?: number;
   budgetLocked: boolean;
   /** Override history for this line, newest first. */
   overrides: BudgetOverrideRow[];
@@ -387,12 +391,20 @@ export function BudgetLineDrawer({
                     ) : null}
                   </div>
                 ) : (
-                  <MoneyInput
-                    value={actual}
-                    onValueChange={setActual}
-                    align="right"
-                    className="h-9 w-36"
-                  />
+                  <div>
+                    <MoneyInput
+                      value={actual}
+                      onValueChange={setActual}
+                      align="right"
+                      className="h-9 w-36"
+                    />
+                    {selfPerformWip > 0 ? (
+                      <div className="mt-1 max-w-[12rem] text-[11px] leading-snug text-muted-foreground">
+                        + {fmtUSD(selfPerformWip)} from daily WIP (added on the ledger; edit this
+                        field only to adjust the manual base).
+                      </div>
+                    ) : null}
+                  </div>
                 )}
               </Field>
               <Field
