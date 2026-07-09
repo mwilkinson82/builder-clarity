@@ -245,12 +245,16 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
 const PROJECT_NAV_RAIL_CLASS =
   "flex h-auto w-full items-stretch justify-start gap-4 overflow-x-auto rounded-lg border border-accent/25 bg-accent/[0.07] p-2 shadow-[0_18px_42px_color-mix(in_srgb,var(--color-accent)_16%,transparent),0_4px_12px_color-mix(in_srgb,var(--color-foreground)_10%,transparent)] ring-1 ring-accent/15 backdrop-blur-sm lg:flex-col lg:gap-5 lg:overflow-visible";
 
-function projectNavItemClass({ active }: { active?: boolean }) {
+// Active styling rides Radix's `data-[state=active]` rather than a JS flag: the
+// shadcn TabsTrigger base sets `data-[state=active]:bg-background/text-foreground`,
+// so a plain `bg-accent` loses the cascade and the active tab paints paper. Same
+// variant → tailwind-merge keeps ours (it wins as the later class). The CRM item
+// is an <a> with no data-state, so it always reads inactive.
+function projectNavItemClass() {
   return cn(
     "group relative flex min-w-[168px] items-start gap-2.5 overflow-hidden rounded-md border px-3 py-2.5 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:min-w-0",
-    active
-      ? "border-accent/70 bg-accent text-accent-foreground shadow-[0_12px_26px_color-mix(in_srgb,var(--color-accent)_30%,transparent)] ring-1 ring-accent/35"
-      : "border-transparent bg-card/45 text-muted-foreground hover:border-accent/35 hover:bg-card/85 hover:text-foreground hover:shadow-sm",
+    "border-transparent bg-card/45 text-muted-foreground hover:border-accent/35 hover:bg-card/85 hover:text-foreground hover:shadow-sm",
+    "data-[state=active]:border-accent/70 data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-[0_12px_26px_color-mix(in_srgb,var(--color-accent)_30%,transparent)] data-[state=active]:ring-1 data-[state=active]:ring-accent/35 data-[state=active]:hover:bg-accent data-[state=active]:hover:text-accent-foreground",
   );
 }
 
@@ -1809,10 +1813,7 @@ function ProjectPage() {
                 href="/?tab=crm"
                 aria-label="CRM: Relationships"
                 title="CRM: Relationships"
-                className={cn(
-                  projectNavItemClass({}),
-                  "shrink-0 self-start lg:shrink lg:self-auto",
-                )}
+                className={cn(projectNavItemClass(), "shrink-0 self-start lg:shrink lg:self-auto")}
               >
                 <BriefcaseBusiness className={projectNavIconClass({})} />
                 <span className="min-w-0 flex-1">
@@ -1835,7 +1836,7 @@ function ProjectPage() {
                           value={item.value}
                           aria-label={`${item.label}: ${item.detail}`}
                           title={`${item.label}: ${item.detail}`}
-                          className={projectNavItemClass({ active: isActive })}
+                          className={projectNavItemClass()}
                         >
                           {isActive && (
                             <span

@@ -668,7 +668,9 @@ await expectContains(
     // Detail sub-line turns the rail into a status board; alarming ones go danger.
     /projectNavDetailClass/,
     /const isActive = activeProjectTab === item\.value/,
-    /className=\{projectNavItemClass\(\{ active: isActive \}\)\}/,
+    // Active fill rides Radix data-state so it overrides the shadcn TabsTrigger
+    // base (otherwise the active tab paints bg-background, not clay).
+    /data-\[state=active\]:bg-accent data-\[state=active\]:text-accent-foreground/,
     // Persistent "you are here" section title (group · label) atop the stage.
     /\{activeNavGroup\.label\} · \{activeNavItem\.label\}/,
     /className="eyebrow px-1/,
