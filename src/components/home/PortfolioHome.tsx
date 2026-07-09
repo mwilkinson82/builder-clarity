@@ -33,6 +33,11 @@ function toneClass(prefix: "ow-tone" | "ow-bg", tone: WorklistJob["tone"]) {
   return `${prefix}-${tone === "muted" ? "" : tone}`.trim();
 }
 
+// CRM / projects live as tabs on the portfolio route; the cutover keeps these
+// `?tab=` URLs working, so the home links here need no re-wiring when 6a lands on /.
+const crmHref = (oppId?: string) => `/?tab=crm${oppId ? `&opportunity=${oppId}` : ""}`;
+const PROJECTS_HREF = "/?tab=projects";
+
 /** The owning company's logo (initials fallback), shown left of a job's name. */
 function JobLogo({ url, name }: { url: string; name: string }) {
   return (
@@ -131,9 +136,9 @@ export function PortfolioHome() {
               <span>⌕</span>
               <span>Search…</span>
             </div>
-            <Link to="/" className="ow-btn ow-btn--signal">
+            <a href={PROJECTS_HREF} className="ow-btn ow-btn--signal">
               + New project
-            </Link>
+            </a>
             <AvatarMenu identity={identity} />
           </div>
         </header>
@@ -230,9 +235,9 @@ function OwnerView({
         </div>
         <HeroStats stats={metrics.ownerStats} />
         <div className="ow-hero__cta">
-          <Link to="/" className="ow-btn ow-btn--light">
+          <a href={PROJECTS_HREF} className="ow-btn ow-btn--light">
             Open {identity.companyName} projects →
-          </Link>
+          </a>
           <a href="/?tab=crm" className="ow-btn ow-btn--ghost-dark">
             Open {identity.companyName} CRM →
           </a>
@@ -252,8 +257,11 @@ function OwnerView({
         </div>
         <div className="ow-pipeline">
           {metrics.pipeline.map((stage) => (
-            <div
+            // Estimating opens the Estimates module (its bid); every other stage
+            // opens that opportunity on the CRM board.
+            <a
               key={stage.key}
+              href={stage.estimatesLink ? "/estimates" : crmHref(stage.oppId)}
               className={`ow-stage${stage.dim ? " is-dim" : ""}${
                 stage.highlight === "clay"
                   ? " is-clay"
@@ -264,11 +272,7 @@ function OwnerView({
             >
               <div className="ow-stage__top">
                 <span className="ow-stage__label">{stage.label}</span>
-                {stage.estimatesLink ? (
-                  <Link to="/estimates" className="ow-stage__link">
-                    Estimates ↗
-                  </Link>
-                ) : null}
+                {stage.estimatesLink ? <span className="ow-stage__link">Estimates ↗</span> : null}
               </div>
               <div className="ow-stage__count">{stage.count}</div>
               {stage.name ? (
@@ -279,7 +283,7 @@ function OwnerView({
               ) : (
                 <div className="ow-stage__empty">{stage.meta}</div>
               )}
-            </div>
+            </a>
           ))}
         </div>
         <div className="ow-note">
@@ -401,12 +405,7 @@ function OwnerView({
             </div>
           ) : null}
           {metrics.pursuits.map((pursuit, i) => (
-            <button
-              type="button"
-              className="ow-pursuit"
-              key={`${pursuit.title}-${i}`}
-              style={{ width: "100%", textAlign: "left", background: "none" }}
-            >
+            <a className="ow-pursuit" key={`${pursuit.title}-${i}`} href={crmHref(pursuit.oppId)}>
               <span className="ow-pursuit__row">
                 <span className="ow-pursuit__title">{pursuit.title}</span>
                 <span className={`ow-pursuit__due${pursuit.dueTone === "crit" ? " is-crit" : ""}`}>
@@ -414,7 +413,7 @@ function OwnerView({
                 </span>
               </span>
               <span className="ow-pursuit__context">{pursuit.context}</span>
-            </button>
+            </a>
           ))}
 
           <div className="ow-company">
@@ -473,12 +472,12 @@ function PmView({ identity, metrics }: { identity: HomeIdentity; metrics: HomeMe
         </div>
         <HeroStats stats={metrics.pmStats} />
         <div className="ow-hero__cta">
-          <Link to="/" className="ow-btn ow-btn--light">
+          <a href={PROJECTS_HREF} className="ow-btn ow-btn--light">
             Start today's logs →
-          </Link>
-          <Link to="/" className="ow-btn ow-btn--ghost-dark">
+          </a>
+          <a href={PROJECTS_HREF} className="ow-btn ow-btn--ghost-dark">
             My to-dos →
-          </Link>
+          </a>
         </div>
       </section>
 
