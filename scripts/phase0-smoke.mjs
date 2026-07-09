@@ -1501,9 +1501,12 @@ await expectContains(
 await expectContains(
   "src/routes/api/stripe/webhook.ts",
   [
-    /stripe_webhook_events/,
+    /createSupabaseWebhookEventStore/,
     /claimWebhookEvent/,
-    /releaseWebhookEvent/,
+    // Idempotency records OUTCOME, not sighting: `processed` is written only
+    // after the handler completes, and a still-fresh concurrent claim 409s.
+    /markProcessed/,
+    /webhook_event_in_flight/,
     /duplicate: true/,
     /planCheckoutCompletion/,
     /surcharge_cents/,
@@ -1513,7 +1516,23 @@ await expectContains(
     /checkout\.session\.async_payment_failed/,
     /checkoutSessionOutcome/,
   ],
-  "Stripe webhook stores processed event ids, no-ops duplicates with 2xx, books payments through the domain plan, and waits out async ACH settlement",
+  "Stripe webhook records processing OUTCOME (processed only after the handler completes), no-ops true duplicates with 2xx, retries concurrent/failed deliveries, and waits out async ACH settlement",
+);
+
+await expectContains(
+  "src/lib/stripe-webhook-idempotency.ts",
+  [
+    // The invariant: a row becomes `processed` only via markProcessed, called
+    // only after the handler succeeds. Failures leave it `processing` for the
+    // next retry to re-take rather than swallowing the retry as a duplicate.
+    /classifyExistingClaim/,
+    /already_processed/,
+    /retry_stale/,
+    /in_flight/,
+    /DEFAULT_WEBHOOK_STALE_SECONDS/,
+    /ON CONFLICT DO NOTHING/,
+  ],
+  "Webhook idempotency state machine claims fresh/re-takes stale/skips processed and only marks processed on handler completion",
 );
 
 await expectContains(
@@ -2399,6 +2418,17 @@ expectSql(
     /event_id text primary key/i,
   ],
   "Payments Phase 1 migrations stage the payment profile, integer-cents ledger, per-invoice method toggles, and webhook idempotency",
+);
+
+expectSql(
+  sql,
+  [
+    // STRIPEIDEMPOTENCY1: record processing OUTCOME, not just the sighting.
+    /add column if not exists status text not null default 'processed'[\s\S]*check \(status in \('processing', 'processed'\)\)/i,
+    /add column if not exists claimed_at timestamptz not null default now\(\)/i,
+    /idx_stripe_webhook_events_status_claimed_at/i,
+  ],
+  "Webhook idempotency gains a processing-state column (default 'processed' so legacy rows still skip) plus a stale-claim sweep index",
 );
 
 expectSql(
