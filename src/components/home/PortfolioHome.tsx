@@ -23,6 +23,8 @@ import {
   type HeroStat,
   type WorklistJob,
 } from "./portfolio-home-data";
+import { useHomeIdentity, type HomeIdentity } from "./home-identity";
+import { AvatarMenu } from "./home-avatar-menu";
 import "./portfolio-home.css";
 
 type HomeView = "owner" | "pm";
@@ -66,6 +68,7 @@ function HeroStats({ stats }: { stats: HeroStat[] }) {
 }
 
 export function PortfolioHome() {
+  const identity = useHomeIdentity();
   const [view, setView] = useState<HomeView>("owner");
   const [filter, setFilter] = useState<WorklistFilter>("all");
 
@@ -88,13 +91,23 @@ export function PortfolioHome() {
         {/* ---------- customer-forward header (white-label) ---------- */}
         <header className="ow-header">
           <div className="ow-brand">
-            <span className="ow-logo">SB</span>
+            <span className="ow-logo">
+              {identity.companyLogo ? (
+                <img
+                  src={identity.companyLogo}
+                  alt=""
+                  style={{ width: "100%", height: "100%", borderRadius: 10, objectFit: "cover" }}
+                />
+              ) : (
+                identity.companyInitials
+              )}
+            </span>
             <Link
               to="/team"
               className="ow-brandname"
               style={{ color: "inherit", textDecoration: "none", display: "inline-flex", gap: 7 }}
             >
-              Summit Builders <span style={{ color: "var(--muted)", fontSize: 12 }}>▾</span>
+              {identity.companyName} <span style={{ color: "var(--muted)", fontSize: 12 }}>▾</span>
             </Link>
           </div>
           <nav className="ow-nav">
@@ -114,11 +127,7 @@ export function PortfolioHome() {
             <Link to="/" className="ow-btn ow-btn--signal">
               + New project
             </Link>
-            {/* M avatar → Company for now. The per-user profile menu (roles,
-                notifications) is the coordinated backend follow-up. */}
-            <Link to="/team" className="ow-avatar" aria-label="Account — company settings">
-              M
-            </Link>
+            <AvatarMenu identity={identity} />
           </div>
         </header>
 
@@ -154,13 +163,14 @@ export function PortfolioHome() {
 
         {view === "owner" ? (
           <OwnerView
+            identity={identity}
             filter={filter}
             setFilter={setFilter}
             filteredJobs={filteredJobs}
             shownLabel={shownLabel}
           />
         ) : (
-          <PmView />
+          <PmView identity={identity} />
         )}
 
         <HomeFooter />
@@ -170,11 +180,13 @@ export function PortfolioHome() {
 }
 
 function OwnerView({
+  identity,
   filter,
   setFilter,
   filteredJobs,
   shownLabel,
 }: {
+  identity: HomeIdentity;
   filter: WorklistFilter;
   setFilter: (f: WorklistFilter) => void;
   filteredJobs: WorklistJob[];
@@ -190,8 +202,10 @@ function OwnerView({
     <>
       {/* dark hero */}
       <section className="ow-hero">
-        <div className="ow-hero__date">{OWNER_HERO.dateline}</div>
-        <h1 className="ow-hero__greet">{OWNER_HERO.greeting}</h1>
+        <div className="ow-hero__date">{identity.dateline}</div>
+        <h1 className="ow-hero__greet">
+          {identity.greeting}, {identity.userFirstName}.
+        </h1>
         <div className="ow-hero__alert">
           <span className="ow-hero__alert-kicker">
             <span />
@@ -203,10 +217,10 @@ function OwnerView({
         <HeroStats stats={OWNER_HERO.stats} />
         <div className="ow-hero__cta">
           <Link to="/" className="ow-btn ow-btn--light">
-            Open Summit Builders projects →
+            Open {identity.companyName} projects →
           </Link>
           <a href="/?tab=crm" className="ow-btn ow-btn--ghost-dark">
-            Open Summit Builders CRM →
+            Open {identity.companyName} CRM →
           </a>
         </div>
       </section>
@@ -379,10 +393,20 @@ function OwnerView({
 
           <div className="ow-company">
             <div className="ow-company__head">
-              <span className="ow-company__logo">SB</span>
+              <span className="ow-company__logo">
+                {identity.companyLogo ? (
+                  <img
+                    src={identity.companyLogo}
+                    alt=""
+                    style={{ width: "100%", height: "100%", borderRadius: 7, objectFit: "cover" }}
+                  />
+                ) : (
+                  identity.companyInitials
+                )}
+              </span>
               <div>
                 <div className="ow-company__eyebrow">Company</div>
-                <div className="ow-company__name">Summit Builders</div>
+                <div className="ow-company__name">{identity.companyName}</div>
               </div>
             </div>
             <Link to="/billing" className="ow-company__row">
@@ -404,12 +428,15 @@ function OwnerView({
   );
 }
 
-function PmView() {
+function PmView({ identity }: { identity: HomeIdentity }) {
   return (
     <>
       <section className="ow-hero">
-        <div className="ow-hero__date">{PM_HERO.dateline}</div>
-        <h1 className="ow-hero__greet">{PM_HERO.greeting}</h1>
+        <div className="ow-hero__date">{identity.dateline}</div>
+        <h1 className="ow-hero__greet">
+          {identity.greeting === "Good morning" ? "Morning" : identity.greeting},{" "}
+          {identity.userFirstName}.
+        </h1>
         <div className="ow-hero__alert">
           <span className="ow-hero__alert-kicker">
             <span />
