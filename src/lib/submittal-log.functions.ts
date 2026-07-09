@@ -1,0 +1,246 @@
+// RFI & SUBMITTALS LOG server fns (docs/compliance arc, module 3). Two logs in
+// one table via `kind` (rfi | submittal), plus the project's organization
+// letterhead for the transmittal cover. Project-scoped via team RLS. Reads
+// degrade to empty and writes surface a clear "not enabled yet" message before
+// the migration lands.
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { COMPANY_ASSET_BUCKET, companyLogoPath, versionAssetUrl } from "@/lib/company-assets";
+
+type DynamicSupabaseError = { code?: string; message: string };
+type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
+type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
+  select(columns?: string): DynamicSupabaseQuery;
+  insert(values: unknown): DynamicSupabaseQuery;
+  update(values: unknown): DynamicSupabaseQuery;
+  delete(): DynamicSupabaseQuery;
+  eq(column: string, value: unknown): DynamicSupabaseQuery;
+  order(column: string, options?: { ascending?: boolean }): DynamicSupabaseQuery;
+  single(): Promise<DynamicSupabaseResult>;
+  maybeSingle(): Promise<DynamicSupabaseResult>;
+};
+type DynamicSupabaseClient = {
+  from(relation: string): DynamicSupabaseQuery;
+  storage: {
+    from(bucket: string): { getPublicUrl(path: string): { data: { publicUrl: string } } };
+  };
+};
+const dynamicTable = (supabase: unknown, relation: string) =>
+  (supabase as DynamicSupabaseClient).from(relation);
+
+const str = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback);
+const int = (value: unknown) => {
+  const n = typeof value === "number" ? value : Number(value ?? 0);
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+};
+const dateOrNull = (value: unknown) => (typeof value === "string" && value ? value : null);
+
+function isMissingLogTable(error: DynamicSupabaseError | null) {
+  const message = error?.message ?? "";
+  return (
+    error?.code === "PGRST205" ||
+    /submittal_log|schema cache|does not exist|relation|column/i.test(message)
+  );
+}
+const NOT_ENABLED =
+  "The RFI / submittal log isn't enabled on this workspace yet — the migration hasn't been applied.";
+
+export type SubmittalLogKind = "rfi" | "submittal";
+export type SubmittalLogStatus = "" | "a" | "aan" | "rar" | "ur";
+
+export interface SubmittalLogEntryRow {
+  id: string;
+  project_id: string;
+  kind: SubmittalLogKind;
+  number: string;
+  spec_section: string;
+  sub_rev: string;
+  item: string;
+  description: string;
+  mfgr_supplier: string;
+  date_submitted: string | null;
+  date_returned: string | null;
+  status: SubmittalLogStatus;
+  comments: string;
+  storage_path: string;
+  file_name: string;
+  sort_order: number;
+}
+
+export interface ProjectLetterhead {
+  company_name: string;
+  legal_name: string;
+  logo_url: string;
+  address_line1: string;
+  address_line2: string;
+  city: string;
+  state: string;
+  postal_code: string;
+  office_phone: string;
+  license_number: string;
+}
+
+const normalize = (row: Record<string, unknown>): SubmittalLogEntryRow => ({
+  id: str(row.id),
+  project_id: str(row.project_id),
+  kind: (str(row.kind, "submittal") as SubmittalLogKind) || "submittal",
+  number: str(row.number),
+  spec_section: str(row.spec_section),
+  sub_rev: str(row.sub_rev),
+  item: str(row.item),
+  description: str(row.description),
+  mfgr_supplier: str(row.mfgr_supplier),
+  date_submitted: (row.date_submitted as string | null) ?? null,
+  date_returned: (row.date_returned as string | null) ?? null,
+  status: (str(row.status) as SubmittalLogStatus) ?? "",
+  comments: str(row.comments),
+  storage_path: str(row.storage_path),
+  file_name: str(row.file_name),
+  sort_order: int(row.sort_order),
+});
+
+export const listSubmittalLog = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string }) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SubmittalLogEntryRow[]> => {
+    const { data: rows, error } = await dynamicTable(context.supabase, "submittal_log_entries")
+      .select("*")
+      .eq("project_id", data.projectId)
+      .order("sort_order", { ascending: true });
+    if (error) {
+      if (isMissingLogTable(error)) return [];
+      throw new Error(error.message);
+    }
+    return ((rows ?? []) as Record<string, unknown>[]).map(normalize);
+  });
+
+const entryInput = z.object({
+  id: z.string().uuid().optional(),
+  projectId: z.string().uuid(),
+  kind: z.enum(["rfi", "submittal"]),
+  number: z.string().max(60).default(""),
+  spec_section: z.string().max(60).default(""),
+  sub_rev: z.string().max(30).default(""),
+  item: z.string().max(120).default(""),
+  description: z.string().max(1000).default(""),
+  mfgr_supplier: z.string().max(200).default(""),
+  date_submitted: z.string().nullable().optional(),
+  date_returned: z.string().nullable().optional(),
+  status: z.enum(["", "a", "aan", "rar", "ur"]).default(""),
+  comments: z.string().max(2000).default(""),
+  storage_path: z.string().max(500).default(""),
+  file_name: z.string().max(300).default(""),
+  sort_order: z.number().default(0),
+});
+
+export const saveSubmittalLogEntry = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof entryInput>) => entryInput.parse(input))
+  .handler(async ({ data, context }): Promise<SubmittalLogEntryRow> => {
+    const fields = {
+      kind: data.kind,
+      number: data.number,
+      spec_section: data.spec_section,
+      sub_rev: data.sub_rev,
+      item: data.item,
+      description: data.description,
+      mfgr_supplier: data.mfgr_supplier,
+      date_submitted: dateOrNull(data.date_submitted),
+      date_returned: dateOrNull(data.date_returned),
+      status: data.status,
+      comments: data.comments,
+      storage_path: data.storage_path,
+      file_name: data.file_name,
+      sort_order: data.sort_order,
+    };
+    const table = dynamicTable(context.supabase, "submittal_log_entries");
+    const res = data.id
+      ? await table
+          .update({ ...fields, updated_at: new Date().toISOString() })
+          .eq("id", data.id)
+          .select("*")
+          .single()
+      : await table
+          .insert({ project_id: data.projectId, ...fields })
+          .select("*")
+          .single();
+    if (res.error || !res.data) {
+      if (isMissingLogTable(res.error)) throw new Error(NOT_ENABLED);
+      throw new Error(res.error?.message ?? "Could not save the entry");
+    }
+    return normalize(res.data as Record<string, unknown>);
+  });
+
+export const deleteSubmittalLogEntry = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "submittal_log_entries")
+      .delete()
+      .eq("id", data.id);
+    if (error && !isMissingLogTable(error)) throw new Error(error.message);
+    return { id: data.id };
+  });
+
+// The project's organization letterhead for the transmittal cover — name, logo,
+// address, phone, license. Empty fallbacks so a missing field just doesn't print.
+export const getProjectLetterhead = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string }) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<ProjectLetterhead> => {
+    const empty: ProjectLetterhead = {
+      company_name: "",
+      legal_name: "",
+      logo_url: "",
+      address_line1: "",
+      address_line2: "",
+      city: "",
+      state: "",
+      postal_code: "",
+      office_phone: "",
+      license_number: "",
+    };
+    const projRes = await dynamicTable(context.supabase, "projects")
+      .select("organization_id")
+      .eq("id", data.projectId)
+      .maybeSingle();
+    const orgId = projRes.data
+      ? str((projRes.data as Record<string, unknown>).organization_id)
+      : "";
+    if (!orgId) return empty;
+
+    const orgRes = await dynamicTable(context.supabase, "organizations")
+      .select(
+        "id,name,legal_name,logo_url,logo_path,address_line1,address_line2,city,state,postal_code,office_phone,license_number,updated_at",
+      )
+      .eq("id", orgId)
+      .maybeSingle();
+    if (orgRes.error || !orgRes.data) return empty;
+    const o = orgRes.data as Record<string, unknown>;
+
+    // Resolve a fetchable logo URL (stored URL, else the public asset URL).
+    let logoUrl = str(o.logo_url);
+    if (!logoUrl && str(o.id)) {
+      const { data: pub } = (context.supabase as DynamicSupabaseClient).storage
+        .from(COMPANY_ASSET_BUCKET)
+        .getPublicUrl(companyLogoPath(str(o.id)));
+      logoUrl = versionAssetUrl(pub.publicUrl, str(o.updated_at));
+    }
+    return {
+      company_name: str(o.name),
+      legal_name: str(o.legal_name),
+      logo_url: logoUrl,
+      address_line1: str(o.address_line1),
+      address_line2: str(o.address_line2),
+      city: str(o.city),
+      state: str(o.state),
+      postal_code: str(o.postal_code),
+      office_phone: str(o.office_phone),
+      license_number: str(o.license_number),
+    };
+  });

@@ -51,6 +51,7 @@ import { DecisionsTable } from "@/components/outcome/DecisionsTable";
 import { DailyReportsWorkspace } from "@/components/outcome/DailyReportsWorkspace";
 import { DailyWipWorkspace } from "@/components/outcome/DailyWipWorkspace";
 import { ProjectFileRoom } from "@/components/project/ProjectFileRoom";
+import { SubmittalLog } from "@/components/project/SubmittalLog";
 import { SubcontractorsWorkspace } from "@/components/project/SubcontractorsWorkspace";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
 import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
@@ -199,6 +200,7 @@ const PROJECT_TAB_VALUES = [
   "daily-reports",
   "daily-wip",
   "file-room",
+  "rfi-submittals",
 ] as const;
 
 type ProjectTabValue = (typeof PROJECT_TAB_VALUES)[number];
@@ -228,7 +230,7 @@ const PROJECT_NAV_GROUPS: ProjectNavGroup[] = [
   },
   { key: "risk", label: "Risk", values: ["risk-tally", "todos"] },
   { key: "parties", label: "Parties", values: ["subcontractors", "client-portal", "ior-report"] },
-  { key: "docs", label: "Docs", values: ["file-room"] },
+  { key: "docs", label: "Docs", values: ["file-room", "rfi-submittals"] },
 ];
 
 export const Route = createFileRoute("/_authenticated/projects/$projectId")({
@@ -1598,6 +1600,12 @@ function ProjectPage() {
       detail: "Contracts, specs, docs",
       icon: FolderOpen,
     },
+    {
+      value: "rfi-submittals",
+      label: "RFIs & Submittals",
+      detail: "Logs + transmittals",
+      icon: ClipboardList,
+    },
   ];
   const navItemByValue = new Map(projectNavItems.map((item) => [item.value, item] as const));
   // Persistent "you are here" title for the content stage: the active tab's
@@ -1993,6 +2001,14 @@ function ProjectPage() {
 
             <TabsContent value="file-room" className="mt-0">
               <ProjectFileRoom projectId={projectId} />
+            </TabsContent>
+
+            <TabsContent value="rfi-submittals" className="mt-0">
+              <SubmittalLog
+                projectId={projectId}
+                projectName={project.name}
+                jobNumber={project.job_number}
+              />
             </TabsContent>
 
             <TabsContent value="risk-tally" className="mt-0 space-y-6">
