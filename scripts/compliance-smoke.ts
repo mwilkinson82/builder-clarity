@@ -3,6 +3,7 @@
 // valid COI + a lien waiver, unless the project toggles the requirement off.
 import assert from "node:assert/strict";
 import {
+  canApproveSubPayment,
   canPaySubcontract,
   insuranceStatus,
   subcontractInsuranceStatus,
@@ -115,6 +116,64 @@ assert.equal(
   }).allowed,
   true,
   "expiring-soon is a heads-up, not a block",
+);
+
+// ── Per-payment APPROVAL gate (field request 2026-07-10): a pay app can't be
+//    approved for payment until a lien waiver is attached to that payment
+//    record and insurance is verified. Same toggle-off escape hatch. ──
+assert.deepEqual(
+  canApproveSubPayment({
+    gatingEnabled: false,
+    insuranceStatus: "missing",
+    hasAttachedWaiver: false,
+  }),
+  { allowed: true, blockers: [] },
+  "toggle off → approval never blocked",
+);
+assert.deepEqual(
+  canApproveSubPayment({ gatingEnabled: true, insuranceStatus: "valid", hasAttachedWaiver: true }),
+  { allowed: true, blockers: [] },
+  "valid COI + attached waiver → approvable",
+);
+{
+  const r = canApproveSubPayment({
+    gatingEnabled: true,
+    insuranceStatus: "valid",
+    hasAttachedWaiver: false,
+  });
+  assert.equal(r.allowed, false, "no waiver attached to the pay app → approval blocked");
+  assert.equal(r.blockers.length, 1, "one blocker");
+  assert.match(
+    r.blockers[0],
+    /attached to this pay app/i,
+    "blocker says the waiver isn't attached",
+  );
+}
+{
+  const r = canApproveSubPayment({
+    gatingEnabled: true,
+    insuranceStatus: "unverified",
+    hasAttachedWaiver: true,
+  });
+  assert.equal(r.allowed, false, "unverified COI → approval blocked even with a waiver");
+  assert.match(r.blockers.join(" "), /hasn't been verified/i, "blocker names verification");
+}
+{
+  const r = canApproveSubPayment({
+    gatingEnabled: true,
+    insuranceStatus: "missing",
+    hasAttachedWaiver: false,
+  });
+  assert.equal(r.blockers.length, 2, "both approval blockers surfaced together");
+}
+assert.equal(
+  canApproveSubPayment({
+    gatingEnabled: true,
+    insuranceStatus: "expiring_soon",
+    hasAttachedWaiver: true,
+  }).allowed,
+  true,
+  "expiring-soon still clears approval — heads-up, not a block",
 );
 
 console.log("compliance smoke: all assertions passed");

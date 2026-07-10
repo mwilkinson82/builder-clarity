@@ -55,6 +55,17 @@ export interface CardPaymentSplit {
   description: string;
   amount: number;
 }
+// A lien waiver as the pay-app rows see it: either attached to one payment
+// (payment_id) or sitting in the sub's on-file pool waiting to be attached.
+export interface CardWaiver {
+  id: string;
+  payment_id: string | null;
+  waiver_type: string;
+  through_date: string | null;
+  amount: number;
+  storage_path: string;
+  file_name: string;
+}
 
 export type PayStage = "draft" | "approved" | "paid";
 
@@ -79,6 +90,124 @@ export interface PaymentEdit {
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+const CARD_WAIVER_LABEL: Record<string, string> = {
+  conditional_progress: "Conditional / progress",
+  unconditional_progress: "Unconditional / progress",
+  conditional_final: "Conditional / final",
+  unconditional_final: "Unconditional / final",
+};
+
+// One pay app's lien-waiver state (field request 2026-07-10): attached →
+// shows it (view/detach); not attached → says what's blocking approval and
+// takes either an on-file waiver pick or a direct signed-waiver upload.
+function PaymentWaiverLine({
+  payment,
+  attached,
+  pool,
+  gatingEnabled,
+  onAttach,
+  onDetach,
+  onUpload,
+  onView,
+}: {
+  payment: CardPayment;
+  attached: CardWaiver | null;
+  pool: CardWaiver[];
+  gatingEnabled: boolean;
+  onAttach: (waiverId: string) => void;
+  onDetach: (waiverId: string) => void;
+  onUpload: (file: File) => void;
+  onView: (path: string) => void;
+}) {
+  const [pickId, setPickId] = useState("");
+  if (attached) {
+    return (
+      <span className="flex flex-wrap items-center gap-2 text-[11px]">
+        <span className="text-success">
+          Lien waiver attached — {CARD_WAIVER_LABEL[attached.waiver_type] ?? "waiver"}
+          {attached.through_date ? ` through ${attached.through_date}` : ""}
+        </span>
+        {attached.storage_path ? (
+          <button
+            type="button"
+            className="font-medium text-accent-foreground hover:underline"
+            onClick={() => onView(attached.storage_path)}
+          >
+            view
+          </button>
+        ) : null}
+        {payment.status !== "paid" ? (
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-danger"
+            onClick={() => onDetach(attached.id)}
+            aria-label="Detach lien waiver"
+            title="Detach — attached in error"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        ) : null}
+      </span>
+    );
+  }
+  // A paid row without a waiver predates per-payment tracking — don't nag.
+  if (payment.status === "paid") return null;
+  return (
+    <span className="flex flex-wrap items-center gap-2 text-[11px]">
+      <span className={gatingEnabled ? "text-warning" : "text-muted-foreground"}>
+        {gatingEnabled
+          ? "Needs a lien waiver + verified insurance before approval."
+          : "No lien waiver attached."}
+      </span>
+      {pool.length > 0 ? (
+        <>
+          <select
+            value={pickId}
+            onChange={(e) => setPickId(e.target.value)}
+            className="rounded-md border border-hairline bg-surface px-1.5 py-0.5 text-[11px] text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+            aria-label="Pick an on-file lien waiver"
+          >
+            <option value="">On-file waiver…</option>
+            {pool.map((w) => (
+              <option key={w.id} value={w.id}>
+                {CARD_WAIVER_LABEL[w.waiver_type] ?? "Waiver"}
+                {w.through_date ? ` · through ${w.through_date}` : ""}
+                {w.amount > 0 ? ` · ${fmtUSD(w.amount)}` : ""}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="font-medium text-accent-foreground hover:underline disabled:opacity-50"
+            disabled={!pickId}
+            onClick={() => {
+              if (pickId) onAttach(pickId);
+              setPickId("");
+            }}
+          >
+            Attach
+          </button>
+          <span className="text-muted-foreground">or</span>
+        </>
+      ) : null}
+      <label className="inline-flex cursor-pointer items-center gap-1 font-medium text-accent-foreground hover:underline">
+        <Upload className="h-3 w-3" />
+        Upload signed waiver
+        <input
+          type="file"
+          accept="application/pdf,image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onUpload(f);
+            e.target.value = "";
+          }}
+        />
+      </label>
+    </span>
+  );
+}
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "good" | "warn" }) {
   return (
@@ -132,6 +261,15 @@ interface CardProps {
   paymentSplits: CardPaymentSplit[];
   onSaveSplit: (paymentId: string, rows: SplitRowDraft[]) => void;
   savingSplit?: boolean;
+  // Lien waivers per pay app (field request 2026-07-10): a pay app can't be
+  // approved until its waiver is attached and insurance is verified. The rows
+  // show the attach state and take an on-file pick or a direct doc upload.
+  waivers: CardWaiver[];
+  gatingEnabled: boolean;
+  onAttachWaiver: (paymentId: string, waiverId: string) => void;
+  onDetachWaiver: (paymentId: string, waiverId: string) => void;
+  onUploadWaiverForPayment: (payment: CardPayment, file: File) => void;
+  onViewWaiverDoc: (path: string) => void;
   onRemoveSub: () => void;
   documents: SubcontractDocumentRow[];
   onUploadDoc: (file: File) => void;
@@ -165,6 +303,12 @@ export function SubcontractCard({
   paymentSplits,
   onSaveSplit,
   savingSplit = false,
+  waivers,
+  gatingEnabled,
+  onAttachWaiver,
+  onDetachWaiver,
+  onUploadWaiverForPayment,
+  onViewWaiverDoc,
   onRemoveSub,
   documents,
   onUploadDoc,
@@ -634,8 +778,8 @@ export function SubcontractCard({
           Pay apps &amp; progress payments
         </div>
         <p className="mt-1 text-[11px] text-muted-foreground">
-          Log a sub&apos;s pay app as a draft, approve it for payment, then mark it paid. Only paid
-          amounts count as job cost.
+          Log a sub&apos;s pay app as a draft, attach its lien waiver, approve it for payment, then
+          mark it paid. Only paid amounts count as job cost.
         </p>
         {payments.length > 0 ? (
           <ul className="mt-2 divide-y divide-hairline text-sm">
@@ -734,6 +878,16 @@ export function SubcontractCard({
                           </button>
                         ) : null}
                       </span>
+                      <PaymentWaiverLine
+                        payment={p}
+                        attached={waivers.find((w) => w.payment_id === p.id) ?? null}
+                        pool={waivers.filter((w) => !w.payment_id)}
+                        gatingEnabled={gatingEnabled}
+                        onAttach={(waiverId) => onAttachWaiver(p.id, waiverId)}
+                        onDetach={(waiverId) => onDetachWaiver(p.id, waiverId)}
+                        onUpload={(file) => onUploadWaiverForPayment(p, file)}
+                        onView={onViewWaiverDoc}
+                      />
                       {allocations.length > 0 || buckets.length > 0 ? (
                         <button
                           type="button"

@@ -60,6 +60,7 @@ const CATEGORY_LABEL: Record<ProjectDocCategory, string> = {
   qc_qa: "QC / QA",
   invoices: "Invoices",
   receipts: "Receipts",
+  compliance: "COIs & lien waivers",
   other: "Other",
 };
 

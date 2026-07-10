@@ -48,6 +48,9 @@ export const PROJECT_DOC_CATEGORIES = [
   "qc_qa",
   "invoices",
   "receipts",
+  // COIs + lien waivers filed from the Subcontractors compliance panel land
+  // here automatically, so the File Room indexes all the compliance paper.
+  "compliance",
   "other",
 ] as const;
 export type ProjectDocCategory = (typeof PROJECT_DOC_CATEGORIES)[number];
