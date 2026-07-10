@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { VendorPicker } from "@/components/billing/VendorPicker";
-import { findOrCreateVendor, listVendors } from "@/lib/vendors.functions";
+import { findOrCreateVendor, listVendors, saveVendor } from "@/lib/vendors.functions";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { Button } from "@/components/ui/button";
 import {
@@ -85,6 +85,18 @@ const COST_STATUS_LABEL: Record<CostActualRow["status"], string> = {
   approved: "Approved for payment",
   paid: "Paid",
   void: "Void",
+};
+
+// Scan-at-a-glance color per stage (field request 2026-07-10: "color coding
+// ... would help"). House tokens only — no second accent: draft reads clay
+// (in progress), approved/committed read warning (money owed, not yet out),
+// paid reads success (done), void reads muted.
+const COST_STATUS_TONE: Record<CostActualRow["status"], { chip: string; edge: string }> = {
+  draft: { chip: "bg-accent/15 text-accent-foreground", edge: "border-l-accent" },
+  committed: { chip: "bg-warning/15 text-warning", edge: "border-l-warning" },
+  approved: { chip: "bg-warning/15 text-warning", edge: "border-l-warning" },
+  paid: { chip: "bg-success/15 text-success", edge: "border-l-success" },
+  void: { chip: "bg-muted text-muted-foreground", edge: "border-l-transparent" },
 };
 
 type BucketSettingsPatch = {
@@ -1054,8 +1066,22 @@ export function ProjectCostTrackingPanel({
   savingCost?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  // When set, the dialog is editing this existing DRAFT row instead of adding.
+  // When set, the dialog is editing this existing row instead of adding.
   const [editingCostId, setEditingCostId] = useState<string | null>(null);
+  // Read-at-a-glance controls for the backup list (field request 2026-07-10):
+  // filter by stage, search by name/vendor/reference.
+  const [costStatusFilter, setCostStatusFilter] = useState<"all" | CostActualRow["status"]>("all");
+  const [costSearch, setCostSearch] = useState("");
+  // The "Add a new vendor" details window (name prefilled from the picker).
+  const [vendorDraft, setVendorDraft] = useState<{
+    name: string;
+    trade: string;
+    contact_name: string;
+    contact_email: string;
+    contact_phone: string;
+    address: string;
+  } | null>(null);
+  const [savingVendor, setSavingVendor] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   // The Vendor field is a pick-or-add over BOTH org directories (vendors +
   // subs) — a cost's payee is one or the other. Self-contained queries, like
@@ -1064,6 +1090,7 @@ export function ProjectCostTrackingPanel({
   const listVendorsFn = useServerFn(listVendors);
   const listSubsFn = useServerFn(listSubcontractors);
   const findOrCreateVendorFn = useServerFn(findOrCreateVendor);
+  const saveVendorFn = useServerFn(saveVendor);
   const vendorsQuery = useQuery({
     queryKey: ["vendors-directory"],
     queryFn: () => listVendorsFn(),
@@ -1083,6 +1110,7 @@ export function ProjectCostTrackingPanel({
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vendors-directory"] }),
     onError: () => {},
   });
+
   // New invoices land as a draft (field request 2026-07-09) — nothing hits job
   // cost until someone approves the spend or marks it paid.
   const [draft, setDraft] = useState<CostActualDraft>(() => ({
@@ -1097,6 +1125,37 @@ export function ProjectCostTrackingPanel({
     status: "draft",
     notes: "",
   }));
+  // The details window's save: build the vendor out in the directory, then
+  // select it into the cost being entered.
+  const editingCost = editingCostId
+    ? (costActuals.find((actual) => actual.id === editingCostId) ?? null)
+    : null;
+  // The backup list after the stage filter + search — used by the grid AND the
+  // "nothing matches" empty state so they can never disagree.
+  const visibleCostActuals = costActuals
+    .filter((actual) => costStatusFilter === "all" || actual.status === costStatusFilter)
+    .filter((actual) => {
+      const query = costSearch.trim().toLowerCase();
+      if (!query) return true;
+      return [actual.description, actual.vendor, actual.reference_number, actual.cost_code]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    });
+  const saveVendorDetails = async () => {
+    if (!vendorDraft || !vendorDraft.name.trim()) return;
+    setSavingVendor(true);
+    try {
+      const saved = await saveVendorFn({ data: vendorDraft });
+      queryClient.invalidateQueries({ queryKey: ["vendors-directory"] });
+      setDraft((current) => ({ ...current, vendor: saved.name }));
+      setVendorDraft(null);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not save the vendor.");
+    } finally {
+      setSavingVendor(false);
+    }
+  };
   const activeActuals = costActuals.filter((actual) => actual.status !== "void");
   // Drafts are logged but unvetted — they sit in the approval queue, not in any
   // cost number. Everything else non-void is incurred cost.
@@ -1201,9 +1260,19 @@ export function ProjectCostTrackingPanel({
     if (!known) enrollVendor.mutate(vendorName);
   };
 
-  const save = () => {
-    if (editingCostId) onUpdateCostActual(editingCostId, draft);
-    else onCreateCostActual(draft);
+  const save = async () => {
+    if (editingCostId) {
+      // Await the edit: if the server refuses (row went paid under us, or the
+      // network dropped), the mutation's own toast explains why and the dialog
+      // stays open with the typed changes intact.
+      try {
+        await onUpdateCostActual(editingCostId, draft);
+      } catch {
+        return;
+      }
+    } else {
+      onCreateCostActual(draft);
+    }
     enrollTypedVendor();
     resetCostForm();
   };
@@ -1299,11 +1368,17 @@ export function ProjectCostTrackingPanel({
             <DialogContent className="sm:max-w-3xl">
               <DialogHeader>
                 <DialogTitle className="font-serif text-2xl">
-                  {editingCostId ? "Edit draft cost" : "Add cost actual"}
+                  {editingCostId
+                    ? editingCost?.status === "draft"
+                      ? "Edit draft cost"
+                      : "Edit cost"
+                    : "Add cost actual"}
                 </DialogTitle>
                 <DialogDescription>
                   {editingCostId
-                    ? "This invoice is still a draft — nothing has hit job cost, so every field is editable. Approve or mark it paid from its card."
+                    ? editingCost?.status === "draft"
+                      ? "This invoice is still a draft — nothing has hit job cost, so every field is editable. Approve or mark it paid below."
+                      : "This cost already counts in the job — changes here update the job-cost totals the moment you save."
                     : "Record cost backup against the same cost codes used by the SOV and WIP."}
                 </DialogDescription>
               </DialogHeader>
@@ -1405,6 +1480,16 @@ export function ProjectCostTrackingPanel({
                       value={draft.vendor}
                       vendors={vendorNames}
                       subcontractors={subNames}
+                      onAddNew={(name) =>
+                        setVendorDraft({
+                          name,
+                          trade: "",
+                          contact_name: "",
+                          contact_email: "",
+                          contact_phone: "",
+                          address: "",
+                        })
+                      }
                       onChange={(name, isSub) =>
                         setDraft({
                           ...draft,
@@ -1438,15 +1523,17 @@ export function ProjectCostTrackingPanel({
               <DialogFooter className="gap-2 sm:items-center sm:justify-between">
                 {editingCostId ? (
                   <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={savingCost}
-                      onClick={() => advanceDraft("approved")}
-                    >
-                      Approve for payment
-                    </Button>
+                    {editingCost?.status === "draft" ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={savingCost}
+                        onClick={() => advanceDraft("approved")}
+                      >
+                        Approve for payment
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       variant="outline"
@@ -1461,13 +1548,112 @@ export function ProjectCostTrackingPanel({
                   <span />
                 )}
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" onClick={() => setOpen(false)}>
+                  {/* Programmatic close skips Radix's onOpenChange, so Cancel
+                      must clear the edit state itself — otherwise the next
+                      "Add cost" reopens armed on the canceled row and Save
+                      overwrites it. */}
+                  <Button variant="ghost" onClick={resetCostForm}>
                     Cancel
                   </Button>
                   <Button onClick={save} disabled={savingCost || !draft.description.trim()}>
                     {editingCostId ? "Save changes" : "Save cost"}
                   </Button>
                 </div>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          {/* "Add a new vendor" details window (field request 2026-07-10):
+              opened from the Vendor picker's Add item; builds the vendor out
+              in the directory, then selects it into the cost being entered. */}
+          <Dialog
+            open={vendorDraft !== null}
+            onOpenChange={(next) => {
+              if (!next) setVendorDraft(null);
+            }}
+          >
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle className="font-serif text-2xl">Add a new vendor</DialogTitle>
+                <DialogDescription>
+                  Build this vendor out in your directory — next time they're one pick away. Only
+                  the name is required.
+                </DialogDescription>
+              </DialogHeader>
+              {vendorDraft ? (
+                <div className="grid gap-3 py-2">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Vendor name</Label>
+                      <Input
+                        value={vendorDraft.name}
+                        onChange={(event) =>
+                          setVendorDraft({ ...vendorDraft, name: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Trade / what they supply</Label>
+                      <Input
+                        value={vendorDraft.trade}
+                        placeholder="e.g. Equipment rental"
+                        onChange={(event) =>
+                          setVendorDraft({ ...vendorDraft, trade: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Contact name</Label>
+                    <Input
+                      value={vendorDraft.contact_name}
+                      onChange={(event) =>
+                        setVendorDraft({ ...vendorDraft, contact_name: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Email</Label>
+                      <Input
+                        type="email"
+                        value={vendorDraft.contact_email}
+                        onChange={(event) =>
+                          setVendorDraft({ ...vendorDraft, contact_email: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Phone</Label>
+                      <Input
+                        value={vendorDraft.contact_phone}
+                        onChange={(event) =>
+                          setVendorDraft({ ...vendorDraft, contact_phone: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Address</Label>
+                    <Input
+                      value={vendorDraft.address}
+                      placeholder="123 Main St, Miami FL 33101"
+                      onChange={(event) =>
+                        setVendorDraft({ ...vendorDraft, address: event.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+              ) : null}
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setVendorDraft(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={saveVendorDetails}
+                  disabled={savingVendor || !vendorDraft?.name.trim()}
+                >
+                  {savingVendor ? "Saving…" : "Save vendor"}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -1640,28 +1826,93 @@ export function ProjectCostTrackingPanel({
           These are the individual vendor, subcontractor, labor, material, and direct-cost rows that
           support the cost-code totals above.
         </p>
+        {costActuals.length > 0 ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {(
+              [
+                ["all", "All"],
+                ["draft", "Draft"],
+                ["approved", "Approved for payment"],
+                ["committed", "Committed"],
+                ["paid", "Paid"],
+                ["void", "Void"],
+              ] as const
+            ).map(([value, label]) => {
+              const count =
+                value === "all"
+                  ? costActuals.length
+                  : costActuals.filter((actual) => actual.status === value).length;
+              // Never unmount the ACTIVE pill: approving the last draft while
+              // filtered to Draft would otherwise strand an invisible filter
+              // over a blank list.
+              if (value !== "all" && count === 0 && costStatusFilter !== value) return null;
+              const active = costStatusFilter === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setCostStatusFilter(value)}
+                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                    active
+                      ? "border-accent bg-accent text-accent-foreground"
+                      : "border-hairline bg-surface text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                  <span className="ml-1.5 tabular-nums opacity-70">{count}</span>
+                </button>
+              );
+            })}
+            <Input
+              value={costSearch}
+              onChange={(event) => setCostSearch(event.target.value)}
+              placeholder="Search by name, vendor, reference…"
+              className="h-8 w-64 max-w-full"
+            />
+          </div>
+        ) : null}
         {costActuals.length === 0 ? (
           <div className="mt-3 rounded-md border border-hairline bg-card py-8 text-center text-sm text-muted-foreground">
             {totalActual > 0
               ? "No cost ledger rows are attached yet. The bucket actuals above still feed WIP, but there is no transaction-level backup to audit."
               : "No cost ledger rows recorded yet."}
           </div>
+        ) : visibleCostActuals.length === 0 ? (
+          <div className="mt-3 rounded-md border border-dashed border-hairline bg-card py-8 text-center text-sm text-muted-foreground">
+            No costs match the current filter{costSearch.trim() ? " and search" : ""}.{" "}
+            <button
+              type="button"
+              className="font-medium text-accent-foreground hover:underline"
+              onClick={() => {
+                setCostStatusFilter("all");
+                setCostSearch("");
+              }}
+            >
+              Show all
+            </button>
+          </div>
         ) : (
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
-            {costActuals.map((actual) => (
+            {visibleCostActuals.map((actual) => (
               <div
                 key={actual.id}
-                className={`rounded-md border border-hairline bg-card p-4 ${
-                  actual.status === "void" ? "opacity-50" : ""
-                }`}
+                className={`rounded-md border border-hairline border-l-4 bg-card p-4 ${
+                  COST_STATUS_TONE[actual.status]?.edge ?? "border-l-transparent"
+                } ${actual.status === "void" ? "opacity-50" : ""}`}
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      {actual.cost_date} · {actual.cost_code || "No code"} ·{" "}
-                      {COST_STATUS_LABEL[actual.status] ?? actual.status} ·{" "}
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      <span>
+                        {actual.cost_date} · {actual.cost_code || "No code"}
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 ${COST_STATUS_TONE[actual.status]?.chip ?? ""}`}
+                      >
+                        {COST_STATUS_LABEL[actual.status] ?? actual.status}
+                      </span>
                       {/* Provenance: imports carry an import_batch_id; manual entries don't. */}
-                      {actual.import_batch_id ? "Imported" : "Manual"}
+                      <span>{actual.import_batch_id ? "Imported" : "Manual"}</span>
                     </div>
                     <div className="mt-1 font-medium text-foreground">{actual.description}</div>
                     <div className="mt-1 text-xs capitalize text-muted-foreground">
@@ -1671,23 +1922,27 @@ export function ProjectCostTrackingPanel({
                     {actual.status === "draft" ||
                     actual.status === "approved" ||
                     actual.status === "committed" ? (
-                      <div className="mt-2 flex items-center gap-3">
+                      <div className="mt-2.5 flex items-center gap-2">
                         {actual.status === "draft" ? (
-                          <button
+                          <Button
                             type="button"
-                            className="text-[11px] font-medium text-accent-foreground hover:underline"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2.5 text-xs"
                             onClick={() => onSetCostActualStatus(actual.id, "approved")}
                           >
                             Approve for payment
-                          </button>
+                          </Button>
                         ) : null}
-                        <button
+                        <Button
                           type="button"
-                          className="text-[11px] font-medium text-accent-foreground hover:underline"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2.5 text-xs"
                           onClick={() => onSetCostActualStatus(actual.id, "paid")}
                         >
                           Mark paid
-                        </button>
+                        </Button>
                       </div>
                     ) : null}
                   </div>
@@ -1695,13 +1950,19 @@ export function ProjectCostTrackingPanel({
                     <div className="text-right text-sm tabular font-medium">
                       {fmtUSD(actual.amount)}
                     </div>
-                    {actual.status === "draft" && (
+                    {(actual.status === "draft" ||
+                      actual.status === "approved" ||
+                      actual.status === "committed") && (
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
                         className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
-                        title="Edit this draft"
+                        title={
+                          actual.status === "draft"
+                            ? "Edit this draft"
+                            : "Edit this cost — changes update job cost"
+                        }
                         onClick={() => startEditCost(actual)}
                       >
                         <Pencil className="h-3.5 w-3.5" />

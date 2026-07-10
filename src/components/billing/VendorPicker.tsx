@@ -24,6 +24,7 @@ export function VendorPicker({
   onChange,
   vendors,
   subcontractors,
+  onAddNew,
   placeholder = "Pick or add a vendor…",
 }: {
   value: string;
@@ -32,6 +33,9 @@ export function VendorPicker({
   onChange: (name: string, isSub: boolean) => void;
   vendors: string[];
   subcontractors: string[];
+  /** When set, "Add ___ as a vendor" opens the caller's details window
+   * (contact name, address, email, phone) instead of enrolling name-only. */
+  onAddNew?: (name: string) => void;
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -117,7 +121,18 @@ export function VendorPicker({
             )}
             {trimmed && !hasExact && (
               <CommandGroup heading="New">
-                <CommandItem value={`add:${trimmed}`} onSelect={() => select(trimmed, false)}>
+                <CommandItem
+                  value={`add:${trimmed}`}
+                  onSelect={() => {
+                    if (onAddNew) {
+                      setQuery("");
+                      setOpen(false);
+                      onAddNew(trimmed);
+                      return;
+                    }
+                    select(trimmed, false);
+                  }}
+                >
                   <Plus className="mr-2 h-4 w-4" />
                   <span className="truncate">Add “{trimmed}” as a vendor</span>
                 </CommandItem>
