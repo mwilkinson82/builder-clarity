@@ -89,6 +89,11 @@ export interface SubcontractPaymentRow {
   notes: string;
   status: SubPaymentStatus;
   approved_at: string | null;
+  // Compliance override (field request 2026-07-10, Marshall-approved): a
+  // non-empty reason means this pay app was paid despite a failing lien-waiver/
+  // insurance gate. Audited — who/when live on overridden_by/at (server-only).
+  compliance_override_reason: string;
+  compliance_overridden_at: string | null;
 }
 // A change order or credit against a subcontract, kept SEPARATE from the base
 // contracted amount (field request 2026-07-09). amount is signed dollars:
@@ -173,6 +178,8 @@ const normalizePayment = (row: Record<string, unknown>): SubcontractPaymentRow =
   notes: str(row.notes),
   status: str(row.status, "paid") as SubPaymentStatus,
   approved_at: (row.approved_at as string | null) ?? null,
+  compliance_override_reason: str(row.compliance_override_reason),
+  compliance_overridden_at: (row.compliance_overridden_at as string | null) ?? null,
 });
 const normalizeChangeOrder = (row: Record<string, unknown>): SubcontractChangeOrderRow => ({
   id: str(row.id),
@@ -668,6 +675,19 @@ const isMissingPaymentStatusColumn = (error: DynamicSupabaseError | null) => {
 const STAGES_NOT_ENABLED =
   "The pay-app approval stages aren't enabled yet (database update pending). Record the payment as paid for now.";
 
+// The override audit columns ship in the sub-payment-compliance-override
+// migration. Pre-migration we must NOT silently pay past the gate without
+// logging the override, so a missing column surfaces a clear "not enabled yet".
+const isMissingOverrideColumn = (error: DynamicSupabaseError | null) =>
+  /compliance_override/i.test(error?.message ?? "");
+const OVERRIDE_NOT_ENABLED =
+  "The compliance override isn't enabled yet (database update pending) — attach the waiver/COI, or try the override again once the update lands.";
+
+// Whether a gate block should be overridden this call, given a typed reason.
+// Marshall's policy (2026-07-10): keep the hard block by default; an override
+// is only honored WITH a non-empty reason, which is then audited.
+const overrideOf = (reason: string | undefined) => (reason ?? "").trim();
+
 export const recordSubcontractPayment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
@@ -683,11 +703,13 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
         // Lifecycle stage the row lands in. Default 'paid' = the pre-lifecycle
         // behaviour, so existing callers keep recording paid facts.
         status: z.enum(["draft", "approved", "paid"]).default("paid"),
+        // A typed reason overrides a failing gate (audited); absent → gate blocks.
+        override_reason: z.string().max(500).optional(),
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
-    const { projectId, subcontractId, status, ...fields } = data;
+    const { projectId, subcontractId, status, override_reason, ...fields } = data;
 
     // Logging a DRAFT pay app needs nothing on file — that's the inbox. Landing
     // directly at approved-for-payment or paid is gated (field request
@@ -702,21 +724,35 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
             fields.payment_date,
           )
         : { allowed: true, blockers: [] as string[], consumeWaiverId: null };
-    if (!gate.allowed) {
+    const reason = overrideOf(override_reason);
+    const overriding = !gate.allowed && reason.length > 0;
+    if (!gate.allowed && !overriding) {
       throw new Error(
-        `${status === "paid" ? "Payment blocked" : "Can't approve for payment"} — compliance not met. ${gate.blockers.join(" ")} Add the missing item, or turn off "Require lien waivers + insurance" for this project.`,
+        `${status === "paid" ? "Payment blocked" : "Can't approve for payment"} — compliance not met. ${gate.blockers.join(" ")} Add the missing item, override with a reason, or turn off "Require lien waivers + insurance" for this project.`,
       );
     }
+    const now = new Date().toISOString();
+    const overrideStamp = overriding
+      ? {
+          compliance_override_reason: reason,
+          compliance_overridden_by: context.userId,
+          compliance_overridden_at: now,
+        }
+      : {};
 
     const base = { project_id: projectId, subcontract_id: subcontractId, ...fields };
     let insertRes = await dynamicTable(context.supabase, "subcontract_payments")
       .insert({
         ...base,
         status,
-        ...(status === "approved" ? { approved_at: new Date().toISOString() } : {}),
+        ...(status === "approved" ? { approved_at: now } : {}),
+        ...overrideStamp,
       })
       .select("*")
       .single();
+    if (insertRes.error && overriding && isMissingOverrideColumn(insertRes.error)) {
+      throw new Error(OVERRIDE_NOT_ENABLED);
+    }
     if (insertRes.error && isMissingPaymentStatusColumn(insertRes.error)) {
       // Migration not applied yet: a paid row is exactly the legacy shape, so
       // record it the old way; the new stages have nothing to fall back to.
@@ -749,7 +785,15 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
 export const setSubcontractPaymentStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
-    z.object({ id: z.string().uuid(), status: z.enum(["approved", "paid"]) }).parse(input),
+    z
+      .object({
+        id: z.string().uuid(),
+        status: z.enum(["approved", "paid"]),
+        // A typed reason overrides a failing gate (Marshall-approved 2026-07-10)
+        // — deliberate + audited. Absent → the gate blocks as before.
+        override_reason: z.string().max(500).optional(),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
     const { data: row, error } = await dynamicTable(context.supabase, "subcontract_payments")
@@ -770,23 +814,36 @@ export const setSubcontractPaymentStatus = createServerFn({ method: "POST" })
       current.id,
       current.payment_date,
     );
-    if (!gate.allowed) {
+    // Gate blocked: honor a typed override (audited), else surface the blockers.
+    const reason = overrideOf(data.override_reason);
+    const overriding = !gate.allowed && reason.length > 0;
+    if (!gate.allowed && !overriding) {
       throw new Error(
-        `${data.status === "paid" ? "Payment blocked" : "Can't approve for payment"} — compliance not met. ${gate.blockers.join(" ")} Attach the missing item, or turn off "Require lien waivers + insurance" for this project.`,
+        `${data.status === "paid" ? "Payment blocked" : "Can't approve for payment"} — compliance not met. ${gate.blockers.join(" ")} Attach the missing item, override with a reason, or turn off "Require lien waivers + insurance" for this project.`,
       );
     }
 
+    const now = new Date().toISOString();
     const updateRes = await dynamicTable(context.supabase, "subcontract_payments")
       .update({
         status: data.status,
         // First pass through approval stamps it — a draft marked straight to
         // paid still records when the spend was approved.
-        ...(current.approved_at ? {} : { approved_at: new Date().toISOString() }),
+        ...(current.approved_at ? {} : { approved_at: now }),
+        ...(overriding
+          ? {
+              compliance_override_reason: reason,
+              compliance_overridden_by: context.userId,
+              compliance_overridden_at: now,
+            }
+          : {}),
       })
       .eq("id", data.id)
       .select("*")
       .single();
     if (updateRes.error) {
+      if (overriding && isMissingOverrideColumn(updateRes.error))
+        throw new Error(OVERRIDE_NOT_ENABLED);
       if (isMissingPaymentStatusColumn(updateRes.error)) throw new Error(STAGES_NOT_ENABLED);
       throw new Error(updateRes.error.message);
     }

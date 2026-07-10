@@ -11,8 +11,17 @@ import { toast } from "sonner";
 import { HardHat, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
+import { Textarea } from "@/components/ui/textarea";
 import { WorkspaceHeader } from "@/components/project/billing/billing-workspace-atoms";
 import {
   SubcontractCard,
@@ -390,12 +399,33 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   });
   // Walk a pay app forward: approve it for payment, or mark it paid (the paid
   // step runs the same lien-waiver/insurance gate as recording a paid payment).
+  // Compliance override (field request 2026-07-10, Marshall-approved): when the
+  // gate blocks a mark-paid/approve, prompt for a reason and retry with it — a
+  // deliberate, audited escape hatch rather than a hard wall.
+  const [overridePrompt, setOverridePrompt] = useState<{
+    id: string;
+    status: "approved" | "paid";
+    blockers: string;
+  } | null>(null);
+  const [overrideReason, setOverrideReason] = useState("");
+  const closeOverride = () => {
+    setOverridePrompt(null);
+    setOverrideReason("");
+  };
   const setPayStage = useMutation({
-    mutationFn: (input: { id: string; status: "approved" | "paid" }) =>
+    mutationFn: (input: { id: string; status: "approved" | "paid"; override_reason?: string }) =>
       setPayStatusFn({ data: input }),
     onSuccess: (row) => {
       invalidate();
-      if (row.status === "paid") {
+      closeOverride();
+      if (row.compliance_override_reason) {
+        toast.success(
+          row.status === "paid"
+            ? "Marked paid — compliance overridden"
+            : "Approved — compliance overridden",
+          { description: "The override reason is recorded on the payment." },
+        );
+      } else if (row.status === "paid") {
         toast.success("Marked paid", {
           description: "Actual-to-date rose and forecast-to-complete dropped on the code(s).",
         });
@@ -403,7 +433,24 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
         toast.success("Approved for payment");
       }
     },
-    onError: onError("update the pay app"),
+    onError: (err, variables) => {
+      const msg = err instanceof Error ? err.message : "";
+      // A compliance block (and not already an override attempt) → offer to
+      // override instead of just failing. Pull the blocker sentences to show.
+      if (/compliance not met/i.test(msg) && !variables.override_reason) {
+        const blockers =
+          msg
+            .split(/compliance not met\.?\s*/i)[1]
+            ?.split(/\s*(?:Attach|Add) the missing item/i)[0] ?? msg;
+        setOverridePrompt({
+          id: variables.id,
+          status: variables.status,
+          blockers: blockers.trim(),
+        });
+        return;
+      }
+      onError("update the pay app")(err);
+    },
   });
   // Tie an on-file waiver to one pay app / undo a mistaken attach. The approve
   // gate reads this link, so attach is what unblocks "Approve for payment".
@@ -814,6 +861,51 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
           );
         })
       )}
+
+      {/* Compliance override prompt (field request 2026-07-10, Marshall-approved) */}
+      <Dialog open={overridePrompt !== null} onOpenChange={(open) => !open && closeOverride()}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-2xl">Override the compliance gate?</DialogTitle>
+            <DialogDescription>
+              This pay app can&apos;t{" "}
+              {overridePrompt?.status === "paid" ? "be paid" : "be approved"} yet —{" "}
+              {overridePrompt?.blockers || "compliance is not met"}. You can override and proceed,
+              but the reason is recorded on the payment.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5 py-1">
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Reason for overriding
+            </label>
+            <Textarea
+              rows={3}
+              value={overrideReason}
+              placeholder="e.g. Waiver signed on paper, scanning tomorrow — releasing payment to hold the schedule."
+              onChange={(e) => setOverrideReason(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={closeOverride}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!overrideReason.trim() || setPayStage.isPending}
+              onClick={() =>
+                overridePrompt &&
+                setPayStage.mutate({
+                  id: overridePrompt.id,
+                  status: overridePrompt.status,
+                  override_reason: overrideReason.trim(),
+                })
+              }
+            >
+              Override &amp; {overridePrompt?.status === "paid" ? "mark paid" : "approve"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }
