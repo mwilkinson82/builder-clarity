@@ -6,7 +6,7 @@
 //
 // The dependency rule: this FEEDS billing; billing never waits on it. Recording
 // here is optional and additive.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -199,6 +199,16 @@ export function DailyWipWorkspace({
   // When set, the form is editing an existing logged line (the PM pricing it),
   // not creating a new one.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The row pencil edits the "price this line" form BELOW the table, not a
+  // modal — on a full day that form is below the fold, so clicking the pencil
+  // looked like nothing happened (field report 2026-07-10). Scroll it into
+  // view whenever an edit starts, so the editor visibly opens.
+  const editFormRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!editingId || !editFormRef.current) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    editFormRef.current.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  }, [editingId]);
 
   const entriesQuery = useQuery({
     queryKey: ["daily-wip-entries", projectId],
@@ -643,7 +653,10 @@ export function DailyWipWorkspace({
           </div>
 
           {/* Add-entry form */}
-          <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
+          <div
+            ref={editFormRef}
+            className="rounded-lg border border-hairline bg-card p-4 shadow-card"
+          >
             <div className="flex items-center justify-between gap-2">
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 {editingId ? "Add costs to this work line" : "Add a work line"}
