@@ -3077,10 +3077,11 @@ function ProjectPage() {
                   onImportCostActuals={(input) => costActualImport.mutate({ projectId, ...input })}
                   onVoidCostActual={(id, notes) => costActualVoid.mutate({ id, notes })}
                   onUpdateCostActual={(id, input) => {
-                    // Status stays out of the edit payload — drafts advance via
-                    // the card's Approve / Mark paid, never a silent side door.
+                    // Status stays out of the edit payload — the dialog advances
+                    // state through onSetCostActualStatus. Returns the promise so
+                    // the dialog can await the save before transitioning.
                     const { status: _status, ...fields } = input;
-                    costActualUpdate.mutate({ id, ...fields });
+                    return costActualUpdate.mutateAsync({ id, ...fields });
                   }}
                   onSetCostActualStatus={(id, status) => costActualSetStatus.mutate({ id, status })}
                   onUpdateBucketBillingSettings={(id, patch) =>
