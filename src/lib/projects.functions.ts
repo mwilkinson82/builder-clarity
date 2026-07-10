@@ -1273,6 +1273,60 @@ function buildSelfPerformByBucket(
   return selfPerformCostByBucket(rows, commitmentFor);
 }
 
+// An invoice/cost entry as the Budget drawer's drill-through needs it.
+// CROSS-MODULE READ: public.cost_actuals is owned by the Billing module (its
+// job-costs form and importer write these rows, and a DB trigger folds each
+// non-void row into cost_buckets.actual_to_date). This lean SELECT exists so
+// the Budget line drawer can itemize WHICH invoices make up a line's actual
+// (field request 2026-07-09: "see the invoices that comprise that actual
+// number") — no writes, RLS still scopes to readable projects. The heavyweight
+// billing workspace read stays the Billing module's.
+export interface BudgetCostActualRow {
+  id: string;
+  cost_bucket_id: string | null;
+  description: string;
+  vendor: string;
+  reference_number: string;
+  amount: number;
+  cost_date: string;
+}
+
+export const listCostActualsForBudget = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string }) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<BudgetCostActualRow[]> => {
+    const { data: rows, error } = await dynamicTable(context.supabase, "cost_actuals")
+      .select(
+        "id, cost_bucket_id, description, vendor, reference_number, amount, cost_date, status",
+      )
+      .eq("project_id", data.projectId)
+      .order("cost_date", { ascending: false });
+    if (error) {
+      // Workspaces provisioned before the billing job-cost tables degrade to
+      // "no invoices" rather than breaking the Budget drawer.
+      if (isMissingRestRelation(error, "cost_actuals")) return [];
+      throw new Error(error.message);
+    }
+    return (
+      ((rows ?? []) as Record<string, unknown>[])
+        // Mirror cost_actual_rollup_amount exactly: void AND draft rows don't
+        // fold into actual_to_date (a draft is an unvetted invoice), so listing
+        // them here would itemize money that isn't in the number being explained.
+        .filter((row) => str(row.status) !== "void" && str(row.status) !== "draft")
+        .map((row) => ({
+          id: str(row.id),
+          cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+          description: str(row.description),
+          vendor: str(row.vendor),
+          reference_number: str(row.reference_number),
+          amount: num(row.amount),
+          cost_date: str(row.cost_date),
+        }))
+    );
+  });
+
 export const listProjects = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
