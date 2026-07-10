@@ -125,8 +125,10 @@ export function BudgetLineDrawer({
   selfPerformWip = 0,
   wipDays = [],
   subPayments = [],
+  invoices = [],
   onOpenWipDay,
   onOpenSubcontractors,
+  onOpenBilling,
   budgetLocked,
   overrides,
   onSave,
@@ -150,8 +152,14 @@ export function BudgetLineDrawer({
   /** Subcontractor payments' pro-rata share on this line (the closest thing to
    * invoices in the actual today). Click-through via onOpenSubcontractors. */
   subPayments?: { id: string; date: string; label: string; amount: number }[];
+  /** The invoices/costs recorded in Billing job costs on this line — a DB
+   * trigger already folded them into actual_to_date, so this itemizes what's
+   * inside the recorded base. Click-through via onOpenBilling. */
+  invoices?: { id: string; date: string; label: string; amount: number }[];
   /** Jump to the Daily WIP tab on a specific day (closes the drawer). */
   onOpenWipDay?: (date: string) => void;
+  /** Jump to the Billing tab (closes the drawer). */
+  onOpenBilling?: () => void;
   /** Jump to the Subcontractors tab (closes the drawer). */
   onOpenSubcontractors?: () => void;
   budgetLocked: boolean;
@@ -446,7 +454,9 @@ export function BudgetLineDrawer({
               2026-07-09: "we'd like to see where that number's coming from").
               Every row is a real record: a day's logged work line, or a sub
               payment's share on this code. */}
-          {!isCreate && bucket && (wipDays.length > 0 || subPayments.length > 0) ? (
+          {!isCreate &&
+          bucket &&
+          (wipDays.length > 0 || subPayments.length > 0 || invoices.length > 0) ? (
             <div className="py-3">
               <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Where actual to date comes from
@@ -458,17 +468,68 @@ export function BudgetLineDrawer({
                 </span>
               </div>
               <ul className="mt-2 space-y-1">
-                {bucket.actual_to_date !== 0 ? (
-                  <li className="flex items-baseline justify-between gap-2 text-xs">
-                    <span className="text-muted-foreground">
-                      Recorded costs &amp; manual entries
-                      <span className="block text-[10px] text-muted-foreground/70">
-                        invoices logged in Billing job costs, plus any hand-set base
+                {invoices.length > 0 ? (
+                  <li>
+                    <div className="flex items-baseline justify-between gap-2 text-xs">
+                      <span className="font-medium text-foreground">
+                        Invoices &amp; recorded costs ({invoices.length})
                       </span>
-                    </span>
-                    <span className="tabular text-foreground">{fmtUSD(bucket.actual_to_date)}</span>
+                      <span className="tabular font-medium text-foreground">
+                        {fmtUSD(invoices.reduce((sum, invoice) => sum + invoice.amount, 0))}
+                      </span>
+                    </div>
+                    <ul className="mt-1 space-y-0.5">
+                      {invoices.slice(0, 8).map((invoice) => (
+                        <li key={invoice.id}>
+                          <button
+                            type="button"
+                            className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-0.5 text-left text-xs text-muted-foreground hover:bg-surface hover:text-foreground"
+                            onClick={() => onOpenBilling?.()}
+                            title="Open Billing — job costs"
+                          >
+                            <span className="min-w-0 truncate">
+                              <span className="tabular">{invoice.date}</span> · {invoice.label}
+                            </span>
+                            <span className="shrink-0 tabular">{fmtUSD(invoice.amount)}</span>
+                          </button>
+                        </li>
+                      ))}
+                      {invoices.length > 8 ? (
+                        <li className="px-1 text-[11px] text-muted-foreground/70">
+                          + {invoices.length - 8} more in Billing → job costs
+                        </li>
+                      ) : null}
+                    </ul>
                   </li>
                 ) : null}
+                {(() => {
+                  // Whatever part of the recorded base the invoices DON'T
+                  // explain is hand-entered (an override, or history from
+                  // before job costs were used) — shown so the pieces always
+                  // add up to the line's actual, never a silent gap.
+                  const invoicedTotal = invoices.reduce((sum, invoice) => sum + invoice.amount, 0);
+                  const handEntered =
+                    Math.round((bucket.actual_to_date - invoicedTotal) * 100) / 100;
+                  if (Math.abs(handEntered) < 0.005) return null;
+                  return (
+                    <li className="flex items-baseline justify-between gap-2 text-xs">
+                      <span className="text-muted-foreground">
+                        {invoices.length > 0
+                          ? "Hand-entered adjustments"
+                          : "Recorded costs & manual entries"}
+                        <span className="block text-[10px] text-muted-foreground/70">
+                          {invoices.length > 0
+                            ? "the part of the base not tied to an invoice"
+                            : "invoices logged in Billing job costs, plus any hand-set base"}
+                        </span>
+                      </span>
+                      <span className="tabular text-foreground">
+                        {handEntered < 0 ? "−" : ""}
+                        {fmtUSD(Math.abs(handEntered))}
+                      </span>
+                    </li>
+                  );
+                })()}
                 {wipDays.length > 0 ? (
                   <li className="pt-1">
                     <div className="flex items-baseline justify-between gap-2 text-xs">

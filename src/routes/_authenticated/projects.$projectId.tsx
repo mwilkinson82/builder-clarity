@@ -172,6 +172,7 @@ import {
   type ClaimDocType,
   type SovImportRow,
   type BucketRow,
+  listCostActualsForBudget,
 } from "@/lib/projects.functions";
 import { isHarborDemoProject } from "@/lib/demo-seed";
 import { listSchedule } from "@/lib/schedule.functions";
@@ -442,6 +443,7 @@ function ProjectPage() {
   const listChangeOrderAllocationsFn = useServerFn(listChangeOrderAllocations);
   const listProjectSubcontractsFn = useServerFn(listProjectSubcontracts);
   const listDailyWipEntriesFn = useServerFn(listDailyWipEntries);
+  const listCostActualsFn = useServerFn(listCostActualsForBudget);
   const lockProjectBudgetFn = useServerFn(lockProjectBudget);
   const buildBudgetFromEstimateFn = useServerFn(buildBudgetFromEstimate);
   const createInspectionFn = useServerFn(createInspection);
@@ -646,6 +648,13 @@ function ProjectPage() {
     queryKey: ["daily-wip-entries", projectId],
     queryFn: () => listDailyWipEntriesFn({ data: { projectId } }),
   });
+  // Invoices/costs recorded in Billing job costs — the Budget drawer itemizes
+  // the ones behind an edited line's actual (they're folded into
+  // actual_to_date by a DB trigger, so they're already IN the number shown).
+  const costActualsQuery = useQuery({
+    queryKey: ["cost-actuals", projectId],
+    queryFn: () => listCostActualsFn({ data: { projectId } }),
+  });
   // BUDGETCONSOLIDATE1: the manual-override audit log for budget lines. Powers
   // the "edited" marker on the ledger and the "recent changes" list in the line
   // editor. Degrades to [] where the audit table isn't applied yet.
@@ -703,6 +712,19 @@ function ProjectPage() {
       .filter((row) => row.amount !== 0)
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [editingBucketId, dailyWipEntriesQuery.data, subcontractsQuery.data]);
+  const drawerInvoices = useMemo(() => {
+    if (!editingBucketId) return [];
+    return (costActualsQuery.data ?? [])
+      .filter((row) => row.cost_bucket_id === editingBucketId)
+      .map((row) => ({
+        id: row.id,
+        date: row.cost_date,
+        label: [row.vendor || row.description || "Cost entry", row.reference_number]
+          .filter(Boolean)
+          .join(" · "),
+        amount: row.amount,
+      }));
+  }, [editingBucketId, costActualsQuery.data]);
   const drawerSubPayments = useMemo(() => {
     const subs = subcontractsQuery.data;
     if (!editingBucketId || !subs) return [];
@@ -2955,6 +2977,12 @@ function ProjectPage() {
                 }
                 wipDays={drawerWipDays}
                 subPayments={drawerSubPayments}
+                invoices={drawerInvoices}
+                onOpenBilling={() => {
+                  setEditingBucketId(null);
+                  setAddingLine(false);
+                  setProjectTab("billing");
+                }}
                 onOpenWipDay={(date) => {
                   setEditingBucketId(null);
                   setAddingLine(false);
