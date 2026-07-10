@@ -19,10 +19,17 @@ import {
   Pencil,
   Plus,
   Trash2,
-  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { WorkspaceHeader } from "@/components/project/billing/billing-workspace-atoms";
@@ -199,6 +206,23 @@ export function DailyWipWorkspace({
   // When set, the form is editing an existing logged line (the PM pricing it),
   // not creating a new one.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The work-line editor is a modal (Marshall 2026-07-10 — the old in-place
+  // form below the table was invisible below the fold). openAddForm / startEdit
+  // open it; closeForm is the SINGLE reset every close path runs (footer Cancel,
+  // the dialog X, a click-outside, and a successful save) so edit state can
+  // never leak into the next open (the Radix-onOpenChange-skips-programmatic-
+  // close trap from the cost dialog review).
+  const [formOpen, setFormOpen] = useState(false);
+  const closeForm = () => {
+    setFormOpen(false);
+    setEditingId(null);
+    setDraft(emptyDraft);
+  };
+  const openAddForm = () => {
+    setEditingId(null);
+    setDraft(emptyDraft);
+    setFormOpen(true);
+  };
 
   const entriesQuery = useQuery({
     queryKey: ["daily-wip-entries", projectId],
@@ -368,11 +392,10 @@ export function DailyWipWorkspace({
 
   const saveMutation = useMutation({
     mutationFn: (input: SaveWipInput) => saveEntry({ data: input }),
-    onSuccess: () => {
-      const wasEditing = editingId !== null;
-      setDraft(emptyDraft);
-      setEditingId(null);
-      toast.success(wasEditing ? "Costs saved" : "Day's work recorded");
+    onSuccess: (_data, variables) => {
+      // Label off the SAVED row, not live editingId (which a close would reset).
+      closeForm();
+      toast.success(variables.id ? "Costs saved" : "Day's work recorded");
       invalidate();
     },
     onError: (error) =>
@@ -503,11 +526,7 @@ export function DailyWipWorkspace({
       percent_complete: entry.percent_complete,
       notes: entry.notes,
     });
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-    setDraft(emptyDraft);
+    setFormOpen(true);
   };
 
   const setDraftField = <K extends keyof EntryDraft>(key: K, value: EntryDraft[K]) =>
@@ -563,6 +582,20 @@ export function DailyWipWorkspace({
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         {/* Left: the day's WIP entries + add form */}
         <div className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Logged work
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1.5"
+              onClick={openAddForm}
+              disabled={saveMutation.isPending}
+            >
+              <Plus className="h-3.5 w-3.5" /> Add work line
+            </Button>
+          </div>
           <div className="overflow-x-auto rounded-lg border border-hairline bg-surface">
             <table className="w-full min-w-[940px] border-collapse text-sm">
               <thead className="border-b border-hairline bg-surface-elevated">
@@ -590,7 +623,8 @@ export function DailyWipWorkspace({
                   <tr>
                     <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
                       No work logged for this day yet. The superintendent adds work lines in the
-                      Daily Reports tab — they show here to cost. You can also add a line below.
+                      Daily Reports tab — they show here to cost. You can also use "Add work line"
+                      above.
                     </td>
                   </tr>
                 ) : (
@@ -642,232 +676,246 @@ export function DailyWipWorkspace({
             </table>
           </div>
 
-          {/* Add-entry form */}
-          <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                {editingId ? "Add costs to this work line" : "Add a work line"}
-              </div>
-              {editingId ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 gap-1 text-muted-foreground"
-                  onClick={cancelEdit}
-                >
-                  <X className="h-3.5 w-3.5" />
-                  Cancel
-                </Button>
-              ) : null}
-            </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {editingId
-                ? "Add the blended crew rate, materials, and equipment to price the superintendent's logged work."
-                : "The superintendent logs the day's work in the Daily Reports tab — pick a line above to add its costs, or add a line here."}
-            </p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="flex flex-col gap-1 sm:col-span-2">
-                <span className="text-xs text-muted-foreground">Cost code (SOV line)</span>
-                <select
-                  value={draft.cost_bucket_id}
-                  onChange={(event) => setDraftField("cost_bucket_id", event.target.value)}
-                  className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
-                >
-                  <option value="">Uncoded (assign later)</option>
-                  {buckets.map((bucket) => (
-                    <option key={bucket.id} value={bucket.id}>
-                      {[bucket.cost_code, bucket.bucket].filter(Boolean).join(" · ")}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 sm:col-span-2">
-                <span className="text-xs text-muted-foreground">Schedule activity (CPM)</span>
-                <select
-                  value={draft.schedule_activity_id}
-                  onChange={(event) => setDraftField("schedule_activity_id", event.target.value)}
-                  disabled={activities.length === 0}
-                  className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
-                >
-                  <option value="">
-                    {activities.length === 0
-                      ? "No schedule activities yet"
-                      : "Not linked to the schedule"}
-                  </option>
-                  {activityGroups.map((group) => (
-                    <optgroup key={group.division} label={group.division}>
-                      {group.items.map((activity) => (
-                        <option key={activity.id} value={activity.id}>
-                          {activityOptionLabel(activity)}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 sm:col-span-2">
-                <span className="text-xs text-muted-foreground">Performed by</span>
-                <select
-                  value={draft.subcontractor_id}
-                  onChange={(event) => setDraftField("subcontractor_id", event.target.value)}
-                  disabled={subOptions.length === 0}
-                  className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
-                >
-                  <option value="">
-                    {subOptions.length === 0
-                      ? "Self-perform (no subs bought out yet)"
-                      : "Self-perform (in-house)"}
-                  </option>
-                  {subOptions.map((sub) => (
-                    <option key={sub.id} value={sub.id}>
-                      {sub.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 sm:col-span-2">
-                <span className="text-xs text-muted-foreground">Activity / note</span>
-                <Input
-                  value={draft.activity}
-                  onChange={(event) => setDraftField("activity", event.target.value)}
-                  placeholder="e.g. Formwork north wall"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Crew</span>
-                <Input
-                  type="number"
-                  min={0}
-                  value={draft.crew_count || ""}
-                  onChange={(event) => setDraftField("crew_count", Number(event.target.value) || 0)}
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Hours</span>
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.25"
-                  value={draft.hours || ""}
-                  onChange={(event) => setDraftField("hours", Number(event.target.value) || 0)}
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Blended rate ($/hr)</span>
-                <MoneyInput
-                  value={draft.labor_rate}
-                  onValueChange={(n) => setDraftField("labor_rate", n)}
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Labor (derived)</span>
-                <div className="flex h-9 items-center rounded-md border border-hairline bg-muted/40 px-3 text-sm tabular-nums text-foreground">
-                  {fmtUSD(draftLabor)}
-                </div>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Quantity placed</span>
-                <Input
-                  type="number"
-                  min={0}
-                  value={draft.quantity || ""}
-                  onChange={(event) => setDraftField("quantity", Number(event.target.value) || 0)}
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Unit</span>
-                <Input
-                  value={draft.unit}
-                  onChange={(event) => setDraftField("unit", event.target.value)}
-                  placeholder="SF, CY, LF…"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">% complete</span>
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={draft.percent_complete || ""}
-                  placeholder="from the field — adjust if needed"
-                  onChange={(event) =>
-                    setDraftField(
-                      "percent_complete",
-                      Math.min(100, Math.max(0, Number(event.target.value) || 0)),
-                    )
-                  }
-                />
-                {draftIsSub ? (
-                  <span className="text-[10px] text-muted-foreground">
-                    {draftPrior > 0 ? (
-                      <>
-                        Sub line — earns {fmtUSD(draftWorkInPlace)} this update ({draftPrior}% →{" "}
-                        {draft.percent_complete || 0}%).{" "}
-                        {fmtUSD(subEarnedValue(draftCommitment ?? 0, draft.percent_complete))} of
-                        the {fmtUSD(draftCommitment ?? 0)} buyout earned to date.
-                      </>
-                    ) : (
-                      <>
-                        Sub line — earns {fmtUSD(draftWorkInPlace)} at {draft.percent_complete || 0}
-                        % of the {fmtUSD(draftCommitment ?? 0)} buyout.
-                      </>
-                    )}
-                  </span>
-                ) : null}
-                {editingEntry ? (
-                  <span
-                    className={`text-[10px] ${pmAdjusting ? "text-warning" : "text-muted-foreground"}`}
+          {/* Work-line editor — a modal so it can't hide below the fold. */}
+          <Dialog
+            open={formOpen}
+            onOpenChange={(next) => {
+              // Ignore close requests (Esc / overlay / X) while saving — closing
+              // mid-save and reopening would let the in-flight onSuccess wipe the
+              // new form.
+              if (!next && !saveMutation.isPending) closeForm();
+            }}
+          >
+            <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>{editingId ? "Price this work line" : "Add a work line"}</DialogTitle>
+                <DialogDescription>
+                  {editingId
+                    ? "Add the blended crew rate, materials, and equipment to price the superintendent's logged work."
+                    : `Adds a priced line directly to ${formatBillingDate(selectedDate)}. The superintendent usually logs the day's work in the Daily Reports tab.`}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1 sm:col-span-2">
+                  <span className="text-xs text-muted-foreground">Cost code (SOV line)</span>
+                  <select
+                    value={draft.cost_bucket_id}
+                    onChange={(event) => setDraftField("cost_bucket_id", event.target.value)}
+                    className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
                   >
-                    {pmAdjusting
-                      ? `Field logged ${fieldPercent}% — you're showing ${draft.percent_complete}%. The change is recorded.`
-                      : `Field logged ${fieldPercent}%.`}
-                  </span>
-                ) : null}
-              </label>
-            </div>
+                    <option value="">Uncoded (assign later)</option>
+                    {buckets.map((bucket) => (
+                      <option key={bucket.id} value={bucket.id}>
+                        {[bucket.cost_code, bucket.bucket].filter(Boolean).join(" · ")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 sm:col-span-2">
+                  <span className="text-xs text-muted-foreground">Schedule activity (CPM)</span>
+                  <select
+                    value={draft.schedule_activity_id}
+                    onChange={(event) => setDraftField("schedule_activity_id", event.target.value)}
+                    disabled={activities.length === 0}
+                    className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                  >
+                    <option value="">
+                      {activities.length === 0
+                        ? "No schedule activities yet"
+                        : "Not linked to the schedule"}
+                    </option>
+                    {activityGroups.map((group) => (
+                      <optgroup key={group.division} label={group.division}>
+                        {group.items.map((activity) => (
+                          <option key={activity.id} value={activity.id}>
+                            {activityOptionLabel(activity)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 sm:col-span-2">
+                  <span className="text-xs text-muted-foreground">Performed by</span>
+                  <select
+                    value={draft.subcontractor_id}
+                    onChange={(event) => setDraftField("subcontractor_id", event.target.value)}
+                    disabled={subOptions.length === 0}
+                    className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-60"
+                  >
+                    <option value="">
+                      {subOptions.length === 0
+                        ? "Self-perform (no subs bought out yet)"
+                        : "Self-perform (in-house)"}
+                    </option>
+                    {subOptions.map((sub) => (
+                      <option key={sub.id} value={sub.id}>
+                        {sub.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 sm:col-span-2">
+                  <span className="text-xs text-muted-foreground">Activity / note</span>
+                  <Input
+                    value={draft.activity}
+                    onChange={(event) => setDraftField("activity", event.target.value)}
+                    placeholder="e.g. Formwork north wall"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Crew</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={draft.crew_count || ""}
+                    onChange={(event) =>
+                      setDraftField("crew_count", Number(event.target.value) || 0)
+                    }
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Hours</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.25"
+                    value={draft.hours || ""}
+                    onChange={(event) => setDraftField("hours", Number(event.target.value) || 0)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Blended rate ($/hr)</span>
+                  <MoneyInput
+                    value={draft.labor_rate}
+                    onValueChange={(n) => setDraftField("labor_rate", n)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Labor (derived)</span>
+                  <div className="flex h-9 items-center rounded-md border border-hairline bg-muted/40 px-3 text-sm tabular-nums text-foreground">
+                    {fmtUSD(draftLabor)}
+                  </div>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Quantity placed</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={draft.quantity || ""}
+                    onChange={(event) => setDraftField("quantity", Number(event.target.value) || 0)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">Unit</span>
+                  <Input
+                    value={draft.unit}
+                    onChange={(event) => setDraftField("unit", event.target.value)}
+                    placeholder="SF, CY, LF…"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">% complete</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={draft.percent_complete || ""}
+                    placeholder="from the field — adjust if needed"
+                    onChange={(event) =>
+                      setDraftField(
+                        "percent_complete",
+                        Math.min(100, Math.max(0, Number(event.target.value) || 0)),
+                      )
+                    }
+                  />
+                  {draftIsSub ? (
+                    <span className="text-[10px] text-muted-foreground">
+                      {draftPrior > 0 ? (
+                        <>
+                          Sub line — earns {fmtUSD(draftWorkInPlace)} this update ({draftPrior}% →{" "}
+                          {draft.percent_complete || 0}%).{" "}
+                          {fmtUSD(subEarnedValue(draftCommitment ?? 0, draft.percent_complete))} of
+                          the {fmtUSD(draftCommitment ?? 0)} buyout earned to date.
+                        </>
+                      ) : (
+                        <>
+                          Sub line — earns {fmtUSD(draftWorkInPlace)} at{" "}
+                          {draft.percent_complete || 0}% of the {fmtUSD(draftCommitment ?? 0)}{" "}
+                          buyout.
+                        </>
+                      )}
+                    </span>
+                  ) : null}
+                  {editingEntry ? (
+                    <span
+                      className={`text-[10px] ${pmAdjusting ? "text-warning" : "text-muted-foreground"}`}
+                    >
+                      {pmAdjusting
+                        ? `Field logged ${fieldPercent}% — you're showing ${draft.percent_complete}%. The change is recorded.`
+                        : `Field logged ${fieldPercent}%.`}
+                    </span>
+                  ) : null}
+                </label>
+              </div>
 
-            {/* Itemized materials + equipment: what it was, and how much it cost. */}
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
-              <ItemizedCostEditor
-                label="Materials"
-                help="What you installed and its cost — e.g. rebar #5, $1,200"
-                placeholder="What material? e.g. rebar #5"
-                items={draft.material_items}
-                onChange={(items) => setDraftField("material_items", items)}
-              />
-              <ItemizedCostEditor
-                label="Equipment"
-                help="What you ran and its cost — e.g. 20T excavator, $800"
-                placeholder="What equipment? e.g. 20T excavator"
-                items={draft.equipment_items}
-                onChange={(items) => setDraftField("equipment_items", items)}
-              />
-            </div>
+              {/* Itemized materials + equipment: what it was, and how much it cost. */}
+              <div className="mt-2 grid gap-4">
+                <ItemizedCostEditor
+                  label="Materials"
+                  help="What you installed and its cost — e.g. rebar #5, $1,200"
+                  placeholder="What material? e.g. rebar #5"
+                  items={draft.material_items}
+                  onChange={(items) => setDraftField("material_items", items)}
+                />
+                <ItemizedCostEditor
+                  label="Equipment"
+                  help="What you ran and its cost — e.g. 20T excavator, $800"
+                  placeholder="What equipment? e.g. 20T excavator"
+                  items={draft.equipment_items}
+                  onChange={(items) => setDraftField("equipment_items", items)}
+                />
+              </div>
 
-            <div className="mt-3 flex items-center justify-between gap-2">
-              <span className="text-[11px] text-muted-foreground">
-                Work in place ={" "}
-                <span className="font-medium text-foreground">{fmtUSD(draftWorkInPlace)}</span>
-                {draftIsSub ? (
-                  <span className="ml-1">
-                    {draftPrior > 0
-                      ? `(+${(draft.percent_complete || 0) - draftPrior}% this update, ${draftPrior}→${draft.percent_complete || 0}% of the sub commitment)`
-                      : `(${draft.percent_complete || 0}% of ${fmtUSD(draftCommitment ?? 0)} sub commitment)`}
-                  </span>
-                ) : null}
-              </span>
-              <Button
-                size="sm"
-                className="gap-1.5"
-                onClick={handleSave}
-                disabled={saveMutation.isPending}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {saveMutation.isPending ? "Saving…" : editingId ? "Save costs" : "Add to this day"}
-              </Button>
-            </div>
-          </div>
+              <DialogFooter className="mt-2 flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-[11px] text-muted-foreground">
+                  Work in place ={" "}
+                  <span className="font-medium text-foreground">{fmtUSD(draftWorkInPlace)}</span>
+                  {draftIsSub ? (
+                    <span className="ml-1">
+                      {draftPrior > 0
+                        ? `(+${(draft.percent_complete || 0) - draftPrior}% this update, ${draftPrior}→${draft.percent_complete || 0}% of the sub commitment)`
+                        : `(${draft.percent_complete || 0}% of ${fmtUSD(draftCommitment ?? 0)} sub commitment)`}
+                    </span>
+                  ) : null}
+                </span>
+                <div className="flex items-center gap-2 sm:justify-end">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={closeForm}
+                    disabled={saveMutation.isPending}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={handleSave}
+                    disabled={saveMutation.isPending}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {saveMutation.isPending
+                      ? "Saving…"
+                      : editingId
+                        ? "Save costs"
+                        : "Add to this day"}
+                  </Button>
+                </div>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* Right: the day's daily report, read-only reference */}
