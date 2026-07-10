@@ -43,6 +43,7 @@ import {
   saveSubcontract,
   setActiveSubcontractDocument,
   setSubcontractPaymentSplit,
+  setSubcontractPaymentStatus,
   updateSubcontractAllocation,
   updateSubcontractPayment,
 } from "@/lib/subcontracts.functions";
@@ -76,6 +77,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const deleteCoFn = useServerFn(deleteSubcontractChangeOrder);
   const payFn = useServerFn(recordSubcontractPayment);
   const updatePayFn = useServerFn(updateSubcontractPayment);
+  const setPayStatusFn = useServerFn(setSubcontractPaymentStatus);
   const deletePayFn = useServerFn(deleteSubcontractPayment);
   const setSplitFn = useServerFn(setSubcontractPaymentSplit);
   const addDocFn = useServerFn(addSubcontractDocument);
@@ -311,6 +313,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       retainage_held: number;
       payment_date: string;
       notes: string;
+      status: "draft" | "approved" | "paid";
     }) =>
       payFn({
         data: {
@@ -321,13 +324,24 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
           payment_date: input.payment_date,
           reference: "",
           notes: input.notes,
+          status: input.status,
         },
       }),
-    onSuccess: () => {
+    onSuccess: (row) => {
       invalidate();
-      toast.success("Payment recorded", {
-        description: "Actual-to-date rose and forecast-to-complete dropped on the code(s).",
-      });
+      if (row.status === "draft") {
+        toast.success("Pay app logged as a draft", {
+          description: "It won't touch the budget until it's approved and marked paid.",
+        });
+      } else if (row.status === "approved") {
+        toast.success("Pay app approved for payment", {
+          description: "Mark it paid when the money goes out — that's when it becomes job cost.",
+        });
+      } else {
+        toast.success("Payment recorded", {
+          description: "Actual-to-date rose and forecast-to-complete dropped on the code(s).",
+        });
+      }
     },
     onError: onError("record the payment"),
   });
@@ -363,6 +377,23 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       );
     },
     onError: onError("save the payment split"),
+  });
+  // Walk a pay app forward: approve it for payment, or mark it paid (the paid
+  // step runs the same lien-waiver/insurance gate as recording a paid payment).
+  const setPayStage = useMutation({
+    mutationFn: (input: { id: string; status: "approved" | "paid" }) =>
+      setPayStatusFn({ data: input }),
+    onSuccess: (row) => {
+      invalidate();
+      if (row.status === "paid") {
+        toast.success("Marked paid", {
+          description: "Actual-to-date rose and forecast-to-complete dropped on the code(s).",
+        });
+      } else {
+        toast.success("Approved for payment");
+      }
+    },
+    onError: onError("update the pay app"),
   });
   const updatePayment = useMutation({
     mutationFn: (input: { id: string; edit: PaymentEdit }) =>
@@ -649,16 +680,18 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
                 })
               }
               onRemoveChangeOrder={(id) => removeCo.mutate(id)}
-              onPay={(amount, retainage_held, payment_date, notes) =>
+              onPay={(amount, retainage_held, payment_date, notes, stage) =>
                 recordPayment.mutate({
                   subcontractId: sub.id,
                   amount,
                   retainage_held,
                   payment_date,
                   notes,
+                  status: stage,
                 })
               }
               onUpdatePayment={(id, edit) => updatePayment.mutate({ id, edit })}
+              onSetPaymentStage={(id, stage) => setPayStage.mutate({ id, status: stage })}
               onRemovePayment={(id) => removePayment.mutate(id)}
               paymentSplits={project.payment_allocations.filter(
                 (split) => split.subcontract_id === sub.id,

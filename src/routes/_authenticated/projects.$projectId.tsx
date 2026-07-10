@@ -99,6 +99,7 @@ import {
   generateBillingLineItems,
   getBillingWorkspace,
   importCostActuals,
+  setCostActualStatus,
   updateBillingApplicationRetainageRate,
   updateBillingLineItem,
   updateBillingLineItems,
@@ -480,6 +481,7 @@ function ProjectPage() {
   const createCostActualFn = useServerFn(createCostActual);
   const importCostActualsFn = useServerFn(importCostActuals);
   const voidCostActualFn = useServerFn(voidCostActual);
+  const setCostActualStatusFn = useServerFn(setCostActualStatus);
   const updateBucketBillingSettingsFn = useServerFn(updateCostBucketBillingSettings);
 
   const invalidate = () => {
@@ -713,21 +715,26 @@ function ProjectPage() {
       list.push(allocation);
       allocationsBySubcontract.set(allocation.subcontract_id, list);
     }
-    return subs.payments
-      .map((payment) => {
-        const allocations = allocationsBySubcontract.get(payment.subcontract_id) ?? [];
-        const share = paymentShareForBucket(payment.amount, allocations, editingBucketId);
-        if (share <= 0) return null;
-        const title = titleBySubcontract.get(payment.subcontract_id) || "Subcontract";
-        return {
-          id: payment.id,
-          date: payment.payment_date,
-          label: payment.reference ? `${title} · ${payment.reference}` : title,
-          amount: share,
-        };
-      })
-      .filter((row): row is NonNullable<typeof row> => row !== null)
-      .sort((a, b) => b.date.localeCompare(a.date));
+    return (
+      subs.payments
+        // The drawer itemizes ACTUAL cost sources — a draft/approved pay app
+        // isn't actual cost yet (only paid rows feed the bucket's actuals).
+        .filter((payment) => payment.status === "paid")
+        .map((payment) => {
+          const allocations = allocationsBySubcontract.get(payment.subcontract_id) ?? [];
+          const share = paymentShareForBucket(payment.amount, allocations, editingBucketId);
+          if (share <= 0) return null;
+          const title = titleBySubcontract.get(payment.subcontract_id) || "Subcontract";
+          return {
+            id: payment.id,
+            date: payment.payment_date,
+            label: payment.reference ? `${title} · ${payment.reference}` : title,
+            amount: share,
+          };
+        })
+        .filter((row): row is NonNullable<typeof row> => row !== null)
+        .sort((a, b) => b.date.localeCompare(a.date))
+    );
   }, [editingBucketId, subcontractsQuery.data]);
 
   // The daily P&L prices earned value at what the owner ACTUALLY pays for a
@@ -1205,13 +1212,34 @@ function ProjectPage() {
   const costActualCreate = useMutation({
     mutationFn: (input: Parameters<typeof createCostActualFn>[0]["data"]) =>
       createCostActualFn({ data: input }),
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       invalidate();
-      toast.success("Cost actual saved");
+      if (variables.status === "draft") {
+        toast.success("Invoice saved as a draft", {
+          description: "It won't count as job cost until it's approved or marked paid.",
+        });
+      } else {
+        toast.success("Cost actual saved");
+      }
     },
     onError: (err) => {
       toast.error("Cost actual did not save", {
         description: err instanceof Error ? err.message : "Check the cost entry and try again.",
+      });
+    },
+  });
+  // Walk an invoice through the payables lifecycle: approve the spend, then
+  // mark it paid. Approving a draft is the moment it starts counting as cost.
+  const costActualSetStatus = useMutation({
+    mutationFn: (input: { id: string; status: "approved" | "paid" }) =>
+      setCostActualStatusFn({ data: input }),
+    onSuccess: (_result, variables) => {
+      invalidate();
+      toast.success(variables.status === "paid" ? "Marked paid" : "Approved for payment");
+    },
+    onError: (err) => {
+      toast.error("Could not update the invoice", {
+        description: err instanceof Error ? err.message : "Try again.",
       });
     },
   });
@@ -2977,7 +3005,8 @@ function ProjectPage() {
                   savingCostActual={
                     costActualCreate.isPending ||
                     costActualImport.isPending ||
-                    costActualVoid.isPending
+                    costActualVoid.isPending ||
+                    costActualSetStatus.isPending
                   }
                   savingBucketBilling={bucketBillingUpdate.isPending}
                   onCreate={handleCreatePayApp}
@@ -3004,6 +3033,7 @@ function ProjectPage() {
                   }
                   onImportCostActuals={(input) => costActualImport.mutate({ projectId, ...input })}
                   onVoidCostActual={(id, notes) => costActualVoid.mutate({ id, notes })}
+                  onSetCostActualStatus={(id, status) => costActualSetStatus.mutate({ id, status })}
                   onUpdateBucketBillingSettings={(id, patch) =>
                     bucketBillingUpdate.mutate({ id, patch })
                   }

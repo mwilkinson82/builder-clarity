@@ -141,8 +141,13 @@ export interface CostActualRow {
   source_row_hash: string;
   source_external_id: string;
   cost_date: string;
-  status: "committed" | "paid" | "void";
+  // Payables lifecycle (field request 2026-07-09): draft (logged, not vetted —
+  // never counts toward job cost) → approved (approved for payment) → paid.
+  // 'committed' predates the approval flow and keeps counting as incurred cost.
+  status: "draft" | "committed" | "approved" | "paid" | "void";
   notes: string;
+  approved_at: string | null;
+  paid_at: string | null;
   voided_at: string | null;
   created_at: string;
   updated_at: string;
@@ -386,6 +391,8 @@ const normalizeCostActual = (row: Record<string, unknown>): CostActualRow => ({
   cost_date: str(row.cost_date),
   status: str(row.status, "committed") as CostActualRow["status"],
   notes: str(row.notes),
+  approved_at: (row.approved_at as string | null) ?? null,
+  paid_at: (row.paid_at as string | null) ?? null,
   voided_at: (row.voided_at as string | null) ?? null,
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
@@ -1080,9 +1087,17 @@ const costActualInput = z.object({
   vendor: z.string().max(200).default(""),
   reference_number: z.string().max(200).default(""),
   cost_date: z.string().min(1),
-  status: z.enum(["committed", "paid"]).default("committed"),
+  status: z.enum(["draft", "committed", "approved", "paid"]).default("committed"),
   notes: z.string().max(2000).default(""),
 });
+
+// The draft/approved stages need the payables-approval migration. If it isn't
+// applied yet the DB CHECK rejects them — translate that into plain English
+// instead of surfacing a constraint name.
+const mapCostStatusError = (message: string) =>
+  message.includes("cost_actuals_status_check")
+    ? 'The invoice approval stages are not enabled yet (database update pending). Save the cost as "Committed" or "Paid" for now.'
+    : message;
 
 export const createCostActual = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -1114,8 +1129,51 @@ export const createCostActual = createServerFn({ method: "POST" })
       cost_date: data.cost_date,
       status: data.status,
       notes: data.notes,
+      ...(data.status === "approved"
+        ? { approved_at: new Date().toISOString(), approved_by: ctx.userId }
+        : {}),
+      ...(data.status === "paid" ? { paid_at: new Date().toISOString() } : {}),
     });
-    if (insertRes.error) throw new Error(insertRes.error.message);
+    if (insertRes.error) throw new Error(mapCostStatusError(insertRes.error.message));
+    return { ok: true };
+  });
+
+// Move an invoice through the payables lifecycle: draft → approved for payment
+// → paid. Approving or paying a draft starts counting it as job cost (the DB
+// trigger applies the delta); nothing else about the row changes.
+const setCostActualStatusInput = z.object({
+  id: z.string().uuid(),
+  status: z.enum(["approved", "paid"]),
+});
+
+export const setCostActualStatus = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof setCostActualStatusInput>) =>
+    setCostActualStatusInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    const actualRes = await dynamicTable(ctx.supabase, "cost_actuals")
+      .select("id,project_id,status,approved_at")
+      .eq("id", data.id)
+      .single();
+    if (actualRes.error) throw new Error(actualRes.error.message);
+    const actual = actualRes.data as Record<string, unknown>;
+    await requireCanManageProject(ctx, actual.project_id as string);
+    const current = str(actual.status, "committed");
+    if (current === "void") throw new Error("This cost was voided — it can't be approved or paid.");
+    if (current === "paid") throw new Error("This cost is already marked paid.");
+    const now = new Date().toISOString();
+    const updateRes = await dynamicTable(ctx.supabase, "cost_actuals")
+      .update({
+        status: data.status,
+        // Stamp approval the first time the row passes through it — marking a
+        // draft straight to paid still records who approved the spend.
+        ...(actual.approved_at ? {} : { approved_at: now, approved_by: ctx.userId }),
+        ...(data.status === "paid" ? { paid_at: now } : {}),
+      })
+      .eq("id", data.id);
+    if (updateRes.error) throw new Error(mapCostStatusError(updateRes.error.message));
     return { ok: true };
   });
 
@@ -1692,6 +1750,8 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
           id: str(row.id),
           subcontract_id: str(row.subcontract_id),
           amount: num(row.amount),
+          // Pre-lifecycle rows have no status column — they were paid facts.
+          status: str(row.status, "paid"),
         })),
         currentPct,
         // Coded sub COs fold into committed — job-cost reporting matches the

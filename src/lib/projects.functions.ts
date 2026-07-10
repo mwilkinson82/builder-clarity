@@ -1474,6 +1474,8 @@ export const listProjects = createServerFn({ method: "GET" })
           id: str(row.id),
           subcontract_id: str(row.subcontract_id),
           amount: num(row.amount),
+          // Pre-lifecycle rows have no status column — they were paid facts.
+          status: str(row.status, "paid"),
         })),
         undefined,
         // Coded sub COs fold into committed here too, so the portfolio matches

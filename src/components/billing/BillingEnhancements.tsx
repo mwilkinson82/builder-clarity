@@ -66,8 +66,20 @@ type CostActualDraft = {
   vendor: string;
   reference_number: string;
   cost_date: string;
-  status: "committed" | "paid";
+  // Payables lifecycle: draft → approved (for payment) → paid. 'committed'
+  // predates the approval flow (an obligation on the books) and still counts
+  // as job cost; a draft never does.
+  status: "draft" | "committed" | "approved" | "paid";
   notes: string;
+};
+
+// Plain-English labels for the lifecycle — shown on entry, rows, and chips.
+const COST_STATUS_LABEL: Record<CostActualRow["status"], string> = {
+  draft: "Draft — not approved",
+  committed: "Committed",
+  approved: "Approved for payment",
+  paid: "Paid",
+  void: "Void",
 };
 
 type BucketSettingsPatch = {
@@ -97,6 +109,7 @@ type BillingEnhancementProps = {
   onCreateCostActual: (input: CostActualDraft) => void;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
+  onSetCostActualStatus: (id: string, status: "approved" | "paid") => void;
   onUpdateBucketSettings: (id: string, patch: BucketSettingsPatch) => void;
 };
 
@@ -181,6 +194,7 @@ export function BillingEnhancementPanels({
   onCreateCostActual,
   onImportCostActuals,
   onVoidCostActual,
+  onSetCostActualStatus,
   onUpdateBucketSettings,
 }: BillingEnhancementProps) {
   if (isLoading) {
@@ -221,6 +235,7 @@ export function BillingEnhancementPanels({
         onCreateCostActual={onCreateCostActual}
         onImportCostActuals={onImportCostActuals}
         onVoidCostActual={onVoidCostActual}
+        onSetCostActualStatus={onSetCostActualStatus}
         savingCost={savingCost}
       />
       <WipAnalysisPanel
@@ -1016,6 +1031,7 @@ export function ProjectCostTrackingPanel({
   onCreateCostActual,
   onImportCostActuals,
   onVoidCostActual,
+  onSetCostActualStatus,
   savingCost,
 }: {
   projectId: string;
@@ -1024,10 +1040,13 @@ export function ProjectCostTrackingPanel({
   onCreateCostActual: (input: CostActualDraft) => void;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
+  onSetCostActualStatus: (id: string, status: "approved" | "paid") => void;
   savingCost?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  // New invoices land as a draft (field request 2026-07-09) — nothing hits job
+  // cost until someone approves the spend or marks it paid.
   const [draft, setDraft] = useState<CostActualDraft>(() => ({
     cost_bucket_id: buckets[0]?.id ?? null,
     cost_code: buckets[0]?.cost_code ?? "",
@@ -1037,14 +1056,23 @@ export function ProjectCostTrackingPanel({
     vendor: "",
     reference_number: "",
     cost_date: today(),
-    status: "committed",
+    status: "draft",
     notes: "",
   }));
   const activeActuals = costActuals.filter((actual) => actual.status !== "void");
+  // Drafts are logged but unvetted — they sit in the approval queue, not in any
+  // cost number. Everything else non-void is incurred cost.
+  const draftActuals = activeActuals.filter((actual) => actual.status === "draft");
+  const approvedActuals = activeActuals.filter((actual) => actual.status === "approved");
+  const costedActuals = activeActuals.filter((actual) => actual.status !== "draft");
+  const totalDraft = centsToDollars(sumDollarsToCents(draftActuals.map((actual) => actual.amount)));
+  const totalApproved = centsToDollars(
+    sumDollarsToCents(approvedActuals.map((actual) => actual.amount)),
+  );
   const totalCommitted = centsToDollars(
     sumDollarsToCents(
       activeActuals
-        .filter((actual) => actual.status === "committed")
+        .filter((actual) => actual.status === "committed" || actual.status === "approved")
         .map((actual) => actual.amount),
     ),
   );
@@ -1064,11 +1092,13 @@ export function ProjectCostTrackingPanel({
   const budgetVariance = centsToDollars(
     dollarsToCents(totalBudget) - dollarsToCents(projectedCost),
   );
+  // Ledger backup compares against bucket actual_to_date, which excludes
+  // drafts — so drafts stay out of the backup sums too.
   const costBackupTotal = centsToDollars(
-    sumDollarsToCents(activeActuals.map((actual) => actual.amount)),
+    sumDollarsToCents(costedActuals.map((actual) => actual.amount)),
   );
   const unmatchedActualCount = activeActuals.filter((actual) => !actual.cost_bucket_id).length;
-  const backupCentsByBucket = activeActuals.reduce((map, actual) => {
+  const backupCentsByBucket = costedActuals.reduce((map, actual) => {
     if (!actual.cost_bucket_id) return map;
     map.set(
       actual.cost_bucket_id,
@@ -1098,7 +1128,7 @@ export function ProjectCostTrackingPanel({
       vendor: "",
       reference_number: "",
       cost_date: today(),
-      status: "committed",
+      status: "draft",
       notes: "",
     });
   };
@@ -1220,7 +1250,7 @@ export function ProjectCostTrackingPanel({
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Status</Label>
+                    <Label>Stage</Label>
                     <Select
                       value={draft.status}
                       onValueChange={(status) =>
@@ -1231,10 +1261,15 @@ export function ProjectCostTrackingPanel({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="committed">Committed</SelectItem>
+                        <SelectItem value="draft">Draft — needs approval</SelectItem>
+                        <SelectItem value="approved">Approved for payment</SelectItem>
                         <SelectItem value="paid">Paid</SelectItem>
+                        <SelectItem value="committed">Committed (obligation)</SelectItem>
                       </SelectContent>
                     </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      A draft doesn&apos;t count as job cost until it&apos;s approved or paid.
+                    </p>
                   </div>
                 </div>
                 <div className="grid gap-3 md:grid-cols-[1fr_150px_150px]">
@@ -1302,11 +1337,27 @@ export function ProjectCostTrackingPanel({
         </div>
       </div>
 
+      {draftActuals.length > 0 || approvedActuals.length > 0 ? (
+        <div className="mt-4 rounded-md border border-accent/30 bg-accent/5 px-4 py-3 text-sm">
+          <span className="font-semibold text-foreground">Approval queue:</span>{" "}
+          <span className="text-muted-foreground">
+            {draftActuals.length > 0
+              ? `${draftActuals.length} draft ${draftActuals.length === 1 ? "invoice" : "invoices"} (${fmtUSD(totalDraft)}) waiting for approval`
+              : null}
+            {draftActuals.length > 0 && approvedActuals.length > 0 ? " · " : null}
+            {approvedActuals.length > 0
+              ? `${approvedActuals.length} approved for payment (${fmtUSD(totalApproved)}) — not paid yet`
+              : null}
+            . Approve or mark rows paid in the list below.
+          </span>
+        </div>
+      ) : null}
+
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <BillingMetric
           label="Open commitments"
           value={fmtUSD(totalCommitted)}
-          sub="Cost rows not marked paid"
+          sub="Committed or approved, not paid"
         />
         <BillingMetric label="Paid costs" value={fmtUSD(totalPaid)} sub="Paid cost rows" />
         <BillingMetric
@@ -1336,8 +1387,8 @@ export function ProjectCostTrackingPanel({
         />
         <CostFlowStep
           step="2"
-          title="Record committed or paid cost"
-          body="Use committed for subcontract/vendor obligations and paid when money has gone out."
+          title="Draft, approve, then pay"
+          body="Log an invoice as a draft, approve it for payment, and mark it paid when money goes out. Drafts never count as job cost."
         />
         <CostFlowStep
           step="3"
@@ -1470,7 +1521,8 @@ export function ProjectCostTrackingPanel({
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      {actual.cost_date} · {actual.cost_code || "No code"} · {actual.status} ·{" "}
+                      {actual.cost_date} · {actual.cost_code || "No code"} ·{" "}
+                      {COST_STATUS_LABEL[actual.status] ?? actual.status} ·{" "}
                       {/* Provenance: imports carry an import_batch_id; manual entries don't. */}
                       {actual.import_batch_id ? "Imported" : "Manual"}
                     </div>
@@ -1479,6 +1531,28 @@ export function ProjectCostTrackingPanel({
                       {actual.category}
                       {actual.vendor ? ` · ${actual.vendor}` : ""}
                     </div>
+                    {actual.status === "draft" ||
+                    actual.status === "approved" ||
+                    actual.status === "committed" ? (
+                      <div className="mt-2 flex items-center gap-3">
+                        {actual.status === "draft" ? (
+                          <button
+                            type="button"
+                            className="text-[11px] font-medium text-accent-foreground hover:underline"
+                            onClick={() => onSetCostActualStatus(actual.id, "approved")}
+                          >
+                            Approve for payment
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="text-[11px] font-medium text-accent-foreground hover:underline"
+                          onClick={() => onSetCostActualStatus(actual.id, "paid")}
+                        >
+                          Mark paid
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="flex items-center justify-between gap-3 sm:justify-end">
                     <div className="text-right text-sm tabular font-medium">

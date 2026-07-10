@@ -679,4 +679,77 @@ import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
   assert.equal(draft.size, 0, "a draft sub's coded payment does not move the budget");
 }
 
+// ── Pay-app lifecycle (field request 2026-07-09): draft → approved → paid.
+//    Only PAID pay apps are actual cost; draft/approved stay inside the open
+//    commitment, so the total forecast (EAC) never moves before money does.
+//    Rows recorded before the lifecycle carry no status → treated as paid. ──
+{
+  const subs = [{ id: "sl1", contract_value: 100_000, status: "executed" }];
+  const allocs = [{ subcontract_id: "sl1", cost_bucket_id: "b1", amount: 100_000 }];
+
+  // A draft pay app moves nothing: paid 0, open = full commitment.
+  const drafted = summarizeSubCostByBucket(subs, allocs, [
+    { subcontract_id: "sl1", amount: 25_000, status: "draft" },
+  ]).get("b1");
+  assert.equal(drafted?.paid, 0, "a draft pay app is not actual cost");
+  assert.equal(drafted?.open, 100_000, "the full commitment stays open");
+
+  // Approving it still moves nothing — cost lands when the money leaves.
+  const approved = summarizeSubCostByBucket(subs, allocs, [
+    { subcontract_id: "sl1", amount: 25_000, status: "approved" },
+  ]).get("b1");
+  assert.equal(approved?.paid, 0, "approved-for-payment is not actual cost yet");
+  assert.equal(approved?.open, 100_000, "EAC unchanged until it's paid");
+
+  // Marking it paid is the existing behaviour: actual up, open down, EAC flat.
+  const paid = summarizeSubCostByBucket(subs, allocs, [
+    { subcontract_id: "sl1", amount: 25_000, status: "paid" },
+  ]).get("b1");
+  assert.equal(paid?.paid, 25_000, "paid pay app = actual cost");
+  assert.equal(paid?.open, 75_000, "open commitment burned down");
+
+  // An UNPAID pay app with an explicit cost-code split: the split rows must not
+  // land either — coding a draft says where the cash WILL go, not that it went.
+  const draftSplit = summarizeSubCostByBucket(
+    subs,
+    allocs,
+    [{ id: "pd1", subcontract_id: "sl1", amount: 25_000, status: "draft" }],
+    undefined,
+    [],
+    [{ payment_id: "pd1", cost_bucket_id: "b1", amount: 25_000 }],
+  ).get("b1");
+  assert.equal(draftSplit?.paid, 0, "a draft's explicit split rows don't land as cost");
+  assert.equal(draftSplit?.open, 100_000, "commitment stays fully open");
+  // …and the same payment marked paid lands its split verbatim.
+  const paidSplit = summarizeSubCostByBucket(
+    subs,
+    allocs,
+    [{ id: "pd1", subcontract_id: "sl1", amount: 25_000, status: "paid" }],
+    undefined,
+    [],
+    [{ payment_id: "pd1", cost_bucket_id: "b1", amount: 25_000 }],
+  ).get("b1");
+  assert.equal(paidSplit?.paid, 25_000, "once paid, the explicit split lands verbatim");
+
+  // A pre-lifecycle row (no status) was a paid fact — identical to 'paid'.
+  const legacy = summarizeSubCostByBucket(subs, allocs, [
+    { subcontract_id: "sl1", amount: 25_000 },
+  ]).get("b1");
+  assert.equal(legacy?.paid, 25_000, "statusless legacy rows still count as paid");
+
+  // The PM view splits the pipeline out and keeps money numbers paid-only.
+  const view = summarizeSubPayments(subs[0], [
+    { amount: 10_000, retainage_held: 1_000, status: "draft" },
+    { amount: 20_000, retainage_held: 2_000, status: "approved" },
+    { amount: 30_000, retainage_held: 3_000, status: "paid" },
+    { amount: 5_000, retainage_held: 500 }, // legacy row = paid
+  ]);
+  assert.equal(view.draftTotal, 10_000, "draft pipeline total");
+  assert.equal(view.approvedTotal, 20_000, "approved-for-payment pipeline total");
+  assert.equal(view.paid, 35_000, "paid-to-date = paid + legacy rows only");
+  assert.equal(view.retainageHeld, 3_500, "retainage held only from paid rows");
+  assert.equal(view.netPaid, 31_500, "net cash out = paid − retainage held");
+  assert.equal(view.remaining, 65_000, "remaining = committed − paid (drafts don't shrink it)");
+}
+
 console.log("subcontract budget smoke: all assertions passed");

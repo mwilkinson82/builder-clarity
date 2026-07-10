@@ -43,6 +43,8 @@ export interface CardPayment {
   retainage_held: number;
   payment_date: string;
   notes: string;
+  // Lifecycle: draft (pay app received) → approved (for payment) → paid.
+  status: string;
 }
 // A saved explicit split row for one of this sub's payments.
 export interface CardPaymentSplit {
@@ -53,6 +55,22 @@ export interface CardPaymentSplit {
   description: string;
   amount: number;
 }
+
+export type PayStage = "draft" | "approved" | "paid";
+
+// Plain-English chip per lifecycle stage; paid rows are the only ones that
+// count as job cost, so the pending stages read as clearly not-money-yet.
+const STAGE_CHIP: Record<string, { label: string; className: string }> = {
+  draft: {
+    label: "Draft — not approved",
+    className: "bg-muted text-muted-foreground",
+  },
+  approved: {
+    label: "Approved for payment",
+    className: "bg-warning/15 text-warning",
+  },
+  paid: { label: "Paid", className: "bg-success/15 text-success" },
+};
 export interface PaymentEdit {
   amount: number;
   retainageHeld: number;
@@ -99,8 +117,15 @@ interface CardProps {
     coDate: string,
   ) => void;
   onRemoveChangeOrder: (id: string) => void;
-  onPay: (amount: number, retainageHeld: number, paymentDate: string, notes: string) => void;
+  onPay: (
+    amount: number,
+    retainageHeld: number,
+    paymentDate: string,
+    notes: string,
+    stage: PayStage,
+  ) => void;
   onUpdatePayment: (id: string, edit: PaymentEdit) => void;
+  onSetPaymentStage: (id: string, stage: "approved" | "paid") => void;
   onRemovePayment: (id: string) => void;
   // Explicit per-payment cost-code splits (field request 2026-07-09): saved
   // rows per payment, and the save handler (empty rows = reset to automatic).
@@ -135,6 +160,7 @@ export function SubcontractCard({
   onRemoveChangeOrder,
   onPay,
   onUpdatePayment,
+  onSetPaymentStage,
   onRemovePayment,
   paymentSplits,
   onSaveSplit,
@@ -158,6 +184,9 @@ export function SubcontractCard({
   const [payAmount, setPayAmount] = useState(0);
   const [payDate, setPayDate] = useState(today);
   const [payNotes, setPayNotes] = useState("");
+  // New pay apps land as a draft (field request 2026-07-09) — nothing hits the
+  // budget until the PM approves it and marks it paid.
+  const [payStage, setPayStage] = useState<PayStage>("draft");
 
   // Inline editors, keyed by the row being edited (null = closed).
   const [editingBuyout, setEditingBuyout] = useState(false);
@@ -323,6 +352,12 @@ export function SubcontractCard({
           </>
         ) : null}
         <Stat label="Paid to date" value={fmtUSD(summary.paid)} />
+        {summary.draftTotal > 0 ? (
+          <Stat label="Draft pay apps" value={fmtUSD(summary.draftTotal)} />
+        ) : null}
+        {summary.approvedTotal > 0 ? (
+          <Stat label="Approved to pay" value={fmtUSD(summary.approvedTotal)} tone="warn" />
+        ) : null}
         <Stat label="Retainage held" value={fmtUSD(summary.retainageHeld)} tone="warn" />
         <Stat label="Net paid" value={fmtUSD(summary.netPaid)} />
         <Stat label="Remaining" value={fmtUSD(revised.remaining)} tone="good" />
@@ -593,11 +628,15 @@ export function SubcontractCard({
         ) : null}
       </div>
 
-      {/* Payments */}
+      {/* Payments — the pay-app pipeline: draft → approved for payment → paid */}
       <div className="mt-4">
         <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Progress payments
+          Pay apps &amp; progress payments
         </div>
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          Log a sub&apos;s pay app as a draft, approve it for payment, then mark it paid. Only paid
+          amounts count as job cost.
+        </p>
         {payments.length > 0 ? (
           <ul className="mt-2 divide-y divide-hairline text-sm">
             {payments.map((p) => (
@@ -660,12 +699,41 @@ export function SubcontractCard({
                 ) : (
                   <div className="flex items-center justify-between">
                     <span className="flex min-w-0 flex-col">
-                      <span className="text-muted-foreground">{p.payment_date}</span>
+                      <span className="flex items-center gap-2 text-muted-foreground">
+                        {p.payment_date}
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                            (STAGE_CHIP[p.status] ?? STAGE_CHIP.paid).className
+                          }`}
+                        >
+                          {(STAGE_CHIP[p.status] ?? STAGE_CHIP.paid).label}
+                        </span>
+                      </span>
                       {p.notes ? (
                         <span className="truncate text-[11px] text-muted-foreground/80">
                           {p.notes}
                         </span>
                       ) : null}
+                      <span className="flex items-center gap-3">
+                        {p.status === "draft" ? (
+                          <button
+                            type="button"
+                            className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
+                            onClick={() => onSetPaymentStage(p.id, "approved")}
+                          >
+                            Approve for payment
+                          </button>
+                        ) : null}
+                        {p.status === "draft" || p.status === "approved" ? (
+                          <button
+                            type="button"
+                            className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
+                            onClick={() => onSetPaymentStage(p.id, "paid")}
+                          >
+                            Mark paid
+                          </button>
+                        ) : null}
+                      </span>
                       {allocations.length > 0 || buckets.length > 0 ? (
                         <button
                           type="button"
@@ -725,6 +793,16 @@ export function SubcontractCard({
         ) : null}
         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
           <ReceiptText className="hidden h-4 w-4 text-muted-foreground sm:block" />
+          <select
+            value={payStage}
+            onChange={(e) => setPayStage(e.target.value as PayStage)}
+            className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+            aria-label="Pay app stage"
+          >
+            <option value="draft">Draft (pay app received)</option>
+            <option value="approved">Approved for payment</option>
+            <option value="paid">Paid (money out)</option>
+          </select>
           <Input
             type="date"
             value={payDate}
@@ -736,7 +814,7 @@ export function SubcontractCard({
           <Input
             value={payNotes}
             onChange={(e) => setPayNotes(e.target.value)}
-            placeholder="Description (optional)"
+            placeholder="Description (e.g. Pay app #3, foundations)"
             className="flex-1"
           />
           <span className="text-[11px] text-muted-foreground">
@@ -748,13 +826,14 @@ export function SubcontractCard({
             className="gap-1.5"
             disabled={payAmount <= 0 || !payDate}
             onClick={() => {
-              onPay(payAmount, retainageHeld, payDate, payNotes.trim());
+              onPay(payAmount, retainageHeld, payDate, payNotes.trim(), payStage);
               setPayAmount(0);
               setPayNotes("");
               setPayDate(today());
             }}
           >
-            <Plus className="h-3.5 w-3.5" /> Record payment
+            <Plus className="h-3.5 w-3.5" />
+            {payStage === "paid" ? "Record payment" : "Log pay app"}
           </Button>
         </div>
       </div>

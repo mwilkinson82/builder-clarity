@@ -46,6 +46,11 @@ export interface SubcontractPaymentLike {
   // Optional row id — only needed to match an explicit per-payment cost-code
   // split (see PaymentSplitLike). Without it the payment always pro-rates.
   id?: string;
+  // Pay-app lifecycle (field request 2026-07-09): draft → approved → paid. Only
+  // 'paid' rows are actual cost; draft/approved stay inside the open commitment
+  // (committed − paid), so the total forecast never moves before money does.
+  // Absent status = a pre-lifecycle row, which was by definition paid.
+  status?: string;
 }
 
 // An explicit per-payment cost-code split row (subcontract_payment_allocations).
@@ -56,6 +61,11 @@ export interface PaymentSplitLike {
   cost_bucket_id: string | null;
   amount: number; // dollars
 }
+
+// Only a PAID pay app is actual cost out the door. Rows recorded before the
+// lifecycle existed carry no status and were paid facts.
+const isPaidPayment = (payment: { status?: string }) =>
+  !payment.status || payment.status === "paid";
 
 export interface SubBucketCost {
   committed: number; // total committed on this bucket (executed subs), dollars
@@ -143,6 +153,10 @@ export function summarizeSubCostByBucket(
   const paidCentsBySub = new Map<string, number>();
   for (const p of payments) {
     if (!executed.has(p.subcontract_id)) continue;
+    // Draft/approved pay apps are not cost yet — they stay in open commitment.
+    // Skipping BEFORE the split check also keeps an unpaid payment's explicit
+    // split rows off the buckets (it never joins explicitlySplitIds).
+    if (!isPaidPayment(p)) continue;
     if (p.id && splitPaymentIds.has(p.id)) {
       explicitlySplitIds.add(p.id);
       continue;
@@ -284,23 +298,37 @@ export function subCostAddition(
 export interface SubcontractPaySummary {
   subcontract_id: string;
   committed: number; // buyout total (dollars)
-  paid: number; // gross paid-to-date (dollars)
-  retainageHeld: number; // retainage still held from the sub (dollars)
+  paid: number; // gross paid-to-date — PAID pay apps only (dollars)
+  retainageHeld: number; // retainage still held from the sub — paid rows (dollars)
   netPaid: number; // cash out to the sub = paid − retainageHeld (dollars)
   remaining: number; // committed − paid (dollars, ≥ 0)
   paidPct: number; // paid / committed, 0..100
+  // The approval pipeline (field request 2026-07-09): pay apps logged but not
+  // yet approved, and pay apps approved for payment but not yet paid. Neither
+  // is cost or cash yet — they're what's sitting on the PM's desk.
+  draftTotal: number;
+  approvedTotal: number;
 }
 
 // The PM payment view per subcontract: buyout, gross paid, retainage held, net
 // cash out, remaining commitment, % paid. Retainage is summed off the payments.
+// Only PAID pay apps move the money numbers; draft/approved are reported as
+// their own pipeline totals.
 export function summarizeSubPayments(
   subcontract: SubcontractLike,
-  payments: { amount: number; retainage_held: number }[],
+  payments: { amount: number; retainage_held: number; status?: string }[],
 ): SubcontractPaySummary {
   const committedCents = dollarsToCents(numeric(subcontract.contract_value));
   let paidCents = 0;
   let retainageCents = 0;
+  let draftCents = 0;
+  let approvedCents = 0;
   for (const p of payments) {
+    if (!isPaidPayment(p)) {
+      if (p.status === "approved") approvedCents += dollarsToCents(numeric(p.amount));
+      else draftCents += dollarsToCents(numeric(p.amount));
+      continue;
+    }
     paidCents += dollarsToCents(numeric(p.amount));
     retainageCents += dollarsToCents(numeric(p.retainage_held));
   }
@@ -315,6 +343,8 @@ export function summarizeSubPayments(
     netPaid: centsToDollars(netCents),
     remaining: centsToDollars(remainingCents),
     paidPct,
+    draftTotal: centsToDollars(draftCents),
+    approvedTotal: centsToDollars(approvedCents),
   };
 }
 
