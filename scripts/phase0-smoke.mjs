@@ -3015,6 +3015,45 @@ await expectContains(
   "the CO register copy explains coded COs auto-carry into the budget",
 );
 
+// PER-PAYMENT COST-CODE SPLIT (field feedback 2026-07-09: "for progress
+// payments i dont see where to add which cost code it goes to"): the payment's
+// split is now EDITABLE — explicit rows replace the pro-rata derivation, must
+// sum cents-exact to the payment, and drive the budget's paid-per-code.
+await expectContains(
+  "supabase/migrations/20260710003000_subcontract_payment_allocations.sql",
+  [
+    /CREATE TABLE IF NOT EXISTS public\.subcontract_payment_allocations/,
+    /payment_id uuid NOT NULL REFERENCES public\.subcontract_payments\(id\) ON DELETE CASCADE/,
+    /tg_set_updated_at/,
+    /public\.can_manage_project\(project_id\)/,
+  ],
+  "payment-split migration ships the explicit split table + trigger + team RLS (desk applies)",
+);
+await expectContains(
+  "src/lib/subcontracts.functions.ts",
+  [
+    /export const setSubcontractPaymentSplit/,
+    /must add up to the payment amount exactly/,
+    /payment_allocations: paymentAllocations\.map\(normalizePaymentAllocation\)/,
+  ],
+  "server replaces a payment's split atomically and enforces the cents-exact sum",
+);
+await expectContains(
+  "src/lib/subcontract-budget.ts",
+  [/PaymentSplitLike/, /explicitlySplitIds/, /paymentSplits: PaymentSplitLike\[\] = \[\]/],
+  "budget layer routes explicitly-coded payments verbatim and pro-rates the rest",
+);
+await expectContains(
+  "src/components/project/PaymentSplitEditor.tsx",
+  [/export function PaymentSplitEditor/, /Reset to automatic/, /left to code/, /Save split/],
+  "payment split editor edits lines, balances to the payment, and can reset to auto",
+);
+await expectContains(
+  "src/components/project/SubcontractorsWorkspace.tsx",
+  [/setSubcontractPaymentSplit/, /paymentSplits={/, /onSaveSplit=/],
+  "subcontractors workspace wires the split editor save path",
+);
+
 // PROJECTFILEROOM1: the project file room — one home for the job's paper. Storage
 // mirrors subcontract-docs (private bucket, client upload + signed URL); the
 // server fn owns the metadata row; the tab is wired onto the project nav rail.

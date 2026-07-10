@@ -12,11 +12,11 @@ import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import {
-  allocatePaymentAcrossCodes,
   reviseSubSummary,
   sumChangeOrders,
   type summarizeSubPayments,
 } from "@/lib/subcontract-budget";
+import { PaymentSplitEditor, type SplitRowDraft } from "@/components/project/PaymentSplitEditor";
 import type { SubcontractDocumentRow } from "@/lib/subcontracts.functions";
 
 interface BucketOption {
@@ -43,6 +43,15 @@ export interface CardPayment {
   retainage_held: number;
   payment_date: string;
   notes: string;
+}
+// A saved explicit split row for one of this sub's payments.
+export interface CardPaymentSplit {
+  id: string;
+  payment_id: string;
+  cost_bucket_id: string | null;
+  cost_code: string;
+  description: string;
+  amount: number;
 }
 export interface PaymentEdit {
   amount: number;
@@ -93,6 +102,11 @@ interface CardProps {
   onPay: (amount: number, retainageHeld: number, paymentDate: string, notes: string) => void;
   onUpdatePayment: (id: string, edit: PaymentEdit) => void;
   onRemovePayment: (id: string) => void;
+  // Explicit per-payment cost-code splits (field request 2026-07-09): saved
+  // rows per payment, and the save handler (empty rows = reset to automatic).
+  paymentSplits: CardPaymentSplit[];
+  onSaveSplit: (paymentId: string, rows: SplitRowDraft[]) => void;
+  savingSplit?: boolean;
   onRemoveSub: () => void;
   documents: SubcontractDocumentRow[];
   onUploadDoc: (file: File) => void;
@@ -122,6 +136,9 @@ export function SubcontractCard({
   onPay,
   onUpdatePayment,
   onRemovePayment,
+  paymentSplits,
+  onSaveSplit,
+  savingSplit = false,
   onRemoveSub,
   documents,
   onUploadDoc,
@@ -130,6 +147,12 @@ export function SubcontractCard({
   onRemoveDoc,
   complianceSlot,
 }: CardProps) {
+  const splitsByPayment = new Map<string, CardPaymentSplit[]>();
+  for (const split of paymentSplits) {
+    const list = splitsByPayment.get(split.payment_id) ?? [];
+    list.push(split);
+    splitsByPayment.set(split.payment_id, list);
+  }
   const [allocBucket, setAllocBucket] = useState("");
   const [allocAmount, setAllocAmount] = useState(0);
   const [payAmount, setPayAmount] = useState(0);
@@ -643,13 +666,14 @@ export function SubcontractCard({
                           {p.notes}
                         </span>
                       ) : null}
-                      {allocations.length > 0 ? (
+                      {allocations.length > 0 || buckets.length > 0 ? (
                         <button
                           type="button"
                           className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
                           onClick={() => setSplitOpen((open) => ({ ...open, [p.id]: !open[p.id] }))}
                         >
                           {splitOpen[p.id] ? "Hide cost codes" : "Where this payment goes"}
+                          {(splitsByPayment.get(p.id)?.length ?? 0) > 0 ? " · custom split" : ""}
                         </button>
                       ) : null}
                     </span>
@@ -682,21 +706,18 @@ export function SubcontractCard({
                   </div>
                 )}
                 {editPayId !== p.id && splitOpen[p.id] ? (
-                  // Derived pro-rata from the buyout's cost-code split — the
-                  // same distribution the budget ledger uses for this payment.
-                  <ul className="mb-1 ml-4 mt-1 space-y-0.5 border-l border-hairline pl-3 text-[12px]">
-                    {allocatePaymentAcrossCodes(p.amount, allocations).map((split, index) => (
-                      <li key={`${split.cost_code}-${index}`} className="flex justify-between">
-                        <span className="text-muted-foreground">
-                          <span className="font-medium text-foreground">
-                            {split.cost_code || "No code"}
-                          </span>
-                          {split.description ? ` · ${split.description}` : ""}
-                        </span>
-                        <span className="tabular-nums text-foreground">{fmtUSD(split.amount)}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  // Editable split (field request 2026-07-09): starts from the
+                  // saved explicit rows, else the pro-rata derivation the budget
+                  // layer uses; saving replaces the payment's coding exactly.
+                  <PaymentSplitEditor
+                    key={`${p.id}:${splitsByPayment.get(p.id)?.length ?? 0}`}
+                    paymentAmount={p.amount}
+                    buckets={buckets}
+                    allocations={allocations}
+                    savedRows={splitsByPayment.get(p.id) ?? []}
+                    onSave={(rows) => onSaveSplit(p.id, rows)}
+                    saving={savingSplit}
+                  />
                 ) : null}
               </li>
             ))}

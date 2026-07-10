@@ -658,6 +658,8 @@ function ProjectPage() {
       // Coded sub COs fold into committed on the Budget grid, matching the
       // dashboard rollup (field request 2026-07-09).
       data.change_orders,
+      // Explicit per-payment splits override the pro-rata paid distribution.
+      data.payment_allocations,
     );
   }, [subcontractsQuery.data, dailyWipEntriesQuery.data]);
   // Sub layer totals for the Budget-tab summary cards, so they match the per-code

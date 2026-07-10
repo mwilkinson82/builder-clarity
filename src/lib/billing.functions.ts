@@ -1571,6 +1571,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       subAllocRes,
       subPayRes,
       subCoRes,
+      subSplitRes,
       dailyWipRes,
     ] = await Promise.all([
       dynamicTable(ctx.supabase, "cost_buckets").select("*").in("project_id", ids),
@@ -1582,6 +1583,9 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       dynamicTable(ctx.supabase, "subcontract_allocations").select("*").in("project_id", ids),
       dynamicTable(ctx.supabase, "subcontract_payments").select("*").in("project_id", ids),
       dynamicTable(ctx.supabase, "subcontract_change_orders").select("*").in("project_id", ids),
+      dynamicTable(ctx.supabase, "subcontract_payment_allocations")
+        .select("*")
+        .in("project_id", ids),
       dynamicTable(ctx.supabase, "daily_wip_entries").select("*").in("project_id", ids),
     ]);
     if (bucketRes.error) throw new Error(bucketRes.error.message);
@@ -1635,6 +1639,11 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
       isMissingRestRelation(subCoRes.error, "subcontract_change_orders") || !subCoRes.data
         ? []
         : (subCoRes.data as Record<string, unknown>[]);
+    const rawSubSplits =
+      isMissingRestRelation(subSplitRes.error, "subcontract_payment_allocations") ||
+      !subSplitRes.data
+        ? []
+        : (subSplitRes.data as Record<string, unknown>[]);
     // Daily-WIP entries feed earned value (latest field % per sub+code). Degrade
     // to no layer if the table isn't present, like the sub tables above.
     const rawDailyWip =
@@ -1651,6 +1660,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
     const subAllocsByProject = groupRawByProject(rawSubAllocs);
     const subPaysByProject = groupRawByProject(rawSubPays);
     const subCosByProject = groupRawByProject(rawSubCos);
+    const subSplitsByProject = groupRawByProject(rawSubSplits);
     const dailyWipByProject = groupRawByProject(rawDailyWip);
 
     const projects = projectRows.map((projectRow) => {
@@ -1679,6 +1689,7 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
           amount: num(row.amount),
         })),
         (subPaysByProject.get(pid) ?? []).map((row) => ({
+          id: str(row.id),
           subcontract_id: str(row.subcontract_id),
           amount: num(row.amount),
         })),
@@ -1687,6 +1698,12 @@ export const listPortfolioJobCost = createServerFn({ method: "GET" })
         // Budget grid and dashboard after a change order lands.
         (subCosByProject.get(pid) ?? []).map((row) => ({
           subcontract_id: str(row.subcontract_id),
+          cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+          amount: num(row.amount),
+        })),
+        // Explicit per-payment splits override the pro-rata paid distribution.
+        (subSplitsByProject.get(pid) ?? []).map((row) => ({
+          payment_id: str(row.payment_id),
           cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
           amount: num(row.amount),
         })),

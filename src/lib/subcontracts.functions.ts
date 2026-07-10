@@ -102,12 +102,26 @@ export interface SubcontractDocumentRow {
   is_active: boolean;
   uploaded_at: string;
 }
+// An explicit per-payment cost-code split row (field request 2026-07-09). A
+// payment with rows here uses them verbatim; without, the pro-rata derivation
+// from the buyout's allocations applies.
+export interface SubcontractPaymentAllocationRow {
+  id: string;
+  project_id: string;
+  subcontract_id: string;
+  payment_id: string;
+  cost_bucket_id: string | null;
+  cost_code: string;
+  description: string;
+  amount: number;
+}
 export interface ProjectSubcontracts {
   subcontracts: SubcontractRow[];
   allocations: SubcontractAllocationRow[];
   payments: SubcontractPaymentRow[];
   documents: SubcontractDocumentRow[];
   change_orders: SubcontractChangeOrderRow[];
+  payment_allocations: SubcontractPaymentAllocationRow[];
 }
 
 const normalizeSubcontract = (row: Record<string, unknown>): SubcontractRow => ({
@@ -165,6 +179,18 @@ const normalizeDocument = (row: Record<string, unknown>): SubcontractDocumentRow
   is_active: Boolean(row.is_active),
   uploaded_at: str(row.uploaded_at),
 });
+const normalizePaymentAllocation = (
+  row: Record<string, unknown>,
+): SubcontractPaymentAllocationRow => ({
+  id: str(row.id),
+  project_id: str(row.project_id),
+  subcontract_id: str(row.subcontract_id),
+  payment_id: str(row.payment_id),
+  cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+  cost_code: str(row.cost_code),
+  description: str(row.description),
+  amount: num(row.amount),
+});
 
 const projectIdInput = z.object({ projectId: z.string().uuid() });
 
@@ -185,12 +211,13 @@ export const listProjectSubcontracts = createServerFn({ method: "GET" })
       }
       return (rows ?? []) as Record<string, unknown>[];
     };
-    const [subs, allocs, pays, docs, changeOrders] = await Promise.all([
+    const [subs, allocs, pays, docs, changeOrders, paymentAllocations] = await Promise.all([
       readList("subcontracts", "created_at"),
       readList("subcontract_allocations", "created_at"),
       readList("subcontract_payments", "payment_date"),
       readList("subcontract_documents", "uploaded_at"),
       readList("subcontract_change_orders", "co_date"),
+      readList("subcontract_payment_allocations", "created_at"),
     ]);
     return {
       subcontracts: subs.map(normalizeSubcontract),
@@ -198,6 +225,7 @@ export const listProjectSubcontracts = createServerFn({ method: "GET" })
       payments: pays.map(normalizePayment),
       documents: docs.map(normalizeDocument),
       change_orders: changeOrders.map(normalizeChangeOrder),
+      payment_allocations: paymentAllocations.map(normalizePaymentAllocation),
     };
   });
 
@@ -637,4 +665,91 @@ export const deleteSubcontractPayment = createServerFn({ method: "POST" })
       .eq("id", data.id);
     if (error && !isMissingSubcontractTable(error)) throw new Error(error.message);
     return { id: data.id };
+  });
+
+// Replace a payment's explicit cost-code split (field request 2026-07-09:
+// "for progress payments … add which cost code it goes to"). Empty rows =
+// clear the explicit split, falling back to the pro-rata derivation. Non-empty
+// rows must sum cents-exact to the payment so the budget's paid-per-code never
+// drifts from cash.
+export const setSubcontractPaymentSplit = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        projectId: z.string().uuid(),
+        subcontractId: z.string().uuid(),
+        paymentId: z.string().uuid(),
+        rows: z
+          .array(
+            z.object({
+              cost_bucket_id: z.string().uuid().nullable(),
+              cost_code: z.string().max(80).default(""),
+              description: z.string().max(300).default(""),
+              amount: z.number().min(0),
+            }),
+          )
+          .max(40)
+          .default([]),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<{ paymentId: string; rowCount: number }> => {
+    const { data: paymentRow, error: paymentError } = await dynamicTable(
+      context.supabase,
+      "subcontract_payments",
+    )
+      .select("id,project_id,subcontract_id,amount")
+      .eq("id", data.paymentId)
+      .maybeSingle();
+    if (paymentError) {
+      if (isMissingSubcontractTable(paymentError)) throw new Error(NOT_ENABLED);
+      throw new Error(paymentError.message);
+    }
+    const payment = (paymentRow ?? null) as Record<string, unknown> | null;
+    if (!payment || str(payment.project_id) !== data.projectId) {
+      throw new Error("That payment was not found on this project.");
+    }
+
+    const cents = (value: number) => Math.round(num(value) * 100);
+    if (data.rows.length > 0) {
+      const rowCents = data.rows.reduce((sum, row) => sum + cents(row.amount), 0);
+      if (rowCents !== cents(num(payment.amount))) {
+        throw new Error(
+          "The split must add up to the payment amount exactly — adjust a line and save again.",
+        );
+      }
+    }
+
+    const { error: clearError } = await dynamicTable(
+      context.supabase,
+      "subcontract_payment_allocations",
+    )
+      .delete()
+      .eq("payment_id", data.paymentId);
+    if (clearError) {
+      if (isMissingSubcontractTable(clearError)) throw new Error(NOT_ENABLED);
+      throw new Error(clearError.message);
+    }
+    if (data.rows.length > 0) {
+      const { error: insertError } = await dynamicTable(
+        context.supabase,
+        "subcontract_payment_allocations",
+      ).insert(
+        data.rows.map((row) => ({
+          project_id: data.projectId,
+          subcontract_id: data.subcontractId,
+          payment_id: data.paymentId,
+          cost_bucket_id: row.cost_bucket_id,
+          cost_code: row.cost_code,
+          description: row.description,
+          amount: row.amount,
+        })),
+      );
+      if (insertError) {
+        if (isMissingSubcontractTable(insertError)) throw new Error(NOT_ENABLED);
+        throw new Error(insertError.message);
+      }
+    }
+    return { paymentId: data.paymentId, rowCount: data.rows.length };
   });

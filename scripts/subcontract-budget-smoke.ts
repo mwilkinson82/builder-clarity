@@ -598,4 +598,65 @@ import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
   );
 }
 
+// ── Explicit per-payment splits override the pro-rata paid distribution ─────
+// Field feedback 2026-07-09: "for progress payments i dont see where to add
+// which cost code it goes to." A payment with saved split rows lands its cash
+// exactly where the user coded it; payments without keep the pro-rata split.
+{
+  const subs = [{ id: "s1", contract_value: 100_000, status: "executed" }];
+  const allocs = [
+    { subcontract_id: "s1", cost_bucket_id: "bA", amount: 75_000 },
+    { subcontract_id: "s1", cost_bucket_id: "bB", amount: 25_000 },
+  ];
+  const pays = [
+    { id: "p1", subcontract_id: "s1", amount: 10_000 },
+    { id: "p2", subcontract_id: "s1", amount: 4_000 },
+  ];
+  // p1 is explicitly coded 100% to bB; p2 stays automatic (pro-rata 75/25).
+  const splits = [{ payment_id: "p1", cost_bucket_id: "bB", amount: 10_000 }];
+  const res = summarizeSubCostByBucket(subs, allocs, pays, undefined, [], splits);
+  assert.equal(res.get("bB")?.paid, 10_000 + 1_000, "coded payment lands whole on its code");
+  assert.equal(res.get("bA")?.paid, 3_000, "uncoded payment still pro-rates");
+  assert.equal(
+    (res.get("bA")?.paid ?? 0) + (res.get("bB")?.paid ?? 0),
+    14_000,
+    "total paid is conserved across explicit + automatic payments",
+  );
+
+  // Without the payment id, splits can't match — everything pro-rates (the
+  // pre-migration behaviour).
+  const noIds = summarizeSubCostByBucket(
+    subs,
+    allocs,
+    pays.map(({ subcontract_id, amount }) => ({ subcontract_id, amount })),
+    undefined,
+    [],
+    splits,
+  );
+  assert.equal(noIds.get("bA")?.paid, 10_500, "id-less payments keep pro-rata");
+
+  // A split row aimed at a code the sub has no allocation on still lands there.
+  const crossSplit = summarizeSubCostByBucket(
+    subs,
+    allocs,
+    pays,
+    undefined,
+    [],
+    [{ payment_id: "p1", cost_bucket_id: "bC", amount: 10_000 }],
+  );
+  assert.equal(crossSplit.get("bC")?.paid, 10_000, "split can code cash to any bucket");
+  assert.equal(crossSplit.get("bC")?.committed, 0, "coding cash does not fake a commitment");
+
+  // Draft subs stay out entirely, split or not.
+  const draft = summarizeSubCostByBucket(
+    [{ id: "s9", contract_value: 5_000, status: "draft" }],
+    [],
+    [{ id: "p9", subcontract_id: "s9", amount: 5_000 }],
+    undefined,
+    [],
+    [{ payment_id: "p9", cost_bucket_id: "bA", amount: 5_000 }],
+  );
+  assert.equal(draft.size, 0, "a draft sub's coded payment does not move the budget");
+}
+
 console.log("subcontract budget smoke: all assertions passed");

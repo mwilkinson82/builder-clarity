@@ -43,6 +43,18 @@ export interface SubcontractPaymentLike {
   // Gross progress payment (the work value put in place this payment). Dollars.
   // Retainage held is tracked on the payment separately and is NOT netted here.
   amount: number;
+  // Optional row id — only needed to match an explicit per-payment cost-code
+  // split (see PaymentSplitLike). Without it the payment always pro-rates.
+  id?: string;
+}
+
+// An explicit per-payment cost-code split row (subcontract_payment_allocations).
+// A payment with ANY split rows uses them verbatim instead of the pro-rata
+// derivation; only coded rows land on buckets.
+export interface PaymentSplitLike {
+  payment_id: string;
+  cost_bucket_id: string | null;
+  amount: number; // dollars
 }
 
 export interface SubBucketCost {
@@ -118,13 +130,23 @@ export function summarizeSubCostByBucket(
   currentPctByCompanyCode: ReadonlyMap<string, number> = new Map(),
   // Signed COs/credits; only rows tagged to a cost code fold into committed.
   changeOrders: SubChangeOrderBudgetLike[] = [],
+  // Explicit per-payment splits; a payment with rows here bypasses pro-rata.
+  paymentSplits: PaymentSplitLike[] = [],
 ): Map<string, SubBucketCost> {
   const executedSubs = subcontracts.filter((s) => s.status === "executed");
   const executed = new Set(executedSubs.map((s) => s.id));
   const companyBySub = new Map(executedSubs.map((s) => [s.id, s.subcontractor_id] as const));
+  const splitPaymentIds = new Set(paymentSplits.map((split) => split.payment_id));
+  // Payments the user explicitly coded (field request 2026-07-09): their cash
+  // lands exactly where they said, and they leave the pro-rata pool entirely.
+  const explicitlySplitIds = new Set<string>();
   const paidCentsBySub = new Map<string, number>();
   for (const p of payments) {
     if (!executed.has(p.subcontract_id)) continue;
+    if (p.id && splitPaymentIds.has(p.id)) {
+      explicitlySplitIds.add(p.id);
+      continue;
+    }
     paidCentsBySub.set(
       p.subcontract_id,
       (paidCentsBySub.get(p.subcontract_id) ?? 0) + dollarsToCents(numeric(p.amount)),
@@ -175,6 +197,19 @@ export function summarizeSubCostByBucket(
       paidCentsByBucket.set(bucketId, (paidCentsByBucket.get(bucketId) ?? 0) + paidShares[i]);
       earnedCentsByBucket.set(bucketId, (earnedCentsByBucket.get(bucketId) ?? 0) + earnedCents);
     }
+  }
+
+  // Explicitly-coded payments: their coded rows land cents directly on those
+  // buckets (uncoded rows stay off the bucket map, same as unallocated cash).
+  // The server enforces rows sum to the payment, so nothing double-counts with
+  // the pro-rata pool those payments already left.
+  for (const split of paymentSplits) {
+    if (!explicitlySplitIds.has(split.payment_id)) continue;
+    if (!split.cost_bucket_id) continue;
+    paidCentsByBucket.set(
+      split.cost_bucket_id,
+      (paidCentsByBucket.get(split.cost_bucket_id) ?? 0) + dollarsToCents(numeric(split.amount)),
+    );
   }
 
   // Fold signed change orders/credits into committed on their tagged code. Only
