@@ -1303,6 +1303,7 @@ export const listProjects = createServerFn({ method: "GET" })
       subAllocRes,
       subPayRes,
       subCoRes,
+      subSplitRes,
       wipRes,
     ] = await Promise.all([
       context.supabase.from("exposures").select("*").in("project_id", ids),
@@ -1330,6 +1331,9 @@ export const listProjects = createServerFn({ method: "GET" })
       dynamicTable(context.supabase, "subcontract_allocations").select("*").in("project_id", ids),
       dynamicTable(context.supabase, "subcontract_payments").select("*").in("project_id", ids),
       dynamicTable(context.supabase, "subcontract_change_orders").select("*").in("project_id", ids),
+      dynamicTable(context.supabase, "subcontract_payment_allocations")
+        .select("*")
+        .in("project_id", ids),
       // Self-perform daily WIP so the portfolio GP folds self-perform cost the
       // same way each project's dashboard does. Degrades to empty if absent.
       dynamicTable(context.supabase, "daily_wip_entries").select("*").in("project_id", ids),
@@ -1403,6 +1407,9 @@ export const listProjects = createServerFn({ method: "GET" })
     const scoByP = groupBy<{ project_id: string } & Record<string, unknown>>(
       subDegrade(subCoRes, "subcontract_change_orders"),
     );
+    const splitByP = groupBy<{ project_id: string } & Record<string, unknown>>(
+      subDegrade(subSplitRes, "subcontract_payment_allocations"),
+    );
     const wipByP = groupBy<{ project_id: string } & Record<string, unknown>>(
       subDegrade(wipRes, "daily_wip_entries"),
     );
@@ -1464,6 +1471,7 @@ export const listProjects = createServerFn({ method: "GET" })
           amount: num(row.amount),
         })),
         (spByP[p.id] ?? []).map((row) => ({
+          id: str(row.id),
           subcontract_id: str(row.subcontract_id),
           amount: num(row.amount),
         })),
@@ -1472,6 +1480,12 @@ export const listProjects = createServerFn({ method: "GET" })
         // the project dashboard after a change order lands.
         (scoByP[p.id] ?? []).map((row) => ({
           subcontract_id: str(row.subcontract_id),
+          cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
+          amount: num(row.amount),
+        })),
+        // Explicit per-payment splits override the pro-rata paid distribution.
+        (splitByP[p.id] ?? []).map((row) => ({
+          payment_id: str(row.payment_id),
           cost_bucket_id: (row.cost_bucket_id as string | null) ?? null,
           amount: num(row.amount),
         })),
@@ -2003,18 +2017,26 @@ export const getProject = createServerFn({ method: "GET" })
       if (error) return [] as Record<string, unknown>[];
       return (rows ?? []) as Record<string, unknown>[];
     };
-    const [subcontractRows, subAllocationRows, subPaymentRows, subChangeOrderRows, wipEntryRows] =
-      await Promise.all([
-        subRows("subcontracts"),
-        subRows("subcontract_allocations"),
-        subRows("subcontract_payments"),
-        // Coded sub COs fold into committed → the dashboard GP moves when a
-        // change order lands (field request 2026-07-09).
-        subRows("subcontract_change_orders"),
-        // Self-perform daily WIP → the rollup, so work put in place by the GC's own
-        // crew reflects on the dashboard GP (not just subcontractor progress).
-        subRows("daily_wip_entries"),
-      ]);
+    const [
+      subcontractRows,
+      subAllocationRows,
+      subPaymentRows,
+      subChangeOrderRows,
+      subPaymentSplitRows,
+      wipEntryRows,
+    ] = await Promise.all([
+      subRows("subcontracts"),
+      subRows("subcontract_allocations"),
+      subRows("subcontract_payments"),
+      // Coded sub COs fold into committed → the dashboard GP moves when a
+      // change order lands (field request 2026-07-09).
+      subRows("subcontract_change_orders"),
+      // Explicit per-payment splits override the pro-rata paid distribution.
+      subRows("subcontract_payment_allocations"),
+      // Self-perform daily WIP → the rollup, so work put in place by the GC's own
+      // crew reflects on the dashboard GP (not just subcontractor progress).
+      subRows("daily_wip_entries"),
+    ]);
     type SummarizeArgs = Parameters<typeof summarizeSubCostByBucket>;
     const subCostByBucket = summarizeSubCostByBucket(
       subcontractRows as unknown as SummarizeArgs[0],
@@ -2022,6 +2044,7 @@ export const getProject = createServerFn({ method: "GET" })
       subPaymentRows as unknown as SummarizeArgs[2],
       undefined,
       subChangeOrderRows as unknown as SummarizeArgs[4],
+      subPaymentSplitRows as unknown as SummarizeArgs[5],
     );
 
     // Self-perform WIP cost per code, folded into actual + forecast (displacement,

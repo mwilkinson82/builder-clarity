@@ -42,6 +42,7 @@ import {
   recordSubcontractPayment,
   saveSubcontract,
   setActiveSubcontractDocument,
+  setSubcontractPaymentSplit,
   updateSubcontractAllocation,
   updateSubcontractPayment,
 } from "@/lib/subcontracts.functions";
@@ -76,6 +77,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const payFn = useServerFn(recordSubcontractPayment);
   const updatePayFn = useServerFn(updateSubcontractPayment);
   const deletePayFn = useServerFn(deleteSubcontractPayment);
+  const setSplitFn = useServerFn(setSubcontractPaymentSplit);
   const addDocFn = useServerFn(addSubcontractDocument);
   const setActiveDocFn = useServerFn(setActiveSubcontractDocument);
   const deleteDocFn = useServerFn(deleteSubcontractDocument);
@@ -107,6 +109,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     payments: [],
     documents: [],
     change_orders: [],
+    payment_allocations: [],
   };
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["subcontracts", projectId] });
@@ -327,6 +330,39 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       });
     },
     onError: onError("record the payment"),
+  });
+  const saveSplit = useMutation({
+    // The server reads the owning sub off the payment row itself — sending it
+    // from the client would just be an unvalidated foot-gun.
+    mutationFn: (input: {
+      paymentId: string;
+      rows: {
+        cost_bucket_id: string | null;
+        cost_code: string;
+        description: string;
+        amount: number;
+      }[];
+    }) =>
+      setSplitFn({
+        data: {
+          projectId,
+          paymentId: input.paymentId,
+          rows: input.rows,
+        },
+      }),
+    onSuccess: (result) => {
+      invalidate();
+      toast.success(
+        result.rowCount > 0 ? "Payment split saved" : "Payment back on the automatic split",
+        {
+          description:
+            result.rowCount > 0
+              ? "The budget's paid-per-code now follows your coding for this payment."
+              : "This payment distributes pro-rata across the buyout's cost codes again.",
+        },
+      );
+    },
+    onError: onError("save the payment split"),
   });
   const updatePayment = useMutation({
     mutationFn: (input: { id: string; edit: PaymentEdit }) =>
@@ -624,6 +660,26 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               }
               onUpdatePayment={(id, edit) => updatePayment.mutate({ id, edit })}
               onRemovePayment={(id) => removePayment.mutate(id)}
+              paymentSplits={project.payment_allocations.filter(
+                (split) => split.subcontract_id === sub.id,
+              )}
+              onSaveSplit={(paymentId, rows) =>
+                saveSplit.mutate({
+                  paymentId,
+                  // Stamp cost_code/description off the bucket so the rows read
+                  // on their own in reports (mirrors allocateSubcontract).
+                  rows: rows.map((row) => {
+                    const bucket = buckets.find((b) => b.id === row.cost_bucket_id);
+                    return {
+                      cost_bucket_id: row.cost_bucket_id,
+                      cost_code: bucket?.cost_code ?? "",
+                      description: bucket?.bucket ?? "",
+                      amount: row.amount,
+                    };
+                  }),
+                })
+              }
+              savingSplit={saveSplit.isPending}
               onRemoveSub={() => removeSub.mutate(sub.id)}
               documents={project.documents.filter((d) => d.subcontract_id === sub.id)}
               onUploadDoc={(file) => uploadDoc(sub.id, file)}
