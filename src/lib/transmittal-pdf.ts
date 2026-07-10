@@ -36,6 +36,16 @@ const fit = (font: PDFFont, v: string, size: number, maxW: number) => {
   return `${s}...`;
 };
 
+// One transmitted item's attached document, already fetched to bytes by the
+// caller (this module stays free of supabase/fetch). Inlined into the package
+// after the cover letter.
+export interface TransmittalAttachment {
+  label: string; // e.g. "004 · Concrete Mix Design" — captions image pages
+  fileName: string;
+  bytes: Uint8Array;
+  contentType: string;
+}
+
 export interface TransmittalInput {
   letterhead: ProjectLetterhead;
   projectName: string;
@@ -48,9 +58,90 @@ export interface TransmittalInput {
   transmittalNumber: string;
   senderName: string;
   generatedAt?: Date;
+  // The attached documents for the transmitted items — appended after the
+  // cover so the package the A/E receives IS the letter + the actual submittals
+  // (field request 2026-07-09). Optional so existing callers are unchanged.
+  attachments?: TransmittalAttachment[];
 }
 
-export async function generateTransmittalPdf(input: TransmittalInput): Promise<void> {
+type AttachmentKind = "pdf" | "png" | "jpg" | "other";
+
+// Prefer magic bytes — Supabase can serve a stored file as octet-stream, so the
+// content-type header and even the extension can lie. Fall back to those only
+// when the signature is inconclusive.
+function detectAttachmentKind(
+  bytes: Uint8Array,
+  fileName: string,
+  contentType: string,
+): AttachmentKind {
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0x25 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x44 &&
+    bytes[3] === 0x46
+  )
+    return "pdf"; // %PDF
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  )
+    return "png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
+    return "jpg";
+  const ct = contentType.toLowerCase();
+  const name = fileName.toLowerCase();
+  if (ct.includes("pdf") || name.endsWith(".pdf")) return "pdf";
+  if (ct.includes("png") || name.endsWith(".png")) return "png";
+  if (ct.includes("jpeg") || ct.includes("jpg") || name.endsWith(".jpg") || name.endsWith(".jpeg"))
+    return "jpg";
+  return "other";
+}
+
+// Append one attachment to the package. PDFs are copied page-for-page; images
+// get one captioned, fit-to-page sheet. Returns false for a format we can't
+// inline (the caller reports it so it's downloaded/attached separately).
+async function appendAttachment(
+  doc: PDFDocument,
+  att: TransmittalAttachment,
+  font: PDFFont,
+): Promise<boolean> {
+  const kind = detectAttachmentKind(att.bytes, att.fileName, att.contentType);
+  if (kind === "pdf") {
+    const src = await PDFDocument.load(att.bytes, { ignoreEncryption: true });
+    const pages = await doc.copyPages(src, src.getPageIndices());
+    for (const p of pages) doc.addPage(p);
+    return true;
+  }
+  if (kind === "png" || kind === "jpg") {
+    const img = kind === "png" ? await doc.embedPng(att.bytes) : await doc.embedJpg(att.bytes);
+    const page = doc.addPage([PAGE_W, PAGE_H]);
+    const caption = clean(att.label || att.fileName);
+    if (caption)
+      page.drawText(fit(font, caption, 9, PAGE_W - 2 * M), {
+        x: M,
+        y: PAGE_H - M + 4,
+        font,
+        size: 9,
+        color: MUTE,
+      });
+    const maxW = PAGE_W - 2 * M;
+    const maxH = PAGE_H - 2 * M - 12;
+    const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+    const w = img.width * scale;
+    const h = img.height * scale;
+    page.drawImage(img, { x: (PAGE_W - w) / 2, y: (PAGE_H - h) / 2 - 6, width: w, height: h });
+    return true;
+  }
+  return false;
+}
+
+export async function generateTransmittalPdf(
+  input: TransmittalInput,
+): Promise<{ skipped: string[] }> {
   const doc = await PDFDocument.create();
   const page = doc.addPage([PAGE_W, PAGE_H]);
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -248,10 +339,25 @@ export async function generateTransmittalPdf(input: TransmittalInput): Promise<v
   const foot = `${companyName} · Generated ${dateStr}`;
   page.drawText(clean(foot), { x: M, y: M - 6, font, size: 7, color: MUTE });
 
+  // ── Attached documents ───────────────────────────────────────────────────
+  // Append each transmitted item's file so the download is the cover letter
+  // followed by the actual submittals. One bad file never sinks the package —
+  // it's collected in `skipped` for the caller to flag.
+  const skipped: string[] = [];
+  for (const att of input.attachments ?? []) {
+    try {
+      const ok = await appendAttachment(doc, att, font);
+      if (!ok) skipped.push(att.label || att.fileName || "attachment");
+    } catch {
+      skipped.push(att.label || att.fileName || "attachment");
+    }
+  }
+
   const bytes = await doc.save();
   const safeProject = (input.projectName || "project").replace(/[^a-zA-Z0-9._-]+/g, "-");
   downloadFileBytes(
     bytes,
     `Transmittal-${safeProject}-${input.transmittalNumber || dateStr.replace(/\//g, "")}.pdf`,
   );
+  return { skipped };
 }
