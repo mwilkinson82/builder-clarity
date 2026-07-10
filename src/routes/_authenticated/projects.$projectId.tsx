@@ -395,6 +395,13 @@ function ProjectPage() {
   // Budget-drawer drill-through: land the Daily WIP tab on a specific day.
   const [focusedWipDate, setFocusedWipDate] = useState<string | null>(null);
   const handleWipFocusHandled = useCallback(() => setFocusedWipDate(null), []);
+  // Budget drawer state. Declared BEFORE the drill-through memos below that
+  // read it — a dependency array evaluates at render, so referencing a const
+  // declared later is a temporal-dead-zone crash of the whole page (this
+  // exact bug shipped once; the file's TDZ warning comment exists for a
+  // reason — vite build does not type-check, so tsc is the only net).
+  const [editingBucketId, setEditingBucketId] = useState<string | null>(null);
+  const [addingLine, setAddingLine] = useState(false);
   const [companyLogoFailedUrl, setCompanyLogoFailedUrl] = useState("");
   const setProjectTab = (value: string) => {
     if (PROJECT_TAB_VALUES.includes(value as ProjectTabValue)) {
@@ -1059,8 +1066,6 @@ function ProjectPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["budget-overrides", projectId] }),
   });
   // BUDGETCONSOLIDATE1: the single Budget table opens a line editor drawer.
-  const [editingBucketId, setEditingBucketId] = useState<string | null>(null);
-  const [addingLine, setAddingLine] = useState(false);
   const reviewSubmit = useServerMutation<Record<string, unknown>>(submitReviewFn as never);
   const reviewUpdate = useServerMutation<Record<string, unknown>>(updateReviewFn as never);
   const bucketImport = useServerMutation<Record<string, unknown>>(importBucketsFn as never);
