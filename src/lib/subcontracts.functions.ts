@@ -68,6 +68,12 @@ export interface SubcontractAllocationRow {
   description: string;
   amount: number;
 }
+// A pay app's lifecycle (field request 2026-07-09): the sub submits it and it's
+// logged as a DRAFT, the PM marks it APPROVED for payment, then PAID when the
+// money goes out. Only 'paid' rows count as actual cost in the budget. Rows
+// recorded before the lifecycle existed have no status column → treated as paid.
+export type SubPaymentStatus = "draft" | "approved" | "paid";
+
 export interface SubcontractPaymentRow {
   id: string;
   project_id: string;
@@ -77,6 +83,8 @@ export interface SubcontractPaymentRow {
   payment_date: string;
   reference: string;
   notes: string;
+  status: SubPaymentStatus;
+  approved_at: string | null;
 }
 // A change order or credit against a subcontract, kept SEPARATE from the base
 // contracted amount (field request 2026-07-09). amount is signed dollars:
@@ -159,6 +167,8 @@ const normalizePayment = (row: Record<string, unknown>): SubcontractPaymentRow =
   payment_date: str(row.payment_date),
   reference: str(row.reference),
   notes: str(row.notes),
+  status: str(row.status, "paid") as SubPaymentStatus,
+  approved_at: (row.approved_at as string | null) ?? null,
 });
 const normalizeChangeOrder = (row: Record<string, unknown>): SubcontractChangeOrderRow => ({
   id: str(row.id),
@@ -578,6 +588,19 @@ async function evaluateSubPaymentGate(
   };
 }
 
+// The status column ships in the payables-approval migration. Pre-migration,
+// PostgREST rejects an insert/update naming it — detect that specific miss so
+// the legacy record-as-paid path can keep working while the desk catches up.
+const isMissingPaymentStatusColumn = (error: DynamicSupabaseError | null) => {
+  const message = error?.message ?? "";
+  return (
+    (error?.code === "PGRST204" || /column/i.test(message)) && /status|approved_at/i.test(message)
+  );
+};
+
+const STAGES_NOT_ENABLED =
+  "The pay-app approval stages aren't enabled yet (database update pending). Record the payment as paid for now.";
+
 export const recordSubcontractPayment = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
@@ -590,35 +613,116 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
         payment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "payment_date must be YYYY-MM-DD"),
         reference: z.string().max(200).default(""),
         notes: z.string().max(4000).default(""),
+        // Lifecycle stage the row lands in. Default 'paid' = the pre-lifecycle
+        // behaviour, so existing callers keep recording paid facts.
+        status: z.enum(["draft", "approved", "paid"]).default("paid"),
       })
       .parse(input),
   )
   .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
-    const { projectId, subcontractId, ...fields } = data;
+    const { projectId, subcontractId, status, ...fields } = data;
 
-    const gate = await evaluateSubPaymentGate(
-      context.supabase,
-      projectId,
-      subcontractId,
-      fields.payment_date,
-    );
+    // The compliance gate protects MONEY LEAVING — logging a draft pay app or
+    // approving it for payment needs no lien waiver yet. Only 'paid' is gated.
+    const gate =
+      status === "paid"
+        ? await evaluateSubPaymentGate(
+            context.supabase,
+            projectId,
+            subcontractId,
+            fields.payment_date,
+          )
+        : { allowed: true, blockers: [] as string[], consumeWaiverId: null };
     if (!gate.allowed) {
       throw new Error(
         `Payment blocked — compliance not met. ${gate.blockers.join(" ")} Add the missing item, or turn off "Require lien waivers + insurance" for this project.`,
       );
     }
 
-    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_payments")
-      .insert({ project_id: projectId, subcontract_id: subcontractId, ...fields })
+    const base = { project_id: projectId, subcontract_id: subcontractId, ...fields };
+    let insertRes = await dynamicTable(context.supabase, "subcontract_payments")
+      .insert({
+        ...base,
+        status,
+        ...(status === "approved" ? { approved_at: new Date().toISOString() } : {}),
+      })
       .select("*")
+      .single();
+    if (insertRes.error && isMissingPaymentStatusColumn(insertRes.error)) {
+      // Migration not applied yet: a paid row is exactly the legacy shape, so
+      // record it the old way; the new stages have nothing to fall back to.
+      if (status !== "paid") throw new Error(STAGES_NOT_ENABLED);
+      insertRes = await dynamicTable(context.supabase, "subcontract_payments")
+        .insert(base)
+        .select("*")
+        .single();
+    }
+    if (insertRes.error) {
+      if (isMissingSubcontractTable(insertRes.error)) throw new Error(NOT_ENABLED);
+      throw new Error(insertRes.error.message);
+    }
+    const payment = normalizePayment(insertRes.data as Record<string, unknown>);
+    // Consume the waiver that cleared the gate — link it so it can't clear a
+    // second payment (best-effort; the payment already succeeded).
+    if (gate.consumeWaiverId) {
+      await dynamicTable(context.supabase, "lien_waivers")
+        .update({ payment_id: payment.id })
+        .eq("id", gate.consumeWaiverId);
+    }
+    return payment;
+  });
+
+// Walk a pay app forward: draft → approved (for payment) → paid. Marking it
+// paid is the moment money leaves, so THAT is where the lien-waiver/insurance
+// gate fires and the clearing waiver is consumed — exactly as it does when a
+// payment is recorded directly as paid.
+export const setSubcontractPaymentStatus = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ id: z.string().uuid(), status: z.enum(["approved", "paid"]) }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
+    const { data: row, error } = await dynamicTable(context.supabase, "subcontract_payments")
+      .select("*")
+      .eq("id", data.id)
       .single();
     if (error) {
       if (isMissingSubcontractTable(error)) throw new Error(NOT_ENABLED);
       throw new Error(error.message);
     }
-    const payment = normalizePayment(row as Record<string, unknown>);
-    // Consume the waiver that cleared the gate — link it so it can't clear a
-    // second payment (best-effort; the payment already succeeded).
+    const current = normalizePayment(row as Record<string, unknown>);
+    if (current.status === "paid") throw new Error("This pay app is already marked paid.");
+
+    const gate =
+      data.status === "paid"
+        ? await evaluateSubPaymentGate(
+            context.supabase,
+            current.project_id,
+            current.subcontract_id,
+            current.payment_date,
+          )
+        : { allowed: true, blockers: [] as string[], consumeWaiverId: null };
+    if (!gate.allowed) {
+      throw new Error(
+        `Payment blocked — compliance not met. ${gate.blockers.join(" ")} Add the missing item, or turn off "Require lien waivers + insurance" for this project.`,
+      );
+    }
+
+    const updateRes = await dynamicTable(context.supabase, "subcontract_payments")
+      .update({
+        status: data.status,
+        // First pass through approval stamps it — a draft marked straight to
+        // paid still records when the spend was approved.
+        ...(current.approved_at ? {} : { approved_at: new Date().toISOString() }),
+      })
+      .eq("id", data.id)
+      .select("*")
+      .single();
+    if (updateRes.error) {
+      if (isMissingPaymentStatusColumn(updateRes.error)) throw new Error(STAGES_NOT_ENABLED);
+      throw new Error(updateRes.error.message);
+    }
+    const payment = normalizePayment(updateRes.data as Record<string, unknown>);
     if (gate.consumeWaiverId) {
       await dynamicTable(context.supabase, "lien_waivers")
         .update({ payment_id: payment.id })
