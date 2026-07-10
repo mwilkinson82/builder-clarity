@@ -26,15 +26,22 @@ import {
   type SubmittalLogStatus,
 } from "@/lib/submittal-log.functions";
 import { generateTransmittalPdf, type TransmittalAttachment } from "@/lib/transmittal-pdf";
+import { daysOutstanding, isOverdue, pipelineCounts } from "@/lib/submittal-domain";
 
 const STATUS: { value: SubmittalLogStatus; short: string; label: string; tone: string }[] = [
   { value: "", short: "—", label: "Not set", tone: "text-muted-foreground" },
+  { value: "pending", short: "P", label: "Pending — not sent yet", tone: "text-muted-foreground" },
   { value: "ur", short: "U/R", label: "Under review", tone: "text-warning" },
   { value: "rar", short: "RAR", label: "Revise & resubmit", tone: "text-danger" },
   { value: "aan", short: "AAN", label: "Approved as noted", tone: "text-accent" },
   { value: "a", short: "A", label: "Approved", tone: "text-success" },
 ];
 const statusTone = (s: SubmittalLogStatus) => STATUS.find((x) => x.value === s)?.tone ?? "";
+
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
 async function uploadLogFile(projectId: string, file: File) {
   const safe = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
@@ -195,7 +202,18 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
     }
   };
 
-  const addRow = () => save.mutate({ kind, sort_order: rows.length, status: "" });
+  // New rows start as PENDING — the planned-at-job-start stage. If the pipeline
+  // migration isn't applied yet, fall back to the legacy blank status so adding
+  // rows keeps working.
+  const addRow = async () => {
+    try {
+      await save.mutateAsync({ kind, sort_order: rows.length, status: "pending" });
+    } catch (e) {
+      if (e instanceof Error && /database update pending/i.test(e.message)) {
+        save.mutate({ kind, sort_order: rows.length, status: "" });
+      }
+    }
+  };
 
   return (
     <section className="space-y-5">
@@ -271,6 +289,57 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
         </div>
       </div>
 
+      {/* Pipeline at a glance (field request 2026-07-10): plan the list up
+          front as PENDING, then track what's out, what's overdue, what's back. */}
+      {rows.length > 0
+        ? (() => {
+            const counts = pipelineCounts(rows, todayStr());
+            const tiles = [
+              {
+                label: "Pending — not sent",
+                value: counts.pending,
+                sub: "",
+                tone: "text-muted-foreground",
+              },
+              {
+                label: "Out for review",
+                value: counts.outForReview,
+                sub: counts.maxDaysOut > 0 ? `longest wait ${counts.maxDaysOut}d` : "",
+                tone: "text-warning",
+              },
+              {
+                label: "Overdue",
+                value: counts.overdue,
+                sub: "",
+                tone: counts.overdue > 0 ? "text-danger" : "text-muted-foreground",
+              },
+              { label: "Returned", value: counts.returned, sub: "", tone: "text-success" },
+            ];
+            return (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {tiles.map((t) => (
+                  <div
+                    key={t.label}
+                    className="rounded-md border border-hairline bg-surface px-3 py-2"
+                  >
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      {t.label}
+                    </div>
+                    <div className={`mt-0.5 text-lg font-semibold tabular-nums ${t.tone}`}>
+                      {t.value}
+                      {t.sub ? (
+                        <span className="ml-2 text-[11px] font-normal text-muted-foreground">
+                          {t.sub}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()
+        : null}
+
       {/* Transmittal builder */}
       {txOpen && kind === "submittal" ? (
         <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
@@ -337,6 +406,8 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
               <th className="px-2 py-2 text-left">Mfgr / Supplier</th>
               <th className="px-2 py-2 text-left">Submitted</th>
               <th className="px-2 py-2 text-left">Returned</th>
+              <th className="px-2 py-2 text-left">Due</th>
+              <th className="px-2 py-2 text-left">Days out</th>
               <th className="px-2 py-2 text-left">Status</th>
               <th className="px-2 py-2 text-left">Comments</th>
               <th className="w-16 px-2 py-2" />
@@ -359,7 +430,7 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
             ))}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={12} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={14} className="px-3 py-8 text-center text-sm text-muted-foreground">
                   No {kind === "rfi" ? "RFIs" : "submittals"} logged yet. Add one above.
                 </td>
               </tr>
@@ -402,6 +473,13 @@ function LogRow({
   // a second cell edit never overwrites the first with a stale full-row payload.
   const commit = (field: keyof SubmittalLogEntryRow, value: string) => {
     if (String(d[field] ?? "") === value) return;
+    // Filling in the submitted date moves a planned item forward on its own:
+    // pending (or legacy not-set) -> Under review. One patch, no extra click.
+    if (field === "date_submitted" && value && (d.status === "pending" || d.status === "")) {
+      setD({ ...d, date_submitted: value, status: "ur" });
+      onPatch({ date_submitted: value, status: "ur" } as Partial<SubmittalLogEntryRow>);
+      return;
+    }
     setD({ ...d, [field]: value });
     onPatch({ [field]: value } as Partial<SubmittalLogEntryRow>);
   };
@@ -414,7 +492,7 @@ function LogRow({
       />
     </td>
   );
-  const dateCell = (field: "date_submitted" | "date_returned") => (
+  const dateCell = (field: "date_submitted" | "date_returned" | "due_date") => (
     <td className="px-1 py-1">
       <input
         type="date"
@@ -440,6 +518,24 @@ function LogRow({
       {cell("mfgr_supplier", "min-w-[130px]")}
       {dateCell("date_submitted")}
       {dateCell("date_returned")}
+      {dateCell("due_date")}
+      <td className="px-1 py-1">
+        {(() => {
+          const today = todayStr();
+          const days = daysOutstanding(d, today);
+          const overdue = isOverdue(d, today);
+          if (days === null && !overdue)
+            return <span className="text-xs text-muted-foreground">{"—"}</span>;
+          return (
+            <span
+              className={`text-xs font-semibold tabular-nums ${overdue ? "text-danger" : "text-warning"}`}
+            >
+              {days !== null ? `${days}d` : ""}
+              {overdue ? (days !== null ? " · overdue" : "overdue") : ""}
+            </span>
+          );
+        })()}
+      </td>
       <td className="px-1 py-1">
         <select
           value={d.status}

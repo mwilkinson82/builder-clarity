@@ -46,8 +46,15 @@ function isMissingLogTable(error: DynamicSupabaseError | null) {
 const NOT_ENABLED =
   "The RFI / submittal log isn't enabled on this workspace yet — the migration hasn't been applied.";
 
+// The pending stage + due dates ship in the submittal-pipeline migration.
+const isMissingPipeline = (error: DynamicSupabaseError | null) =>
+  /submittal_log_entries_status_check|due_date/i.test(error?.message ?? "");
+const PIPELINE_NOT_ENABLED =
+  "The pending stage and due dates aren't enabled yet (database update pending) — dates and reviewer actions still save.";
+
 export type SubmittalLogKind = "rfi" | "submittal";
-export type SubmittalLogStatus = "" | "a" | "aan" | "rar" | "ur";
+// 'pending' = planned at job start, not sent yet (field request 2026-07-10).
+export type SubmittalLogStatus = "" | "pending" | "a" | "aan" | "rar" | "ur";
 
 export interface SubmittalLogEntryRow {
   id: string;
@@ -61,6 +68,8 @@ export interface SubmittalLogEntryRow {
   mfgr_supplier: string;
   date_submitted: string | null;
   date_returned: string | null;
+  // When the answer/return is needed by — drives overdue + days-outstanding.
+  due_date: string | null;
   status: SubmittalLogStatus;
   comments: string;
   storage_path: string;
@@ -93,6 +102,7 @@ const normalize = (row: Record<string, unknown>): SubmittalLogEntryRow => ({
   mfgr_supplier: str(row.mfgr_supplier),
   date_submitted: (row.date_submitted as string | null) ?? null,
   date_returned: (row.date_returned as string | null) ?? null,
+  due_date: (row.due_date as string | null) ?? null,
   status: (str(row.status) as SubmittalLogStatus) ?? "",
   comments: str(row.comments),
   storage_path: str(row.storage_path),
@@ -129,7 +139,8 @@ const entryInput = z.object({
   mfgr_supplier: z.string().max(200).default(""),
   date_submitted: z.string().nullable().optional(),
   date_returned: z.string().nullable().optional(),
-  status: z.enum(["", "a", "aan", "rar", "ur"]).default(""),
+  due_date: z.string().nullable().optional(),
+  status: z.enum(["", "pending", "a", "aan", "rar", "ur"]).default(""),
   comments: z.string().max(2000).default(""),
   storage_path: z.string().max(500).default(""),
   file_name: z.string().max(300).default(""),
@@ -150,6 +161,7 @@ export const saveSubmittalLogEntry = createServerFn({ method: "POST" })
       mfgr_supplier: data.mfgr_supplier,
       date_submitted: dateOrNull(data.date_submitted),
       date_returned: dateOrNull(data.date_returned),
+      due_date: dateOrNull(data.due_date),
       status: data.status,
       comments: data.comments,
       storage_path: data.storage_path,
@@ -168,6 +180,7 @@ export const saveSubmittalLogEntry = createServerFn({ method: "POST" })
           .select("*")
           .single();
     if (res.error || !res.data) {
+      if (isMissingPipeline(res.error)) throw new Error(PIPELINE_NOT_ENABLED);
       if (isMissingLogTable(res.error)) throw new Error(NOT_ENABLED);
       throw new Error(res.error?.message ?? "Could not save the entry");
     }
@@ -187,7 +200,8 @@ const patchInput = z.object({
   mfgr_supplier: z.string().max(200).optional(),
   date_submitted: z.string().nullable().optional(),
   date_returned: z.string().nullable().optional(),
-  status: z.enum(["", "a", "aan", "rar", "ur"]).optional(),
+  due_date: z.string().nullable().optional(),
+  status: z.enum(["", "pending", "a", "aan", "rar", "ur"]).optional(),
   comments: z.string().max(2000).optional(),
   storage_path: z.string().max(500).optional(),
   file_name: z.string().max(300).optional(),
@@ -201,7 +215,8 @@ export const patchSubmittalLogEntry = createServerFn({ method: "POST" })
     const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const [k, v] of Object.entries(rest)) {
       if (v === undefined) continue;
-      update[k] = k === "date_submitted" || k === "date_returned" ? dateOrNull(v) : v;
+      update[k] =
+        k === "date_submitted" || k === "date_returned" || k === "due_date" ? dateOrNull(v) : v;
     }
     const { data: row, error } = await dynamicTable(context.supabase, "submittal_log_entries")
       .update(update)
@@ -209,6 +224,7 @@ export const patchSubmittalLogEntry = createServerFn({ method: "POST" })
       .select("*")
       .single();
     if (error || !row) {
+      if (isMissingPipeline(error)) throw new Error(PIPELINE_NOT_ENABLED);
       if (isMissingLogTable(error)) throw new Error(NOT_ENABLED);
       throw new Error(error?.message ?? "Could not save the change");
     }
