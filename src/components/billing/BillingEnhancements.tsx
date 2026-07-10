@@ -1615,7 +1615,7 @@ export function ProjectCostTrackingPanel({
                     sub="Cost to date + FTC"
                   />
                   <BillingDetail
-                    label="Projected variance"
+                    label="Projected margin"
                     value={fmtUSD(variance)}
                     tone={tone}
                     sub="Contract less projected cost"
