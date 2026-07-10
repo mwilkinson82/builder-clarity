@@ -2986,6 +2986,35 @@ await expectContains(
   "daily-WIP workspace has the performed-by picker (self-perform ↔ sub)",
 );
 
+// SUB CO → BUDGET FOLD (field feedback 2026-07-09: "change orders didnt roll up
+// to the dashboards"): a coded sub CO folds into that code's committed in
+// summarizeSubCostByBucket, and every call site (grid, dashboard, portfolio,
+// job-cost report) feeds the change-order rows in.
+await expectContains(
+  "src/lib/subcontract-budget.ts",
+  [
+    /SubChangeOrderBudgetLike/,
+    /changeOrders: SubChangeOrderBudgetLike\[\] = \[\]/,
+    /for \(const co of changeOrders\)/,
+  ],
+  "sub budget layer folds coded change orders into committed",
+);
+await expectContains(
+  "src/lib/projects.functions.ts",
+  [/subcontract_change_orders/],
+  "dashboard + portfolio rollups fetch sub change orders for the committed fold",
+);
+await expectContains(
+  "src/lib/billing.functions.ts",
+  [/subcontract_change_orders/, /subCosByProject/],
+  "job-cost reporting folds sub change orders the same way",
+);
+await expectContains(
+  "src/components/project/SubcontractCard.tsx",
+  [/carries into that code(&apos;|')s committed/],
+  "the CO register copy explains coded COs auto-carry into the budget",
+);
+
 // PROJECTFILEROOM1: the project file room — one home for the job's paper. Storage
 // mirrors subcontract-docs (private bucket, client upload + signed URL); the
 // server fn owns the metadata row; the tab is wired onto the project nav rail.
