@@ -20,6 +20,9 @@ import {
   subEarnedIncrement,
   subEarnedValue,
   sumLineItems,
+  dayProfitSummary,
+  lineProfitToday,
+  priorCodePercent,
 } from "../src/lib/daily-wip.ts";
 
 const row = (over: Partial<Parameters<typeof rowWorkInPlace>[0]> = {}) => ({
@@ -452,6 +455,102 @@ assert.deepEqual(
   assert.equal(untouched.ftc, 2_000, "…and its forecast holds");
   // The originals are never mutated (the drawer still edits raw actual_to_date).
   assert.equal(buckets[0].actual_to_date, 4_300, "fold returns new objects — raw bucket untouched");
+}
+
+// ── Daily P&L (field request 2026-07-09): made/lost today per line ──────────
+{
+  // The earned baseline is per CODE, whoever performed the work: a line's sub
+  // tag flipping (the super's form has no sub picker; the PM tags later) must
+  // never re-earn the whole cumulative % as fresh profit.
+  const history = [
+    {
+      id: "e1",
+      subcontractor_id: "acme",
+      cost_bucket_id: "b1",
+      percent_complete: 50,
+      entry_date: "2026-07-08",
+      updated_at: "1",
+    },
+  ];
+  assert.equal(
+    priorCodePercent(
+      {
+        id: "e9",
+        subcontractor_id: null,
+        cost_bucket_id: "b1",
+        percent_complete: 60,
+        entry_date: "2026-07-09",
+        updated_at: "9",
+      },
+      history,
+    ),
+    50,
+    "an untagged line inherits the code's baseline — a tag flip never re-earns",
+  );
+  // A 0% entry is the form default ("% not logged") — it never sets a baseline.
+  assert.equal(
+    priorCodePercent(
+      {
+        id: "e9",
+        subcontractor_id: null,
+        cost_bucket_id: "b1",
+        percent_complete: 60,
+        entry_date: "2026-07-09",
+        updated_at: "9",
+      },
+      [
+        {
+          id: "e0",
+          subcontractor_id: null,
+          cost_bucket_id: "b1",
+          percent_complete: 0,
+          entry_date: "2026-07-08",
+          updated_at: "1",
+        },
+      ],
+    ),
+    0,
+    "a 0% entry (the form default) never becomes the code's baseline",
+  );
+
+  // Earned = contract value × the day's % movement; profit = earned − cost.
+  // 60,142 × 2.5% = 1,503.55 against 1,320 of cost → +183.55 on the day.
+  const line = lineProfitToday(60_142, 42.5, 45, 1_320);
+  assert.equal(line.earnedToday, 1_503.55, "earned prices the day's % movement at contract value");
+  assert.equal(line.profitToday, 183.55, "profit is earned minus the day's cost");
+  assert.equal(line.reason, null, "a measured line carries no excuse");
+
+  // Honesty rails — the review found each of these fabricating money:
+  // 1. A 0% entry after real progress is "not logged", NEVER a walk-back loss.
+  const blankAfterProgress = lineProfitToday(100_000, 30, 0, 800);
+  assert.equal(blankAfterProgress.reason, "no-progress", "0%% after 30%% = not logged, not −$30k");
+  assert.equal(blankAfterProgress.profitToday, null, "…and no loss is fabricated");
+  // 2. %-movement with $0 cost never claims the earned value as pure profit.
+  const unpricedCost = lineProfitToday(100_000, 30, 40, 0);
+  assert.equal(unpricedCost.reason, "uncosted", "earned with $0 cost = costs not priced yet");
+  assert.equal(unpricedCost.profitToday, null, "…no fabricated pure profit");
+  // 3. Unpriced / uncoded lines say so.
+  assert.equal(lineProfitToday(0, 0, 25, 500).reason, "unpriced", "a $0-contract code says so");
+  assert.equal(lineProfitToday(null, 0, 25, 500).reason, "no-code", "an uncoded line says so");
+  // 4. No % movement on a priced, costed line = not measured.
+  assert.equal(lineProfitToday(60_142, 10, 10, 500).reason, "no-progress", "no movement");
+
+  // A downward correction to a REAL % (> 0) earns negative, honestly.
+  const corrected = lineProfitToday(10_000, 30, 20, 100);
+  assert.equal(corrected.earnedToday, -1_000, "a % walk-back to a real % earns negative");
+
+  // The day rolls up measured lines; unmeasured cost is reported separately,
+  // never silently folded into a fake loss.
+  const day = dayProfitSummary([
+    lineProfitToday(60_142, 42.5, 45, 1_320),
+    lineProfitToday(126_582, 40, 42.5, 3_565),
+    lineProfitToday(null, 0, 0, 792),
+  ]);
+  assert.equal(day.measuredCount, 2, "two lines measured");
+  assert.equal(day.unmeasuredCount, 1, "one line couldn't be measured");
+  assert.equal(day.unmeasuredCost, 792, "…and its cost is reported, not hidden");
+  assert.equal(day.earned, 4_668.1, "earned sums cents-exact");
+  assert.equal(day.profit, -216.9, "day profit = earned − measured cost");
 }
 
 console.log("daily WIP smoke: all assertions passed");

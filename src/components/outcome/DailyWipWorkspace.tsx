@@ -6,7 +6,7 @@
 //
 // The dependency rule: this FEEDS billing; billing never waits on it. Recording
 // here is optional and additive.
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
@@ -42,12 +42,16 @@ import {
   commitmentBySubBucket,
   costItemsForEdit,
   dailyWipTotals,
+  dayProfitSummary,
   dailyWipWorkInPlaceTotal,
   isPercentOverridden,
   laborCost,
   priorSubPercent,
   productionRate,
+  lineProfitToday,
+  priorCodePercent,
   rowWorkInPlace,
+  type LineProfitToday,
   subCommitmentKey,
   subEarnedValue,
   sumLineItems,
@@ -59,11 +63,19 @@ interface BucketOption {
   id: string;
   cost_code: string;
   bucket: string;
+  // The SOV price of this line (what the owner pays) — the route's full bucket
+  // rows carry it; the daily P&L prices each day's % movement with it.
+  contract_value?: number;
 }
 
 interface DailyWipWorkspaceProps {
   projectId: string;
   buckets: BucketOption[];
+  // Drill-through landing (e.g. the Budget drawer's "from the daily log" rows):
+  // when set, the workspace jumps to that day and reports back so the route can
+  // clear it — the same handoff pattern as the risk register focus.
+  focusDate?: string | null;
+  onFocusDateHandled?: () => void;
 }
 
 interface SaveWipInput {
@@ -162,7 +174,12 @@ function shiftDate(iso: string, delta: number): string {
   ).padStart(2, "0")}`;
 }
 
-export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps) {
+export function DailyWipWorkspace({
+  projectId,
+  buckets,
+  focusDate,
+  onFocusDateHandled,
+}: DailyWipWorkspaceProps) {
   const queryClient = useQueryClient();
   const listEntries = useServerFn(listDailyWipEntries);
   const listReports = useServerFn(listDailyReports);
@@ -173,6 +190,11 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
   const listProjectSubs = useServerFn(listProjectSubcontracts);
 
   const [selectedDate, setSelectedDate] = useState<string>(() => localToday());
+  useEffect(() => {
+    if (!focusDate) return;
+    setSelectedDate(focusDate);
+    onFocusDateHandled?.();
+  }, [focusDate, onFocusDateHandled]);
   const [draft, setDraft] = useState<EntryDraft>(emptyDraft);
   // When set, the form is editing an existing logged line (the PM pricing it),
   // not creating a new one.
@@ -307,8 +329,42 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
     [entries, commitmentFor, priorPercentFor],
   );
 
-  const invalidate = () =>
+  // The daily P&L: each line's % movement priced at its cost code's contract
+  // value (earned), against its work-in-place cost. Keyed by entry id for the
+  // row cells; summarized for the day card. Lines that can't be measured say
+  // why instead of faking a loss.
+  const contractValueFor = useCallback(
+    (costBucketId: string | null): number | null => {
+      if (!costBucketId) return null;
+      const bucket = buckets.find((b) => b.id === costBucketId);
+      if (!bucket || bucket.contract_value == null) return null;
+      return bucket.contract_value;
+    },
+    [buckets],
+  );
+  const profitByEntry = useMemo(() => {
+    const map = new Map<string, LineProfitToday>();
+    for (const entry of entries) {
+      map.set(
+        entry.id,
+        lineProfitToday(
+          contractValueFor(entry.cost_bucket_id),
+          priorCodePercent(entry, entriesQuery.data ?? []),
+          entry.percent_complete,
+          rowWorkInPlace(entry, commitmentFor(entry), priorPercentFor(entry)),
+        ),
+      );
+    }
+    return map;
+  }, [entries, entriesQuery.data, contractValueFor, commitmentFor, priorPercentFor]);
+  const dayProfit = useMemo(() => dayProfitSummary([...profitByEntry.values()]), [profitByEntry]);
+
+  const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["daily-wip-entries", projectId] });
+    // The server folds this WIP into the project payload (ledger actuals, the
+    // Budget drawer's "from the daily log" figure) — keep them in step.
+    queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+  };
 
   const saveMutation = useMutation({
     mutationFn: (input: SaveWipInput) => saveEntry({ data: input }),
@@ -508,7 +564,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
         {/* Left: the day's WIP entries + add form */}
         <div className="space-y-4">
           <div className="overflow-x-auto rounded-lg border border-hairline bg-surface">
-            <table className="w-full min-w-[820px] border-collapse text-sm">
+            <table className="w-full min-w-[940px] border-collapse text-sm">
               <thead className="border-b border-hairline bg-surface-elevated">
                 <tr className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                   <th className="px-3 py-2 text-left">Activity / cost code</th>
@@ -519,19 +575,20 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                   <th className="px-3 py-2 text-right">Materials</th>
                   <th className="px-3 py-2 text-right">Equipment</th>
                   <th className="px-3 py-2 text-right">Work in place</th>
+                  <th className="px-3 py-2 text-right">Made / lost today</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
               <tbody>
                 {entriesQuery.isLoading ? (
                   <tr>
-                    <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
+                    <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
                       Loading…
                     </td>
                   </tr>
                 ) : entries.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
+                    <td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">
                       No work logged for this day yet. The superintendent adds work lines in the
                       Daily Reports tab — they show here to cost. You can also add a line below.
                     </td>
@@ -546,6 +603,7 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                       performedBy={subName(entry.subcontractor_id)}
                       subCommitment={commitmentFor(entry)}
                       priorPercent={priorPercentFor(entry)}
+                      profit={profitByEntry.get(entry.id) ?? null}
                       editing={editingId === entry.id}
                       onEdit={() => startEdit(entry)}
                       onDelete={() => deleteMutation.mutate(entry.id)}
@@ -573,6 +631,9 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums">
                       {fmtUSD(workInPlaceTotal)}
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      <ProfitAmount value={dayProfit.measuredCount > 0 ? dayProfit.profit : null} />
                     </td>
                     <td />
                   </tr>
@@ -811,6 +872,53 @@ export function DailyWipWorkspace({ projectId, buckets }: DailyWipWorkspaceProps
 
         {/* Right: the day's daily report, read-only reference */}
         <aside className="space-y-3">
+          {entries.length > 0 ? (
+            <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Made or lost today
+              </div>
+              {dayProfit.measuredCount > 0 ? (
+                <>
+                  <div
+                    className={`mt-1.5 text-2xl font-semibold tabular-nums ${
+                      dayProfit.profit < 0 ? "text-danger" : "text-success"
+                    }`}
+                  >
+                    {dayProfit.profit < 0 ? "−" : "+"}
+                    {fmtUSD(Math.abs(dayProfit.profit))}
+                  </div>
+                  <dl className="mt-2 space-y-1 text-sm">
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-muted-foreground">Earned today</dt>
+                      <dd className="tabular-nums text-foreground">{fmtUSD(dayProfit.earned)}</dd>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <dt className="text-muted-foreground">Cost of that work</dt>
+                      <dd className="tabular-nums text-foreground">
+                        {fmtUSD(dayProfit.measuredCost)}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                    Earned = each line's % progress today × its cost code's contract value (what the
+                    owner pays). The gap against today's cost is your margin on the day.
+                  </p>
+                </>
+              ) : (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Log % progress on today's lines to see what the day earned against what it cost.
+                </p>
+              )}
+              {dayProfit.unmeasuredCount > 0 && dayProfit.measuredCount > 0 ? (
+                <p className="mt-2 text-[11px] leading-snug text-warning">
+                  {dayProfit.unmeasuredCount} line{dayProfit.unmeasuredCount === 1 ? "" : "s"} with{" "}
+                  {fmtUSD(dayProfit.unmeasuredCost)} of cost{" "}
+                  {dayProfit.unmeasuredCount === 1 ? "isn't" : "aren't"} counted — no % progress or
+                  contract value on {dayProfit.unmeasuredCount === 1 ? "it" : "them"} yet.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <div className="rounded-lg border border-hairline bg-surface p-4">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               Daily report · {formatBillingDate(selectedDate)}
@@ -967,6 +1075,27 @@ function itemsTooltip(items: CostLineItem[]): string | undefined {
   return lines.length ? lines.join("\n") : undefined;
 }
 
+// Plain-English "why there's no number" labels — a missing % log must never
+// read as a loss.
+const PROFIT_REASON_LABEL: Record<NonNullable<LineProfitToday["reason"]>, string> = {
+  "no-code": "No cost code",
+  unpriced: "Needs contract value",
+  "no-progress": "No % progress logged",
+  uncosted: "Costs not priced yet",
+};
+
+// A made/lost dollar figure that reads itself: green +$ / red −$; null → dash.
+function ProfitAmount({ value }: { value: number | null }) {
+  if (value === null) return <span className="text-muted-foreground">—</span>;
+  const negative = value < 0;
+  return (
+    <span className={`font-medium tabular-nums ${negative ? "text-danger" : "text-success"}`}>
+      {negative ? "−" : "+"}
+      {fmtUSD(Math.abs(value))}
+    </span>
+  );
+}
+
 function EntryRow({
   entry,
   label,
@@ -974,6 +1103,7 @@ function EntryRow({
   performedBy,
   subCommitment,
   priorPercent,
+  profit,
   editing,
   onEdit,
   onDelete,
@@ -987,6 +1117,8 @@ function EntryRow({
   // Cumulative % logged for this sub line before this entry, so its work in place
   // is the increment since the prior log (not the whole to-date amount).
   priorPercent: number;
+  // The line's P&L for the day (earned vs cost), or null while loading.
+  profit: LineProfitToday | null;
   editing: boolean;
   onEdit: () => void;
   onDelete: () => void;
@@ -1070,6 +1202,25 @@ function EntryRow({
             {isSubLine ? "Needs % complete" : "Needs costs"}
           </div>
         ) : null}
+      </td>
+      <td className="px-3 py-2.5 text-right">
+        {profit && profit.profitToday !== null ? (
+          <>
+            <ProfitAmount value={profit.profitToday} />
+            <div className="text-[10px] font-normal text-muted-foreground">
+              earned {fmtUSD(profit.earnedToday ?? 0)}
+            </div>
+          </>
+        ) : (
+          <>
+            <span className="text-muted-foreground">—</span>
+            {profit?.reason ? (
+              <div className="max-w-[110px] text-[10px] font-normal leading-snug text-muted-foreground">
+                {PROFIT_REASON_LABEL[profit.reason]}
+              </div>
+            ) : null}
+          </>
+        )}
       </td>
       <td className="px-3 py-2.5 text-right">
         <div className="flex items-center justify-end gap-1">
