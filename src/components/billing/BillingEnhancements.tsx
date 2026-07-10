@@ -1,5 +1,10 @@
 import * as Papa from "papaparse";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import { VendorPicker } from "@/components/billing/VendorPicker";
+import { findOrCreateVendor, listVendors } from "@/lib/vendors.functions";
+import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -1052,6 +1057,32 @@ export function ProjectCostTrackingPanel({
   // When set, the dialog is editing this existing DRAFT row instead of adding.
   const [editingCostId, setEditingCostId] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  // The Vendor field is a pick-or-add over BOTH org directories (vendors +
+  // subs) — a cost's payee is one or the other. Self-contained queries, like
+  // DailyWipWorkspace; both degrade to empty before their migrations.
+  const queryClient = useQueryClient();
+  const listVendorsFn = useServerFn(listVendors);
+  const listSubsFn = useServerFn(listSubcontractors);
+  const findOrCreateVendorFn = useServerFn(findOrCreateVendor);
+  const vendorsQuery = useQuery({
+    queryKey: ["vendors-directory"],
+    queryFn: () => listVendorsFn(),
+    staleTime: 30_000,
+  });
+  const subsQuery = useQuery({
+    queryKey: ["subcontractors-directory"],
+    queryFn: () => listSubsFn(),
+    staleTime: 30_000,
+  });
+  const vendorNames = (vendorsQuery.data ?? []).map((vendor) => vendor.name);
+  const subNames = (subsQuery.data ?? []).map((sub) => sub.name);
+  // Enrolling a new name in the vendor directory is best-effort: the cost row
+  // is the real record and saves regardless; a directory hiccup stays silent.
+  const enrollVendor = useMutation({
+    mutationFn: (name: string) => findOrCreateVendorFn({ data: { name } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["vendors-directory"] }),
+    onError: () => {},
+  });
   // New invoices land as a draft (field request 2026-07-09) — nothing hits job
   // cost until someone approves the spend or marks it paid.
   const [draft, setDraft] = useState<CostActualDraft>(() => ({
@@ -1336,9 +1367,19 @@ export function ProjectCostTrackingPanel({
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>Vendor</Label>
-                    <Input
+                    <VendorPicker
                       value={draft.vendor}
-                      onChange={(event) => setDraft({ ...draft, vendor: event.target.value })}
+                      vendors={vendorNames}
+                      subcontractors={subNames}
+                      onChange={(name, isSub) =>
+                        setDraft({
+                          ...draft,
+                          vendor: name,
+                          // Picking a sub as the payee defaults the category —
+                          // still changeable above.
+                          ...(isSub ? { category: "subcontract" as const } : {}),
+                        })
+                      }
                     />
                   </div>
                   <div className="space-y-1.5">
