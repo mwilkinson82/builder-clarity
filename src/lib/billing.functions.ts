@@ -149,6 +149,13 @@ export interface CostActualRow {
   notes: string;
   approved_at: string | null;
   paid_at: string | null;
+  // How this cost was paid (field request 2026-07-10): method (wire/check/card/
+  // ach/other), the check #/wire confirmation/ACH trace, and the real-world date
+  // money went out. Distinct from reference_number (the vendor's invoice number)
+  // and paid_at (the system stamp of when it was marked paid).
+  payment_method: string;
+  payment_reference: string;
+  paid_date: string | null;
   voided_at: string | null;
   created_at: string;
   updated_at: string;
@@ -394,6 +401,9 @@ const normalizeCostActual = (row: Record<string, unknown>): CostActualRow => ({
   notes: str(row.notes),
   approved_at: (row.approved_at as string | null) ?? null,
   paid_at: (row.paid_at as string | null) ?? null,
+  payment_method: str(row.payment_method),
+  payment_reference: str(row.payment_reference),
+  paid_date: (row.paid_date as string | null) ?? null,
   voided_at: (row.voided_at as string | null) ?? null,
   created_at: str(row.created_at),
   updated_at: str(row.updated_at),
@@ -1226,7 +1236,18 @@ export const updateCostActual = createServerFn({ method: "POST" })
 const setCostActualStatusInput = z.object({
   id: z.string().uuid(),
   status: z.enum(["approved", "paid"]),
+  // How it was paid (field request 2026-07-10) — only meaningful on the 'paid'
+  // transition; ignored for 'approved'. All optional so a bare mark-paid works.
+  payment_method: z.string().max(40).optional(),
+  payment_reference: z.string().max(200).optional(),
+  paid_date: z.string().nullable().optional(),
 });
+
+// The payment-detail columns ship in the cost-payment-details migration.
+// Pre-migration, PostgREST rejects an update naming them — detect that so the
+// paid transition still lands (details are just dropped until the desk applies).
+const isMissingPaymentColumn = (message: string) =>
+  /payment_method|payment_reference|paid_date/i.test(message);
 
 export const setCostActualStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -1246,15 +1267,31 @@ export const setCostActualStatus = createServerFn({ method: "POST" })
     if (current === "void") throw new Error("This cost was voided — it can't be approved or paid.");
     if (current === "paid") throw new Error("This cost is already marked paid.");
     const now = new Date().toISOString();
-    const updateRes = await dynamicTable(ctx.supabase, "cost_actuals")
-      .update({
-        status: data.status,
-        // Stamp approval the first time the row passes through it — marking a
-        // draft straight to paid still records who approved the spend.
-        ...(actual.approved_at ? {} : { approved_at: now, approved_by: ctx.userId }),
-        ...(data.status === "paid" ? { paid_at: now } : {}),
-      })
+    // The lifecycle stamps (status + approval/paid_at) always apply; the "how
+    // paid" details are layered on top only when marking paid.
+    const core = {
+      status: data.status,
+      // Stamp approval the first time the row passes through it — marking a
+      // draft straight to paid still records who approved the spend.
+      ...(actual.approved_at ? {} : { approved_at: now, approved_by: ctx.userId }),
+      ...(data.status === "paid" ? { paid_at: now } : {}),
+    };
+    const paymentDetails =
+      data.status === "paid"
+        ? {
+            payment_method: data.payment_method ?? "",
+            payment_reference: data.payment_reference ?? "",
+            paid_date: data.paid_date || null,
+          }
+        : {};
+    let updateRes = await dynamicTable(ctx.supabase, "cost_actuals")
+      .update({ ...core, ...paymentDetails })
       .eq("id", data.id);
+    // Pre-migration: the detail columns don't exist yet — flip the status
+    // anyway so marking paid never blocks, and drop the details silently.
+    if (updateRes.error && isMissingPaymentColumn(updateRes.error.message)) {
+      updateRes = await dynamicTable(ctx.supabase, "cost_actuals").update(core).eq("id", data.id);
+    }
     if (updateRes.error) throw new Error(mapCostStatusError(updateRes.error.message));
     return { ok: true };
   });
