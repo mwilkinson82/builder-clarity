@@ -139,9 +139,19 @@ async function appendAttachment(
   return false;
 }
 
-export async function generateTransmittalPdf(
+export interface TransmittalBuildResult {
+  bytes: Uint8Array;
+  fileName: string;
+  pageCount: number;
+  bundled: string[]; // attachment labels that made it into the package
+  skipped: string[]; // attachment labels that couldn't be inlined
+}
+
+// Build the PDF bytes (pure — node-testable). generateTransmittalPdf below is
+// the browser wrapper that also triggers the download.
+export async function buildTransmittalPdf(
   input: TransmittalInput,
-): Promise<{ skipped: string[] }> {
+): Promise<TransmittalBuildResult> {
   const doc = await PDFDocument.create();
   const page = doc.addPage([PAGE_W, PAGE_H]);
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -344,20 +354,38 @@ export async function generateTransmittalPdf(
   // followed by the actual submittals. One bad file never sinks the package —
   // it's collected in `skipped` for the caller to flag.
   const skipped: string[] = [];
+  const bundled: string[] = [];
   for (const att of input.attachments ?? []) {
     try {
       const ok = await appendAttachment(doc, att, font);
-      if (!ok) skipped.push(att.label || att.fileName || "attachment");
+      if (ok) bundled.push(att.label || att.fileName || "attachment");
+      else skipped.push(att.label || att.fileName || "attachment");
     } catch {
       skipped.push(att.label || att.fileName || "attachment");
     }
   }
+  // Note the bundle on the cover so the paper says what it carries.
+  if (bundled.length > 0) {
+    page.drawText(
+      clean(
+        `${bundled.length} attached document${bundled.length === 1 ? "" : "s"} enclosed with this transmittal.`,
+      ),
+      { x: M, y: M + 14, font, size: 7.5, color: MUTE },
+    );
+  }
 
   const bytes = await doc.save();
   const safeProject = (input.projectName || "project").replace(/[^a-zA-Z0-9._-]+/g, "-");
-  downloadFileBytes(
-    bytes,
-    `Transmittal-${safeProject}-${input.transmittalNumber || dateStr.replace(/\//g, "")}.pdf`,
-  );
-  return { skipped };
+  const fileName = `Transmittal-${safeProject}-${input.transmittalNumber || dateStr.replace(/\//g, "")}.pdf`;
+  return { bytes, fileName, pageCount: doc.getPageCount(), bundled, skipped };
+}
+
+// Browser entry point: build, then hand the bytes to the Safari-safe download
+// helper. Returns the build result so the UI can flag anything skipped.
+export async function generateTransmittalPdf(
+  input: TransmittalInput,
+): Promise<TransmittalBuildResult> {
+  const result = await buildTransmittalPdf(input);
+  downloadFileBytes(result.bytes, result.fileName);
+  return result;
 }
