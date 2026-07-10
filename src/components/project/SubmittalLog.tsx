@@ -25,7 +25,7 @@ import {
   type SubmittalLogKind,
   type SubmittalLogStatus,
 } from "@/lib/submittal-log.functions";
-import { generateTransmittalPdf } from "@/lib/transmittal-pdf";
+import { generateTransmittalPdf, type TransmittalAttachment } from "@/lib/transmittal-pdf";
 
 const STATUS: { value: SubmittalLogStatus; short: string; label: string; tone: string }[] = [
   { value: "", short: "—", label: "Not set", tone: "text-muted-foreground" },
@@ -53,6 +53,24 @@ async function viewLogFile(path: string) {
   const { data, error } = await supabase.storage.from("project-docs").createSignedUrl(path, 600);
   if (error || !data?.signedUrl) return toast.error("Could not open the document");
   window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+}
+// Pull a log attachment's bytes for the transmittal package (signed URL → fetch).
+// Returns null on any failure so one bad file never sinks the whole transmittal.
+async function fetchLogFileBytes(
+  path: string,
+): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  const { data, error } = await supabase.storage.from("project-docs").createSignedUrl(path, 600);
+  if (error || !data?.signedUrl) return null;
+  try {
+    const res = await fetch(data.signedUrl);
+    if (!res.ok) return null;
+    return {
+      bytes: new Uint8Array(await res.arrayBuffer()),
+      contentType: res.headers.get("content-type") ?? "",
+    };
+  } catch {
+    return null;
+  }
 }
 
 interface Props {
@@ -125,19 +143,49 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
     try {
       const letterhead = await letterheadFn({ data: { projectId } });
       const picked = rows.filter((r) => txPicked.has(r.id));
-      await generateTransmittalPdf({
+      const entries = picked.length > 0 ? picked : rows;
+      // Pull each transmitted item's attached document so the download is the
+      // cover letter followed by the actual submittals (field request
+      // 2026-07-09). A file that can't be fetched is reported, not fatal.
+      const attachments: TransmittalAttachment[] = [];
+      const failed: string[] = [];
+      for (const entry of entries) {
+        if (!entry.storage_path) continue;
+        const label = [entry.number, entry.description || entry.item].filter(Boolean).join(" · ");
+        const file = await fetchLogFileBytes(entry.storage_path);
+        if (!file) {
+          failed.push(entry.file_name || label || entry.number || "attachment");
+          continue;
+        }
+        attachments.push({
+          label,
+          fileName: entry.file_name,
+          bytes: file.bytes,
+          contentType: file.contentType,
+        });
+      }
+      const { skipped } = await generateTransmittalPdf({
         letterhead,
         projectName,
         jobNumber,
         kind,
-        entries: picked.length > 0 ? picked : rows,
+        entries,
         to: txTo,
         attn: txAttn,
         re: txRe,
         transmittalNumber: txNo,
         senderName: txBy,
         generatedAt: new Date(),
+        attachments,
       });
+      const notIncluded = [...failed, ...skipped];
+      if (notIncluded.length > 0) {
+        toast("Transmittal downloaded — some attachments weren't included", {
+          description: `${notIncluded.join(", ")} couldn't be added to the PDF. Send ${
+            notIncluded.length === 1 ? "it" : "them"
+          } separately.`,
+        });
+      }
     } catch (e) {
       toast.error("Could not build the transmittal", {
         description: e instanceof Error ? e.message : "Try again.",
