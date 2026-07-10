@@ -510,4 +510,92 @@ import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
   assert.deepEqual(allocatePaymentAcrossCodes(0, allocations), [], "zero payment → no split");
 }
 
+// ── Coded change orders fold into committed (the dashboard roll-up ask) ─────
+// Field feedback 2026-07-09: "change orders didnt roll up to the dashboards."
+// A CO tagged to a cost code now carries into that code's committed (and from
+// there the Budget grid + rollup); untagged COs stay card-only.
+{
+  const subs = [{ id: "s1", contract_value: 117_672.88, status: "executed" }];
+  const allocs = [
+    { subcontract_id: "s1", cost_bucket_id: "b8009", amount: 92_372.88 },
+    { subcontract_id: "s1", cost_bucket_id: "b8010", amount: 25_300 },
+  ];
+
+  // DB3T's own $11,500 CO, tagged to 03-8009 → that code's committed rises.
+  const withCo = summarizeSubCostByBucket(subs, allocs, [], undefined, [
+    { subcontract_id: "s1", cost_bucket_id: "b8009", amount: 11_500 },
+  ]);
+  assert.equal(withCo.get("b8009")?.committed, 103_872.88, "coded CO adds to its code");
+  assert.equal(withCo.get("b8010")?.committed, 25_300, "other codes untouched");
+  assert.equal(withCo.get("b8009")?.open, 103_872.88, "open follows the revised commitment");
+
+  // A credit (negative) reduces committed on its code.
+  const withCredit = summarizeSubCostByBucket(subs, allocs, [], undefined, [
+    { subcontract_id: "s1", cost_bucket_id: "b8010", amount: -5_300 },
+  ]);
+  assert.equal(withCredit.get("b8010")?.committed, 20_000, "credit reduces its code");
+
+  // A credit larger than the code's buyout floors committed at 0, not negative.
+  const overCredit = summarizeSubCostByBucket(subs, allocs, [], undefined, [
+    { subcontract_id: "s1", cost_bucket_id: "b8010", amount: -99_999 },
+  ]);
+  assert.equal(overCredit.get("b8010")?.committed, 0, "committed floors at 0");
+
+  // Untagged COs stay card-only; draft-sub COs never move the budget.
+  const untagged = summarizeSubCostByBucket(subs, allocs, [], undefined, [
+    { subcontract_id: "s1", cost_bucket_id: null, amount: 50_000 },
+  ]);
+  assert.equal(untagged.get("b8009")?.committed, 92_372.88, "untagged CO does not fold");
+  const draftSubs = [{ id: "s9", contract_value: 10_000, status: "draft" }];
+  const draftCo = summarizeSubCostByBucket(draftSubs, [], [], undefined, [
+    { subcontract_id: "s9", cost_bucket_id: "b8009", amount: 7_500 },
+  ]);
+  assert.equal(draftCo.size, 0, "a draft sub's CO does not move the budget");
+
+  // A CO on a code the sub has NO allocation on still lands on that code.
+  const newCode = summarizeSubCostByBucket(subs, allocs, [], undefined, [
+    { subcontract_id: "s1", cost_bucket_id: "b-new", amount: 4_000 },
+  ]);
+  assert.equal(newCode.get("b-new")?.committed, 4_000, "CO alone creates the code's commitment");
+
+  // Payments still distribute by ALLOCATION weights — a CO changes what's
+  // committed, not how past cash was coded.
+  const paidWithCo = summarizeSubCostByBucket(
+    subs,
+    allocs,
+    [{ subcontract_id: "s1", amount: 10_000 }],
+    undefined,
+    [{ subcontract_id: "s1", cost_bucket_id: "b8009", amount: 11_500 }],
+  );
+  const paidPlain = summarizeSubCostByBucket(subs, allocs, [
+    { subcontract_id: "s1", amount: 10_000 },
+  ]);
+  assert.equal(
+    paidWithCo.get("b8009")?.paid,
+    paidPlain.get("b8009")?.paid,
+    "CO leaves payment distribution unchanged",
+  );
+
+  // End to end through the rollup's displacement math: once committed passes the
+  // code's budgeted forecast, the CO pops GP by exactly the overage…
+  const tightBuckets = [{ id: "b8009", ftc: 92_372.88 }];
+  const addPlain = subCostAddition(tightBuckets, summarizeSubCostByBucket(subs, allocs, []));
+  const addWithCo = subCostAddition(tightBuckets, withCo);
+  assert.equal(
+    Math.round((addWithCo - addPlain) * 100),
+    1_150_000,
+    "the $11,500 CO flows through to the rollup's added sub cost",
+  );
+  // …while a code with budget headroom absorbs it (displacement, not stacking):
+  // committed still SHOWS the CO on the grid, but EAC only moves on the overage.
+  const roomyBuckets = [{ id: "b8009", ftc: 130_000 }];
+  const addRoomPlain = subCostAddition(roomyBuckets, summarizeSubCostByBucket(subs, allocs, []));
+  const addRoomWithCo = subCostAddition(roomyBuckets, withCo);
+  assert.equal(
+    Math.round((addRoomWithCo - addRoomPlain) * 100),
+    0,
+    "a CO inside the code's budgeted forecast displaces instead of stacking",
+  );
+}
+
 console.log("subcontract budget smoke: all assertions passed");

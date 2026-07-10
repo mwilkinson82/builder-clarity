@@ -453,8 +453,9 @@ export function SubcontractCard({
           </Button>
         </div>
         <p className="mt-1 text-[11px] text-muted-foreground">
-          The base contract stays untouched — the revised total is shown above. To carry a change
-          order into the job budget, adjust the cost-code allocation below to match.
+          The base contract stays untouched — the revised total is shown above. A change order
+          tagged to a cost code carries into that code&apos;s committed on the job budget and
+          dashboard automatically; leave it untagged and it stays here on the card only.
         </p>
       </div>
 

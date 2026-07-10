@@ -90,7 +90,19 @@ export function subEarnedKey(subcontractorId: string, costBucketId: string): str
   return `${subcontractorId}:${costBucketId}`;
 }
 
-// Per cost bucket: committed = Σ executed-sub allocations; paid = each
+// A sub change order/credit as the budget layer sees it: signed dollars tagged
+// (or not) to a cost code. Mirrors subcontract_change_orders rows.
+export interface SubChangeOrderBudgetLike {
+  subcontract_id: string;
+  cost_bucket_id: string | null;
+  // Signed dollars: a change order is positive, a credit is negative.
+  amount: number;
+}
+
+// Per cost bucket: committed = Σ executed-sub allocations + Σ signed change
+// orders TAGGED to that code (field request 2026-07-09: "change orders didn't
+// roll up to the dashboards" — a coded CO now carries into committed
+// automatically; untagged COs stay on the card until coded); paid = each
 // subcontract's payments distributed pro-rata across its allocations (actual cash
 // out); open = max(0, committed − paid) = remaining commitment; earned = Σ
 // (allocation commitment × the sub's field percent-complete on that code) — what
@@ -104,6 +116,8 @@ export function summarizeSubCostByBucket(
   // Latest field percent-complete (0–100) per `${subcontractor_id}:${cost_bucket_id}`
   // (see subEarnedKey). Optional; empty → payments-only behaviour.
   currentPctByCompanyCode: ReadonlyMap<string, number> = new Map(),
+  // Signed COs/credits; only rows tagged to a cost code fold into committed.
+  changeOrders: SubChangeOrderBudgetLike[] = [],
 ): Map<string, SubBucketCost> {
   const executedSubs = subcontracts.filter((s) => s.status === "executed");
   const executed = new Set(executedSubs.map((s) => s.id));
@@ -163,13 +177,28 @@ export function summarizeSubCostByBucket(
     }
   }
 
+  // Fold signed change orders/credits into committed on their tagged code. Only
+  // executed subs move the budget (same rule as allocations); untagged COs stay
+  // card-only. Payments still distribute by ALLOCATION weights — a CO changes
+  // what's committed, not how past cash was coded.
+  for (const co of changeOrders) {
+    if (!executed.has(co.subcontract_id)) continue;
+    if (!co.cost_bucket_id) continue;
+    committedCentsByBucket.set(
+      co.cost_bucket_id,
+      (committedCentsByBucket.get(co.cost_bucket_id) ?? 0) + dollarsToCents(numeric(co.amount)),
+    );
+  }
+
   const out = new Map<string, SubBucketCost>();
   const bucketIds = new Set<string>([
     ...committedCentsByBucket.keys(),
     ...paidCentsByBucket.keys(),
   ]);
   for (const bucketId of bucketIds) {
-    const committedCents = committedCentsByBucket.get(bucketId) ?? 0;
+    // Floor at 0: a credit larger than the code's buyout can't drive committed
+    // negative (open already floors the same way).
+    const committedCents = Math.max(0, committedCentsByBucket.get(bucketId) ?? 0);
     const paidCents = paidCentsByBucket.get(bucketId) ?? 0;
     const openCents = Math.max(0, committedCents - paidCents);
     out.set(bucketId, {

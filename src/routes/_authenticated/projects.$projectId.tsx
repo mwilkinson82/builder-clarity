@@ -650,7 +650,15 @@ function ProjectPage() {
     const data = subcontractsQuery.data;
     if (!data) return undefined;
     const currentPct = latestPercentBySubBucket(dailyWipEntriesQuery.data ?? []);
-    return summarizeSubCostByBucket(data.subcontracts, data.allocations, data.payments, currentPct);
+    return summarizeSubCostByBucket(
+      data.subcontracts,
+      data.allocations,
+      data.payments,
+      currentPct,
+      // Coded sub COs fold into committed on the Budget grid, matching the
+      // dashboard rollup (field request 2026-07-09).
+      data.change_orders,
+    );
   }, [subcontractsQuery.data, dailyWipEntriesQuery.data]);
   // Sub layer totals for the Budget-tab summary cards, so they match the per-code
   // ledger below. A buyout DISPLACES the self-perform forecast for its scope — it
