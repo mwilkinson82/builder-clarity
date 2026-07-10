@@ -193,7 +193,11 @@ export function BillingWorkspace({
   }) => void;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
-  onSetCostActualStatus: (id: string, status: "approved" | "paid") => void;
+  onSetCostActualStatus: (
+    id: string,
+    status: "approved" | "paid",
+    payment?: { payment_method: string; payment_reference: string; paid_date: string },
+  ) => void;
   onUpdateCostActual: (
     id: string,
     input: Parameters<Parameters<typeof ProjectCostTrackingPanel>[0]["onUpdateCostActual"]>[1],

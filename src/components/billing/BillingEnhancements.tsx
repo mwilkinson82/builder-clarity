@@ -78,6 +78,24 @@ type CostActualDraft = {
   notes: string;
 };
 
+// How a cost was paid, captured when marking it paid (field request 2026-07-10).
+export type CostPaymentDetails = {
+  payment_method: string; // wire | check | card | ach | other
+  payment_reference: string; // check #, wire confirmation, ACH trace
+  paid_date: string; // the real-world date money went out (YYYY-MM-DD)
+};
+
+// The payment methods a cost can be marked paid with — mirrors the receivables
+// manual-payment form, plus 'card' (Darian explicitly asked for wire/check/card).
+const PAYMENT_METHODS: { value: string; label: string }[] = [
+  { value: "wire", label: "Wire" },
+  { value: "check", label: "Check" },
+  { value: "card", label: "Card" },
+  { value: "ach", label: "ACH" },
+  { value: "other", label: "Other" },
+];
+const paymentMethodLabel = (v: string) => PAYMENT_METHODS.find((m) => m.value === v)?.label ?? v;
+
 // Plain-English labels for the lifecycle — shown on entry, rows, and chips.
 const COST_STATUS_LABEL: Record<CostActualRow["status"], string> = {
   draft: "Draft — not approved",
@@ -126,7 +144,11 @@ type BillingEnhancementProps = {
   onCreateCostActual: (input: CostActualDraft) => void;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
-  onSetCostActualStatus: (id: string, status: "approved" | "paid") => void;
+  onSetCostActualStatus: (
+    id: string,
+    status: "approved" | "paid",
+    payment?: CostPaymentDetails,
+  ) => void;
   onUpdateCostActual: (id: string, input: CostActualDraft) => void | Promise<unknown>;
   onUpdateBucketSettings: (id: string, patch: BucketSettingsPatch) => void;
 };
@@ -1061,13 +1083,34 @@ export function ProjectCostTrackingPanel({
   onCreateCostActual: (input: CostActualDraft) => void;
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
-  onSetCostActualStatus: (id: string, status: "approved" | "paid") => void;
+  onSetCostActualStatus: (
+    id: string,
+    status: "approved" | "paid",
+    payment?: CostPaymentDetails,
+  ) => void;
   onUpdateCostActual: (id: string, input: CostActualDraft) => void | Promise<unknown>;
   savingCost?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   // When set, the dialog is editing this existing row instead of adding.
   const [editingCostId, setEditingCostId] = useState<string | null>(null);
+  // Mark-paid capture (field request 2026-07-10): the cost being marked paid,
+  // plus the "how was this paid" draft. Both mark-paid entry points open this.
+  const [payingCost, setPayingCost] = useState<CostActualRow | null>(null);
+  const [payDraft, setPayDraft] = useState<CostPaymentDetails>({
+    payment_method: "check",
+    payment_reference: "",
+    paid_date: today(),
+  });
+  const openPayDialog = (actual: CostActualRow) => {
+    setPayDraft({ payment_method: "check", payment_reference: "", paid_date: today() });
+    setPayingCost(actual);
+  };
+  const confirmPaid = () => {
+    if (!payingCost) return;
+    onSetCostActualStatus(payingCost.id, "paid", payDraft);
+    setPayingCost(null);
+  };
   // Read-at-a-glance controls for the backup list (field request 2026-07-10):
   // filter by stage, search by name/vendor/reference.
   const [costStatusFilter, setCostStatusFilter] = useState<"all" | CostActualRow["status"]>("all");
@@ -1283,12 +1326,20 @@ export function ProjectCostTrackingPanel({
   // a draft when the status change lands (updateCostActual only accepts drafts).
   const advanceDraft = async (status: "approved" | "paid") => {
     if (!editingCostId) return;
+    const row = editingCost;
     try {
       await onUpdateCostActual(editingCostId, draft);
     } catch {
       return; // the update's own error toast already fired — don't advance
     }
     enrollTypedVendor();
+    // Marking paid asks HOW it was paid — persist the edits, close the editor,
+    // then open the payment-details dialog. Approving stays a direct transition.
+    if (status === "paid" && row) {
+      resetCostForm();
+      openPayDialog(row);
+      return;
+    }
     onSetCostActualStatus(editingCostId, status);
     resetCostForm();
   };
@@ -1939,7 +1990,7 @@ export function ProjectCostTrackingPanel({
                           variant="outline"
                           size="sm"
                           className="h-7 px-2.5 text-xs"
-                          onClick={() => onSetCostActualStatus(actual.id, "paid")}
+                          onClick={() => openPayDialog(actual)}
                         >
                           Mark paid
                         </Button>
@@ -1994,11 +2045,82 @@ export function ProjectCostTrackingPanel({
                   <BillingDetail label="Vendor" value={actual.vendor || "-"} />
                   <BillingDetail label="Reference" value={actual.reference_number || "-"} />
                 </div>
+                {actual.status === "paid" &&
+                (actual.payment_method || actual.payment_reference || actual.paid_date) ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-success">
+                    <span className="font-semibold">Paid</span>
+                    {actual.payment_method ? (
+                      <span>by {paymentMethodLabel(actual.payment_method)}</span>
+                    ) : null}
+                    {actual.payment_reference ? <span>· {actual.payment_reference}</span> : null}
+                    {actual.paid_date ? <span>· {actual.paid_date}</span> : null}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* Mark-paid: capture HOW it was paid (field request 2026-07-10) */}
+      <Dialog open={payingCost !== null} onOpenChange={(open) => !open && setPayingCost(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-2xl">Mark cost paid</DialogTitle>
+            <DialogDescription>
+              {payingCost
+                ? `${fmtUSD(payingCost.amount)}${payingCost.vendor ? ` to ${payingCost.vendor}` : ""} — record how it was paid.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label>Date paid</Label>
+              <Input
+                type="date"
+                value={payDraft.paid_date}
+                onChange={(event) =>
+                  setPayDraft({ ...payDraft, paid_date: event.target.value || today() })
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>How paid</Label>
+              <Select
+                value={payDraft.payment_method}
+                onValueChange={(payment_method) => setPayDraft({ ...payDraft, payment_method })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_METHODS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Check # / reference</Label>
+              <Input
+                value={payDraft.payment_reference}
+                placeholder="Check #, wire confirmation, ACH trace"
+                onChange={(event) =>
+                  setPayDraft({ ...payDraft, payment_reference: event.target.value })
+                }
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPayingCost(null)}>
+              Cancel
+            </Button>
+            <Button onClick={confirmPaid}>Mark paid</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

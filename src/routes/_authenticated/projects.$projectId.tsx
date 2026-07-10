@@ -1272,8 +1272,13 @@ function ProjectPage() {
   // Walk an invoice through the payables lifecycle: approve the spend, then
   // mark it paid. Approving a draft is the moment it starts counting as cost.
   const costActualSetStatus = useMutation({
-    mutationFn: (input: { id: string; status: "approved" | "paid" }) =>
-      setCostActualStatusFn({ data: input }),
+    mutationFn: (input: {
+      id: string;
+      status: "approved" | "paid";
+      payment_method?: string;
+      payment_reference?: string;
+      paid_date?: string | null;
+    }) => setCostActualStatusFn({ data: input }),
     onSuccess: (_result, variables) => {
       invalidate();
       toast.success(variables.status === "paid" ? "Marked paid" : "Approved for payment");
@@ -3087,7 +3092,9 @@ function ProjectPage() {
                     const { status: _status, ...fields } = input;
                     return costActualUpdate.mutateAsync({ id, ...fields });
                   }}
-                  onSetCostActualStatus={(id, status) => costActualSetStatus.mutate({ id, status })}
+                  onSetCostActualStatus={(id, status, payment) =>
+                    costActualSetStatus.mutate({ id, status, ...(payment ?? {}) })
+                  }
                   onUpdateBucketBillingSettings={(id, patch) =>
                     bucketBillingUpdate.mutate({ id, patch })
                   }
