@@ -332,8 +332,9 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     onError: onError("record the payment"),
   });
   const saveSplit = useMutation({
+    // The server reads the owning sub off the payment row itself — sending it
+    // from the client would just be an unvalidated foot-gun.
     mutationFn: (input: {
-      subcontractId: string;
       paymentId: string;
       rows: {
         cost_bucket_id: string | null;
@@ -345,7 +346,6 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       setSplitFn({
         data: {
           projectId,
-          subcontractId: input.subcontractId,
           paymentId: input.paymentId,
           rows: input.rows,
         },
@@ -665,7 +665,6 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               )}
               onSaveSplit={(paymentId, rows) =>
                 saveSplit.mutate({
-                  subcontractId: sub.id,
                   paymentId,
                   // Stamp cost_code/description off the bucket so the rows read
                   // on their own in reports (mirrors allocateSubcontract).

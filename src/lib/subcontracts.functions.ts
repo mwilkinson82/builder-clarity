@@ -17,6 +17,7 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   update(values: unknown): DynamicSupabaseQuery;
   delete(): DynamicSupabaseQuery;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
+  in(column: string, values: readonly unknown[]): DynamicSupabaseQuery;
   order(column: string, options?: { ascending?: boolean }): DynamicSupabaseQuery;
   single(): Promise<DynamicSupabaseResult>;
   maybeSingle(): Promise<DynamicSupabaseResult>;
@@ -672,13 +673,19 @@ export const deleteSubcontractPayment = createServerFn({ method: "POST" })
 // clear the explicit split, falling back to the pro-rata derivation. Non-empty
 // rows must sum cents-exact to the payment so the budget's paid-per-code never
 // drifts from cash.
+//
+// Replacement is all-or-nothing without a cross-call transaction: the NEW rows
+// are inserted BEFORE the old ones are removed, so a failed insert leaves the
+// existing split untouched; if the cleanup delete then fails, the just-inserted
+// rows are compensated away so the old split still stands alone. The sub the
+// cash belongs to comes from the payment row itself — never from the client —
+// so a split can't attribute cash to another sub's buyout.
 export const setSubcontractPaymentSplit = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
     z
       .object({
         projectId: z.string().uuid(),
-        subcontractId: z.string().uuid(),
         paymentId: z.string().uuid(),
         rows: z
           .array(
@@ -710,6 +717,8 @@ export const setSubcontractPaymentSplit = createServerFn({ method: "POST" })
     if (!payment || str(payment.project_id) !== data.projectId) {
       throw new Error("That payment was not found on this project.");
     }
+    // Server truth: the payment row says which sub the cash belongs to.
+    const subcontractId = str(payment.subcontract_id);
 
     const cents = (value: number) => Math.round(num(value) * 100);
     if (data.rows.length > 0) {
@@ -721,34 +730,77 @@ export const setSubcontractPaymentSplit = createServerFn({ method: "POST" })
       }
     }
 
-    const { error: clearError } = await dynamicTable(
+    // Capture the current rows by id so the swap can be compensated exactly.
+    const { data: existingRows, error: existingError } = await dynamicTable(
       context.supabase,
       "subcontract_payment_allocations",
     )
-      .delete()
+      .select("id")
       .eq("payment_id", data.paymentId);
-    if (clearError) {
-      if (isMissingSubcontractTable(clearError)) throw new Error(NOT_ENABLED);
-      throw new Error(clearError.message);
+    if (existingError) {
+      if (isMissingSubcontractTable(existingError)) throw new Error(NOT_ENABLED);
+      throw new Error(existingError.message);
     }
+    const oldIds = ((existingRows ?? []) as Record<string, unknown>[])
+      .map((row) => str(row.id))
+      .filter(Boolean);
+
+    // 1. Insert the replacement rows first — if this fails, the old split is
+    //    still fully intact and the save just reports the error.
+    let newIds: string[] = [];
     if (data.rows.length > 0) {
-      const { error: insertError } = await dynamicTable(
+      const { data: insertedRows, error: insertError } = await dynamicTable(
         context.supabase,
         "subcontract_payment_allocations",
-      ).insert(
-        data.rows.map((row) => ({
-          project_id: data.projectId,
-          subcontract_id: data.subcontractId,
-          payment_id: data.paymentId,
-          cost_bucket_id: row.cost_bucket_id,
-          cost_code: row.cost_code,
-          description: row.description,
-          amount: row.amount,
-        })),
-      );
+      )
+        .insert(
+          data.rows.map((row) => ({
+            project_id: data.projectId,
+            subcontract_id: subcontractId,
+            payment_id: data.paymentId,
+            cost_bucket_id: row.cost_bucket_id,
+            cost_code: row.cost_code,
+            description: row.description,
+            amount: row.amount,
+          })),
+        )
+        .select("id");
       if (insertError) {
         if (isMissingSubcontractTable(insertError)) throw new Error(NOT_ENABLED);
         throw new Error(insertError.message);
+      }
+      newIds = ((insertedRows ?? []) as Record<string, unknown>[])
+        .map((row) => str(row.id))
+        .filter(Boolean);
+    }
+
+    // 2. Remove the superseded rows. If this fails, compensate by removing the
+    //    rows just inserted so the old split stands alone again.
+    if (oldIds.length > 0) {
+      const { error: clearError } = await dynamicTable(
+        context.supabase,
+        "subcontract_payment_allocations",
+      )
+        .delete()
+        .in("id", oldIds);
+      if (clearError) {
+        if (newIds.length > 0) {
+          const { error: undoError } = await dynamicTable(
+            context.supabase,
+            "subcontract_payment_allocations",
+          )
+            .delete()
+            .in("id", newIds);
+          if (undoError) {
+            // Both sets are present — a re-save captures them all as "old" and
+            // replaces them, so the fix is to simply save again.
+            throw new Error(
+              "The split did not save cleanly — reopen the payment and save the split again.",
+            );
+          }
+        }
+        if (isMissingSubcontractTable(clearError)) throw new Error(NOT_ENABLED);
+        throw new Error(clearError.message);
       }
     }
     return { paymentId: data.paymentId, rowCount: data.rows.length };
