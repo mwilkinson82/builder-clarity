@@ -48,7 +48,7 @@ import type {
   BucketRow,
   ProjectRow,
 } from "@/lib/projects.functions";
-import { AlertTriangle, Check, Plus, Save, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, Check, Plus, Save, Trash2, Upload, Pencil } from "lucide-react";
 
 type LinePatch = {
   work_completed_this_period?: number;
@@ -110,6 +110,7 @@ type BillingEnhancementProps = {
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   onSetCostActualStatus: (id: string, status: "approved" | "paid") => void;
+  onUpdateCostActual: (id: string, input: CostActualDraft) => void;
   onUpdateBucketSettings: (id: string, patch: BucketSettingsPatch) => void;
 };
 
@@ -195,6 +196,7 @@ export function BillingEnhancementPanels({
   onImportCostActuals,
   onVoidCostActual,
   onSetCostActualStatus,
+  onUpdateCostActual,
   onUpdateBucketSettings,
 }: BillingEnhancementProps) {
   if (isLoading) {
@@ -236,6 +238,7 @@ export function BillingEnhancementPanels({
         onImportCostActuals={onImportCostActuals}
         onVoidCostActual={onVoidCostActual}
         onSetCostActualStatus={onSetCostActualStatus}
+        onUpdateCostActual={onUpdateCostActual}
         savingCost={savingCost}
       />
       <WipAnalysisPanel
@@ -1032,6 +1035,7 @@ export function ProjectCostTrackingPanel({
   onImportCostActuals,
   onVoidCostActual,
   onSetCostActualStatus,
+  onUpdateCostActual,
   savingCost,
 }: {
   projectId: string;
@@ -1041,9 +1045,12 @@ export function ProjectCostTrackingPanel({
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   onSetCostActualStatus: (id: string, status: "approved" | "paid") => void;
+  onUpdateCostActual: (id: string, input: CostActualDraft) => void;
   savingCost?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // When set, the dialog is editing this existing DRAFT row instead of adding.
+  const [editingCostId, setEditingCostId] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   // New invoices land as a draft (field request 2026-07-09) — nothing hits job
   // cost until someone approves the spend or marks it paid.
@@ -1116,9 +1123,28 @@ export function ProjectCostTrackingPanel({
     });
   };
 
+  const startEditCost = (actual: CostActualRow) => {
+    setDraft({
+      cost_bucket_id: actual.cost_bucket_id,
+      cost_code: actual.cost_code,
+      description: actual.description,
+      category: actual.category,
+      amount: actual.amount,
+      vendor: actual.vendor,
+      reference_number: actual.reference_number,
+      cost_date: actual.cost_date,
+      status: "draft",
+      notes: actual.notes,
+    });
+    setEditingCostId(actual.id);
+    setOpen(true);
+  };
+
   const save = () => {
-    onCreateCostActual(draft);
+    if (editingCostId) onUpdateCostActual(editingCostId, draft);
+    else onCreateCostActual(draft);
     setOpen(false);
+    setEditingCostId(null);
     setDraft({
       cost_bucket_id: buckets[0]?.id ?? null,
       cost_code: buckets[0]?.cost_code ?? "",
@@ -1193,7 +1219,13 @@ export function ProjectCostTrackingPanel({
           >
             <Upload className="h-3.5 w-3.5" /> Import CSV
           </Button>
-          <Dialog open={open} onOpenChange={setOpen}>
+          <Dialog
+            open={open}
+            onOpenChange={(next) => {
+              setOpen(next);
+              if (!next) setEditingCostId(null);
+            }}
+          >
             <DialogTrigger asChild>
               <Button size="sm" className="gap-1.5">
                 <Plus className="h-3.5 w-3.5" /> Add cost
@@ -1201,9 +1233,13 @@ export function ProjectCostTrackingPanel({
             </DialogTrigger>
             <DialogContent className="sm:max-w-3xl">
               <DialogHeader>
-                <DialogTitle className="font-serif text-2xl">Add cost actual</DialogTitle>
+                <DialogTitle className="font-serif text-2xl">
+                  {editingCostId ? "Edit draft cost" : "Add cost actual"}
+                </DialogTitle>
                 <DialogDescription>
-                  Record cost backup against the same cost codes used by the SOV and WIP.
+                  {editingCostId
+                    ? "This invoice is still a draft — nothing has hit job cost, so every field is editable. Approve or mark it paid from its card."
+                    : "Record cost backup against the same cost codes used by the SOV and WIP."}
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-2">
@@ -1249,7 +1285,7 @@ export function ProjectCostTrackingPanel({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-1.5">
+                  <div className={editingCostId ? "hidden" : "space-y-1.5"}>
                     <Label>Stage</Label>
                     <Select
                       value={draft.status}
@@ -1329,7 +1365,7 @@ export function ProjectCostTrackingPanel({
                   Cancel
                 </Button>
                 <Button onClick={save} disabled={savingCost || !draft.description.trim()}>
-                  Save cost
+                  {editingCostId ? "Save changes" : "Save cost"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -1558,6 +1594,18 @@ export function ProjectCostTrackingPanel({
                     <div className="text-right text-sm tabular font-medium">
                       {fmtUSD(actual.amount)}
                     </div>
+                    {actual.status === "draft" && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                        title="Edit this draft"
+                        onClick={() => startEditCost(actual)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                     {actual.status !== "void" && (
                       <Button
                         type="button"
