@@ -22,6 +22,7 @@ type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   update(values: unknown): DynamicSupabaseQuery;
   delete(): DynamicSupabaseQuery;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
+  neq(column: string, value: unknown): DynamicSupabaseQuery;
   is(column: string, value: unknown): DynamicSupabaseQuery;
   in(column: string, values: readonly string[]): DynamicSupabaseQuery;
   order(
@@ -1141,10 +1142,13 @@ export const createCostActual = createServerFn({ method: "POST" })
 // Move an invoice through the payables lifecycle: draft → approved for payment
 // → paid. Approving or paying a draft starts counting it as job cost (the DB
 // trigger applies the delta); nothing else about the row changes.
-// Edit a cost row's facts — DRAFT rows only. A draft is unvetted and carries
-// no job cost (the rollup zeroes it), so every field is safely editable. Once
-// a row is committed/approved/paid it has entered the money and stays locked:
-// void it and enter a corrected cost, so the audit trail keeps both.
+// Edit a cost row's facts. Drafts carry no job cost (the rollup zeroes them);
+// committed/approved rows DO count, and the bucket trigger recomputes
+// actual_to_date from the amount/bucket delta on every UPDATE, so editing them
+// keeps job cost exactly in sync (verified: tg_apply_cost_actual_to_bucket
+// handles amount deltas and bucket moves). PAID is the line in the sand —
+// money already went out the door, so a paid row stays locked: void it and
+// enter a corrected cost, keeping both in the audit trail.
 const updateCostActualInput = z.object({
   id: z.string().uuid(),
   cost_bucket_id: z.string().uuid().nullable().optional(),
@@ -1174,10 +1178,14 @@ export const updateCostActual = createServerFn({ method: "POST" })
     if (actualRes.error) throw new Error(actualRes.error.message);
     const actual = actualRes.data as Record<string, unknown>;
     await requireCanManageProject(ctx, actual.project_id as string);
-    if (str(actual.status, "committed") !== "draft") {
+    const currentStatus = str(actual.status, "committed");
+    if (currentStatus === "paid") {
       throw new Error(
-        "Only a draft can be edited. This cost has already entered the books — void it and enter a corrected cost instead.",
+        "This cost is already paid — money went out the door. Void it and enter a corrected cost instead.",
       );
+    }
+    if (currentStatus === "void") {
+      throw new Error("This cost was voided — enter a new cost instead.");
     }
 
     // Resolve the bucket from the cost code when no explicit bucket came in —
@@ -1195,10 +1203,23 @@ export const updateCostActual = createServerFn({ method: "POST" })
     }
 
     const { id, ...fields } = data;
+    // Re-assert the stage IN the update itself: between the check above and
+    // this write, someone else may have marked the row paid (or voided it) —
+    // the predicate makes that race land as "0 rows", never as an edit to
+    // money that already went out the door.
     const updateRes = await dynamicTable(ctx.supabase, "cost_actuals")
       .update({ ...fields, cost_bucket_id: bucketId, cost_code: fields.cost_code.trim() })
-      .eq("id", id);
+      .eq("id", id)
+      .neq("status", "paid")
+      .neq("status", "void")
+      .select("id")
+      .maybeSingle();
     if (updateRes.error) throw new Error(updateRes.error.message);
+    if (!updateRes.data) {
+      throw new Error(
+        "This cost changed state while you were editing — someone marked it paid or voided it. Reload and try again.",
+      );
+    }
     return { ok: true };
   });
 

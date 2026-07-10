@@ -495,6 +495,10 @@ function ProjectPage() {
     qc.invalidateQueries({ queryKey: ["portfolio-billing"] });
     qc.invalidateQueries({ queryKey: ["exposure-allocations", projectId] });
     qc.invalidateQueries({ queryKey: ["budget-overrides", projectId] });
+    // The Budget drawer itemizes invoices from this key; a counted row's edit
+    // must never leave the explaining list out of sync with the rollup (#261
+    // invariant — a stale list manufactures a phantom "hand-entered" line).
+    qc.invalidateQueries({ queryKey: ["cost-actuals", projectId] });
   };
   const useServerMutation = <I,>(fn: (i: { data: I }) => Promise<unknown>) =>
     useMutation({ mutationFn: (input: I) => fn({ data: input }), onSuccess: invalidate });
@@ -1257,7 +1261,7 @@ function ProjectPage() {
       updateCostActualFn({ data: input }),
     onSuccess: () => {
       invalidate();
-      toast.success("Draft cost updated");
+      toast.success("Cost updated");
     },
     onError: (err) => {
       toast.error("Draft cost did not save", {

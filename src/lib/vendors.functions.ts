@@ -13,6 +13,7 @@ type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupaba
 type DynamicSupabaseQuery = PromiseLike<DynamicSupabaseResult> & {
   select(columns?: string): DynamicSupabaseQuery;
   insert(values: unknown): DynamicSupabaseQuery;
+  update(values: unknown): DynamicSupabaseQuery;
   eq(column: string, value: unknown): DynamicSupabaseQuery;
   ilike(column: string, value: string): DynamicSupabaseQuery;
   order(column: string, options?: { ascending?: boolean }): DynamicSupabaseQuery;
@@ -25,6 +26,10 @@ const dynamicTable = (supabase: unknown, relation: string) =>
   (supabase as DynamicSupabaseClient).from(relation);
 
 const str = (value: unknown, fallback = "") => (typeof value === "string" ? value : fallback);
+
+// A typed vendor name goes into ilike() — escape % and _ so "A&B 100% Rentals"
+// matches literally instead of becoming a wildcard pattern.
+const escapeIlike = (value: string) => value.replace(/[\\%_]/g, (m) => `\\${m}`);
 
 // The migration hasn't been applied yet — treat as an empty directory.
 function isMissingVendorTable(error: DynamicSupabaseError | null) {
@@ -98,7 +103,7 @@ export const findOrCreateVendor = createServerFn({ method: "POST" })
     const { data: existing, error: findError } = await table()
       .select("id,name,trade")
       .eq("organization_id", organizationId)
-      .ilike("name", name)
+      .ilike("name", escapeIlike(name))
       .maybeSingle();
     if (findError) {
       if (isMissingVendorTable(findError)) return null;
@@ -116,11 +121,103 @@ export const findOrCreateVendor = createServerFn({ method: "POST" })
         const { data: raced } = await table()
           .select("id,name,trade")
           .eq("organization_id", organizationId)
-          .ilike("name", name)
+          .ilike("name", escapeIlike(name))
           .maybeSingle();
         return raced ? normalizeVendor(raced as Record<string, unknown>) : null;
       }
       throw new Error(createError.message);
     }
     return normalizeVendor(created as Record<string, unknown>);
+  });
+
+// Full-detail save from the "Add a new vendor" window (field request
+// 2026-07-10: "a secondary window popped up and we could put contact name
+// address email phone etc to build them out in the database"). Finds by name
+// and fills in the details, or creates the vendor with them. The address
+// column ships in its own migration — until the desk applies it, the save
+// simply proceeds without the address rather than failing the whole vendor.
+const vendorDetailsInput = z.object({
+  name: z.string().min(1).max(200),
+  trade: z.string().max(120).default(""),
+  contact_name: z.string().max(200).default(""),
+  contact_email: z.string().max(200).default(""),
+  contact_phone: z.string().max(60).default(""),
+  address: z.string().max(400).default(""),
+});
+
+function isMissingAddressColumn(error: DynamicSupabaseError | null) {
+  return /address/i.test(error?.message ?? "") && /column|schema cache/i.test(error?.message ?? "");
+}
+
+export const saveVendor = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof vendorDetailsInput>) => vendorDetailsInput.parse(input))
+  .handler(async ({ data, context }): Promise<VendorRow> => {
+    const organizationId = await getOrganizationId(context);
+    const name = data.name.trim();
+    // Only fields the user actually filled in — updating an existing vendor
+    // with blanks must never wipe details someone else already entered.
+    const details: Record<string, string> = {};
+    for (const [key, value] of Object.entries({
+      trade: data.trade.trim(),
+      contact_name: data.contact_name.trim(),
+      contact_email: data.contact_email.trim(),
+      contact_phone: data.contact_phone.trim(),
+      address: data.address.trim(),
+    })) {
+      if (value) details[key] = value;
+    }
+    const table = () => dynamicTable(context.supabase, "vendors");
+
+    const { data: existing, error: findError } = await table()
+      .select("id,name,trade")
+      .eq("organization_id", organizationId)
+      .ilike("name", escapeIlike(name))
+      .maybeSingle();
+    if (findError) {
+      if (isMissingVendorTable(findError)) {
+        throw new Error(
+          "The vendor directory isn't enabled on this workspace yet — the vendors migration hasn't been applied.",
+        );
+      }
+      throw new Error(findError.message);
+    }
+
+    const writeRow = async (payload: Record<string, string>) => {
+      if (existing) {
+        if (Object.keys(payload).length === 0) {
+          // Nothing new to write — the existing vendor already wins.
+          return { data: existing, error: null } as {
+            data: Record<string, unknown>;
+            error: null;
+          };
+        }
+        return table()
+          .update(payload)
+          .eq("id", str((existing as Record<string, unknown>).id))
+          .select("id,name,trade")
+          .single();
+      }
+      return table()
+        .insert({ organization_id: organizationId, name, source: "user", ...payload })
+        .select("id,name,trade")
+        .single();
+    };
+
+    let res = await writeRow(details);
+    if (res.error && isMissingAddressColumn(res.error)) {
+      // Pre-migration workspace: save everything except the address.
+      const { address: _address, ...withoutAddress } = details;
+      res = await writeRow(withoutAddress);
+    }
+    if ((res.error || !res.data) && existing) {
+      // Updating an existing vendor's details is manager-gated by RLS — a team
+      // member who can't edit the directory still needs the payee on their
+      // cost. The vendor exists; return it and let the details ride.
+      return normalizeVendor(existing as Record<string, unknown>);
+    }
+    if (res.error || !res.data) {
+      throw new Error(res.error?.message ?? "Could not save the vendor.");
+    }
+    return normalizeVendor(res.data as Record<string, unknown>);
   });
