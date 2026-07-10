@@ -122,6 +122,7 @@ export function BillingWorkspace({
   onImportCostActuals,
   onVoidCostActual,
   onSetCostActualStatus,
+  onUpdateCostActual,
   onUpdateBucketBillingSettings,
   onCreateInvoice,
   onUpdateInvoice,
@@ -193,6 +194,10 @@ export function BillingWorkspace({
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   onSetCostActualStatus: (id: string, status: "approved" | "paid") => void;
+  onUpdateCostActual: (
+    id: string,
+    input: Parameters<Parameters<typeof ProjectCostTrackingPanel>[0]["onUpdateCostActual"]>[1],
+  ) => void;
   onUpdateBucketBillingSettings: (
     id: string,
     patch: {
@@ -986,6 +991,7 @@ export function BillingWorkspace({
               onImportCostActuals={onImportCostActuals}
               onVoidCostActual={onVoidCostActual}
               onSetCostActualStatus={onSetCostActualStatus}
+              onUpdateCostActual={onUpdateCostActual}
               savingCost={savingCostActual}
             />
           ))}

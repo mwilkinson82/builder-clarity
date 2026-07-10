@@ -96,6 +96,7 @@ import {
 } from "@/components/project/billing/billing-workspace-atoms";
 import {
   createCostActual,
+  updateCostActual,
   generateBillingLineItems,
   getBillingWorkspace,
   importCostActuals,
@@ -481,6 +482,7 @@ function ProjectPage() {
   const updateBillingLinesFn = useServerFn(updateBillingLineItems);
   const updateBillingRetainageRateFn = useServerFn(updateBillingApplicationRetainageRate);
   const createCostActualFn = useServerFn(createCostActual);
+  const updateCostActualFn = useServerFn(updateCostActual);
   const importCostActualsFn = useServerFn(importCostActuals);
   const voidCostActualFn = useServerFn(voidCostActual);
   const setCostActualStatusFn = useServerFn(setCostActualStatus);
@@ -1247,6 +1249,19 @@ function ProjectPage() {
     onError: (err) => {
       toast.error("Cost actual did not save", {
         description: err instanceof Error ? err.message : "Check the cost entry and try again.",
+      });
+    },
+  });
+  const costActualUpdate = useMutation({
+    mutationFn: (input: Parameters<typeof updateCostActualFn>[0]["data"]) =>
+      updateCostActualFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Draft cost updated");
+    },
+    onError: (err) => {
+      toast.error("Draft cost did not save", {
+        description: err instanceof Error ? err.message : "Check the entry and try again.",
       });
     },
   });
@@ -3061,6 +3076,12 @@ function ProjectPage() {
                   }
                   onImportCostActuals={(input) => costActualImport.mutate({ projectId, ...input })}
                   onVoidCostActual={(id, notes) => costActualVoid.mutate({ id, notes })}
+                  onUpdateCostActual={(id, input) => {
+                    // Status stays out of the edit payload — drafts advance via
+                    // the card's Approve / Mark paid, never a silent side door.
+                    const { status: _status, ...fields } = input;
+                    costActualUpdate.mutate({ id, ...fields });
+                  }}
                   onSetCostActualStatus={(id, status) => costActualSetStatus.mutate({ id, status })}
                   onUpdateBucketBillingSettings={(id, patch) =>
                     bucketBillingUpdate.mutate({ id, patch })

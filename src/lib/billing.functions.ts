@@ -1141,6 +1141,67 @@ export const createCostActual = createServerFn({ method: "POST" })
 // Move an invoice through the payables lifecycle: draft → approved for payment
 // → paid. Approving or paying a draft starts counting it as job cost (the DB
 // trigger applies the delta); nothing else about the row changes.
+// Edit a cost row's facts — DRAFT rows only. A draft is unvetted and carries
+// no job cost (the rollup zeroes it), so every field is safely editable. Once
+// a row is committed/approved/paid it has entered the money and stays locked:
+// void it and enter a corrected cost, so the audit trail keeps both.
+const updateCostActualInput = z.object({
+  id: z.string().uuid(),
+  cost_bucket_id: z.string().uuid().nullable().optional(),
+  cost_code: z.string().max(64).default(""),
+  description: z.string().min(1).max(500),
+  category: z
+    .enum(["direct", "labor", "material", "equipment", "subcontract", "overhead"])
+    .default("direct"),
+  amount: z.number().min(0),
+  vendor: z.string().max(200).default(""),
+  reference_number: z.string().max(200).default(""),
+  cost_date: z.string().min(1),
+  notes: z.string().max(2000).default(""),
+});
+
+export const updateCostActual = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof updateCostActualInput>) =>
+    updateCostActualInput.parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const ctx = context as unknown as BillingServerContext;
+    const actualRes = await dynamicTable(ctx.supabase, "cost_actuals")
+      .select("id,project_id,status")
+      .eq("id", data.id)
+      .single();
+    if (actualRes.error) throw new Error(actualRes.error.message);
+    const actual = actualRes.data as Record<string, unknown>;
+    await requireCanManageProject(ctx, actual.project_id as string);
+    if (str(actual.status, "committed") !== "draft") {
+      throw new Error(
+        "Only a draft can be edited. This cost has already entered the books — void it and enter a corrected cost instead.",
+      );
+    }
+
+    // Resolve the bucket from the cost code when no explicit bucket came in —
+    // the same matching the create path uses.
+    let bucketId = data.cost_bucket_id ?? null;
+    if (!bucketId && data.cost_code.trim()) {
+      const bucketRes = await dynamicTable(ctx.supabase, "cost_buckets")
+        .select("id,cost_code")
+        .eq("project_id", actual.project_id as string);
+      if (bucketRes.error) throw new Error(bucketRes.error.message);
+      const match = ((bucketRes.data ?? []) as Record<string, unknown>[]).find(
+        (bucket) => normalizeKey(str(bucket.cost_code)) === normalizeKey(data.cost_code),
+      );
+      bucketId = (match?.id as string | undefined) ?? null;
+    }
+
+    const { id, ...fields } = data;
+    const updateRes = await dynamicTable(ctx.supabase, "cost_actuals")
+      .update({ ...fields, cost_bucket_id: bucketId, cost_code: fields.cost_code.trim() })
+      .eq("id", id);
+    if (updateRes.error) throw new Error(updateRes.error.message);
+    return { ok: true };
+  });
+
 const setCostActualStatusInput = z.object({
   id: z.string().uuid(),
   status: z.enum(["approved", "paid"]),
