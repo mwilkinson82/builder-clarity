@@ -659,7 +659,15 @@ function ProjectPage() {
     const data = subcontractsQuery.data;
     if (!data) return undefined;
     const currentPct = latestPercentBySubBucket(dailyWipEntriesQuery.data ?? []);
-    return summarizeSubCostByBucket(data.subcontracts, data.allocations, data.payments, currentPct);
+    return summarizeSubCostByBucket(
+      data.subcontracts,
+      data.allocations,
+      data.payments,
+      currentPct,
+      // Coded sub COs fold into committed on the Budget grid, matching the
+      // dashboard rollup (field request 2026-07-09).
+      data.change_orders,
+    );
   }, [subcontractsQuery.data, dailyWipEntriesQuery.data]);
   // Budget-drawer drill-through (field request 2026-07-09): the actual rows
   // behind an edited line — its self-perform daily-log lines (a bought-out sub
