@@ -45,6 +45,9 @@ export interface CardPayment {
   notes: string;
   // Lifecycle: draft (pay app received) → approved (for payment) → paid.
   status: string;
+  // Non-empty when this pay app was paid despite a failing compliance gate
+  // (field request 2026-07-10) — surfaced on the row so the override is visible.
+  compliance_override_reason?: string;
 }
 // A saved explicit split row for one of this sub's payments.
 export interface CardPaymentSplit {
@@ -856,6 +859,11 @@ export function SubcontractCard({
                       {p.notes ? (
                         <span className="truncate text-[11px] text-muted-foreground/80">
                           {p.notes}
+                        </span>
+                      ) : null}
+                      {p.compliance_override_reason ? (
+                        <span className="text-[11px] text-warning">
+                          ⚠ Paid without compliance — {p.compliance_override_reason}
                         </span>
                       ) : null}
                       <span className="flex items-center gap-3">
