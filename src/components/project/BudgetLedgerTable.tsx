@@ -315,7 +315,10 @@ export function BudgetLedgerTable({
                           ? (selfPerformByBucket?.get(row.costBucketId) ?? 0)
                           : 0;
                         return wip > 0 ? (
-                          <div className="text-[10px] font-normal text-muted-foreground">
+                          <div
+                            className="text-[10px] font-normal text-muted-foreground underline decoration-dotted underline-offset-2"
+                            title="Open this line to see which days' logs roll up into it"
+                          >
                             incl. {fmtUSD(wip)} from daily WIP
                           </div>
                         ) : null;

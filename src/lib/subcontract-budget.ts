@@ -337,3 +337,38 @@ export function allocatePaymentAcrossCodes(
     amount: centsToDollars(floors[index]),
   }));
 }
+
+// One payment's pro-rata share on ONE cost code (for the budget line drawer's
+// "where actual to date comes from" list). Distributed cents-exact across the
+// subcontract's coded allocations with the same largest-remainder scheme as
+// allocatePaymentAcrossCodes, then the target bucket's share is read out — so
+// per-bucket shares always sum to the payment across buckets.
+export function paymentShareForBucket(
+  paymentAmount: number,
+  allocations: { cost_bucket_id: string | null; amount: number }[],
+  costBucketId: string,
+): number {
+  const basis = allocations.filter(
+    (allocation) => allocation.cost_bucket_id && allocation.amount > 0,
+  );
+  const basisCents = basis.map((allocation) => dollarsToCents(allocation.amount));
+  const basisTotal = basisCents.reduce((sum, cents) => sum + cents, 0);
+  const paymentCents = dollarsToCents(paymentAmount);
+  if (basisTotal <= 0 || paymentCents <= 0) return 0;
+  const exact = basisCents.map((cents) => (paymentCents * cents) / basisTotal);
+  const floors = exact.map((value) => Math.floor(value));
+  let shortfall = paymentCents - floors.reduce((sum, value) => sum + value, 0);
+  const order = exact
+    .map((value, index) => ({ index, remainder: value - Math.floor(value) }))
+    .sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+  for (const entry of order) {
+    if (shortfall <= 0) break;
+    floors[entry.index] += 1;
+    shortfall -= 1;
+  }
+  let shareCents = 0;
+  basis.forEach((allocation, index) => {
+    if (allocation.cost_bucket_id === costBucketId) shareCents += floors[index];
+  });
+  return centsToDollars(shareCents);
+}

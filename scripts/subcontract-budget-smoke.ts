@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import {
   allocatePaymentAcrossCodes,
+  paymentShareForBucket,
   reviseSubSummary,
   subCostAddition,
   subEarnedKey,
@@ -508,6 +509,25 @@ import { latestPercentBySubBucket } from "../src/lib/daily-wip.ts";
     "no coded allocations → no derived split",
   );
   assert.deepEqual(allocatePaymentAcrossCodes(0, allocations), [], "zero payment → no split");
+}
+
+// ── A payment's pro-rata share on ONE cost code (budget drawer drill-through) ─
+{
+  const allocations = [
+    { cost_bucket_id: "b1", amount: 98372.88 },
+    { cost_bucket_id: "b2", amount: 25300 },
+    { cost_bucket_id: null, amount: 11500 }, // uncoded slice never claims a share
+  ];
+  const b1 = paymentShareForBucket(108173, allocations, "b1");
+  const b2 = paymentShareForBucket(108173, allocations, "b2");
+  assert.equal(
+    Math.round(b1 * 100) + Math.round(b2 * 100),
+    10817300,
+    "per-bucket shares sum cents-exact to the payment",
+  );
+  assert.ok(b1 > b2, "shares track the allocation sizes");
+  assert.equal(paymentShareForBucket(108173, allocations, "b9"), 0, "no allocation → no share");
+  assert.equal(paymentShareForBucket(0, allocations, "b1"), 0, "zero payment → zero share");
 }
 
 console.log("subcontract budget smoke: all assertions passed");

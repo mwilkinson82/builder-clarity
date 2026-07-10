@@ -123,6 +123,10 @@ export function BudgetLineDrawer({
   bucket,
   subCost,
   selfPerformWip = 0,
+  wipDays = [],
+  subPayments = [],
+  onOpenWipDay,
+  onOpenSubcontractors,
   budgetLocked,
   overrides,
   onSave,
@@ -140,6 +144,16 @@ export function BudgetLineDrawer({
   /** Self-perform daily WIP cost folded into this line's actual on the ledger. The
    * field below edits the manual base; this is added on top from the daily log. */
   selfPerformWip?: number;
+  /** The daily-log work behind that WIP figure, one row per logged line (newest
+   * first) — the "which days is that?" answer. Click-through via onOpenWipDay. */
+  wipDays?: { date: string; activity: string; amount: number }[];
+  /** Subcontractor payments' pro-rata share on this line (the closest thing to
+   * invoices in the actual today). Click-through via onOpenSubcontractors. */
+  subPayments?: { id: string; date: string; label: string; amount: number }[];
+  /** Jump to the Daily WIP tab on a specific day (closes the drawer). */
+  onOpenWipDay?: (date: string) => void;
+  /** Jump to the Subcontractors tab (closes the drawer). */
+  onOpenSubcontractors?: () => void;
   budgetLocked: boolean;
   /** Override history for this line, newest first. */
   overrides: BudgetOverrideRow[];
@@ -425,6 +439,106 @@ export function BudgetLineDrawer({
                   />
                 )}
               </Field>
+            </div>
+          ) : null}
+
+          {/* Where the actual comes from — the roll-up, itemized (field request
+              2026-07-09: "we'd like to see where that number's coming from").
+              Every row is a real record: a day's logged work line, or a sub
+              payment's share on this code. */}
+          {!isCreate && bucket && (wipDays.length > 0 || subPayments.length > 0) ? (
+            <div className="py-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Where actual to date comes from
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-2 text-xs">
+                <span className="text-muted-foreground">On the ledger</span>
+                <span className="tabular font-medium text-foreground">
+                  {fmtUSD(bucket.actual_to_date + selfPerformWip + (subCost?.paid ?? 0))}
+                </span>
+              </div>
+              <ul className="mt-2 space-y-1">
+                {bucket.actual_to_date !== 0 ? (
+                  <li className="flex items-baseline justify-between gap-2 text-xs">
+                    <span className="text-muted-foreground">
+                      Recorded costs &amp; manual entries
+                      <span className="block text-[10px] text-muted-foreground/70">
+                        invoices logged in Billing job costs, plus any hand-set base
+                      </span>
+                    </span>
+                    <span className="tabular text-foreground">{fmtUSD(bucket.actual_to_date)}</span>
+                  </li>
+                ) : null}
+                {wipDays.length > 0 ? (
+                  <li className="pt-1">
+                    <div className="flex items-baseline justify-between gap-2 text-xs">
+                      <span className="font-medium text-foreground">
+                        From the daily log ({wipDays.length}{" "}
+                        {wipDays.length === 1 ? "line" : "lines"})
+                      </span>
+                      <span className="tabular font-medium text-foreground">
+                        {fmtUSD(selfPerformWip)}
+                      </span>
+                    </div>
+                    <ul className="mt-1 space-y-0.5">
+                      {wipDays.slice(0, 8).map((day, index) => (
+                        <li key={`${day.date}-${index}`}>
+                          <button
+                            type="button"
+                            className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-0.5 text-left text-xs text-muted-foreground hover:bg-surface hover:text-foreground"
+                            onClick={() => onOpenWipDay?.(day.date)}
+                            title="Open this day in the Daily WIP tab"
+                          >
+                            <span className="min-w-0 truncate">
+                              <span className="tabular">{day.date}</span>
+                              {day.activity ? ` · ${day.activity}` : ""}
+                            </span>
+                            <span className="shrink-0 tabular">{fmtUSD(day.amount)}</span>
+                          </button>
+                        </li>
+                      ))}
+                      {wipDays.length > 8 ? (
+                        <li className="px-1 text-[11px] text-muted-foreground/70">
+                          + {wipDays.length - 8} more in the Daily WIP tab
+                        </li>
+                      ) : null}
+                    </ul>
+                  </li>
+                ) : null}
+                {subPayments.length > 0 ? (
+                  <li className="pt-1">
+                    <div className="text-xs font-medium text-foreground">
+                      Subcontractor payments on this code
+                    </div>
+                    <ul className="mt-1 space-y-0.5">
+                      {subPayments.slice(0, 8).map((payment) => (
+                        <li key={payment.id}>
+                          <button
+                            type="button"
+                            className="flex w-full items-baseline justify-between gap-2 rounded px-1 py-0.5 text-left text-xs text-muted-foreground hover:bg-surface hover:text-foreground"
+                            onClick={() => onOpenSubcontractors?.()}
+                            title="Open the Subcontractors tab"
+                          >
+                            <span className="min-w-0 truncate">
+                              <span className="tabular">{payment.date}</span> · {payment.label}
+                            </span>
+                            <span className="shrink-0 tabular">{fmtUSD(payment.amount)}</span>
+                          </button>
+                        </li>
+                      ))}
+                      {subPayments.length > 8 ? (
+                        <li className="px-1 text-[11px] text-muted-foreground/70">
+                          + {subPayments.length - 8} more in the Subcontractors tab
+                        </li>
+                      ) : null}
+                    </ul>
+                    <p className="mt-1 px-1 text-[11px] leading-snug text-muted-foreground/80">
+                      A payment covering several codes shows only this code's share here, rounded to
+                      the cent — the list can differ from the ledger total by a cent or two.
+                    </p>
+                  </li>
+                ) : null}
+              </ul>
             </div>
           ) : null}
 

@@ -90,7 +90,12 @@ export function subEarnedIncrement(
   priorPercent: number,
   percentComplete: number,
 ): number {
-  return subEarnedValue(commitment, percentComplete) - subEarnedValue(commitment, priorPercent);
+  // Subtract in cents — the raw dollar difference of two rounded values can
+  // carry float residue (e.g. 1503.550000000003).
+  return centsToDollars(
+    dollarsToCents(subEarnedValue(commitment, percentComplete)) -
+      dollarsToCents(subEarnedValue(commitment, priorPercent)),
+  );
 }
 
 // The percent-complete review pair: the super's field number, the PM's reviewed
@@ -357,6 +362,135 @@ export function applySelfPerformToBuckets<T extends SelfPerformFoldable>(
     const ftcCents = Math.max(0, dollarsToCents(numeric(b.ftc)) - wipCents);
     return { ...b, actual_to_date: centsToDollars(actualCents), ftc: centsToDollars(ftcCents) };
   });
+}
+
+// ── Daily P&L (field request 2026-07-09) ────────────────────────────────────
+// "How do I know how much money I made or lost today?" Every WIP line ties to
+// an SOV cost code that carries a CONTRACT value (what the owner pays). The
+// day's % movement on that code, priced at the contract value, is the revenue
+// the day EARNED; the line's work-in-place cost is what the day COST. The gap
+// is the day's profit on that line — the same one-%-drives-both model as the
+// earned-value billing arc, just read daily.
+
+// The earned side's baseline is per CODE, not per performer: the % complete of
+// an SOV line is one physical fact about the work, whoever advanced it. Keying
+// by performer would re-earn the whole cumulative % whenever a line's sub tag
+// flips (the super's log form has no sub picker — the PM tags later), and
+// would double-count when a sub line and a self-perform line share a code.
+// (The COST side keeps its performer-keyed chain — a sub's earned cost is
+// against that sub's own commitment; see priorSubPercent.)
+export function priorCodePercent(
+  target: WipPercentRowLike & { id?: string | null },
+  entries: readonly (WipPercentRowLike & { id?: string | null })[],
+): number {
+  if (!target.cost_bucket_id) return 0;
+  const tDate = target.entry_date ?? "";
+  const tUpd = target.updated_at ?? "";
+  let best: { date: string; upd: string; pct: number } | null = null;
+  for (const e of entries) {
+    if (target.id != null && e.id != null && e.id === target.id) continue;
+    if (e.cost_bucket_id !== target.cost_bucket_id) continue;
+    // A 0% entry is indistinguishable from "% not logged" (the form default) —
+    // it never sets the code's baseline.
+    if (numeric(e.percent_complete) <= 0) continue;
+    const eDate = e.entry_date ?? "";
+    const eUpd = e.updated_at ?? "";
+    const earlier = eDate < tDate || (eDate === tDate && eUpd < tUpd);
+    if (!earlier) continue;
+    if (!best || eDate > best.date || (eDate === best.date && eUpd > best.upd)) {
+      best = { date: eDate, upd: eUpd, pct: numeric(e.percent_complete) };
+    }
+  }
+  return best ? best.pct : 0;
+}
+
+// One line's P&L for the day. `earnedToday` is the SOV value of the day's %
+// movement (contract value × Δ%); null when it genuinely can't be measured,
+// with `reason` carrying the plain-English why so the UI never fakes a number:
+//   "no-code"     — the line isn't tied to a cost code (no SOV line to earn on)
+//   "unpriced"    — the code has no contract value yet
+//   "no-progress" — no % was logged. 0 IS the form default, so a 0% entry
+//                   always reads as "not logged", never as a walk-back to
+//                   nothing (that fabricated five-figure losses in review) —
+//                   correct over-reported work by logging the true % (> 0).
+//   "uncosted"    — % moved but the work carries $0 cost (not priced yet):
+//                   claiming the whole earned value as pure profit would be
+//                   fiction until the PM prices the line.
+export interface LineProfitToday {
+  earnedToday: number | null;
+  costToday: number;
+  profitToday: number | null;
+  reason: "no-code" | "unpriced" | "no-progress" | "uncosted" | null;
+}
+
+export function lineProfitToday(
+  contractValue: number | null,
+  priorPercent: number,
+  percentComplete: number,
+  costToday: number,
+): LineProfitToday {
+  const cost = centsToDollars(dollarsToCents(numeric(costToday)));
+  const unmeasured = (reason: NonNullable<LineProfitToday["reason"]>): LineProfitToday => ({
+    earnedToday: null,
+    costToday: cost,
+    profitToday: null,
+    reason,
+  });
+  if (contractValue == null) return unmeasured("no-code");
+  if (dollarsToCents(numeric(contractValue)) <= 0) return unmeasured("unpriced");
+  if (numeric(percentComplete) <= 0) return unmeasured("no-progress");
+  // Same cumulative-increment math as the sub cost side: today's earned is the
+  // move since the prior log, so re-logging the same % never re-earns work, and
+  // a downward correction (to a real % > 0) honestly earns negative.
+  const earned = subEarnedIncrement(numeric(contractValue), priorPercent, percentComplete);
+  if (earned === 0 && numeric(percentComplete) === numeric(priorPercent)) {
+    return unmeasured("no-progress");
+  }
+  if (dollarsToCents(cost) === 0) return unmeasured("uncosted");
+  return {
+    earnedToday: earned,
+    costToday: cost,
+    profitToday: centsToDollars(dollarsToCents(earned) - dollarsToCents(cost)),
+    reason: null,
+  };
+}
+
+// The day rolled up. `profit` covers MEASURED lines only (earned − cost);
+// unmeasured lines' cost is reported separately so a super who didn't log %
+// reads "not measured yet", never a fabricated loss.
+export interface DayProfitSummary {
+  earned: number; // Σ earned across measured lines
+  measuredCost: number; // Σ cost of measured lines
+  profit: number; // earned − measuredCost
+  unmeasuredCost: number; // Σ cost sitting on lines that couldn't be measured
+  measuredCount: number;
+  unmeasuredCount: number; // lines with cost but no measurable earned value
+}
+
+export function dayProfitSummary(lines: readonly LineProfitToday[]): DayProfitSummary {
+  let earnedCents = 0;
+  let measuredCostCents = 0;
+  let unmeasuredCostCents = 0;
+  let measuredCount = 0;
+  let unmeasuredCount = 0;
+  for (const line of lines) {
+    if (line.earnedToday !== null) {
+      earnedCents += dollarsToCents(line.earnedToday);
+      measuredCostCents += dollarsToCents(line.costToday);
+      measuredCount += 1;
+    } else if (dollarsToCents(line.costToday) !== 0) {
+      unmeasuredCostCents += dollarsToCents(line.costToday);
+      unmeasuredCount += 1;
+    }
+  }
+  return {
+    earned: centsToDollars(earnedCents),
+    measuredCost: centsToDollars(measuredCostCents),
+    profit: centsToDollars(earnedCents - measuredCostCents),
+    unmeasuredCost: centsToDollars(unmeasuredCostCents),
+    measuredCount,
+    unmeasuredCount,
+  };
 }
 
 export interface DailyWipTotals {

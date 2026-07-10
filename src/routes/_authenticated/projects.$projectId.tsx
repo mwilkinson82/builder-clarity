@@ -54,8 +54,14 @@ import { ProjectFileRoom } from "@/components/project/ProjectFileRoom";
 import { SubmittalLog } from "@/components/project/SubmittalLog";
 import { SubcontractorsWorkspace } from "@/components/project/SubcontractorsWorkspace";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
-import { summarizeSubCostByBucket } from "@/lib/subcontract-budget";
-import { applySelfPerformToBuckets, latestPercentBySubBucket } from "@/lib/daily-wip";
+import { paymentShareForBucket, summarizeSubCostByBucket } from "@/lib/subcontract-budget";
+import {
+  applySelfPerformToBuckets,
+  latestPercentBySubBucket,
+  rowWorkInPlace,
+  subCommitmentKey,
+  commitmentBySubBucket,
+} from "@/lib/daily-wip";
 import { listDailyWipEntries } from "@/lib/daily-wip.functions";
 import { ClientPortalWorkspace } from "@/components/outcome/ClientPortalWorkspace";
 import {
@@ -386,6 +392,9 @@ function ProjectPage() {
   );
   const [focusedRiskExposureId, setFocusedRiskExposureId] = useState<string | null>(null);
   const handleRiskFocusHandled = useCallback(() => setFocusedRiskExposureId(null), []);
+  // Budget-drawer drill-through: land the Daily WIP tab on a specific day.
+  const [focusedWipDate, setFocusedWipDate] = useState<string | null>(null);
+  const handleWipFocusHandled = useCallback(() => setFocusedWipDate(null), []);
   const [companyLogoFailedUrl, setCompanyLogoFailedUrl] = useState("");
   const setProjectTab = (value: string) => {
     if (PROJECT_TAB_VALUES.includes(value as ProjectTabValue)) {
@@ -652,6 +661,84 @@ function ProjectPage() {
     const currentPct = latestPercentBySubBucket(dailyWipEntriesQuery.data ?? []);
     return summarizeSubCostByBucket(data.subcontracts, data.allocations, data.payments, currentPct);
   }, [subcontractsQuery.data, dailyWipEntriesQuery.data]);
+  // Budget-drawer drill-through (field request 2026-07-09): the actual rows
+  // behind an edited line — its self-perform daily-log lines (a bought-out sub
+  // line belongs to the subcontract layer's story, so it's excluded exactly the
+  // way the server's self-perform fold excludes it) and each sub payment's
+  // pro-rata share on this code.
+  const drawerWipDays = useMemo(() => {
+    if (!editingBucketId) return [];
+    const subs = subcontractsQuery.data;
+    const commitments = subs ? commitmentBySubBucket(subs.subcontracts, subs.allocations) : null;
+    return (dailyWipEntriesQuery.data ?? [])
+      .filter((entry) => entry.cost_bucket_id === editingBucketId)
+      .filter((entry) => {
+        const key = subCommitmentKey(entry.subcontractor_id, entry.cost_bucket_id);
+        return !(key && (commitments?.get(key) ?? 0) > 0);
+      })
+      .map((entry) => ({
+        date: entry.entry_date,
+        activity: entry.activity,
+        amount: rowWorkInPlace(entry, null),
+      }))
+      .filter((row) => row.amount !== 0)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [editingBucketId, dailyWipEntriesQuery.data, subcontractsQuery.data]);
+  const drawerSubPayments = useMemo(() => {
+    const subs = subcontractsQuery.data;
+    if (!editingBucketId || !subs) return [];
+    const titleBySubcontract = new Map(
+      subs.subcontracts.map((sub) => [sub.id, sub.title] as const),
+    );
+    const allocationsBySubcontract = new Map<string, typeof subs.allocations>();
+    for (const allocation of subs.allocations) {
+      const list = allocationsBySubcontract.get(allocation.subcontract_id) ?? [];
+      list.push(allocation);
+      allocationsBySubcontract.set(allocation.subcontract_id, list);
+    }
+    return subs.payments
+      .map((payment) => {
+        const allocations = allocationsBySubcontract.get(payment.subcontract_id) ?? [];
+        const share = paymentShareForBucket(payment.amount, allocations, editingBucketId);
+        if (share <= 0) return null;
+        const title = titleBySubcontract.get(payment.subcontract_id) || "Subcontract";
+        return {
+          id: payment.id,
+          date: payment.payment_date,
+          label: payment.reference ? `${title} · ${payment.reference}` : title,
+          amount: share,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [editingBucketId, subcontractsQuery.data]);
+
+  // The daily P&L prices earned value at what the owner ACTUALLY pays for a
+  // code today: base contract value + approved change-order contract dollars
+  // allocated to it — the same contract side the budget ledger shows. Base-only
+  // would under-earn every CO'd line.
+  const wipProfitBuckets = useMemo(() => {
+    const buckets = data?.buckets ?? [];
+    const approvedIds = new Set(
+      (data?.changeOrders ?? []).filter((co) => co.status === "Approved").map((co) => co.id),
+    );
+    const coContractCents = new Map<string, number>();
+    for (const allocation of changeOrderAllocationsQuery.data ?? []) {
+      if (!allocation.cost_bucket_id || !approvedIds.has(allocation.change_order_id)) continue;
+      coContractCents.set(
+        allocation.cost_bucket_id,
+        (coContractCents.get(allocation.cost_bucket_id) ?? 0) +
+          dollarsToCents(allocation.contract_amount),
+      );
+    }
+    return buckets.map((bucket) => ({
+      ...bucket,
+      contract_value: centsToDollars(
+        dollarsToCents(bucket.contract_value) + (coContractCents.get(bucket.id) ?? 0),
+      ),
+    }));
+  }, [data?.buckets, data?.changeOrders, changeOrderAllocationsQuery.data]);
+
   // Sub layer totals for the Budget-tab summary cards, so they match the per-code
   // ledger below. A buyout DISPLACES the self-perform forecast for its scope — it
   // doesn't stack on top — so the forecast adjustment is the remaining sub
@@ -2499,7 +2586,12 @@ function ProjectPage() {
             </TabsContent>
 
             <TabsContent value="daily-wip" className="mt-0">
-              <DailyWipWorkspace projectId={projectId} buckets={buckets} />
+              <DailyWipWorkspace
+                projectId={projectId}
+                buckets={wipProfitBuckets}
+                focusDate={focusedWipDate}
+                onFocusDateHandled={handleWipFocusHandled}
+              />
             </TabsContent>
 
             <TabsContent value="file-room" className="mt-0">
@@ -2818,6 +2910,19 @@ function ProjectPage() {
                 selfPerformWip={
                   editingBucketId ? (selfPerformByBucket.get(editingBucketId) ?? 0) : 0
                 }
+                wipDays={drawerWipDays}
+                subPayments={drawerSubPayments}
+                onOpenWipDay={(date) => {
+                  setEditingBucketId(null);
+                  setAddingLine(false);
+                  setProjectTab("daily-wip");
+                  setFocusedWipDate(date);
+                }}
+                onOpenSubcontractors={() => {
+                  setEditingBucketId(null);
+                  setAddingLine(false);
+                  setProjectTab("subcontractors");
+                }}
                 budgetLocked={Boolean(project.budget_locked_at)}
                 overrides={budgetOverrides}
                 onSave={(id, patch) => bucketUpdate.mutateAsync({ id, patch })}
