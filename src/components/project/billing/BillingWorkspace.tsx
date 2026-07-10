@@ -197,7 +197,7 @@ export function BillingWorkspace({
   onUpdateCostActual: (
     id: string,
     input: Parameters<Parameters<typeof ProjectCostTrackingPanel>[0]["onUpdateCostActual"]>[1],
-  ) => void;
+  ) => void | Promise<unknown>;
   onUpdateBucketBillingSettings: (
     id: string,
     patch: {

@@ -115,7 +115,7 @@ type BillingEnhancementProps = {
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   onSetCostActualStatus: (id: string, status: "approved" | "paid") => void;
-  onUpdateCostActual: (id: string, input: CostActualDraft) => void;
+  onUpdateCostActual: (id: string, input: CostActualDraft) => void | Promise<unknown>;
   onUpdateBucketSettings: (id: string, patch: BucketSettingsPatch) => void;
 };
 
@@ -1050,7 +1050,7 @@ export function ProjectCostTrackingPanel({
   onImportCostActuals: (input: { source_name: string; rows: CostActualImportRow[] }) => void;
   onVoidCostActual: (id: string, notes: string) => void;
   onSetCostActualStatus: (id: string, status: "approved" | "paid") => void;
-  onUpdateCostActual: (id: string, input: CostActualDraft) => void;
+  onUpdateCostActual: (id: string, input: CostActualDraft) => void | Promise<unknown>;
   savingCost?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -1171,9 +1171,7 @@ export function ProjectCostTrackingPanel({
     setOpen(true);
   };
 
-  const save = () => {
-    if (editingCostId) onUpdateCostActual(editingCostId, draft);
-    else onCreateCostActual(draft);
+  const resetCostForm = () => {
     setOpen(false);
     setEditingCostId(null);
     setDraft({
@@ -1188,6 +1186,42 @@ export function ProjectCostTrackingPanel({
       status: "draft",
       notes: "",
     });
+  };
+
+  // Pick-or-add: a typed vendor name neither directory knows becomes a vendor
+  // (best-effort — the cost row is the real record). Called on every path that
+  // commits the form. (This call was dropped from save() during #266's rebase;
+  // without it a brand-new vendor never reached the directory.)
+  const enrollTypedVendor = () => {
+    const vendorName = draft.vendor.trim();
+    if (!vendorName) return;
+    const known = [...vendorNames, ...subNames].some(
+      (name) => name.toLowerCase() === vendorName.toLowerCase(),
+    );
+    if (!known) enrollVendor.mutate(vendorName);
+  };
+
+  const save = () => {
+    if (editingCostId) onUpdateCostActual(editingCostId, draft);
+    else onCreateCostActual(draft);
+    enrollTypedVendor();
+    resetCostForm();
+  };
+
+  // Advance an open draft straight from the edit dialog (field request 2026-07-09:
+  // "no button to approve or mark paid" from the editor). Persist any pending
+  // edits FIRST so nothing typed is lost, and AWAIT that save so the row is still
+  // a draft when the status change lands (updateCostActual only accepts drafts).
+  const advanceDraft = async (status: "approved" | "paid") => {
+    if (!editingCostId) return;
+    try {
+      await onUpdateCostActual(editingCostId, draft);
+    } catch {
+      return; // the update's own error toast already fired — don't advance
+    }
+    enrollTypedVendor();
+    onSetCostActualStatus(editingCostId, status);
+    resetCostForm();
   };
 
   const importCsv = (file: File) => {
@@ -1401,13 +1435,39 @@ export function ProjectCostTrackingPanel({
                   />
                 </div>
               </div>
-              <DialogFooter>
-                <Button variant="ghost" onClick={() => setOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={save} disabled={savingCost || !draft.description.trim()}>
-                  {editingCostId ? "Save changes" : "Save cost"}
-                </Button>
+              <DialogFooter className="gap-2 sm:items-center sm:justify-between">
+                {editingCostId ? (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={savingCost}
+                      onClick={() => advanceDraft("approved")}
+                    >
+                      Approve for payment
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={savingCost}
+                      onClick={() => advanceDraft("paid")}
+                    >
+                      Mark paid
+                    </Button>
+                  </div>
+                ) : (
+                  <span />
+                )}
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" onClick={() => setOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={save} disabled={savingCost || !draft.description.trim()}>
+                    {editingCostId ? "Save changes" : "Save cost"}
+                  </Button>
+                </div>
               </DialogFooter>
             </DialogContent>
           </Dialog>
