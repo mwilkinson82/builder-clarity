@@ -7,7 +7,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { canPaySubcontract, subcontractInsuranceStatus } from "@/lib/compliance-domain";
+import {
+  canApproveSubPayment,
+  canPaySubcontract,
+  subcontractInsuranceStatus,
+} from "@/lib/compliance-domain";
 
 type DynamicSupabaseError = { code?: string; message: string };
 type DynamicSupabaseResult<T = unknown> = { data: T | null; error: DynamicSupabaseError | null };
@@ -588,6 +592,69 @@ async function evaluateSubPaymentGate(
   };
 }
 
+// PER-PAYMENT gate (field request 2026-07-10): a pay app can't move FORWARD
+// (draft → approved, or on to paid) until a lien waiver is tied to that
+// specific payment record AND the sub's insurance is verified as of the
+// payment date. A waiver sitting unattached in the sub's on-file pool counts —
+// it auto-attaches when the transition succeeds (attachWaiverId), which is the
+// same consumption the record-as-paid path has always done. Same OPEN/CLOSED
+// posture as evaluateSubPaymentGate: pre-migration reads stay open; a
+// transient read error once gating is confirmed ON blocks with a retry.
+async function evaluateSubApprovalGate(
+  supabase: unknown,
+  projectId: string,
+  subcontractId: string,
+  paymentId: string,
+  asOfDate: string,
+): Promise<{ allowed: boolean; blockers: string[]; attachWaiverId: string | null }> {
+  const OPEN = { allowed: true, blockers: [] as string[], attachWaiverId: null };
+  const CLOSED = {
+    allowed: false,
+    blockers: ["Couldn't verify insurance/lien-waiver status right now — try again in a moment."],
+    attachWaiverId: null,
+  };
+  const projRes = await dynamicTable(supabase, "projects")
+    .select("require_compliance_gating")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (projRes.error || !projRes.data) return OPEN;
+  const gatingEnabled =
+    (projRes.data as Record<string, unknown>).require_compliance_gating !== false;
+  if (!gatingEnabled) return OPEN;
+
+  const certsRes = await dynamicTable(supabase, "insurance_certificates")
+    .select("*")
+    .eq("subcontract_id", subcontractId);
+  if (certsRes.error) return CLOSED;
+  const certs = ((certsRes.data ?? []) as Record<string, unknown>[]).map((c) => ({
+    verified: c.verified === true,
+    effective_date: (c.effective_date as string | null) ?? null,
+    expiry_date: (c.expiry_date as string | null) ?? null,
+  }));
+  const status = subcontractInsuranceStatus(certs, asOfDate);
+
+  const waiversRes = await dynamicTable(supabase, "lien_waivers")
+    .select("*")
+    .eq("subcontract_id", subcontractId);
+  if (waiversRes.error) return CLOSED;
+  const waivers = (waiversRes.data ?? []) as Record<string, unknown>[];
+  const attached = waivers.some((w) => str(w.payment_id) === paymentId);
+  const pool = waivers.filter((w) => !w.payment_id);
+
+  const result = canApproveSubPayment({
+    gatingEnabled: true,
+    insuranceStatus: status,
+    // An unattached on-file waiver satisfies the gate — it becomes THIS pay
+    // app's waiver the moment the transition succeeds.
+    hasAttachedWaiver: attached || pool.length > 0,
+  });
+  return {
+    ...result,
+    attachWaiverId:
+      result.allowed && !attached && pool.length > 0 ? str(pool[pool.length - 1].id) : null,
+  };
+}
+
 // The status column ships in the payables-approval migration. Pre-migration,
 // PostgREST rejects an insert/update naming it — detect that specific miss so
 // the legacy record-as-paid path can keep working while the desk catches up.
@@ -622,10 +689,12 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<SubcontractPaymentRow> => {
     const { projectId, subcontractId, status, ...fields } = data;
 
-    // The compliance gate protects MONEY LEAVING — logging a draft pay app or
-    // approving it for payment needs no lien waiver yet. Only 'paid' is gated.
+    // Logging a DRAFT pay app needs nothing on file — that's the inbox. Landing
+    // directly at approved-for-payment or paid is gated (field request
+    // 2026-07-10: no approval without a lien waiver + verified insurance); the
+    // waiver that clears it is attached to the payment right after insert.
     const gate =
-      status === "paid"
+      status !== "draft"
         ? await evaluateSubPaymentGate(
             context.supabase,
             projectId,
@@ -635,7 +704,7 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
         : { allowed: true, blockers: [] as string[], consumeWaiverId: null };
     if (!gate.allowed) {
       throw new Error(
-        `Payment blocked — compliance not met. ${gate.blockers.join(" ")} Add the missing item, or turn off "Require lien waivers + insurance" for this project.`,
+        `${status === "paid" ? "Payment blocked" : "Can't approve for payment"} — compliance not met. ${gate.blockers.join(" ")} Add the missing item, or turn off "Require lien waivers + insurance" for this project.`,
       );
     }
 
@@ -672,10 +741,11 @@ export const recordSubcontractPayment = createServerFn({ method: "POST" })
     return payment;
   });
 
-// Walk a pay app forward: draft → approved (for payment) → paid. Marking it
-// paid is the moment money leaves, so THAT is where the lien-waiver/insurance
-// gate fires and the clearing waiver is consumed — exactly as it does when a
-// payment is recorded directly as paid.
+// Walk a pay app forward: draft → approved (for payment) → paid. BOTH forward
+// transitions run the per-payment gate (field request 2026-07-10): the pay app
+// needs a lien waiver tied to this payment record + verified insurance before
+// it can even be APPROVED — marking it paid re-checks (the COI could have
+// lapsed between approval and the check run).
 export const setSubcontractPaymentStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) =>
@@ -693,18 +763,16 @@ export const setSubcontractPaymentStatus = createServerFn({ method: "POST" })
     const current = normalizePayment(row as Record<string, unknown>);
     if (current.status === "paid") throw new Error("This pay app is already marked paid.");
 
-    const gate =
-      data.status === "paid"
-        ? await evaluateSubPaymentGate(
-            context.supabase,
-            current.project_id,
-            current.subcontract_id,
-            current.payment_date,
-          )
-        : { allowed: true, blockers: [] as string[], consumeWaiverId: null };
+    const gate = await evaluateSubApprovalGate(
+      context.supabase,
+      current.project_id,
+      current.subcontract_id,
+      current.id,
+      current.payment_date,
+    );
     if (!gate.allowed) {
       throw new Error(
-        `Payment blocked — compliance not met. ${gate.blockers.join(" ")} Add the missing item, or turn off "Require lien waivers + insurance" for this project.`,
+        `${data.status === "paid" ? "Payment blocked" : "Can't approve for payment"} — compliance not met. ${gate.blockers.join(" ")} Attach the missing item, or turn off "Require lien waivers + insurance" for this project.`,
       );
     }
 
@@ -723,12 +791,79 @@ export const setSubcontractPaymentStatus = createServerFn({ method: "POST" })
       throw new Error(updateRes.error.message);
     }
     const payment = normalizePayment(updateRes.data as Record<string, unknown>);
-    if (gate.consumeWaiverId) {
+    // A pool waiver cleared the gate — tie it to this pay app so it can't clear
+    // a second one (best-effort; the transition already succeeded).
+    if (gate.attachWaiverId) {
       await dynamicTable(context.supabase, "lien_waivers")
         .update({ payment_id: payment.id })
-        .eq("id", gate.consumeWaiverId);
+        .eq("id", gate.attachWaiverId);
     }
     return payment;
+  });
+
+// Tie an on-file lien waiver to one pay app (field request 2026-07-10: "attach
+// that lien waiver to that payment record"). The waiver and payment must belong
+// to the same subcontract, and a waiver already covering another payment can't
+// be moved — collect a new one instead.
+export const attachLienWaiverToPayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ waiverId: z.string().uuid(), paymentId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const payRes = await dynamicTable(context.supabase, "subcontract_payments")
+      .select("id,subcontract_id")
+      .eq("id", data.paymentId)
+      .single();
+    if (payRes.error) {
+      if (isMissingSubcontractTable(payRes.error)) throw new Error(NOT_ENABLED);
+      throw new Error(payRes.error.message);
+    }
+    const waiverRes = await dynamicTable(context.supabase, "lien_waivers")
+      .select("id,subcontract_id,payment_id")
+      .eq("id", data.waiverId)
+      .single();
+    if (waiverRes.error) throw new Error(waiverRes.error.message);
+    const waiver = waiverRes.data as Record<string, unknown>;
+    const payment = payRes.data as Record<string, unknown>;
+    if (str(waiver.subcontract_id) !== str(payment.subcontract_id)) {
+      throw new Error("That lien waiver belongs to a different subcontract.");
+    }
+    if (waiver.payment_id && str(waiver.payment_id) !== data.paymentId) {
+      throw new Error("That lien waiver already covers another payment — collect a new one.");
+    }
+    const updateRes = await dynamicTable(context.supabase, "lien_waivers")
+      .update({ payment_id: data.paymentId })
+      .eq("id", data.waiverId);
+    if (updateRes.error) throw new Error(updateRes.error.message);
+    return { ok: true };
+  });
+
+// Undo an attach made in error. Only while the pay app hasn't been paid — once
+// money left, its waiver is part of the payment's paper trail.
+export const detachLienWaiverFromPayment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z.object({ waiverId: z.string().uuid(), paymentId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const payRes = await dynamicTable(context.supabase, "subcontract_payments")
+      .select("id,status")
+      .eq("id", data.paymentId)
+      .single();
+    if (payRes.error) {
+      if (isMissingSubcontractTable(payRes.error)) throw new Error(NOT_ENABLED);
+      throw new Error(payRes.error.message);
+    }
+    if (str((payRes.data as Record<string, unknown>).status, "paid") === "paid") {
+      throw new Error("This pay app is already paid — its lien waiver stays on the record.");
+    }
+    const updateRes = await dynamicTable(context.supabase, "lien_waivers")
+      .update({ payment_id: null })
+      .eq("id", data.waiverId)
+      .eq("payment_id", data.paymentId);
+    if (updateRes.error) throw new Error(updateRes.error.message);
+    return { ok: true };
   });
 
 // Edit a recorded payment after the fact — fix the date, the amount, the

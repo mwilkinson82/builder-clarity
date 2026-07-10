@@ -14,8 +14,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { WorkspaceHeader } from "@/components/project/billing/billing-workspace-atoms";
-import { SubcontractCard, type PaymentEdit } from "@/components/project/SubcontractCard";
-import { SubcontractCompliance } from "@/components/project/SubcontractCompliance";
+import {
+  SubcontractCard,
+  type CardPayment,
+  type PaymentEdit,
+} from "@/components/project/SubcontractCard";
+import {
+  SubcontractCompliance,
+  uploadComplianceFile,
+  viewComplianceFile,
+} from "@/components/project/SubcontractCompliance";
 import {
   deleteInsuranceCertificate,
   deleteLienWaiver,
@@ -32,11 +40,13 @@ import {
 import {
   addSubcontractDocument,
   allocateSubcontract,
+  attachLienWaiverToPayment,
   deleteSubcontract,
   deleteSubcontractAllocation,
   deleteSubcontractChangeOrder,
   deleteSubcontractDocument,
   deleteSubcontractPayment,
+  detachLienWaiverFromPayment,
   listProjectSubcontracts,
   recordSubcontractChangeOrder,
   recordSubcontractPayment,
@@ -395,6 +405,48 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     },
     onError: onError("update the pay app"),
   });
+  // Tie an on-file waiver to one pay app / undo a mistaken attach. The approve
+  // gate reads this link, so attach is what unblocks "Approve for payment".
+  const attachWaiverFn = useServerFn(attachLienWaiverToPayment);
+  const detachWaiverFn = useServerFn(detachLienWaiverFromPayment);
+  const attachWaiver = useMutation({
+    mutationFn: (input: { paymentId: string; waiverId: string }) => attachWaiverFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Lien waiver attached to the pay app");
+    },
+    onError: onError("attach the lien waiver"),
+  });
+  const detachWaiver = useMutation({
+    mutationFn: (input: { paymentId: string; waiverId: string }) => detachWaiverFn({ data: input }),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Lien waiver detached — back in the on-file pool");
+    },
+    onError: onError("detach the lien waiver"),
+  });
+  // Upload a signed waiver straight onto a pay app: file the doc, record the
+  // waiver already bound to the payment (type defaults to conditional/progress;
+  // amount + through-date default from the pay app itself).
+  const uploadWaiverForPayment = async (
+    subcontractId: string,
+    payment: CardPayment,
+    file: File,
+  ) => {
+    const up = await uploadComplianceFile(projectId, file);
+    if (!up) return;
+    await recordWaiver.mutateAsync({
+      subcontractId,
+      payment_id: payment.id,
+      waiver_type: "conditional_progress",
+      through_date: payment.payment_date || null,
+      amount: payment.amount,
+      signed_date: today(),
+      storage_path: up.path,
+      file_name: up.name,
+    });
+    toast.success("Signed waiver attached to the pay app");
+  };
   const updatePayment = useMutation({
     mutationFn: (input: { id: string; edit: PaymentEdit }) =>
       updatePayFn({
@@ -713,6 +765,24 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
                 })
               }
               savingSplit={saveSplit.isPending}
+              waivers={compliance.waivers
+                .filter((w) => w.subcontract_id === sub.id)
+                .map((w) => ({
+                  id: w.id,
+                  payment_id: w.payment_id,
+                  waiver_type: w.waiver_type,
+                  through_date: w.through_date,
+                  amount: w.amount,
+                  storage_path: w.storage_path,
+                  file_name: w.file_name,
+                }))}
+              gatingEnabled={compliance.gatingEnabled}
+              onAttachWaiver={(paymentId, waiverId) => attachWaiver.mutate({ paymentId, waiverId })}
+              onDetachWaiver={(paymentId, waiverId) => detachWaiver.mutate({ paymentId, waiverId })}
+              onUploadWaiverForPayment={(payment, file) =>
+                uploadWaiverForPayment(sub.id, payment, file)
+              }
+              onViewWaiverDoc={(path) => viewComplianceFile(path)}
               onRemoveSub={() => removeSub.mutate(sub.id)}
               documents={project.documents.filter((d) => d.subcontract_id === sub.id)}
               onUploadDoc={(file) => uploadDoc(sub.id, file)}
@@ -725,6 +795,11 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
                   gatingEnabled={compliance.gatingEnabled}
                   certificates={compliance.certificates.filter((c) => c.subcontract_id === sub.id)}
                   waivers={compliance.waivers.filter((w) => w.subcontract_id === sub.id)}
+                  payments={pays.map((p) => ({
+                    id: p.id,
+                    payment_date: p.payment_date,
+                    amount: p.amount,
+                  }))}
                   onSaveCertificate={(input) =>
                     saveCert.mutateAsync({ subcontractId: sub.id, ...input })
                   }

@@ -43,6 +43,66 @@ function isMissingComplianceTable(error: DynamicSupabaseError | null) {
 const NOT_ENABLED =
   "Compliance tracking isn't enabled on this workspace yet — the migration hasn't been applied.";
 
+const WAIVER_TYPE_LABEL: Record<string, string> = {
+  conditional_progress: "Conditional progress",
+  unconditional_progress: "Unconditional progress",
+  conditional_final: "Conditional final",
+  unconditional_final: "Unconditional final",
+};
+
+// File a compliance upload (COI / lien waiver PDF) into the project File Room
+// so all the paper is findable in one place — the bytes already live in the
+// same project-docs bucket the room reads from, this just indexes them.
+// Best-effort: the compliance write already succeeded and must never be undone
+// by an indexing hiccup. Skips silently if the path is already indexed.
+async function indexComplianceDocInFileRoom(
+  supabase: unknown,
+  userId: string | null,
+  input: { projectId: string; storagePath: string; fileName: string; title: string },
+): Promise<void> {
+  if (!input.storagePath) return;
+  try {
+    const existing = await dynamicTable(supabase, "project_documents")
+      .select("id")
+      .eq("project_id", input.projectId)
+      .eq("storage_path", input.storagePath)
+      .maybeSingle();
+    if (existing.error || existing.data) return;
+    await dynamicTable(supabase, "project_documents").insert({
+      project_id: input.projectId,
+      category: "compliance",
+      title: input.title.slice(0, 200),
+      description: "Filed automatically from the Subcontractors compliance panel.",
+      storage_path: input.storagePath,
+      file_name: input.fileName,
+      uploaded_by: userId,
+    });
+  } catch {
+    // Indexing is a convenience — never surface it as a compliance failure.
+  }
+}
+
+// The sub's display name for File Room titles — best-effort, falls back to the
+// scope title or a generic label.
+async function subcontractLabel(supabase: unknown, subcontractId: string): Promise<string> {
+  try {
+    const subRes = await dynamicTable(supabase, "subcontracts")
+      .select("title,subcontractor_id")
+      .eq("id", subcontractId)
+      .maybeSingle();
+    if (subRes.error || !subRes.data) return "Subcontractor";
+    const sub = subRes.data as Record<string, unknown>;
+    const dirRes = await dynamicTable(supabase, "subcontractors")
+      .select("name")
+      .eq("id", str(sub.subcontractor_id))
+      .maybeSingle();
+    const name = dirRes.error ? "" : str((dirRes.data as Record<string, unknown>)?.name);
+    return name || str(sub.title) || "Subcontractor";
+  } catch {
+    return "Subcontractor";
+  }
+}
+
 export interface InsuranceCertificateRow {
   id: string;
   project_id: string;
@@ -219,7 +279,17 @@ export const saveInsuranceCertificate = createServerFn({ method: "POST" })
       if (isMissingComplianceTable(res.error)) throw new Error(NOT_ENABLED);
       throw new Error(res.error?.message ?? "Could not save the certificate");
     }
-    return normalizeCert(res.data as Record<string, unknown>);
+    const cert = normalizeCert(res.data as Record<string, unknown>);
+    if (cert.storage_path) {
+      const subName = await subcontractLabel(context.supabase, cert.subcontract_id);
+      await indexComplianceDocInFileRoom(context.supabase, context.userId ?? null, {
+        projectId: cert.project_id,
+        storagePath: cert.storage_path,
+        fileName: cert.file_name,
+        title: `Insurance certificate (COI) — ${subName}${cert.carrier ? ` — ${cert.carrier}` : ""}`,
+      });
+    }
+    return cert;
   });
 
 export const deleteInsuranceCertificate = createServerFn({ method: "POST" })
@@ -277,7 +347,18 @@ export const recordLienWaiver = createServerFn({ method: "POST" })
       if (isMissingComplianceTable(error)) throw new Error(NOT_ENABLED);
       throw new Error(error?.message ?? "Could not record the lien waiver");
     }
-    return normalizeWaiver(row as Record<string, unknown>);
+    const waiver = normalizeWaiver(row as Record<string, unknown>);
+    if (waiver.storage_path) {
+      const subName = await subcontractLabel(context.supabase, waiver.subcontract_id);
+      const typeLabel = WAIVER_TYPE_LABEL[waiver.waiver_type] ?? "Lien";
+      await indexComplianceDocInFileRoom(context.supabase, context.userId ?? null, {
+        projectId: waiver.project_id,
+        storagePath: waiver.storage_path,
+        fileName: waiver.file_name,
+        title: `Lien waiver — ${subName} — ${typeLabel}${waiver.through_date ? ` through ${waiver.through_date}` : ""}`,
+      });
+    }
+    return waiver;
   });
 
 export const deleteLienWaiver = createServerFn({ method: "POST" })

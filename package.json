@@ -17,6 +17,7 @@
     "test:billing": "node --experimental-strip-types scripts/billing-payments-smoke.ts",
     "test:budget": "node --experimental-strip-types scripts/budget-contract-smoke.ts",
     "test:sub": "node --experimental-strip-types scripts/subcontract-budget-smoke.ts",
+    "test:compliance": "node --experimental-strip-types scripts/compliance-smoke.ts",
     "test:wip": "node --experimental-strip-types scripts/daily-wip-smoke.ts",
     "test:billing:aia": "node --experimental-strip-types scripts/aia-pdf-fixture-smoke.ts",
     "test:billing:portal": "vitest run scripts/portal-view-signal.test.tsx",

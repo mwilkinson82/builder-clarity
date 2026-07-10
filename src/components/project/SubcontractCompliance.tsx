@@ -74,8 +74,9 @@ function today(): string {
 }
 
 // Upload a compliance doc to the shared private project-docs bucket; returns the
-// stored path + original name (or null on failure, already toasted).
-async function uploadComplianceFile(
+// stored path + original name (or null on failure, already toasted). Exported
+// so the pay-app rows on SubcontractCard can take a waiver upload in place.
+export async function uploadComplianceFile(
   projectId: string,
   file: File,
 ): Promise<{ path: string; name: string } | null> {
@@ -89,6 +90,10 @@ async function uploadComplianceFile(
     return null;
   }
   return { path, name: file.name };
+}
+
+export async function viewComplianceFile(path: string) {
+  return viewFile(path);
 }
 
 async function viewFile(path: string) {
@@ -106,6 +111,7 @@ export function SubcontractCompliance({
   gatingEnabled,
   certificates,
   waivers,
+  payments = [],
   onSaveCertificate,
   onDeleteCertificate,
   onRecordWaiver,
@@ -115,6 +121,8 @@ export function SubcontractCompliance({
   gatingEnabled: boolean;
   certificates: InsuranceCertificateRow[];
   waivers: LienWaiverRow[];
+  // This sub's pay apps, so an attached waiver can say WHICH payment it covers.
+  payments?: { id: string; payment_date: string; amount: number }[];
   onSaveCertificate: (input: SaveCertInput) => Promise<unknown> | void;
   onDeleteCertificate: (id: string) => void;
   onRecordWaiver: (input: RecordWaiverInput) => Promise<unknown> | void;
@@ -124,6 +132,7 @@ export function SubcontractCompliance({
   const ui = STATUS_UI[status];
   const cleared = insuranceClears(status);
   const openWaivers = waivers.filter((w) => !w.payment_id);
+  const paymentById = new Map(payments.map((p) => [p.id, p]));
 
   // Insurance capture form — a clean ADD each time (renewals stack in the list
   // above; corrections use the list's remove button). Starts empty.
@@ -169,6 +178,37 @@ export function SubcontractCompliance({
     }
   };
 
+  // One-click COI filing (field request 2026-07-10: "upload the contract AND
+  // their insurance certs"): the file goes on record immediately as an
+  // UNVERIFIED certificate — it doesn't clear the gate until someone fills the
+  // dates and checks "verified", but the paper is captured and in the File Room.
+  const [quickFiling, setQuickFiling] = useState(false);
+  const quickFileCoi = async (file: File) => {
+    setQuickFiling(true);
+    try {
+      const up = await uploadComplianceFile(projectId, file);
+      if (!up) return;
+      await onSaveCertificate({
+        carrier: "",
+        effective_date: null,
+        expiry_date: null,
+        verified: false,
+        gl_limit: 0,
+        wc_limit: 0,
+        auto_limit: 0,
+        umbrella_limit: 0,
+        storage_path: up.path,
+        file_name: up.name,
+      });
+      toast.success("COI filed", {
+        description:
+          "On record and in the File Room. Add the dates and verify it to clear the gate.",
+      });
+    } finally {
+      setQuickFiling(false);
+    }
+  };
+
   // Lien waiver add form.
   const [wType, setWType] = useState<LienWaiverRow["waiver_type"]>("conditional_progress");
   const [wThrough, setWThrough] = useState("");
@@ -204,9 +244,26 @@ export function SubcontractCompliance({
         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
           Compliance
         </div>
-        <div className={`inline-flex items-center gap-1.5 text-xs font-medium ${ui.tone}`}>
-          <StatusIcon className="h-4 w-4" />
-          {ui.label}
+        <div className="flex items-center gap-3">
+          <label className="inline-flex cursor-pointer items-center gap-1 text-xs text-accent hover:underline">
+            <Upload className="h-3.5 w-3.5" />
+            {quickFiling ? "Filing…" : "Upload COI"}
+            <input
+              type="file"
+              accept="application/pdf,image/*"
+              className="hidden"
+              disabled={quickFiling}
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (f) await quickFileCoi(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <div className={`inline-flex items-center gap-1.5 text-xs font-medium ${ui.tone}`}>
+            <StatusIcon className="h-4 w-4" />
+            {ui.label}
+          </div>
         </div>
       </div>
       {!gatingEnabled ? (
@@ -215,7 +272,7 @@ export function SubcontractCompliance({
         </p>
       ) : !cleared || openWaivers.length === 0 ? (
         <p className="mt-1 text-[11px] text-danger">
-          Payment is blocked until{" "}
+          Pay apps can&apos;t be approved for payment until{" "}
           {[
             !cleared ? "a valid COI is on file" : null,
             openWaivers.length === 0 ? "a lien waiver is collected" : null,
@@ -377,9 +434,16 @@ export function SubcontractCompliance({
                     <span className="ml-2 text-muted-foreground">through {w.through_date}</span>
                   ) : null}
                   {w.payment_id ? (
-                    <span className="ml-2 text-success">· applied</span>
+                    <span className="ml-2 text-success">
+                      {(() => {
+                        const p = paymentById.get(w.payment_id);
+                        return p
+                          ? `· attached to pay app ${p.payment_date} (${fmtUSD(p.amount)})`
+                          : "· attached to a pay app";
+                      })()}
+                    </span>
                   ) : (
-                    <span className="ml-2 text-accent">· on file</span>
+                    <span className="ml-2 text-accent">· on file — not attached yet</span>
                   )}
                 </span>
                 <span className="flex items-center gap-2">

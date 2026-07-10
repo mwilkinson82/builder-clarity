@@ -111,3 +111,27 @@ export function canPaySubcontract(input: PaymentGateInput): PaymentGateResult {
   }
   return { allowed: blockers.length === 0, blockers };
 }
+
+export interface ApprovalGateInput {
+  gatingEnabled: boolean;
+  insuranceStatus: InsuranceStatus;
+  // Whether a lien waiver is attached to THIS pay app (lien_waivers.payment_id
+  // pointing at it) — not merely somewhere in the sub's on-file pool.
+  hasAttachedWaiver: boolean;
+}
+
+// Can this pay app move forward to APPROVED (and on to paid)? Field request
+// 2026-07-10: a draft pay app can be logged with nothing on file, but it can't
+// be APPROVED for payment until its lien waiver is attached to the payment
+// record and the sub's insurance is verified. Gating off → always allowed.
+export function canApproveSubPayment(input: ApprovalGateInput): PaymentGateResult {
+  if (!input.gatingEnabled) return { allowed: true, blockers: [] };
+  const blockers: string[] = [];
+  if (!insuranceClears(input.insuranceStatus)) {
+    blockers.push(insuranceBlockerMessage(input.insuranceStatus));
+  }
+  if (!input.hasAttachedWaiver) {
+    blockers.push("No lien waiver is attached to this pay app.");
+  }
+  return { allowed: blockers.length === 0, blockers };
+}
