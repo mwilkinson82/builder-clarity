@@ -48,7 +48,19 @@ export interface CardPayment {
   // Non-empty when this pay app was paid despite a failing compliance gate
   // (field request 2026-07-10) — surfaced on the row so the override is visible.
   compliance_override_reason?: string;
+  // How it was paid (field request 2026-07-10, mirrors cost #273): method +
+  // the check#/wire confirmation (reference), shown on the paid row.
+  payment_method?: string;
+  reference?: string;
 }
+
+const SUB_PAY_METHOD_LABEL: Record<string, string> = {
+  wire: "Wire",
+  check: "Check",
+  card: "Card",
+  ach: "ACH",
+  other: "Other",
+};
 // A saved explicit split row for one of this sub's payments.
 export interface CardPaymentSplit {
   id: string;
@@ -258,6 +270,9 @@ interface CardProps {
   ) => void;
   onUpdatePayment: (id: string, edit: PaymentEdit) => void;
   onSetPaymentStage: (id: string, stage: "approved" | "paid") => void;
+  // Marking paid opens a "how paid" dialog in the workspace (field request
+  // 2026-07-10) — method/check#/date, and the override path if the gate blocks.
+  onMarkPaid: (payment: CardPayment) => void;
   onRemovePayment: (id: string) => void;
   // Explicit per-payment cost-code splits (field request 2026-07-09): saved
   // rows per payment, and the save handler (empty rows = reset to automatic).
@@ -302,6 +317,7 @@ export function SubcontractCard({
   onPay,
   onUpdatePayment,
   onSetPaymentStage,
+  onMarkPaid,
   onRemovePayment,
   paymentSplits,
   onSaveSplit,
@@ -866,6 +882,15 @@ export function SubcontractCard({
                           ⚠ Paid without compliance — {p.compliance_override_reason}
                         </span>
                       ) : null}
+                      {p.status === "paid" && (p.payment_method || p.reference) ? (
+                        <span className="text-[11px] text-success">
+                          Paid
+                          {p.payment_method
+                            ? ` by ${SUB_PAY_METHOD_LABEL[p.payment_method] ?? p.payment_method}`
+                            : ""}
+                          {p.reference ? ` · ${p.reference}` : ""}
+                        </span>
+                      ) : null}
                       <span className="flex items-center gap-3">
                         {p.status === "draft" ? (
                           <button
@@ -880,7 +905,7 @@ export function SubcontractCard({
                           <button
                             type="button"
                             className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
-                            onClick={() => onSetPaymentStage(p.id, "paid")}
+                            onClick={() => onMarkPaid(p)}
                           >
                             Mark paid
                           </button>

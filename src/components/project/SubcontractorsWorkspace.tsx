@@ -67,6 +67,7 @@ import {
   updateSubcontractPayment,
 } from "@/lib/subcontracts.functions";
 import { summarizeSubPayments } from "@/lib/subcontract-budget";
+import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { supabase } from "@/integrations/supabase/client";
 
 interface BucketOption {
@@ -412,12 +413,37 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     setOverridePrompt(null);
     setOverrideReason("");
   };
+  // "How paid" capture (field request 2026-07-10, mirrors cost #273): marking a
+  // pay app paid opens this dialog for method/check#/date. The details persist
+  // through an override retry (the override dialog reuses payDraft), so paying
+  // past the gate still records how it was paid.
+  const [payDialog, setPayDialog] = useState<CardPayment | null>(null);
+  const [payDraft, setPayDraft] = useState<{
+    payment_method: string;
+    payment_reference: string;
+    paid_date: string;
+  }>({ payment_method: "check", payment_reference: "", paid_date: today() });
+  const openPayDialog = (payment: CardPayment) => {
+    setPayDraft({
+      payment_method: "check",
+      payment_reference: "",
+      paid_date: payment.payment_date || today(),
+    });
+    setPayDialog(payment);
+  };
   const setPayStage = useMutation({
-    mutationFn: (input: { id: string; status: "approved" | "paid"; override_reason?: string }) =>
-      setPayStatusFn({ data: input }),
+    mutationFn: (input: {
+      id: string;
+      status: "approved" | "paid";
+      override_reason?: string;
+      payment_method?: string;
+      payment_reference?: string;
+      paid_date?: string;
+    }) => setPayStatusFn({ data: input }),
     onSuccess: (row) => {
       invalidate();
       closeOverride();
+      setPayDialog(null);
       if (row.compliance_override_reason) {
         toast.success(
           row.status === "paid"
@@ -445,7 +471,9 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
         setOverridePrompt({
           id: variables.id,
           status: variables.status,
-          blockers: blockers.trim(),
+          // Strip the sentence's trailing period so it reads cleanly before the
+          // template's own "." (avoids "...this pay app.. You can override").
+          blockers: blockers.trim().replace(/\.\s*$/, ""),
         });
         return;
       }
@@ -791,6 +819,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               }
               onUpdatePayment={(id, edit) => updatePayment.mutate({ id, edit })}
               onSetPaymentStage={(id, stage) => setPayStage.mutate({ id, status: stage })}
+              onMarkPaid={(payment) => openPayDialog(payment)}
               onRemovePayment={(id) => removePayment.mutate(id)}
               paymentSplits={project.payment_allocations.filter(
                 (split) => split.subcontract_id === sub.id,
@@ -898,10 +927,70 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
                   id: overridePrompt.id,
                   status: overridePrompt.status,
                   override_reason: overrideReason.trim(),
+                  // Carry the how-paid details captured before the block so the
+                  // overridden payment still records method/check#/date.
+                  ...(overridePrompt.status === "paid" ? payDraft : {}),
                 })
               }
             >
               Override &amp; {overridePrompt?.status === "paid" ? "mark paid" : "approve"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* How paid (field request 2026-07-10, mirrors cost #273) */}
+      <Dialog open={payDialog !== null} onOpenChange={(open) => !open && setPayDialog(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-2xl">Mark pay app paid</DialogTitle>
+            <DialogDescription>
+              {payDialog ? `${fmtUSD(payDialog.amount)} — record how it was paid.` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2 sm:grid-cols-3">
+            <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Date paid
+              <Input
+                type="date"
+                value={payDraft.paid_date}
+                onChange={(e) => setPayDraft({ ...payDraft, paid_date: e.target.value || today() })}
+              />
+            </label>
+            <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              How paid
+              <select
+                value={payDraft.payment_method}
+                onChange={(e) => setPayDraft({ ...payDraft, payment_method: e.target.value })}
+                className="h-9 w-full rounded-md border border-hairline bg-surface px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+              >
+                <option value="wire">Wire</option>
+                <option value="check">Check</option>
+                <option value="card">Card</option>
+                <option value="ach">ACH</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Check # / reference
+              <Input
+                value={payDraft.payment_reference}
+                placeholder="Check #, wire confirmation, ACH trace"
+                onChange={(e) => setPayDraft({ ...payDraft, payment_reference: e.target.value })}
+              />
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPayDialog(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={setPayStage.isPending}
+              onClick={() =>
+                payDialog && setPayStage.mutate({ id: payDialog.id, status: "paid", ...payDraft })
+              }
+            >
+              Mark paid
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -89,6 +89,10 @@ export interface SubcontractPaymentRow {
   notes: string;
   status: SubPaymentStatus;
   approved_at: string | null;
+  // How this pay app was paid (field request 2026-07-10, mirrors cost #273):
+  // method wire/check/card/ach/other; the check#/wire confirmation lives on
+  // `reference`; the date paid on `payment_date`.
+  payment_method: string;
   // Compliance override (field request 2026-07-10, Marshall-approved): a
   // non-empty reason means this pay app was paid despite a failing lien-waiver/
   // insurance gate. Audited — who/when live on overridden_by/at (server-only).
@@ -178,6 +182,7 @@ const normalizePayment = (row: Record<string, unknown>): SubcontractPaymentRow =
   notes: str(row.notes),
   status: str(row.status, "paid") as SubPaymentStatus,
   approved_at: (row.approved_at as string | null) ?? null,
+  payment_method: str(row.payment_method),
   compliance_override_reason: str(row.compliance_override_reason),
   compliance_overridden_at: (row.compliance_overridden_at as string | null) ?? null,
 });
@@ -680,6 +685,9 @@ const STAGES_NOT_ENABLED =
 // logging the override, so a missing column surfaces a clear "not enabled yet".
 const isMissingOverrideColumn = (error: DynamicSupabaseError | null) =>
   /compliance_override/i.test(error?.message ?? "");
+// The payment_method column ships in the sub-payment-method migration.
+const isMissingPaymentMethodColumn = (error: DynamicSupabaseError | null) =>
+  /payment_method/i.test(error?.message ?? "");
 const OVERRIDE_NOT_ENABLED =
   "The compliance override isn't enabled yet (database update pending) — attach the waiver/COI, or try the override again once the update lands.";
 
@@ -792,6 +800,11 @@ export const setSubcontractPaymentStatus = createServerFn({ method: "POST" })
         // A typed reason overrides a failing gate (Marshall-approved 2026-07-10)
         // — deliberate + audited. Absent → the gate blocks as before.
         override_reason: z.string().max(500).optional(),
+        // How it was paid (field request 2026-07-10, mirrors cost #273) — only
+        // meaningful on the 'paid' transition. reference = check#/wire conf.
+        payment_method: z.string().max(40).optional(),
+        payment_reference: z.string().max(200).optional(),
+        paid_date: z.string().nullable().optional(),
       })
       .parse(input),
   )
@@ -824,23 +837,42 @@ export const setSubcontractPaymentStatus = createServerFn({ method: "POST" })
     }
 
     const now = new Date().toISOString();
-    const updateRes = await dynamicTable(context.supabase, "subcontract_payments")
-      .update({
-        status: data.status,
-        // First pass through approval stamps it — a draft marked straight to
-        // paid still records when the spend was approved.
-        ...(current.approved_at ? {} : { approved_at: now }),
-        ...(overriding
-          ? {
-              compliance_override_reason: reason,
-              compliance_overridden_by: context.userId,
-              compliance_overridden_at: now,
-            }
-          : {}),
-      })
+    // "How paid" details ride along on the paid transition (field request
+    // 2026-07-10). Only overwrite fields the caller actually supplied.
+    const paymentDetails: Record<string, unknown> = {};
+    if (data.status === "paid") {
+      if (data.payment_method !== undefined) paymentDetails.payment_method = data.payment_method;
+      if (data.payment_reference !== undefined) paymentDetails.reference = data.payment_reference;
+      if (data.paid_date) paymentDetails.payment_date = data.paid_date;
+    }
+    const core = {
+      status: data.status,
+      // First pass through approval stamps it — a draft marked straight to
+      // paid still records when the spend was approved.
+      ...(current.approved_at ? {} : { approved_at: now }),
+      ...(overriding
+        ? {
+            compliance_override_reason: reason,
+            compliance_overridden_by: context.userId,
+            compliance_overridden_at: now,
+          }
+        : {}),
+    };
+    let updateRes = await dynamicTable(context.supabase, "subcontract_payments")
+      .update({ ...core, ...paymentDetails })
       .eq("id", data.id)
       .select("*")
       .single();
+    // Pre-migration: payment_method column not there yet — retry without it so
+    // the transition (and the always-present reference/payment_date) still land.
+    if (updateRes.error && isMissingPaymentMethodColumn(updateRes.error)) {
+      const { payment_method: _pm, ...detailsNoMethod } = paymentDetails;
+      updateRes = await dynamicTable(context.supabase, "subcontract_payments")
+        .update({ ...core, ...detailsNoMethod })
+        .eq("id", data.id)
+        .select("*")
+        .single();
+    }
     if (updateRes.error) {
       if (overriding && isMissingOverrideColumn(updateRes.error))
         throw new Error(OVERRIDE_NOT_ENABLED);
