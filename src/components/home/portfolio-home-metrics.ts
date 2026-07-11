@@ -62,11 +62,14 @@ function isPast(value: string | null): boolean {
 }
 
 // ---- classification (mirrors index.tsx statusFor / scheduleFor / dailyReportFor)
-function riskLabel(originalPct: number, indicatedPct: number): "At Risk" | "Watch" | "Aligned" {
-  const erosion = originalPct - indicatedPct;
-  if (erosion >= 5) return "At Risk";
-  if (erosion >= 2) return "Watch";
-  return "Aligned";
+// A job "needs attention" on the exact same terms its own Financial Dashboard uses
+// (ProjectDashboard.needsAttention): any logged warning, OR gross profit now
+// forecast below the signed deal. Keeping this identical is what stops the
+// portfolio from reading "On plan" while the project's own page reads "At risk" —
+// the drift Darian flagged. It is NOT a GP-erosion threshold: a job forecasting
+// ABOVE signed can still need attention because it carries an unreserved warning.
+function needsAttention(p: HomeProject): boolean {
+  return p.warning_count > 0 || p.gp_at_risk > 0;
 }
 function scheduleSlipped(weeks: number, riskCount: number): "Slipped" | "Watch" | "On plan" {
   const slip = Math.max(0, weeks);
@@ -83,15 +86,16 @@ function dailyLabel(count: number, daysSince: number | null): "None" | "Stale" |
 
 // ---- worklist row -----------------------------------------------------------
 function toJob(p: HomeProject): WorklistJob {
-  const risk = riskLabel(p.original_gp_pct, p.indicated_gp_pct);
+  const attention = needsAttention(p);
   const sched = scheduleSlipped(p.schedule_variance_weeks, p.schedule_risk_count);
   const daily = dailyLabel(p.daily_report_count, p.days_since_daily_report);
   const overdue = p.overdue_decision_count > 0;
-  const atRisk = risk === "At Risk" || risk === "Watch" || sched === "Slipped";
+  const openHolds = p.risk_allocated;
+  const atRisk = attention || sched === "Slipped" || sched === "Watch";
 
   let tag = "ON PLAN";
   let tone: WorklistJob["tone"] = "good";
-  if (risk === "At Risk") {
+  if (attention) {
     tag = "AT RISK";
     tone = "crit";
   } else if (overdue) {
@@ -106,20 +110,33 @@ function toJob(p: HomeProject): WorklistJob {
   } else if (daily === "None") {
     tag = "NO DAILY";
     tone = "warn";
-  } else if (risk === "Watch" || sched === "Watch") {
+  } else if (sched === "Watch") {
     tag = "WATCH";
     tone = "warn";
   }
 
+  // Open holds lead the line: a job carrying reserves against live risk must say
+  // so even when its GP is forecasting above signed (the old copy printed the flat
+  // lie "no open holds" for exactly that case). GP shows as "at risk" only when
+  // below signed; above signed is called out as upside, not hidden.
   const bits: string[] = [];
+  if (openHolds > 0) bits.push(`Open holds ${compactUSD(openHolds)}`);
   if (p.gp_at_risk > 0) bits.push(`GP at risk ${compactUSD(p.gp_at_risk)}`);
+  else if (p.gp_at_risk < 0) bits.push("forecasting above signed");
   if (overdue) bits.push(plural(p.overdue_decision_count, "overdue decision"));
   if (sched === "Slipped") bits.push(`${p.schedule_variance_weeks} wk behind`);
   if (daily === "None") bits.push("no daily log filed");
   else if (daily === "Stale") bits.push("daily log stale");
   const desc = bits.slice(0, 2).join(" · ") || "On schedule · no open holds";
 
-  const value = p.gp_at_risk > 0 ? compactUSD(p.gp_at_risk) : tone === "good" ? "On plan" : "";
+  const value =
+    openHolds > 0
+      ? compactUSD(openHolds)
+      : p.gp_at_risk > 0
+        ? compactUSD(p.gp_at_risk)
+        : tone === "good"
+          ? "On plan"
+          : "";
 
   return {
     id: p.id,
@@ -171,13 +188,18 @@ export function buildHomeMetrics(
   // ---- project aggregates (mirror buildPortfolioTotals) ----
   const sum = (fn: (p: HomeProject) => number) => openProjects.reduce((t, p) => t + fn(p), 0);
   const indicatedGP = sum((p) => p.indicated_gp);
-  const gpAtRisk = sum((p) => p.gp_at_risk);
+  // Company-wide open holds: every dollar reserved against a live risk (E-Hold +
+  // C-Hold remaining), summed across open jobs. Always ≥ 0 and never nets away —
+  // this is the number that was simply missing from the overview.
+  const openHoldsTotal = sum((p) => p.risk_allocated);
+  // GP genuinely at risk = only the jobs forecasting BELOW signed. Summing the raw
+  // signed delta let one job's upside cancel another's erosion and even go negative
+  // ("$-21K at risk"), which read as nonsense and buried real holds. Sign-aware.
+  const gpAtRiskExposed = sum((p) => Math.max(0, p.gp_at_risk));
   const forecastedContract = sum((p) => p.forecasted_final_contract);
   const overdueActions = sum((p) => p.overdue_decision_count);
   const projectCount = openProjects.length;
-  const atRiskCount = openProjects.filter(
-    (p) => riskLabel(p.original_gp_pct, p.indicated_gp_pct) === "At Risk",
-  ).length;
+  const atRiskCount = openProjects.filter(needsAttention).length;
   const slippedCount = openProjects.filter(
     (p) => p.schedule_variance_weeks > 0 || p.schedule_risk_count > 0,
   ).length;
@@ -186,8 +208,8 @@ export function buildHomeMetrics(
     (p) => dailyLabel(p.daily_report_count, p.days_since_daily_report) !== "Current",
   ).length;
   const indicatedPct = forecastedContract ? (indicatedGP / forecastedContract) * 100 : 0;
-  // Share of the company's indicated GP that's exposed (matches the design's read).
-  const gpAtRiskPct = indicatedGP > 0 ? (gpAtRisk / indicatedGP) * 100 : 0;
+  // Share of the company's indicated GP that's forecasting below signed.
+  const gpAtRiskPct = indicatedGP > 0 ? (gpAtRiskExposed / indicatedGP) * 100 : 0;
 
   // ---- CRM aggregates (mirror buildPortfolioCrmTotals) ----
   const activeOpps = opportunities.filter(
@@ -267,15 +289,12 @@ export function buildHomeMetrics(
     { label: "Jobs at risk", value: String(atRiskCount), valueTone: "crit" },
     { label: "Overdue actions", value: String(overdueActions), valueTone: "crit" },
   ];
-  const pmAttention = openProjects.filter((p) => {
-    const risk = riskLabel(p.original_gp_pct, p.indicated_gp_pct);
-    return (
-      risk === "At Risk" ||
-      risk === "Watch" ||
+  const pmAttention = openProjects.filter(
+    (p) =>
+      needsAttention(p) ||
       p.overdue_decision_count > 0 ||
-      dailyLabel(p.daily_report_count, p.days_since_daily_report) !== "Current"
-    );
-  }).length;
+      dailyLabel(p.daily_report_count, p.days_since_daily_report) !== "Current",
+  ).length;
   const pmStats: HeroStat[] = [
     { label: "Your jobs", value: String(projectCount) },
     { label: "At risk", value: String(atRiskCount), valueTone: "crit" },
@@ -294,9 +313,17 @@ export function buildHomeMetrics(
       variant: "dark",
     },
     {
+      key: "open-holds",
+      label: "Open holds",
+      value: compactUSD(openHoldsTotal),
+      sub: "Held against live risk",
+      subTone: "muted",
+      variant: "dark",
+    },
+    {
       key: "gp-at-risk",
       label: "GP at Risk",
-      value: compactUSD(gpAtRisk),
+      value: compactUSD(gpAtRiskExposed),
       sub: pct(gpAtRiskPct),
       subTone: "crit",
       variant: "dark",

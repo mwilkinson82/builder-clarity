@@ -114,9 +114,13 @@ function PortfolioIndex() {
   return hasTab ? <PortfolioPage /> : <PortfolioHome />;
 }
 
-function statusFor(originalPct: number, indicatedPct: number) {
+// Mirrors ProjectDashboard.needsAttention (warning_count > 0 || gp_at_risk > 0) so a
+// job's portfolio label never contradicts its own Financial Dashboard. A job can be
+// forecasting above signed GP and still be "At Risk" because it carries an
+// unreserved warning — that binary is intentional and matches the project page.
+function statusFor(originalPct: number, indicatedPct: number, warningCount = 0, gpAtRisk = 0) {
   const erosion = originalPct - indicatedPct;
-  if (erosion >= 5)
+  if (warningCount > 0 || gpAtRisk > 0 || erosion >= 5)
     return { label: "At Risk", className: "border-danger/40 bg-danger/10 text-danger" };
   if (erosion >= 2)
     return { label: "Watch", className: "border-warning/40 bg-warning/10 text-warning" };
@@ -257,7 +261,12 @@ function PortfolioPage() {
     const filtered = projects.filter((p) => {
       const manager = p.project_manager.trim();
       const company = p.organization_name.trim();
-      const status = statusFor(p.original_gp_pct, p.indicated_gp_pct).label;
+      const status = statusFor(
+        p.original_gp_pct,
+        p.indicated_gp_pct,
+        p.warning_count,
+        p.gp_at_risk,
+      ).label;
       const schedule = scheduleFor(p.schedule_variance_weeks, p.schedule_risk_count).label;
       const daily = dailyReportFor(p.daily_report_count, p.days_since_daily_report).label;
       const reviewState =
@@ -799,7 +808,12 @@ function PortfolioProjectLedger({
       ) : (
         <div className="divide-y divide-hairline">
           {projects.map((project) => {
-            const status = statusFor(project.original_gp_pct, project.indicated_gp_pct);
+            const status = statusFor(
+              project.original_gp_pct,
+              project.indicated_gp_pct,
+              project.warning_count,
+              project.gp_at_risk,
+            );
             const schedule = scheduleFor(
               project.schedule_variance_weeks,
               project.schedule_risk_count,

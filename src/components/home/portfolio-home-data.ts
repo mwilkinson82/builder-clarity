@@ -30,7 +30,7 @@ export type PipelineStage = {
 };
 
 export type PostureTile = {
-  key: "indicated-gp" | "gp-at-risk" | "active" | "at-risk" | "overdue";
+  key: "indicated-gp" | "open-holds" | "gp-at-risk" | "active" | "at-risk" | "overdue";
   label: string;
   value: string;
   sub?: string;
