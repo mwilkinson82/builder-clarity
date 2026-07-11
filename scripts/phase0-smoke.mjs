@@ -243,15 +243,15 @@ await expectContains(
 await expectContains(
   "src/styles.css",
   [
-    // ALP house skin (AOS-DESIGN-SYSTEM.md §2): warm clay accent for
-    // active/selected states, signal-orange focus ring. Orange is rationed to
+    // ALP house skin, Brand Kit v2 (docs/THEMING.md): warm clay accent for
+    // active/selected states, coral signal focus ring. Coral is rationed to
     // the Button variant="signal" CTA, never the global accent.
-    /--accent:\s*#d97757/,
-    /--ring:\s*rgb\(247 106 22 \/ 0\.45\)/,
-    /--signal:\s*#f76a16/,
-    /--ring:\s*rgb\(247 106 22 \/ 0\.55\)/,
+    /--accent:\s*#c36e4f/,
+    /--ring:\s*rgb\(217 119 87 \/ 0\.5\)/,
+    /--signal:\s*#d97757/,
+    /--ring:\s*rgb\(217 119 87 \/ 0\.55\)/,
   ],
-  "global highlight accent uses the ALP house palette (clay accent, signal-orange focus)",
+  "global highlight accent uses the ALP house v2 palette (clay accent, coral signal focus)",
 );
 
 await expectContains(
@@ -681,15 +681,15 @@ await expectContains(
     /bg-surface-elevated\/95 shadow-\[0_10px_30px_rgb/,
     // Grouped vertical rail (labels are the default; no icon-only collapse).
     /lg:grid-cols-\[248px_minmax\(0,1fr\)\]/,
-    // Rail glow retargeted off the pre-reskin teal onto the --accent (clay) token.
-    /PROJECT_NAV_RAIL_CLASS[\s\S]*bg-accent\/\[0\.07\][\s\S]*shadow-\[0_18px_42px_color-mix\(in_srgb,var\(--color-accent\)/,
+    // v2 floating rail: rounded paper card with the one soft wide glow.
+    /PROJECT_NAV_RAIL_CLASS[\s\S]*rounded-\[15px\][\s\S]*shadow-nav/,
     /projectNavItemClass/,
     // Detail sub-line turns the rail into a status board; alarming ones go danger.
     /projectNavDetailClass/,
     /const isActive = activeProjectTab === item\.value/,
     // Active fill rides Radix data-state so it overrides the shadcn TabsTrigger
-    // base (otherwise the active tab paints bg-background, not clay).
-    /data-\[state=active\]:bg-accent data-\[state=active\]:text-accent-foreground/,
+    // base (otherwise the active tab paints bg-background, not the v2 paper2).
+    /data-\[state=active\]:bg-secondary data-\[state=active\]:text-foreground/,
     // Persistent "you are here" section title (group · label) atop the stage.
     /\{activeNavGroup\.label\} · \{activeNavItem\.label\}/,
     /className="eyebrow px-1/,

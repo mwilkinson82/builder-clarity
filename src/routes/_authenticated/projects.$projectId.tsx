@@ -11,6 +11,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AppFooter } from "@/components/layout/AppFooter";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -282,41 +283,41 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
   component: ProjectRoute,
 });
 
-// Warm-clay glow tuned to the shipped skin. Shadows reference the `--accent`
-// (clay) and `--foreground` (ink) tokens via color-mix — no hardcoded hex, no
-// leftover pre-reskin teal (was rgb(27 122 110 …)).
+// v2 floating rail (docs/THEMING.md structural signatures): a rounded paper
+// card that floats on the page wash — radius 15, hairline border, one soft
+// wide glow (`shadow-nav`). Structure is unchanged; this is chrome only.
 const PROJECT_NAV_RAIL_CLASS =
-  "flex h-auto w-full items-stretch justify-start gap-4 overflow-x-auto rounded-lg border border-accent/25 bg-accent/[0.07] p-2 shadow-[0_18px_42px_color-mix(in_srgb,var(--color-accent)_16%,transparent),0_4px_12px_color-mix(in_srgb,var(--color-foreground)_10%,transparent)] ring-1 ring-accent/15 backdrop-blur-sm lg:flex-col lg:gap-5 lg:overflow-visible";
+  "flex h-auto w-full items-stretch justify-start gap-4 overflow-x-auto rounded-[15px] border border-hairline bg-background p-3 shadow-nav lg:flex-col lg:gap-5 lg:overflow-visible";
 
 // Active styling rides Radix's `data-[state=active]` rather than a JS flag: the
 // shadcn TabsTrigger base sets `data-[state=active]:bg-background/text-foreground`,
-// so a plain `bg-accent` loses the cascade and the active tab paints paper. Same
-// variant → tailwind-merge keeps ours (it wins as the later class). The CRM item
-// is an <a> with no data-state, so it always reads inactive.
+// so a plain `bg-secondary` loses the cascade and the active tab paints paper.
+// Same variant → tailwind-merge keeps ours (it wins as the later class). The CRM
+// item is an <a> with no data-state, so it always reads inactive.
+// v2 active = quiet paper2 fill + ink text (+ clay dot from the indicator
+// span), NOT a clay fill — the clay stays a small accent.
 function projectNavItemClass() {
   return cn(
-    "group relative flex min-w-[168px] items-start gap-2.5 overflow-hidden rounded-md border px-3 py-2.5 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:min-w-0",
-    "border-transparent bg-card/45 text-muted-foreground hover:border-accent/35 hover:bg-card/85 hover:text-foreground hover:shadow-sm",
-    "data-[state=active]:border-accent/70 data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-[0_12px_26px_color-mix(in_srgb,var(--color-accent)_30%,transparent)] data-[state=active]:ring-1 data-[state=active]:ring-accent/35 data-[state=active]:hover:bg-accent data-[state=active]:hover:text-accent-foreground",
+    "group relative flex min-w-[168px] items-start gap-2.5 overflow-hidden rounded-lg border px-3 py-2 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:min-w-0",
+    "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+    "data-[state=active]:border-transparent data-[state=active]:bg-secondary data-[state=active]:text-foreground data-[state=active]:hover:bg-secondary data-[state=active]:hover:text-foreground",
   );
 }
 
 function projectNavIconClass({ active }: { active?: boolean }) {
   return cn(
     "mt-0.5 h-4 w-4 shrink-0 transition",
-    active
-      ? "text-accent-foreground drop-shadow-sm"
-      : "text-muted-foreground group-hover:text-clay",
+    active ? "text-clay" : "text-muted-foreground group-hover:text-clay",
   );
 }
 
 // Detail sub-line under each label. Alarming counts (e.g. live risk exposures,
-// a slipped schedule) go `text-danger`; on the filled-clay active item the
-// sub-line stays light so it reads against the accent fill.
+// a slipped schedule) go `text-danger` — these are the rail's status hints.
 function projectNavDetailClass({ active, alert }: { active?: boolean; alert?: boolean }) {
   return cn(
     "mt-0.5 block truncate font-mono text-[11px] leading-tight",
-    active ? "text-accent-foreground/85" : alert ? "text-danger" : "text-muted-foreground",
+    alert ? "text-danger" : "text-muted-foreground",
+    active && !alert ? "text-foreground/70" : "",
   );
 }
 
@@ -2273,7 +2274,7 @@ function ProjectPage() {
   ];
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-background text-foreground">
+    <div className="flex min-h-screen flex-col overflow-x-hidden bg-wash text-foreground">
       <header className="relative border-b border-hairline bg-surface-elevated/95 shadow-[0_10px_30px_rgb(31_28_23_/_0.05)]">
         <div className="absolute inset-0 grid-bg opacity-25" />
         <div className="relative mx-auto flex max-w-[1760px] flex-col gap-2 px-4 py-2.5 sm:px-6 lg:px-8">
@@ -2541,7 +2542,7 @@ function ProjectPage() {
         </div>
       </header>
 
-      <main className="mx-auto w-full min-w-0 max-w-[1640px] px-4 py-6 sm:px-6 lg:px-8">
+      <main className="mx-auto w-full min-w-0 max-w-[1640px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
         <Tabs
           value={activeProjectTab}
           onValueChange={setProjectTab}
@@ -2582,7 +2583,7 @@ function ProjectPage() {
                           {isActive && (
                             <span
                               aria-hidden="true"
-                              className="absolute inset-y-2 left-0.5 w-1 rounded-full bg-accent-foreground/90"
+                              className="absolute right-2.5 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-clay"
                             />
                           )}
                           <Icon className={projectNavIconClass({ active: isActive })} />
@@ -3275,6 +3276,13 @@ function ProjectPage() {
           </AlertDialogContent>
         </AlertDialog>
       </main>
+      <AppFooter
+        context={
+          lastReviewDays !== null
+            ? `Financial IOR · Reviewed ${lastReviewDays}d ago`
+            : `Financial IOR · ${project.name}`
+        }
+      />
     </div>
   );
 }
