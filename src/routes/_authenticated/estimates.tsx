@@ -2,19 +2,8 @@ import { createFileRoute, Link, Outlet, useLocation, useNavigate } from "@tansta
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
-import {
-  ArrowLeft,
-  Calculator,
-  FileSpreadsheet,
-  FolderOpen,
-  Library,
-  Plus,
-  Search,
-  Trash2,
-  Users,
-} from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -41,6 +30,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AppFooter } from "@/components/layout/AppFooter";
+import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import {
   createEstimate,
   deleteEstimate,
@@ -50,9 +41,11 @@ import {
   updateEstimate,
   type EstimateFolder,
   type EstimateRow,
+  type EstimateStatus,
 } from "@/lib/estimates.functions";
 import { fmtUSD } from "@/lib/format";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/estimates")({
   ssr: false,
@@ -68,6 +61,11 @@ export const Route = createFileRoute("/_authenticated/estimates")({
   component: EstimatesPage,
 });
 
+// House mono label (v2): 8.5px, .12em tracking, muted. Reused for KPI labels and
+// table headers so the two read as one system.
+const MONO_LABEL =
+  "font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground";
+
 function shortDate(value: string) {
   if (!value) return "";
   const date = new Date(value);
@@ -75,9 +73,88 @@ function shortDate(value: string) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+// Compact serif-figure money for the KPI tiles ($6.5M / $840K). Full dollars go
+// to the footer via fmtUSD; whole-cents in, no float dollars kept.
+function fmtCompactUSD(cents: number) {
+  const dollars = cents / 100;
+  const abs = Math.abs(dollars);
+  if (abs >= 1_000_000) return `$${(dollars / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M`;
+  if (abs >= 1_000) return `$${Math.round(dollars / 1_000)}K`;
+  return fmtUSD(dollars);
+}
+
 type EstimateFolderFilter = "all" | EstimateFolder;
 const folderLabel = (folder: EstimateFolder) =>
   ESTIMATE_FOLDERS.find((item) => item.value === folder)?.label ?? "Sales Process";
+
+// Display-only reconciliation: the enum stays draft/final/awarded/lost; the list
+// shows plain-English labels + a semantic tone (no "Overwatch blue" — Submitted
+// borrows clay, not the info blue from the mock).
+const STATUS_DISPLAY: Record<EstimateStatus, { label: string; className: string }> = {
+  draft: { label: "Draft", className: "text-warning" },
+  final: { label: "Submitted", className: "text-clay" },
+  awarded: { label: "Won", className: "text-success" },
+  lost: { label: "Lost", className: "text-danger" },
+};
+const statusDisplay = (status: EstimateStatus) =>
+  STATUS_DISPLAY[status] ?? { label: status, className: "text-muted-foreground" };
+
+function StatCard({ label, value, tone }: { label: string; value: string; tone?: "good" }) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl border p-3.5",
+        tone === "good" ? "border-success/30 bg-success/5" : "border-hairline bg-surface",
+      )}
+    >
+      <div className={MONO_LABEL}>{label}</div>
+      <div
+        className={cn(
+          "mt-1.5 font-serif text-[22px] leading-none",
+          tone === "good" ? "text-success" : "text-foreground",
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function FolderPill({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors",
+        active
+          ? "border-clay bg-clay/10 text-clay"
+          : "border-hairline bg-surface text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {label}
+      <span className="tabular opacity-70">{count}</span>
+    </button>
+  );
+}
+
+const segmentClass = (active: boolean) =>
+  cn(
+    "whitespace-nowrap rounded-lg px-3.5 py-2 text-[12.5px] font-semibold transition-colors",
+    active
+      ? "bg-primary text-primary-foreground"
+      : "border border-hairline text-foreground hover:bg-muted",
+  );
 
 function EstimatesPage() {
   const location = useLocation();
@@ -120,6 +197,42 @@ function EstimatesPage() {
       counts.set(estimate.folder, (counts.get(estimate.folder) ?? 0) + 1);
     }
     return counts;
+  }, [projectEstimates]);
+
+  // KPI roll-up, all derived client-side from listEstimates (no new server fn):
+  //  • Bid value out  = Σ total_with_markups of estimates still out to bid
+  //    (folder === sales_process — the clean "in play, not won/lost/archived" set)
+  //  • Won this year   = Σ total_with_markups of Won-folder estimates touched this year
+  //  • Win rate        = won ÷ (won + not_won), guarded against ÷0 (null → "—")
+  const kpis = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    let bidValueOutCents = 0;
+    let wonThisYearCents = 0;
+    let wonCount = 0;
+    let notWonCount = 0;
+    for (const estimate of projectEstimates) {
+      if (estimate.folder === "sales_process") {
+        bidValueOutCents += estimate.total_with_markups_cents;
+      }
+      if (estimate.folder === "won") {
+        wonCount += 1;
+        const touched = new Date(estimate.updated_at);
+        if (!Number.isNaN(touched.getTime()) && touched.getFullYear() === currentYear) {
+          wonThisYearCents += estimate.total_with_markups_cents;
+        }
+      }
+      if (estimate.folder === "not_won") {
+        notWonCount += 1;
+      }
+    }
+    const decided = wonCount + notWonCount;
+    const winRate = decided > 0 ? Math.round((wonCount / decided) * 100) : null;
+    return {
+      count: projectEstimates.length,
+      bidValueOutCents,
+      wonThisYearCents,
+      winRate,
+    };
   }, [projectEstimates]);
 
   const visibleEstimates = useMemo(() => {
@@ -191,115 +304,91 @@ function EstimatesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto flex max-w-[1500px] flex-col gap-4 px-6 py-5 lg:px-10">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              <Button asChild variant="ghost" size="icon" title="Back to portfolio">
-                <Link to="/">
-                  <ArrowLeft className="h-4 w-4" />
-                </Link>
-              </Button>
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  {companyName}
-                </p>
-                <h1 className="mt-1 font-serif text-3xl text-foreground">Estimates</h1>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button asChild size="sm" variant="outline" className="gap-1.5">
-                <Link to="/">
-                  <Calculator className="h-3.5 w-3.5" /> Portfolio
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5">
-                <Link to="/estimate-masters">
-                  <FileSpreadsheet className="h-3.5 w-3.5" /> Master Sheets
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5">
-                <Link to="/cost-library">
-                  <Library className="h-3.5 w-3.5" /> Cost Library
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5">
-                <Link to="/team">
-                  <Users className="h-3.5 w-3.5" /> Company
-                </Link>
-              </Button>
-              <Button size="sm" className="gap-1.5" onClick={() => setNewOpen(true)}>
-                <Plus className="h-3.5 w-3.5" /> New Estimate
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <PortfolioTopBar
+        active="estimates"
+        actions={
+          <Button size="sm" className="gap-1.5" onClick={() => setNewOpen(true)}>
+            <Plus className="h-3.5 w-3.5" /> New Estimate
+          </Button>
+        }
+      />
 
-      <main className="mx-auto max-w-[1500px] space-y-5 px-6 py-8 lg:px-10">
-        <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search estimates, folders, projects, opportunities, status, or region"
-              className="pl-9"
+      <main className="mx-auto w-full max-w-[1500px] flex-1 space-y-5 px-6 py-8 lg:px-10">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className={MONO_LABEL}>{companyName}</p>
+            <h1 className="mt-2 font-serif text-3xl text-foreground">Estimates</h1>
+            <p className="mt-1.5 max-w-[60ch] text-sm text-muted-foreground">
+              Manual spreadsheet estimating with the Overwatch cost library — win a bid and hand it
+              straight off to a project.
+            </p>
+          </div>
+          <nav className="flex flex-wrap gap-2" aria-label="Estimating sections">
+            <Link to="/estimates" className={segmentClass(true)}>
+              Estimates
+            </Link>
+            <Link to="/estimate-masters" className={segmentClass(false)}>
+              Master sheets
+            </Link>
+            <Link to="/cost-library" className={segmentClass(false)}>
+              Cost library
+            </Link>
+          </nav>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard label="Estimates" value={String(kpis.count)} />
+          <StatCard label="Bid value out" value={fmtCompactUSD(kpis.bidValueOutCents)} />
+          <StatCard
+            label="Won this year"
+            value={fmtCompactUSD(kpis.wonThisYearCents)}
+            tone="good"
+          />
+          <StatCard label="Win rate" value={kpis.winRate === null ? "—" : `${kpis.winRate}%`} />
+        </div>
+
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search estimates, folders, projects, opportunities, status, or region"
+            className="bg-surface pl-9"
+          />
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <FolderPill
+            label="All"
+            count={projectEstimates.length}
+            active={folderFilter === "all"}
+            onClick={() => setFolderFilter("all")}
+          />
+          {ESTIMATE_FOLDERS.map((folder) => (
+            <FolderPill
+              key={folder.value}
+              label={folder.label}
+              count={folderCounts.get(folder.value) ?? 0}
+              active={folderFilter === folder.value}
+              onClick={() => setFolderFilter(folder.value)}
             />
-          </div>
+          ))}
         </div>
 
-        <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="mt-0.5 rounded-md border border-hairline bg-surface p-2">
-                <FolderOpen className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div>
-                <h2 className="text-sm font-semibold text-foreground">Estimate Folders</h2>
-                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                  Keep active bids, won work, and not-won estimates separated before they become
-                  projects or get cleaned out. Archived keeps a record; Delete permanently removes
-                  it.
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant={folderFilter === "all" ? "default" : "outline"}
-                onClick={() => setFolderFilter("all")}
-              >
-                All ({projectEstimates.length})
-              </Button>
-              {ESTIMATE_FOLDERS.map((folder) => (
-                <Button
-                  key={folder.value}
-                  size="sm"
-                  variant={folderFilter === folder.value ? "default" : "outline"}
-                  onClick={() => setFolderFilter(folder.value)}
-                >
-                  {folder.label} ({folderCounts.get(folder.value) ?? 0})
-                </Button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
+        <div className="overflow-hidden rounded-xl border border-hairline bg-surface">
           <Table className="min-w-[1180px]">
             <TableHeader>
-              <TableRow className="bg-surface [&>th]:whitespace-nowrap">
-                <TableHead>Name</TableHead>
-                <TableHead>Client / Opportunity</TableHead>
-                <TableHead>Folder</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Line Items</TableHead>
-                <TableHead className="text-right">Subtotal</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead>Last Updated</TableHead>
-                <TableHead className="w-[72px] text-right">Actions</TableHead>
+              <TableRow className="bg-muted [&>th]:whitespace-nowrap">
+                <TableHead className={MONO_LABEL}>Name</TableHead>
+                <TableHead className={MONO_LABEL}>Client / Opportunity</TableHead>
+                <TableHead className={MONO_LABEL}>Folder</TableHead>
+                <TableHead className={MONO_LABEL}>Status</TableHead>
+                <TableHead className={cn(MONO_LABEL, "text-right")}>Line Items</TableHead>
+                <TableHead className={cn(MONO_LABEL, "text-right")}>Subtotal</TableHead>
+                <TableHead className={cn(MONO_LABEL, "text-right")}>Total</TableHead>
+                <TableHead className={MONO_LABEL}>Last Updated</TableHead>
+                <TableHead className={cn(MONO_LABEL, "w-[72px] text-right")}>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -332,106 +421,122 @@ function EstimatesPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                visibleEstimates.map((estimate) => (
-                  <TableRow
-                    key={estimate.id}
-                    role="link"
-                    tabIndex={0}
-                    className="cursor-pointer hover:bg-surface/60 [&>td]:py-4"
-                    onClick={() =>
-                      navigate({
-                        to: "/estimates/$estimateId",
-                        params: { estimateId: estimate.id },
-                      })
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
+                visibleEstimates.map((estimate) => {
+                  const status = statusDisplay(estimate.status);
+                  const client = estimate.description?.trim();
+                  const region = estimate.region || "National";
+                  return (
+                    <TableRow
+                      key={estimate.id}
+                      role="link"
+                      tabIndex={0}
+                      className="cursor-pointer [&>td]:py-4"
+                      onClick={() =>
                         navigate({
                           to: "/estimates/$estimateId",
                           params: { estimateId: estimate.id },
-                        });
+                        })
                       }
-                    }}
-                  >
-                    <TableCell>
-                      <div className="font-serif text-lg">{estimate.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {estimate.region || "National"}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {estimate.opportunity_name || estimate.project_name || "-"}
-                    </TableCell>
-                    <TableCell>
-                      <div
-                        onClick={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => event.stopPropagation()}
-                      >
-                        <Select
-                          value={estimate.folder}
-                          onValueChange={(folder) =>
-                            folderMutation.mutate({
-                              id: estimate.id,
-                              folder: folder as EstimateFolder,
-                            })
-                          }
-                          disabled={folderMutation.isPending}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          navigate({
+                            to: "/estimates/$estimateId",
+                            params: { estimateId: estimate.id },
+                          });
+                        }
+                      }}
+                    >
+                      <TableCell>
+                        <div className="font-serif text-base">{estimate.name}</div>
+                        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                          {client ? `${client} · ${region}` : region}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-[12.5px] text-muted-foreground">
+                        {estimate.opportunity_name || estimate.project_name || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <div
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => event.stopPropagation()}
                         >
-                          <SelectTrigger className="h-9 w-[160px]">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {ESTIMATE_FOLDERS.map((folder) => (
-                              <SelectItem key={folder.value} value={folder.value}>
-                                {folder.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="capitalize">
-                        {estimate.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular">
-                      {estimate.line_item_count ?? 0}
-                    </TableCell>
-                    <TableCell className="text-right tabular">
-                      {fmtUSD(estimate.subtotal_cents / 100)}
-                    </TableCell>
-                    <TableCell className="text-right font-medium tabular">
-                      {fmtUSD(estimate.total_with_markups_cents / 100)}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {shortDate(estimate.updated_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-muted-foreground hover:text-danger"
-                        title="Delete estimate"
-                        aria-label="Delete estimate"
-                        disabled={deleteMutation.isPending}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setDeleteTarget(estimate);
-                        }}
-                        onKeyDown={(event) => event.stopPropagation()}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
+                          <Select
+                            value={estimate.folder}
+                            onValueChange={(folder) =>
+                              folderMutation.mutate({
+                                id: estimate.id,
+                                folder: folder as EstimateFolder,
+                              })
+                            }
+                            disabled={folderMutation.isPending}
+                          >
+                            <SelectTrigger className="h-9 w-[160px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ESTIMATE_FOLDERS.map((folder) => (
+                                <SelectItem key={folder.value} value={folder.value}>
+                                  {folder.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={cn(
+                            "inline-flex items-center rounded-md border border-current px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.05em]",
+                            status.className,
+                          )}
+                        >
+                          {status.label}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right tabular text-muted-foreground">
+                        {estimate.line_item_count ?? 0}
+                      </TableCell>
+                      <TableCell className="text-right font-serif text-sm tabular">
+                        {fmtUSD(estimate.subtotal_cents / 100)}
+                      </TableCell>
+                      <TableCell className="text-right font-serif text-[15px] font-semibold tabular">
+                        {fmtUSD(estimate.total_with_markups_cents / 100)}
+                      </TableCell>
+                      <TableCell className="text-[12px] text-muted-foreground">
+                        {shortDate(estimate.updated_at)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-muted-foreground hover:text-danger"
+                          title="Delete estimate"
+                          aria-label="Delete estimate"
+                          disabled={deleteMutation.isPending}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setDeleteTarget(estimate);
+                          }}
+                          onKeyDown={(event) => event.stopPropagation()}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>
         </div>
       </main>
+
+      <AppFooter
+        context={`Estimates · ${projectEstimates.length} · ${fmtUSD(
+          kpis.bidValueOutCents / 100,
+        )} out to bid`}
+      />
 
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
         <DialogContent>

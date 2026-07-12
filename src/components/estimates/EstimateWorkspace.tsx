@@ -1,12 +1,13 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   Copy,
   Download,
   FileDown,
@@ -93,6 +94,7 @@ import { fmtUSD } from "@/lib/format";
 import { getEstimatePlanSetSummary } from "@/lib/plan-room.functions";
 import { parseCsv, parsePaste, parseXlsx } from "@/lib/sov-import";
 import { Textarea } from "@/components/ui/textarea";
+import { AppFooter } from "@/components/layout/AppFooter";
 import { FlagIssueButton } from "@/components/estimates/FlagIssueButton";
 import {
   EstimateFirstRunLauncher,
@@ -489,6 +491,47 @@ export function EstimateWorkspace({
     [estimate, orderedLines],
   );
 
+  // Scope-group subtotals are a display pass over the flat, sort_order line
+  // array — persistence, reorder semantics, and the totals math are untouched.
+  // We keep drag within the flat order (dragging never rewrites scope_group;
+  // to move a row between groups you edit its Group field). Groups are the
+  // contiguous runs of the flat order, so each subtotal is exactly the sum of
+  // the rows shown beneath its header, and the grand-total footer is unchanged.
+  // Row index stays the FLAT index so keyboard grid-nav and add-row focus keep
+  // working; the header rows carry no grid cells and are skipped by nav.
+  const groupedRuns = useMemo(() => {
+    const runs: {
+      key: string;
+      label: string;
+      rows: { line: EstimateLineItemRow; index: number }[];
+      subtotalCents: number;
+    }[] = [];
+    orderedLines.forEach((line, index) => {
+      const label = line.scope_group?.trim() || "Ungrouped";
+      const rowTotalCents =
+        Math.round(line.quantity * line.material_unit_cost_cents * estimate.region_multiplier) +
+        Math.round(line.quantity * line.labor_unit_cost_cents * estimate.region_multiplier);
+      const last = runs[runs.length - 1];
+      if (last && last.label === label) {
+        last.rows.push({ line, index });
+        last.subtotalCents += rowTotalCents;
+      } else {
+        runs.push({
+          key: `${label}::${index}`,
+          label,
+          rows: [{ line, index }],
+          subtotalCents: rowTotalCents,
+        });
+      }
+    });
+    return runs;
+  }, [orderedLines, estimate.region_multiplier]);
+
+  // Don't burden estimates that never use scope groups with a lone "Ungrouped"
+  // banner; show headers once there is real grouping (a named group or 2+ runs).
+  const showGroupHeaders =
+    groupedRuns.length > 1 || (groupedRuns.length === 1 && groupedRuns[0].label !== "Ungrouped");
+
   // First-run launcher (Phase 4 Task 5): only while the estimate has zero
   // line items AND zero real plan sets, and only until either ever exists.
   const loadPlanSetSummaryFn = useServerFn(getEstimatePlanSetSummary);
@@ -589,114 +632,125 @@ export function EstimateWorkspace({
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex min-h-screen flex-col bg-background">
       <header className="border-b border-hairline bg-surface-elevated">
         <div className="mx-auto flex max-w-[1800px] flex-col gap-4 px-5 py-4 lg:px-8">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
             <div className="flex min-w-0 flex-1 items-start gap-3">
-              {isMasterSheet ? (
-                <Button asChild variant="ghost" size="icon" title="Back to master sheets">
-                  <Link to="/estimate-masters">
-                    <ArrowLeft className="h-4 w-4" />
-                  </Link>
-                </Button>
-              ) : (
-                <Button asChild variant="ghost" size="icon" title="Back to estimates">
-                  <Link to="/estimates">
-                    <ArrowLeft className="h-4 w-4" />
-                  </Link>
-                </Button>
-              )}
+              <Button
+                asChild
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 shrink-0 rounded-lg text-muted-foreground"
+                title={isMasterSheet ? "Back to master sheets" : "Back to estimates"}
+              >
+                <Link to={isMasterSheet ? "/estimate-masters" : "/estimates"}>
+                  <ArrowLeft className="h-4 w-4" />
+                </Link>
+              </Button>
               <div className="min-w-0 flex-1">
-                <p className="mb-1 text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  {companyName}
+                <p className="mb-1 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                  {companyName} · {isMasterSheet ? "Master Sheet" : "Estimate"}
                 </p>
-                <div className="mb-1 flex items-center gap-2">
-                  <Badge variant="outline" className="capitalize">
-                    {estimate.status}
-                  </Badge>
-                  {!isMasterSheet && (
-                    <Badge variant="secondary">{estimateFolderLabel(estimate.folder)}</Badge>
-                  )}
-                  {isMasterSheet && <Badge variant="secondary">Master Sheet</Badge>}
-                  {estimate.project_name && (
-                    <span className="text-xs text-muted-foreground">
-                      Project: {estimate.project_name}
-                    </span>
-                  )}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                  <Textarea
+                    rows={titleRows}
+                    value={nameDraft}
+                    onChange={(event) => setNameDraft(event.target.value)}
+                    onBlur={() => {
+                      if (nameDraft.trim() && nameDraft !== estimate.name) {
+                        updateEstimateMutation.mutate({
+                          id: estimate.id,
+                          patch: { name: nameDraft },
+                        });
+                      }
+                    }}
+                    className="min-h-[2rem] w-full max-w-[560px] resize-none overflow-hidden border-0 bg-transparent p-0 font-serif text-[26px] leading-tight shadow-none focus-visible:ring-0"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select
+                      value={estimate.status}
+                      onValueChange={(status) =>
+                        updateEstimatePatch({ status: status as EstimateStatus })
+                      }
+                    >
+                      <SelectTrigger
+                        className="h-7 w-auto gap-1.5 rounded-full border-hairline px-3 text-xs capitalize"
+                        aria-label="Estimate status"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="draft">Draft</SelectItem>
+                        <SelectItem value="final">Final</SelectItem>
+                        <SelectItem value="awarded">Awarded</SelectItem>
+                        <SelectItem value="lost">Lost</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {!isMasterSheet && (
+                      <Select
+                        value={estimate.folder}
+                        onValueChange={(folder) =>
+                          updateEstimatePatch({ folder: folder as EstimateFolder })
+                        }
+                      >
+                        <SelectTrigger
+                          className="h-7 w-auto gap-1.5 rounded-full border-hairline px-3 text-xs text-clay"
+                          aria-label="Estimate folder"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ESTIMATE_FOLDERS.map((folder) => (
+                            <SelectItem key={folder.value} value={folder.value}>
+                              {folder.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    {estimate.project_name && (
+                      <span className="text-xs text-muted-foreground">
+                        Project: {estimate.project_name}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <Textarea
-                  rows={titleRows}
-                  value={nameDraft}
-                  onChange={(event) => setNameDraft(event.target.value)}
-                  onBlur={() => {
-                    if (nameDraft.trim() && nameDraft !== estimate.name) {
-                      updateEstimateMutation.mutate({
-                        id: estimate.id,
-                        patch: { name: nameDraft },
-                      });
-                    }
-                  }}
-                  className="min-h-[2.4rem] w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-serif text-3xl leading-tight shadow-none focus-visible:ring-0"
-                />
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-              <Select
-                value={estimate.status}
-                onValueChange={(status) =>
-                  updateEstimatePatch({ status: status as EstimateStatus })
-                }
-              >
-                <SelectTrigger className="w-[132px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="draft">Draft</SelectItem>
-                  <SelectItem value="final">Final</SelectItem>
-                  <SelectItem value="awarded">Awarded</SelectItem>
-                  <SelectItem value="lost">Lost</SelectItem>
-                </SelectContent>
-              </Select>
-              {!isMasterSheet && (
-                <Select
-                  value={estimate.folder}
-                  onValueChange={(folder) =>
-                    updateEstimatePatch({ folder: folder as EstimateFolder })
-                  }
+              <div className="flex items-center gap-1">
+                <FlagIssueButton
+                  getContext={() => ({
+                    estimate_id: estimate.id,
+                    estimate_status: estimate.status,
+                    is_master_sheet: isMasterSheet,
+                  })}
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => duplicateMutation.mutate(false)}
+                  disabled={duplicateMutation.isPending}
                 >
-                  <SelectTrigger className="w-[170px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ESTIMATE_FOLDERS.map((folder) => (
-                      <SelectItem key={folder.value} value={folder.value}>
-                        {folder.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              <FlagIssueButton
-                getContext={() => ({
-                  estimate_id: estimate.id,
-                  estimate_status: estimate.status,
-                  is_master_sheet: isMasterSheet,
-                })}
-              />
+                  <Copy className="h-3.5 w-3.5" /> {isMasterSheet ? "Copy Master" : "Duplicate"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-danger hover:text-danger"
+                  onClick={() => setDeleteOpen(true)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {isMasterSheet ? "Delete Master" : "Delete"}
+                </Button>
+              </div>
+              <Separator orientation="vertical" className="hidden h-6 xl:block" />
               <Button variant="outline" size="sm" className="gap-1.5" asChild>
                 <Link to="/estimates/$estimateId/plan-room" params={{ estimateId: estimate.id }}>
                   <PencilRuler className="h-3.5 w-3.5" /> Plan Room
                 </Link>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                onClick={() => duplicateMutation.mutate(false)}
-                disabled={duplicateMutation.isPending}
-              >
-                <Copy className="h-3.5 w-3.5" /> {isMasterSheet ? "Copy Master" : "Duplicate"}
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -713,15 +767,6 @@ export function EstimateWorkspace({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-danger hover:text-danger"
-                onClick={() => setDeleteOpen(true)}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                {isMasterSheet ? "Delete Master" : "Delete Estimate"}
-              </Button>
               <Button
                 size="sm"
                 className="gap-1.5"
@@ -821,21 +866,21 @@ export function EstimateWorkspace({
             />
           ) : (
             <div className="overflow-x-auto">
-              <Table data-estimate-grid className="min-w-[1720px] table-fixed">
+              <Table data-estimate-grid className="min-w-[1450px] table-fixed">
                 <TableHeader>
                   <TableRow className="bg-surface [&>th]:whitespace-nowrap">
                     <TableHead className="w-[44px]" />
-                    <TableHead className="w-[58px]">#</TableHead>
+                    <TableHead className="w-[56px]">#</TableHead>
                     <TableHead className="w-[120px]">Cost Code</TableHead>
-                    <TableHead className="w-[140px]">Group</TableHead>
-                    <TableHead className="w-[360px]">Description</TableHead>
+                    <TableHead className="w-[150px]">Group</TableHead>
+                    <TableHead className="w-[340px]">Description</TableHead>
                     <TableHead className="w-[86px]">Unit</TableHead>
                     <TableHead className="w-[128px] text-right">Qty</TableHead>
                     <TableHead className="w-[150px] text-right">Mat $/Unit</TableHead>
                     <TableHead className="w-[150px] text-right">Labor $/Unit</TableHead>
-                    <TableHead className="w-[145px] text-right">Mat Ext</TableHead>
-                    <TableHead className="w-[145px] text-right">Labor Ext</TableHead>
-                    <TableHead className="w-[145px] text-right">Total</TableHead>
+                    <TableHead className="w-[170px] border-l border-hairline text-right">
+                      Extended
+                    </TableHead>
                     <TableHead className="w-[56px]" />
                   </TableRow>
                 </TableHeader>
@@ -843,7 +888,7 @@ export function EstimateWorkspace({
                   {orderedLines.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={13}
+                        colSpan={11}
                         className="py-12 text-center text-sm text-muted-foreground"
                         data-testid="estimate-grid-empty"
                       >
@@ -852,32 +897,57 @@ export function EstimateWorkspace({
                       </TableCell>
                     </TableRow>
                   ) : (
-                    orderedLines.map((line, index) => (
-                      <EstimateLineRow
-                        key={line.id}
-                        estimate={estimate}
-                        line={line}
-                        index={index}
-                        onUpdate={(patch) => updateLineMutation.mutate({ id: line.id, patch })}
-                        onDelete={() => deleteLineMutation.mutate(line.id)}
-                        onDragStart={() => setDraggingId(line.id)}
-                        onDrop={() => onDropRow(line.id)}
-                        onCreateNextRow={(colIndex) => {
-                          addBlankRows(1, colIndex);
-                        }}
-                      />
+                    groupedRuns.map((run) => (
+                      <Fragment key={run.key}>
+                        {showGroupHeaders && (
+                          <TableRow className="border-t border-hairline bg-background hover:bg-background">
+                            <TableCell colSpan={11} className="px-3 py-2.5">
+                              <div className="flex items-center gap-2.5">
+                                <span className="eyebrow">{run.label}</span>
+                                <span className="text-[11px] text-muted-foreground">
+                                  {run.rows.length} {run.rows.length === 1 ? "item" : "items"}
+                                </span>
+                                <span className="flex-1" />
+                                <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                                  Subtotal
+                                </span>
+                                <span className="font-serif text-[15px]">
+                                  {fmtUSD(run.subtotalCents / 100)}
+                                </span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        {run.rows.map(({ line, index }) => (
+                          <EstimateLineRow
+                            key={line.id}
+                            estimate={estimate}
+                            line={line}
+                            index={index}
+                            onUpdate={(patch) => updateLineMutation.mutate({ id: line.id, patch })}
+                            onDelete={() => deleteLineMutation.mutate(line.id)}
+                            onDragStart={() => setDraggingId(line.id)}
+                            onDrop={() => onDropRow(line.id)}
+                            onCreateNextRow={(colIndex) => {
+                              addBlankRows(1, colIndex);
+                            }}
+                          />
+                        ))}
+                      </Fragment>
                     ))
                   )}
-                  <TableRow className="bg-surface font-medium">
-                    <TableCell colSpan={9}>Subtotal</TableCell>
-                    <TableCell className="text-right tabular">
-                      {fmtUSD(liveTotals.material_cents / 100)}
+                  <TableRow className="border-t-2 border-foreground bg-surface font-medium">
+                    <TableCell colSpan={9} className="text-sm">
+                      Grand subtotal
                     </TableCell>
-                    <TableCell className="text-right tabular">
-                      {fmtUSD(liveTotals.labor_cents / 100)}
-                    </TableCell>
-                    <TableCell className="text-right tabular">
-                      {fmtUSD(liveTotals.direct_cents / 100)}
+                    <TableCell className="border-l border-hairline text-right align-top">
+                      <div className="font-serif text-[15px] leading-tight">
+                        {fmtUSD(liveTotals.direct_cents / 100)}
+                      </div>
+                      <div className="mt-0.5 text-[10px] tabular text-muted-foreground">
+                        {fmtUSD(liveTotals.material_cents / 100)} mat ·{" "}
+                        {fmtUSD(liveTotals.labor_cents / 100)} lab
+                      </div>
                     </TableCell>
                     <TableCell />
                   </TableRow>
@@ -896,6 +966,12 @@ export function EstimateWorkspace({
           savingDefaults={saveDefaultsMutation.isPending}
         />
       </main>
+
+      <AppFooter
+        context={`${isMasterSheet ? "Master sheet" : "Estimate"} · ${fmtUSD(
+          liveTotals.total_cents / 100,
+        )} · ${liveTotals.indicated_gp_pct.toFixed(1)}% GP`}
+      />
 
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
@@ -1178,9 +1254,7 @@ function EstimateLineRow({
           className="h-8 w-full min-w-0"
         />
       </TableCell>
-      <TableCell className="text-right tabular">{fmtUSD(materialExt / 100)}</TableCell>
-      <TableCell className="text-right tabular">{fmtUSD(laborExt / 100)}</TableCell>
-      <TableCell className="text-right font-medium tabular">
+      <TableCell className="border-l border-hairline text-right align-middle tabular">
         {draft.material_unit_cost_cents === 0 && draft.labor_unit_cost_cents === 0 ? (
           <Badge
             variant="outline"
@@ -1191,7 +1265,14 @@ function EstimateLineRow({
             Needs pricing
           </Badge>
         ) : (
-          fmtUSD((materialExt + laborExt) / 100)
+          <div title={`Material ${fmtUSD(materialExt / 100)} · Labor ${fmtUSD(laborExt / 100)}`}>
+            <div className="font-serif text-[15px] leading-tight">
+              {fmtUSD((materialExt + laborExt) / 100)}
+            </div>
+            <div className="mt-0.5 text-[10px] text-muted-foreground">
+              {fmtUSD(materialExt / 100)} mat · {fmtUSD(laborExt / 100)} lab
+            </div>
+          </div>
         )}
       </TableCell>
       <TableCell>
@@ -1582,6 +1663,8 @@ function EstimateSummaryPanel({
   onSaveDefaults: () => void;
   savingDefaults: boolean;
 }) {
+  const [adjustOpen, setAdjustOpen] = useState(false);
+
   const patchPct =
     (
       field: keyof Pick<
@@ -1599,25 +1682,167 @@ function EstimateSummaryPanel({
 
   const selectedRegion = regions.find((region) => region.code === estimate.region);
 
+  // Donut gauge geometry. Arc fills clockwise from 12 o'clock to the indicated
+  // gross-profit share of the total bid. GP dollars = total bid − adjusted
+  // direct cost (the same numerator the totals fn divides to get the pct).
+  const gpPct = Math.max(0, Math.min(100, totals.indicated_gp_pct));
+  const gpCents = totals.total_cents - totals.adjusted_direct_cents;
+  const RADIUS = 30;
+  const CIRC = 2 * Math.PI * RADIUS;
+  const dashOffset = CIRC * (1 - gpPct / 100);
+
+  // Composition bar: material / labor / all markups, as a share of their sum.
+  const markupCents =
+    totals.overhead_cents +
+    totals.profit_cents +
+    totals.contingency_cents +
+    totals.bond_cents +
+    totals.tax_cents +
+    totals.general_conditions_cents +
+    totals.custom_markup_cents;
+  const barSum = totals.material_cents + totals.labor_cents + markupCents;
+  const share = (value: number) => (barSum > 0 ? (value / barSum) * 100 : 0);
+  const materialSwatch = "color-mix(in srgb, var(--dark-panel-foreground) 55%, transparent)";
+  const laborSwatch = "color-mix(in srgb, var(--dark-panel-foreground) 30%, transparent)";
+
   return (
-    <aside className="h-max rounded-lg border border-hairline bg-card p-4 shadow-card lg:sticky lg:top-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="font-serif text-2xl">Markup</h2>
-          <p className="text-xs text-muted-foreground">Bid summary</p>
+    <aside className="h-max overflow-hidden rounded-lg border border-hairline bg-card shadow-card lg:sticky lg:top-4">
+      <div className="bg-dark-panel px-5 py-5 text-dark-panel-foreground">
+        <div className="flex items-center gap-4">
+          <svg
+            width="84"
+            height="84"
+            viewBox="0 0 82 82"
+            className="shrink-0"
+            role="img"
+            aria-label={`Indicated gross profit ${gpPct.toFixed(1)} percent`}
+          >
+            <circle
+              cx="41"
+              cy="41"
+              r={RADIUS}
+              fill="none"
+              stroke="var(--dark-panel-foreground)"
+              strokeOpacity={0.18}
+              strokeWidth="7"
+            />
+            <circle
+              cx="41"
+              cy="41"
+              r={RADIUS}
+              fill="none"
+              stroke="var(--clay)"
+              strokeWidth="7"
+              strokeLinecap="round"
+              strokeDasharray={CIRC}
+              strokeDashoffset={dashOffset}
+              transform="rotate(-90 41 41)"
+            />
+            <text
+              x="41"
+              y="46"
+              textAnchor="middle"
+              className="font-serif"
+              fontSize="16"
+              fill="var(--dark-panel-foreground)"
+            >
+              {gpPct.toFixed(1)}%
+            </text>
+          </svg>
+          <div className="min-w-0">
+            <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-dark-panel-foreground/60">
+              Indicated gross profit
+            </div>
+            <div className="mt-1 font-serif text-[26px] leading-none">{fmtUSD(gpCents / 100)}</div>
+            <div className="mt-1 text-[11.5px] text-dark-panel-foreground/60">
+              on {fmtUSD(totals.total_cents / 100)} total bid
+            </div>
+          </div>
         </div>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={onSaveDefaults}
-          disabled={savingDefaults}
-          title="Save defaults"
-        >
-          <Save className="h-4 w-4" />
-        </Button>
+        <div className="mt-4 flex h-2.5 gap-px overflow-hidden rounded-full">
+          <div
+            style={{ width: `${share(totals.material_cents)}%`, backgroundColor: materialSwatch }}
+          />
+          <div style={{ width: `${share(totals.labor_cents)}%`, backgroundColor: laborSwatch }} />
+          <div style={{ width: `${share(markupCents)}%`, backgroundColor: "var(--clay)" }} />
+        </div>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-dark-panel-foreground/60">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-[2px]" style={{ backgroundColor: materialSwatch }} />
+            Material
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-[2px]" style={{ backgroundColor: laborSwatch }} />
+            Labor
+          </span>
+          <span className="flex items-center gap-1.5 text-clay">
+            <span className="h-2 w-2 rounded-[2px] bg-accent" />
+            Markup
+          </span>
+        </div>
       </div>
-      <div className="mt-4 space-y-3">
-        <div className="space-y-1.5">
+
+      <div className="p-4">
+        <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+          Bid build-up
+        </div>
+        <div className="mt-1.5 space-y-0.5 text-sm">
+          <SummaryRow label="Direct cost · material" value={totals.material_cents} />
+          <SummaryRow label="Direct cost · labor" value={totals.labor_cents} />
+          {totals.regional_adjustment_cents !== 0 && (
+            <SummaryRow
+              label={`Regional adjustment (${(selectedRegion?.multiplier_decimal ?? estimate.region_multiplier).toFixed(2)}x)`}
+              value={totals.regional_adjustment_cents}
+            />
+          )}
+          <Separator className="my-1.5" />
+          <SummaryRow
+            label="Overhead"
+            value={totals.overhead_cents}
+            badge={`${pctToNumber(estimate.overhead_pct)}%`}
+          />
+          <SummaryRow
+            label="Profit"
+            value={totals.profit_cents}
+            badge={`${pctToNumber(estimate.profit_pct)}%`}
+          />
+          <SummaryRow
+            label="Contingency"
+            value={totals.contingency_cents}
+            badge={`${pctToNumber(estimate.contingency_pct)}%`}
+          />
+          <SummaryRow
+            label="General conditions"
+            value={totals.general_conditions_cents}
+            badge={`${pctToNumber(estimate.general_conditions_pct)}%`}
+          />
+          <SummaryRow
+            label="Bond"
+            value={totals.bond_cents}
+            badge={`${pctToNumber(estimate.bond_pct)}%`}
+          />
+          <SummaryRow
+            label="Tax (materials)"
+            value={totals.tax_cents}
+            badge={`${pctToNumber(estimate.tax_pct)}%`}
+          />
+          {totals.custom_markup_cents > 0 && (
+            <SummaryRow label="Custom markups" value={totals.custom_markup_cents} />
+          )}
+        </div>
+
+        <div className="mt-3 flex items-baseline justify-between gap-3 border-t-2 border-foreground pt-3">
+          <span className="text-[13px] font-bold">Total bid</span>
+          <span className="font-serif text-[26px] text-accent">
+            {fmtUSD(totals.total_cents / 100)}
+          </span>
+        </div>
+        <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
+          <span>Indicated GP</span>
+          <span className="font-semibold text-foreground">{gpPct.toFixed(1)}%</span>
+        </div>
+
+        <div className="mt-4 space-y-1.5">
           <Label>Region</Label>
           <Select
             value={estimate.region || "national"}
@@ -1641,66 +1866,65 @@ function EstimateSummaryPanel({
             </SelectContent>
           </Select>
         </div>
-        <PctField
-          label="Overhead"
-          value={pctToNumber(estimate.overhead_pct)}
-          onCommit={patchPct("overhead_pct")}
-        />
-        <PctField
-          label="Profit"
-          value={pctToNumber(estimate.profit_pct)}
-          onCommit={patchPct("profit_pct")}
-        />
-        <PctField
-          label="Contingency"
-          value={pctToNumber(estimate.contingency_pct)}
-          onCommit={patchPct("contingency_pct")}
-        />
-        <PctField
-          label="Bond"
-          value={pctToNumber(estimate.bond_pct)}
-          onCommit={patchPct("bond_pct")}
-        />
-        <PctField
-          label="Tax"
-          value={pctToNumber(estimate.tax_pct)}
-          onCommit={patchPct("tax_pct")}
-        />
-        <PctField
-          label="General Conditions"
-          value={pctToNumber(estimate.general_conditions_pct)}
-          onCommit={patchPct("general_conditions_pct")}
-        />
-      </div>
-      <Separator className="my-5" />
-      <div className="space-y-2 text-sm">
-        <SummaryRow label="Direct Cost (Material)" value={totals.material_cents} />
-        <SummaryRow label="Direct Cost (Labor)" value={totals.labor_cents} />
-        <SummaryRow
-          label={`Regional Adjustment (${(selectedRegion?.multiplier_decimal ?? estimate.region_multiplier).toFixed(2)}x)`}
-          value={totals.regional_adjustment_cents}
-        />
-        <SummaryRow label="Tax (materials)" value={totals.tax_cents} />
-        <SummaryRow label="Overhead" value={totals.overhead_cents} />
-        <SummaryRow label="Profit" value={totals.profit_cents} />
-        <SummaryRow label="Contingency" value={totals.contingency_cents} />
-        <SummaryRow label="Bond" value={totals.bond_cents} />
-        <SummaryRow label="General Conditions" value={totals.general_conditions_cents} />
-        {totals.custom_markup_cents > 0 && (
-          <SummaryRow label="Custom Markups" value={totals.custom_markup_cents} />
-        )}
-      </div>
-      <Separator className="my-4" />
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <div className="text-xs uppercase text-muted-foreground">Total Bid</div>
-          <div className="font-serif text-3xl text-accent">{fmtUSD(totals.total_cents / 100)}</div>
-        </div>
-        <div className="text-right text-xs text-muted-foreground">
-          Indicated GP
-          <div className="text-base font-semibold text-foreground">
-            {totals.indicated_gp_pct.toFixed(1)}%
-          </div>
+
+        <div className="mt-4 border-t border-hairline pt-3">
+          <button
+            type="button"
+            onClick={() => setAdjustOpen((open) => !open)}
+            aria-expanded={adjustOpen}
+            className="flex w-full items-center justify-between gap-2 text-left text-sm font-medium"
+          >
+            <span>Adjust markup</span>
+            <ChevronDown
+              className={`h-4 w-4 text-muted-foreground transition-transform ${
+                adjustOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+          {adjustOpen && (
+            <div className="mt-3 space-y-3">
+              <PctField
+                label="Overhead"
+                value={pctToNumber(estimate.overhead_pct)}
+                onCommit={patchPct("overhead_pct")}
+              />
+              <PctField
+                label="Profit"
+                value={pctToNumber(estimate.profit_pct)}
+                onCommit={patchPct("profit_pct")}
+              />
+              <PctField
+                label="Contingency"
+                value={pctToNumber(estimate.contingency_pct)}
+                onCommit={patchPct("contingency_pct")}
+              />
+              <PctField
+                label="Bond"
+                value={pctToNumber(estimate.bond_pct)}
+                onCommit={patchPct("bond_pct")}
+              />
+              <PctField
+                label="Tax"
+                value={pctToNumber(estimate.tax_pct)}
+                onCommit={patchPct("tax_pct")}
+              />
+              <PctField
+                label="General Conditions"
+                value={pctToNumber(estimate.general_conditions_pct)}
+                onCommit={patchPct("general_conditions_pct")}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full gap-1.5"
+                onClick={onSaveDefaults}
+                disabled={savingDefaults}
+                title="Save these markups and region as your defaults"
+              >
+                <Save className="h-3.5 w-3.5" /> Save as defaults
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </aside>
@@ -1739,11 +1963,18 @@ function PctField({
   );
 }
 
-function SummaryRow({ label, value }: { label: string; value: number }) {
+function SummaryRow({ label, value, badge }: { label: string; value: number; badge?: string }) {
   return (
-    <div className="flex justify-between gap-3">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="tabular">{fmtUSD(value / 100)}</span>
+    <div className="flex items-center justify-between gap-3 py-0.5">
+      <span className="flex items-center gap-2 text-muted-foreground">
+        {label}
+        {badge && (
+          <span className="rounded-[5px] border border-hairline px-1.5 py-px font-mono text-[9px] text-muted-foreground">
+            {badge}
+          </span>
+        )}
+      </span>
+      <span className="font-serif text-[14px] tabular text-foreground">{fmtUSD(value / 100)}</span>
     </div>
   );
 }

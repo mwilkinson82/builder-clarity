@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { AppFooter } from "@/components/layout/AppFooter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -285,6 +286,9 @@ function usageStatus(used: number, limit: number, grantActive: boolean): UsageSt
   };
 }
 
+type ConsoleSection =
+  "people" | "clients" | "plan" | "paid" | "assignments" | "company" | "profile";
+
 function TeamPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -344,6 +348,8 @@ function TeamPage() {
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const [logoImageFailedUrl, setLogoImageFailedUrl] = useState("");
   const [clientInviteForm, setClientInviteForm] = useState(emptyClientInvite);
+  // Client-only: which console section the left nav is showing.
+  const [section, setSection] = useState<ConsoleSection>("people");
 
   useEffect(() => {
     if (!team) return;
@@ -870,8 +876,63 @@ function TeamPage() {
     );
   }, [team]);
 
+  // Left-nav model. Sub-labels derive from live data where cheap, else the
+  // static mock strings. Only built when the workspace has loaded.
+  const navItems: { id: ConsoleSection; title: string; sub: string; icon: ReactNode }[] = team
+    ? [
+        {
+          id: "people",
+          title: "People & roles",
+          sub: `${formatNumber(memberSummary.active)} ${
+            memberSummary.active === 1 ? "seat" : "seats"
+          } · invites · access`,
+          icon: <Users className="h-4 w-4" />,
+        },
+        {
+          id: "clients",
+          title: "Client access",
+          sub: `${formatNumber(clientAccessSummary.seats)} portal ${
+            clientAccessSummary.seats === 1 ? "user" : "users"
+          }`,
+          icon: <ShieldCheck className="h-4 w-4" />,
+        },
+        {
+          id: "plan",
+          title: "Plan & usage",
+          sub: team.organization.contractor_circle_grant
+            ? "Circle grant · usage"
+            : formatPlanCode(team.organization.plan_code),
+          icon: <Gauge className="h-4 w-4" />,
+        },
+        {
+          id: "paid",
+          title: "Getting paid",
+          sub: "Bank + Stripe",
+          icon: <CreditCard className="h-4 w-4" />,
+        },
+        {
+          id: "assignments",
+          title: "Project assignments",
+          sub: "who's on what job",
+          icon: <ClipboardList className="h-4 w-4" />,
+        },
+        {
+          id: "company",
+          title: "Company profile",
+          sub: "logo · license · tax",
+          icon: <BriefcaseBusiness className="h-4 w-4" />,
+        },
+        {
+          id: "profile",
+          title: "Your profile",
+          sub: "your account",
+          icon: <UserCog className="h-4 w-4" />,
+        },
+      ]
+    : [];
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
       <header className="border-b border-hairline bg-surface-elevated">
         <div className="mx-auto flex max-w-[1600px] flex-col gap-4 px-6 py-5 lg:flex-row lg:items-center lg:justify-between lg:px-10">
           <div>
@@ -881,7 +942,7 @@ function TeamPage() {
                 Portfolio
               </Link>
             </Button>
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-clay">
               <span className="inline-block h-px w-7 bg-accent" />
               {team?.organization.name || "Company Workspace"}
             </div>
@@ -892,9 +953,6 @@ function TeamPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button asChild variant="outline" size="sm">
-              <Link to="/">Portfolio</Link>
-            </Button>
             {canOpenOverwatchAdmin && (
               <Button asChild variant="outline" size="sm">
                 <Link to="/admin">
@@ -911,7 +969,7 @@ function TeamPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1600px] px-6 py-7 lg:px-10">
+      <main className="mx-auto w-full max-w-[1600px] flex-1 px-6 py-7 lg:px-10">
         {isLoading ? (
           <div className="rounded-lg border border-hairline bg-card p-8 text-sm text-muted-foreground shadow-card">
             Loading company workspace...
@@ -921,1182 +979,1265 @@ function TeamPage() {
             Company workspace did not load.
           </div>
         ) : (
-          <div className="space-y-6">
-            <section
-              data-testid="company-command-center"
-              className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-hairline bg-hairline shadow-card md:grid-cols-3 xl:grid-cols-6"
+          <div className="flex flex-col gap-5 lg:flex-row lg:gap-8">
+            <nav
+              aria-label="Company settings sections"
+              className="flex gap-2 overflow-x-auto rounded-xl border border-hairline bg-surface p-2 lg:w-[272px] lg:flex-none lg:flex-col lg:gap-1 lg:self-start lg:overflow-visible lg:p-3"
             >
-              <UsageCard
-                icon={<ShieldCheck className="h-4 w-4" />}
-                label="Access"
-                value={accessLabelForMember(
-                  team.currentUserRole ?? "member",
-                  team.currentUserCapabilities,
-                )}
-                sub={team.canManageTeam ? "can manage people" : "limited access"}
-              />
-              <UsageCard
-                icon={<Users className="h-4 w-4" />}
-                label="Seats"
-                value={
-                  usage
-                    ? formatUsageValue(usage.seatsUsed, usage.seatLimit)
-                    : formatUsageValue(0, 0)
-                }
-                sub={`${usage?.activeSeats ?? 0} active, ${usage?.pendingInvites ?? 0} pending`}
-                meterValue={usage ? meterPercent(usage.seatsUsed, usage.seatLimit) : 0}
-                tone={usage ? usageTone(usage.seatsUsed, usage.seatLimit) : "default"}
-              />
-              <UsageCard
-                icon={<BriefcaseBusiness className="h-4 w-4" />}
-                label="Projects"
-                value={
-                  usage
-                    ? formatUsageValue(usage.projectsUsed, usage.projectLimit)
-                    : formatUsageValue(0, 0)
-                }
-                sub="active jobs"
-                meterValue={usage ? meterPercent(usage.projectsUsed, usage.projectLimit) : 0}
-                tone={usage ? usageTone(usage.projectsUsed, usage.projectLimit) : "default"}
-              />
-              <UsageCard
-                icon={<ClipboardList className="h-4 w-4" />}
-                label="Daily reports"
-                value={
-                  usage
-                    ? formatUsageValue(usage.dailyReports, usage.dailyReportLimit)
-                    : formatUsageValue(0, 0)
-                }
-                sub={`${usage?.dailyReportsTotal ?? 0} all-time logs`}
-                meterValue={usage ? meterPercent(usage.dailyReports, usage.dailyReportLimit) : 0}
-                tone={usage ? usageTone(usage.dailyReports, usage.dailyReportLimit) : "default"}
-              />
-              <UsageCard
-                icon={<Gauge className="h-4 w-4" />}
-                label="Plan"
-                value={
-                  team.organization.contractor_circle_grant
-                    ? "Circle grant"
-                    : formatPlanCode(team.organization.plan_code)
-                }
-                sub={formatBillingStatus(team.organization.billing_status)}
-              />
-              <UsageCard
-                icon={<CreditCard className="h-4 w-4" />}
-                label="Payments"
-                value={team.organization.payment_processor_ready ? "Online ready" : "Manual only"}
-                sub={
-                  team.organization.stripe_connect_account_id
-                    ? "Stripe setup started"
-                    : "Stripe not connected"
-                }
-              />
-            </section>
-
-            {!team.canManageTeam && (
-              <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-                Your access is{" "}
-                {accessLabelForMember(
-                  team.currentUserRole ?? "member",
-                  team.currentUserCapabilities,
-                )}
-                . Only people with the "Manage people" capability can change company access.
-              </div>
-            )}
-
-            <section
-              data-testid="company-users-access"
-              className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]"
-            >
-              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-                <SectionHeader
-                  icon={<MailPlus className="h-4 w-4" />}
-                  eyebrow="Seats"
-                  title="Invite company users"
-                  description="Send a sign-in link by email and set exactly what the new person can do before it goes out."
-                />
-                <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                  <SummaryMetric
-                    label="Seats used"
-                    value={usage ? formatUsageValue(usage.seatsUsed, usage.seatLimit) : "0 / 0"}
-                    sub="active plus pending"
-                  />
-                  <SummaryMetric
-                    label="Active users"
-                    value={formatNumber(memberSummary.active)}
-                    sub={`${formatNumber(memberSummary.owners)} owner/admin`}
-                  />
-                  <SummaryMetric
-                    label="Pending invites"
-                    value={formatNumber(team.invites.length)}
-                    sub="magic links waiting"
-                  />
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-[1fr_190px_auto] md:items-end">
-                  <div className="space-y-1.5">
-                    <Label>Email</Label>
-                    <Input
-                      type="email"
-                      value={inviteEmail}
-                      disabled={!team.canManageTeam}
-                      onChange={(event) => setInviteEmail(event.target.value)}
-                      placeholder="pm@company.com"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Access preset</Label>
-                    <Select
-                      value={inviteRole}
-                      disabled={!team.canManageTeam}
-                      onValueChange={(value) => {
-                        const role = value as AccountRole;
-                        setInviteRole(role);
-                        // Choosing a preset fills the checkboxes below.
-                        setInviteCapabilities({ ...ROLE_PRESETS[role] });
-                      }}
+              {navItems.map((item) => {
+                const active = section === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setSection(item.id)}
+                    aria-current={active ? "page" : undefined}
+                    className={`flex shrink-0 items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition lg:shrink ${
+                      active
+                        ? "bg-primary text-primary-foreground"
+                        : "text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <span
+                      className={`mt-0.5 shrink-0 ${
+                        active ? "text-primary-foreground" : "text-muted-foreground"
+                      }`}
                     >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {roleOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button
-                    disabled={
-                      !team.canManageTeam || !inviteEmail.trim() || inviteMutation.isPending
-                    }
-                    onClick={() => inviteMutation.mutate()}
-                    className="gap-1.5"
-                  >
-                    <MailPlus className="h-3.5 w-3.5" />
-                    {inviteMutation.isPending ? "Sending..." : "Send invite"}
-                  </Button>
-                </div>
+                      {item.icon}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block whitespace-nowrap text-sm font-semibold lg:whitespace-normal">
+                        {item.title}
+                      </span>
+                      <span
+                        className={`mt-0.5 block truncate text-[11px] ${
+                          active ? "text-primary-foreground/70" : "text-muted-foreground"
+                        }`}
+                      >
+                        {item.sub}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
 
-                <div className="mt-4 rounded-md border border-hairline p-3">
-                  <div className="mb-3 flex items-baseline justify-between gap-2">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      What this invite can do
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {accessLabelForMember(inviteRole, inviteCapabilities)}
-                    </div>
-                  </div>
-                  <CapabilityPicker
-                    idPrefix="invite"
-                    value={inviteCapabilities}
-                    onChange={setInviteCapabilities}
-                    disabled={!team.canManageTeam}
-                  />
-                </div>
-
-                <div className="mt-5 rounded-md border border-hairline">
-                  <div className="border-b border-hairline bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Pending invites
-                  </div>
-                  {team.invites.length === 0 ? (
-                    <div className="px-3 py-6 text-sm text-muted-foreground">
-                      No pending invites. Send one above — the person gets a sign-in link by email
-                      and lands in this company with the access you chose.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-hairline">
-                      {team.invites.map((invite) => (
-                        <div
-                          key={invite.id}
-                          className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_150px_120px_auto] md:items-center"
-                        >
-                          <div>
-                            <div className="font-medium">{invite.email}</div>
-                            <div className="text-xs text-muted-foreground">
-                              Expires {shortDate(invite.expires_at)}
-                            </div>
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            {accessLabelForMember(invite.role, invite.capabilities)}
-                          </div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-warning">
-                            {invite.status}
-                          </div>
-                          {team.canManageTeam && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={revokeMutation.isPending}
-                              onClick={() => revokeMutation.mutate(invite.id)}
-                            >
-                              Revoke
-                            </Button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+            <div className="min-w-0 flex-1 space-y-6">
+              {!team.canManageTeam && (
+                <div className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+                  Your access is{" "}
+                  {accessLabelForMember(
+                    team.currentUserRole ?? "member",
+                    team.currentUserCapabilities,
                   )}
+                  . Only people with the "Manage people" capability can change company access.
                 </div>
-              </div>
+              )}
 
-              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-                <SectionHeader
-                  icon={<Users className="h-4 w-4" />}
-                  eyebrow="Members"
-                  title="Company users and roles"
-                  description="Everyone with a seat in this company. Open a person's access to adjust what they can do."
-                />
-                <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                  <SummaryMetric
-                    label="Total users"
-                    value={formatNumber(team.members.length)}
-                    sub="company seats"
+              {section === "plan" && (
+                <section
+                  data-testid="company-command-center"
+                  className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-hairline bg-hairline shadow-card md:grid-cols-3 xl:grid-cols-6"
+                >
+                  <UsageCard
+                    icon={<ShieldCheck className="h-4 w-4" />}
+                    label="Access"
+                    value={accessLabelForMember(
+                      team.currentUserRole ?? "member",
+                      team.currentUserCapabilities,
+                    )}
+                    sub={team.canManageTeam ? "can manage people" : "limited access"}
                   />
-                  <SummaryMetric
-                    label="Active"
-                    value={formatNumber(memberSummary.active)}
-                    sub="can work now"
+                  <UsageCard
+                    icon={<Users className="h-4 w-4" />}
+                    label="Seats"
+                    value={
+                      usage
+                        ? formatUsageValue(usage.seatsUsed, usage.seatLimit)
+                        : formatUsageValue(0, 0)
+                    }
+                    sub={`${usage?.activeSeats ?? 0} active, ${usage?.pendingInvites ?? 0} pending`}
+                    meterValue={usage ? meterPercent(usage.seatsUsed, usage.seatLimit) : 0}
+                    tone={usage ? usageTone(usage.seatsUsed, usage.seatLimit) : "default"}
                   />
-                  <SummaryMetric
-                    label="Disabled"
-                    value={formatNumber(memberSummary.disabled)}
-                    sub="locked out"
+                  <UsageCard
+                    icon={<BriefcaseBusiness className="h-4 w-4" />}
+                    label="Projects"
+                    value={
+                      usage
+                        ? formatUsageValue(usage.projectsUsed, usage.projectLimit)
+                        : formatUsageValue(0, 0)
+                    }
+                    sub="active jobs"
+                    meterValue={usage ? meterPercent(usage.projectsUsed, usage.projectLimit) : 0}
+                    tone={usage ? usageTone(usage.projectsUsed, usage.projectLimit) : "default"}
                   />
-                </div>
-                <div className="mt-4 divide-y divide-hairline rounded-md border border-hairline">
-                  {team.members.map((member) => {
-                    const isOwnerRow = member.role === "owner";
-                    const isSelf = member.user_id === team.currentProfile.id;
-                    const canEditRow = team.canManageTeam && !isOwnerRow;
-                    const accessLabel = accessLabelForMember(member.role, member.capabilities);
-                    return (
-                      <div key={member.id} className="space-y-3 px-3 py-3">
-                        <div className="grid gap-3 lg:grid-cols-[1fr_190px_150px] lg:items-center">
-                          <div>
-                            <div className="font-medium">{member.full_name || member.email}</div>
-                            <div className="text-xs text-muted-foreground">{member.email}</div>
-                          </div>
-                          {canEditRow ? (
-                            <>
-                              <Select
-                                value={member.role}
-                                onValueChange={(value) =>
-                                  // Choosing a preset fills the capability
-                                  // boxes with that preset's set.
-                                  memberMutation.mutate({
-                                    membershipId: member.id,
-                                    role: value as AccountRole,
-                                    capabilities: { ...ROLE_PRESETS[value as AccountRole] },
-                                  })
-                                }
-                              >
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {roleOptions.map((option) => (
-                                    <SelectItem key={option.value} value={option.value}>
-                                      {option.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <Select
-                                value={member.status === "pending" ? "active" : member.status}
-                                onValueChange={(value) =>
-                                  memberMutation.mutate({
-                                    membershipId: member.id,
-                                    status: value as "active" | "disabled",
-                                  })
-                                }
-                              >
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {memberStatusOptions.map((option) => (
-                                    <SelectItem key={option.value} value={option.value}>
-                                      {option.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </>
-                          ) : (
-                            <>
-                              <div className="text-sm text-muted-foreground">{accessLabel}</div>
-                              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                                {member.status}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                        {isOwnerRow ? (
-                          <div className="text-xs text-muted-foreground">
-                            Company owner — full access. Owner access can't be edited.
-                          </div>
-                        ) : (
-                          <Collapsible>
-                            <CollapsibleTrigger className="group flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
-                              <ChevronDown className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180" />
-                              <span>
-                                Access: <span className="text-foreground">{accessLabel}</span>
-                              </span>
-                            </CollapsibleTrigger>
-                            <CollapsibleContent className="pt-3">
-                              <CapabilityPicker
-                                idPrefix={`member-${member.id}`}
-                                value={member.capabilities}
-                                disabled={!team.canManageTeam || memberMutation.isPending}
-                                lockedKeys={
-                                  isSelf
-                                    ? {
-                                        "company.manage_team":
-                                          "You can't remove your own people-management access.",
-                                      }
-                                    : undefined
-                                }
-                                onChange={(next) =>
-                                  memberMutation.mutate({
-                                    membershipId: member.id,
-                                    capabilities: next,
-                                  })
-                                }
-                              />
-                            </CollapsibleContent>
-                          </Collapsible>
-                        )}
+                  <UsageCard
+                    icon={<ClipboardList className="h-4 w-4" />}
+                    label="Daily reports"
+                    value={
+                      usage
+                        ? formatUsageValue(usage.dailyReports, usage.dailyReportLimit)
+                        : formatUsageValue(0, 0)
+                    }
+                    sub={`${usage?.dailyReportsTotal ?? 0} all-time logs`}
+                    meterValue={
+                      usage ? meterPercent(usage.dailyReports, usage.dailyReportLimit) : 0
+                    }
+                    tone={usage ? usageTone(usage.dailyReports, usage.dailyReportLimit) : "default"}
+                  />
+                  <UsageCard
+                    icon={<Gauge className="h-4 w-4" />}
+                    label="Plan"
+                    value={
+                      team.organization.contractor_circle_grant
+                        ? "Circle grant"
+                        : formatPlanCode(team.organization.plan_code)
+                    }
+                    sub={formatBillingStatus(team.organization.billing_status)}
+                  />
+                  <UsageCard
+                    icon={<CreditCard className="h-4 w-4" />}
+                    label="Payments"
+                    value={
+                      team.organization.payment_processor_ready ? "Online ready" : "Manual only"
+                    }
+                    sub={
+                      team.organization.stripe_connect_account_id
+                        ? "Stripe setup started"
+                        : "Stripe not connected"
+                    }
+                  />
+                </section>
+              )}
+
+              {section === "people" && (
+                <section
+                  data-testid="company-users-access"
+                  className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]"
+                >
+                  <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+                    <SectionHeader
+                      icon={<MailPlus className="h-4 w-4" />}
+                      eyebrow="Seats"
+                      title="Invite company users"
+                      description="Send a sign-in link by email and set exactly what the new person can do before it goes out."
+                    />
+                    <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                      <SummaryMetric
+                        label="Seats used"
+                        value={usage ? formatUsageValue(usage.seatsUsed, usage.seatLimit) : "0 / 0"}
+                        sub="active plus pending"
+                      />
+                      <SummaryMetric
+                        label="Active users"
+                        value={formatNumber(memberSummary.active)}
+                        sub={`${formatNumber(memberSummary.owners)} owner/admin`}
+                      />
+                      <SummaryMetric
+                        label="Pending invites"
+                        value={formatNumber(team.invites.length)}
+                        sub="magic links waiting"
+                      />
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-[1fr_190px_auto] md:items-end">
+                      <div className="space-y-1.5">
+                        <Label>Email</Label>
+                        <Input
+                          type="email"
+                          value={inviteEmail}
+                          disabled={!team.canManageTeam}
+                          onChange={(event) => setInviteEmail(event.target.value)}
+                          placeholder="pm@company.com"
+                        />
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
+                      <div className="space-y-1.5">
+                        <Label>Access preset</Label>
+                        <Select
+                          value={inviteRole}
+                          disabled={!team.canManageTeam}
+                          onValueChange={(value) => {
+                            const role = value as AccountRole;
+                            setInviteRole(role);
+                            // Choosing a preset fills the checkboxes below.
+                            setInviteCapabilities({ ...ROLE_PRESETS[role] });
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {roleOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        disabled={
+                          !team.canManageTeam || !inviteEmail.trim() || inviteMutation.isPending
+                        }
+                        onClick={() => inviteMutation.mutate()}
+                        className="gap-1.5"
+                      >
+                        <MailPlus className="h-3.5 w-3.5" />
+                        {inviteMutation.isPending ? "Sending..." : "Send invite"}
+                      </Button>
+                    </div>
 
-            <section
-              data-testid="client-access-priority-panel"
-              className="rounded-lg border border-hairline bg-card p-5 shadow-card"
-            >
-              <SectionHeader
-                icon={<ShieldCheck className="h-4 w-4" />}
-                eyebrow="Client Portal"
-                title="Client project access"
-                description="Give a client a view of their own project. You pick which modules they see — nothing else is visible."
-              />
-              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                <SummaryMetric
-                  label="Client seats"
-                  value={formatNumber(clientAccessSummary.seats)}
-                  sub="portal users"
-                />
-                <SummaryMetric
-                  label="Shared projects"
-                  value={formatNumber(clientAccessSummary.projects)}
-                  sub="client-visible"
-                />
-                <SummaryMetric
-                  label="Billing on"
-                  value={formatNumber(clientAccessSummary.billing)}
-                  sub="invoice access"
-                />
-                <SummaryMetric
-                  label="Daily reports"
-                  value={formatNumber(clientAccessSummary.daily)}
-                  sub="field logs shared"
-                />
-                <SummaryMetric
-                  label="Change orders"
-                  value={formatNumber(clientAccessSummary.changeOrders)}
-                  sub="CO access"
-                />
-              </div>
-              <div className="mt-4 grid gap-3 rounded-md border border-hairline bg-surface p-3 xl:grid-cols-[1fr_1fr_1fr]">
-                <div className="space-y-1.5">
-                  <Label>Project</Label>
-                  <Select
-                    value={clientInviteForm.projectId}
-                    disabled={!team.canManageTeam}
-                    onValueChange={(projectId) =>
-                      setClientInviteForm((current) => ({ ...current, projectId }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose project" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {team.projects.map((project) => (
-                        <SelectItem key={project.id} value={project.id}>
-                          {project.job_number
-                            ? `${project.job_number} - ${project.name}`
-                            : project.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Client name</Label>
-                  <Input
-                    value={clientInviteForm.name}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        name: event.target.value,
-                      }))
-                    }
-                    placeholder="Owner or client rep"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Email</Label>
-                  <Input
-                    type="email"
-                    value={clientInviteForm.email}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        email: event.target.value,
-                      }))
-                    }
-                    placeholder="client@company.com"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Client company</Label>
-                  <Input
-                    value={clientInviteForm.company}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        company: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Title</Label>
-                  <Input
-                    value={clientInviteForm.title}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        title: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Phone</Label>
-                  <Input
-                    value={clientInviteForm.phone}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        phone: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-1.5 xl:col-span-2">
-                  <Label>Notes</Label>
-                  <Input
-                    value={clientInviteForm.notes}
-                    disabled={!team.canManageTeam}
-                    onChange={(event) =>
-                      setClientInviteForm((current) => ({
-                        ...current,
-                        notes: event.target.value,
-                      }))
-                    }
-                    placeholder="Owner rep, lender, architect, billing contact"
-                  />
-                </div>
-                <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
-                  <div className="space-y-1.5">
-                    <Label>Portal modules</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {clientPermissionFields.map(({ field, label }) => {
-                        const active = clientInviteForm[field];
+                    <div className="mt-4 rounded-md border border-hairline p-3">
+                      <div className="mb-3 flex items-baseline justify-between gap-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          What this invite can do
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {accessLabelForMember(inviteRole, inviteCapabilities)}
+                        </div>
+                      </div>
+                      <CapabilityPicker
+                        idPrefix="invite"
+                        value={inviteCapabilities}
+                        onChange={setInviteCapabilities}
+                        disabled={!team.canManageTeam}
+                      />
+                    </div>
+
+                    <div className="mt-5 rounded-md border border-hairline">
+                      <div className="border-b border-hairline bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Pending invites
+                      </div>
+                      {team.invites.length === 0 ? (
+                        <div className="px-3 py-6 text-sm text-muted-foreground">
+                          No pending invites. Send one above — the person gets a sign-in link by
+                          email and lands in this company with the access you chose.
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-hairline">
+                          {team.invites.map((invite) => (
+                            <div
+                              key={invite.id}
+                              className="grid gap-2 px-3 py-3 md:grid-cols-[1fr_150px_120px_auto] md:items-center"
+                            >
+                              <div>
+                                <div className="font-medium">{invite.email}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  Expires {shortDate(invite.expires_at)}
+                                </div>
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {accessLabelForMember(invite.role, invite.capabilities)}
+                              </div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-warning">
+                                {invite.status}
+                              </div>
+                              {team.canManageTeam && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={revokeMutation.isPending}
+                                  onClick={() => revokeMutation.mutate(invite.id)}
+                                >
+                                  Revoke
+                                </Button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+                    <SectionHeader
+                      icon={<Users className="h-4 w-4" />}
+                      eyebrow="Members"
+                      title="Company users and roles"
+                      description="Everyone with a seat in this company. Open a person's access to adjust what they can do."
+                    />
+                    <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                      <SummaryMetric
+                        label="Total users"
+                        value={formatNumber(team.members.length)}
+                        sub="company seats"
+                      />
+                      <SummaryMetric
+                        label="Active"
+                        value={formatNumber(memberSummary.active)}
+                        sub="can work now"
+                      />
+                      <SummaryMetric
+                        label="Disabled"
+                        value={formatNumber(memberSummary.disabled)}
+                        sub="locked out"
+                      />
+                    </div>
+                    <div className="mt-4 divide-y divide-hairline rounded-md border border-hairline">
+                      {team.members.map((member) => {
+                        const isOwnerRow = member.role === "owner";
+                        const isSelf = member.user_id === team.currentProfile.id;
+                        const canEditRow = team.canManageTeam && !isOwnerRow;
+                        const accessLabel = accessLabelForMember(member.role, member.capabilities);
                         return (
-                          <Button
-                            key={field}
-                            type="button"
-                            size="sm"
-                            variant={active ? "default" : "outline"}
-                            disabled={!team.canManageTeam}
-                            onClick={() =>
-                              setClientInviteForm((current) => ({
-                                ...current,
-                                [field]: !current[field],
-                              }))
-                            }
-                          >
-                            {label}
-                          </Button>
+                          <div key={member.id} className="space-y-3 px-3 py-3">
+                            <div className="grid gap-3 lg:grid-cols-[1fr_190px_150px] lg:items-center">
+                              <div>
+                                <div className="font-medium">
+                                  {member.full_name || member.email}
+                                </div>
+                                <div className="text-xs text-muted-foreground">{member.email}</div>
+                              </div>
+                              {canEditRow ? (
+                                <>
+                                  <Select
+                                    value={member.role}
+                                    onValueChange={(value) =>
+                                      // Choosing a preset fills the capability
+                                      // boxes with that preset's set.
+                                      memberMutation.mutate({
+                                        membershipId: member.id,
+                                        role: value as AccountRole,
+                                        capabilities: { ...ROLE_PRESETS[value as AccountRole] },
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {roleOptions.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <Select
+                                    value={member.status === "pending" ? "active" : member.status}
+                                    onValueChange={(value) =>
+                                      memberMutation.mutate({
+                                        membershipId: member.id,
+                                        status: value as "active" | "disabled",
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {memberStatusOptions.map((option) => (
+                                        <SelectItem key={option.value} value={option.value}>
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="text-sm text-muted-foreground">{accessLabel}</div>
+                                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                                    {member.status}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                            {isOwnerRow ? (
+                              <div className="text-xs text-muted-foreground">
+                                Company owner — full access. Owner access can't be edited.
+                              </div>
+                            ) : (
+                              <Collapsible>
+                                <CollapsibleTrigger className="group flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
+                                  <ChevronDown className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-180" />
+                                  <span>
+                                    Access: <span className="text-foreground">{accessLabel}</span>
+                                  </span>
+                                </CollapsibleTrigger>
+                                <CollapsibleContent className="pt-3">
+                                  <CapabilityPicker
+                                    idPrefix={`member-${member.id}`}
+                                    value={member.capabilities}
+                                    disabled={!team.canManageTeam || memberMutation.isPending}
+                                    lockedKeys={
+                                      isSelf
+                                        ? {
+                                            "company.manage_team":
+                                              "You can't remove your own people-management access.",
+                                          }
+                                        : undefined
+                                    }
+                                    onChange={(next) =>
+                                      memberMutation.mutate({
+                                        membershipId: member.id,
+                                        capabilities: next,
+                                      })
+                                    }
+                                  />
+                                </CollapsibleContent>
+                              </Collapsible>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
                   </div>
-                  <Button
-                    disabled={
-                      !team.canManageTeam ||
-                      !clientInviteForm.projectId ||
-                      !clientInviteForm.name.trim() ||
-                      !clientInviteForm.email.trim() ||
-                      clientInviteMutation.isPending
-                    }
-                    onClick={() => clientInviteMutation.mutate()}
-                    className="gap-1.5"
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                    {clientInviteMutation.isPending ? "Sending..." : "Invite client"}
-                  </Button>
-                </div>
-              </div>
+                </section>
+              )}
 
-              <div className="mt-5 overflow-hidden rounded-md border border-hairline">
-                {team.clientProjectAccess.length === 0 ? (
-                  <div className="px-4 py-10 text-center">
-                    <div className="font-serif text-xl text-foreground">
-                      No clients have portal access yet
-                    </div>
-                    <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                      Invite a client above to share progress on their project. They only see the
-                      modules you turn on — change orders, daily reports, or billing.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-hairline">
-                    <div className="hidden gap-3 bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground xl:grid xl:grid-cols-[minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(130px,0.72fr)_minmax(190px,1.05fr)_minmax(110px,0.58fr)_110px]">
-                      <div>Client</div>
-                      <div>Project</div>
-                      <div>Status</div>
-                      <div>Modules</div>
-                      <div>Last sent</div>
-                      <div className="text-right">Actions</div>
-                    </div>
-                    {team.clientProjectAccess.map((access) => (
-                      <div
-                        key={access.id}
-                        className="grid gap-3 px-3 py-3 text-sm md:grid-cols-2 xl:grid-cols-[minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(130px,0.72fr)_minmax(190px,1.05fr)_minmax(110px,0.58fr)_110px] xl:items-center"
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate font-medium text-foreground">
-                            {access.contact_name || access.email}
-                          </div>
-                          <div className="truncate text-xs text-muted-foreground">
-                            {access.email}
-                          </div>
-                          {access.contact_company && (
-                            <div className="truncate text-xs text-muted-foreground">
-                              {access.contact_company}
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="truncate font-medium text-foreground">
-                            {access.project_name}
-                          </div>
-                          <div className="truncate text-xs text-muted-foreground">
-                            {access.project_job_number || "No job number"}
-                          </div>
-                        </div>
-                        <div className="min-w-0">
-                          <span className="inline-flex max-w-full rounded-full border border-hairline px-2 py-1 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-                            <span className="truncate">{access.status}</span>
-                          </span>
-                          <div className="mt-1 truncate text-xs text-muted-foreground">
-                            {access.accepted_at
-                              ? `Accepted ${shortDate(access.accepted_at)}`
-                              : "Not accepted"}
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {clientPermissionFields.map(({ field, label }) => {
-                            const active = access[field];
-                            return (
-                              <Button
-                                key={field}
-                                type="button"
-                                size="sm"
-                                variant={active ? "default" : "outline"}
-                                disabled={
-                                  !team.canManageTeam || isClientPermissionSaving(access.id, field)
-                                }
-                                onClick={() =>
-                                  clientAccessPermissionMutation.mutate({
-                                    accessId: access.id,
-                                    field,
-                                    value: !active,
-                                  })
-                                }
-                                className="h-7 px-2 text-xs"
-                              >
-                                {label}
-                              </Button>
-                            );
-                          })}
-                        </div>
-                        <div className="min-w-0 truncate text-sm text-muted-foreground">
-                          {access.last_sent_at ? shortDate(access.last_sent_at) : "Not sent"}
-                        </div>
-                        <div className="flex justify-start gap-1.5 xl:justify-end">
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            title="Send portal link"
-                            disabled={!team.canManageTeam || clientAccessSendLinkMutation.isPending}
-                            onClick={() => clientAccessSendLinkMutation.mutate(access)}
-                          >
-                            <Send className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Remove client access"
-                            disabled={!team.canManageTeam || clientAccessRevokeMutation.isPending}
-                            onClick={() => clientAccessRevokeMutation.mutate(access.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </section>
-
-            {usage && (
-              <PlanReadinessPanel
-                planCode={team.organization.plan_code}
-                billingStatus={team.organization.billing_status}
-                grantActive={team.organization.contractor_circle_grant}
-                usage={usage}
-                subscriptionCurrentPeriodEnd={team.organization.subscription_current_period_end}
-                subscriptionCancelAtPeriodEnd={team.organization.subscription_cancel_at_period_end}
-                showPaymentsLink={Boolean(team.canManageSettings || team.canManageBilling)}
-              />
-            )}
-
-            <GettingPaidSection
-              canManage={Boolean(team.canManageSettings || team.canManageBilling)}
-              stripe={{
-                accountId: team.organization.stripe_connect_account_id,
-                connectStatus: team.organization.stripe_connect_status,
-                processorReady: team.organization.payment_processor_ready,
-              }}
-              onConnectStripe={() => stripeConnectMutation.mutate()}
-              stripeConnectPending={stripeConnectMutation.isPending}
-              subscriptionNote={subscriptionNote}
-              billingContactName={team.organization.billing_contact_name}
-              billingContactEmail={team.organization.billing_email}
-              canEditBillingContact={Boolean(team.canManageSettings)}
-              onSaveBillingContact={(next) => billingContactMutation.mutate(next)}
-              billingContactSaving={billingContactMutation.isPending}
-            />
-
-            <section
-              data-testid="project-asset-access-assignments"
-              className="rounded-lg border border-hairline bg-card p-5 shadow-card"
-            >
-              <SectionHeader
-                icon={<ShieldCheck className="h-4 w-4" />}
-                eyebrow="Asset Access"
-                title="Project access assignments"
-                description="Put a company member on a specific job with a project role. Company-wide access stays as set above."
-              />
-              <div className="mt-5 grid gap-3 rounded-md border border-hairline bg-surface p-3 lg:grid-cols-[1fr_1fr_180px_auto] lg:items-end">
-                <div className="space-y-1.5">
-                  <Label>Project</Label>
-                  <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose project" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {team.projects.map((project) => (
-                        <SelectItem key={project.id} value={project.id}>
-                          {project.job_number
-                            ? `${project.job_number} - ${project.name}`
-                            : project.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Company member</Label>
-                  <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose person" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {team.members
-                        .filter((member) => member.status === "active")
-                        .map((member) => (
-                          <SelectItem key={member.user_id} value={member.user_id}>
-                            {member.full_name || member.email}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Project role</Label>
-                  <Select
-                    value={projectRole}
-                    onValueChange={(value) => setProjectRole(value as ProjectMemberRole)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {projectRoleOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  disabled={!selectedProjectId || !selectedUserId || assignMutation.isPending}
-                  onClick={() => assignMutation.mutate()}
+              {section === "clients" && (
+                <section
+                  data-testid="client-access-priority-panel"
+                  className="rounded-lg border border-hairline bg-card p-5 shadow-card"
                 >
-                  {assignMutation.isPending ? "Saving..." : "Assign"}
-                </Button>
-              </div>
-
-              <div className="mt-5 overflow-hidden rounded-md border border-hairline">
-                {team.projectMembers.length === 0 ? (
-                  <div className="px-4 py-10 text-center">
-                    <div className="font-serif text-xl text-foreground">
-                      No project assignments yet
-                    </div>
-                    <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                      Use the pickers above to put a company member on a specific job — useful for
-                      supers and PMs who should only see their own projects.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-hairline">
-                    {team.projectMembers.map((member) => {
-                      const project = team.projects.find((p) => p.id === member.project_id);
-                      return (
-                        <div
-                          key={member.id}
-                          className="grid gap-3 px-3 py-3 lg:grid-cols-[1.1fr_1fr_170px_140px_auto] lg:items-center"
-                        >
-                          <div>
-                            <div className="font-medium">{project?.name || "Project"}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {project?.job_number || "No job number"}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="font-medium">{member.full_name || member.email}</div>
-                            <div className="text-xs text-muted-foreground">{member.email}</div>
-                          </div>
-                          <Select
-                            value={member.role}
-                            onValueChange={(value) =>
-                              projectAccessMutation.mutate({
-                                membershipId: member.id,
-                                role: value as ProjectMemberRole,
-                              })
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {projectRoleOptions.map((option) => (
-                                <SelectItem key={option.value} value={option.value}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                            {member.status}
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title={`Remove ${projectRoleLabel(member.role)} access`}
-                            disabled={removeProjectAccessMutation.isPending}
-                            onClick={() => removeProjectAccessMutation.mutate(member.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </section>
-            <section
-              data-testid="company-profile-record"
-              className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]"
-            >
-              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-                <SectionHeader
-                  icon={<UserCog className="h-4 w-4" />}
-                  eyebrow="Profile"
-                  title="Your Overwatch profile"
-                  description="Your name and contact details as they appear on invites, reports, and daily logs."
-                />
-                <div className="mt-5 grid gap-4">
-                  <div className="space-y-1.5">
-                    <Label>Email</Label>
-                    <Input value={team.currentProfile.email} disabled />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Name</Label>
-                    <Input
-                      value={profileForm.full_name}
-                      onChange={(event) =>
-                        setProfileForm({ ...profileForm, full_name: event.target.value })
-                      }
+                  <SectionHeader
+                    icon={<ShieldCheck className="h-4 w-4" />}
+                    eyebrow="Client Portal"
+                    title="Client project access"
+                    description="Give a client a view of their own project. You pick which modules they see — nothing else is visible."
+                  />
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                    <SummaryMetric
+                      label="Client seats"
+                      value={formatNumber(clientAccessSummary.seats)}
+                      sub="portal users"
+                    />
+                    <SummaryMetric
+                      label="Shared projects"
+                      value={formatNumber(clientAccessSummary.projects)}
+                      sub="client-visible"
+                    />
+                    <SummaryMetric
+                      label="Billing on"
+                      value={formatNumber(clientAccessSummary.billing)}
+                      sub="invoice access"
+                    />
+                    <SummaryMetric
+                      label="Daily reports"
+                      value={formatNumber(clientAccessSummary.daily)}
+                      sub="field logs shared"
+                    />
+                    <SummaryMetric
+                      label="Change orders"
+                      value={formatNumber(clientAccessSummary.changeOrders)}
+                      sub="CO access"
                     />
                   </div>
-                  <div className="grid gap-4 md:grid-cols-2">
+                  <div className="mt-4 grid gap-3 rounded-md border border-hairline bg-surface p-3 xl:grid-cols-[1fr_1fr_1fr]">
                     <div className="space-y-1.5">
-                      <Label>Phone</Label>
+                      <Label>Project</Label>
+                      <Select
+                        value={clientInviteForm.projectId}
+                        disabled={!team.canManageTeam}
+                        onValueChange={(projectId) =>
+                          setClientInviteForm((current) => ({ ...current, projectId }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choose project" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {team.projects.map((project) => (
+                            <SelectItem key={project.id} value={project.id}>
+                              {project.job_number
+                                ? `${project.job_number} - ${project.name}`
+                                : project.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Client name</Label>
                       <Input
-                        value={profileForm.phone}
+                        value={clientInviteForm.name}
+                        disabled={!team.canManageTeam}
                         onChange={(event) =>
-                          setProfileForm({ ...profileForm, phone: event.target.value })
+                          setClientInviteForm((current) => ({
+                            ...current,
+                            name: event.target.value,
+                          }))
+                        }
+                        placeholder="Owner or client rep"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Email</Label>
+                      <Input
+                        type="email"
+                        value={clientInviteForm.email}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) =>
+                          setClientInviteForm((current) => ({
+                            ...current,
+                            email: event.target.value,
+                          }))
+                        }
+                        placeholder="client@company.com"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Client company</Label>
+                      <Input
+                        value={clientInviteForm.company}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) =>
+                          setClientInviteForm((current) => ({
+                            ...current,
+                            company: event.target.value,
+                          }))
                         }
                       />
                     </div>
                     <div className="space-y-1.5">
                       <Label>Title</Label>
                       <Input
-                        value={profileForm.company_title}
+                        value={clientInviteForm.title}
+                        disabled={!team.canManageTeam}
                         onChange={(event) =>
-                          setProfileForm({ ...profileForm, company_title: event.target.value })
+                          setClientInviteForm((current) => ({
+                            ...current,
+                            title: event.target.value,
+                          }))
                         }
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <Label>Phone</Label>
+                      <Input
+                        value={clientInviteForm.phone}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) =>
+                          setClientInviteForm((current) => ({
+                            ...current,
+                            phone: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1.5 xl:col-span-2">
+                      <Label>Notes</Label>
+                      <Input
+                        value={clientInviteForm.notes}
+                        disabled={!team.canManageTeam}
+                        onChange={(event) =>
+                          setClientInviteForm((current) => ({
+                            ...current,
+                            notes: event.target.value,
+                          }))
+                        }
+                        placeholder="Owner rep, lender, architect, billing contact"
+                      />
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+                      <div className="space-y-1.5">
+                        <Label>Portal modules</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {clientPermissionFields.map(({ field, label }) => {
+                            const active = clientInviteForm[field];
+                            return (
+                              <Button
+                                key={field}
+                                type="button"
+                                size="sm"
+                                variant={active ? "default" : "outline"}
+                                disabled={!team.canManageTeam}
+                                onClick={() =>
+                                  setClientInviteForm((current) => ({
+                                    ...current,
+                                    [field]: !current[field],
+                                  }))
+                                }
+                              >
+                                {label}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <Button
+                        disabled={
+                          !team.canManageTeam ||
+                          !clientInviteForm.projectId ||
+                          !clientInviteForm.name.trim() ||
+                          !clientInviteForm.email.trim() ||
+                          clientInviteMutation.isPending
+                        }
+                        onClick={() => clientInviteMutation.mutate()}
+                        className="gap-1.5"
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        {clientInviteMutation.isPending ? "Sending..." : "Invite client"}
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex justify-end">
+
+                  <div className="mt-5 overflow-hidden rounded-md border border-hairline">
+                    {team.clientProjectAccess.length === 0 ? (
+                      <div className="px-4 py-10 text-center">
+                        <div className="font-serif text-xl text-foreground">
+                          No clients have portal access yet
+                        </div>
+                        <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                          Invite a client above to share progress on their project. They only see
+                          the modules you turn on — change orders, daily reports, or billing.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-hairline">
+                        <div className="hidden gap-3 bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground xl:grid xl:grid-cols-[minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(130px,0.72fr)_minmax(190px,1.05fr)_minmax(110px,0.58fr)_110px]">
+                          <div>Client</div>
+                          <div>Project</div>
+                          <div>Status</div>
+                          <div>Modules</div>
+                          <div>Last sent</div>
+                          <div className="text-right">Actions</div>
+                        </div>
+                        {team.clientProjectAccess.map((access) => (
+                          <div
+                            key={access.id}
+                            className="grid gap-3 px-3 py-3 text-sm md:grid-cols-2 xl:grid-cols-[minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(130px,0.72fr)_minmax(190px,1.05fr)_minmax(110px,0.58fr)_110px] xl:items-center"
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate font-medium text-foreground">
+                                {access.contact_name || access.email}
+                              </div>
+                              <div className="truncate text-xs text-muted-foreground">
+                                {access.email}
+                              </div>
+                              {access.contact_company && (
+                                <div className="truncate text-xs text-muted-foreground">
+                                  {access.contact_company}
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="truncate font-medium text-foreground">
+                                {access.project_name}
+                              </div>
+                              <div className="truncate text-xs text-muted-foreground">
+                                {access.project_job_number || "No job number"}
+                              </div>
+                            </div>
+                            <div className="min-w-0">
+                              <span className="inline-flex max-w-full rounded-full border border-hairline px-2 py-1 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                                <span className="truncate">{access.status}</span>
+                              </span>
+                              <div className="mt-1 truncate text-xs text-muted-foreground">
+                                {access.accepted_at
+                                  ? `Accepted ${shortDate(access.accepted_at)}`
+                                  : "Not accepted"}
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {clientPermissionFields.map(({ field, label }) => {
+                                const active = access[field];
+                                return (
+                                  <Button
+                                    key={field}
+                                    type="button"
+                                    size="sm"
+                                    variant={active ? "default" : "outline"}
+                                    disabled={
+                                      !team.canManageTeam ||
+                                      isClientPermissionSaving(access.id, field)
+                                    }
+                                    onClick={() =>
+                                      clientAccessPermissionMutation.mutate({
+                                        accessId: access.id,
+                                        field,
+                                        value: !active,
+                                      })
+                                    }
+                                    className="h-7 px-2 text-xs"
+                                  >
+                                    {label}
+                                  </Button>
+                                );
+                              })}
+                            </div>
+                            <div className="min-w-0 truncate text-sm text-muted-foreground">
+                              {access.last_sent_at ? shortDate(access.last_sent_at) : "Not sent"}
+                            </div>
+                            <div className="flex justify-start gap-1.5 xl:justify-end">
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                title="Send portal link"
+                                disabled={
+                                  !team.canManageTeam || clientAccessSendLinkMutation.isPending
+                                }
+                                onClick={() => clientAccessSendLinkMutation.mutate(access)}
+                              >
+                                <Send className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Remove client access"
+                                disabled={
+                                  !team.canManageTeam || clientAccessRevokeMutation.isPending
+                                }
+                                onClick={() => clientAccessRevokeMutation.mutate(access.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {section === "plan" && usage && (
+                <PlanReadinessPanel
+                  planCode={team.organization.plan_code}
+                  billingStatus={team.organization.billing_status}
+                  grantActive={team.organization.contractor_circle_grant}
+                  usage={usage}
+                  subscriptionCurrentPeriodEnd={team.organization.subscription_current_period_end}
+                  subscriptionCancelAtPeriodEnd={
+                    team.organization.subscription_cancel_at_period_end
+                  }
+                  showPaymentsLink={Boolean(team.canManageSettings || team.canManageBilling)}
+                />
+              )}
+
+              {section === "paid" && (
+                <GettingPaidSection
+                  canManage={Boolean(team.canManageSettings || team.canManageBilling)}
+                  stripe={{
+                    accountId: team.organization.stripe_connect_account_id,
+                    connectStatus: team.organization.stripe_connect_status,
+                    processorReady: team.organization.payment_processor_ready,
+                  }}
+                  onConnectStripe={() => stripeConnectMutation.mutate()}
+                  stripeConnectPending={stripeConnectMutation.isPending}
+                  subscriptionNote={subscriptionNote}
+                  billingContactName={team.organization.billing_contact_name}
+                  billingContactEmail={team.organization.billing_email}
+                  canEditBillingContact={Boolean(team.canManageSettings)}
+                  onSaveBillingContact={(next) => billingContactMutation.mutate(next)}
+                  billingContactSaving={billingContactMutation.isPending}
+                />
+              )}
+
+              {section === "assignments" && (
+                <section
+                  data-testid="project-asset-access-assignments"
+                  className="rounded-lg border border-hairline bg-card p-5 shadow-card"
+                >
+                  <SectionHeader
+                    icon={<ShieldCheck className="h-4 w-4" />}
+                    eyebrow="Asset Access"
+                    title="Project access assignments"
+                    description="Put a company member on a specific job with a project role. Company-wide access stays as set above."
+                  />
+                  <div className="mt-5 grid gap-3 rounded-md border border-hairline bg-surface p-3 lg:grid-cols-[1fr_1fr_180px_auto] lg:items-end">
+                    <div className="space-y-1.5">
+                      <Label>Project</Label>
+                      <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choose project" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {team.projects.map((project) => (
+                            <SelectItem key={project.id} value={project.id}>
+                              {project.job_number
+                                ? `${project.job_number} - ${project.name}`
+                                : project.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Company member</Label>
+                      <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choose person" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {team.members
+                            .filter((member) => member.status === "active")
+                            .map((member) => (
+                              <SelectItem key={member.user_id} value={member.user_id}>
+                                {member.full_name || member.email}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Project role</Label>
+                      <Select
+                        value={projectRole}
+                        onValueChange={(value) => setProjectRole(value as ProjectMemberRole)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {projectRoleOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <Button
-                      onClick={() => profileMutation.mutate()}
-                      disabled={profileMutation.isPending}
-                      className="gap-1.5"
+                      disabled={!selectedProjectId || !selectedUserId || assignMutation.isPending}
+                      onClick={() => assignMutation.mutate()}
                     >
-                      <Save className="h-3.5 w-3.5" />
-                      {profileMutation.isPending ? "Saving..." : "Save profile"}
+                      {assignMutation.isPending ? "Saving..." : "Assign"}
                     </Button>
                   </div>
-                </div>
-              </div>
 
-              <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-                <SectionHeader
-                  icon={<BriefcaseBusiness className="h-4 w-4" />}
-                  eyebrow="Company"
-                  title={team.organization.name}
-                  description="The company identity that shows up on estimates, invoices, and client pages."
-                />
-                <div className="mt-5 grid gap-4">
-                  <div className="grid gap-4 lg:grid-cols-[180px_1fr]">
-                    <div className="space-y-3">
-                      <div className="flex h-32 w-32 items-center justify-center overflow-hidden rounded-md border border-hairline bg-surface text-xl font-semibold text-muted-foreground">
-                        {visibleLogoPreviewUrl ? (
-                          <img
-                            src={visibleLogoPreviewUrl}
-                            alt={`${orgForm.name || "Company"} logo`}
-                            className="h-full w-full object-contain p-2"
-                            onError={() => setLogoImageFailedUrl(visibleLogoPreviewUrl)}
-                          />
-                        ) : (
-                          companyInitials(orgForm.name)
-                        )}
+                  <div className="mt-5 overflow-hidden rounded-md border border-hairline">
+                    {team.projectMembers.length === 0 ? (
+                      <div className="px-4 py-10 text-center">
+                        <div className="font-serif text-xl text-foreground">
+                          No project assignments yet
+                        </div>
+                        <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                          Use the pickers above to put a company member on a specific job — useful
+                          for supers and PMs who should only see their own projects.
+                        </p>
                       </div>
-                      {team.canManageSettings && (
-                        <div className="space-y-2">
-                          <Label htmlFor="company-logo-upload">Logo</Label>
-                          {/* Native input: the styled Input's w-full fights sr-only's 1px width
+                    ) : (
+                      <div className="divide-y divide-hairline">
+                        {team.projectMembers.map((member) => {
+                          const project = team.projects.find((p) => p.id === member.project_id);
+                          return (
+                            <div
+                              key={member.id}
+                              className="grid gap-3 px-3 py-3 lg:grid-cols-[1.1fr_1fr_170px_140px_auto] lg:items-center"
+                            >
+                              <div>
+                                <div className="font-medium">{project?.name || "Project"}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {project?.job_number || "No job number"}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="font-medium">
+                                  {member.full_name || member.email}
+                                </div>
+                                <div className="text-xs text-muted-foreground">{member.email}</div>
+                              </div>
+                              <Select
+                                value={member.role}
+                                onValueChange={(value) =>
+                                  projectAccessMutation.mutate({
+                                    membershipId: member.id,
+                                    role: value as ProjectMemberRole,
+                                  })
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {projectRoleOptions.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                                {member.status}
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title={`Remove ${projectRoleLabel(member.role)} access`}
+                                disabled={removeProjectAccessMutation.isPending}
+                                onClick={() => removeProjectAccessMutation.mutate(member.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {section === "profile" && (
+                <section>
+                  <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+                    <SectionHeader
+                      icon={<UserCog className="h-4 w-4" />}
+                      eyebrow="Profile"
+                      title="Your Overwatch profile"
+                      description="Your name and contact details as they appear on invites, reports, and daily logs."
+                    />
+                    <div className="mt-5 grid gap-4">
+                      <div className="space-y-1.5">
+                        <Label>Email</Label>
+                        <Input value={team.currentProfile.email} disabled />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Name</Label>
+                        <Input
+                          value={profileForm.full_name}
+                          onChange={(event) =>
+                            setProfileForm({ ...profileForm, full_name: event.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label>Phone</Label>
+                          <Input
+                            value={profileForm.phone}
+                            onChange={(event) =>
+                              setProfileForm({ ...profileForm, phone: event.target.value })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Title</Label>
+                          <Input
+                            value={profileForm.company_title}
+                            onChange={(event) =>
+                              setProfileForm({ ...profileForm, company_title: event.target.value })
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end">
+                        <Button
+                          onClick={() => profileMutation.mutate()}
+                          disabled={profileMutation.isPending}
+                          className="gap-1.5"
+                        >
+                          <Save className="h-3.5 w-3.5" />
+                          {profileMutation.isPending ? "Saving..." : "Save profile"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {section === "company" && (
+                <section data-testid="company-profile-record">
+                  <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
+                    <SectionHeader
+                      icon={<BriefcaseBusiness className="h-4 w-4" />}
+                      eyebrow="Company"
+                      title={team.organization.name}
+                      description="The company identity that shows up on estimates, invoices, and client pages."
+                    />
+                    <div className="mt-5 grid gap-4">
+                      <div className="grid gap-4 lg:grid-cols-[180px_1fr]">
+                        <div className="space-y-3">
+                          <div className="flex h-32 w-32 items-center justify-center overflow-hidden rounded-md border border-hairline bg-surface text-xl font-semibold text-muted-foreground">
+                            {visibleLogoPreviewUrl ? (
+                              <img
+                                src={visibleLogoPreviewUrl}
+                                alt={`${orgForm.name || "Company"} logo`}
+                                className="h-full w-full object-contain p-2"
+                                onError={() => setLogoImageFailedUrl(visibleLogoPreviewUrl)}
+                              />
+                            ) : (
+                              companyInitials(orgForm.name)
+                            )}
+                          </div>
+                          {team.canManageSettings && (
+                            <div className="space-y-2">
+                              <Label htmlFor="company-logo-upload">Logo</Label>
+                              {/* Native input: the styled Input's w-full fights sr-only's 1px width
                               and (depending on compiled CSS order) renders a viewport-wide
                               invisible box that forces page-level horizontal scroll. */}
-                          <input
-                            key={logoInputKey}
-                            ref={logoInputRef}
-                            id="company-logo-upload"
-                            type="file"
-                            accept="image/png,image/jpeg"
-                            disabled={logoUploadMutation.isPending}
-                            className="sr-only"
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
-                              if (file) logoUploadMutation.mutate(file);
-                            }}
-                          />
+                              <input
+                                key={logoInputKey}
+                                ref={logoInputRef}
+                                id="company-logo-upload"
+                                type="file"
+                                accept="image/png,image/jpeg"
+                                disabled={logoUploadMutation.isPending}
+                                className="sr-only"
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0];
+                                  if (file) logoUploadMutation.mutate(file);
+                                }}
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="w-full justify-start gap-2"
+                                disabled={logoUploadMutation.isPending}
+                                onClick={() => logoInputRef.current?.click()}
+                              >
+                                <Upload className="h-3.5 w-3.5" />
+                                {logoUploadMutation.isPending
+                                  ? "Uploading..."
+                                  : visibleLogoPreviewUrl
+                                    ? "Replace logo"
+                                    : "Upload logo"}
+                              </Button>
+                              <p className="text-xs leading-5 text-muted-foreground">
+                                PNG or JPG, up to 2 MB.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="grid gap-4">
+                          <div className="grid gap-4 md:grid-cols-[1fr_1fr_160px]">
+                            <div className="space-y-1.5">
+                              <Label>Company name</Label>
+                              <Input
+                                value={orgForm.name}
+                                disabled={!team.canManageSettings}
+                                onChange={(event) =>
+                                  setOrgForm({ ...orgForm, name: event.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Legal name</Label>
+                              <Input
+                                value={orgForm.legal_name}
+                                disabled={!team.canManageSettings}
+                                onChange={(event) =>
+                                  setOrgForm({ ...orgForm, legal_name: event.target.value })
+                                }
+                                placeholder={orgForm.name}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Slug</Label>
+                              <Input
+                                value={orgForm.slug}
+                                disabled={!team.canManageSettings}
+                                onChange={(event) =>
+                                  setOrgForm({ ...orgForm, slug: event.target.value })
+                                }
+                              />
+                            </div>
+                          </div>
+                          <div className="grid gap-4 md:grid-cols-3">
+                            <div className="space-y-1.5">
+                              <Label>Website</Label>
+                              <Input
+                                value={orgForm.website_url}
+                                disabled={!team.canManageSettings}
+                                onChange={(event) =>
+                                  setOrgForm({ ...orgForm, website_url: event.target.value })
+                                }
+                                placeholder="company.com"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Office phone</Label>
+                              <Input
+                                value={orgForm.office_phone}
+                                disabled={!team.canManageSettings}
+                                onChange={(event) =>
+                                  setOrgForm({ ...orgForm, office_phone: event.target.value })
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Country</Label>
+                              <Input
+                                value={orgForm.country}
+                                disabled={!team.canManageSettings}
+                                onChange={(event) =>
+                                  setOrgForm({ ...orgForm, country: event.target.value })
+                                }
+                                placeholder="United States"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid gap-4 rounded-md border border-hairline bg-surface p-3">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Office address
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <Label>Address line 1</Label>
+                            <Input
+                              value={orgForm.address_line1}
+                              disabled={!team.canManageSettings}
+                              onChange={(event) =>
+                                setOrgForm({ ...orgForm, address_line1: event.target.value })
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Address line 2</Label>
+                            <Input
+                              value={orgForm.address_line2}
+                              disabled={!team.canManageSettings}
+                              onChange={(event) =>
+                                setOrgForm({ ...orgForm, address_line2: event.target.value })
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-[1fr_120px_140px]">
+                          <div className="space-y-1.5">
+                            <Label>City</Label>
+                            <Input
+                              value={orgForm.city}
+                              disabled={!team.canManageSettings}
+                              onChange={(event) =>
+                                setOrgForm({ ...orgForm, city: event.target.value })
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>State</Label>
+                            <Input
+                              value={orgForm.state}
+                              disabled={!team.canManageSettings}
+                              onChange={(event) =>
+                                setOrgForm({ ...orgForm, state: event.target.value })
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>ZIP</Label>
+                            <Input
+                              value={orgForm.postal_code}
+                              disabled={!team.canManageSettings}
+                              onChange={(event) =>
+                                setOrgForm({ ...orgForm, postal_code: event.target.value })
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid gap-4 rounded-md border border-hairline bg-surface p-3">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          License and tax
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <Label>License number</Label>
+                            <Input
+                              value={orgForm.license_number}
+                              disabled={!team.canManageSettings}
+                              onChange={(event) =>
+                                setOrgForm({ ...orgForm, license_number: event.target.value })
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label>Tax identifier</Label>
+                            <Input
+                              value={orgForm.tax_identifier}
+                              disabled={!team.canManageSettings}
+                              onChange={(event) =>
+                                setOrgForm({ ...orgForm, tax_identifier: event.target.value })
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-3">
+                        <ContactFact
+                          icon={<Building2 className="h-3.5 w-3.5" />}
+                          label="Display"
+                          value={orgForm.name || "Company"}
+                        />
+                        <ContactFact
+                          icon={<Globe className="h-3.5 w-3.5" />}
+                          label="Website"
+                          value={orgForm.website_url || "Not set"}
+                        />
+                        <ContactFact
+                          icon={<Phone className="h-3.5 w-3.5" />}
+                          label="Phone"
+                          value={orgForm.office_phone || "Not set"}
+                        />
+                        <ContactFact
+                          icon={<MapPin className="h-3.5 w-3.5" />}
+                          label="Location"
+                          value={
+                            [orgForm.city, orgForm.state].filter(Boolean).join(", ") || "Not set"
+                          }
+                        />
+                        <ContactFact
+                          icon={<FileImage className="h-3.5 w-3.5" />}
+                          label="Logo"
+                          value={visibleLogoPreviewUrl ? "Ready" : "Not set"}
+                        />
+                        <ContactFact
+                          icon={<ShieldCheck className="h-3.5 w-3.5" />}
+                          label="Role"
+                          value={roleLabel(team.currentUserRole ?? "member")}
+                        />
+                      </div>
+                      <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-3 xl:grid-cols-6">
+                        <MiniStat label="Plan" value={team.organization.plan_code} />
+                        <MiniStat label="Billing" value={team.organization.billing_status} />
+                        <MiniStat
+                          label="Stripe"
+                          value={
+                            team.organization.payment_processor_ready
+                              ? "Connect ready"
+                              : team.organization.stripe_connect_account_id
+                                ? "Setup started"
+                                : team.organization.stripe_customer_id
+                                  ? "Customer linked"
+                                  : "Not connected"
+                          }
+                        />
+                        <MiniStat
+                          label="Payments"
+                          value={
+                            team.organization.payment_processor_ready
+                              ? "Online ready"
+                              : "Manual only"
+                          }
+                        />
+                        <MiniStat
+                          label="Role"
+                          value={roleLabel(team.currentUserRole ?? "member")}
+                        />
+                        <MiniStat
+                          label="Grant"
+                          value={team.organization.contractor_circle_grant ? "Active" : "None"}
+                        />
+                      </div>
+                      {team.canManageSettings && (
+                        <div className="flex justify-end">
                           <Button
-                            type="button"
-                            variant="outline"
-                            className="w-full justify-start gap-2"
-                            disabled={logoUploadMutation.isPending}
-                            onClick={() => logoInputRef.current?.click()}
+                            onClick={() => orgMutation.mutate()}
+                            disabled={
+                              orgMutation.isPending ||
+                              logoUploadMutation.isPending ||
+                              !orgForm.name.trim()
+                            }
+                            className="gap-1.5"
                           >
-                            <Upload className="h-3.5 w-3.5" />
-                            {logoUploadMutation.isPending
-                              ? "Uploading..."
-                              : visibleLogoPreviewUrl
-                                ? "Replace logo"
-                                : "Upload logo"}
+                            <Save className="h-3.5 w-3.5" />
+                            {orgMutation.isPending ? "Saving..." : "Save company"}
                           </Button>
-                          <p className="text-xs leading-5 text-muted-foreground">
-                            PNG or JPG, up to 2 MB.
-                          </p>
                         </div>
                       )}
                     </div>
-                    <div className="grid gap-4">
-                      <div className="grid gap-4 md:grid-cols-[1fr_1fr_160px]">
-                        <div className="space-y-1.5">
-                          <Label>Company name</Label>
-                          <Input
-                            value={orgForm.name}
-                            disabled={!team.canManageSettings}
-                            onChange={(event) =>
-                              setOrgForm({ ...orgForm, name: event.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Legal name</Label>
-                          <Input
-                            value={orgForm.legal_name}
-                            disabled={!team.canManageSettings}
-                            onChange={(event) =>
-                              setOrgForm({ ...orgForm, legal_name: event.target.value })
-                            }
-                            placeholder={orgForm.name}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Slug</Label>
-                          <Input
-                            value={orgForm.slug}
-                            disabled={!team.canManageSettings}
-                            onChange={(event) =>
-                              setOrgForm({ ...orgForm, slug: event.target.value })
-                            }
-                          />
-                        </div>
-                      </div>
-                      <div className="grid gap-4 md:grid-cols-3">
-                        <div className="space-y-1.5">
-                          <Label>Website</Label>
-                          <Input
-                            value={orgForm.website_url}
-                            disabled={!team.canManageSettings}
-                            onChange={(event) =>
-                              setOrgForm({ ...orgForm, website_url: event.target.value })
-                            }
-                            placeholder="company.com"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Office phone</Label>
-                          <Input
-                            value={orgForm.office_phone}
-                            disabled={!team.canManageSettings}
-                            onChange={(event) =>
-                              setOrgForm({ ...orgForm, office_phone: event.target.value })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Country</Label>
-                          <Input
-                            value={orgForm.country}
-                            disabled={!team.canManageSettings}
-                            onChange={(event) =>
-                              setOrgForm({ ...orgForm, country: event.target.value })
-                            }
-                            placeholder="United States"
-                          />
-                        </div>
-                      </div>
-                    </div>
                   </div>
-                  <div className="grid gap-4 rounded-md border border-hairline bg-surface p-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Office address
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label>Address line 1</Label>
-                        <Input
-                          value={orgForm.address_line1}
-                          disabled={!team.canManageSettings}
-                          onChange={(event) =>
-                            setOrgForm({ ...orgForm, address_line1: event.target.value })
-                          }
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Address line 2</Label>
-                        <Input
-                          value={orgForm.address_line2}
-                          disabled={!team.canManageSettings}
-                          onChange={(event) =>
-                            setOrgForm({ ...orgForm, address_line2: event.target.value })
-                          }
-                        />
-                      </div>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-[1fr_120px_140px]">
-                      <div className="space-y-1.5">
-                        <Label>City</Label>
-                        <Input
-                          value={orgForm.city}
-                          disabled={!team.canManageSettings}
-                          onChange={(event) => setOrgForm({ ...orgForm, city: event.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>State</Label>
-                        <Input
-                          value={orgForm.state}
-                          disabled={!team.canManageSettings}
-                          onChange={(event) =>
-                            setOrgForm({ ...orgForm, state: event.target.value })
-                          }
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>ZIP</Label>
-                        <Input
-                          value={orgForm.postal_code}
-                          disabled={!team.canManageSettings}
-                          onChange={(event) =>
-                            setOrgForm({ ...orgForm, postal_code: event.target.value })
-                          }
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid gap-4 rounded-md border border-hairline bg-surface p-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      License and tax
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label>License number</Label>
-                        <Input
-                          value={orgForm.license_number}
-                          disabled={!team.canManageSettings}
-                          onChange={(event) =>
-                            setOrgForm({ ...orgForm, license_number: event.target.value })
-                          }
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Tax identifier</Label>
-                        <Input
-                          value={orgForm.tax_identifier}
-                          disabled={!team.canManageSettings}
-                          onChange={(event) =>
-                            setOrgForm({ ...orgForm, tax_identifier: event.target.value })
-                          }
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-3">
-                    <ContactFact
-                      icon={<Building2 className="h-3.5 w-3.5" />}
-                      label="Display"
-                      value={orgForm.name || "Company"}
-                    />
-                    <ContactFact
-                      icon={<Globe className="h-3.5 w-3.5" />}
-                      label="Website"
-                      value={orgForm.website_url || "Not set"}
-                    />
-                    <ContactFact
-                      icon={<Phone className="h-3.5 w-3.5" />}
-                      label="Phone"
-                      value={orgForm.office_phone || "Not set"}
-                    />
-                    <ContactFact
-                      icon={<MapPin className="h-3.5 w-3.5" />}
-                      label="Location"
-                      value={[orgForm.city, orgForm.state].filter(Boolean).join(", ") || "Not set"}
-                    />
-                    <ContactFact
-                      icon={<FileImage className="h-3.5 w-3.5" />}
-                      label="Logo"
-                      value={visibleLogoPreviewUrl ? "Ready" : "Not set"}
-                    />
-                    <ContactFact
-                      icon={<ShieldCheck className="h-3.5 w-3.5" />}
-                      label="Role"
-                      value={roleLabel(team.currentUserRole ?? "member")}
-                    />
-                  </div>
-                  <div className="grid gap-3 rounded-md border border-hairline bg-surface p-3 md:grid-cols-3 xl:grid-cols-6">
-                    <MiniStat label="Plan" value={team.organization.plan_code} />
-                    <MiniStat label="Billing" value={team.organization.billing_status} />
-                    <MiniStat
-                      label="Stripe"
-                      value={
-                        team.organization.payment_processor_ready
-                          ? "Connect ready"
-                          : team.organization.stripe_connect_account_id
-                            ? "Setup started"
-                            : team.organization.stripe_customer_id
-                              ? "Customer linked"
-                              : "Not connected"
-                      }
-                    />
-                    <MiniStat
-                      label="Payments"
-                      value={
-                        team.organization.payment_processor_ready ? "Online ready" : "Manual only"
-                      }
-                    />
-                    <MiniStat label="Role" value={roleLabel(team.currentUserRole ?? "member")} />
-                    <MiniStat
-                      label="Grant"
-                      value={team.organization.contractor_circle_grant ? "Active" : "None"}
-                    />
-                  </div>
-                  {team.canManageSettings && (
-                    <div className="flex justify-end">
-                      <Button
-                        onClick={() => orgMutation.mutate()}
-                        disabled={
-                          orgMutation.isPending ||
-                          logoUploadMutation.isPending ||
-                          !orgForm.name.trim()
-                        }
-                        className="gap-1.5"
-                      >
-                        <Save className="h-3.5 w-3.5" />
-                        {orgMutation.isPending ? "Saving..." : "Save company"}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
+                </section>
+              )}
+            </div>
           </div>
         )}
       </main>
+      <AppFooter context={`${team?.organization.name || "Company"} · settings console`} />
     </div>
   );
 }

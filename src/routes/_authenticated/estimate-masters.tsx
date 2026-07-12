@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
-import { ArrowLeft, Calculator, FileSpreadsheet, Library, Plus, Search, Users } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +30,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AppFooter } from "@/components/layout/AppFooter";
+import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import {
   createBlankLineItems,
   createEstimate,
@@ -38,6 +40,7 @@ import {
 } from "@/lib/estimates.functions";
 import { fmtUSD } from "@/lib/format";
 import { getCompanyWorkspaceContext } from "@/lib/team.functions";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/estimate-masters")({
   ssr: false,
@@ -52,6 +55,19 @@ export const Route = createFileRoute("/_authenticated/estimate-masters")({
   }),
   component: EstimateMastersPage,
 });
+
+// House mono label (v2): 8.5px, .12em tracking, muted. Shared with the estimates
+// list so the two tables read as one system.
+const MONO_LABEL =
+  "font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground";
+
+const segmentClass = (active: boolean) =>
+  cn(
+    "whitespace-nowrap rounded-lg px-3.5 py-2 text-[12.5px] font-semibold transition-colors",
+    active
+      ? "bg-primary text-primary-foreground"
+      : "border border-hairline text-foreground hover:bg-muted",
+  );
 
 function shortDate(value: string) {
   if (!value) return "";
@@ -87,17 +103,18 @@ function EstimateMastersPage() {
   });
   const companyName = companyContext?.name || "Company";
 
+  const allMasters = useMemo(() => estimatesQuery.data ?? [], [estimatesQuery.data]);
   const visibleMasters = useMemo(() => {
     const q = search.trim().toLowerCase();
     // listMasterSheets returns only master sheets, filtered server-side.
-    return (estimatesQuery.data ?? []).filter((estimate) => {
+    return allMasters.filter((estimate) => {
       if (!q) return true;
       return [estimate.name, estimate.description, estimate.region]
         .join(" ")
         .toLowerCase()
         .includes(q);
     });
-  }, [estimatesQuery.data, search]);
+  }, [allMasters, search]);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -128,89 +145,60 @@ function EstimateMastersPage() {
   });
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto flex max-w-[1500px] flex-col gap-4 px-6 py-5 lg:px-10">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              <Button asChild variant="ghost" size="icon" title="Back to estimates">
-                <Link to="/estimates">
-                  <ArrowLeft className="h-4 w-4" />
-                </Link>
-              </Button>
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  {companyName}
-                </p>
-                <h1 className="mt-1 font-serif text-3xl text-foreground">Master Estimate Sheets</h1>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button asChild size="sm" variant="outline" className="gap-1.5">
-                <Link to="/estimates">
-                  <Calculator className="h-3.5 w-3.5" /> Project Estimates
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5">
-                <Link to="/cost-library">
-                  <Library className="h-3.5 w-3.5" /> Cost Library
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5">
-                <Link to="/team">
-                  <Users className="h-3.5 w-3.5" /> Company
-                </Link>
-              </Button>
-              <Button size="sm" className="gap-1.5" onClick={() => setNewOpen(true)}>
-                <Plus className="h-3.5 w-3.5" /> New Master Sheet
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <PortfolioTopBar
+        active="estimates"
+        actions={
+          <Button size="sm" className="gap-1.5" onClick={() => setNewOpen(true)}>
+            <Plus className="h-3.5 w-3.5" /> New Master Sheet
+          </Button>
+        }
+      />
 
-      <main className="mx-auto max-w-[1500px] space-y-5 px-6 py-8 lg:px-10">
-        <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="max-w-3xl">
-              <div className="flex items-center gap-2 font-medium">
-                <FileSpreadsheet className="h-4 w-4" />
-                Prep room for repeatable pricing
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Open the Harbor sample first to see a finished master sheet. For your own work, keep
-                company pricing here, update material and labor unit costs, copy it for alternates,
-                then create a project estimate from the clean master.
-              </p>
-            </div>
-            <Button size="sm" className="gap-1.5" onClick={() => setNewOpen(true)}>
-              <Plus className="h-3.5 w-3.5" /> New Master Sheet
-            </Button>
+      <main className="mx-auto w-full max-w-[1500px] flex-1 space-y-5 px-6 py-8 lg:px-10">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className={MONO_LABEL}>{companyName}</p>
+            <h1 className="mt-2 font-serif text-3xl text-foreground">Master estimate sheets</h1>
+            <p className="mt-1.5 max-w-[64ch] text-sm text-muted-foreground">
+              Your prep room for repeatable pricing — keep company rates here, update material and
+              labor unit costs, copy for alternates, then spin a clean project estimate from the
+              master. Open the Harbor sample first to see a finished sheet.
+            </p>
           </div>
-        </section>
-
-        <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search master sheets, trades, regions, or notes"
-              className="pl-9"
-            />
-          </div>
+          <nav className="flex flex-wrap gap-2" aria-label="Estimating sections">
+            <Link to="/estimates" className={segmentClass(false)}>
+              Estimates
+            </Link>
+            <Link to="/estimate-masters" className={segmentClass(true)}>
+              Master sheets
+            </Link>
+            <Link to="/cost-library" className={segmentClass(false)}>
+              Cost library
+            </Link>
+          </nav>
         </div>
 
-        <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search master sheets, trades, regions, or notes"
+            className="bg-surface pl-9"
+          />
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-hairline bg-surface">
           <Table className="min-w-[980px]">
             <TableHeader>
-              <TableRow className="bg-surface [&>th]:whitespace-nowrap">
-                <TableHead>Name</TableHead>
-                <TableHead>Purpose</TableHead>
-                <TableHead className="text-right">Lines</TableHead>
-                <TableHead className="text-right">Direct Cost</TableHead>
-                <TableHead className="text-right">Total Model</TableHead>
-                <TableHead>Last Updated</TableHead>
+              <TableRow className="bg-muted [&>th]:whitespace-nowrap">
+                <TableHead className={MONO_LABEL}>Name</TableHead>
+                <TableHead className={MONO_LABEL}>Purpose</TableHead>
+                <TableHead className={cn(MONO_LABEL, "text-right")}>Lines</TableHead>
+                <TableHead className={cn(MONO_LABEL, "text-right")}>Direct Cost</TableHead>
+                <TableHead className={cn(MONO_LABEL, "text-right")}>Total Model</TableHead>
+                <TableHead className={MONO_LABEL}>Last Updated</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -247,7 +235,7 @@ function EstimateMastersPage() {
                     key={estimate.id}
                     role="link"
                     tabIndex={0}
-                    className="cursor-pointer hover:bg-surface/60 [&>td]:py-4"
+                    className="cursor-pointer [&>td]:py-4"
                     onClick={() => window.location.assign(`/estimates/${estimate.id}`)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
@@ -257,24 +245,24 @@ function EstimateMastersPage() {
                     }}
                   >
                     <TableCell>
-                      <div className="font-serif text-lg">{estimate.name}</div>
-                      <div className="text-xs text-muted-foreground">
+                      <div className="font-serif text-base">{estimate.name}</div>
+                      <div className="mt-0.5 text-[11.5px] text-muted-foreground">
                         {estimate.region || "National"}
                       </div>
                     </TableCell>
-                    <TableCell className="max-w-[420px] text-sm text-muted-foreground">
+                    <TableCell className="max-w-[38ch] text-[12.5px] text-muted-foreground">
                       {estimate.description || "Reusable estimating master"}
                     </TableCell>
-                    <TableCell className="text-right tabular">
+                    <TableCell className="text-right tabular text-muted-foreground">
                       {estimate.line_item_count ?? 0}
                     </TableCell>
-                    <TableCell className="text-right tabular">
+                    <TableCell className="text-right font-serif text-sm tabular">
                       {fmtUSD(estimate.subtotal_cents / 100)}
                     </TableCell>
-                    <TableCell className="text-right font-medium tabular">
+                    <TableCell className="text-right font-serif text-[15px] font-semibold tabular">
                       {fmtUSD(estimate.total_with_markups_cents / 100)}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell className="text-[12px] text-muted-foreground">
                       {shortDate(estimate.updated_at)}
                     </TableCell>
                   </TableRow>
@@ -284,6 +272,8 @@ function EstimateMastersPage() {
           </Table>
         </div>
       </main>
+
+      <AppFooter context={`Master sheets · ${allMasters.length}`} />
 
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
         <DialogContent>

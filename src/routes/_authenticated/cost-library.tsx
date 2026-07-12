@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -9,16 +9,15 @@ import {
   Copy,
   Download,
   FileSpreadsheet,
-  Library,
   Lock,
   Plus,
   Save,
   Search,
+  SlidersHorizontal,
   Trash2,
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,6 +30,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -48,12 +48,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { AppFooter } from "@/components/layout/AppFooter";
+import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
 import {
   COST_LIBRARY_LABOR_BASES,
   createCostLibraryItem,
   deleteCostLibraryItem,
   importCostLibraryItems,
   listCostLibraryItems,
+  resolveLibraryUnitCosts,
   updateCostLibraryItem,
   type CostLibraryItemRow,
   type CostLibraryLaborBasis,
@@ -67,6 +70,7 @@ import {
 import { fmtUSD } from "@/lib/format";
 import { parseCsv, parsePaste, parseXlsx } from "@/lib/sov-import";
 import { downloadTextFile } from "@/lib/download-file";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/cost-library")({
   ssr: false,
@@ -90,6 +94,58 @@ const dollarsToCents = (value: number) => Math.round(value * 100);
 function downloadText(filename: string, content: string, type: string) {
   downloadTextFile(filename, content, type);
 }
+
+// Unit prices are cents-precise: whole-dollar rounding would turn $0.62 into $1.
+// fmtUSD (whole dollars) is right for extended totals, wrong for a rate book.
+const fmtUnitUSD = (cents: number) =>
+  (cents / 100).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+const fmtCrew = (value: number) =>
+  Number(value).toLocaleString("en-US", { maximumFractionDigits: 1 });
+const fmtProd = (value: number) =>
+  Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 });
+
+// CSI MasterFormat division names for the sidebar list and group headers. This
+// is display-only labelling owned by this route (the schedule module keeps its
+// own private copy for its WBS labels).
+const CSI_DIVISION_NAMES: Record<string, string> = {
+  "01": "General Requirements",
+  "02": "Existing Conditions",
+  "03": "Concrete",
+  "04": "Masonry",
+  "05": "Metals",
+  "06": "Wood & Composites",
+  "07": "Thermal & Moisture",
+  "08": "Openings",
+  "09": "Finishes",
+  "10": "Specialties",
+  "11": "Equipment",
+  "12": "Furnishings",
+  "13": "Special Construction",
+  "14": "Conveying Equipment",
+  "21": "Fire Suppression",
+  "22": "Plumbing",
+  "23": "HVAC",
+  "25": "Integrated Automation",
+  "26": "Electrical",
+  "27": "Communications",
+  "28": "Electronic Safety & Security",
+  "31": "Earthwork",
+  "32": "Exterior Improvements",
+  "33": "Utilities",
+};
+
+const divisionName = (code: string) => {
+  const trimmed = code.trim();
+  if (!trimmed) return "Uncoded";
+  const padded = trimmed.padStart(2, "0");
+  return CSI_DIVISION_NAMES[padded] ?? `Division ${trimmed}`;
+};
 
 type NewItem = {
   csi_division: string;
@@ -127,11 +183,11 @@ const laborBasisLabel = (basis: CostLibraryLaborBasis) =>
 
 const EMPTY_COST_ITEMS: CostLibraryItemRow[] = [];
 
-const costFocusOptions: Array<{ value: CostFocus; label: string; description: string }> = [
-  { value: "all", label: "All Costs", description: "Material, labor, and installed costs." },
-  { value: "material", label: "Material", description: "Material price per unit." },
-  { value: "labor", label: "Labor", description: "Labor price per unit, with crew assumptions." },
-  { value: "installed", label: "Installed", description: "Material and labor in one row." },
+const costFocusOptions: Array<{ value: CostFocus; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "material", label: "Material" },
+  { value: "labor", label: "Labor" },
+  { value: "installed", label: "Installed" },
 ];
 
 const getCostProfile = (
@@ -162,58 +218,31 @@ const matchesCostFocus = (item: CostLibraryItemRow, focus: CostFocus) => {
 
 const unitLabel = (unit: string) => unit.trim().toUpperCase() || "unit";
 
-function CostRateDisplay({
-  cents,
-  unit,
-  kind,
-  basis = "per_unit",
-}: {
-  cents: number;
-  unit: string;
-  kind: "Material" | "Labor";
-  basis?: CostLibraryLaborBasis;
-}) {
-  const normalizedUnit = unitLabel(unit);
-  if (cents <= 0) {
-    return (
-      <div className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs">
-        <div className="flex items-center justify-between gap-2">
-          <span className="font-medium text-foreground">{kind}</span>
-          <span className="text-muted-foreground">
-            {kind === "Material" && basis === "installed" ? "In the installed price" : "Not priced"}
-          </span>
-        </div>
-        <div className="mt-0.5 text-muted-foreground">
-          {kind === "Material"
-            ? basis === "installed"
-              ? "Material is included in the installed labor price"
-              : "No material cost"
-            : "No labor cost"}
-        </div>
-      </div>
-    );
+// Per-unit material + labor + installed, routed through the app's canonical
+// resolver so per-crew-hour rows convert with crew size × production, and
+// installed-basis rows keep material folded into the labor price. When a
+// per-hour row is missing its crew/production, labor and installed can't be
+// priced, so both read "—" rather than a fabricated number.
+function deriveUnitCosts(
+  item: Pick<
+    CostLibraryItemRow,
+    | "description"
+    | "material_cost_cents"
+    | "labor_cost_cents"
+    | "labor_basis"
+    | "crew_size"
+    | "productivity_per_hour"
+  >,
+): { materialCents: number; laborCents: number | null; installedCents: number | null } {
+  const resolution = resolveLibraryUnitCosts(item);
+  if (!resolution.ok) {
+    return { materialCents: item.material_cost_cents, laborCents: null, installedCents: null };
   }
-  const perLabel = kind === "Labor" && basis === "per_hour" ? "crew hr" : normalizedUnit;
-  const explainer =
-    kind === "Material"
-      ? `Material price per ${normalizedUnit}`
-      : basis === "per_hour"
-        ? "Crew rate for one hour. Crew size and production turn it into a unit price."
-        : basis === "installed"
-          ? `Material and labor together for one ${normalizedUnit}`
-          : `Labor price per ${normalizedUnit}, not per worker`;
-  return (
-    <div className="rounded-md border border-hairline bg-surface px-2 py-1.5">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs font-medium text-muted-foreground">{kind}</span>
-        <span className="text-sm font-semibold tabular text-foreground">
-          {fmtUSD(cents / 100)}{" "}
-          <span className="text-xs font-normal text-muted-foreground">/ {perLabel}</span>
-        </span>
-      </div>
-      <div className="text-[11px] text-muted-foreground">{explainer}</div>
-    </div>
-  );
+  return {
+    materialCents: resolution.material_cost_cents,
+    laborCents: resolution.labor_cost_cents,
+    installedCents: resolution.material_cost_cents + resolution.labor_cost_cents,
+  };
 }
 
 function CostMoneyInput({
@@ -291,15 +320,11 @@ function CostLibraryPage() {
   const [activeView, setActiveView] = useState<LibraryView>("system");
   const [costFocus, setCostFocus] = useState<CostFocus>("all");
 
+  // The whole book loads once (no server-side division/category filter) so the
+  // sidebar can count every division client-side; refinement is all local.
   const libraryQuery = useQuery({
-    queryKey: ["cost-library", division, category],
-    queryFn: () =>
-      list({
-        data: {
-          csi_division: division === "all" ? "" : division,
-          category: category === "all" ? "" : category,
-        },
-      }),
+    queryKey: ["cost-library"],
+    queryFn: () => list({ data: { csi_division: "", category: "" } }),
   });
   const { data: companyContext } = useQuery({
     queryKey: ["company-workspace-context"],
@@ -446,41 +471,85 @@ function CostLibraryPage() {
     [sourceItems],
   );
 
+  // Sidebar CSI-division counts: within the active library (Overwatch / My) and
+  // the active Views focus only — so "All divisions" always equals the active
+  // Views pill count. Search and the popover filters refine the table, not the
+  // navigation map.
+  const focusItems = useMemo(
+    () => sourceItems.filter((item) => matchesCostFocus(item, costFocus)),
+    [sourceItems, costFocus],
+  );
+  const divisionNav = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of focusItems) {
+      const key = item.csi_division ?? "";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([code, count]) => ({ code, name: divisionName(code), count }));
+  }, [focusItems]);
+  const divisionTotal = focusItems.length;
+
+  const categories = libraryQuery.data?.categories ?? [];
+  const activeFilterCount = (category !== "all" ? 1 : 0) + (basisFilter !== "all" ? 1 : 0);
+
   const visibleItems = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const sourceFiltered = sourceItems
+    return sourceItems
       .filter((item) => matchesCostFocus(item, costFocus))
-      .filter((item) => basisFilter === "all" || item.labor_basis === basisFilter);
-    const searched = sourceFiltered.filter((item) => {
-      if (!q) return true;
-      return [
-        item.description,
-        item.category,
-        item.csi_code,
-        item.csi_division,
-        item.unit,
-        item.source,
-        profileLabel(getCostProfile(item)),
-        laborBasisLabel(item.labor_basis),
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(q);
-    });
-    if (activeView === "system") return searched;
-    return [...searched].sort(
-      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-    );
-  }, [activeView, basisFilter, costFocus, search, sourceItems]);
+      .filter((item) => basisFilter === "all" || item.labor_basis === basisFilter)
+      .filter((item) => division === "all" || (item.csi_division ?? "") === division)
+      .filter((item) => category === "all" || item.category === category)
+      .filter((item) => {
+        if (!q) return true;
+        return [
+          item.description,
+          item.category,
+          item.csi_code,
+          item.csi_division,
+          item.unit,
+          item.source,
+          profileLabel(getCostProfile(item)),
+          laborBasisLabel(item.labor_basis),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      });
+  }, [basisFilter, category, costFocus, division, search, sourceItems]);
 
+  // Rows are grouped under a clay Division header, divisions ascending and each
+  // division's rows by CSI code, matching the mock's price-book layout.
+  const groupedVisible = useMemo(() => {
+    const groups = new Map<string, CostLibraryItemRow[]>();
+    for (const item of visibleItems) {
+      const key = item.csi_division ?? "";
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(item);
+      else groups.set(key, [item]);
+    }
+    return Array.from(groups.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([code, items]) => ({
+        code,
+        name: divisionName(code),
+        items: [...items].sort(
+          (x, y) =>
+            (x.csi_code || x.csi_division).localeCompare(y.csi_code || y.csi_division) ||
+            x.description.localeCompare(y.description),
+        ),
+      }));
+  }, [visibleItems]);
+
+  const priceBookSubhead =
+    activeView === "system"
+      ? "Material and labor unit costs, with crew & production. Read-only Overwatch pricing — copy a row to edit it."
+      : "Your editable price book. These material and labor unit costs are searchable inside master sheets and project estimates.";
   const activeEmptyMessage =
     activeView === "system"
       ? "No Overwatch system costs found for this view."
       : "No personal costs found for this view. Add a custom cost, import your spreadsheet, or copy Overwatch pricing into My Cost Library.";
-  const activeViewDescription =
-    activeView === "system"
-      ? "Read-only Overwatch starter pricing. Use the labor view for crew-based labor items, then copy useful rows into My Cost Library before editing them."
-      : "Your editable material and labor price book. These saved costs are searchable inside master sheets and project estimates.";
 
   const resetImport = () => {
     setImportRows([]);
@@ -521,248 +590,268 @@ function CostLibraryPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto flex max-w-[1500px] flex-col gap-4 px-6 py-5 lg:px-10">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-3">
-              <Button asChild variant="ghost" size="icon" title="Back to estimates">
-                <Link to="/estimates">
-                  <ArrowLeft className="h-4 w-4" />
-                </Link>
-              </Button>
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  {companyName}
-                </p>
-                <h1 className="mt-1 font-serif text-3xl text-foreground">Cost Library</h1>
-              </div>
+    <div className="flex min-h-screen flex-col bg-background">
+      <PortfolioTopBar active="estimates" />
+
+      {/* Detail bar: back-arrow + eyebrow + serif title, Overwatch/My segmented
+          toggle (the activeView), and the Import / Add cost actions. */}
+      <div className="border-b border-hairline bg-surface">
+        <div className="mx-auto flex w-full max-w-[1500px] flex-wrap items-center gap-x-4 gap-y-3 px-5 py-3.5 sm:px-8 lg:px-10">
+          <Button
+            asChild
+            variant="ghost"
+            size="icon"
+            className="shrink-0"
+            title="Back to estimates"
+          >
+            <Link to="/estimates" aria-label="Back to estimates">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+          </Button>
+          <div className="min-w-0">
+            <p className="eyebrow truncate">{companyName} · Estimates</p>
+            <h1 className="mt-0.5 font-serif text-[26px] leading-tight text-foreground">
+              Cost Library
+            </h1>
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2.5">
+            <div
+              role="tablist"
+              aria-label="Cost library"
+              className="inline-flex items-center gap-0.5 rounded-lg bg-muted p-[3px]"
+            >
+              <SegmentedTab
+                active={activeView === "system"}
+                label="Overwatch"
+                count={systemCount}
+                onClick={() => setActiveView("system")}
+              />
+              <SegmentedTab
+                active={activeView === "my"}
+                label="My library"
+                count={myCount}
+                onClick={() => setActiveView("my")}
+              />
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1.5"
-                title="Download the CSV column guide for importing costs"
-                onClick={() =>
-                  downloadText(
-                    "overwatch-cost-library-import-format.csv",
-                    costLibraryTemplateCsv,
-                    "text/csv",
-                  )
-                }
-              >
-                <Download className="h-3.5 w-3.5" /> Download Import Format
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1.5"
-                onClick={() => setImportOpen(true)}
-              >
-                <Upload className="h-3.5 w-3.5" /> Import My Costs
-              </Button>
-              <Button size="sm" className="gap-1.5" onClick={() => setNewOpen(true)}>
-                <Plus className="h-3.5 w-3.5" /> Add Custom Cost
-              </Button>
-            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => setImportOpen(true)}
+            >
+              <Upload className="h-3.5 w-3.5" /> Import
+            </Button>
+            <Button size="sm" className="gap-1.5" onClick={() => setNewOpen(true)}>
+              <Plus className="h-3.5 w-3.5" /> Add cost
+            </Button>
           </div>
         </div>
-      </header>
+      </div>
 
-      <main className="mx-auto max-w-[1500px] space-y-5 px-6 py-8 lg:px-10">
-        <section className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="max-w-3xl">
-              <div className="flex items-center gap-2 font-medium">
-                <Library className="h-4 w-4" />
-                Build your estimating price book
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Start from Overwatch material and labor pricing, import your spreadsheet, or add
-                costs by hand. My Cost Library is the editable price book used by master sheets and
-                project estimates.
-              </p>
-            </div>
-            <Tabs
-              value={activeView}
-              onValueChange={(value) => setActiveView(value as LibraryView)}
-              className="w-full lg:w-auto"
-            >
-              <TabsList className="grid w-full grid-cols-2 lg:w-[390px]">
-                <TabsTrigger value="system">Overwatch Library ({systemCount})</TabsTrigger>
-                <TabsTrigger value="my">My Cost Library ({myCount})</TabsTrigger>
-              </TabsList>
-            </Tabs>
+      <main className="mx-auto grid w-full max-w-[1500px] flex-1 grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)]">
+        {/* Left sidebar: Views focus pills + CSI division navigation. */}
+        <aside className="border-b border-hairline bg-surface px-3 py-4 lg:border-b-0 lg:border-r">
+          <div className="eyebrow px-2 pb-2">Views</div>
+          <div className="flex flex-wrap gap-1.5 border-b border-hairline px-1 pb-3.5">
+            {costFocusOptions.map((option) => {
+              const active = costFocus === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setCostFocus(option.value)}
+                  aria-pressed={active}
+                  className={cn(
+                    "whitespace-nowrap rounded-full px-3 py-1.5 text-[11.5px] font-semibold transition-colors",
+                    active
+                      ? "bg-accent text-accent-foreground"
+                      : "border border-hairline text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {option.label} {costCounts[option.value]}
+                </button>
+              );
+            })}
           </div>
-          <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
-            <div className="grid gap-2 sm:grid-cols-4">
-              {costFocusOptions.map((option) => {
-                const active = costFocus === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setCostFocus(option.value)}
-                    className={`rounded-md border px-3 py-2 text-left transition ${
-                      active
-                        ? "border-foreground bg-foreground text-background"
-                        : "border-hairline bg-surface hover:bg-muted"
-                    }`}
+
+          <div className="eyebrow px-2 pb-2 pt-3.5">CSI divisions</div>
+          <div className="flex flex-col gap-0.5">
+            <SidebarDivision
+              label="All divisions"
+              count={divisionTotal}
+              active={division === "all"}
+              onClick={() => setDivision("all")}
+            />
+            {divisionNav.map((entry) => (
+              <SidebarDivision
+                key={entry.code || "uncoded"}
+                label={entry.code ? `${entry.code} · ${entry.name}` : entry.name}
+                count={entry.count}
+                active={division === entry.code}
+                onClick={() => setDivision(entry.code)}
+              />
+            ))}
+          </div>
+        </aside>
+
+        {/* Right content: Price book heading, search + filters, price table. */}
+        <section className="min-w-0 px-5 py-6 sm:px-6 lg:px-8">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className="font-serif text-[26px] font-normal leading-none text-foreground">
+              Price book
+            </h2>
+            <p className="text-[13px] text-muted-foreground">{priceBookSubhead}</p>
+          </div>
+
+          <div className="mt-3.5 flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search description, CSI, unit, or category"
+                className="pl-9"
+              />
+            </div>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <SlidersHorizontal className="h-3.5 w-3.5" /> Filters
+                  {activeFilterCount > 0 && (
+                    <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-accent-foreground">
+                      {activeFilterCount}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-72 space-y-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Category</Label>
+                  <Select value={category} onValueChange={setCategory}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All categories</SelectItem>
+                      {categories.map((item) => (
+                        <SelectItem key={item} value={item}>
+                          {item}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Labor pricing</Label>
+                  <Select
+                    value={basisFilter}
+                    onValueChange={(value) => setBasisFilter(value as LaborBasisFilter)}
                   >
-                    <span className="block text-sm font-medium">
-                      {option.label} ({costCounts[option.value]})
-                    </span>
-                    <span
-                      className={`mt-0.5 block text-xs ${
-                        active ? "text-background/75" : "text-muted-foreground"
-                      }`}
-                    >
-                      {option.description}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-xs text-muted-foreground lg:max-w-sm">{activeViewDescription}</p>
+                    <SelectTrigger aria-label="Filter by labor basis">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All labor pricing</SelectItem>
+                      {COST_LIBRARY_LABOR_BASES.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {activeFilterCount > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      setCategory("all");
+                      setBasisFilter("all");
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                )}
+              </PopoverContent>
+            </Popover>
           </div>
-          <div className="mt-4 grid gap-2 rounded-lg border border-hairline bg-surface p-3 md:grid-cols-3">
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Material $/Unit
-              </div>
-              <p className="mt-1 text-sm text-foreground">
-                The material price for one unit, like one LF, SF, EA, or MO.
-              </p>
-            </div>
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Labor Price
-              </div>
-              <p className="mt-1 text-sm text-foreground">
-                Each row says what its labor price means: per unit, per crew hour, or installed
-                (material and labor together).
-              </p>
-            </div>
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Crew / Production
-              </div>
-              <p className="mt-1 text-sm text-foreground">
-                The crew and speed assumption behind the labor price. Per-crew-hour rows need both
-                to price a unit.
-              </p>
+
+          <div className="mt-3.5 overflow-hidden rounded-xl border border-hairline bg-surface">
+            <div className="overflow-x-auto">
+              <Table className="w-full min-w-[920px]">
+                <TableHeader>
+                  <TableRow className="bg-muted/60 hover:bg-muted/60 [&>th]:h-auto [&>th]:whitespace-nowrap [&>th]:py-2.5 [&>th]:font-mono [&>th]:text-[9px] [&>th]:font-bold [&>th]:uppercase [&>th]:tracking-[0.12em]">
+                    <TableHead>Item</TableHead>
+                    <TableHead className="text-center">Unit</TableHead>
+                    <TableHead className="text-right">Material $/u</TableHead>
+                    <TableHead className="text-right">Labor $/u</TableHead>
+                    <TableHead className="text-center">Crew</TableHead>
+                    <TableHead className="text-center">Prod/hr</TableHead>
+                    <TableHead className="border-l border-hairline text-right">Installed</TableHead>
+                    <TableHead className="w-12 text-right">
+                      <span className="sr-only">Actions</span>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {libraryQuery.isLoading ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={8}
+                        className="py-10 text-center text-sm text-muted-foreground"
+                      >
+                        Loading...
+                      </TableCell>
+                    </TableRow>
+                  ) : libraryQuery.isError ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="py-10 text-center text-sm text-danger">
+                        {libraryQuery.error instanceof Error
+                          ? libraryQuery.error.message
+                          : "Cost library did not load"}
+                      </TableCell>
+                    </TableRow>
+                  ) : groupedVisible.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={8}
+                        className="py-10 text-center text-sm text-muted-foreground"
+                      >
+                        {activeEmptyMessage}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    groupedVisible.map((group) => (
+                      <Fragment key={group.code || "uncoded"}>
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell
+                            colSpan={8}
+                            className="border-t border-hairline bg-background py-2.5 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-clay"
+                          >
+                            {group.code ? `Division ${group.code} · ${group.name}` : group.name}
+                          </TableCell>
+                        </TableRow>
+                        {group.items.map((item) => (
+                          <CostLibraryRow
+                            key={item.id}
+                            item={item}
+                            onSave={(patch) => updateMutation.mutate({ id: item.id, patch })}
+                            onDelete={() => deleteMutation.mutate(item.id)}
+                            onCopy={() => copyMutation.mutate(item)}
+                          />
+                        ))}
+                      </Fragment>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
             </div>
           </div>
         </section>
-
-        <div className="grid gap-3 rounded-lg border border-hairline bg-card p-4 shadow-card lg:grid-cols-[1fr_160px_190px_190px]">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search description, CSI, unit, category, or source"
-              className="pl-9"
-            />
-          </div>
-          <Select value={division} onValueChange={setDivision}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All divisions</SelectItem>
-              {(libraryQuery.data?.divisions ?? []).map((item) => (
-                <SelectItem key={item} value={item}>
-                  CSI {item}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={category} onValueChange={setCategory}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All categories</SelectItem>
-              {(libraryQuery.data?.categories ?? []).map((item) => (
-                <SelectItem key={item} value={item}>
-                  {item}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={basisFilter}
-            onValueChange={(value) => setBasisFilter(value as LaborBasisFilter)}
-          >
-            <SelectTrigger aria-label="Filter by labor basis">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All labor pricing</SelectItem>
-              {COST_LIBRARY_LABOR_BASES.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="overflow-hidden rounded-lg border border-hairline bg-card shadow-card">
-          <Table className="w-full table-fixed">
-            <TableHeader>
-              <TableRow className="bg-surface [&>th]:whitespace-nowrap">
-                <TableHead className="w-[38%]">Item</TableHead>
-                <TableHead className="w-[13%]">Scope</TableHead>
-                <TableHead className="w-[23%]">Rates</TableHead>
-                <TableHead className="w-[14%]">Crew / Production</TableHead>
-                <TableHead className="w-[12%] text-right">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {libraryQuery.isLoading ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={5}
-                    className="py-10 text-center text-sm text-muted-foreground"
-                  >
-                    Loading...
-                  </TableCell>
-                </TableRow>
-              ) : libraryQuery.isError ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-sm text-danger">
-                    {libraryQuery.error instanceof Error
-                      ? libraryQuery.error.message
-                      : "Cost library did not load"}
-                  </TableCell>
-                </TableRow>
-              ) : visibleItems.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={5}
-                    className="py-10 text-center text-sm text-muted-foreground"
-                  >
-                    {activeEmptyMessage}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                visibleItems.map((item) => (
-                  <CostLibraryRow
-                    key={item.id}
-                    item={item}
-                    onSave={(patch) => updateMutation.mutate({ id: item.id, patch })}
-                    onDelete={() => deleteMutation.mutate(item.id)}
-                    onCopy={() => copyMutation.mutate(item)}
-                  />
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
       </main>
+
+      <AppFooter context="Cost library" />
 
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
         <DialogContent>
@@ -933,6 +1022,71 @@ function CostLibraryPage() {
   );
 }
 
+function SegmentedTab({
+  active,
+  label,
+  count,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  count: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+        active
+          ? "border border-hairline bg-surface-elevated text-foreground shadow-sm"
+          : "border border-transparent text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {label} <span className="font-mono text-[11px] text-muted-foreground">{count}</span>
+    </button>
+  );
+}
+
+function SidebarDivision({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] transition-colors",
+        active
+          ? "bg-muted font-semibold text-foreground"
+          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+      )}
+    >
+      <span className="truncate">{label}</span>
+      <span className="font-mono text-[10px] text-muted-foreground">{count}</span>
+    </button>
+  );
+}
+
+function ReadOnlyMoney({ cents }: { cents: number | null }) {
+  if (cents == null || cents <= 0) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return <span className="font-serif text-sm text-foreground">{fmtUnitUSD(cents)}</span>;
+}
+
 function CostLibraryRow({
   item,
   onSave,
@@ -945,9 +1099,6 @@ function CostLibraryRow({
   onCopy: () => void;
 }) {
   const editable = item.source !== "system";
-  const sourceLabel =
-    item.source === "system" ? "Overwatch" : item.source === "imported" ? "Imported" : "Custom";
-  const profile = getCostProfile(item);
   const [draft, setDraft] = useState<NewItem>({
     csi_division: item.csi_division,
     csi_code: item.csi_code,
@@ -975,85 +1126,45 @@ function CostLibraryRow({
     });
   }, [item]);
 
-  return (
-    <TableRow className="[&>td]:align-top [&>td]:py-3">
-      <TableCell>
-        {editable ? (
-          <div className="space-y-2">
-            <div className="grid gap-2 sm:grid-cols-[120px_1fr]">
-              <Input
-                value={draft.csi_code || draft.csi_division}
-                onChange={(event) => setDraft({ ...draft, csi_code: event.target.value })}
-                className="h-8"
-                aria-label="CSI code"
-              />
+  if (editable) {
+    const draftInstalled = deriveUnitCosts({
+      description: draft.description,
+      material_cost_cents: draft.material_cost_cents,
+      labor_cost_cents: draft.labor_cost_cents,
+      labor_basis: (draft.labor_basis || "per_unit") as CostLibraryLaborBasis,
+      crew_size: draft.crew_size,
+      productivity_per_hour: draft.productivity_per_hour,
+    });
+    return (
+      <TableRow className="[&>td]:align-top [&>td]:py-3">
+        <TableCell>
+          <div className="flex items-start gap-2">
+            <span
+              aria-hidden="true"
+              className="mt-2 inline-block h-[7px] w-[7px] shrink-0 rounded-full bg-clay"
+            />
+            <div className="min-w-0 flex-1 space-y-2">
               <Input
                 value={draft.description}
                 onChange={(event) => setDraft({ ...draft, description: event.target.value })}
                 className="h-8"
                 aria-label="Cost description"
               />
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <Badge variant="outline" className="gap-1 capitalize">
-                {sourceLabel}
-              </Badge>
-              <Badge variant={profile === "labor" ? "default" : "outline"} className="capitalize">
-                {profileLabel(profile)}
-              </Badge>
-              <Badge variant="outline">{laborBasisLabel(item.labor_basis)}</Badge>
-            </div>
-          </div>
-        ) : (
-          <div className="min-w-0 space-y-2">
-            <div className="font-medium leading-snug text-foreground">{item.description}</div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Badge variant="outline" className="gap-1 capitalize">
-                {item.source === "system" && <Lock className="h-3 w-3" />}
-                {sourceLabel}
-              </Badge>
-              <Badge variant={profile === "labor" ? "default" : "outline"} className="capitalize">
-                {profileLabel(profile)}
-              </Badge>
-              <Badge variant="outline">{laborBasisLabel(item.labor_basis)}</Badge>
-              <span className="text-xs tabular text-muted-foreground">
-                CSI {item.csi_code || item.csi_division}
-              </span>
-            </div>
-          </div>
-        )}
-      </TableCell>
-      <TableCell>
-        {editable ? (
-          <div className="space-y-2">
-            <Input
-              value={draft.category}
-              onChange={(event) => setDraft({ ...draft, category: event.target.value })}
-              className="h-8"
-              aria-label="Category"
-            />
-            <Input
-              value={draft.unit}
-              onChange={(event) => setDraft({ ...draft, unit: event.target.value })}
-              className="h-8 uppercase"
-              aria-label="Unit"
-            />
-          </div>
-        ) : (
-          <div className="space-y-1 text-sm">
-            <div className="font-medium capitalize">{item.category || "Uncategorized"}</div>
-            <div className="text-xs text-muted-foreground">
-              Unit: <span className="tabular text-foreground">{unitLabel(item.unit)}</span>
-            </div>
-          </div>
-        )}
-      </TableCell>
-      <TableCell>
-        {editable ? (
-          <div className="space-y-2">
-            <div>
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Labor Pricing
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  value={draft.csi_code}
+                  onChange={(event) => setDraft({ ...draft, csi_code: event.target.value })}
+                  className="h-8 font-mono text-xs"
+                  aria-label="CSI code"
+                  placeholder="CSI code"
+                />
+                <Input
+                  value={draft.category}
+                  onChange={(event) => setDraft({ ...draft, category: event.target.value })}
+                  className="h-8"
+                  aria-label="Category"
+                  placeholder="Category"
+                />
               </div>
               <Select
                 value={draft.labor_basis || "per_unit"}
@@ -1077,145 +1188,166 @@ function CostLibraryRow({
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Material $/Unit
-              </div>
-              {draft.labor_basis === "installed" ? (
-                <p className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-[11px] text-muted-foreground">
-                  Included in the installed price
-                </p>
-              ) : (
-                <CostMoneyInput
-                  value={centsToDollars(draft.material_cost_cents)}
-                  onValueChange={(value) =>
-                    setDraft({ ...draft, material_cost_cents: dollarsToCents(value) })
-                  }
-                  unit={draft.unit}
-                  ariaLabel="Material dollars per unit"
-                />
-              )}
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                {draft.labor_basis === "per_hour"
-                  ? "Labor $ / Crew Hour"
-                  : draft.labor_basis === "installed"
-                    ? "Installed $/Unit"
-                    : "Labor $/Unit"}
-              </div>
-              <CostMoneyInput
-                value={centsToDollars(draft.labor_cost_cents)}
-                onValueChange={(value) =>
-                  setDraft({ ...draft, labor_cost_cents: dollarsToCents(value) })
-                }
-                unit={draft.labor_basis === "per_hour" ? "HR" : draft.unit}
-                ariaLabel="Labor dollars"
-              />
-            </div>
           </div>
-        ) : (
-          <div className="space-y-2">
-            <CostRateDisplay
-              cents={item.material_cost_cents}
-              unit={item.unit}
-              kind="Material"
-              basis={item.labor_basis}
-            />
-            <CostRateDisplay
-              cents={item.labor_cost_cents}
-              unit={item.unit}
-              kind="Labor"
-              basis={item.labor_basis}
-            />
-          </div>
-        )}
-      </TableCell>
-      <TableCell className="text-xs text-muted-foreground">
-        {editable ? (
-          <div className="space-y-2">
-            <div>
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Crew
-              </div>
-              <Input
-                type="number"
-                min={0}
-                step="0.1"
-                value={draft.crew_size ?? ""}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    crew_size: event.target.value === "" ? null : Number(event.target.value),
-                  })
-                }
-                className="h-8"
-                aria-label="Crew size"
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Production / Hour
-              </div>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={draft.productivity_per_hour ?? ""}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    productivity_per_hour:
-                      event.target.value === "" ? null : Number(event.target.value),
-                  })
-                }
-                className="h-8"
-                aria-label="Production per hour"
-              />
-            </div>
-          </div>
-        ) : (
-          <CrewProductionDisplay item={item} />
-        )}
-      </TableCell>
-      <TableCell>
-        <div className="flex justify-end gap-1">
-          {editable ? (
-            <>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={() => onSave(draft)}
-                title="Save cost"
-                aria-label="Save cost"
-              >
-                <Save className="h-4 w-4" />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={onDelete}
-                title="Delete cost"
-                aria-label="Delete cost"
-              >
-                <Trash2 className="h-4 w-4 text-danger" />
-              </Button>
-            </>
+        </TableCell>
+        <TableCell>
+          <Input
+            value={draft.unit}
+            onChange={(event) => setDraft({ ...draft, unit: event.target.value })}
+            className="h-8 w-16 uppercase"
+            aria-label="Unit"
+          />
+        </TableCell>
+        <TableCell>
+          {draft.labor_basis === "installed" ? (
+            <p className="text-[11px] text-muted-foreground">In the installed price</p>
           ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-auto min-h-8 justify-start gap-1.5 whitespace-normal px-2 py-1.5 text-left leading-tight"
-              onClick={onCopy}
-              title="Add to My Cost Library"
-              aria-label="Add to My Cost Library"
-            >
-              <Copy className="h-3.5 w-3.5" /> Add to My Cost Library
-            </Button>
+            <CostMoneyInput
+              value={centsToDollars(draft.material_cost_cents)}
+              onValueChange={(value) =>
+                setDraft({ ...draft, material_cost_cents: dollarsToCents(value) })
+              }
+              unit={draft.unit}
+              ariaLabel="Material dollars per unit"
+            />
           )}
+        </TableCell>
+        <TableCell>
+          <CostMoneyInput
+            value={centsToDollars(draft.labor_cost_cents)}
+            onValueChange={(value) =>
+              setDraft({ ...draft, labor_cost_cents: dollarsToCents(value) })
+            }
+            unit={draft.labor_basis === "per_hour" ? "HR" : draft.unit}
+            ariaLabel="Labor dollars"
+          />
+        </TableCell>
+        <TableCell>
+          <Input
+            type="number"
+            min={0}
+            step="0.1"
+            value={draft.crew_size ?? ""}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                crew_size: event.target.value === "" ? null : Number(event.target.value),
+              })
+            }
+            className="h-8 w-16"
+            aria-label="Crew size"
+          />
+        </TableCell>
+        <TableCell>
+          <Input
+            type="number"
+            min={0}
+            step="0.01"
+            value={draft.productivity_per_hour ?? ""}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                productivity_per_hour:
+                  event.target.value === "" ? null : Number(event.target.value),
+              })
+            }
+            className="h-8 w-20"
+            aria-label="Production per hour"
+          />
+        </TableCell>
+        <TableCell className="border-l border-hairline text-right">
+          {draftInstalled.installedCents == null ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <span className="font-serif text-[15px] font-semibold text-foreground">
+              {fmtUnitUSD(draftInstalled.installedCents)}
+            </span>
+          )}
+        </TableCell>
+        <TableCell>
+          <div className="flex justify-end gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              onClick={() => onSave(draft)}
+              title="Save cost"
+              aria-label="Save cost"
+            >
+              <Save className="h-4 w-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              onClick={onDelete}
+              title="Delete cost"
+              aria-label="Delete cost"
+            >
+              <Trash2 className="h-4 w-4 text-danger" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
+  const derived = deriveUnitCosts(item);
+  return (
+    <TableRow className="[&>td]:py-3 [&>td]:align-middle [&>td]:tabular">
+      <TableCell>
+        <div className="flex items-center gap-2.5">
+          <Lock
+            className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+            aria-label="Overwatch — read-only"
+          />
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold leading-snug text-foreground">
+              {item.description}
+            </div>
+            <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">
+              {item.csi_code || item.csi_division}
+            </div>
+          </div>
         </div>
+      </TableCell>
+      <TableCell className="text-center text-xs text-muted-foreground">
+        {unitLabel(item.unit)}
+      </TableCell>
+      <TableCell className="text-right">
+        <ReadOnlyMoney cents={derived.materialCents} />
+      </TableCell>
+      <TableCell className="text-right">
+        <ReadOnlyMoney cents={derived.laborCents} />
+      </TableCell>
+      <TableCell className="text-center text-xs text-muted-foreground">
+        {item.crew_size ? fmtCrew(item.crew_size) : "—"}
+      </TableCell>
+      <TableCell className="text-center text-xs text-muted-foreground">
+        {item.productivity_per_hour
+          ? `${fmtProd(item.productivity_per_hour)} ${unitLabel(item.unit)}`
+          : "—"}
+      </TableCell>
+      <TableCell className="border-l border-hairline text-right">
+        {derived.installedCents == null ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          <span className="font-serif text-[15px] font-semibold text-foreground">
+            {fmtUnitUSD(derived.installedCents)}
+          </span>
+        )}
+      </TableCell>
+      <TableCell className="text-right">
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8 text-muted-foreground"
+          onClick={onCopy}
+          title="Add to My Cost Library"
+          aria-label="Add to My Cost Library"
+        >
+          <Copy className="h-4 w-4" />
+        </Button>
       </TableCell>
     </TableRow>
   );
@@ -1262,8 +1394,8 @@ function CostImportDialog({
         <DialogHeader>
           <DialogTitle>Import My Costs</DialogTitle>
           <DialogDescription>
-            Bring in your own price list from pasted rows, CSV, or Excel. Use Download Import Format
-            for the column guide; imported rows save to My Cost Library. Labor $/Unit is the unit
+            Bring in your own price list from pasted rows, CSV, or Excel. Download the column guide
+            for the exact format; imported rows save to My Cost Library. Labor $/Unit is the unit
             price used in estimates. Crew Size and Production / Hour are assumptions behind that
             price.
           </DialogDescription>
@@ -1271,11 +1403,28 @@ function CostImportDialog({
 
         {rows.length === 0 ? (
           <Tabs defaultValue="paste" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="paste">Paste Rows</TabsTrigger>
-              <TabsTrigger value="csv">CSV</TabsTrigger>
-              <TabsTrigger value="xlsx">Excel</TabsTrigger>
-            </TabsList>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <TabsList className="grid grid-cols-3">
+                <TabsTrigger value="paste">Paste Rows</TabsTrigger>
+                <TabsTrigger value="csv">CSV</TabsTrigger>
+                <TabsTrigger value="xlsx">Excel</TabsTrigger>
+              </TabsList>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="gap-1.5"
+                title="Download the CSV column guide for importing costs"
+                onClick={() =>
+                  downloadText(
+                    "overwatch-cost-library-import-format.csv",
+                    costLibraryTemplateCsv,
+                    "text/csv",
+                  )
+                }
+              >
+                <Download className="h-3.5 w-3.5" /> Download import format
+              </Button>
+            </div>
 
             <TabsContent value="paste" className="space-y-3">
               <Label>Spreadsheet rows</Label>
