@@ -9,15 +9,8 @@ import { toast } from "sonner";
 
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -381,12 +374,11 @@ export function BillingInvoiceRowEditor({
           </Button>
           <Dialog open={sendOpen} onOpenChange={setSendOpen}>
             <DialogContent className="sm:max-w-xl">
-              <DialogHeader>
-                <DialogTitle className="font-serif text-2xl">Send invoice</DialogTitle>
-                <DialogDescription>
-                  Confirm the client billing recipients before queuing the invoice email.
-                </DialogDescription>
-              </DialogHeader>
+              <DialogHeaderV2
+                eyebrow="Invoice"
+                title="Send invoice"
+                description="Confirm the client billing recipients before queuing the invoice email."
+              />
               <div className="space-y-4 py-2">
                 <div className="rounded-md border border-hairline bg-surface p-4">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -471,12 +463,11 @@ export function BillingInvoiceRowEditor({
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-2xl">
-              <DialogHeader>
-                <DialogTitle className="font-serif text-2xl">Record payment</DialogTitle>
-                <DialogDescription>
-                  Enter received funds, fees, and reconciliation details for this invoice.
-                </DialogDescription>
-              </DialogHeader>
+              <DialogHeaderV2
+                eyebrow="Payment"
+                title="Record payment"
+                description="Enter received funds, fees, and reconciliation details for this invoice."
+              />
               <div className="grid gap-4 py-2">
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="space-y-1.5">

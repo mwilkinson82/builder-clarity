@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { Switch } from "@/components/ui/switch";
@@ -1057,7 +1058,8 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
                 <ShieldAlert className="h-5 w-5" />
               </span>
               <div className="space-y-2">
-                <DialogTitle className="font-serif text-2xl">
+                <div className="eyebrow">Compliance</div>
+                <DialogTitle className="font-serif text-2xl font-normal">
                   Override the compliance gate?
                 </DialogTitle>
                 <DialogDescription>
@@ -1113,12 +1115,11 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       {/* How paid (field request 2026-07-10, mirrors cost #273) */}
       <Dialog open={payDialog !== null} onOpenChange={(open) => !open && setPayDialog(null)}>
         <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="font-serif text-2xl">Mark pay app paid</DialogTitle>
-            <DialogDescription>
-              {payDialog ? `${fmtUSD(payDialog.amount)} — record how it was paid.` : ""}
-            </DialogDescription>
-          </DialogHeader>
+          <DialogHeaderV2
+            eyebrow="Payment"
+            title="Mark pay app paid"
+            description={payDialog ? `${fmtUSD(payDialog.amount)} — record how it was paid.` : ""}
+          />
           <div className="grid gap-3 py-2 sm:grid-cols-3">
             <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Date paid
