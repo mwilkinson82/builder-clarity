@@ -136,32 +136,43 @@ export function BillingStageRail({
       </div>
 
       {ledgers.length > 0 ? (
-        <div className="mt-4 lg:pr-3">
-          <div className="mb-1.5 px-1 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
-            More views
-          </div>
-          <div className="flex flex-wrap gap-1.5 lg:flex-col lg:gap-1">
-            {ledgers.map((ledger) => {
-              const active = ledger.value === value;
-              return (
-                <button
-                  key={ledger.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => onValueChange(ledger.value)}
+        // The backward-looking ledgers continue the same tab column — first-class
+        // rows with the identical active-connects-to-panel treatment, under a
+        // hairline so the rail reads as one continuous set of tabs top to bottom.
+        <div
+          role="tablist"
+          aria-label="Billing ledgers"
+          className="mt-2.5 grid gap-1.5 border-t border-hairline pt-2.5 sm:grid-cols-2 lg:grid-cols-1"
+        >
+          {ledgers.map((ledger) => {
+            const active = ledger.value === value;
+            return (
+              <button
+                key={ledger.value}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => onValueChange(ledger.value)}
+                className={cn(
+                  "relative z-[1] flex w-full items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-left text-[13px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:rounded-r-none lg:border-r-transparent",
+                  active
+                    ? "border-hairline bg-secondary text-foreground lg:z-10 lg:-mr-px lg:rounded-l-xl"
+                    : "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                )}
+              >
+                <span className="truncate">{ledger.title}</span>
+                <span
+                  aria-hidden="true"
                   className={cn(
-                    "rounded-lg border px-2.5 py-1.5 text-left text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    active
-                      ? "border-hairline bg-secondary text-foreground"
-                      : "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                    "shrink-0 text-[11px]",
+                    active ? "text-clay" : "text-muted-foreground",
                   )}
                 >
-                  {ledger.title}
-                </button>
-              );
-            })}
-          </div>
+                  ›
+                </span>
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>
