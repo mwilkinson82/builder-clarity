@@ -694,16 +694,17 @@ await expectContains(
     /lg:grid-cols-\[248px_minmax\(0,1fr\)\]/,
     // v2 floating rail: rounded paper card with the one soft wide glow.
     /PROJECT_NAV_RAIL_CLASS[\s\S]*rounded-\[15px\][\s\S]*shadow-nav/,
-    /projectNavItemClass/,
-    // Detail sub-line turns the rail into a status board; alarming ones go danger.
-    /projectNavDetailClass/,
+    // ACCORDION: the active group expands to its tabs; inactive groups collapse
+    // to a single status-hint row that jumps to the group's first tab.
+    /const isActiveGroup = group\.key === activeNavGroup\?\.key/,
+    /navGroupHint/,
+    /onClick=\{\(\) => setProjectTab\(group\.values\[0\]\)\}/,
     /const isActive = activeProjectTab === item\.value/,
-    // Active fill rides Radix data-state so it overrides the shadcn TabsTrigger
-    // base (otherwise the active tab paints bg-background, not the v2 paper2).
-    /data-\[state=active\]:bg-secondary data-\[state=active\]:text-foreground/,
+    // Active tab = quiet paper2 fill + a clay dot (Radix data-state wins over the
+    // shadcn TabsTrigger base).
+    /data-\[state=active\]:bg-secondary data-\[state=active\]:font-semibold data-\[state=active\]:text-foreground/,
     // Persistent "you are here" section title (group · label) atop the stage.
     /\{activeNavGroup\.label\} · \{activeNavItem\.label\}/,
-    /className="eyebrow px-1/,
     /aria-label=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
     /title=\{`\$\{item\.label\}: \$\{item\.detail\}`\}/,
     // Billing is lazy-loaded (PROJECTDECOMP1 part 3): the rail hosts a Suspense
