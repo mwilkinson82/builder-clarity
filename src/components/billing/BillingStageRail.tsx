@@ -26,12 +26,22 @@ export interface BillingRailLedger {
   title: string;
 }
 
+// Sub-line dot + text tone. good=on-plan, clay=in-progress, muted=idle/empty,
+// crit(warn)=blocked. Mirrors the schedule-health color rule (THEMING.md).
 const TONE_DOT: Record<BillingStageTone, string> = {
   home: "bg-muted-foreground/40",
   empty: "bg-muted-foreground/40",
-  progress: "bg-accent",
+  progress: "bg-clay",
   complete: "bg-success",
   blocked: "bg-warning",
+};
+
+const TONE_TEXT: Record<BillingStageTone, string> = {
+  home: "text-muted-foreground",
+  empty: "text-muted-foreground",
+  progress: "text-clay",
+  complete: "text-success",
+  blocked: "text-warning",
 };
 
 export function BillingStageRail({
@@ -55,11 +65,11 @@ export function BillingStageRail({
   };
 
   return (
-    <div className="mt-5 space-y-3">
+    <div className="lg:w-[186px] lg:flex-none lg:pt-1.5">
       <div
         role="tablist"
         aria-label="Billing stages"
-        className="grid gap-1.5 rounded-lg border border-accent/25 bg-accent/[0.06] p-1.5 shadow-card ring-1 ring-accent/10 sm:grid-cols-2 lg:grid-cols-4"
+        className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1"
       >
         {stages.map((stage) => {
           const active = stage.value === value;
@@ -74,53 +84,47 @@ export function BillingStageRail({
               title={blocked ? stage.blockedReason : undefined}
               onClick={() => handleStageClick(stage)}
               className={cn(
-                "flex flex-col gap-1 rounded-md border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                // The active card connects into the panel on lg (square right
+                // edge, tucked 1px under the panel's left border).
+                "relative z-[1] flex flex-col gap-1.5 rounded-xl border px-3.5 py-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:rounded-r-none lg:border-r-transparent",
                 active
-                  ? "border-accent bg-accent text-accent-foreground shadow-md"
-                  : blocked
-                    ? "border-hairline bg-card/60 hover:border-warning/40"
-                    : "border-accent/35 bg-accent/10 text-foreground hover:border-accent/60 hover:bg-accent/20",
+                  ? "border-hairline bg-secondary lg:z-10 lg:-mr-px lg:rounded-l-xl"
+                  : "border-transparent hover:bg-secondary/60",
               )}
             >
               <div className="flex items-center gap-2">
                 <span
                   className={cn(
-                    "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold",
-                    active
-                      ? "bg-accent-foreground/20 text-accent-foreground"
-                      : "bg-accent/15 text-accent",
+                    "flex h-[19px] w-[19px] shrink-0 items-center justify-center rounded-full font-mono text-[10px] font-bold",
+                    active ? "bg-clay/15 text-clay" : "bg-secondary text-muted-foreground",
                   )}
                 >
                   {stage.step}
                 </span>
                 <span
                   className={cn(
-                    "truncate text-sm font-semibold",
-                    active
-                      ? "text-accent-foreground"
-                      : blocked
-                        ? "text-muted-foreground"
-                        : "text-foreground",
+                    "truncate text-[13px] font-semibold",
+                    blocked ? "text-muted-foreground" : "text-foreground",
                   )}
                 >
                   {stage.title}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 pl-7">
+              <div className="flex items-center gap-1.5 pl-[27px]">
                 <span
                   className={cn(
-                    "h-2 w-2 shrink-0 rounded-full",
-                    active ? "bg-accent-foreground/70" : TONE_DOT[stage.tone],
+                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    blocked ? "bg-warning" : TONE_DOT[stage.tone],
                   )}
                 />
                 <span
                   className={cn(
-                    "truncate text-[11px] font-medium",
-                    active
-                      ? "text-accent-foreground/85"
-                      : blocked
-                        ? "text-warning"
-                        : "text-muted-foreground",
+                    "truncate text-[11px]",
+                    blocked
+                      ? "text-warning"
+                      : active
+                        ? "text-foreground/70"
+                        : TONE_TEXT[stage.tone],
                   )}
                 >
                   {blocked ? stage.blockedReason : stage.chip}
@@ -132,30 +136,32 @@ export function BillingStageRail({
       </div>
 
       {ledgers.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Ledgers &amp; history
-          </span>
-          {ledgers.map((ledger) => {
-            const active = ledger.value === value;
-            return (
-              <button
-                key={ledger.value}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => onValueChange(ledger.value)}
-                className={cn(
-                  "rounded-md border px-2.5 py-1 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  active
-                    ? "border-accent bg-accent text-accent-foreground"
-                    : "border-hairline bg-card text-muted-foreground hover:border-accent/40 hover:text-foreground",
-                )}
-              >
-                {ledger.title}
-              </button>
-            );
-          })}
+        <div className="mt-4 lg:pr-3">
+          <div className="mb-1.5 px-1 font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+            More views
+          </div>
+          <div className="flex flex-wrap gap-1.5 lg:flex-col lg:gap-1">
+            {ledgers.map((ledger) => {
+              const active = ledger.value === value;
+              return (
+                <button
+                  key={ledger.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => onValueChange(ledger.value)}
+                  className={cn(
+                    "rounded-lg border px-2.5 py-1.5 text-left text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    active
+                      ? "border-hairline bg-secondary text-foreground"
+                      : "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                  )}
+                >
+                  {ledger.title}
+                </button>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </div>
