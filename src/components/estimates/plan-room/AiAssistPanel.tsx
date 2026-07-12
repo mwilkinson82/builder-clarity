@@ -367,7 +367,7 @@ export function AiAssistPanel({
               className={cn(
                 "mt-3 rounded-md px-2 py-1.5 text-xs",
                 availability.state === "out_of_credits"
-                  ? "bg-amber-50 text-amber-900"
+                  ? "bg-warning/10 text-warning"
                   : "bg-surface text-muted-foreground",
               )}
               data-testid="ai-assist-status"
@@ -396,7 +396,7 @@ export function AiAssistPanel({
                     the exemplar it received. A wrong line here means the crop
                     is corrupted — stop and open scan diagnostics. */}
                 <p
-                  className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-900"
+                  className="rounded bg-warning/10 px-2 py-1 text-xs text-warning"
                   data-testid="ai-echo-line"
                 >
                   Looking for:{" "}
@@ -452,8 +452,8 @@ export function AiAssistPanel({
             )}
 
             {showBuyPanel && summary && (
-              <div className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50/60 p-2">
-                <p className="text-xs font-medium text-amber-900">Buy credits</p>
+              <div className="mt-3 space-y-2 rounded-md border border-warning/30 bg-warning/10 p-2">
+                <p className="text-xs font-medium text-warning">Buy credits</p>
                 {summary.packs.map((pack) => (
                   <Button
                     key={pack.id}
@@ -471,7 +471,7 @@ export function AiAssistPanel({
                     </span>
                   </Button>
                 ))}
-                <p className="text-[11px] text-amber-900/80">
+                <p className="text-[11px] text-warning/80">
                   Checkout opens in Stripe; credits land on your company the moment payment
                   completes.
                 </p>

@@ -1489,6 +1489,7 @@ export function PlanCanvas({
           data-testid="plan-zoom-slider"
         >
           <Slider
+            className="[&>span:first-child]:bg-muted [&>span:first-child>span]:bg-clay [&_[role=slider]]:border-clay [&_[role=slider]]:bg-surface"
             min={ZOOM_SLIDER_MIN}
             max={ZOOM_SLIDER_MAX}
             step={5}
@@ -1597,7 +1598,7 @@ export function PlanCanvas({
         ref={scrollRef}
         tabIndex={0}
         className={cn(
-          "relative min-h-0 overflow-auto bg-[#f7f4ef] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+          "relative min-h-0 overflow-auto bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
           isCockpitMode
             ? "flex-1 rounded-none border-0"
             : "h-[min(72vh,760px)] rounded-md border border-hairline shadow-inner",

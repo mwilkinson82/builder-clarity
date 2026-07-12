@@ -94,9 +94,7 @@ export function LinkOrCreatePicker({
       >
         {matchingRows.length > 0 && (
           <>
-            <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              Estimate rows
-            </p>
+            <p className="eyebrow px-1">Estimate rows</p>
             {matchingRows.map((line) => {
               const mismatch = !takeoffUnitsCompatible(takeoffUnit, line.unit);
               return (
@@ -129,9 +127,7 @@ export function LinkOrCreatePicker({
         )}
         {libraryItems.length > 0 && (
           <>
-            <p className="px-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              Cost library
-            </p>
+            <p className="eyebrow px-1 pt-1">Cost library</p>
             {libraryItems.map((item) => (
               <button
                 key={item.id}

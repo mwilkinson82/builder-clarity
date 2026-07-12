@@ -97,7 +97,7 @@ export function TakeoffGroupCard({
             {group.members.some((member) => member.created_by_ai) && (
               <Badge
                 variant="outline"
-                className="shrink-0 gap-1 border-amber-300 bg-amber-50 text-[10px] text-amber-900"
+                className="shrink-0 gap-1 border-warning/30 bg-warning/10 text-[10px] text-warning"
                 title="Part of this group was counted with AI Assist — every point was reviewed and accepted by hand."
                 data-testid="takeoff-ai-chip"
               >
