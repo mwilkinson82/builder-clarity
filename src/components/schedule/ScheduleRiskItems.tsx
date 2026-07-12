@@ -21,7 +21,14 @@ import {
 import { fmtUSD } from "@/lib/format";
 import { type HoldClass, type ResponsePath } from "@/lib/ior";
 import { RISK_META, RISK_STATUS_LABEL, RISK_STATUS_STYLES, shortDate } from "./scheduleShared";
-import { CompactField } from "./ScheduleMilestones";
+
+// v2 compact card titles (mock copy). RISK_META keeps the long-form labels for
+// placeholders and the Risk Tally category mapping.
+const RISK_CARD_TITLE: Record<ScheduleRiskKind, string> = {
+  procurement: "Procurement & fabrication",
+  trade_performance: "Trade / subcontractor",
+  critical_decision: "Critical decisions",
+};
 
 export function RiskGroup({
   kind,
@@ -43,8 +50,8 @@ export function RiskGroup({
   linkedExposureIds: Record<string, string>;
 }) {
   const meta = RISK_META[kind];
-  const Icon = meta.icon;
   const [statusView, setStatusView] = useState<ScheduleRiskStatus | "all">("active");
+  const [showAdd, setShowAdd] = useState(false);
   const visibleItems = (statusView === "all" ? items : items.filter((r) => r.status === statusView))
     .slice()
     .sort(
@@ -56,27 +63,20 @@ export function RiskGroup({
   const activeCount = items.filter((r) => r.status === "active").length;
   const completedCount = items.filter((r) => r.status === "completed").length;
   return (
-    <div className="rounded-lg border border-hairline bg-card p-6">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="rounded-md bg-accent/10 p-2 text-accent">
-            <Icon className="h-5 w-5" />
-          </div>
-          <div>
-            <h4 className="font-serif text-xl text-foreground">{meta.label}</h4>
-            <p className="text-xs text-muted-foreground">
-              {items.length === 0
-                ? "None logged yet."
-                : `${activeCount} active · ${completedCount} completed · ${items.length} total`}
-            </p>
-          </div>
-        </div>
-        <div className="flex w-full max-w-xl flex-col gap-2 sm:flex-row">
+    <div className="min-w-0 rounded-xl border border-hairline bg-card p-4">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 truncate font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-clay">
+          {RISK_CARD_TITLE[kind]}
+        </span>
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
           <Select
             value={statusView}
             onValueChange={(value) => setStatusView(value as ScheduleRiskStatus | "all")}
           >
-            <SelectTrigger className="h-9 sm:w-[150px]">
+            <SelectTrigger
+              aria-label={`Show ${RISK_CARD_TITLE[kind]} items by status`}
+              className="h-6 w-auto gap-1 border-none bg-transparent px-1.5 text-[11px] text-muted-foreground shadow-none"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -86,28 +86,52 @@ export function RiskGroup({
               <SelectItem value="all">All</SelectItem>
             </SelectContent>
           </Select>
-          <AddInline placeholder={meta.placeholder} onAdd={onAdd} />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-1.5 text-[11px] font-normal text-muted-foreground"
+            onClick={() => setShowAdd((current) => !current)}
+          >
+            + Add
+          </Button>
         </div>
       </div>
-      <div className="space-y-3">
-        {visibleItems.length === 0 && (
-          <div className="rounded-md border border-dashed border-hairline bg-surface/60 px-3 py-5 text-sm text-muted-foreground">
-            No {statusView === "all" ? "" : statusView} items in this group.
-          </div>
-        )}
-        {visibleItems.map((r) => (
-          <RiskItem
-            key={r.id}
-            row={r}
-            detailPlaceholder={meta.detailPlaceholder}
-            onPatch={(p) => onPatch(r.id, p)}
-            onDelete={() => onDelete(r.id)}
-            onCreateExposure={onCreateExposure}
-            creatingExposure={pendingExposureId === r.id}
-            linkedExposureId={linkedExposureIds[r.id] ?? r.linked_exposure_id}
+      {items.length > 0 && (
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          {activeCount} active · {completedCount} completed · {items.length} total
+        </p>
+      )}
+      {showAdd && (
+        <div className="mt-2.5">
+          <AddInline
+            placeholder={meta.placeholder}
+            onAdd={(title) => {
+              onAdd(title);
+              setShowAdd(false);
+            }}
           />
-        ))}
-      </div>
+        </div>
+      )}
+      {visibleItems.length === 0 && (
+        <div className="mt-2.5 border-t border-hairline pt-2.5 text-sm text-muted-foreground">
+          {items.length === 0
+            ? "None logged yet."
+            : `No ${statusView === "all" ? "" : statusView} items in this group.`}
+        </div>
+      )}
+      {visibleItems.map((r) => (
+        <RiskItem
+          key={r.id}
+          row={r}
+          detailPlaceholder={meta.detailPlaceholder}
+          onPatch={(p) => onPatch(r.id, p)}
+          onDelete={() => onDelete(r.id)}
+          onCreateExposure={onCreateExposure}
+          creatingExposure={pendingExposureId === r.id}
+          linkedExposureId={linkedExposureIds[r.id] ?? r.linked_exposure_id}
+        />
+      ))}
     </div>
   );
 }
@@ -188,328 +212,320 @@ function RiskItem({
   };
 
   if (!editing) {
+    const impactWeeks = local.schedule_impact_weeks;
+    const subLine =
+      local.detail ||
+      [local.owner || null, local.due_date ? `due ${shortDate(local.due_date)}` : null]
+        .filter(Boolean)
+        .join(" · ");
     return (
       <div
-        className="rounded-md border border-hairline bg-surface p-3"
-        onDoubleClick={() => setEditing(true)}
+        role="button"
+        tabIndex={0}
+        aria-label={`Open ${local.title}`}
+        className="mt-2.5 cursor-pointer border-t border-hairline pt-2.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        onClick={() => setEditing(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setEditing(true);
+          }
+        }}
       >
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="font-medium text-foreground">{local.title}</div>
-              <span className="inline-flex items-center rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[10px]">
-                {local.hold_class}
-              </span>
-              {isLinked && (
-                <StatusChip tone="complete" icon={CheckCircle2}>
-                  Linked
-                </StatusChip>
-              )}
-              <span
-                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${RISK_STATUS_STYLES[local.status]}`}
-              >
-                {RISK_STATUS_LABEL[local.status]}
-              </span>
-            </div>
-            {local.detail && (
-              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{local.detail}</p>
-            )}
-            {local.status !== "active" && local.inactive_reason && (
-              <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
-                {local.status === "completed" ? "Completed: " : "Inactive: "}
-                {local.inactive_reason}
-              </p>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-xs md:min-w-[560px] md:grid-cols-5">
-            <CompactField label="Dollar risk" value={fmtUSD(local.dollar_exposure)} />
-            <CompactField label="Likely risk" value={fmtUSD(likelyRiskValue(local))} />
-            <CompactField
-              label="Schedule"
-              value={
-                local.schedule_impact_weeks == null
-                  ? "No impact"
-                  : `${local.schedule_impact_weeks} wk`
-              }
-            />
-            <CompactField label="Owner" value={local.owner || "Unassigned"} />
-            <CompactField label="Due" value={shortDate(local.due_date)} />
-          </div>
-        </div>
-        <div className="mt-3 flex flex-col gap-2 border-t border-hairline pt-3 md:flex-row md:items-center md:justify-between">
-          <div className="text-xs text-muted-foreground">
-            Treatment:{" "}
-            <span className="font-medium text-foreground">
-              {RESPONSE_LABEL[local.response_path]}
+        <div className="flex items-baseline gap-2">
+          <span className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-foreground">
+            {local.title}
+          </span>
+          {impactWeeks != null && impactWeeks !== 0 && (
+            <span
+              className={`shrink-0 font-serif text-[15px] ${
+                impactWeeks >= 4 ? "text-danger" : impactWeeks > 0 ? "text-warning" : "text-success"
+              }`}
+            >
+              {impactWeeks > 0 ? "+" : ""}
+              {impactWeeks} wk
             </span>
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            {!isLinked && (
-              <Button
-                type="button"
-                size="sm"
-                disabled={creatingExposure}
-                onClick={createLinkedExposure}
-              >
-                {creatingExposure ? "Creating..." : "Create risk allocation"}
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 gap-1"
-              onClick={() => setEditing(true)}
+          )}
+        </div>
+        {subLine ? (
+          <div className="mt-0.5 line-clamp-1 text-[11.5px] text-muted-foreground">{subLine}</div>
+        ) : null}
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          {isLinked ? (
+            <StatusChip tone="complete" icon={CheckCircle2}>
+              Linked to Risk Tally
+            </StatusChip>
+          ) : (
+            <button
+              type="button"
+              disabled={creatingExposure}
+              className="border-b border-foreground pb-px font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-foreground transition-colors hover:border-clay hover:text-clay disabled:opacity-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                createLinkedExposure();
+              }}
             >
-              <Pencil className="h-3.5 w-3.5" /> Edit
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={onDelete}
-              aria-label="Delete risk"
+              {creatingExposure ? "Sending…" : "Send to Risk Tally →"}
+            </button>
+          )}
+          {local.status !== "active" && (
+            <span
+              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${RISK_STATUS_STYLES[local.status]}`}
             >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+              {RISK_STATUS_LABEL[local.status]}
+            </span>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-auto h-6 gap-1 px-1.5 text-[11px] font-normal text-muted-foreground"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditing(true);
+            }}
+          >
+            <Pencil className="h-3 w-3" /> Edit
+          </Button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="group rounded-md border border-hairline bg-surface p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 space-y-3">
+    <div className="mt-2.5 rounded-md border border-hairline p-3">
+      <div className="space-y-3">
+        <div className="space-y-1">
+          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Title
+          </Label>
+          <Input
+            value={local.title}
+            onChange={(e) => setLocal({ ...local, title: e.target.value })}
+            onBlur={() => row.title !== local.title && onPatch({ title: local.title })}
+            className="font-medium"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Detail - owner, blocked scope, dollar/schedule impact, dates
+          </Label>
+          <Textarea
+            rows={5}
+            className="min-h-[140px] text-sm leading-relaxed"
+            placeholder={detailPlaceholder}
+            value={local.detail}
+            onChange={(e) => setLocal({ ...local, detail: e.target.value })}
+            onBlur={() => row.detail !== local.detail && onPatch({ detail: local.detail })}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
             <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Title
+              Dollar risk
+            </Label>
+            <MoneyInput
+              value={local.dollar_exposure}
+              onValueChange={(v) => setLocal({ ...local, dollar_exposure: v })}
+              onBlur={() =>
+                row.dollar_exposure !== local.dollar_exposure &&
+                onPatch({ dollar_exposure: local.dollar_exposure })
+              }
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Probability %
             </Label>
             <Input
-              value={local.title}
-              onChange={(e) => setLocal({ ...local, title: e.target.value })}
-              onBlur={() => row.title !== local.title && onPatch({ title: local.title })}
-              className="font-medium"
+              type="number"
+              min={0}
+              max={100}
+              value={local.probability}
+              onChange={(e) => setLocal({ ...local, probability: Number(e.target.value) })}
+              onBlur={() =>
+                row.probability !== local.probability && onPatch({ probability: local.probability })
+              }
             />
           </div>
           <div className="space-y-1">
             <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Detail - owner, blocked scope, dollar/schedule impact, dates
+              Impact (wk)
             </Label>
-            <Textarea
-              rows={5}
-              className="min-h-[140px] text-sm leading-relaxed"
-              placeholder={detailPlaceholder}
-              value={local.detail}
-              onChange={(e) => setLocal({ ...local, detail: e.target.value })}
-              onBlur={() => row.detail !== local.detail && onPatch({ detail: local.detail })}
+            <Input
+              type="number"
+              value={local.schedule_impact_weeks ?? ""}
+              onChange={(e) =>
+                setLocal({
+                  ...local,
+                  schedule_impact_weeks: e.target.value === "" ? null : Number(e.target.value),
+                })
+              }
+              onBlur={() =>
+                row.schedule_impact_weeks !== local.schedule_impact_weeks &&
+                onPatch({ schedule_impact_weeks: local.schedule_impact_weeks })
+              }
             />
           </div>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-            <div className="space-y-1 md:col-span-2">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Dollar risk
-              </Label>
-              <MoneyInput
-                value={local.dollar_exposure}
-                onValueChange={(v) => setLocal({ ...local, dollar_exposure: v })}
-                onBlur={() =>
-                  row.dollar_exposure !== local.dollar_exposure &&
-                  onPatch({ dollar_exposure: local.dollar_exposure })
-                }
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Probability %
-              </Label>
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                value={local.probability}
-                onChange={(e) => setLocal({ ...local, probability: Number(e.target.value) })}
-                onBlur={() =>
-                  row.probability !== local.probability &&
-                  onPatch({ probability: local.probability })
-                }
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Impact (wk)
-              </Label>
-              <Input
-                type="number"
-                value={local.schedule_impact_weeks ?? ""}
-                onChange={(e) =>
-                  setLocal({
-                    ...local,
-                    schedule_impact_weeks: e.target.value === "" ? null : Number(e.target.value),
-                  })
-                }
-                onBlur={() =>
-                  row.schedule_impact_weeks !== local.schedule_impact_weeks &&
-                  onPatch({ schedule_impact_weeks: local.schedule_impact_weeks })
-                }
-              />
-            </div>
-            <div className="space-y-1 md:col-span-2">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Owner
-              </Label>
-              <Input
-                value={local.owner}
-                onChange={(e) => setLocal({ ...local, owner: e.target.value })}
-                onBlur={() => row.owner !== local.owner && onPatch({ owner: local.owner })}
-                placeholder="PM, owner, trade"
-              />
-            </div>
-            <div className="space-y-1 md:col-span-2">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Due date
-              </Label>
-              <Input
-                type="date"
-                value={local.due_date ?? ""}
-                onChange={(e) => {
-                  const next = e.target.value || null;
-                  setLocal({ ...local, due_date: next });
-                  if (row.due_date !== next) onPatch({ due_date: next });
-                }}
-              />
-            </div>
-            <div className="space-y-1 md:col-span-2">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Treatment path
-              </Label>
-              <Select
-                value={local.response_path}
-                onValueChange={(v) => {
-                  const next = v as ResponsePath;
-                  setLocal({ ...local, response_path: next });
-                  onPatch({ response_path: next });
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="eliminate">Eliminate</SelectItem>
-                  <SelectItem value="recover">Recover</SelectItem>
-                  <SelectItem value="offset">Offset</SelectItem>
-                  <SelectItem value="accept">Accept</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1 md:col-span-2">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Hold class
-              </Label>
-              <Select
-                value={local.hold_class}
-                onValueChange={(v) => {
-                  const next = v as HoldClass;
-                  setLocal({ ...local, hold_class: next });
-                  onPatch({ hold_class: next });
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="E-Hold">E-Hold</SelectItem>
-                  <SelectItem value="C-Hold">C-Hold</SelectItem>
-                  <SelectItem value="Both">Both</SelectItem>
-                  <SelectItem value="None">None</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1 md:col-span-2">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Status
-              </Label>
-              <Select
-                value={local.status}
-                onValueChange={(v) => {
-                  const next = v as ScheduleRiskStatus;
-                  setLocal({
-                    ...local,
-                    status: next,
-                    completed_at:
-                      next === "completed"
-                        ? (local.completed_at ?? new Date().toISOString())
-                        : null,
-                  });
-                  onPatch({
-                    status: next,
-                    completed_at:
-                      next === "completed"
-                        ? (local.completed_at ?? new Date().toISOString())
-                        : null,
-                  });
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Owner
+            </Label>
+            <Input
+              value={local.owner}
+              onChange={(e) => setLocal({ ...local, owner: e.target.value })}
+              onBlur={() => row.owner !== local.owner && onPatch({ owner: local.owner })}
+              placeholder="PM, owner, trade"
+            />
           </div>
-          {local.status !== "active" && (
-            <div className="space-y-1">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                {local.status === "completed" ? "Completion note" : "Inactive reason"}
-              </Label>
-              <Input
-                value={local.inactive_reason}
-                onChange={(e) => setLocal({ ...local, inactive_reason: e.target.value })}
-                onBlur={() =>
-                  row.inactive_reason !== local.inactive_reason &&
-                  onPatch({ inactive_reason: local.inactive_reason })
-                }
-                placeholder="Why is this no longer an active schedule risk?"
-              />
-            </div>
-          )}
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {isLinked && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-success/30 bg-success/10 px-2 py-1 text-xs font-medium text-success">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Linked to Risk Tally
-              </span>
-            )}
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Due date
+            </Label>
+            <Input
+              type="date"
+              value={local.due_date ?? ""}
+              onChange={(e) => {
+                const next = e.target.value || null;
+                setLocal({ ...local, due_date: next });
+                if (row.due_date !== next) onPatch({ due_date: next });
+              }}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Treatment path
+            </Label>
+            <Select
+              value={local.response_path}
+              onValueChange={(v) => {
+                const next = v as ResponsePath;
+                setLocal({ ...local, response_path: next });
+                onPatch({ response_path: next });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="eliminate">Eliminate</SelectItem>
+                <SelectItem value="recover">Recover</SelectItem>
+                <SelectItem value="offset">Offset</SelectItem>
+                <SelectItem value="accept">Accept</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Hold class
+            </Label>
+            <Select
+              value={local.hold_class}
+              onValueChange={(v) => {
+                const next = v as HoldClass;
+                setLocal({ ...local, hold_class: next });
+                onPatch({ hold_class: next });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="E-Hold">E-Hold</SelectItem>
+                <SelectItem value="C-Hold">C-Hold</SelectItem>
+                <SelectItem value="Both">Both</SelectItem>
+                <SelectItem value="None">None</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Status
+            </Label>
+            <Select
+              value={local.status}
+              onValueChange={(v) => {
+                const next = v as ScheduleRiskStatus;
+                setLocal({
+                  ...local,
+                  status: next,
+                  completed_at:
+                    next === "completed" ? (local.completed_at ?? new Date().toISOString()) : null,
+                });
+                onPatch({
+                  status: next,
+                  completed_at:
+                    next === "completed" ? (local.completed_at ?? new Date().toISOString()) : null,
+                });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {local.status !== "active" && (
+          <div className="space-y-1">
+            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {local.status === "completed" ? "Completion note" : "Inactive reason"}
+            </Label>
+            <Input
+              value={local.inactive_reason}
+              onChange={(e) => setLocal({ ...local, inactive_reason: e.target.value })}
+              onBlur={() =>
+                row.inactive_reason !== local.inactive_reason &&
+                onPatch({ inactive_reason: local.inactive_reason })
+              }
+              placeholder="Why is this no longer an active schedule risk?"
+            />
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span>
+            Likely risk (dollar × probability):{" "}
+            <span className="font-medium text-foreground">{fmtUSD(likelyRiskValue(local))}</span>
+          </span>
+          <span>
+            Treatment:{" "}
+            <span className="font-medium text-foreground">
+              {RESPONSE_LABEL[local.response_path]}
+            </span>
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="mr-auto h-8 w-8 opacity-60 hover:opacity-100"
+            onClick={onDelete}
+            aria-label="Delete risk"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+          {isLinked ? (
+            <StatusChip tone="complete" icon={CheckCircle2}>
+              Linked to Risk Tally
+            </StatusChip>
+          ) : (
             <Button
               type="button"
               size="sm"
-              variant={isLinked ? "outline" : "default"}
-              disabled={creatingExposure || isLinked}
+              disabled={creatingExposure}
               onClick={createLinkedExposure}
             >
-              {isLinked
-                ? "Linked to Risk Tally"
-                : creatingExposure
-                  ? "Creating..."
-                  : "Create risk allocation"}
+              {creatingExposure ? "Sending…" : "Send to Risk Tally"}
             </Button>
-            <Button type="button" size="sm" variant="outline" onClick={finishEditing}>
-              Done
-            </Button>
-          </div>
+          )}
+          <Button type="button" size="sm" variant="outline" onClick={finishEditing}>
+            Done
+          </Button>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0 opacity-60 hover:opacity-100"
-          onClick={onDelete}
-          aria-label="Delete risk"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
       </div>
     </div>
   );

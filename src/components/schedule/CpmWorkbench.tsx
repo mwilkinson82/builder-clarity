@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,6 @@ import {
   Plus,
   ClipboardList,
   GitBranch,
-  Gauge,
   Layers,
   Minimize2,
   Diamond,
@@ -115,6 +114,7 @@ import {
 import {
   CpmDataDateControl,
   CpmGridToolbar,
+  CpmStatusChip,
   ScheduleOrderControls,
   ScheduleViewControls,
   ScheduleZoomControls,
@@ -130,8 +130,11 @@ import { ActivityDetailDialog } from "./ActivityDetailDialog";
 
 const EMPTY_SOV_LINES: SovScheduleLine[] = [];
 
+type WorkbenchAnalyticsTab = "intelligence" | "stacking" | "quality" | "readiness";
+
 export function CpmActivityPlanner({
   workspaceMode = "full",
+  workspaceSummaryChips,
   activities,
   wbsSections,
   delayFragments,
@@ -158,6 +161,7 @@ export function CpmActivityPlanner({
   isSavingWbsOrder = false,
 }: {
   workspaceMode?: "embedded" | "full";
+  workspaceSummaryChips?: ReactNode;
   activities: ScheduleActivityRow[];
   wbsSections: ScheduleWbsSectionRow[];
   delayFragments: ScheduleDelayFragmentRow[];
@@ -212,6 +216,7 @@ export function CpmActivityPlanner({
   const [importWizardMode, setImportWizardMode] = useState<ScheduleImportWizardMode | null>(null);
   const [importRunwayCount, setImportRunwayCount] = useState<number | null>(null);
   const [isFocusOpen, setIsFocusOpen] = useState(false);
+  const [analyticsTab, setAnalyticsTab] = useState<WorkbenchAnalyticsTab>("intelligence");
   const [readinessWarningAcceptedFor, setReadinessWarningAcceptedFor] = useState<string | null>(
     null,
   );
@@ -326,6 +331,10 @@ export function CpmActivityPlanner({
   const selectedActivity = useMemo(
     () => sortedActivities.find((activity) => activity.id === selectedActivityId) ?? null,
     [selectedActivityId, sortedActivities],
+  );
+  const selectedCpmTask = useMemo(
+    () => cpmModel.tasks.find((task) => task.activity.id === selectedActivityId) ?? null,
+    [cpmModel.tasks, selectedActivityId],
   );
   const selectedUpdateQueueContext = useMemo<ScheduleUpdateQueueDialogContext | null>(() => {
     if (!selectedActivity) return null;
@@ -857,6 +866,46 @@ export function CpmActivityPlanner({
       : "Critical basis provisional";
   const isReadinessSaveWarningArmed =
     updateReadiness.needsStatusCount > 0 && readinessWarningAcceptedFor === dataDateDraft;
+  // Command-bar status chips are display-only reads of values the CPM model
+  // already computes — no schedule math happens here.
+  const negativeFloatTaskCount = useMemo(
+    () => cpmModel.tasks.filter((task) => task.totalFloat < 0).length,
+    [cpmModel.tasks],
+  );
+  const cpmBasisChipValue = cpmModel.isSubstantiallyUntied
+    ? "Untied"
+    : cpmModel.criticalPathReliable
+      ? "Reliable"
+      : "Provisional";
+  const commandBarStatusChips = (
+    <>
+      <CpmStatusChip
+        label="CPM"
+        value={cpmBasisChipValue}
+        tone={cpmModel.criticalPathReliable ? "success" : "warning"}
+        title={cpmModel.criticalPathReliabilityNote}
+      />
+      <CpmStatusChip
+        label="Open starts"
+        value={String(cpmModel.openStartCount)}
+        tone={cpmModel.openStartCount > 1 ? "warning" : "default"}
+        title="Activities with no predecessor logic — more than one start weakens the critical path."
+      />
+      <CpmStatusChip
+        label="Neg float"
+        value={String(negativeFloatTaskCount)}
+        tone={negativeFloatTaskCount > 0 ? "danger" : "default"}
+        title="Activities with negative total float — currently forecast to finish behind the completion path."
+      />
+      <CpmStatusChip
+        label="Critical"
+        value={`${cpmModel.criticalCount}/${cpmModel.nearCriticalCount}`}
+        tone={cpmModel.criticalCount > 0 ? "danger" : "default"}
+        title="Critical / near-critical activities on the current CPM path."
+      />
+      {workspaceSummaryChips}
+    </>
+  );
   const saveDataDate = () => {
     if (!dataDateDraft || dataDateUpdate.isPending) return;
     if (updateReadiness.needsStatusCount > 0 && readinessWarningAcceptedFor !== dataDateDraft) {
@@ -880,7 +929,7 @@ export function CpmActivityPlanner({
   const untiedActivityCount = baseCpmModel.untiedActivityCount;
   const showImportRunwayBanner = importRunwayCount != null && untiedActivityCount > 0;
   const importRunwayBanner = showImportRunwayBanner ? (
-    <div className="mb-3 flex flex-col gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between print:hidden">
+    <div className="flex flex-col gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between print:hidden">
       <div className="min-w-0 text-foreground">
         <span className="font-semibold">
           {importRunwayCount} {importRunwayCount === 1 ? "activity" : "activities"} imported ·{" "}
@@ -935,7 +984,7 @@ export function CpmActivityPlanner({
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-clay">
             {draft.is_milestone ? "New completion milestone" : "New CPM activity"}
           </div>
           <div className="mt-1 font-serif text-xl text-foreground">
@@ -1098,8 +1147,8 @@ export function CpmActivityPlanner({
       />
       <div
         className={cn(
-          "constructline-screen-workbench rounded-lg border border-hairline bg-surface",
-          isFullWorkspace ? "p-3 lg:p-4" : "p-5",
+          "constructline-screen-workbench flex min-w-0 flex-col gap-3.5",
+          !isFullWorkspace && "rounded-lg border border-hairline bg-surface p-5",
         )}
       >
         {!isFullWorkspace && (
@@ -1119,58 +1168,58 @@ export function CpmActivityPlanner({
 
         {importRunwayBanner}
 
+        <CpmGridToolbar
+          compact={isFullWorkspace}
+          scheduleView={scheduleView}
+          onScheduleViewChange={setScheduleView}
+          activityOrder={activityOrder}
+          onActivityOrderChange={setActivityOrder}
+          dayPx={dayPx}
+          onZoomChange={setDayPx}
+          showLogicLines={showLogicLines}
+          onToggleLogicLines={() => setShowLogicLines((visible) => !visible)}
+          showBaselineBars={showBaselineBars}
+          onToggleBaselineBars={() => setShowBaselineBars((visible) => !visible)}
+          onManageWbs={() => setIsWbsManagerOpen(true)}
+          onExpand={() => setIsFocusOpen(true)}
+          onSeedActivities={() => onSeedActivities(milestoneSeedRows)}
+          canSeedActivities={milestoneSeedRows.length > 0}
+          isSeedingActivities={isSeedingActivities}
+          onImportSchedule={() => setImportWizardMode("file")}
+          onBuildFromSov={() => setImportWizardMode("sov")}
+          onToggleActivityDraft={toggleActivityDraft}
+          isActivityDraftOpen={showDraft}
+          activityDraftMode={activityDraftMode}
+          onFocusActivityDraft={() => scrollActivityDraftIntoView(draftFormRef)}
+          onAddMilestone={openMilestoneDraft}
+          dataDateDraft={dataDateDraft}
+          latestDataDate={latestDataDate}
+          isSavingDataDate={dataDateUpdate.isPending}
+          onDataDateChange={setDataDateDraft}
+          onSaveDataDate={saveDataDate}
+          readinessWarningCount={updateReadiness.needsStatusCount}
+          isReadinessWarningArmed={isReadinessSaveWarningArmed}
+          statusChips={commandBarStatusChips}
+          templateName={templateName}
+          onTemplateNameChange={setTemplateName}
+          templates={cpmTemplates}
+          selectedTemplateId={selectedTemplateId}
+          onSelectedTemplateChange={setSelectedTemplateId}
+          isTemplateLoading={templateQuery.isLoading}
+          isSavingTemplate={templateSave.isPending}
+          isApplyingTemplate={templateImport.isPending || isSeedingActivities}
+          onSaveTemplate={saveCpmTemplate}
+          onApplyTemplate={applySelectedCpmTemplate}
+        />
+
+        {!isFocusOpen && activityDraftEditor}
+
         <ActivityScheduleMatrix
           matrixId="cpm-grid"
           model={displayedCpmModel}
           delayFragments={delayFragments}
           layoutStorageKey={cpmGridLayoutStorageKey}
           isDenseHeader={isFullWorkspace}
-          draftEditor={isFocusOpen ? null : activityDraftEditor}
-          toolbar={
-            <CpmGridToolbar
-              compact={isFullWorkspace}
-              scheduleView={scheduleView}
-              onScheduleViewChange={setScheduleView}
-              activityOrder={activityOrder}
-              onActivityOrderChange={setActivityOrder}
-              dayPx={dayPx}
-              onZoomChange={setDayPx}
-              showLogicLines={showLogicLines}
-              onToggleLogicLines={() => setShowLogicLines((visible) => !visible)}
-              showBaselineBars={showBaselineBars}
-              onToggleBaselineBars={() => setShowBaselineBars((visible) => !visible)}
-              onManageWbs={() => setIsWbsManagerOpen(true)}
-              onExpand={() => setIsFocusOpen(true)}
-              onSeedActivities={() => onSeedActivities(milestoneSeedRows)}
-              canSeedActivities={milestoneSeedRows.length > 0}
-              isSeedingActivities={isSeedingActivities}
-              onImportSchedule={() => setImportWizardMode("file")}
-              onBuildFromSov={() => setImportWizardMode("sov")}
-              onPrint={() => typeof window !== "undefined" && window.print()}
-              onToggleActivityDraft={toggleActivityDraft}
-              isActivityDraftOpen={showDraft}
-              activityDraftMode={activityDraftMode}
-              onFocusActivityDraft={() => scrollActivityDraftIntoView(draftFormRef)}
-              onAddMilestone={openMilestoneDraft}
-              dataDateDraft={dataDateDraft}
-              latestDataDate={latestDataDate}
-              isSavingDataDate={dataDateUpdate.isPending}
-              onDataDateChange={setDataDateDraft}
-              onSaveDataDate={saveDataDate}
-              readinessWarningCount={updateReadiness.needsStatusCount}
-              isReadinessWarningArmed={isReadinessSaveWarningArmed}
-              templateName={templateName}
-              onTemplateNameChange={setTemplateName}
-              templates={cpmTemplates}
-              selectedTemplateId={selectedTemplateId}
-              onSelectedTemplateChange={setSelectedTemplateId}
-              isTemplateLoading={templateQuery.isLoading}
-              isSavingTemplate={templateSave.isPending}
-              isApplyingTemplate={templateImport.isPending || isSeedingActivities}
-              onSaveTemplate={saveCpmTemplate}
-              onApplyTemplate={applySelectedCpmTemplate}
-            />
-          }
           viewSummary={scheduleViewSummary}
           emptyTitle={
             scheduleView === "all"
@@ -1198,105 +1247,151 @@ export function CpmActivityPlanner({
           }}
         />
 
-        <ScheduleUpdateReadinessPanel
-          summary={updateReadiness}
-          dataDate={effectiveDataDate}
-          onShowActive={() => setScheduleView("active")}
-          onShowUpdateQueue={() => setScheduleView("update_queue")}
-          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
-        />
-
-        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="rounded-md border border-hairline bg-card p-4">
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              <Gauge className="h-3.5 w-3.5" />
-              Schedule intelligence
-            </div>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
-              {cpmModel.recommendations.slice(0, 4).map((item) => (
-                <div
-                  key={item}
-                  className="rounded border border-hairline bg-surface px-3 py-2 text-sm text-foreground"
+        {/* Analytics: one card, tabbed progressive disclosure — every panel keeps
+            its full content; the tabs only choose which one is in front. */}
+        <div className="rounded-xl border border-hairline bg-card p-4">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <div
+              role="tablist"
+              aria-label="Schedule analytics"
+              className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-[10px] bg-secondary p-[3px]"
+            >
+              {(
+                [
+                  { value: "intelligence", label: "Intelligence" },
+                  { value: "stacking", label: "Activity stacking" },
+                  { value: "quality", label: `Quality queue · ${qualityQueueItems.length}` },
+                  { value: "readiness", label: "Update readiness" },
+                ] as Array<{ value: WorkbenchAnalyticsTab; label: string }>
+              ).map((tab) => (
+                <button
+                  key={tab.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={analyticsTab === tab.value}
+                  className={cn(
+                    "h-9 whitespace-nowrap rounded-lg px-3.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground",
+                    analyticsTab === tab.value &&
+                      "bg-foreground text-background hover:text-background",
+                  )}
+                  onClick={() => setAnalyticsTab(tab.value)}
                 >
-                  {item}
-                </div>
+                  {tab.label}
+                </button>
               ))}
             </div>
-            {cpmModel.diagnostics.length > 0 && (
-              <div className="mt-3 rounded border border-warning/25 bg-warning/10 px-3 py-2 text-xs text-warning">
-                {cpmModel.diagnostics.slice(0, 2).join(" ")}
-              </div>
-            )}
-            {delaySummary.openCount > 0 && (
-              <div className="mt-3 rounded border border-danger/20 bg-danger/10 px-3 py-2 text-xs text-danger">
-                Delay ledger has {delaySummary.openCount} open fragment
-                {delaySummary.openCount === 1 ? "" : "s"} totaling {delaySummary.openDays} days.
-                {delaySummary.driverLabels.length > 0
-                  ? ` Drivers: ${delaySummary.driverLabels.join(", ")}.`
-                  : ""}
-              </div>
-            )}
+            <span className="ml-auto whitespace-nowrap text-[11.5px] text-muted-foreground">
+              Status basis {effectiveDataDate ? shortDate(effectiveDataDate) : "not set"}
+            </span>
           </div>
-          <div className="rounded-md border border-hairline bg-card p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                <Layers className="h-3.5 w-3.5" />
-                Activity stacking
+
+          {analyticsTab === "intelligence" && (
+            <div className="mt-3.5">
+              <div className="grid gap-2.5 md:grid-cols-2">
+                {cpmModel.recommendations.slice(0, 4).map((item) => (
+                  <div
+                    key={item}
+                    className="rounded-[10px] border border-hairline bg-background px-3.5 py-3 text-sm leading-relaxed text-foreground"
+                  >
+                    {item}
+                  </div>
+                ))}
               </div>
-              <div className="text-xs font-semibold tabular text-foreground">
-                {cpmModel.maxStack} peak
+              {cpmModel.diagnostics.length > 0 && (
+                <div className="mt-3 rounded-[10px] border border-warning/25 bg-warning/10 px-3.5 py-2.5 text-xs text-warning">
+                  {cpmModel.diagnostics.slice(0, 2).join(" ")}
+                </div>
+              )}
+              {delaySummary.openCount > 0 && (
+                <div className="mt-3 rounded-[10px] border border-danger/25 bg-danger/5 px-3.5 py-2.5 text-xs">
+                  <span className="font-bold text-danger">
+                    Delay ledger: {delaySummary.openCount} open fragment
+                    {delaySummary.openCount === 1 ? "" : "s"} · {delaySummary.openDays} days
+                  </span>
+                  {delaySummary.driverLabels.length > 0 && (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      — Drivers: {delaySummary.driverLabels.join(", ")}.
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="mt-4 grid gap-2.5 md:grid-cols-4">
+                <ScheduleWorkbenchStat
+                  label="Activities"
+                  value={String(sortedActivities.length)}
+                  sub="in plan"
+                />
+                <ScheduleWorkbenchStat
+                  label="Complete"
+                  value={`${completedActivities}/${sortedActivities.length || 0}`}
+                  sub="progress count"
+                  tone={completedActivities > 0 ? "success" : "default"}
+                />
+                <ScheduleWorkbenchStat
+                  label="Logic ties"
+                  value={String(logicTieCount)}
+                  sub={`${activitiesWithLogic} linked activities`}
+                  tone={logicTieCount > 0 ? "success" : "warning"}
+                />
+                <ScheduleWorkbenchStat
+                  label="Dated"
+                  value={`${activitiesWithDates}/${sortedActivities.length || 0}`}
+                  sub={`${shortDate(bounds.startLabel)} to ${shortDate(bounds.endLabel)}`}
+                />
               </div>
+              {milestones.length > 0 && milestoneSeedRows.length > 0 && (
+                <div className="mt-3 rounded-[10px] border border-hairline bg-background p-3 text-sm text-muted-foreground">
+                  <span className="font-semibold text-foreground">Milestone bridge:</span>{" "}
+                  {milestoneSeedRows.length} milestone{" "}
+                  {milestoneSeedRows.length === 1 ? "is" : "are"} ready to become CPM activity rows.
+                  Build them once, then add logic ties and update percent complete from the schedule
+                  workbench.
+                </div>
+              )}
             </div>
-            <StackingMiniMap model={cpmModel} />
-          </div>
+          )}
+
+          {analyticsTab === "stacking" && (
+            <div className="mt-3.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                  <Layers className="h-3.5 w-3.5" />
+                  Activity stacking
+                </div>
+                <div className="text-xs font-semibold tabular text-foreground">
+                  {cpmModel.maxStack} peak
+                </div>
+              </div>
+              <StackingMiniMap model={cpmModel} />
+            </div>
+          )}
+
+          {analyticsTab === "quality" && (
+            <ScheduleQualityQueue
+              items={qualityQueueItems}
+              onShowIssues={() => setScheduleView("issues")}
+              onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
+            />
+          )}
+
+          {analyticsTab === "readiness" && (
+            <ScheduleUpdateReadinessPanel
+              summary={updateReadiness}
+              dataDate={effectiveDataDate}
+              onShowActive={() => setScheduleView("active")}
+              onShowUpdateQueue={() => setScheduleView("update_queue")}
+              onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
+            />
+          )}
         </div>
-
-        <ScheduleQualityQueue
-          items={qualityQueueItems}
-          onShowIssues={() => setScheduleView("issues")}
-          onOpenActivity={(activity) => setSelectedActivityId(activity.id)}
-        />
-
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
-          <ScheduleWorkbenchStat
-            label="Activities"
-            value={String(sortedActivities.length)}
-            sub="in plan"
-          />
-          <ScheduleWorkbenchStat
-            label="Complete"
-            value={`${completedActivities}/${sortedActivities.length || 0}`}
-            sub="progress count"
-            tone={completedActivities > 0 ? "success" : "default"}
-          />
-          <ScheduleWorkbenchStat
-            label="Logic ties"
-            value={String(logicTieCount)}
-            sub={`${activitiesWithLogic} linked activities`}
-            tone={logicTieCount > 0 ? "success" : "warning"}
-          />
-          <ScheduleWorkbenchStat
-            label="Dated"
-            value={`${activitiesWithDates}/${sortedActivities.length || 0}`}
-            sub={`${shortDate(bounds.startLabel)} to ${shortDate(bounds.endLabel)}`}
-          />
-        </div>
-
-        {milestones.length > 0 && milestoneSeedRows.length > 0 && (
-          <div className="mt-4 rounded-md border border-hairline bg-card p-3 text-sm text-muted-foreground">
-            <span className="font-semibold text-foreground">Milestone bridge:</span>{" "}
-            {milestoneSeedRows.length} milestone {milestoneSeedRows.length === 1 ? "is" : "are"}{" "}
-            ready to become CPM activity rows. Build them once, then add logic ties and update
-            percent complete from the schedule workbench.
-          </div>
-        )}
       </div>
 
       {isFocusOpen && (
         <div className="fixed inset-0 z-50 flex flex-col bg-background p-2 text-foreground print:hidden sm:p-3">
           <div className="mb-2 flex shrink-0 flex-col gap-2 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              <div className="font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-clay">
                 ConstructLine CPM grid
               </div>
               <div className="mt-0.5 font-serif text-lg text-foreground">
@@ -1458,6 +1553,7 @@ export function CpmActivityPlanner({
           activity={selectedActivity}
           activities={sortedActivities}
           dataDate={effectiveDataDate}
+          isCriticalPath={selectedCpmTask?.isCritical ?? false}
           updateQueueContext={selectedUpdateQueueContext}
           isSaving={isSavingActivity}
           onClose={() => setSelectedActivityId(null)}

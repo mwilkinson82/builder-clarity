@@ -2695,7 +2695,17 @@ function ProjectPage() {
             </TabsContent>
 
             <TabsContent value="daily-reports" className="mt-0">
-              <DailyReportsWorkspace projectId={projectId} project={project} buckets={buckets} />
+              <DailyReportsWorkspace
+                projectId={projectId}
+                project={project}
+                buckets={buckets}
+                onOpenWipDay={(date) => {
+                  // Handoff rule: a report's Work-put-in-place deep-links to
+                  // that specific day in Daily WIP (same pattern as the SOV tab).
+                  setFocusedWipDate(date);
+                  setProjectTab("daily-wip");
+                }}
+              />
             </TabsContent>
 
             <TabsContent value="daily-wip" className="mt-0">

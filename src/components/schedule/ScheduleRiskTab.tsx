@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Gauge } from "lucide-react";
+import { ChevronDown, ExternalLink, Gauge } from "lucide-react";
 import { toast } from "sonner";
 import {
   listSchedule,
@@ -28,10 +28,8 @@ import {
   type ScheduleRiskKind,
   type MilestoneRow,
   type ScheduleRiskRow,
-  type ScheduleUpdateRow,
 } from "@/lib/schedule.functions";
 import { createExposure, updateProjectFinancials, type ProjectRow } from "@/lib/projects.functions";
-import { fmtUSD } from "@/lib/format";
 import { computeScheduleVarianceWeeks } from "@/lib/ior";
 import { buildConstructLineCpmModel } from "@/lib/constructline-cpm";
 import {
@@ -51,17 +49,37 @@ import {
   EMPTY_SCHEDULE_UPDATES,
   type MilestoneView,
   RISK_META,
-  moneyTone,
   shortDate,
   todayIsoDate,
   varianceLabel,
   varianceTone,
 } from "./scheduleShared";
 import { buildCpmScheduleUpdateDraft, buildDelayFragmentSummary } from "./scheduleUpdateDraft";
-import { ScheduleSnapshotTimeline } from "./ScheduleSnapshotTimeline";
-import { ScheduleUpdateLedger } from "./ScheduleUpdateHistory";
+import {
+  ScheduleCompletionPath,
+  ScheduleDarkStatStrip,
+  ScheduleMetaRow,
+  ScheduleMilestonePlan,
+  ScheduleWorkspaceLaunch,
+} from "./ScheduleSnapshotTimeline";
+import {
+  ScheduleAttentionBanner,
+  ScheduleCompletionOfRecordCard,
+  ScheduleDeltaCard,
+  ScheduleIntelligenceMetric,
+  ScheduleMoneyNetCard,
+  ScheduleUpdateLedger,
+  ScheduleVarianceCard,
+} from "./ScheduleUpdateHistory";
 import { DateField, MilestoneRowEditor } from "./ScheduleMilestones";
 import { AddInline, RiskGroup } from "./ScheduleRiskItems";
+
+// v2 review-tab card order for the schedule-linked risk groups (mock order).
+const RISK_GROUP_ORDER: ScheduleRiskKind[] = [
+  "procurement",
+  "trade_performance",
+  "critical_decision",
+];
 
 export function ScheduleRisk({
   project,
@@ -94,6 +112,21 @@ export function ScheduleRisk({
   const [updateNotes, setUpdateNotes] = useState("");
   const [annotationSeedUpdateId, setAnnotationSeedUpdateId] = useState<string | null>(null);
   const [milestoneView, setMilestoneView] = useState<MilestoneView>("active");
+  // Progressive disclosure: the annotate/save authoring panel lives collapsed
+  // below the update history; the CTA row opens and scrolls to it.
+  const [annotateOpen, setAnnotateOpen] = useState(false);
+  const annotatePanelRef = useRef<HTMLDetailsElement>(null);
+  const updateNotesRef = useRef<HTMLTextAreaElement>(null);
+  const openAnnotatePanel = () => {
+    setAnnotateOpen(true);
+    requestAnimationFrame(() => {
+      const panel = annotatePanelRef.current;
+      if (!panel) return;
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      panel.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+      updateNotesRef.current?.focus({ preventScroll: true });
+    });
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: ["schedule", projectId],
@@ -196,7 +229,7 @@ export function ScheduleRisk({
       }
       await Promise.all([invalidateSchedule(), invalidateProject()]);
       await qc.refetchQueries({ queryKey: ["project", projectId] });
-      toast.success("Risk allocation created", {
+      toast.success("Sent to the Risk Tally", {
         description: `${risk.title} is now in the open risk tally.`,
       });
     },
@@ -372,208 +405,79 @@ export function ScheduleRisk({
   });
 
   return (
-    <div className="space-y-8">
-      {/* Top: editable completion summary */}
-      <section className="rounded-lg border border-hairline bg-card p-6">
-        <div className="mb-4">
-          <h3 className="font-serif text-2xl text-foreground">Baseline vs schedule updates</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {hasCpmActivities
-              ? "The CPM workbench authors every schedule update: set the data date, work the needs-update queue, save the snapshot. This tab reviews the saved record and adds the schedule narrative and money."
-              : "No CPM activities yet, so schedule updates are recorded manually here. The CPM workbench takes over authoring the moment activities exist."}
-          </p>
-        </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <DateField
-            label="Baseline completion"
-            value={project.baseline_completion_date}
-            onCommit={(v) =>
-              finMut.mutate({
-                baseline_completion_date: v,
-                schedule_variance_weeks:
-                  computeScheduleVarianceWeeks(v, project.forecast_completion_date) ?? 0,
-              })
-            }
-          />
-          {hasCpmActivities ? (
-            <ScheduleCompletionOfRecordCard value={savedForecast} update={latestUpdate} />
-          ) : (
-            <DateField
-              label="Manual completion update"
-              value={manualCompletionDraft}
-              accent
-              onCommit={(v) => setManualCompletionDraft(v ?? "")}
+    <div className="space-y-6">
+      {/* 1 · Dark stat strip: the schedule position at a glance */}
+      <ScheduleDarkStatStrip
+        project={project}
+        updates={updates}
+        cpmForecastStatus={cpmForecastStatus}
+        unsavedDeltaWeeks={unsavedDeltaWeeks}
+        delaySummary={delaySummary}
+      />
+
+      {/* 2 · Needs-attention banner (only when something needs attention) */}
+      <ScheduleAttentionBanner
+        updates={updates}
+        cpmForecastStatus={cpmForecastStatus}
+        unsavedDeltaWeeks={unsavedDeltaWeeks}
+        delaySummary={delaySummary}
+      />
+
+      {/* 3 · CTA row — the workspace launch is the view's one coral signal */}
+      <div className="flex flex-wrap gap-2.5">
+        <Button asChild variant="signal" className="gap-2">
+          <a href={`/projects/${projectId}/schedule#cpm-grid`} target="_blank" rel="noreferrer">
+            <ExternalLink className="h-4 w-4" />
+            Open schedule workspace
+          </a>
+        </Button>
+        <Button type="button" variant="outline" onClick={openAnnotatePanel}>
+          Save schedule update
+        </Button>
+      </div>
+
+      {/* 4 · Completion path + verdict */}
+      <ScheduleCompletionPath
+        project={project}
+        updates={updates}
+        cpmForecastStatus={cpmForecastStatus}
+        unsavedDeltaWeeks={unsavedDeltaWeeks}
+      />
+
+      {/* 5 · Schedule-linked risk */}
+      <section>
+        <div className="eyebrow">Schedule-linked risk</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Surfaced here because it moves the schedule, routed to the Risk Tally.
+        </p>
+        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+          {RISK_GROUP_ORDER.map((kind) => (
+            <RiskGroup
+              key={kind}
+              kind={kind}
+              items={risks.filter((r) => r.kind === kind)}
+              onAdd={(title) => rCreate.mutate({ projectId, kind, title })}
+              onPatch={(id, patch) => rUpdate.mutate({ id, patch })}
+              onDelete={(id) => rDelete.mutate({ id })}
+              onCreateExposure={(risk) => exposureCreate.mutate(risk)}
+              pendingExposureId={exposureCreate.variables?.id ?? null}
+              linkedExposureIds={linkedExposureIds}
             />
-          )}
-          <ScheduleVarianceCard value={scheduleVariance} />
-          <ScheduleDeltaCard value={lastMovementWeeks} />
-        </div>
-        {hasCpmActivities && (
-          <div className="mt-4 rounded-md border border-hairline bg-surface p-4">
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-              <Gauge className="h-3.5 w-3.5" />
-              Latest CPM schedule update
-            </div>
-            {latestUpdate ? (
-              <>
-                <div className="mt-2 grid gap-3 text-sm md:grid-cols-5">
-                  <ScheduleIntelligenceMetric
-                    label={`Update #${latestUpdate.update_number}`}
-                    value={`Data date ${shortDate(latestUpdate.data_date)}`}
-                  />
-                  <ScheduleIntelligenceMetric
-                    label="Completion forecast"
-                    value={shortDate(latestUpdate.forecast_completion_date)}
-                  />
-                  <ScheduleIntelligenceMetric
-                    label="Baseline variance"
-                    value={varianceLabel(latestUpdate.variance_weeks)}
-                    tone={varianceTone(latestUpdate.variance_weeks)}
-                  />
-                  <ScheduleIntelligenceMetric
-                    label="Movement vs prior"
-                    value={varianceLabel(latestUpdate.movement_weeks)}
-                    tone={varianceTone(latestUpdate.movement_weeks)}
-                  />
-                  <ScheduleIntelligenceMetric
-                    label="Activity snapshots"
-                    value={String(latestActivitySnapshotCount)}
-                    tone={
-                      latestActivitySnapshotCount > 0 ? "text-foreground" : "text-muted-foreground"
-                    }
-                  />
-                </div>
-                {latestUpdate.notes ? (
-                  <div className="mt-3 max-w-5xl text-xs text-muted-foreground">
-                    {latestUpdate.notes}
-                  </div>
-                ) : null}
-                {cpmForecastStatus.isUnsaved && (
-                  <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs font-medium text-foreground">
-                    Unsaved forecast: the live CPM schedule now points to{" "}
-                    {shortDate(cpmForecastStatus.unsavedForecast)}
-                    {unsavedDeltaWeeks !== 0 ? (
-                      <>
-                        {" "}
-                        — {Math.abs(unsavedDeltaWeeks)} week
-                        {Math.abs(unsavedDeltaWeeks) === 1 ? "" : "s"}{" "}
-                        {unsavedDeltaWeeks < 0 ? "earlier" : "later"} than the saved record (
-                        {shortDate(cpmForecastStatus.forecastOfRecord)})
-                      </>
-                    ) : null}
-                    . Save a new snapshot in the CPM workbench to make it the schedule update of
-                    record.
-                  </div>
-                )}
-              </>
-            ) : (
-              <p className="mt-2 text-sm text-muted-foreground">
-                No CPM update saved yet. In the CPM workbench, set the data date, work the
-                needs-update queue, and save the snapshot — that saved snapshot becomes schedule
-                update #1.
-              </p>
-            )}
-          </div>
-        )}
-        <div className="mt-4 grid gap-3 md:grid-cols-4 md:items-end">
-          {hasCpmActivities ? (
-            <div className="space-y-1.5">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Data date
-              </Label>
-              <div className="flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm tabular text-foreground">
-                {latestUpdate ? shortDate(latestUpdate.data_date) : "Set in the CPM workbench"}
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Data date
-              </Label>
-              <Input
-                type="date"
-                value={manualDataDate}
-                onChange={(e) => setManualDataDate(e.target.value)}
-              />
-            </div>
-          )}
-          <div className="space-y-1.5">
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Money exposure in update
-            </Label>
-            <MoneyInput value={scheduleMoneyExposure} onValueChange={setScheduleMoneyExposure} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Recovered / offset
-            </Label>
-            <MoneyInput value={scheduleMoneyRecovery} onValueChange={setScheduleMoneyRecovery} />
-          </div>
-          <ScheduleMoneyNetCard exposure={scheduleMoneyExposure} recovery={scheduleMoneyRecovery} />
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] md:items-end">
-          <div className="space-y-1.5">
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Schedule update narrative
-            </Label>
-            <Textarea
-              value={updateNotes}
-              onChange={(e) => setUpdateNotes(e.target.value)}
-              placeholder="What changed since the prior schedule update?"
-              className="min-h-20 resize-y"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              Money note
-            </Label>
-            <Input
-              value={moneyNotes}
-              onChange={(e) => setMoneyNotes(e.target.value)}
-              placeholder="What dollar impact belongs to this update?"
-            />
-          </div>
-          {hasCpmActivities ? (
-            <Button
-              type="button"
-              disabled={!latestUpdate || annotate.isPending}
-              onClick={() => annotate.mutate()}
-            >
-              {annotate.isPending
-                ? "Saving..."
-                : latestUpdate
-                  ? `Save onto update #${latestUpdate.update_number}`
-                  : "Save a CPM update first"}
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              disabled={!manualCompletionDraft || manualUpdate.isPending}
-              onClick={() => manualUpdate.mutate({})}
-            >
-              {manualUpdate.isPending ? "Saving..." : "Save manual schedule update"}
-            </Button>
-          )}
+          ))}
         </div>
       </section>
 
-      <ScheduleSnapshotTimeline
+      {/* 6 · Interim milestone plan (meeting mini-Gantt + recent updates) */}
+      <ScheduleMilestonePlan
         project={project}
         updates={updates}
         milestones={milestones}
-        activities={activities}
         milestoneView={milestoneView}
         onMilestoneViewChange={setMilestoneView}
       />
 
-      <ScheduleUpdateLedger
-        updates={updates}
-        milestoneUpdates={milestoneUpdates}
-        activityUpdates={activityUpdates}
-      />
-
-      {/* Interim milestones */}
-      <section className="rounded-lg border border-hairline bg-card p-6">
+      {/* Interim milestones working list */}
+      <section className="rounded-xl border border-hairline bg-card p-6">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
             <h3 className="font-serif text-2xl text-foreground">Interim milestones</h3>
@@ -619,22 +523,229 @@ export function ScheduleRisk({
         )}
       </section>
 
-      {/* Risk groups */}
-      <div className="space-y-6">
-        {(Object.keys(RISK_META) as ScheduleRiskKind[]).map((kind) => (
-          <RiskGroup
-            key={kind}
-            kind={kind}
-            items={risks.filter((r) => r.kind === kind)}
-            onAdd={(title) => rCreate.mutate({ projectId, kind, title })}
-            onPatch={(id, patch) => rUpdate.mutate({ id, patch })}
-            onDelete={(id) => rDelete.mutate({ id })}
-            onCreateExposure={(risk) => exposureCreate.mutate(risk)}
-            pendingExposureId={exposureCreate.variables?.id ?? null}
-            linkedExposureIds={linkedExposureIds}
-          />
-        ))}
-      </div>
+      {/* 7 · Schedule update history */}
+      <ScheduleUpdateLedger
+        updates={updates}
+        milestoneUpdates={milestoneUpdates}
+        activityUpdates={activityUpdates}
+      />
+
+      {/* 8 · Annotate / save authoring — demoted into a collapsed panel; the
+          CTA-row "Save schedule update" button opens and scrolls here. */}
+      <details
+        ref={annotatePanelRef}
+        open={annotateOpen}
+        onToggle={(event) => setAnnotateOpen(event.currentTarget.open)}
+        className="group rounded-xl border border-hairline bg-card"
+      >
+        <summary className="flex cursor-pointer list-none items-center gap-3 px-6 py-4 [&::-webkit-details-marker]:hidden">
+          <div className="min-w-0">
+            <h3 className="font-serif text-xl text-foreground">
+              Annotate or save a schedule update
+            </h3>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Baseline date, schedule narrative, and schedule dollars for the update of record.
+            </p>
+          </div>
+          <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180 motion-reduce:transition-none" />
+        </summary>
+        <div className="border-t border-hairline p-6">
+          <p className="mb-4 text-sm text-muted-foreground">
+            {hasCpmActivities
+              ? "The CPM workspace authors every schedule update: set the data date, work the needs-update queue, save the snapshot. This panel reviews the saved record and adds the schedule narrative and money."
+              : "No CPM activities yet, so schedule updates are recorded manually here. The CPM workspace takes over authoring the moment activities exist."}
+          </p>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <DateField
+              label="Baseline completion"
+              value={project.baseline_completion_date}
+              onCommit={(v) =>
+                finMut.mutate({
+                  baseline_completion_date: v,
+                  schedule_variance_weeks:
+                    computeScheduleVarianceWeeks(v, project.forecast_completion_date) ?? 0,
+                })
+              }
+            />
+            {hasCpmActivities ? (
+              <ScheduleCompletionOfRecordCard value={savedForecast} update={latestUpdate} />
+            ) : (
+              <DateField
+                label="Manual completion update"
+                value={manualCompletionDraft}
+                accent
+                onCommit={(v) => setManualCompletionDraft(v ?? "")}
+              />
+            )}
+            <ScheduleVarianceCard value={scheduleVariance} />
+            <ScheduleDeltaCard value={lastMovementWeeks} />
+          </div>
+          {hasCpmActivities && (
+            <div className="mt-4 rounded-md border border-hairline bg-surface p-4">
+              <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                <Gauge className="h-3.5 w-3.5" />
+                Latest CPM schedule update
+              </div>
+              {latestUpdate ? (
+                <>
+                  <div className="mt-2 grid gap-3 text-sm md:grid-cols-5">
+                    <ScheduleIntelligenceMetric
+                      label={`Update #${latestUpdate.update_number}`}
+                      value={`Data date ${shortDate(latestUpdate.data_date)}`}
+                    />
+                    <ScheduleIntelligenceMetric
+                      label="Completion forecast"
+                      value={shortDate(latestUpdate.forecast_completion_date)}
+                    />
+                    <ScheduleIntelligenceMetric
+                      label="Baseline variance"
+                      value={varianceLabel(latestUpdate.variance_weeks)}
+                      tone={varianceTone(latestUpdate.variance_weeks)}
+                    />
+                    <ScheduleIntelligenceMetric
+                      label="Movement vs prior"
+                      value={varianceLabel(latestUpdate.movement_weeks)}
+                      tone={varianceTone(latestUpdate.movement_weeks)}
+                    />
+                    <ScheduleIntelligenceMetric
+                      label="Activity snapshots"
+                      value={String(latestActivitySnapshotCount)}
+                      tone={
+                        latestActivitySnapshotCount > 0
+                          ? "text-foreground"
+                          : "text-muted-foreground"
+                      }
+                    />
+                  </div>
+                  {latestUpdate.notes ? (
+                    <div className="mt-3 max-w-5xl text-xs text-muted-foreground">
+                      {latestUpdate.notes}
+                    </div>
+                  ) : null}
+                  {cpmForecastStatus.isUnsaved && (
+                    <div className="mt-3 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs font-medium text-foreground">
+                      Unsaved forecast: the live CPM schedule now points to{" "}
+                      {shortDate(cpmForecastStatus.unsavedForecast)}
+                      {unsavedDeltaWeeks !== 0 ? (
+                        <>
+                          {" "}
+                          — {Math.abs(unsavedDeltaWeeks)} week
+                          {Math.abs(unsavedDeltaWeeks) === 1 ? "" : "s"}{" "}
+                          {unsavedDeltaWeeks < 0 ? "earlier" : "later"} than the saved record (
+                          {shortDate(cpmForecastStatus.forecastOfRecord)})
+                        </>
+                      ) : null}
+                      . Save a new snapshot in the CPM workbench to make it the schedule update of
+                      record.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  No CPM update saved yet. In the CPM workbench, set the data date, work the
+                  needs-update queue, and save the snapshot — that saved snapshot becomes schedule
+                  update #1.
+                </p>
+              )}
+            </div>
+          )}
+          <div className="mt-4 grid gap-3 md:grid-cols-4 md:items-end">
+            {hasCpmActivities ? (
+              <div className="space-y-1.5">
+                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Data date
+                </Label>
+                <div className="flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm tabular text-foreground">
+                  {latestUpdate ? shortDate(latestUpdate.data_date) : "Set in the CPM workbench"}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Data date
+                </Label>
+                <Input
+                  type="date"
+                  value={manualDataDate}
+                  onChange={(e) => setManualDataDate(e.target.value)}
+                />
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Money exposure in update
+              </Label>
+              <MoneyInput value={scheduleMoneyExposure} onValueChange={setScheduleMoneyExposure} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Recovered / offset
+              </Label>
+              <MoneyInput value={scheduleMoneyRecovery} onValueChange={setScheduleMoneyRecovery} />
+            </div>
+            <ScheduleMoneyNetCard
+              exposure={scheduleMoneyExposure}
+              recovery={scheduleMoneyRecovery}
+            />
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] md:items-end">
+            <div className="space-y-1.5">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Schedule update narrative
+              </Label>
+              <Textarea
+                ref={updateNotesRef}
+                value={updateNotes}
+                onChange={(e) => setUpdateNotes(e.target.value)}
+                placeholder="What changed since the prior schedule update?"
+                className="min-h-20 resize-y"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Money note
+              </Label>
+              <Input
+                value={moneyNotes}
+                onChange={(e) => setMoneyNotes(e.target.value)}
+                placeholder="What dollar impact belongs to this update?"
+              />
+            </div>
+            {hasCpmActivities ? (
+              <Button
+                type="button"
+                disabled={!latestUpdate || annotate.isPending}
+                onClick={() => annotate.mutate()}
+              >
+                {annotate.isPending
+                  ? "Saving..."
+                  : latestUpdate
+                    ? `Save onto update #${latestUpdate.update_number}`
+                    : "Save a CPM update first"}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                disabled={!manualCompletionDraft || manualUpdate.isPending}
+                onClick={() => manualUpdate.mutate({})}
+              >
+                {manualUpdate.isPending ? "Saving..." : "Save manual schedule update"}
+              </Button>
+            )}
+          </div>
+        </div>
+      </details>
+
+      {/* 9 · Dark workspace handoff panel */}
+      <ScheduleWorkspaceLaunch
+        project={project}
+        activities={activities}
+        milestones={milestones}
+        latestDataDate={latestUpdate?.data_date ?? null}
+      />
+
+      {/* 10 · Job meta row */}
+      <ScheduleMetaRow project={project} activities={activities} />
     </div>
   );
 }
@@ -663,106 +774,5 @@ export function MilestoneViewSelect({
         <SelectItem value="all">All</SelectItem>
       </SelectContent>
     </Select>
-  );
-}
-
-function ScheduleCompletionOfRecordCard({
-  value,
-  update,
-}: {
-  value: string | null;
-  update: ScheduleUpdateRow | null;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        {update ? `Completion of record · update #${update.update_number}` : "Completion of record"}
-      </Label>
-      <div className="flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm tabular text-foreground">
-        {value ? shortDate(value) : "No update saved yet"}
-      </div>
-    </div>
-  );
-}
-
-function ScheduleVarianceCard({ value }: { value: number | null }) {
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        Baseline variance
-      </Label>
-      <div
-        className={`flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm tabular ${varianceTone(value)}`}
-      >
-        {varianceLabel(value)}
-      </div>
-    </div>
-  );
-}
-
-function ScheduleDeltaCard({ value }: { value: number | null }) {
-  const label =
-    value == null
-      ? "No prior update"
-      : value > 0
-        ? `+${value} wk`
-        : value < 0
-          ? `${value} wk`
-          : "No movement";
-  const tone =
-    value == null
-      ? "text-muted-foreground"
-      : value > 0
-        ? "text-danger"
-        : value < 0
-          ? "text-success"
-          : "text-foreground";
-
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        Movement from prior update
-      </Label>
-      <div
-        className={`flex h-9 items-center rounded-md border border-input px-3 text-sm tabular ${tone}`}
-      >
-        {label}
-      </div>
-    </div>
-  );
-}
-
-function ScheduleMoneyNetCard({ exposure, recovery }: { exposure: number; recovery: number }) {
-  const net = exposure - recovery;
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-        Net schedule dollars
-      </Label>
-      <div
-        className={`flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm font-semibold tabular ${moneyTone(net)}`}
-      >
-        {fmtUSD(net)}
-      </div>
-    </div>
-  );
-}
-
-function ScheduleIntelligenceMetric({
-  label,
-  value,
-  tone = "text-foreground",
-}: {
-  label: string;
-  value: string;
-  tone?: string;
-}) {
-  return (
-    <div className="rounded border border-hairline bg-card px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-        {label}
-      </div>
-      <div className={`mt-1 font-semibold tabular ${tone}`}>{value}</div>
-    </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import {
   type ScheduleUpdateRow,
@@ -8,14 +9,76 @@ import {
 } from "@/lib/schedule.functions";
 import { fmtUSD } from "@/lib/format";
 import { type ConstructLineStatusBasis } from "@/lib/constructline-cpm";
+import { selectLatestScheduleUpdate } from "@/lib/schedule-selectors";
 import {
   ACTIVITY_UPDATE_SNAPSHOT_COLUMNS,
+  type DelayFragmentSummary,
   formatFinishVarianceDays,
   moneyTone,
   shortDate,
   varianceLabel,
   varianceTone,
 } from "./scheduleShared";
+import { type CpmForecastStatus } from "./ScheduleSnapshotTimeline";
+
+/** Warn-tinted needs-attention banner. Renders only when the live CPM has
+ * drifted off the saved record or the delay ledger has open impacts, and only
+ * composes clauses whose data actually exists. */
+export function ScheduleAttentionBanner({
+  updates,
+  cpmForecastStatus,
+  unsavedDeltaWeeks,
+  delaySummary,
+}: {
+  updates: ScheduleUpdateRow[];
+  cpmForecastStatus: CpmForecastStatus;
+  unsavedDeltaWeeks: number;
+  delaySummary: DelayFragmentSummary;
+}) {
+  if (!cpmForecastStatus.isUnsaved && delaySummary.openCount === 0) return null;
+  const latestUpdate = selectLatestScheduleUpdate(updates);
+  const delayClause =
+    delaySummary.openCount > 0
+      ? `${delaySummary.openCount} open delay${delaySummary.openCount === 1 ? "" : "s"} totaling ${delaySummary.openDays} day${delaySummary.openDays === 1 ? "" : "s"}`
+      : null;
+  const nextUpdateNumber = (latestUpdate?.update_number ?? 0) + 1;
+  return (
+    <div className="flex max-w-[82ch] items-start gap-3 rounded-xl border border-warning/35 bg-warning/5 px-4 py-3">
+      <span className="mt-0.5 shrink-0 whitespace-nowrap rounded-full border border-warning/35 bg-surface px-2.5 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-warning">
+        Needs attention
+      </span>
+      <p className="text-[13.5px] leading-relaxed text-muted-foreground">
+        {cpmForecastStatus.isUnsaved ? (
+          <>
+            <b className="font-semibold text-foreground">Save a fresh snapshot.</b> The live CPM has{" "}
+            {unsavedDeltaWeeks > 0 ? "slipped" : "moved"} to{" "}
+            {shortDate(cpmForecastStatus.unsavedForecast)}
+            {delayClause ? (
+              <>
+                {" "}
+                and carries <b className="font-semibold text-foreground">{delayClause}</b>
+              </>
+            ) : null}
+            .{" "}
+          </>
+        ) : (
+          <>
+            <b className="font-semibold text-foreground">Work the delay ledger.</b>{" "}
+            <b className="font-semibold text-foreground">{delayClause}</b>{" "}
+            {delaySummary.openCount === 1 ? "is" : "are"} logged against the schedule.{" "}
+          </>
+        )}
+        {latestUpdate ? (
+          <>
+            Update #{latestUpdate.update_number} ({shortDate(latestUpdate.forecast_completion_date)}
+            ) is the record.{" "}
+          </>
+        ) : null}
+        Work the update queue in the workspace and save Update #{nextUpdateNumber}.
+      </p>
+    </div>
+  );
+}
 
 export function ScheduleUpdateLedger({
   updates,
@@ -39,8 +102,8 @@ export function ScheduleUpdateLedger({
 
   if (updates.length === 0) {
     return (
-      <section className="rounded-lg border border-hairline bg-card p-6">
-        <h3 className="font-serif text-2xl text-foreground">Schedule update history</h3>
+      <section className="rounded-xl border border-hairline bg-card p-6">
+        <div className="text-[13px] font-semibold text-foreground">Schedule update history</div>
         <p className="mt-1 text-sm text-muted-foreground">
           No formal schedule updates have been saved yet. The next saved data-date snapshot becomes
           update 1.
@@ -55,24 +118,24 @@ export function ScheduleUpdateLedger({
   const activitySnapshotByUpdate = buildActivityUpdateSnapshotSummaries(activityUpdates);
   const activityRowsByUpdate = groupActivityUpdateSnapshots(activityUpdates);
   return (
-    <section className="rounded-lg border border-hairline bg-card p-6">
-      <div className="mb-4">
-        <h3 className="font-serif text-2xl text-foreground">Schedule update history</h3>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Each saved update records the data date, current completion forecast, activity status,
-          float, critical path signals, milestone movement, and schedule-dollar movement.
-        </p>
+    <section className="rounded-xl border border-hairline bg-card p-6">
+      <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <div className="text-[13px] font-semibold text-foreground">Schedule update history</div>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {updates.length} saved update{updates.length === 1 ? "" : "s"} · each records data date,
+          forecast, variance, activity status, and net $
+        </span>
       </div>
       <div className="overflow-x-auto rounded-md border border-hairline">
-        <div className="grid grid-cols-[64px_100px_120px_140px_100px_100px_110px_minmax(180px,1fr)] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        <div className="grid grid-cols-[64px_100px_120px_140px_100px_100px_110px_minmax(180px,1fr)] bg-surface px-3 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
           <div>Update</div>
           <div>Data date</div>
           <div>Baseline</div>
-          <div>Current completion</div>
+          <div>Forecast</div>
           <div>Variance</div>
           <div>Movement</div>
           <div>Net $</div>
-          <div>Notes</div>
+          <div>Note</div>
         </div>
         {updates.map((update) => {
           const activitySummary = activitySnapshotByUpdate[update.update_number];
@@ -83,21 +146,31 @@ export function ScheduleUpdateLedger({
               key={update.id}
               className="grid grid-cols-[64px_100px_120px_140px_100px_100px_110px_minmax(180px,1fr)] items-start border-t border-hairline px-3 py-3 text-sm"
             >
-              <div className="font-medium tabular text-foreground">#{update.update_number}</div>
-              <div className="text-muted-foreground">{shortDate(update.data_date)}</div>
-              <div className="tabular text-muted-foreground">
+              <div className="font-mono text-xs font-medium tabular text-foreground">
+                #{update.update_number}
+              </div>
+              <div className="font-serif text-[15px] tabular text-muted-foreground">
+                {shortDate(update.data_date)}
+              </div>
+              <div className="font-serif text-[15px] tabular text-muted-foreground">
                 {shortDate(update.baseline_completion_date)}
               </div>
-              <div className="font-medium text-foreground">
+              <div className="font-serif text-[15px] font-semibold tabular text-foreground">
                 {shortDate(update.forecast_completion_date)}
               </div>
-              <div className={`tabular ${varianceTone(update.variance_weeks)}`}>
+              <div
+                className={`font-serif text-[15px] tabular ${varianceTone(update.variance_weeks)}`}
+              >
                 {varianceLabel(update.variance_weeks)}
               </div>
-              <div className={`tabular ${varianceTone(update.movement_weeks)}`}>
+              <div
+                className={`font-serif text-[15px] tabular ${varianceTone(update.movement_weeks)}`}
+              >
                 {varianceLabel(update.movement_weeks)}
               </div>
-              <div className={`font-semibold tabular ${moneyTone(update.schedule_money_net)}`}>
+              <div
+                className={`font-serif text-[15px] font-semibold tabular ${moneyTone(update.schedule_money_net)}`}
+              >
                 {fmtUSD(update.schedule_money_net)}
               </div>
               <div>
@@ -161,7 +234,7 @@ export function ScheduleUpdateLedger({
               {isSnapshotExpanded && activitySnapshotRows.length > 0 && (
                 <div className="col-span-8 mt-3 overflow-x-auto rounded-md border border-hairline bg-card">
                   <div
-                    className="grid min-w-[980px] bg-surface px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"
+                    className="grid min-w-[980px] bg-surface px-3 py-2 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-muted-foreground"
                     style={{ gridTemplateColumns: ACTIVITY_UPDATE_SNAPSHOT_COLUMNS }}
                   >
                     <div>ID</div>
@@ -435,4 +508,114 @@ function getActivityUpdateStatusBasisClass(value: ConstructLineStatusBasis) {
     default:
       return "text-muted-foreground";
   }
+}
+
+// ——— Annotate-panel metric cards (used by the collapsed authoring panel in
+// ScheduleRiskTab; they read the same update-of-record the ledger shows) ———
+
+export function ScheduleCompletionOfRecordCard({
+  value,
+  update,
+}: {
+  value: string | null;
+  update: ScheduleUpdateRow | null;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {update ? `Completion of record · update #${update.update_number}` : "Completion of record"}
+      </Label>
+      <div className="flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm tabular text-foreground">
+        {value ? shortDate(value) : "No update saved yet"}
+      </div>
+    </div>
+  );
+}
+
+export function ScheduleVarianceCard({ value }: { value: number | null }) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        Baseline variance
+      </Label>
+      <div
+        className={`flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm tabular ${varianceTone(value)}`}
+      >
+        {varianceLabel(value)}
+      </div>
+    </div>
+  );
+}
+
+export function ScheduleDeltaCard({ value }: { value: number | null }) {
+  const label =
+    value == null
+      ? "No prior update"
+      : value > 0
+        ? `+${value} wk`
+        : value < 0
+          ? `${value} wk`
+          : "No movement";
+  const tone =
+    value == null
+      ? "text-muted-foreground"
+      : value > 0
+        ? "text-danger"
+        : value < 0
+          ? "text-success"
+          : "text-foreground";
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        Movement from prior update
+      </Label>
+      <div
+        className={`flex h-9 items-center rounded-md border border-input px-3 text-sm tabular ${tone}`}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}
+
+export function ScheduleMoneyNetCard({
+  exposure,
+  recovery,
+}: {
+  exposure: number;
+  recovery: number;
+}) {
+  const net = exposure - recovery;
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        Net schedule dollars
+      </Label>
+      <div
+        className={`flex h-9 items-center rounded-md border border-input bg-surface px-3 text-sm font-semibold tabular ${moneyTone(net)}`}
+      >
+        {fmtUSD(net)}
+      </div>
+    </div>
+  );
+}
+
+export function ScheduleIntelligenceMetric({
+  label,
+  value,
+  tone = "text-foreground",
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded border border-hairline bg-card px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 font-semibold tabular ${tone}`}>{value}</div>
+    </div>
+  );
 }

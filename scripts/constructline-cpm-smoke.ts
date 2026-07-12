@@ -839,7 +839,7 @@ const activityUpdateStatusBasisMigrationSource = readProjectFile(
 const stylesSource = readProjectFile("src/styles.css");
 
 for (const requiredScheduleRiskText of [
-  "Open full schedule workspace",
+  "Open schedule workspace", // v2 relabel (mock CTA)
   "Critical Path Report",
   "Company: {contractorName}",
   "{printReportLabel} · {criticalBasisLabel} · Finish",
