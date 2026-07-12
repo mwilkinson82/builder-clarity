@@ -771,6 +771,47 @@ export const setChangeOrderClientVisibility = createServerFn({ method: "POST" })
     return { changeOrder: normalizeChangeOrder(saved as Record<string, unknown>) };
   });
 
+// Send a change order to the client, or nudge one already sent. Both ensure the
+// CO is visible and (re)stamp client_sent_at = now — the timestamp drives the
+// PM "Send vs Nudge" affordance and the client card's "shared {date}" line. A
+// client decision that already landed (approved/rejected) is never clobbered;
+// its client_status is preserved while the shared-on timestamp refreshes.
+export const sendChangeOrderToClient = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { changeOrderId: string }) =>
+    z.object({ changeOrderId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { data: co, error: coError } = await db(context)
+      .from("change_orders")
+      .select("id,project_id,client_status,client_sent_at")
+      .eq("id", data.changeOrderId)
+      .single();
+    if (coError) throw new Error(coError.message);
+    const changeOrderRow = record(co);
+    await requireCanManageProject(context as ServerContext, changeOrderRow.project_id as string);
+
+    const alreadySent = Boolean(changeOrderRow.client_sent_at);
+    const currentStatus = str(changeOrderRow.client_status, "not_sent");
+    const nextStatus =
+      currentStatus === "approved" || currentStatus === "rejected" ? currentStatus : "sent";
+    const { data: saved, error } = await db(context)
+      .from("change_orders")
+      .update({
+        client_visible: true,
+        client_status: nextStatus,
+        client_sent_at: new Date().toISOString(),
+      })
+      .eq("id", data.changeOrderId)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return {
+      changeOrder: normalizeChangeOrder(saved as Record<string, unknown>),
+      nudged: alreadySent,
+    };
+  });
+
 export interface ClientInvoiceRemittance {
   bankName: string;
   routingNumber: string;
