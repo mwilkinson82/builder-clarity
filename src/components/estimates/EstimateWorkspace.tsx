@@ -24,14 +24,8 @@ import {
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -975,14 +969,10 @@ export function EstimateWorkspace({
 
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{isMasterSheet ? "Delete Master Sheet?" : "Delete Estimate?"}</DialogTitle>
-            <DialogDescription>
-              This permanently removes "{estimate.name}" and all of its worksheet rows from
-              Overwatch. This does not move it to Archived. Use the Archived folder instead if you
-              want to keep the record out of the way.
-            </DialogDescription>
-          </DialogHeader>
+          <DialogHeaderV2
+            title={isMasterSheet ? "Delete Master Sheet?" : "Delete Estimate?"}
+            description={`This permanently removes "${estimate.name}" and all of its worksheet rows from Overwatch. This does not move it to Archived. Use the Archived folder instead if you want to keep the record out of the way.`}
+          />
           <DialogFooter>
             <Button
               variant="outline"
@@ -1477,15 +1467,11 @@ function EstimateLineImportDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[86vh] max-w-6xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Import Master Sheet</DialogTitle>
-          <DialogDescription>
-            Paste or upload a spreadsheet into this worksheet. The download is only the import
-            format/example file; your saved master sheet is the worksheet inside Overwatch. Accepted
-            columns include Cost Code, CSI Division, Description, Group, Unit, Qty, Material $/Unit,
-            Labor $/Unit, and Notes.
-          </DialogDescription>
-        </DialogHeader>
+        <DialogHeaderV2
+          eyebrow="Estimating"
+          title="Import Master Sheet"
+          description="Paste or upload a spreadsheet into this worksheet. The download is only the import format/example file; your saved master sheet is the worksheet inside Overwatch. Accepted columns include Cost Code, CSI Division, Description, Group, Unit, Qty, Material $/Unit, Labor $/Unit, and Notes."
+        />
 
         {rows.length === 0 ? (
           <Tabs defaultValue="paste" className="space-y-4">

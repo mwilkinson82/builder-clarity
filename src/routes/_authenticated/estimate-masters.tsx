@@ -5,14 +5,8 @@ import { useMemo, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -277,13 +271,11 @@ function EstimateMastersPage() {
 
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New Master Sheet</DialogTitle>
-            <DialogDescription>
-              This creates the saved worksheet inside Overwatch. The import format download is only
-              a column guide for Excel or CSV files.
-            </DialogDescription>
-          </DialogHeader>
+          <DialogHeaderV2
+            eyebrow="Estimating"
+            title="New Master Sheet"
+            description="This creates the saved worksheet inside Overwatch. The import format download is only a column guide for Excel or CSV files."
+          />
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
               This is your reusable estimating workbook inside Overwatch. Add lines manually or

@@ -298,7 +298,8 @@ export function BudgetLineDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="text-left">
-          <SheetTitle>
+          <div className="eyebrow">Budget</div>
+          <SheetTitle className="font-serif text-2xl font-normal">
             {isCreate
               ? "Add a budget line"
               : `${bucket?.cost_code || "—"} · ${bucket?.bucket ?? ""}`}
