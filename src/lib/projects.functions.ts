@@ -548,6 +548,10 @@ export interface ReviewRow {
   email_recipients: string[];
   pdf_style: string;
   kpi_snapshot: Json;
+  /** Storage path of the last PDF sent to the client (empty until first send / pre-migration). */
+  pdf_path: string;
+  /** When the review PDF was last emailed to the client (null until first send / pre-migration). */
+  last_sent_at: string | null;
 }
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
@@ -2097,6 +2101,9 @@ export const getProject = createServerFn({ method: "GET" })
         email_recipients: Array.isArray(o.email_recipients) ? (o.email_recipients as string[]) : [],
         pdf_style: str(o.pdf_style, "executive"),
         kpi_snapshot: (o.kpi_snapshot ?? {}) as Json,
+        // Tolerant of pre-migration rows where these columns don't exist yet.
+        pdf_path: str(o.pdf_path),
+        last_sent_at: (o.last_sent_at as string | null) ?? null,
       };
     });
     const sovImports: SovImportRow[] = sovImportsTableMissing
@@ -4609,6 +4616,9 @@ const updateReviewInput = z.object({
     status: z.enum(["draft", "published"]).optional(),
     email_recipients: z.array(z.string().email().max(254)).max(20).optional(),
     pdf_style: z.enum(["executive", "structured"]).optional(),
+    // PDF-delivery stamp (Option A). Best-effort — tolerated if columns are absent (pre-migration).
+    pdf_path: z.string().max(1024).optional(),
+    last_sent_at: z.string().datetime().optional(),
   }),
 });
 
@@ -4616,8 +4626,33 @@ export const updateReview = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: z.input<typeof updateReviewInput>) => updateReviewInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { error } = await context.supabase.from("reviews").update(data.patch).eq("id", data.id);
-    if (error) throw new Error(error.message);
+    // Split the PDF-delivery stamp fields off from the core patch. Those columns
+    // (pdf_path / last_sent_at) may not exist yet on pre-migration databases, and
+    // an unknown-column error must NEVER break the normal review update flow.
+    const { pdf_path, last_sent_at, ...core } = data.patch;
+
+    if (Object.keys(core).length > 0) {
+      const { error } = await context.supabase.from("reviews").update(core).eq("id", data.id);
+      if (error) throw new Error(error.message);
+    }
+
+    if (pdf_path !== undefined || last_sent_at !== undefined) {
+      const stamp: Record<string, unknown> = {};
+      if (pdf_path !== undefined) stamp.pdf_path = pdf_path;
+      if (last_sent_at !== undefined) stamp.last_sent_at = last_sent_at;
+      try {
+        // dynamicTable = untyped builder (same pattern this file uses for columns
+        // not yet in the generated schema), so pre-migration replays don't fail tsc.
+        const { error: stampErr } = await dynamicTable(context.supabase, "reviews")
+          .update(stamp)
+          .eq("id", data.id);
+        // Column may be missing pre-migration — swallow, never surface to the caller.
+        if (stampErr) console.warn("[updateReview] pdf-delivery stamp skipped:", stampErr.message);
+      } catch (stampCaught) {
+        console.warn("[updateReview] pdf-delivery stamp threw:", stampCaught);
+      }
+    }
+
     return { ok: true };
   });
 
