@@ -1,12 +1,4 @@
 import { useState } from "react";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,17 +21,10 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { MoneyInput } from "@/components/ui/money-input";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   FileCheck,
   FileText,
   History,
   Gavel,
-  MoreHorizontal,
   Paperclip,
   Pencil,
   Plus,
@@ -107,7 +92,7 @@ const CLAIM_TYPE_ORDER: ClaimType[] = [
 
 const statusStyles: Record<ClaimStatus, string> = {
   in_preparation: "border-hairline bg-surface text-muted-foreground",
-  submitted: "border-info/30 bg-info/10 text-info",
+  submitted: "border-accent/30 bg-accent/10 text-clay",
   pending_review: "border-warning/30 bg-warning/10 text-warning",
   under_review: "border-warning/30 bg-warning/10 text-warning",
   reviewed: "border-warning/30 bg-warning/10 text-warning",
@@ -115,6 +100,102 @@ const statusStyles: Record<ClaimStatus, string> = {
   rejected: "border-danger/30 bg-danger/10 text-danger",
   withdrawn: "border-hairline bg-surface text-muted-foreground",
 };
+
+// Shared pill shape for the type / status / relationship badges on a claim card.
+const badgePill =
+  "inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em]";
+
+// ── Pipeline stepper (display-only) ─────────────────────────────────────────
+// Prep → Submitted → Review → Resolved. Statuses map onto the four stages;
+// the status badge on the card carries the exact truth (incl. rejected /
+// withdrawn, which land on the Resolved node in danger / muted tone).
+const PIPELINE_STAGES = ["Prep", "Submitted", "Review", "Resolved"] as const;
+
+const PIPELINE_STAGE_INDEX: Record<ClaimStatus, number> = {
+  in_preparation: 0,
+  submitted: 1,
+  pending_review: 2,
+  under_review: 2,
+  reviewed: 2,
+  resolved: 3,
+  rejected: 3,
+  withdrawn: 3,
+};
+
+function ClaimPipeline({ status }: { status: ClaimStatus }) {
+  const current = PIPELINE_STAGE_INDEX[status];
+  return (
+    <div className="mt-2.5 flex flex-wrap items-center">
+      {PIPELINE_STAGES.map((stage, i) => {
+        let node = "border border-hairline text-muted-foreground"; // future
+        if (i === current) {
+          node = "bg-accent text-accent-foreground"; // clay-filled
+          if (i === 3 && status === "rejected") node = "bg-destructive text-destructive-foreground";
+          if (i === 3 && status === "withdrawn") node = "bg-muted text-muted-foreground";
+        } else if (i < current) {
+          node = "border border-clay/40 text-clay"; // done: clay-outline
+        }
+        return (
+          <div key={stage} className="flex items-center">
+            {i > 0 && (
+              <span
+                aria-hidden="true"
+                className={`h-px w-4 ${i <= current ? "bg-clay" : "bg-hairline"}`}
+              />
+            )}
+            <span
+              className={`whitespace-nowrap rounded-full px-[7px] py-0.5 font-mono text-[8px] font-bold uppercase tracking-[0.04em] ${node}`}
+            >
+              {stage}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Small building blocks ────────────────────────────────────────────────────
+
+function StatTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "success" | "danger";
+}) {
+  const valueTone =
+    tone === "success" ? "text-success" : tone === "danger" ? "text-danger" : "text-foreground";
+  return (
+    <div className="rounded-lg border border-hairline bg-card px-[15px] py-[13px]">
+      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1.5 font-serif text-[22px] leading-none tabular ${valueTone}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function CountPill({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="inline-flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-accent px-[5px] text-[9px] font-bold leading-none text-accent-foreground">
+      {count}
+    </span>
+  );
+}
+
+// Clay-outline styling for the "Push to" actions (Send to risk / Promote to CO).
+const pushButtonClass =
+  "gap-1.5 border-clay/45 bg-clay/5 text-clay hover:bg-clay/10 hover:text-clay";
+
+// Disabled-state pill shown once a claim is already linked.
+const linkedPillClass =
+  "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-hairline px-3 text-xs font-semibold text-muted-foreground";
 
 export type ClaimDraft = {
   claim_number: string;
@@ -166,7 +247,9 @@ const claimToDraft = (claim: ClaimRow): ClaimDraft => ({
   resolved_at: claim.resolved_at,
 });
 
-const fmtDays = (days: number) => (days > 0 ? `${days} d` : "—");
+// Resolved, rejected, and withdrawn claims are closed; everything else is an
+// open dispute (drives Open claims + In dispute).
+const isClosed = (s: ClaimStatus) => s === "resolved" || s === "rejected" || s === "withdrawn";
 
 export function ClaimsWorkspace({
   claims,
@@ -221,6 +304,14 @@ export function ClaimsWorkspace({
     docsByClaim.set(doc.claim_id, list);
   }
 
+  // ── Live aggregates for the verdict + stat row ─────────────────────────────
+  const openClaims = claims.filter((c) => !isClosed(c.status));
+  const totalSought = claims.reduce((s, c) => s + c.money_claimed, 0);
+  const totalAwarded = claims.reduce((s, c) => s + c.money_awarded, 0);
+  const daysSought = claims.reduce((s, c) => s + c.time_claimed_days, 0);
+  const daysAwarded = claims.reduce((s, c) => s + c.time_awarded_days, 0);
+  const inDispute = openClaims.reduce((s, c) => s + c.money_claimed, 0);
+
   const openNew = () => {
     setEditingId(null);
     setDraft(emptyDraft());
@@ -246,168 +337,245 @@ export function ClaimsWorkspace({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end">
-        <Button size="sm" className="gap-1.5" onClick={openNew}>
+      {/* 1 · Chip + Add claim */}
+      <div className="flex items-center gap-2.5">
+        <span className="rounded-md border border-hairline px-[7px] py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-clay">
+          Dispute resolution
+        </span>
+        <Button size="sm" className="ml-auto gap-1.5" onClick={openNew}>
           <Plus className="h-4 w-4" /> Add claim
         </Button>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-hairline bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-surface">
-              <TableHead className="w-[90px]">Claim #</TableHead>
-              <TableHead>Claim</TableHead>
-              <TableHead className="hidden lg:table-cell">Type</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Amount sought</TableHead>
-              <TableHead className="text-right">Time sought</TableHead>
-              <TableHead className="hidden md:table-cell">Submitted</TableHead>
-              <TableHead className="w-[190px] text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {claims.map((c) => (
-              <TableRow key={c.id}>
-                <TableCell className="font-mono text-xs text-muted-foreground">
-                  {c.claim_number || "—"}
-                </TableCell>
-                <TableCell className="font-medium">{c.title}</TableCell>
-                <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                  {CLAIM_TYPE_LABELS[c.claim_type]}
-                </TableCell>
-                <TableCell>
-                  <span
-                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${statusStyles[c.status]}`}
-                  >
-                    {CLAIM_STATUS_LABELS[c.status]}
+      {/* 2 · Verdict headline + muted sub */}
+      <div>
+        <h2 className="max-w-[36ch] font-serif text-3xl font-normal leading-[1.16]">
+          {claims.length === 0 ? (
+            <>No claims logged — disputes go here when they start.</>
+          ) : (
+            <>
+              {fmtUSD(totalSought)} and {daysSought} {daysSought === 1 ? "day" : "days"} sought
+              across {claims.length} {claims.length === 1 ? "claim" : "claims"} —{" "}
+              {totalAwarded === 0 ? "none awarded yet" : `${fmtUSD(totalAwarded)} awarded`}.
+            </>
+          )}
+        </h2>
+        <p className="mt-2 max-w-[70ch] text-sm leading-relaxed text-muted-foreground">
+          Claims run the contract&apos;s dispute-resolution process for money and time. Track each
+          through the pipeline, keep its cycle log and documents, and push it to Risk Tally or a
+          Change Order.
+        </p>
+      </div>
+
+      {/* 3 · Stat row */}
+      {claims.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <StatTile label="Open claims" value={String(openClaims.length)} />
+          <StatTile label="Amount sought" value={fmtUSD(totalSought)} />
+          <StatTile label="Amount awarded" value={fmtUSD(totalAwarded)} tone="success" />
+          <StatTile label="Time sought" value={`${daysSought} d`} />
+          <StatTile label="Time awarded" value={`${daysAwarded} d`} />
+          <StatTile label="In dispute" value={fmtUSD(inDispute)} tone="danger" />
+        </div>
+      )}
+
+      {/* 4 · One card per claim */}
+      <div className="flex flex-col gap-3">
+        {claims.map((c) => {
+          const eventCount = eventsByClaim.get(c.id)?.length ?? 0;
+          const docCount = docsByClaim.get(c.id)?.length ?? 0;
+          return (
+            <article
+              key={c.id}
+              className="rounded-xl border border-hairline bg-card px-5 py-[18px]"
+            >
+              {/* Header row: number · title · type · status · relationships */}
+              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                {c.claim_number && (
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {c.claim_number}
                   </span>
-                </TableCell>
-                <TableCell className="text-right tabular">
-                  {c.money_claimed > 0 ? fmtUSD(c.money_claimed) : "—"}
-                </TableCell>
-                <TableCell className="text-right tabular text-sm">
-                  {fmtDays(c.time_claimed_days)}
-                </TableCell>
-                <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                  {c.submitted_at || "Not submitted"}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="relative h-7 w-7"
-                      onClick={() => setCycleLogClaimId(c.id)}
-                      title="Cycle log"
-                      aria-label={`Open cycle log for ${c.title}`}
-                    >
-                      <History className="h-3.5 w-3.5" />
-                      {(eventsByClaim.get(c.id)?.length ?? 0) > 0 && (
-                        <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold leading-none text-accent-foreground">
-                          {eventsByClaim.get(c.id)?.length}
-                        </span>
-                      )}
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="relative h-7 w-7"
-                      onClick={() => setDocsClaimId(c.id)}
-                      title="Documents"
-                      aria-label={`Open documents for ${c.title}`}
-                    >
-                      <Paperclip className="h-3.5 w-3.5" />
-                      {(docsByClaim.get(c.id)?.length ?? 0) > 0 && (
-                        <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold leading-none text-accent-foreground">
-                          {docsByClaim.get(c.id)?.length}
-                        </span>
-                      )}
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => openEdit(c)}
-                      aria-label={`Edit claim ${c.title}`}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => onDelete(c.id)}
-                      aria-label={`Delete claim ${c.title}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                    {(onSendToRisk || onPromoteToChangeOrder) && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7"
-                            aria-label={`Link actions for ${c.title}`}
-                          >
-                            <MoreHorizontal className="h-3.5 w-3.5" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {onSendToRisk &&
-                            (c.risk_exposure_id ? (
-                              <DropdownMenuItem disabled>
-                                <ShieldCheck className="mr-2 h-3.5 w-3.5" /> In the risk tally
-                              </DropdownMenuItem>
-                            ) : (
-                              <DropdownMenuItem onClick={() => onSendToRisk(c)}>
-                                <ShieldAlert className="mr-2 h-3.5 w-3.5" /> Send to risk tally
-                              </DropdownMenuItem>
-                            ))}
-                          {onPromoteToChangeOrder &&
-                            (c.change_order_id ? (
-                              <DropdownMenuItem disabled>
-                                <FileCheck className="mr-2 h-3.5 w-3.5" /> In change orders
-                              </DropdownMenuItem>
-                            ) : (
-                              <DropdownMenuItem onClick={() => onPromoteToChangeOrder(c)}>
-                                <FileText className="mr-2 h-3.5 w-3.5" /> Promote to change order
-                              </DropdownMenuItem>
-                            ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
+                )}
+                <span className="text-[15px] font-semibold">{c.title}</span>
+                <span className={`${badgePill} border-hairline text-muted-foreground`}>
+                  {CLAIM_TYPE_LABELS[c.claim_type]}
+                </span>
+                <span className={`${badgePill} ${statusStyles[c.status]}`}>
+                  {CLAIM_STATUS_LABELS[c.status]}
+                </span>
+                {c.risk_exposure_id && (
+                  <span className={`${badgePill} border-accent/30 bg-accent/10 text-clay`}>
+                    from Risk Tally
+                  </span>
+                )}
+                {c.change_order_id && (
+                  <span className={`${badgePill} border-hairline bg-surface text-muted-foreground`}>
+                    in Change Orders
+                  </span>
+                )}
+              </div>
+
+              {c.description && (
+                <p className="mt-2 max-w-[66ch] text-[12.5px] leading-relaxed text-muted-foreground">
+                  {c.description}
+                </p>
+              )}
+
+              <ClaimPipeline status={c.status} />
+
+              {/* Mini metric tiles */}
+              <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <div className="rounded-lg border border-hairline bg-background px-3 py-2.5">
+                  <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                    Amount sought
                   </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {claims.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8} className="p-0">
-                  <div className="px-4 py-10">
-                    <EmptyState
-                      icon={Gavel}
-                      title="No claims yet"
-                      description="Log a delay claim, extension-of-time request, or delay-damages claim to track it through the dispute-resolution process."
-                      action={
-                        <Button size="sm" className="gap-1.5" onClick={openNew}>
-                          <Plus className="h-4 w-4" /> Add claim
+                  <div className="mt-1 font-serif text-lg leading-tight tabular">
+                    {c.money_claimed > 0 ? fmtUSD(c.money_claimed) : "—"}
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    {c.time_claimed_days} d sought
+                  </div>
+                </div>
+                <div className="rounded-lg border border-hairline bg-background px-3 py-2.5">
+                  <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                    Amount awarded
+                  </div>
+                  <div
+                    className={`mt-1 font-serif text-lg leading-tight tabular ${
+                      c.money_awarded > 0 ? "text-success" : "text-muted-foreground"
+                    }`}
+                  >
+                    {c.money_awarded > 0 ? fmtUSD(c.money_awarded) : "—"}
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    {c.time_awarded_days > 0 ? `${c.time_awarded_days} d awarded` : "— awarded"}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-hairline bg-background px-3 py-2.5">
+                  <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                    Submitted
+                  </div>
+                  <div className="mt-1.5 text-[13.5px] font-semibold">
+                    {c.submitted_at || "Not submitted"}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-hairline bg-background px-3 py-2.5">
+                  <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                    Owner
+                  </div>
+                  <div className="mt-1.5 text-[13.5px] font-semibold">
+                    {c.owner || "Unassigned"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Action bar */}
+              <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-hairline pt-3.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => setCycleLogClaimId(c.id)}
+                  aria-label={`Open cycle log for ${c.title}`}
+                >
+                  <History className="h-3.5 w-3.5" /> Cycle log
+                  <CountPill count={eventCount} />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => setDocsClaimId(c.id)}
+                  aria-label={`Open documents for ${c.title}`}
+                >
+                  <Paperclip className="h-3.5 w-3.5" /> Documents
+                  <CountPill count={docCount} />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => openEdit(c)}
+                  aria-label={`Edit claim ${c.title}`}
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => onDelete(c.id)}
+                  aria-label={`Delete claim ${c.title}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Delete
+                </Button>
+                {(onSendToRisk || onPromoteToChangeOrder) && (
+                  <div className="ml-auto flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-clay">
+                      Push to →
+                    </span>
+                    {onSendToRisk &&
+                      (c.risk_exposure_id ? (
+                        <span className={linkedPillClass}>
+                          <ShieldCheck className="h-3.5 w-3.5" /> In risk tally
+                        </span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className={pushButtonClass}
+                          onClick={() => onSendToRisk(c)}
+                          aria-label={`Send ${c.title} to the risk tally`}
+                        >
+                          <ShieldAlert className="h-3.5 w-3.5" /> Send to risk
                         </Button>
-                      }
-                    />
+                      ))}
+                    {onPromoteToChangeOrder &&
+                      (c.change_order_id ? (
+                        <span className={linkedPillClass}>
+                          <FileCheck className="h-3.5 w-3.5" /> In change orders
+                        </span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className={pushButtonClass}
+                          onClick={() => onPromoteToChangeOrder(c)}
+                          aria-label={`Promote ${c.title} to a change order`}
+                        >
+                          <FileText className="h-3.5 w-3.5" /> Promote to CO
+                        </Button>
+                      ))}
                   </div>
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+                )}
+              </div>
+            </article>
+          );
+        })}
+
+        {claims.length === 0 && (
+          <div className="rounded-xl border border-hairline bg-card px-4 py-10">
+            <EmptyState
+              icon={Gavel}
+              title="No claims yet"
+              description="Log a delay claim, extension-of-time request, or delay-damages claim to track it through the dispute-resolution process."
+              action={
+                <Button size="sm" className="gap-1.5" onClick={openNew}>
+                  <Plus className="h-4 w-4" /> Add claim
+                </Button>
+              }
+            />
+          </div>
+        )}
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editingId ? "Edit claim" : "New claim"}</DialogTitle>
+            <div className="eyebrow">Dispute resolution</div>
+            <DialogTitle className="font-serif text-2xl font-normal">
+              {editingId ? "Edit claim" : "New claim"}
+            </DialogTitle>
             <DialogDescription>
               A claim runs the contract's dispute-resolution process for money and/or time. Track
               where it sits and what's being sought.
@@ -583,7 +751,10 @@ export function ClaimsWorkspace({
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:items-center">
+            <span className="text-[11.5px] text-muted-foreground sm:mr-auto">
+              Cycle log &amp; documents open from the claim row once saved.
+            </span>
             <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>

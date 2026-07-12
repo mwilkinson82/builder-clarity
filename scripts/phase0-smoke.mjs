@@ -1192,7 +1192,7 @@ await expectContains(
 );
 await expectContains(
   "src/components/outcome/ClaimsWorkspace.tsx",
-  [/onSendToRisk/, /onPromoteToChangeOrder/, /Send to risk tally/, /Promote to change order/],
+  [/onSendToRisk/, /onPromoteToChangeOrder/, /Send to risk/, /Promote to CO/, /In risk tally/, /In change orders/], // v2 relabels (mock)
   "claims workspace offers send-to-risk + promote-to-change-order with linked state",
 );
 await expectContains(
@@ -1287,10 +1287,10 @@ await expectContains(
   "src/components/outcome/ExposuresTable.tsx",
   [
     /w-full min-w-0 max-w-full overflow-hidden rounded-lg border border-hairline bg-card/,
-    /lg:grid-cols-\[minmax\(280px,1\.35fr\)_minmax\(156px,0\.46fr\)_minmax\(210px,0\.62fr\)_minmax\(170px,0\.5fr\)_96px\]/,
+    /lg:grid-cols-\[minmax\(0,1fr\)_200px_150px_175px\]/, // v2 4-col reflow
     /role="button"/,
-    /onClick=\{\(\) => onView\(exposure\)\}/,
-    /Risk detail/,
+    /Send this risk to →/, // v2: labeled action stack
+    /Edit risk allocation/, // v2: row-click opens edit (view dialog folded in)
   ],
   "risk exposure table fits desktop presentations and opens row-level detail",
 );
