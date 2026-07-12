@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
-import { HardHat, Plus, Trash2 } from "lucide-react";
+import { HardHat, Plus, ShieldAlert, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -21,8 +21,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { WorkspaceHeader } from "@/components/project/billing/billing-workspace-atoms";
 import {
   SubcontractCard,
   type CardPayment,
@@ -66,7 +66,8 @@ import {
   updateSubcontractAllocation,
   updateSubcontractPayment,
 } from "@/lib/subcontracts.functions";
-import { summarizeSubPayments } from "@/lib/subcontract-budget";
+import { sumChangeOrders, summarizeSubPayments } from "@/lib/subcontract-budget";
+import { canApproveSubPayment, subcontractInsuranceStatus } from "@/lib/compliance-domain";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -81,6 +82,27 @@ interface Props {
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+// One posture tile in the KPI strip. Tone tints the box + figure per the
+// schedule-health rule (good = on-goal, crit = off-goal); default is neutral.
+function KpiTile({ label, value, tone }: { label: string; value: string; tone?: "good" | "crit" }) {
+  const box =
+    tone === "good"
+      ? "border-success/30 bg-success/[0.05]"
+      : tone === "crit"
+        ? "border-destructive/30 bg-destructive/[0.05]"
+        : "border-hairline bg-surface";
+  const val =
+    tone === "good" ? "text-success" : tone === "crit" ? "text-danger" : "text-foreground";
+  return (
+    <div className={`rounded-[11px] border px-3.5 py-3 ${box}`}>
+      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1.5 font-serif text-[22px] tabular-nums ${val}`}>{value}</div>
+    </div>
+  );
+}
 
 export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   const qc = useQueryClient();
@@ -125,14 +147,18 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
   });
 
   const directory = useMemo(() => directoryQuery.data ?? [], [directoryQuery.data]);
-  const project = projectQuery.data ?? {
-    subcontracts: [],
-    allocations: [],
-    payments: [],
-    documents: [],
-    change_orders: [],
-    payment_allocations: [],
-  };
+  const project = useMemo(
+    () =>
+      projectQuery.data ?? {
+        subcontracts: [],
+        allocations: [],
+        payments: [],
+        documents: [],
+        change_orders: [],
+        payment_allocations: [],
+      },
+    [projectQuery.data],
+  );
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["subcontracts", projectId] });
     qc.invalidateQueries({ queryKey: ["subcontractors-directory"] });
@@ -147,11 +173,15 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     });
 
   // ── Compliance (module 2): insurance + lien waivers, and the gating toggle ──
-  const compliance = complianceQuery.data ?? {
-    certificates: [],
-    waivers: [],
-    gatingEnabled: true,
-  };
+  const compliance = useMemo(
+    () =>
+      complianceQuery.data ?? {
+        certificates: [],
+        waivers: [],
+        gatingEnabled: true,
+      },
+    [complianceQuery.data],
+  );
   const saveCert = useMutation({
     mutationFn: (input: { subcontractId: string } & Record<string, unknown>) =>
       saveCertFn({ data: { projectId, ...input } as never }),
@@ -205,7 +235,8 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     onError: onError("remove subcontractor"),
   });
 
-  // ── New subcontract (buyout) form ──
+  // ── New subcontract (buyout) form — expands from the header CTA ──
+  const [buyoutOpen, setBuyoutOpen] = useState(false);
   const [buySubId, setBuySubId] = useState("");
   const [buyTitle, setBuyTitle] = useState("");
   const [buyValue, setBuyValue] = useState(0);
@@ -228,6 +259,7 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
       setBuySubId("");
       setBuyTitle("");
       setBuyValue(0);
+      setBuyoutOpen(false);
       invalidate();
       toast.success("Buyout recorded", {
         description: "The committed cost now shows as forecast-to-complete on its code(s).",
@@ -550,6 +582,70 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
     const map = new Map(directory.map((d) => [d.id, d.name]));
     return (id: string) => map.get(id) ?? "Subcontractor";
   }, [directory]);
+  const subTrade = useMemo(() => {
+    const map = new Map(directory.map((d) => [d.id, d.trade]));
+    return (id: string) => map.get(id) ?? "";
+  }, [directory]);
+
+  // Live posture for the verdict + KPI tiles. Committed / paid / retainage come
+  // straight from the payment summaries; revised folds in each sub's change
+  // orders (committed + COs), and "open to pay" = committed + COs − paid.
+  const totals = useMemo(() => {
+    let committed = 0;
+    let paid = 0;
+    let retainage = 0;
+    let revised = 0;
+    for (const sub of project.subcontracts) {
+      const pays = project.payments.filter((p) => p.subcontract_id === sub.id);
+      const s = summarizeSubPayments(sub, pays);
+      const cos = project.change_orders.filter((co) => co.subcontract_id === sub.id);
+      committed += s.committed;
+      paid += s.paid;
+      retainage += s.retainageHeld;
+      revised += s.committed + sumChangeOrders(cos);
+    }
+    return { committed, paid, retainage, openToPay: Math.max(0, revised - paid) };
+  }, [project]);
+
+  // Best insurance standing per sub, as of today — reused by the KPI/verdict
+  // blocked count AND handed to each card's COI chip (same compliance query).
+  const coiStatusBySub = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof subcontractInsuranceStatus>>();
+    for (const sub of project.subcontracts) {
+      const certs = compliance.certificates.filter((c) => c.subcontract_id === sub.id);
+      map.set(sub.id, subcontractInsuranceStatus(certs, today()));
+    }
+    return map;
+  }, [project.subcontracts, compliance.certificates]);
+
+  // Pay apps blocked on compliance: a draft/approved app that can't be approved
+  // while gating is enforced. Reuses the exact gate the server/panel run
+  // (canApproveSubPayment): insurance in force AND a waiver attached to THIS app.
+  const blockedCount = useMemo(() => {
+    if (!compliance.gatingEnabled) return 0;
+    let n = 0;
+    for (const sub of project.subcontracts) {
+      const insStatus = coiStatusBySub.get(sub.id) ?? "missing";
+      const subWaivers = compliance.waivers.filter((w) => w.subcontract_id === sub.id);
+      for (const p of project.payments) {
+        if (p.subcontract_id !== sub.id) continue;
+        // Only draft/approved apps can be blocked — a paid (or pre-lifecycle) row
+        // is already money out, not on the desk.
+        if (!p.status || p.status === "paid") continue;
+        const hasAttachedWaiver = subWaivers.some((w) => w.payment_id === p.id);
+        if (
+          !canApproveSubPayment({
+            gatingEnabled: true,
+            insuranceStatus: insStatus,
+            hasAttachedWaiver,
+          }).allowed
+        ) {
+          n += 1;
+        }
+      }
+    }
+    return n;
+  }, [compliance, project, coiStatusBySub]);
 
   // Contract upload: the bytes go straight to the private 'subcontract-docs'
   // bucket (path = <projectId>/<subId>/<file>, so the team storage RLS applies);
@@ -612,155 +708,128 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
 
   return (
     <section className="space-y-5">
-      <WorkspaceHeader
-        title="Subcontractors"
-        subtitle="Load your subs, buy out their scope, and pay against it. A buyout is committed cost; each progress payment moves it to actual — your Budget's Actual-to-date and Forecast-to-complete follow automatically."
-      />
+      {/* Verdict-led header: mono clay chip, one ink CTA that expands the buyout
+          form, and a serif statement of live posture. */}
+      <div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground">
+            Parties / Subcontractors · Financial IOR
+          </span>
+          <span className="eyebrow rounded-md border border-hairline px-1.5 py-0.5 text-[8.5px]">
+            Buyouts &amp; Payments
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            className="ml-auto gap-1.5"
+            onClick={() => setBuyoutOpen((v) => !v)}
+            aria-expanded={buyoutOpen}
+          >
+            <Plus className="h-3.5 w-3.5" /> Buy out a scope
+          </Button>
+        </div>
+        <h1 className="mt-5 max-w-[42ch] font-serif text-[30px] font-normal leading-[1.16] text-foreground">
+          {fmtUSD(totals.committed)} bought out — {fmtUSD(totals.paid)} paid,{" "}
+          {fmtUSD(totals.retainage)} held in retainage.
+          {blockedCount > 0 ? (
+            <span className="text-warning">
+              {" "}
+              {blockedCount} pay app{blockedCount === 1 ? "" : "s"}{" "}
+              {blockedCount === 1 ? "is" : "are"} blocked on compliance.
+            </span>
+          ) : null}
+        </h1>
+        <p className="mt-2 max-w-[72ch] text-sm leading-relaxed text-muted-foreground">
+          A buyout is committed cost; a paid application becomes actual cost on its cost codes.
+        </p>
+      </div>
+
+      {/* New buyout — expands from the header CTA. Form fields unchanged. */}
+      {buyoutOpen ? (
+        <div className="rounded-xl border border-hairline bg-card p-5 shadow-card">
+          <div className="eyebrow">Buy out a scope</div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1.5fr)_minmax(0,1fr)_auto_auto]">
+            <select
+              value={buySubId}
+              onChange={(e) => setBuySubId(e.target.value)}
+              className="rounded-md border border-hairline bg-surface px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
+            >
+              <option value="">Pick a subcontractor…</option>
+              {directory.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                  {d.trade ? ` — ${d.trade}` : ""}
+                </option>
+              ))}
+            </select>
+            <Input
+              value={buyTitle}
+              onChange={(e) => setBuyTitle(e.target.value)}
+              placeholder="Scope title (e.g. Concrete — foundations)"
+            />
+            <MoneyInput value={buyValue} onValueChange={setBuyValue} align="right" />
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Input
+                type="number"
+                value={buyRetainage}
+                onChange={(e) => setBuyRetainage(Number(e.target.value) || 0)}
+                className="w-16"
+              />
+              % ret.
+            </label>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1.5"
+              disabled={!buySubId || buyValue <= 0 || createBuyout.isPending}
+              onClick={() => createBuyout.mutate()}
+            >
+              <Plus className="h-3.5 w-3.5" /> Buy out
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Posture at a glance. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <KpiTile label="Committed (buyouts)" value={fmtUSD(totals.committed)} />
+        <KpiTile label="Paid to date" value={fmtUSD(totals.paid)} tone="good" />
+        <KpiTile label="Retainage held" value={fmtUSD(totals.retainage)} />
+        <KpiTile label="Open to pay" value={fmtUSD(totals.openToPay)} />
+        <KpiTile
+          label="Compliance"
+          value={blockedCount > 0 ? `${blockedCount} blocked` : "Clear"}
+          tone={blockedCount > 0 ? "crit" : "good"}
+        />
+      </div>
 
       {/* Compliance gating toggle — default ON: no pay without a valid COI + a
           lien waiver. Off = the GC self-manages compliance (never blocks). */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-hairline bg-card px-4 py-3 shadow-card">
-        <div className="text-sm">
-          <span className="font-medium text-foreground">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-hairline bg-card px-4 py-3.5 shadow-card">
+        <div className="flex-1 text-sm">
+          <div className="font-medium text-foreground">
             Require lien waivers + insurance to pay subs
-          </span>
-          <span className="ml-2 text-xs text-muted-foreground">
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
             {compliance.gatingEnabled
               ? "On — a sub can't be paid without a valid COI and a lien waiver on file."
               : "Off — you're managing compliance yourself; payments are never blocked."}
-          </span>
+          </div>
         </div>
-        <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-foreground">
-          <input
-            type="checkbox"
-            checked={compliance.gatingEnabled}
-            disabled={setGating.isPending}
-            onChange={(e) => setGating.mutate(e.target.checked)}
-            className="h-4 w-4"
-          />
+        <Switch
+          checked={compliance.gatingEnabled}
+          disabled={setGating.isPending}
+          onCheckedChange={(checked) => setGating.mutate(checked)}
+          aria-label="Require lien waivers + insurance to pay subs"
+          className="data-[state=checked]:bg-success"
+        />
+        <span
+          className={`text-xs font-semibold ${
+            compliance.gatingEnabled ? "text-success" : "text-muted-foreground"
+          }`}
+        >
           {compliance.gatingEnabled ? "Enforced" : "Not enforced"}
-        </label>
-      </div>
-
-      {/* Directory */}
-      <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          <HardHat className="h-3.5 w-3.5" /> Your subcontractor directory
-        </div>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
-          <label className="flex-1 text-xs text-muted-foreground">
-            Name
-            <Input
-              value={dirName}
-              onChange={(e) => setDirName(e.target.value)}
-              placeholder="e.g. Ironclad Concrete Co."
-            />
-          </label>
-          <label className="flex-1 text-xs text-muted-foreground">
-            Trade
-            <Input
-              value={dirTrade}
-              onChange={(e) => setDirTrade(e.target.value)}
-              placeholder="Concrete"
-            />
-          </label>
-          <label className="flex-1 text-xs text-muted-foreground">
-            Contact
-            <Input
-              value={dirContact}
-              onChange={(e) => setDirContact(e.target.value)}
-              placeholder="Ray Delgado"
-            />
-          </label>
-          <Button
-            type="button"
-            size="sm"
-            className="gap-1.5"
-            disabled={dirName.trim().length === 0 || saveDir.isPending}
-            onClick={() =>
-              saveDir.mutate({
-                name: dirName.trim(),
-                trade: dirTrade.trim(),
-                contact_name: dirContact.trim(),
-              })
-            }
-          >
-            <Plus className="h-3.5 w-3.5" /> Add
-          </Button>
-        </div>
-        {directory.length > 0 ? (
-          <ul className="mt-3 divide-y divide-hairline text-sm">
-            {directory.map((d) => (
-              <li key={d.id} className="flex items-center justify-between py-2">
-                <span>
-                  <span className="font-medium text-foreground">{d.name}</span>
-                  {d.trade ? <span className="ml-2 text-muted-foreground">· {d.trade}</span> : null}
-                  {d.contact_name ? (
-                    <span className="ml-2 text-xs text-muted-foreground">{d.contact_name}</span>
-                  ) : null}
-                </span>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-danger"
-                  onClick={() => removeDir.mutate(d.id)}
-                  aria-label={`Remove ${d.name}`}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-3 text-xs text-muted-foreground">
-            No subs yet. Add one above, then buy out their scope below.
-          </p>
-        )}
-      </div>
-
-      {/* New buyout */}
-      <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          Buy out a scope
-        </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1.5fr)_minmax(0,1fr)_auto_auto]">
-          <select
-            value={buySubId}
-            onChange={(e) => setBuySubId(e.target.value)}
-            className="rounded-md border border-hairline bg-surface px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
-          >
-            <option value="">Pick a subcontractor…</option>
-            {directory.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-                {d.trade ? ` — ${d.trade}` : ""}
-              </option>
-            ))}
-          </select>
-          <Input
-            value={buyTitle}
-            onChange={(e) => setBuyTitle(e.target.value)}
-            placeholder="Scope title (e.g. Concrete — foundations)"
-          />
-          <MoneyInput value={buyValue} onValueChange={setBuyValue} align="right" />
-          <label className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Input
-              type="number"
-              value={buyRetainage}
-              onChange={(e) => setBuyRetainage(Number(e.target.value) || 0)}
-              className="w-16"
-            />
-            % ret.
-          </label>
-          <Button
-            type="button"
-            size="sm"
-            className="gap-1.5"
-            disabled={!buySubId || buyValue <= 0 || createBuyout.isPending}
-            onClick={() => createBuyout.mutate()}
-          >
-            <Plus className="h-3.5 w-3.5" /> Buy out
-          </Button>
-        </div>
+        </span>
       </div>
 
       {/* Subcontract cards */}
@@ -788,6 +857,9 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               buckets={buckets}
               allocatedTotal={allocatedTotal}
               defaultRetainagePct={sub.retainage_pct}
+              trade={subTrade(sub.subcontractor_id)}
+              subStatus={sub.status}
+              coiStatus={coiStatusBySub.get(sub.id)}
               onEditBuyout={(contractValue, retainagePct) =>
                 editBuyout.mutate({ sub, contractValue, retainagePct })
               }
@@ -891,17 +963,111 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
         })
       )}
 
+      {/* Subcontractor directory — the add form + roster, tucked below the cards
+          (it's setup, not the daily view). */}
+      <details className="group rounded-xl border border-hairline bg-card shadow-card">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-5 py-4">
+          <HardHat className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="eyebrow">Subcontractor directory</span>
+          <span className="text-xs text-muted-foreground">{directory.length} on file</span>
+          <span className="ml-auto text-xs text-muted-foreground transition-transform group-open:rotate-180">
+            ▾
+          </span>
+        </summary>
+        <div className="border-t border-hairline p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <label className="flex-1 text-xs text-muted-foreground">
+              Name
+              <Input
+                value={dirName}
+                onChange={(e) => setDirName(e.target.value)}
+                placeholder="e.g. Ironclad Concrete Co."
+              />
+            </label>
+            <label className="flex-1 text-xs text-muted-foreground">
+              Trade
+              <Input
+                value={dirTrade}
+                onChange={(e) => setDirTrade(e.target.value)}
+                placeholder="Concrete"
+              />
+            </label>
+            <label className="flex-1 text-xs text-muted-foreground">
+              Contact
+              <Input
+                value={dirContact}
+                onChange={(e) => setDirContact(e.target.value)}
+                placeholder="Ray Delgado"
+              />
+            </label>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1.5"
+              disabled={dirName.trim().length === 0 || saveDir.isPending}
+              onClick={() =>
+                saveDir.mutate({
+                  name: dirName.trim(),
+                  trade: dirTrade.trim(),
+                  contact_name: dirContact.trim(),
+                })
+              }
+            >
+              <Plus className="h-3.5 w-3.5" /> Add
+            </Button>
+          </div>
+          {directory.length > 0 ? (
+            <ul className="mt-3 divide-y divide-hairline text-sm">
+              {directory.map((d) => (
+                <li key={d.id} className="flex items-center justify-between py-2">
+                  <span>
+                    <span className="font-medium text-foreground">{d.name}</span>
+                    {d.trade ? (
+                      <span className="ml-2 text-muted-foreground">· {d.trade}</span>
+                    ) : null}
+                    {d.contact_name ? (
+                      <span className="ml-2 text-xs text-muted-foreground">{d.contact_name}</span>
+                    ) : null}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-danger"
+                    onClick={() => removeDir.mutate(d.id)}
+                    aria-label={`Remove ${d.name}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 text-xs text-muted-foreground">
+              No subs yet. Add one here, then buy out their scope from the header.
+            </p>
+          )}
+        </div>
+      </details>
+
       {/* Compliance override prompt (field request 2026-07-10, Marshall-approved) */}
       <Dialog open={overridePrompt !== null} onOpenChange={(open) => !open && closeOverride()}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="font-serif text-2xl">Override the compliance gate?</DialogTitle>
-            <DialogDescription>
-              This pay app can&apos;t{" "}
-              {overridePrompt?.status === "paid" ? "be paid" : "be approved"} yet —{" "}
-              {overridePrompt?.blockers || "compliance is not met"}. You can override and proceed,
-              but the reason is recorded on the payment.
-            </DialogDescription>
+            <div className="flex items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-destructive/10 text-danger">
+                <ShieldAlert className="h-5 w-5" />
+              </span>
+              <div className="space-y-2">
+                <DialogTitle className="font-serif text-2xl">
+                  Override the compliance gate?
+                </DialogTitle>
+                <DialogDescription>
+                  This pay app can&apos;t{" "}
+                  {overridePrompt?.status === "paid" ? "be paid" : "be approved"} yet —{" "}
+                  {overridePrompt?.blockers || "compliance is not met"}. You can override and
+                  proceed, but the reason is recorded on the payment.
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
           <div className="space-y-1.5 py-1">
             <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -914,27 +1080,32 @@ export function SubcontractorsWorkspace({ projectId, buckets }: Props) {
               onChange={(e) => setOverrideReason(e.target.value)}
             />
           </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={closeOverride}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={!overrideReason.trim() || setPayStage.isPending}
-              onClick={() =>
-                overridePrompt &&
-                setPayStage.mutate({
-                  id: overridePrompt.id,
-                  status: overridePrompt.status,
-                  override_reason: overrideReason.trim(),
-                  // Carry the how-paid details captured before the block so the
-                  // overridden payment still records method/check#/date.
-                  ...(overridePrompt.status === "paid" ? payDraft : {}),
-                })
-              }
-            >
-              Override &amp; {overridePrompt?.status === "paid" ? "mark paid" : "approve"}
-            </Button>
+          <DialogFooter className="items-center sm:justify-between">
+            <span className="text-[11px] text-muted-foreground">
+              Recorded on the payment &amp; the audit trail.
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={closeOverride}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={!overrideReason.trim() || setPayStage.isPending}
+                onClick={() =>
+                  overridePrompt &&
+                  setPayStage.mutate({
+                    id: overridePrompt.id,
+                    status: overridePrompt.status,
+                    override_reason: overrideReason.trim(),
+                    // Carry the how-paid details captured before the block so the
+                    // overridden payment still records method/check#/date.
+                    ...(overridePrompt.status === "paid" ? payDraft : {}),
+                  })
+                }
+              >
+                Override &amp; {overridePrompt?.status === "paid" ? "mark paid" : "approve"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

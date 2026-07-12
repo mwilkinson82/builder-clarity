@@ -5,9 +5,27 @@
 // date/amount/description can be corrected after the fact. Extracted from
 // SubcontractorsWorkspace so both files stay well under the size limit.
 import { useState } from "react";
-import { Check, FileText, Pencil, Plus, ReceiptText, Trash2, Upload, X } from "lucide-react";
+import {
+  Check,
+  FileText,
+  HardHat,
+  Pencil,
+  Plus,
+  ShieldAlert,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSDCents as fmtUSD } from "@/lib/billing-format";
@@ -16,6 +34,7 @@ import {
   sumChangeOrders,
   type summarizeSubPayments,
 } from "@/lib/subcontract-budget";
+import type { InsuranceStatus } from "@/lib/compliance-domain";
 import { PaymentSplitEditor, type SplitRowDraft } from "@/components/project/PaymentSplitEditor";
 import type { SubcontractDocumentRow } from "@/lib/subcontracts.functions";
 
@@ -84,18 +103,40 @@ export interface CardWaiver {
 
 export type PayStage = "draft" | "approved" | "paid";
 
+// House chip (v2): mono, bordered, uppercase pill. Tone carries the semantic —
+// good/warn/crit follow the schedule-health rule, never a brand accent.
+const CHIP_BASE =
+  "inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-[8px] font-bold uppercase tracking-[0.06em]";
+const CHIP_TONE: Record<"muted" | "good" | "warn" | "crit", string> = {
+  muted: "border-hairline text-muted-foreground",
+  good: "border-success/40 bg-success/[0.06] text-success",
+  warn: "border-warning/40 bg-warning/[0.06] text-warning",
+  crit: "border-destructive/40 bg-destructive/[0.06] text-danger",
+};
+function Chip({
+  tone = "muted",
+  children,
+}: {
+  tone?: keyof typeof CHIP_TONE;
+  children: React.ReactNode;
+}) {
+  return <span className={`${CHIP_BASE} ${CHIP_TONE[tone]}`}>{children}</span>;
+}
+
 // Plain-English chip per lifecycle stage; paid rows are the only ones that
 // count as job cost, so the pending stages read as clearly not-money-yet.
-const STAGE_CHIP: Record<string, { label: string; className: string }> = {
-  draft: {
-    label: "Draft — not approved",
-    className: "bg-muted text-muted-foreground",
-  },
-  approved: {
-    label: "Approved for payment",
-    className: "bg-warning/15 text-warning",
-  },
-  paid: { label: "Paid", className: "bg-success/15 text-success" },
+const STAGE_CHIP: Record<string, { label: string; tone: keyof typeof CHIP_TONE }> = {
+  draft: { label: "Draft — not approved", tone: "muted" },
+  approved: { label: "Approved for payment", tone: "warn" },
+  paid: { label: "Paid", tone: "good" },
+};
+// COI chip per the sub's best insurance standing (bound to the compliance query).
+const COI_CHIP: Record<InsuranceStatus, { label: string; tone: keyof typeof CHIP_TONE }> = {
+  valid: { label: "COI valid", tone: "good" },
+  expiring_soon: { label: "COI expiring soon", tone: "warn" },
+  unverified: { label: "COI unverified", tone: "warn" },
+  expired: { label: "COI expired", tone: "crit" },
+  missing: { label: "COI missing", tone: "crit" },
 };
 export interface PaymentEdit {
   amount: number;
@@ -224,16 +265,35 @@ function PaymentWaiverLine({
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: "good" | "warn" }) {
+function Stat({
+  label,
+  value,
+  tone,
+  quiet,
+}: {
+  label: string;
+  value: string;
+  tone?: "good" | "warn";
+  quiet?: boolean;
+}) {
+  const valueColor = quiet
+    ? "text-muted-foreground"
+    : tone === "good"
+      ? "text-success"
+      : tone === "warn"
+        ? "text-warning"
+        : "text-foreground";
   return (
-    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+    <div
+      className={
+        quiet ? "min-w-0" : "min-w-0 rounded-md border border-hairline bg-surface px-3 py-2"
+      }
+    >
+      <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
       <div
-        className={`mt-0.5 text-sm font-semibold tabular-nums ${
-          tone === "good" ? "text-success" : tone === "warn" ? "text-warning" : "text-foreground"
-        }`}
+        className={`mt-1 font-serif tabular-nums ${quiet ? "text-[15px]" : "text-base"} ${valueColor}`}
       >
         {value}
       </div>
@@ -249,6 +309,12 @@ interface CardProps {
   buckets: BucketOption[];
   allocatedTotal: number;
   defaultRetainagePct: number;
+  // Card-chrome inputs (v2): the sub's trade + executed/draft status, and the
+  // sub's best insurance standing (bound to the same compliance query the panel
+  // uses) so the header can show the COI chip without owning the certs.
+  trade?: string;
+  subStatus?: string;
+  coiStatus?: InsuranceStatus;
   onEditBuyout: (contractValue: number, retainagePct: number) => void;
   onAllocate: (costBucketId: string, amount: number) => void;
   onUpdateAllocation: (id: string, amount: number) => void;
@@ -307,6 +373,9 @@ export function SubcontractCard({
   buckets,
   allocatedTotal,
   defaultRetainagePct,
+  trade,
+  subStatus,
+  coiStatus,
   onEditBuyout,
   onAllocate,
   onUpdateAllocation,
@@ -350,6 +419,10 @@ export function SubcontractCard({
   // New pay apps land as a draft (field request 2026-07-09) — nothing hits the
   // budget until the PM approves it and marks it paid.
   const [payStage, setPayStage] = useState<PayStage>("draft");
+  // The new-pay-app entry lives in a modal now (v2). Split-manually toggle only
+  // affects the modal's preview copy — the live split editor stays on each row.
+  const [payModalOpen, setPayModalOpen] = useState(false);
+  const [modalSplitManual, setModalSplitManual] = useState(false);
 
   // Inline editors, keyed by the row being edited (null = closed).
   const [editingBuyout, setEditingBuyout] = useState(false);
@@ -381,6 +454,16 @@ export function SubcontractCard({
 
   const unallocated = summary.committed - allocatedTotal;
   const retainageHeld = Math.round(payAmount * defaultRetainagePct) / 100;
+  // The buyout's biggest cost code drives the header "allocated to" line and the
+  // modal eyebrow / automatic-split copy.
+  const topAlloc =
+    allocations.length > 0 ? [...allocations].sort((a, b) => b.amount - a.amount)[0] : null;
+  const splitCodes = allocations
+    .map((a) => a.cost_code)
+    .filter(Boolean)
+    .join(", ");
+  const coiChip = coiStatus ? COI_CHIP[coiStatus] : null;
+  const hasWaiverOnFile = waivers.length > 0;
   // Active version first, then newest — the current contract sits on top, the
   // superseded ones stay below as the paper trail.
   const orderedDocs = [...documents].sort(
@@ -406,19 +489,77 @@ export function SubcontractCard({
       notes: p.notes,
     });
   };
+  const openPayModal = () => {
+    setPayAmount(0);
+    setPayNotes("");
+    setPayDate(today());
+    setPayStage("draft");
+    setModalSplitManual(false);
+    setPayModalOpen(true);
+  };
+  const submitPayModal = () => {
+    onPay(payAmount, retainageHeld, payDate, payNotes.trim(), payStage);
+    setPayAmount(0);
+    setPayNotes("");
+    setPayDate(today());
+    setPayStage("draft");
+    setModalSplitManual(false);
+    setPayModalOpen(false);
+  };
+
+  const STAGE_SEG: { value: PayStage; label: string }[] = [
+    { value: "draft", label: "Draft" },
+    { value: "approved", label: "Approved" },
+    { value: "paid", label: "Paid" },
+  ];
+  const PRIMARY_LABEL: Record<PayStage, string> = {
+    draft: "Save draft",
+    approved: "Approve for payment",
+    paid: "Mark paid",
+  };
 
   return (
-    <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="font-serif text-lg text-foreground">{subLabel}</div>
-        <button
-          type="button"
-          className="text-muted-foreground hover:text-danger"
-          onClick={onRemoveSub}
-          aria-label="Remove subcontract"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
+    <article className="rounded-xl border border-hairline bg-card p-5 shadow-card">
+      {/* Header chrome (v2): icon tile · name · trade + status chips, with the
+          COI / waiver compliance chips and the remove control to the right. */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <HardHat className="h-4 w-4 text-muted-foreground" />
+            </span>
+            <span className="font-serif text-lg text-foreground">{subLabel}</span>
+            {trade ? <Chip>{trade}</Chip> : null}
+            {subStatus ? (
+              <Chip tone={subStatus === "executed" ? "good" : "muted"}>
+                {subStatus === "executed" ? "Executed" : "Draft"}
+              </Chip>
+            ) : null}
+          </div>
+          {topAlloc ? (
+            <div className="mt-1.5 text-xs text-muted-foreground">
+              Allocated to{" "}
+              <b className="font-medium text-foreground">
+                {topAlloc.cost_code}
+                {topAlloc.description ? ` ${topAlloc.description}` : ""}
+              </b>
+            </div>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {coiChip ? <Chip tone={coiChip.tone}>{coiChip.label}</Chip> : null}
+          <Chip tone={hasWaiverOnFile ? "good" : "warn"}>
+            {hasWaiverOnFile ? "Waiver on file" : "Waiver missing"}
+          </Chip>
+          <button
+            type="button"
+            className="ml-0.5 text-muted-foreground hover:text-danger"
+            onClick={onRemoveSub}
+            aria-label="Remove subcontract"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {/* Contracts — the versioned paper trail; exactly one is the active contract */}
@@ -488,12 +629,15 @@ export function SubcontractCard({
         </label>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        <div className="relative">
-          <Stat
-            label={hasChangeOrders ? "Base contract" : "Buyout"}
-            value={fmtUSD(summary.committed)}
-          />
+      {/* Primary stat row (v2): six always-on tiles per the mock. */}
+      <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-y border-hairline py-4 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="relative min-w-0 rounded-md border border-hairline bg-surface px-3 py-2">
+          <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+            Contract
+          </div>
+          <div className="mt-1 font-serif text-base tabular-nums text-foreground">
+            {fmtUSD(summary.committed)}
+          </div>
           <button
             type="button"
             className="absolute right-1.5 top-1.5 text-muted-foreground hover:text-foreground"
@@ -504,27 +648,27 @@ export function SubcontractCard({
             <Pencil className="h-3 w-3" />
           </button>
         </div>
-        {hasChangeOrders ? (
-          <>
-            <Stat
-              label="Change orders"
-              value={`${revised.changeOrders < 0 ? "−" : "+"}${fmtUSD(Math.abs(revised.changeOrders))}`}
-              tone={revised.changeOrders < 0 ? "warn" : undefined}
-            />
-            <Stat label="Revised contract" value={fmtUSD(revised.revised)} />
-          </>
-        ) : null}
-        <Stat label="Paid to date" value={fmtUSD(summary.paid)} />
+        <Stat
+          label="Change orders"
+          value={`${revised.changeOrders < 0 ? "−" : "+"}${fmtUSD(Math.abs(revised.changeOrders))}`}
+          tone={revised.changeOrders !== 0 ? "warn" : undefined}
+        />
+        <Stat label="Revised" value={fmtUSD(revised.revised)} />
+        <Stat label="Paid to date" value={fmtUSD(summary.paid)} tone="good" />
+        <Stat label="Retainage held" value={fmtUSD(summary.retainageHeld)} />
+        <Stat label="Remaining" value={fmtUSD(revised.remaining)} />
+      </div>
+
+      {/* Quieter second row — the pipeline totals, kept (not dropped). */}
+      <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
         {summary.draftTotal > 0 ? (
-          <Stat label="Draft pay apps" value={fmtUSD(summary.draftTotal)} />
+          <Stat label="Draft pay apps" value={fmtUSD(summary.draftTotal)} quiet />
         ) : null}
         {summary.approvedTotal > 0 ? (
-          <Stat label="Approved to pay" value={fmtUSD(summary.approvedTotal)} tone="warn" />
+          <Stat label="Approved to pay" value={fmtUSD(summary.approvedTotal)} quiet />
         ) : null}
-        <Stat label="Retainage held" value={fmtUSD(summary.retainageHeld)} tone="warn" />
-        <Stat label="Net paid" value={fmtUSD(summary.netPaid)} />
-        <Stat label="Remaining" value={fmtUSD(revised.remaining)} tone="good" />
-        <Stat label="% paid" value={`${revised.paidPct.toFixed(1)}%`} />
+        <Stat label="Net paid" value={fmtUSD(summary.netPaid)} quiet />
+        <Stat label="% paid" value={`${revised.paidPct.toFixed(1)}%`} quiet />
       </div>
 
       {/* Change-the-commitment editor — a change order or credit moves the buyout */}
@@ -792,240 +936,350 @@ export function SubcontractCard({
       </div>
 
       {/* Payments — the pay-app pipeline: draft → approved for payment → paid */}
-      <div className="mt-4">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          Pay apps &amp; progress payments
-        </div>
-        <p className="mt-1 text-[11px] text-muted-foreground">
-          Log a sub&apos;s pay app as a draft, attach its lien waiver, approve it for payment, then
-          mark it paid. Only paid amounts count as job cost.
-        </p>
-        {payments.length > 0 ? (
-          <ul className="mt-2 divide-y divide-hairline text-sm">
-            {payments.map((p) => (
-              <li key={p.id} className="py-1.5">
-                {editPayId === p.id ? (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <Input
-                        type="date"
-                        value={editPay.paymentDate}
-                        onChange={(e) => setEditPay((s) => ({ ...s, paymentDate: e.target.value }))}
-                        className="w-40"
-                      />
-                      <MoneyInput
-                        value={editPay.amount}
-                        onValueChange={(v) => setEditPay((s) => ({ ...s, amount: v }))}
-                        align="right"
-                      />
-                      <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                        ret.
-                        <MoneyInput
-                          value={editPay.retainageHeld}
-                          onValueChange={(v) => setEditPay((s) => ({ ...s, retainageHeld: v }))}
-                          align="right"
-                        />
-                      </label>
-                    </div>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                      <Input
-                        value={editPay.notes}
-                        onChange={(e) => setEditPay((s) => ({ ...s, notes: e.target.value }))}
-                        placeholder="Description (e.g. Pay app #3, foundations)"
-                        className="flex-1"
-                      />
-                      <div className="flex items-center gap-1">
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="gap-1"
-                          disabled={editPay.amount <= 0}
-                          onClick={() => {
-                            onUpdatePayment(p.id, editPay);
-                            setEditPayId(null);
-                          }}
-                        >
-                          <Check className="h-3.5 w-3.5" /> Save
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setEditPayId(null)}
-                          aria-label="Cancel"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between">
-                    <span className="flex min-w-0 flex-col">
-                      <span className="flex items-center gap-2 text-muted-foreground">
-                        {p.payment_date}
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                            (STAGE_CHIP[p.status] ?? STAGE_CHIP.paid).className
-                          }`}
-                        >
-                          {(STAGE_CHIP[p.status] ?? STAGE_CHIP.paid).label}
-                        </span>
-                      </span>
-                      {p.notes ? (
-                        <span className="truncate text-[11px] text-muted-foreground/80">
-                          {p.notes}
-                        </span>
-                      ) : null}
-                      {p.compliance_override_reason ? (
-                        <span className="text-[11px] text-warning">
-                          ⚠ Paid without compliance — {p.compliance_override_reason}
-                        </span>
-                      ) : null}
-                      {p.status === "paid" && (p.payment_method || p.reference) ? (
-                        <span className="text-[11px] text-success">
-                          Paid
-                          {p.payment_method
-                            ? ` by ${SUB_PAY_METHOD_LABEL[p.payment_method] ?? p.payment_method}`
-                            : ""}
-                          {p.reference ? ` · ${p.reference}` : ""}
-                        </span>
-                      ) : null}
-                      <span className="flex items-center gap-3">
-                        {p.status === "draft" ? (
-                          <button
-                            type="button"
-                            className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
-                            onClick={() => onSetPaymentStage(p.id, "approved")}
-                          >
-                            Approve for payment
-                          </button>
-                        ) : null}
-                        {p.status === "draft" || p.status === "approved" ? (
-                          <button
-                            type="button"
-                            className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
-                            onClick={() => onMarkPaid(p)}
-                          >
-                            Mark paid
-                          </button>
-                        ) : null}
-                      </span>
-                      <PaymentWaiverLine
-                        payment={p}
-                        attached={waivers.find((w) => w.payment_id === p.id) ?? null}
-                        pool={waivers.filter((w) => !w.payment_id)}
-                        gatingEnabled={gatingEnabled}
-                        onAttach={(waiverId) => onAttachWaiver(p.id, waiverId)}
-                        onDetach={(waiverId) => onDetachWaiver(p.id, waiverId)}
-                        onUpload={(file) => onUploadWaiverForPayment(p, file)}
-                        onView={onViewWaiverDoc}
-                      />
-                      {allocations.length > 0 || buckets.length > 0 ? (
-                        <button
-                          type="button"
-                          className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
-                          onClick={() => setSplitOpen((open) => ({ ...open, [p.id]: !open[p.id] }))}
-                        >
-                          {splitOpen[p.id] ? "Hide cost codes" : "Where this payment goes"}
-                          {(splitsByPayment.get(p.id)?.length ?? 0) > 0 ? " · custom split" : ""}
-                        </button>
-                      ) : null}
-                    </span>
-                    <span className="flex items-center gap-3">
-                      <span className="font-semibold tabular-nums text-foreground">
-                        {fmtUSD(p.amount)}
-                      </span>
-                      {p.retainage_held > 0 ? (
-                        <span className="text-[11px] text-warning">
-                          −{fmtUSD(p.retainage_held)} ret.
-                        </span>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="text-muted-foreground hover:text-foreground"
-                        onClick={() => openPayEditor(p)}
-                        aria-label="Edit payment"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        className="text-muted-foreground hover:text-danger"
-                        onClick={() => onRemovePayment(p.id)}
-                        aria-label="Remove payment"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </span>
-                  </div>
-                )}
-                {editPayId !== p.id && splitOpen[p.id] ? (
-                  // Editable split (field request 2026-07-09): starts from the
-                  // saved explicit rows, else the pro-rata derivation the budget
-                  // layer uses; saving replaces the payment's coding exactly.
-                  <PaymentSplitEditor
-                    key={`${p.id}:${splitsByPayment.get(p.id)?.length ?? 0}`}
-                    paymentAmount={p.amount}
-                    buckets={buckets}
-                    allocations={allocations}
-                    savedRows={splitsByPayment.get(p.id) ?? []}
-                    onSave={(rows) => onSaveSplit(p.id, rows)}
-                    saving={savingSplit}
-                  />
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <ReceiptText className="hidden h-4 w-4 text-muted-foreground sm:block" />
-          <select
-            value={payStage}
-            onChange={(e) => setPayStage(e.target.value as PayStage)}
-            className="rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent/40"
-            aria-label="Pay app stage"
-          >
-            <option value="draft">Draft (pay app received)</option>
-            <option value="approved">Approved for payment</option>
-            <option value="paid">Paid (money out)</option>
-          </select>
-          <Input
-            type="date"
-            value={payDate}
-            onChange={(e) => setPayDate(e.target.value)}
-            className="w-40"
-            aria-label="Payment date"
-          />
-          <MoneyInput value={payAmount} onValueChange={setPayAmount} align="right" />
-          <Input
-            value={payNotes}
-            onChange={(e) => setPayNotes(e.target.value)}
-            placeholder="Description (e.g. Pay app #3, foundations)"
-            className="flex-1"
-          />
+      <div className="mt-5 border-t border-hairline pt-4">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+            Pay applications
+          </div>
           <span className="text-[11px] text-muted-foreground">
-            holds {fmtUSD(retainageHeld)} retainage ({defaultRetainagePct}%)
+            buyout = committed cost · a paid app becomes actual cost on the code
           </span>
-          <Button
-            type="button"
-            size="sm"
-            className="gap-1.5"
-            disabled={payAmount <= 0 || !payDate}
-            onClick={() => {
-              onPay(payAmount, retainageHeld, payDate, payNotes.trim(), payStage);
-              setPayAmount(0);
-              setPayNotes("");
-              setPayDate(today());
-            }}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {payStage === "paid" ? "Record payment" : "Log pay app"}
+          <Button type="button" size="sm" className="ml-auto gap-1.5" onClick={openPayModal}>
+            <Plus className="h-3.5 w-3.5" /> Record pay app
           </Button>
         </div>
+        {payments.length > 0 ? (
+          <ul className="mt-2 divide-y divide-hairline text-sm">
+            {payments.map((p) => {
+              const stage = STAGE_CHIP[p.status] ?? STAGE_CHIP.paid;
+              const attachedWaiver = waivers.find((w) => w.payment_id === p.id) ?? null;
+              const compliant = p.status === "paid" || !!attachedWaiver;
+              return (
+                <li key={p.id} className="py-1.5">
+                  {editPayId === p.id ? (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <Input
+                          type="date"
+                          value={editPay.paymentDate}
+                          onChange={(e) =>
+                            setEditPay((s) => ({ ...s, paymentDate: e.target.value }))
+                          }
+                          className="w-40"
+                        />
+                        <MoneyInput
+                          value={editPay.amount}
+                          onValueChange={(v) => setEditPay((s) => ({ ...s, amount: v }))}
+                          align="right"
+                        />
+                        <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                          ret.
+                          <MoneyInput
+                            value={editPay.retainageHeld}
+                            onValueChange={(v) => setEditPay((s) => ({ ...s, retainageHeld: v }))}
+                            align="right"
+                          />
+                        </label>
+                      </div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <Input
+                          value={editPay.notes}
+                          onChange={(e) => setEditPay((s) => ({ ...s, notes: e.target.value }))}
+                          placeholder="Description (e.g. Pay app #3, foundations)"
+                          className="flex-1"
+                        />
+                        <div className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="gap-1"
+                            disabled={editPay.amount <= 0}
+                            onClick={() => {
+                              onUpdatePayment(p.id, editPay);
+                              setEditPayId(null);
+                            }}
+                          >
+                            <Check className="h-3.5 w-3.5" /> Save
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEditPayId(null)}
+                            aria-label="Cancel"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <span className="flex min-w-0 flex-col gap-1">
+                        <span className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                          {p.payment_date}
+                          <Chip tone={stage.tone}>{stage.label}</Chip>
+                          {compliant ? (
+                            <Chip tone="good">Compliant</Chip>
+                          ) : gatingEnabled ? (
+                            <Chip tone="warn">Waiver needed</Chip>
+                          ) : null}
+                        </span>
+                        {p.notes ? (
+                          <span className="truncate text-[11px] text-muted-foreground/80">
+                            {p.notes}
+                          </span>
+                        ) : null}
+                        {p.compliance_override_reason ? (
+                          <span className="text-[11px] text-warning">
+                            ⚠ Paid without compliance — {p.compliance_override_reason}
+                          </span>
+                        ) : null}
+                        {p.status === "paid" && (p.payment_method || p.reference) ? (
+                          <span className="text-[11px] text-success">
+                            Paid
+                            {p.payment_method
+                              ? ` by ${SUB_PAY_METHOD_LABEL[p.payment_method] ?? p.payment_method}`
+                              : ""}
+                            {p.reference ? ` · ${p.reference}` : ""}
+                          </span>
+                        ) : null}
+                        <span className="flex items-center gap-3">
+                          {p.status === "draft" ? (
+                            <button
+                              type="button"
+                              className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
+                              onClick={() => onSetPaymentStage(p.id, "approved")}
+                            >
+                              Approve for payment
+                            </button>
+                          ) : null}
+                          {p.status === "draft" || p.status === "approved" ? (
+                            <button
+                              type="button"
+                              className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
+                              onClick={() => onMarkPaid(p)}
+                            >
+                              Mark paid
+                            </button>
+                          ) : null}
+                        </span>
+                        <PaymentWaiverLine
+                          payment={p}
+                          attached={attachedWaiver}
+                          pool={waivers.filter((w) => !w.payment_id)}
+                          gatingEnabled={gatingEnabled}
+                          onAttach={(waiverId) => onAttachWaiver(p.id, waiverId)}
+                          onDetach={(waiverId) => onDetachWaiver(p.id, waiverId)}
+                          onUpload={(file) => onUploadWaiverForPayment(p, file)}
+                          onView={onViewWaiverDoc}
+                        />
+                        {allocations.length > 0 || buckets.length > 0 ? (
+                          <button
+                            type="button"
+                            className="w-fit text-[11px] font-medium text-accent-foreground hover:underline"
+                            onClick={() =>
+                              setSplitOpen((open) => ({ ...open, [p.id]: !open[p.id] }))
+                            }
+                          >
+                            {splitOpen[p.id] ? "Hide cost codes" : "Where this payment goes"}
+                            {(splitsByPayment.get(p.id)?.length ?? 0) > 0 ? " · custom split" : ""}
+                          </button>
+                        ) : null}
+                      </span>
+                      <span className="flex items-center gap-3">
+                        <span className="font-semibold tabular-nums text-foreground">
+                          {fmtUSD(p.amount)}
+                        </span>
+                        {p.retainage_held > 0 ? (
+                          <span className="text-[11px] text-warning">
+                            −{fmtUSD(p.retainage_held)} ret.
+                          </span>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-foreground"
+                          onClick={() => openPayEditor(p)}
+                          aria-label="Edit payment"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-danger"
+                          onClick={() => onRemovePayment(p.id)}
+                          aria-label="Remove payment"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                    </div>
+                  )}
+                  {editPayId !== p.id && splitOpen[p.id] ? (
+                    // Editable split (field request 2026-07-09): starts from the
+                    // saved explicit rows, else the pro-rata derivation the budget
+                    // layer uses; saving replaces the payment's coding exactly.
+                    <PaymentSplitEditor
+                      key={`${p.id}:${splitsByPayment.get(p.id)?.length ?? 0}`}
+                      paymentAmount={p.amount}
+                      buckets={buckets}
+                      allocations={allocations}
+                      savedRows={splitsByPayment.get(p.id) ?? []}
+                      onSave={(rows) => onSaveSplit(p.id, rows)}
+                      saving={savingSplit}
+                    />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            No pay apps yet. Record the first one — a draft won&apos;t touch the budget until
+            it&apos;s approved and marked paid.
+          </p>
+        )}
       </div>
 
       {complianceSlot}
-    </div>
+
+      {/* Record pay app (v2): the new-pay-app form, relocated into a modal with a
+          3-segment stage control, an automatic-split preview, and the compliance
+          gate copy. Recording calls the same onPay as before. */}
+      <Dialog open={payModalOpen} onOpenChange={setPayModalOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <div className="eyebrow">
+              {subLabel}
+              {topAlloc?.cost_code ? ` · ${topAlloc.cost_code}` : ""}
+            </div>
+            <DialogTitle className="font-serif text-2xl">Record pay application</DialogTitle>
+            <DialogDescription>
+              A draft won&apos;t touch the budget. Approve it, then mark it paid — that&apos;s when
+              it becomes job cost.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Payment amount
+              <MoneyInput value={payAmount} onValueChange={setPayAmount} align="right" />
+            </label>
+            <div className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Retainage held ({defaultRetainagePct}%)
+              <div className="flex h-9 items-center rounded-md border border-hairline bg-surface px-3 text-sm tabular-nums text-foreground">
+                {fmtUSD(retainageHeld)}
+              </div>
+            </div>
+            <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Payment date
+              <Input
+                type="date"
+                value={payDate}
+                onChange={(e) => setPayDate(e.target.value)}
+                aria-label="Payment date"
+              />
+            </label>
+            <label className="space-y-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-1">
+              Notes
+              <Input
+                value={payNotes}
+                onChange={(e) => setPayNotes(e.target.value)}
+                placeholder="Description (e.g. Pay app #3, foundations)"
+              />
+            </label>
+          </div>
+
+          <div className="mt-1 space-y-1.5">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Stage
+            </div>
+            <div className="flex gap-0.5 rounded-lg bg-muted p-0.5">
+              {STAGE_SEG.map((s) => (
+                <button
+                  key={s.value}
+                  type="button"
+                  onClick={() => setPayStage(s.value)}
+                  className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
+                    payStage === s.value
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Cost-code split preview. The live per-payment split editor stays on
+              the pay-app's row (it needs the recorded payment) — here we preview
+              the automatic pro-rata distribution and point to it. */}
+          <div className="rounded-xl border border-hairline bg-background p-4">
+            <div className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+              Cost-code split
+            </div>
+            <div className="mt-1.5 text-[12.5px] text-muted-foreground">
+              Automatic — distributes pro-rata across{" "}
+              <b className="font-medium text-foreground">
+                {splitCodes || "the buyout's cost codes"}
+              </b>
+              .{" "}
+              <button
+                type="button"
+                className="font-medium text-foreground underline"
+                onClick={() => setModalSplitManual((v) => !v)}
+              >
+                {modalSplitManual ? "Use automatic split" : "Split manually →"}
+              </button>
+            </div>
+            {modalSplitManual ? (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Record the pay app first, then open{" "}
+                <b className="text-foreground">Where this payment goes</b> on its row to set an
+                exact cost-code split.
+              </p>
+            ) : null}
+          </div>
+
+          {/* Compliance gate copy. The live attach / upload / override controls
+              live on the pay-app row and the how-paid → override dialog. */}
+          {gatingEnabled ? (
+            <div className="rounded-xl border border-warning/40 bg-warning/[0.06] p-4">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 text-warning" />
+                <span className="text-sm font-semibold text-foreground">Compliance gate is on</span>
+              </div>
+              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                Marking this app <b className="text-foreground">paid</b> needs a valid COI (
+                {coiStatus === "valid" || coiStatus === "expiring_soon"
+                  ? "✓ on file"
+                  : "✗ not verified"}
+                ) and a signed lien waiver for this payment. Attach it on the pay app&apos;s row
+                after recording, or override when you mark it paid.
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Compliance gating is off for this project — payments are never blocked.
+            </p>
+          )}
+
+          <DialogFooter className="items-center sm:justify-between">
+            <span className="text-[11px] text-muted-foreground">
+              This app: {fmtUSD(payAmount)} · retainage {fmtUSD(retainageHeld)}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={() => setPayModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button disabled={payAmount <= 0 || !payDate} onClick={submitPayModal}>
+                {PRIMARY_LABEL[payStage]}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </article>
   );
 }

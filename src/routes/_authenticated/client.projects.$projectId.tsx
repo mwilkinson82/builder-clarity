@@ -3,12 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
+  ArrowRight,
   CheckCircle2,
-  CreditCard,
   Download,
   Eye,
   ExternalLink,
   FileText,
+  Lock,
   LogOut,
   MessageSquare,
   ReceiptText,
@@ -27,6 +28,7 @@ import {
   type ClientPortalChangeOrder,
   type ClientPortalDailyReport,
   type ClientPortalDailyReportAttachment,
+  type ClientPortalProjectRow,
 } from "@/lib/client-portal.functions";
 import type { ClientInvoicePaymentOptions } from "@/lib/client-portal.functions";
 import { HowToPayBlock } from "@/components/billing/HowToPayBlock";
@@ -104,6 +106,9 @@ function ClientProjectPage() {
   const [exportingDailyPacket, setExportingDailyPacket] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [checkoutPendingId, setCheckoutPendingId] = useState<string | null>(null);
+  // Local-only pagination through the pending change orders in the review-first
+  // flow. Never persisted; a decision refetches and the list reshapes.
+  const [reviewIndex, setReviewIndex] = useState(0);
 
   const projectQuery = useQuery({
     queryKey: ["client-portal-project", projectId],
@@ -316,6 +321,20 @@ function ClientProjectPage() {
   const canViewChangeOrders = portalPermissions?.canViewChangeOrders ?? true;
   const canViewDailyReports = portalPermissions?.canViewDailyReports ?? true;
   const canViewBilling = portalPermissions?.canViewBilling ?? false;
+  // Review-first split: undecided change orders drive the one-at-a-time flow;
+  // decided ones fall to a summary list below so nothing is hidden.
+  const pendingChangeOrders = changeOrders.filter(
+    (co: ClientPortalChangeOrder) =>
+      co.client_status !== "approved" && co.client_status !== "rejected",
+  );
+  const decidedChangeOrders = changeOrders.filter(
+    (co: ClientPortalChangeOrder) =>
+      co.client_status === "approved" || co.client_status === "rejected",
+  );
+  const activeReviewIndex =
+    pendingChangeOrders.length > 0 ? Math.min(reviewIndex, pendingChangeOrders.length - 1) : 0;
+  const activeReviewCo = pendingChangeOrders[activeReviewIndex];
+  const portalInitial = (project.name || "Client").trim().charAt(0).toUpperCase() || "C";
   const selectedInvoice =
     billingInvoices.find((invoice: BillingInvoiceRow) => invoice.id === selectedInvoiceId) ??
     billingInvoices[0] ??
@@ -371,180 +390,101 @@ function ClientProjectPage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-hairline bg-surface-elevated">
-        <div className="mx-auto max-w-6xl px-6 py-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                Overwatch Client Portal
-              </div>
-              <h1 className="mt-2 font-serif text-4xl leading-tight">{project.name}</h1>
-              <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                Review change orders and daily reports shared by the project team. Your approval or
-                rejection is recorded immediately.
-              </p>
+        <div className="mx-auto flex max-w-6xl items-center gap-3.5 px-6 py-4">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-foreground font-serif text-sm text-background">
+            {portalInitial}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold leading-tight">
+              {project.name || "Client portal"}
             </div>
+            <div className="text-xs text-muted-foreground">Client portal</div>
+          </div>
+          <div className="ml-auto flex items-center gap-3 sm:gap-4">
+            {/* Signed-in client identity (name/company) is not carried in the
+                loaded portal payload, so only the trust chip renders here. */}
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success">
+              <Lock className="h-3.5 w-3.5" /> Secure link
+            </span>
             <Button variant="ghost" size="sm" className="gap-1.5" onClick={signOut}>
               <LogOut className="h-3.5 w-3.5" /> Sign out
             </Button>
           </div>
-          <dl className="mt-6 grid gap-3 md:grid-cols-6">
-            <ClientMetric label="Client" value={project.client || "Project client"} />
-            <ClientMetric label="Job #" value={project.job_number || "Not listed"} />
-            <ClientMetric label="Change orders" value={String(totals.visible)} />
-            <ClientMetric label="Shared CO value" value={fmtUSD(totals.amount)} />
-            <ClientMetric
-              label="Invoices"
-              value={canViewBilling ? String(totals.invoices || totals.payApps) : "Off"}
-            />
-            <ClientMetric
-              label="Daily reports"
-              value={canViewDailyReports ? String(totals.dailyReports) : "Off"}
-            />
-          </dl>
         </div>
       </header>
 
       <main className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-8">
-        <section className="order-2 rounded-lg border border-hairline bg-card p-6 shadow-card">
-          <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-            <div>
-              <h2 className="font-serif text-3xl">Change orders for client response</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {totals.approved} approved of {totals.visible} shared change orders.
-              </p>
+        <section className="order-1 space-y-6">
+          <div>
+            <div className="eyebrow">For your review</div>
+            <h2 className="mt-1 font-serif text-3xl">Change orders</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Approve or request changes. Every decision is time-stamped the moment you submit.
+            </p>
+          </div>
+
+          {!canViewChangeOrders ? (
+            <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
+              Change orders are not enabled for this client seat yet.
             </div>
-          </div>
+          ) : pendingChangeOrders.length === 0 && decidedChangeOrders.length === 0 ? (
+            <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
+              No change orders have been shared for your review yet.
+            </div>
+          ) : (
+            <div className="space-y-8">
+              {pendingChangeOrders.length > 0 ? (
+                <ClientChangeOrderReview
+                  co={activeReviewCo}
+                  index={activeReviewIndex}
+                  total={pendingChangeOrders.length}
+                  project={project}
+                  note={notesByCo[activeReviewCo.id] ?? ""}
+                  decisionPending={decisionMutation.isPending}
+                  onNoteChange={(value) =>
+                    setNotesByCo((current) => ({ ...current, [activeReviewCo.id]: value }))
+                  }
+                  onSkip={() =>
+                    setReviewIndex((current) => (current + 1) % pendingChangeOrders.length)
+                  }
+                  onDecision={(decision) =>
+                    decisionMutation.mutate({
+                      changeOrderId: activeReviewCo.id,
+                      decision,
+                      notes: notesByCo[activeReviewCo.id] ?? "",
+                    })
+                  }
+                />
+              ) : (
+                <div className="rounded-md border border-success/30 bg-success/10 p-6 text-sm text-success">
+                  Every shared change order has been reviewed. Thank you.
+                </div>
+              )}
 
-          <div className="mt-6 space-y-4">
-            {!canViewChangeOrders ? (
-              <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
-                Change orders are not enabled for this client seat yet.
-              </div>
-            ) : changeOrders.length === 0 ? (
-              <div className="rounded-md border border-hairline bg-muted/20 p-6 text-sm text-muted-foreground">
-                No change orders are currently awaiting your review.
-              </div>
-            ) : (
-              changeOrders.map((co: ClientPortalChangeOrder) => {
-                const approval = latestApproval(approvals, co.id);
-                const note = notesByCo[co.id] ?? "";
-                return (
-                  <article
-                    key={co.id}
-                    className="rounded-md border border-hairline bg-background p-5"
-                  >
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="font-serif text-2xl">{co.number || "Change order"}</h3>
-                          <span
-                            className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${statusClass(co.client_status)}`}
-                          >
-                            {co.client_status.replace("_", " ")}
-                          </span>
-                        </div>
-                        <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-                          {co.description}
-                        </p>
-                      </div>
-                      <div className="rounded-md border border-hairline bg-muted/30 p-3 text-right">
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          Contract impact
-                        </div>
-                        <div className="mt-1 font-serif text-3xl">{fmtUSD(co.contract_amount)}</div>
-                      </div>
-                    </div>
-
-                    {co.notes && (
-                      <div className="mt-4 rounded-md border border-hairline bg-muted/20 p-3 text-sm">
-                        {co.notes}
-                      </div>
-                    )}
-
-                    {approval && (
-                      <div className="mt-4 rounded-md border border-hairline bg-muted/20 p-3 text-sm">
-                        <div className="flex items-center gap-2 font-medium capitalize">
-                          {approval.decision === "approved" ? (
-                            <CheckCircle2 className="h-4 w-4 text-success" />
-                          ) : approval.decision === "rejected" ? (
-                            <XCircle className="h-4 w-4 text-danger" />
-                          ) : (
-                            <MessageSquare className="h-4 w-4 text-muted-foreground" />
-                          )}
-                          Latest response: {approval.decision}
-                        </div>
-                        <p className="mt-1 text-muted-foreground">
-                          {approval.notes || "No note was included."}
-                        </p>
-                      </div>
-                    )}
-
-                    <div className="mt-5 space-y-3">
-                      <Textarea
-                        value={note}
-                        placeholder="Optional client note, rejection reason, or approval context."
-                        onChange={(event) =>
-                          setNotesByCo((current) => ({
-                            ...current,
-                            [co.id]: event.target.value,
-                          }))
-                        }
+              {decidedChangeOrders.length > 0 ? (
+                <div className="space-y-3">
+                  <div>
+                    <div className="eyebrow">Decided</div>
+                    <h3 className="mt-1 font-serif text-2xl">
+                      Change orders you have responded to
+                    </h3>
+                  </div>
+                  <div className="space-y-3">
+                    {decidedChangeOrders.map((co: ClientPortalChangeOrder) => (
+                      <DecidedChangeOrderCard
+                        key={co.id}
+                        co={co}
+                        approval={latestApproval(approvals, co.id)}
                       />
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="gap-1.5"
-                          disabled={decisionMutation.isPending}
-                          onClick={() =>
-                            decisionMutation.mutate({
-                              changeOrderId: co.id,
-                              decision: "comment",
-                              notes: note,
-                            })
-                          }
-                        >
-                          <MessageSquare className="h-3.5 w-3.5" /> Save comment
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="gap-1.5 border-danger/40 text-danger hover:bg-danger/10"
-                          disabled={decisionMutation.isPending}
-                          onClick={() =>
-                            decisionMutation.mutate({
-                              changeOrderId: co.id,
-                              decision: "rejected",
-                              notes: note,
-                            })
-                          }
-                        >
-                          <XCircle className="h-3.5 w-3.5" /> Reject
-                        </Button>
-                        <Button
-                          type="button"
-                          className="gap-1.5"
-                          disabled={decisionMutation.isPending}
-                          onClick={() =>
-                            decisionMutation.mutate({
-                              changeOrderId: co.id,
-                              decision: "approved",
-                              notes: note,
-                            })
-                          }
-                        >
-                          <CheckCircle2 className="h-3.5 w-3.5" /> Approve
-                        </Button>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })
-            )}
-          </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
         </section>
 
-        <section className="order-1 rounded-lg border border-hairline bg-card p-6 shadow-card">
+        <section className="order-2 rounded-lg border border-hairline bg-card p-6 shadow-card">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <h2 className="font-serif text-3xl">Billing shared with client</h2>
@@ -683,6 +623,21 @@ function ClientProjectPage() {
           </div>
         </section>
       </main>
+
+      <footer className="border-t border-hairline bg-surface-elevated">
+        <div className="mx-auto flex max-w-6xl flex-col gap-2 px-6 py-5 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          {/* No signed-in client name in the payload, so the private-link note
+              addresses "your team" rather than fabricating an identity. */}
+          <span className="inline-flex items-center gap-1.5">
+            <Lock className="h-3.5 w-3.5" /> Private link for your team · every decision is
+            time-stamped.
+          </span>
+          <span className="inline-flex items-baseline gap-1.5">
+            Powered by
+            <span className="text-sm font-semibold tracking-tight text-foreground">OverWatch</span>
+          </span>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -1112,6 +1067,195 @@ function DailyReportCard({
           This report was shared without additional field notes.
         </p>
       )}
+    </article>
+  );
+}
+
+// Title = the change order's first description line; body = the rest of the
+// description plus notes, as the CO's own prose. We never invent Scope / Why /
+// Cost-basis / Schedule fields (flagged product gap) — only real CO text shows.
+function splitChangeOrderNarrative(co: ClientPortalChangeOrder): { title: string; body: string } {
+  const description = co.description.trim();
+  const [firstLine, ...rest] = description.split("\n");
+  const title = (firstLine ?? "").trim() || co.number || "Change order";
+  const remainder = rest.join("\n").trim();
+  const body = [remainder, co.notes.trim()].filter(Boolean).join("\n\n");
+  return { title, body };
+}
+
+function ClientChangeOrderReview({
+  co,
+  index,
+  total,
+  project,
+  note,
+  decisionPending,
+  onNoteChange,
+  onSkip,
+  onDecision,
+}: {
+  co: ClientPortalChangeOrder;
+  index: number;
+  total: number;
+  project: ClientPortalProjectRow;
+  note: string;
+  decisionPending: boolean;
+  onNoteChange: (value: string) => void;
+  onSkip: () => void;
+  onDecision: (decision: "approved" | "rejected" | "comment") => void;
+}) {
+  const { title, body } = splitChangeOrderNarrative(co);
+  // Context sub is built only from fields present in the loaded payload; the
+  // shared date drops when client_sent_at is null (never fabricated).
+  const contextLine = [
+    project.name,
+    project.client,
+    co.client_sent_at ? `shared ${formatClientDate(co.client_sent_at)}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const progress = total > 0 ? Math.round(((index + 1) / total) * 100) : 0;
+  const amount = fmtUSD(co.contract_amount);
+  return (
+    <div>
+      <div className="flex items-center gap-3">
+        <span className="eyebrow shrink-0 text-muted-foreground">
+          Reviewing {index + 1} of {total}
+        </span>
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+          <div className="h-full rounded-full bg-clay" style={{ width: `${progress}%` }} />
+        </div>
+        {total > 1 ? (
+          <button
+            type="button"
+            onClick={onSkip}
+            className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-clay"
+          >
+            Skip <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+      </div>
+
+      <article className="mt-5 overflow-hidden rounded-xl border border-hairline bg-surface shadow-card">
+        <div className="border-b border-hairline p-6 md:p-8">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="eyebrow">Change order · {co.number || "Pending number"}</div>
+              <h3 className="mt-2.5 max-w-[24ch] font-serif text-3xl leading-tight">{title}</h3>
+              {contextLine ? (
+                <div className="mt-2 text-sm text-muted-foreground">{contextLine}</div>
+              ) : null}
+            </div>
+            <div className="shrink-0 sm:text-right">
+              <div className="eyebrow text-muted-foreground">Requested</div>
+              <div className="mt-1 font-serif text-3xl">{amount}</div>
+              {/* Running "contract → total" is intentionally omitted: the signed
+                  contract value and approved-CO running sum are not in the
+                  client payload, and we never fabricate a figure. */}
+            </div>
+          </div>
+        </div>
+
+        {body ? (
+          <div className="border-b border-hairline p-6 md:px-8">
+            <p className="max-w-2xl whitespace-pre-line text-sm leading-relaxed text-foreground">
+              {body}
+            </p>
+          </div>
+        ) : null}
+
+        <div className="bg-background p-6 md:px-8 md:py-7">
+          <div className="eyebrow text-muted-foreground">Your decision</div>
+          <div className="mt-3 space-y-4">
+            <Textarea
+              value={note}
+              placeholder="Add a note for the project team (optional)."
+              onChange={(event) => onNoteChange(event.target.value)}
+            />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              {/* Attribution names the client + company when identity is known;
+                  it is not in the payload, so only the audit fact shows. */}
+              <p className="text-xs text-muted-foreground">Time-stamped on submit.</p>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={decisionPending}
+                  onClick={() => onDecision("comment")}
+                >
+                  <MessageSquare className="h-3.5 w-3.5" /> Save comment
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={decisionPending}
+                  onClick={() => onDecision("rejected")}
+                >
+                  Request changes
+                </Button>
+                <Button
+                  type="button"
+                  className="gap-1.5 bg-success text-white hover:bg-success/90"
+                  disabled={decisionPending}
+                  onClick={() => onDecision("approved")}
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Approve {amount}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function DecidedChangeOrderCard({
+  co,
+  approval,
+}: {
+  co: ClientPortalChangeOrder;
+  approval?: ChangeOrderApprovalRow;
+}) {
+  const statusLabel =
+    co.client_status === "rejected" ? "Changes requested" : clientStatusLabel(co.client_status);
+  return (
+    <article className="rounded-md border border-hairline bg-background p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="font-serif text-xl">{co.number || "Change order"}</h4>
+            <span
+              className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${statusClass(co.client_status)}`}
+            >
+              {statusLabel}
+            </span>
+          </div>
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{co.description}</p>
+        </div>
+        <div className="sm:shrink-0 sm:text-right">
+          <div className="eyebrow text-muted-foreground">Amount</div>
+          <div className="mt-1 font-serif text-2xl">{fmtUSD(co.contract_amount)}</div>
+        </div>
+      </div>
+      {approval ? (
+        <div className="mt-4 rounded-md border border-hairline bg-muted/20 p-3 text-sm">
+          <div className="flex items-center gap-2 font-medium">
+            {approval.decision === "approved" ? (
+              <CheckCircle2 className="h-4 w-4 text-success" />
+            ) : approval.decision === "rejected" ? (
+              <XCircle className="h-4 w-4 text-danger" />
+            ) : (
+              <MessageSquare className="h-4 w-4 text-muted-foreground" />
+            )}
+            Your response:{" "}
+            {approval.decision === "rejected" ? "changes requested" : approval.decision}
+          </div>
+          {approval.notes ? <p className="mt-1 text-muted-foreground">{approval.notes}</p> : null}
+        </div>
+      ) : null}
     </article>
   );
 }
