@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { KanbanSquare, List, RotateCcw, Search } from "lucide-react";
+import { KanbanSquare, List, Plus, RotateCcw, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { createEstimate } from "@/lib/estimates.functions";
@@ -34,13 +34,16 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { PipelineKanban } from "./PipelineKanban";
 import { PipelineList } from "./PipelineList";
-import { PipelineMetrics } from "./PipelineMetrics";
+import { PipelineGlanceCard } from "./PipelineMetrics";
+import { PipelineRailLists } from "./PipelineRailLists";
 import { PipelineCrmOverview } from "./PipelineCrmOverview";
 import { OpportunityCreateDialog, QuickAddOpportunity } from "./OpportunityCreateDialog";
 import { OpportunityDetail } from "./OpportunityDetail";
 import {
+  computePipelineMetrics,
   DEMO_REMOVED_STORAGE_KEY,
   isDemoOpportunityId,
   pruneRemovedDemoCrm,
@@ -53,6 +56,9 @@ import {
 
 type PipelineWorkspaceProps = {
   initialOpportunityId?: string | null;
+  // Lifts the two headline metrics (active count + weighted value) so the page
+  // shell can render them in the house footer without recomputing.
+  onSummary?: (summary: { activeCount: number; weighted: number }) => void;
 };
 
 const EMPTY_OPPORTUNITIES: PipelineOpportunityRow[] = [];
@@ -87,7 +93,7 @@ type DemoOpportunityOverride = Partial<
   >
 >;
 
-export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspaceProps) {
+export function PipelineWorkspace({ initialOpportunityId, onSummary }: PipelineWorkspaceProps) {
   const queryClient = useQueryClient();
   const listFn = useServerFn(listOpportunities);
   const membersFn = useServerFn(listPipelineMembers);
@@ -226,6 +232,17 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
     typeFilter !== "all",
     showArchived,
   ].filter(Boolean).length;
+  // Filters that live behind the "More filters" popover — badge the trigger when any are set.
+  const secondaryFilterCount = [
+    assignedFilter !== "all",
+    typeFilter !== "all",
+    showArchived,
+  ].filter(Boolean).length;
+
+  const metrics = useMemo(() => computePipelineMetrics(opportunities), [opportunities]);
+  useEffect(() => {
+    onSummary?.({ activeCount: metrics.activeCount, weighted: metrics.weighted });
+  }, [onSummary, metrics.activeCount, metrics.weighted]);
 
   const invalidatePipeline = async () => {
     await Promise.all([
@@ -462,52 +479,106 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
   };
 
   return (
-    <div className="space-y-6">
-      <PipelineMetrics opportunities={opportunities} />
+    <div className="space-y-5">
+      {/* 1. Page header inside the CRM tab */}
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
+        <h1 className="font-serif text-[30px] font-normal leading-none text-foreground">
+          Sales pipeline
+        </h1>
+        <span className="text-sm text-muted-foreground">
+          Lead → estimate → bid → won → project.
+        </span>
+        <div className="ml-auto">
+          <OpportunityCreateDialog
+            members={members}
+            accounts={accountNames}
+            isCreating={createMutation.isPending}
+            onCreate={(input) => createMutation.mutateAsync(input).then(() => undefined)}
+            trigger={
+              <Button type="button" className="gap-1.5">
+                <Plus className="h-4 w-4" /> New opportunity
+              </Button>
+            }
+          />
+        </div>
+      </div>
 
-      <PipelineCrmOverview
-        snapshot={crmSnapshot}
-        opportunities={opportunities}
-        isLoading={crmSnapshotQuery.isLoading || ensureDemoMutation.isPending}
-        completingActionId={
-          typeof completeActionMutation.variables === "string"
-            ? completeActionMutation.variables
-            : null
-        }
-        onCompleteAction={(id) => completeActionMutation.mutate(id)}
-      />
+      {/* 2. Glance grid: rail lists (left) + pipeline-at-a-glance (right) */}
+      <div className="grid items-start gap-4 xl:grid-cols-[1.25fr_1fr]">
+        <PipelineRailLists
+          opportunities={opportunities}
+          openActions={crmSnapshot?.openActions ?? []}
+          onOpen={setSelectedId}
+        />
+        <PipelineGlanceCard metrics={metrics} />
+      </div>
 
-      <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex flex-1 flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search opportunity, client, source, type, or assignee"
-                className="pl-9"
-              />
-            </div>
-            <Select
-              value={stageFilter}
-              onValueChange={(value) => setStageFilter(value as PipelineStage | "all")}
-            >
-              <SelectTrigger className="w-full lg:w-[180px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All stages</SelectItem>
-                {STAGE_ORDER.map((stage) => (
-                  <SelectItem key={stage} value={stage}>
-                    {STAGE_LABELS[stage]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      {/* 4. Toolbar */}
+      <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-hairline bg-surface p-3 shadow-card">
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search opportunity, client, source, type, or assignee"
+            className="pl-9"
+          />
+        </div>
+        <Select
+          value={stageFilter}
+          onValueChange={(value) => setStageFilter(value as PipelineStage | "all")}
+        >
+          <SelectTrigger className="w-full sm:w-[160px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All stages</SelectItem>
+            {STAGE_ORDER.map((stage) => (
+              <SelectItem key={stage} value={stage}>
+                {STAGE_LABELS[stage]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={sortMode} onValueChange={(value) => setSortMode(value as PipelineSortMode)}>
+          <SelectTrigger className="w-full sm:w-[190px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="last_activity_at">Sort · Last activity</SelectItem>
+            <SelectItem value="bid_due_date">Sort · Bid due</SelectItem>
+            <SelectItem value="estimated_contract">Sort · Est. contract</SelectItem>
+          </SelectContent>
+        </Select>
+        <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as PipelineViewMode)}>
+          <TabsList>
+            <TabsTrigger value="kanban">
+              <KanbanSquare className="mr-1.5 h-3.5 w-3.5" />
+              Kanban
+            </TabsTrigger>
+            <TabsTrigger value="list">
+              <List className="mr-1.5 h-3.5 w-3.5" />
+              List
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="outline" size="sm" className="gap-1.5">
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              More filters
+              {secondaryFilterCount > 0 && (
+                <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-clay/15 px-1 text-[10px] font-bold text-clay">
+                  {secondaryFilterCount}
+                </span>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-72 space-y-3">
+            <div className="eyebrow">Filters</div>
             <Select value={assignedFilter} onValueChange={setAssignedFilter}>
-              <SelectTrigger className="w-full lg:w-[180px]">
-                <SelectValue />
+              <SelectTrigger>
+                <SelectValue placeholder="All assignees" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All assignees</SelectItem>
@@ -519,8 +590,8 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
               </SelectContent>
             </Select>
             <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-full lg:w-[180px]">
-                <SelectValue />
+              <SelectTrigger>
+                <SelectValue placeholder="All types" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All types</SelectItem>
@@ -531,62 +602,30 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
                 ))}
               </SelectContent>
             </Select>
-            <Select
-              value={sortMode}
-              onValueChange={(value) => setSortMode(value as PipelineSortMode)}
-            >
-              <SelectTrigger className="w-full lg:w-[190px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="last_activity_at">Last activity</SelectItem>
-                <SelectItem value="bid_due_date">Bid due</SelectItem>
-                <SelectItem value="estimated_contract">Est. contract</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <label className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
+              <span>Show archived</span>
               <Switch checked={showArchived} onCheckedChange={setShowArchived} />
-              Archived
             </label>
-            <Tabs
-              value={viewMode}
-              onValueChange={(value) => setViewMode(value as PipelineViewMode)}
-            >
-              <TabsList>
-                <TabsTrigger value="kanban">
-                  <KanbanSquare className="mr-1.5 h-3.5 w-3.5" />
-                  Kanban
-                </TabsTrigger>
-                <TabsTrigger value="list">
-                  <List className="mr-1.5 h-3.5 w-3.5" />
-                  List
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
             <Button
               type="button"
               variant="ghost"
               size="sm"
               onClick={resetFilters}
               disabled={activeFilterCount === 0}
+              className="w-full justify-start gap-1.5"
             >
-              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-              Reset
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset filters
             </Button>
-            <QuickAddOpportunity
-              isCreating={createMutation.isPending}
-              onCreate={(input) => createMutation.mutateAsync(input).then(() => undefined)}
-            />
-            <OpportunityCreateDialog
-              members={members}
-              accounts={accountNames}
-              isCreating={createMutation.isPending}
-              onCreate={(input) => createMutation.mutateAsync(input).then(() => undefined)}
-            />
-          </div>
-        </div>
+            <div className="border-t border-hairline pt-3">
+              <div className="eyebrow mb-2">Quick-add a lead</div>
+              <QuickAddOpportunity
+                isCreating={createMutation.isPending}
+                onCreate={(input) => createMutation.mutateAsync(input).then(() => undefined)}
+              />
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
 
       {opportunitiesQuery.isLoading ? (
@@ -610,6 +649,19 @@ export function PipelineWorkspace({ initialOpportunityId }: PipelineWorkspacePro
           onStageChange={handleStageChange}
         />
       )}
+
+      {/* 3. CRM command center — kept live below the board, behind a collapse */}
+      <PipelineCrmOverview
+        snapshot={crmSnapshot}
+        opportunities={opportunities}
+        isLoading={crmSnapshotQuery.isLoading || ensureDemoMutation.isPending}
+        completingActionId={
+          typeof completeActionMutation.variables === "string"
+            ? completeActionMutation.variables
+            : null
+        }
+        onCompleteAction={(id) => completeActionMutation.mutate(id)}
+      />
 
       <OpportunityDetail
         open={Boolean(selectedId)}

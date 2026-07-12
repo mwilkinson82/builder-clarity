@@ -1,14 +1,14 @@
-import { createFileRoute, Link, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { supabase } from "@/integrations/supabase/client";
 import { sendOverwatchMagicLink } from "@/lib/auth/magic-link";
 import { createProject, listProjects, seedDemoIfEmpty } from "@/lib/projects.functions";
 import { getOnboardingStatus } from "@/lib/onboarding.functions";
 import { FirstRunChecklist, type ChecklistStep } from "@/components/onboarding/FirstRunChecklist";
 import { PortfolioHome } from "@/components/home/PortfolioHome";
-import { BillingFeedBadge } from "@/components/billing/BillingFeedBadge";
+import { PortfolioTopBar } from "@/components/layout/PortfolioTopBar";
+import { AppFooter } from "@/components/layout/AppFooter";
 import { PipelineWorkspace } from "@/components/pipeline/PipelineWorkspace";
 import {
   assignProjectMember,
@@ -42,22 +42,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  Activity,
   AlertTriangle,
-  BarChart3,
   BriefcaseBusiness,
-  CalendarClock,
-  ClipboardList,
-  FileText,
-  Info,
-  KanbanSquare,
-  LayoutDashboard,
-  LogOut,
   MailPlus,
   Plus,
-  ReceiptText,
   RotateCcw,
   Search,
   Trash2,
@@ -79,17 +68,6 @@ function formatUsageValue(used: number, limit: number) {
 
 const ONBOARDING_DISMISSED_KEY = "overwatch:onboarding-dismissed:v1";
 
-function companyInitials(name: string) {
-  return (
-    name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase())
-      .join("") || "OW"
-  );
-}
-
 export const Route = createFileRoute("/_authenticated/")({
   ssr: false,
   head: () => ({
@@ -110,7 +88,7 @@ export const Route = createFileRoute("/_authenticated/")({
 // the CRM &opportunity= links) keeps resolving here unchanged. Bare / renders 6a.
 function PortfolioIndex() {
   const tab = useLocation({ select: (l) => (l.search as { tab?: unknown }).tab });
-  const hasTab = typeof tab === "string" && tab.length > 0;
+  const hasTab = typeof tab === "string" && tab !== "";
   return hasTab ? <PortfolioPage /> : <PortfolioHome />;
 }
 
@@ -217,7 +195,7 @@ function PortfolioPage() {
   const [failedOrganizationLogos, setFailedOrganizationLogos] = useState<Set<string>>(
     () => new Set(),
   );
-  const [failedCompanyLogoUrl, setFailedCompanyLogoUrl] = useState<string | null>(null);
+  const [crmSummary, setCrmSummary] = useState({ activeCount: 0, weighted: 0 });
   const [portfolioTab, setPortfolioTab] = useState<"projects" | "pipeline">(() => {
     if (typeof window === "undefined") return "projects";
     const tab = new URLSearchParams(window.location.search).get("tab");
@@ -234,17 +212,6 @@ function PortfolioPage() {
       ),
     [projects],
   );
-  const headerCompanyName =
-    companyFilter !== "all" ? companyFilter : companyContext?.name || companyNames[0] || "Company";
-  // "Portfolio" is now the 6a home at /; this tabbed page is the Projects/CRM
-  // drill-down, so its heading mirrors the active tab (no name collision).
-  const headerTitle = portfolioTab === "pipeline" ? "CRM" : "Projects";
-  const headerLogoUrl =
-    companyContext?.logo_url &&
-    failedCompanyLogoUrl !== companyContext.logo_url &&
-    companyFilter === "all"
-      ? companyContext.logo_url
-      : "";
   const currentViewLabel =
     portfolioTab === "projects"
       ? "Live project IOR control"
@@ -382,14 +349,6 @@ function PortfolioPage() {
       });
   }, [isLoading, seed, qc]);
 
-  const navigate = useNavigate();
-  const router = useRouter();
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    router.invalidate();
-    navigate({ to: "/auth" });
-  };
-
   // First-run checklist (ONBOARDING1). Each step self-checks from live data; the billing
   // steps stay disabled until their prerequisite lands, and deep-link straight to Billing.
   const onboardingFirstProjectId = onboardingStatus?.firstProjectId ?? null;
@@ -460,82 +419,26 @@ function PortfolioPage() {
   const showOnboarding =
     onboardingStatus !== undefined && !onboardingDismissed && !onboardingAllDone;
 
+  const footerContext =
+    portfolioTab === "pipeline"
+      ? `CRM · ${crmSummary.activeCount} active · ${fmtUSD(crmSummary.weighted)} weighted`
+      : `Projects · ${visibleProjects.length} of ${projects.length} shown`;
+
+  // The shared top bar owns portfolio-level nav + sign out; the page-specific
+  // action slot carries "New project" on the Projects tab (CRM carries its own
+  // "+ New opportunity" inside the tab body). Controllable so the onboarding
+  // checklist can still open the New Project dialog.
+  const topBarActions =
+    portfolioTab === "projects" ? (
+      <NewProjectButton open={createProjectOpen} onOpenChange={setCreateProjectOpen} />
+    ) : undefined;
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="relative border-b border-hairline bg-surface-elevated/95 shadow-[0_10px_30px_rgb(31_28_23_/_0.05)]">
-        <div className="absolute inset-0 grid-bg opacity-25" />
-        <div className="relative mx-auto flex max-w-[1760px] flex-col gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              {headerLogoUrl ? (
-                <img
-                  src={headerLogoUrl}
-                  alt={`${headerCompanyName} logo`}
-                  className="h-9 w-9 shrink-0 rounded-sm border border-hairline bg-card object-contain p-1"
-                  onError={() => setFailedCompanyLogoUrl(headerLogoUrl)}
-                />
-              ) : (
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border border-hairline bg-card text-xs font-semibold text-muted-foreground">
-                  {companyInitials(headerCompanyName)}
-                </div>
-              )}
-              <div className="min-w-0">
-                <div className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  {headerCompanyName}
-                </div>
-                <h1 className="truncate font-serif text-3xl leading-none text-foreground">
-                  {headerTitle}
-                </h1>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
-                <Link to="/">
-                  <LayoutDashboard className="h-3.5 w-3.5" /> Portfolio
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
-                <a href="/?tab=crm">
-                  <BriefcaseBusiness className="h-3.5 w-3.5" /> CRM
-                </a>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
-                <Link to="/estimates">
-                  <ClipboardList className="h-3.5 w-3.5" /> Estimates
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
-                <Link to="/billing">
-                  <ReceiptText className="h-3.5 w-3.5" /> Billing
-                  <BillingFeedBadge />
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
-                <Link to="/reports">
-                  <BarChart3 className="h-3.5 w-3.5" /> Reports
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
-                <Link to="/cost-library">
-                  <FileText className="h-3.5 w-3.5" /> Cost Library
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline" className="gap-1.5 bg-card/70">
-                <Link to="/team">
-                  <Users className="h-3.5 w-3.5" /> Company
-                </Link>
-              </Button>
-              <NewProjectButton open={createProjectOpen} onOpenChange={setCreateProjectOpen} />
-              <Button variant="ghost" size="sm" onClick={signOut} className="gap-1.5">
-                <LogOut className="h-3.5 w-3.5" /> Sign out
-              </Button>
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <PortfolioTopBar active="crm" actions={topBarActions} />
 
       <main
-        className={`mx-auto px-4 py-6 sm:px-6 lg:px-8 ${
+        className={`mx-auto w-full flex-1 px-4 py-6 sm:px-6 lg:px-8 ${
           portfolioTab === "pipeline" ? "max-w-[1900px]" : "max-w-[1760px]"
         }`}
       >
@@ -735,10 +638,14 @@ function PortfolioPage() {
             )}
           </TabsContent>
           <TabsContent value="pipeline" className="mt-0">
-            <PipelineWorkspace initialOpportunityId={initialPipelineOpportunityId} />
+            <PipelineWorkspace
+              initialOpportunityId={initialPipelineOpportunityId}
+              onSummary={setCrmSummary}
+            />
           </TabsContent>
         </Tabs>
       </main>
+      <AppFooter context={footerContext} />
     </div>
   );
 }

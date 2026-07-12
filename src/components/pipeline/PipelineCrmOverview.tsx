@@ -1,5 +1,5 @@
-import { CheckCircle2, Clock3, Contact, Landmark, PhoneCall, UserRound } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckCircle2, ChevronDown, Clock3, Landmark, PhoneCall, UserRound } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import type {
   PipelineCrmSnapshot,
   PipelineNextActionRow,
@@ -7,6 +7,7 @@ import type {
 } from "@/lib/pipeline.functions";
 import { fmtUSD } from "@/lib/format";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { shortDate } from "./pipeline-ui";
 
@@ -25,40 +26,48 @@ export function PipelineCrmOverview({
   completingActionId,
   onCompleteAction,
 }: PipelineCrmOverviewProps) {
+  const [open, setOpen] = useState(false);
   const accounts = snapshot?.accounts ?? [];
   const contacts = snapshot?.contacts ?? [];
   const openActions = snapshot?.openActions ?? [];
   const activeRelationshipCount = accounts.filter((account) => !account.archived).length;
   const activeContactCount = contacts.filter((contact) => !contact.archived).length;
   const activeValue = accounts.reduce((total, account) => total + account.active_pipeline_value, 0);
-  const nextAction = openActions[0] ?? null;
+  const openBidCount = opportunities.filter((o) => !o.archived).length;
 
   return (
-    <section className="rounded-lg border border-hairline bg-card p-4 shadow-card md:p-5">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-        <div className="min-w-0 xl:max-w-[360px]">
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            <Contact className="h-3.5 w-3.5" />
-            CRM command center
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="rounded-xl border border-hairline bg-surface shadow-card"
+    >
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="flex w-full items-center gap-4 px-5 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <div className="min-w-0">
+            <div className="eyebrow">CRM command center</div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              Accounts, contacts, and follow-up — beside the board.
+            </div>
           </div>
-          <h2 className="mt-2 font-serif text-3xl leading-none text-foreground">
-            Relationships, pursuits, and follow-up.
-          </h2>
-          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            Accounts and contacts now sit beside the bid board so the next move is visible before
-            work becomes an Overwatch project.
-          </p>
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            <MiniStat label="Accounts" value={String(activeRelationshipCount)} />
-            <MiniStat label="Contacts" value={String(activeContactCount)} />
-            <MiniStat
-              label="Open bids"
-              value={String(opportunities.filter((o) => !o.archived).length)}
+          <div className="ml-auto flex items-center gap-3 sm:gap-5">
+            <HeaderCount label="Accounts" value={activeRelationshipCount} />
+            <HeaderCount label="Contacts" value={activeContactCount} />
+            <HeaderCount label="Open bids" value={openBidCount} />
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                open && "rotate-180",
+              )}
             />
           </div>
-        </div>
+        </button>
+      </CollapsibleTrigger>
 
-        <div className="grid flex-1 gap-3 xl:grid-cols-[minmax(220px,0.95fr)_minmax(240px,1.05fr)_minmax(280px,1.2fr)]">
+      <CollapsibleContent>
+        <div className="grid gap-3 border-t border-hairline p-5 xl:grid-cols-3">
           <Panel
             icon={<Landmark className="h-3.5 w-3.5" />}
             label="Top accounts"
@@ -124,7 +133,9 @@ export function PipelineCrmOverview({
           <Panel
             icon={<Clock3 className="h-3.5 w-3.5" />}
             label="Next actions"
-            meta={nextAction ? `Next: ${shortDate(nextAction.due_date)}` : "Daily follow-up"}
+            meta={
+              openActions[0] ? `Next: ${shortDate(openActions[0].due_date)}` : "Daily follow-up"
+            }
           >
             {isLoading ? (
               <LoadingLine />
@@ -144,8 +155,8 @@ export function PipelineCrmOverview({
             )}
           </Panel>
         </div>
-      </div>
-    </section>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -174,13 +185,13 @@ function Panel({
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function HeaderCount({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-md border border-hairline bg-background px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+    <div className="text-right">
+      <div className="font-serif text-lg leading-none text-foreground tabular-nums">{value}</div>
+      <div className="mt-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         {label}
       </div>
-      <div className="mt-1 text-xl font-semibold tabular-nums text-foreground">{value}</div>
     </div>
   );
 }

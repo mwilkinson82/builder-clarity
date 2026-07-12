@@ -1,8 +1,8 @@
-import { ArrowUpRight, CalendarClock, GripVertical } from "lucide-react";
-import { fmtUSD } from "@/lib/format";
+import { ArrowUpRight } from "lucide-react";
+import { fmtPct, fmtUSD } from "@/lib/format";
 import type { PipelineOpportunityRow } from "@/lib/pipeline.functions";
 import { cn } from "@/lib/utils";
-import { bidUrgencyClass, initials, shortDate } from "./pipeline-ui";
+import { bidChip, gpToneClass, initials } from "./pipeline-ui";
 
 type OpportunityCardProps = {
   opportunity: PipelineOpportunityRow;
@@ -17,6 +17,7 @@ export function OpportunityCard({
   onDragStart,
   onDragEnd,
 }: OpportunityCardProps) {
+  const chip = bidChip(opportunity);
   return (
     <button
       type="button"
@@ -28,10 +29,14 @@ export function OpportunityCard({
       onDragEnd={onDragEnd}
       onClick={() => onOpen(opportunity.id)}
       title="Drag to move, click to open"
-      className="w-full cursor-grab rounded-lg border border-hairline bg-background p-3 text-left shadow-sm transition hover:border-accent/40 hover:bg-surface active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="w-full cursor-grab rounded-xl border border-hairline bg-surface px-4 pb-3.5 pt-2.5 text-left shadow-sm transition hover:border-clay/40 active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
+      {/* Centered drag-pill (the house grab affordance) */}
+      <div className="mb-2 flex justify-center">
+        <span aria-hidden="true" className="h-1 w-6 rounded-full bg-hairline" />
+      </div>
+
       <div className="flex items-start gap-2">
-        <GripVertical className="mt-0.5 h-4 w-4 shrink-0 cursor-grab text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold leading-snug text-foreground">
             {opportunity.name}
@@ -44,41 +49,26 @@ export function OpportunityCard({
           <ArrowUpRight className="h-4 w-4 shrink-0 text-success" />
         )}
       </div>
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="text-sm font-semibold tabular-nums text-foreground">
+
+      <div className="mt-2.5 flex items-baseline gap-2.5">
+        <span className="font-serif text-[19px] leading-none text-foreground">
           {fmtUSD(opportunity.estimated_contract)}
         </span>
-        <span className="rounded-full border border-hairline bg-card px-2 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
-          {opportunity.probability}%
+        <span className={cn("text-[11.5px] font-bold", gpToneClass(opportunity.estimated_gp_pct))}>
+          {fmtPct(opportunity.estimated_gp_pct)} GP
         </span>
       </div>
-      {(opportunity.primary_contact_name || opportunity.next_action_title) && (
-        <div className="mt-3 rounded-md border border-hairline bg-card px-2.5 py-2">
-          {opportunity.primary_contact_name && (
-            <div className="truncate text-[11px] font-medium text-foreground">
-              {opportunity.primary_contact_name}
-              {opportunity.primary_contact_email ? ` · ${opportunity.primary_contact_email}` : ""}
-            </div>
-          )}
-          {opportunity.next_action_title && (
-            <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
-              Next: {opportunity.next_action_title}
-            </div>
-          )}
-        </div>
-      )}
-      <div className="mt-3 flex items-center justify-between gap-2 text-[11px]">
-        <span className={cn("inline-flex items-center gap-1", bidUrgencyClass(opportunity))}>
-          <CalendarClock className="h-3.5 w-3.5" />
-          {opportunity.next_action_due_date
-            ? `Action ${shortDate(opportunity.next_action_due_date)}`
-            : shortDate(opportunity.bid_due_date)}
-        </span>
+
+      <div className="mt-2.5 flex items-center gap-2 border-t border-hairline pt-2.5">
         <span
           title={opportunity.assigned_to || "Unassigned"}
-          className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-secondary text-[9px] font-bold text-muted-foreground"
         >
           {initials(opportunity.assigned_to)}
+        </span>
+        <span className={cn("text-[11px] font-semibold", chip.tone)}>{chip.label}</span>
+        <span className="ml-auto font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+          {opportunity.probability}%
         </span>
       </div>
     </button>
