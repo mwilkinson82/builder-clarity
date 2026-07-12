@@ -161,6 +161,10 @@ export type COType =
   | "sub_issued"
   | "other";
 
+/** How a change order is priced. Ships in the structured-fields migration. */
+export type COPricingMethod =
+  "lump_sum" | "time_and_materials" | "unit_price" | "allowance" | "other";
+
 export interface ChangeOrderRow {
   id: string;
   project_id: string;
@@ -173,6 +177,14 @@ export interface ChangeOrderRow {
   owner: string;
   notes: string;
   co_type: COType;
+  /** How this CO is priced (lump sum, T&M, unit price, allowance). */
+  pricing_method: COPricingMethod;
+  /** Calendar days this CO adds to the schedule (0 = no time impact). */
+  schedule_impact_days: number;
+  /** Who requested / initiated this change. Free text. */
+  requested_by: string;
+  /** When the change was first initiated, or null. */
+  date_initiated: string | null;
   client_visible: boolean;
   client_status: ClientChangeOrderStatus;
   client_notes: string;
@@ -291,6 +303,20 @@ export interface ClaimDocumentRow {
   storage_path: string;
   file_name: string;
   doc_type: ClaimDocType;
+  note: string;
+  uploaded_at: string;
+  created_by: string | null;
+}
+
+export type CoDocType = "backup" | "quote" | "correspondence" | "other";
+
+export interface ChangeOrderDocumentRow {
+  id: string;
+  change_order_id: string;
+  project_id: string;
+  storage_path: string;
+  file_name: string;
+  doc_type: CoDocType;
   note: string;
   uploaded_at: string;
   created_by: string | null;
@@ -715,6 +741,23 @@ const normalizeClaimDocument = (row: Record<string, unknown>): ClaimDocumentRow 
     doc_type: CLAIM_DOC_TYPES.includes(docType as ClaimDocType)
       ? (docType as ClaimDocType)
       : "supporting",
+    note: str(row.note),
+    uploaded_at: str(row.uploaded_at),
+    created_by: (row.created_by as string | null) ?? null,
+  };
+};
+
+const CO_DOC_TYPES = ["backup", "quote", "correspondence", "other"] as const;
+
+const normalizeChangeOrderDocument = (row: Record<string, unknown>): ChangeOrderDocumentRow => {
+  const docType = str(row.doc_type, "backup");
+  return {
+    id: row.id as string,
+    change_order_id: row.change_order_id as string,
+    project_id: row.project_id as string,
+    storage_path: str(row.storage_path),
+    file_name: str(row.file_name),
+    doc_type: CO_DOC_TYPES.includes(docType as CoDocType) ? (docType as CoDocType) : "backup",
     note: str(row.note),
     uploaded_at: str(row.uploaded_at),
     created_by: (row.created_by as string | null) ?? null,
@@ -1751,6 +1794,10 @@ export const getProject = createServerFn({ method: "GET" })
       .select("*")
       .eq("project_id", pid)
       .order("uploaded_at", { ascending: false });
+    const changeOrderDocumentRes = await dynamicTable(context.supabase, "change_order_documents")
+      .select("*")
+      .eq("project_id", pid)
+      .order("uploaded_at", { ascending: false });
     if (eRes.error) throw new Error(eRes.error.message);
     if (cRes.error) throw new Error(cRes.error.message);
     if (bRes.error) throw new Error(bRes.error.message);
@@ -1802,6 +1849,17 @@ export const getProject = createServerFn({ method: "GET" })
         claimDocumentRes.error.message.includes("schema cache"));
     if (claimDocumentRes.error && !claimDocumentsTableMissing) {
       throw new Error(claimDocumentRes.error.message);
+    }
+    // Pre-migration the change_order_documents table doesn't exist yet — swallow
+    // that so the project still loads (mirrors the claim-documents catch above),
+    // and rethrow anything that isn't a missing-relation error.
+    const changeOrderDocumentsTableMissing =
+      changeOrderDocumentRes.error &&
+      (isMissingRestRelation(changeOrderDocumentRes.error, "change_order_documents") ||
+        changeOrderDocumentRes.error.message.includes("change_order_documents") ||
+        changeOrderDocumentRes.error.message.includes("schema cache"));
+    if (changeOrderDocumentRes.error && !changeOrderDocumentsTableMissing) {
+      throw new Error(changeOrderDocumentRes.error.message);
     }
 
     let billingEventRows: BillingApplicationEventRow[] = [];
@@ -1909,6 +1967,12 @@ export const getProject = createServerFn({ method: "GET" })
         owner: str(o.owner),
         notes: str(o.notes),
         co_type: str(o.co_type, "other") as COType,
+        // Structured fields read with SAFE DEFAULTS so a pre-migration row (no
+        // such columns) still maps and the project loads.
+        pricing_method: str(o.pricing_method, "lump_sum") as COPricingMethod,
+        schedule_impact_days: num(o.schedule_impact_days ?? 0),
+        requested_by: str(o.requested_by, ""),
+        date_initiated: (o.date_initiated as string | null) ?? null,
         client_visible: Boolean(o.client_visible ?? false),
         client_status: str(o.client_status, "not_sent") as ClientChangeOrderStatus,
         client_notes: str(o.client_notes),
@@ -2008,6 +2072,11 @@ export const getProject = createServerFn({ method: "GET" })
       ? []
       : ((claimDocumentRes.data ?? []) as unknown[]).map((row) =>
           normalizeClaimDocument(row as Record<string, unknown>),
+        );
+    const changeOrderDocuments: ChangeOrderDocumentRow[] = changeOrderDocumentsTableMissing
+      ? []
+      : ((changeOrderDocumentRes.data ?? []) as unknown[]).map((row) =>
+          normalizeChangeOrderDocument(row as Record<string, unknown>),
         );
     const decisions: DecisionRow[] = (dRes.data ?? []).map((d) =>
       normalizeDecision(d as Record<string, unknown>),
@@ -2141,6 +2210,7 @@ export const getProject = createServerFn({ method: "GET" })
       claims,
       claimEvents,
       claimDocuments,
+      changeOrderDocuments,
       rollup,
       guidance,
       warnings,
@@ -2560,7 +2630,34 @@ const coInput = z.object({
   owner: z.string().max(200).default(""),
   notes: z.string().max(2000).default(""),
   co_type: z.enum(CO_TYPES).default("other"),
+  // Structured fields (ship in the structured-fields migration).
+  pricing_method: z
+    .enum(["lump_sum", "time_and_materials", "unit_price", "allowance", "other"])
+    .default("lump_sum"),
+  schedule_impact_days: z.number().int().default(0),
+  requested_by: z.string().max(200).default(""),
+  date_initiated: z.string().nullable().optional(),
 });
+
+// The columns that ship in the structured-fields migration. If the code deploys
+// before the migration lands, writing them 400s with a missing-column error;
+// we strip them and retry so CO create/edit still works (the values simply
+// aren't persisted until the migration applies).
+const CO_STRUCTURED_COLUMNS = [
+  "pricing_method",
+  "schedule_impact_days",
+  "requested_by",
+  "date_initiated",
+] as const;
+
+const stripCoStructuredColumns = <T extends Record<string, unknown>>(payload: T): Partial<T> => {
+  const clone: Record<string, unknown> = { ...payload };
+  for (const col of CO_STRUCTURED_COLUMNS) delete clone[col];
+  return clone as Partial<T>;
+};
+
+const isMissingCoStructuredColumn = (error: { code?: string; message?: string } | null) =>
+  CO_STRUCTURED_COLUMNS.some((col) => isMissingRestColumn(error, col));
 
 export const createChangeOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -2569,11 +2666,22 @@ export const createChangeOrder = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { projectId, ...rest } = data;
-    const { data: inserted, error } = await context.supabase
+    const row = { project_id: projectId, ...rest };
+    // Cast to `never`: the structured columns land with a migration that may be
+    // behind the generated Database types (same pattern as linkChangeOrderExposure).
+    let { data: inserted, error } = await context.supabase
       .from("change_orders")
-      .insert({ project_id: projectId, ...rest })
+      .insert(row as never)
       .select("id")
       .single();
+    if (error && isMissingCoStructuredColumn(error)) {
+      // Pre-migration: retry without the structured columns so the CO still saves.
+      ({ data: inserted, error } = await context.supabase
+        .from("change_orders")
+        .insert(stripCoStructuredColumns(row) as never)
+        .select("id")
+        .single());
+    }
     if (error) throw new Error(error.message);
     return { ok: true, id: (inserted as { id: string } | null)?.id ?? "" };
   });
@@ -2585,7 +2693,19 @@ export const updateChangeOrder = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { id, ...patch } = data;
-    const { error } = await context.supabase.from("change_orders").update(patch).eq("id", id);
+    // Cast to `never`: structured columns may be a migration behind the generated
+    // Database types (same pattern as linkChangeOrderExposure).
+    let { error } = await context.supabase
+      .from("change_orders")
+      .update(patch as never)
+      .eq("id", id);
+    if (error && isMissingCoStructuredColumn(error)) {
+      // Pre-migration: retry without the structured columns so the edit still lands.
+      ({ error } = await context.supabase
+        .from("change_orders")
+        .update(stripCoStructuredColumns(patch) as never)
+        .eq("id", id));
+    }
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -3423,6 +3543,54 @@ export const deleteClaimDocument = createServerFn({ method: "POST" })
   .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { error } = await dynamicTable(context.supabase, "project_claim_documents")
+      .delete()
+      .eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true, id: data.id };
+  });
+
+// ---------------- CHANGE ORDER DOCUMENTS ----------------
+// Attachments on a change order (the CO proposal/quote + cost backup +
+// correspondence). Bytes are uploaded to the private 'co-docs' bucket
+// client-side (path <projectId>/<changeOrderId>/<file>, team storage RLS); this
+// records the path + name.
+
+export const addChangeOrderDocument = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) =>
+    z
+      .object({
+        changeOrderId: z.string().uuid(),
+        projectId: z.string().uuid(),
+        path: z.string().min(1).max(500),
+        name: z.string().min(1).max(300),
+        doc_type: z.enum(["backup", "quote", "correspondence", "other"]).default("backup"),
+        note: z.string().max(300).default(""),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }): Promise<ChangeOrderDocumentRow> => {
+    const { data: row, error } = await dynamicTable(context.supabase, "change_order_documents")
+      .insert({
+        change_order_id: data.changeOrderId,
+        project_id: data.projectId,
+        storage_path: data.path,
+        file_name: data.name,
+        doc_type: data.doc_type,
+        note: data.note,
+        created_by: context.userId,
+      })
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return normalizeChangeOrderDocument(row as Record<string, unknown>);
+  });
+
+export const deleteChangeOrderDocument = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "change_order_documents")
       .delete()
       .eq("id", data.id);
     if (error) throw new Error(error.message);
