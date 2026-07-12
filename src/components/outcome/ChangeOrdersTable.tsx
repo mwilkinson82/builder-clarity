@@ -3,6 +3,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -30,7 +31,16 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { FileText, Plus, Pencil, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
-import type { ChangeOrderRow, COStatus, COType } from "@/lib/projects.functions";
+import type {
+  ChangeOrderRow,
+  ClientChangeOrderStatus,
+  COStatus,
+  COType,
+  ExposureRow,
+  ProjectRow,
+} from "@/lib/projects.functions";
+import type { Rollup } from "@/lib/ior";
+import type { ChangeOrderAllocationRow } from "@/lib/billing.functions";
 
 const statusStyles: Record<COStatus, string> = {
   Approved: "bg-success/15 text-success border-success/30",
@@ -47,6 +57,38 @@ const CO_TYPE_LABELS: Record<COType, string> = {
   sub_issued: "Issued to sub",
   other: "Other",
 };
+
+/** Short chip labels for the Reason chips (full labels stay in the edit dialog). */
+const CO_TYPE_SHORT: Record<COType, string> = {
+  owner_change: "Owner change",
+  design_error: "Design error",
+  design_omission: "Design omission",
+  unforeseen_condition: "Unforeseen",
+  missed_scope: "Missed scope",
+  sub_issued: "Sub issued",
+  other: "Other",
+};
+
+const CLIENT_STATUS_DISPLAY: Record<ClientChangeOrderStatus, { label: string; className: string }> =
+  {
+    not_sent: { label: "Not sent", className: "text-muted-foreground" },
+    sent: { label: "Client: sent", className: "text-warning" },
+    approved: { label: "Client approved", className: "text-success" },
+    rejected: { label: "Client rejected", className: "text-danger" },
+  };
+
+const marginPctLabel = (contract: number, cost: number): string | null =>
+  contract !== 0 ? `${(((contract - cost) / contract) * 100).toFixed(1)}%` : null;
+
+const truncate = (s: string, n = 24) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+function ReasonChip({ type }: { type: COType }) {
+  return (
+    <span className="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+      {CO_TYPE_SHORT[type] ?? "Other"}
+    </span>
+  );
+}
 
 type Draft = {
   number: string;
@@ -79,6 +121,12 @@ export function ChangeOrdersTable({
   onDelete,
   onCreateRisk,
   creatingRiskId,
+  project,
+  rollup,
+  allocations,
+  exposures,
+  onOpenClientPortal,
+  onQuickStatus,
 }: {
   changeOrders: ChangeOrderRow[];
   onCreate: (d: Draft) => void;
@@ -86,6 +134,14 @@ export function ChangeOrdersTable({
   onDelete: (id: string) => void;
   onCreateRisk?: (changeOrder: ChangeOrderRow) => void;
   creatingRiskId?: string | null;
+  project?: ProjectRow;
+  rollup?: Rollup;
+  // Structural pick so both billing's ChangeOrderAllocationRow and the route's
+  // ChangeOrderAllocationListRow satisfy it — the log only reads these two.
+  allocations?: Array<Pick<ChangeOrderAllocationRow, "change_order_id" | "cost_code">>;
+  exposures?: ExposureRow[];
+  onOpenClientPortal?: () => void;
+  onQuickStatus?: (co: ChangeOrderRow, status: "Approved" | "Denied") => void;
 }) {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -119,38 +175,268 @@ export function ChangeOrdersTable({
     setOpen(false);
   };
 
-  const totals = changeOrders.reduce(
-    (acc, c) => {
-      if (c.status === "Approved") {
-        acc.approvedContract += c.contract_amount;
-        acc.approvedCost += c.cost_amount;
-      } else if (c.status === "Pending") {
-        acc.pendingContract += c.contract_amount;
-        acc.weightedContract += c.contract_amount * (c.probability / 100);
-        acc.weightedCost += c.cost_amount * (c.probability / 100);
-      }
-      return acc;
+  // ── Derived money (live rows; rollup fields preferred when supplied) ──────
+  const pending = changeOrders.filter((c) => c.status === "Pending");
+  const approvedRows = changeOrders.filter((c) => c.status === "Approved");
+  const deniedRows = changeOrders.filter((c) => c.status === "Denied");
+
+  const pendingContract = pending.reduce((s, c) => s + c.contract_amount, 0);
+  const approvedContract =
+    rollup?.approvedCOContract ?? approvedRows.reduce((s, c) => s + c.contract_amount, 0);
+  const approvedCost =
+    rollup?.approvedCOCost ?? approvedRows.reduce((s, c) => s + c.cost_amount, 0);
+  const deniedContract = deniedRows.reduce((s, c) => s + c.contract_amount, 0);
+  const originalContract = project?.original_contract ?? rollup?.originalContract ?? 0;
+  const coMargin = approvedContract - approvedCost;
+  const coMarginPct = marginPctLabel(approvedContract, approvedCost);
+
+  const totalContract = changeOrders.reduce((s, c) => s + c.contract_amount, 0);
+  const totalCost = changeOrders.reduce((s, c) => s + c.cost_amount, 0);
+  const totalMargin = totalContract - totalCost;
+
+  // Rows arrive ordered by CO number ascending — reverse for newest first.
+  const pendingCards = [...pending].reverse().slice(0, 4);
+
+  // Unsent design errors/omissions still pending → the "Needs attention" callout.
+  const unsentDesign = pending
+    .filter(
+      (c) =>
+        (c.co_type === "design_error" || c.co_type === "design_omission") &&
+        c.client_status === "not_sent",
+    )
+    .sort((a, b) => b.cost_amount - a.cost_amount);
+  const attention = unsentDesign[0];
+
+  // ── By-reason buckets (all COs, contract dollars) ──────────────────────────
+  const bucketDefs: { label: string; match: (t: COType) => boolean; bar: string }[] = [
+    { label: "Owner change", match: (t) => t === "owner_change", bar: "bg-success/70" },
+    { label: "Missed scope", match: (t) => t === "missed_scope", bar: "bg-success/70" },
+    {
+      label: "Unforeseen condition",
+      match: (t) => t === "unforeseen_condition",
+      bar: "bg-warning/70",
     },
     {
-      approvedContract: 0,
-      approvedCost: 0,
-      pendingContract: 0,
-      weightedContract: 0,
-      weightedCost: 0,
+      label: "Design error",
+      match: (t) => t === "design_error" || t === "design_omission",
+      bar: "bg-danger/70",
     },
-  );
+  ];
+  const matchedTypes = (t: COType) => bucketDefs.some((b) => b.match(t));
+  const buckets = bucketDefs.map((b) => ({
+    label: b.label,
+    bar: b.bar,
+    sum: changeOrders.filter((c) => b.match(c.co_type)).reduce((s, c) => s + c.contract_amount, 0),
+  }));
+  const otherSum = changeOrders
+    .filter((c) => !matchedTypes(c.co_type))
+    .reduce((s, c) => s + c.contract_amount, 0);
+  if (otherSum > 0) buckets.push({ label: "Other", bar: "bg-muted-foreground/50", sum: otherSum });
+  const maxBucket = Math.max(...buckets.map((b) => b.sum), 0);
+  const barWidth = (sum: number) =>
+    maxBucket > 0 && sum > 0 ? Math.max((sum / maxBucket) * 100, 8) : 0;
+
+  const linksFor = (c: ChangeOrderRow) => {
+    const parts = (allocations ?? [])
+      .filter((a) => a.change_order_id === c.id)
+      .map((a) => `→ ${a.cost_code}`);
+    if (c.linked_exposure_id) parts.push("↔ Risk");
+    return parts;
+  };
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-hairline bg-hairline md:grid-cols-4">
-        <Stat label="Approved (contract)" value={fmtUSD(totals.approvedContract)} />
-        <Stat label="Approved (cost)" value={fmtUSD(totals.approvedCost)} />
-        <Stat label="Pending (raw)" value={fmtUSD(totals.pendingContract)} />
-        <Stat
-          label="Pending (probability-weighted)"
-          value={fmtUSD(totals.weightedContract)}
-          accent
-        />
+      {/* 1 · Verdict headline */}
+      <div>
+        <h2 className="max-w-[30ch] font-serif text-3xl font-normal leading-[1.15]">
+          {pending.length > 0 ? (
+            <>
+              {pending.length} change {pending.length === 1 ? "order is" : "orders are"} pending —{" "}
+              <b className="font-semibold text-warning">{fmtUSD(pendingContract)}</b> of contract
+              awaiting a decision.
+            </>
+          ) : (
+            <>No change orders are waiting on a decision.</>
+          )}
+        </h2>
+        {attention && (
+          <div className="mt-3 flex max-w-[74ch] items-start gap-2.5">
+            <span className="mt-0.5 flex-none whitespace-nowrap rounded-full border border-warning/35 bg-warning/10 px-2.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-warning">
+              Needs attention
+            </span>
+            <span className="text-[13.5px] leading-relaxed text-muted-foreground">
+              <b className="font-semibold text-foreground">
+                {attention.number} ({attention.description})
+              </b>{" "}
+              is a {CO_TYPE_SHORT[attention.co_type].toLowerCase()} and hasn&apos;t been sent to the
+              client — {fmtUSD(attention.cost_amount)} of cost sits unbilled until it moves.
+              {unsentDesign.length > 1 &&
+                ` ${unsentDesign.length - 1} more unsent design ${
+                  unsentDesign.length - 1 === 1 ? "change hasn't" : "changes haven't"
+                } been sent either.`}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* 2 · Pending your decision */}
+      {pendingCards.length > 0 && (
+        <div>
+          <div className="eyebrow mt-6">Pending your decision</div>
+          <div className="mt-3 grid gap-4 md:grid-cols-2">
+            {pendingCards.map((c) => {
+              const margin = c.contract_amount - c.cost_amount;
+              const pct = marginPctLabel(c.contract_amount, c.cost_amount);
+              const client = CLIENT_STATUS_DISPLAY[c.client_status];
+              const riskTitle = c.linked_exposure_id
+                ? exposures?.find((e) => e.id === c.linked_exposure_id)?.title
+                : undefined;
+              return (
+                <div key={c.id} className="rounded-xl border border-hairline bg-card p-4">
+                  <div className="flex items-center gap-2.5">
+                    <span className="font-mono text-[10px] text-muted-foreground">{c.number}</span>
+                    <ReasonChip type={c.co_type} />
+                    <span className="whitespace-nowrap text-[10px] text-muted-foreground">
+                      {c.probability}% likely
+                    </span>
+                    <span
+                      className={`ml-auto whitespace-nowrap font-mono text-[10px] font-bold uppercase tracking-[0.06em] ${client.className}`}
+                    >
+                      {client.label}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-[15px] font-semibold">{c.description}</div>
+                  <div className="mt-2.5 flex gap-6 border-t border-hairline pt-2.5">
+                    <div>
+                      <div className="text-[11px] text-muted-foreground">Contract</div>
+                      <div className="mt-0.5 font-serif text-[17px] tabular">
+                        {fmtUSD(c.contract_amount)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-muted-foreground">Cost</div>
+                      <div className="mt-0.5 font-serif text-[17px] tabular text-muted-foreground">
+                        {fmtUSD(c.cost_amount)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-clay">Margin</div>
+                      <div
+                        className={`mt-0.5 font-serif text-[17px] tabular ${
+                          margin < 0 ? "text-danger" : "text-success"
+                        }`}
+                      >
+                        {fmtUSD(margin)}
+                        {pct ? ` · ${pct}` : ""}
+                      </div>
+                    </div>
+                    {c.linked_exposure_id && (
+                      <div className="ml-auto min-w-0 self-center">
+                        <span
+                          className="font-mono text-[11px] text-muted-foreground"
+                          title={riskTitle}
+                        >
+                          ↔ Risk{riskTitle ? `: ${truncate(riskTitle)}` : ""}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-3.5 flex gap-2">
+                    <Button size="sm" onClick={onOpenClientPortal}>
+                      {c.client_status === "sent" ? "Nudge client" : "Send to client"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onQuickStatus?.(c, "Approved")}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onQuickStatus?.(c, "Denied")}
+                    >
+                      Deny
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 3 · Analysis grid */}
+      <div className="grid items-start gap-4 md:grid-cols-2">
+        <div className="rounded-xl border border-hairline bg-card px-5 py-4">
+          <div className="eyebrow">What change orders did to the contract</div>
+          <div className="mt-2.5 flex items-baseline justify-between border-t border-hairline py-2.5">
+            <span className="text-[12.5px] text-muted-foreground">Original contract sum</span>
+            <span className="font-serif text-[17px] tabular">{fmtUSD(originalContract)}</span>
+          </div>
+          <div className="flex items-baseline justify-between border-t border-hairline py-2.5">
+            <span className="text-[12.5px] text-muted-foreground">
+              + Approved change orders ({approvedRows.length} approved)
+            </span>
+            <span className="font-serif text-[17px] tabular text-success">
+              {fmtUSD(approvedContract, { sign: true })}
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between border-t-2 py-2.5">
+            <span className="text-[12.5px] font-semibold">Contract sum to date</span>
+            <span className="font-serif text-[19px] tabular">
+              {fmtUSD(originalContract + approvedContract)}
+            </span>
+          </div>
+          <div className="mt-2 flex border-t border-hairline pt-3">
+            <div className="flex-1">
+              <div className="text-xs text-muted-foreground">Approved CO revenue</div>
+              <div className="mt-0.5 font-serif text-[17px] tabular">
+                {fmtUSD(approvedContract)}
+              </div>
+            </div>
+            <div className="flex-1">
+              <div className="text-xs text-muted-foreground">Approved CO cost</div>
+              <div className="mt-0.5 font-serif text-[17px] tabular text-muted-foreground">
+                {fmtUSD(approvedCost)}
+              </div>
+            </div>
+            <div className="flex-1">
+              <div className="text-xs text-clay">CO margin</div>
+              <div
+                className={`mt-0.5 font-serif text-[17px] tabular ${
+                  coMargin < 0 ? "text-danger" : "text-success"
+                }`}
+              >
+                {fmtUSD(coMargin)}
+                {coMarginPct ? ` · ${coMarginPct}` : ""}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-hairline bg-card px-5 py-4">
+          <div className="eyebrow">By reason · all COs</div>
+          <p className="mb-2 mt-1.5 max-w-[52ch] text-[11.5px] text-muted-foreground">
+            Design errors and omissions may not be billable — watch the margin.
+          </p>
+          {buckets.map((b) => (
+            <div
+              key={b.label}
+              className="grid grid-cols-[140px_1fr_84px] items-center gap-2.5 py-1.5"
+            >
+              <span className="text-[12.5px]">{b.label}</span>
+              <span className="block h-1.5 rounded-full bg-muted">
+                <span
+                  className={`block h-full rounded-full ${b.bar}`}
+                  style={{ width: `${barWidth(b.sum)}%` }}
+                />
+              </span>
+              <span className="text-right font-serif text-sm tabular">{fmtUSD(b.sum)}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="flex justify-end">
@@ -159,96 +445,135 @@ export function ChangeOrdersTable({
         </Button>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-hairline bg-card">
+      {/* 4 · Full change order log */}
+      <div className="overflow-hidden rounded-xl border border-hairline bg-card">
+        <div className="flex items-center gap-3 px-5 pb-3 pt-4">
+          <div className="text-[13px] font-semibold">Full change order log</div>
+          <span className="ml-auto text-xs text-muted-foreground">
+            {changeOrders.length} total · {fmtUSD(totalContract)} requested
+          </span>
+        </div>
         <Table>
           <TableHeader>
             <TableRow className="bg-surface">
               <TableHead className="w-[90px]">CO #</TableHead>
               <TableHead>Description</TableHead>
-              <TableHead className="hidden lg:table-cell">Type</TableHead>
+              <TableHead>Reason</TableHead>
               <TableHead className="text-right">Contract</TableHead>
               <TableHead className="text-right">Cost</TableHead>
+              <TableHead className="text-right">Margin</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="text-right">Prob.</TableHead>
-              <TableHead className="hidden md:table-cell">Owner</TableHead>
+              <TableHead>Client</TableHead>
+              <TableHead>Links</TableHead>
               <TableHead className="w-[150px] text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {changeOrders.map((c) => (
-              <TableRow key={c.id}>
-                <TableCell className="font-mono text-xs text-muted-foreground">
-                  {c.number}
-                </TableCell>
-                <TableCell className="font-medium">{c.description}</TableCell>
-                <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                  {CO_TYPE_LABELS[c.co_type] ?? "—"}
-                </TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(c.contract_amount)}</TableCell>
-                <TableCell className="text-right tabular text-foreground/80">
-                  {fmtUSD(c.cost_amount)}
-                </TableCell>
-                <TableCell>
-                  <span
-                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${statusStyles[c.status]}`}
-                  >
-                    {c.status}
-                  </span>
-                </TableCell>
-                <TableCell className="text-right tabular text-sm">
-                  {c.status === "Pending" ? `${c.probability}%` : "—"}
-                </TableCell>
-                <TableCell className="hidden md:table-cell text-sm">{c.owner}</TableCell>
-
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    {c.linked_exposure_id ? (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7 text-accent-foreground"
-                        disabled
-                        title="Already in the risk tally"
-                        aria-label={`${c.number || c.description} is already in the risk tally`}
-                      >
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                      </Button>
+            {changeOrders.map((c) => {
+              const margin = c.contract_amount - c.cost_amount;
+              const pct = marginPctLabel(c.contract_amount, c.cost_amount);
+              const client = CLIENT_STATUS_DISPLAY[c.client_status];
+              const links = linksFor(c);
+              return (
+                <TableRow key={c.id}>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {c.number}
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    {c.description}
+                    {c.owner && (
+                      <div className="text-[11px] font-normal text-muted-foreground">{c.owner}</div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <ReasonChip type={c.co_type} />
+                  </TableCell>
+                  <TableCell className="text-right font-serif tabular">
+                    {fmtUSD(c.contract_amount)}
+                  </TableCell>
+                  <TableCell className="text-right font-serif tabular text-muted-foreground">
+                    {fmtUSD(c.cost_amount)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-right">
+                    <span
+                      className={`font-serif tabular ${margin < 0 ? "text-danger" : "text-success"}`}
+                    >
+                      {fmtUSD(margin)}
+                    </span>
+                    {pct && <span className="ml-1 text-[10.5px] text-muted-foreground">{pct}</span>}
+                  </TableCell>
+                  <TableCell>
+                    <span
+                      className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ${statusStyles[c.status]}`}
+                    >
+                      {c.status}
+                      {c.status === "Pending" ? ` · ${c.probability}%` : ""}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <span className={`whitespace-nowrap text-xs ${client.className}`}>
+                      {client.label}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    {links.length > 0 ? (
+                      <span className="whitespace-nowrap font-mono text-[11px] text-muted-foreground">
+                        {links.join(" ")}
+                      </span>
                     ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      {c.linked_exposure_id ? (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 text-accent-foreground"
+                          disabled
+                          title="Already in the risk tally"
+                          aria-label={`${c.number || c.description} is already in the risk tally`}
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() => onCreateRisk?.(c)}
+                          disabled={!onCreateRisk || creatingRiskId === c.id}
+                          title="Send to risk tally"
+                          aria-label={`Send ${c.number || c.description} to risk tally`}
+                        >
+                          <ShieldAlert className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                       <Button
                         size="icon"
                         variant="ghost"
                         className="h-7 w-7"
-                        onClick={() => onCreateRisk?.(c)}
-                        disabled={!onCreateRisk || creatingRiskId === c.id}
-                        title="Send to risk tally"
-                        aria-label={`Send ${c.number || c.description} to risk tally`}
+                        onClick={() => openEdit(c)}
                       >
-                        <ShieldAlert className="h-3.5 w-3.5" />
+                        <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                    )}
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => openEdit(c)}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7"
-                      onClick={() => onDelete(c.id)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        onClick={() => onDelete(c.id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
             {changeOrders.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="py-8">
+                <TableCell colSpan={10} className="py-8">
                   <EmptyState
                     icon={FileText}
                     title="No change orders yet"
@@ -263,6 +588,36 @@ export function ChangeOrdersTable({
               </TableRow>
             )}
           </TableBody>
+          {changeOrders.length > 0 && (
+            <TableFooter className="bg-transparent">
+              <TableRow className="border-t-2 hover:bg-transparent">
+                <TableCell />
+                <TableCell className="font-bold">
+                  {changeOrders.length} change order{changeOrders.length === 1 ? "" : "s"}
+                </TableCell>
+                <TableCell />
+                <TableCell className="text-right font-serif text-[15px] tabular">
+                  {fmtUSD(totalContract)}
+                </TableCell>
+                <TableCell className="text-right font-serif text-[15px] tabular text-muted-foreground">
+                  {fmtUSD(totalCost)}
+                </TableCell>
+                <TableCell
+                  className={`text-right font-serif text-[15px] tabular ${
+                    totalMargin < 0 ? "text-danger" : "text-success"
+                  }`}
+                >
+                  {fmtUSD(totalMargin)}
+                </TableCell>
+                <TableCell colSpan={4}>
+                  <span className="text-[11px] font-normal text-muted-foreground">
+                    {fmtUSD(approvedContract)} in contract · {fmtUSD(pendingContract)} pending ·{" "}
+                    {fmtUSD(deniedContract)} denied
+                  </span>
+                </TableCell>
+              </TableRow>
+            </TableFooter>
+          )}
         </Table>
       </div>
 
@@ -382,19 +737,6 @@ export function ChangeOrdersTable({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className="bg-card px-5 py-4">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-        {label}
-      </div>
-      <div className={`mt-1 font-serif text-2xl tabular ${accent ? "text-accent" : ""}`}>
-        {value}
-      </div>
     </div>
   );
 }
