@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Download, Pencil, Mail, FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 import { sendTransactionalEmail } from "@/lib/email/send";
 import { fmtPct, fmtUSD } from "@/lib/format";
 import type { ReviewRow, ProjectRow } from "@/lib/projects.functions";
@@ -40,6 +41,8 @@ export function ReviewsTab({
       status?: string;
       email_recipients?: string[];
       pdf_style?: IorPdfStyle;
+      pdf_path?: string;
+      last_sent_at?: string;
     },
   ) => void;
   pending?: boolean;
@@ -161,8 +164,10 @@ export function ReviewsTab({
           project={project}
           buildPdfInput={buildPdfInput}
           onClose={() => setEmailing(null)}
-          onSent={(recipients) => {
-            onUpdate(emailing.id, { email_recipients: recipients });
+          onSent={(recipients, stamp) => {
+            // Non-blocking: reviewUpdate.mutate is fire-and-forget; the stamp
+            // fields are tolerated server-side even if the columns are absent.
+            onUpdate(emailing.id, { email_recipients: recipients, ...stamp });
             setEmailing(null);
           }}
         />
@@ -182,7 +187,7 @@ function EmailReviewDialog({
   project: ProjectRow;
   buildPdfInput: (review: ReviewRow | null) => IorPdfInput;
   onClose: () => void;
-  onSent: (recipients: string[]) => void;
+  onSent: (recipients: string[], stamp?: { pdf_path?: string; last_sent_at?: string }) => void;
 }) {
   const [emails, setEmails] = useState((review.email_recipients ?? []).join(", "));
   const [note, setNote] = useState("");
@@ -190,6 +195,10 @@ function EmailReviewDialog({
 
   const input = buildPdfInput(review);
   const narrative = review.body_markdown || review.summary_notes || "";
+  // Same filename the download path builds — reused for the attachment chip,
+  // the upload object name, and the email's PDF caption.
+  const reviewedDate = new Date(review.reviewed_at).toISOString().slice(0, 10);
+  const pdfFilename = `IOR_${project.name.replace(/\s+/g, "_")}_${reviewedDate}.pdf`;
 
   const send = async () => {
     const recipients = parseRecipients(emails);
@@ -203,6 +212,42 @@ function EmailReviewDialog({
     setSending(true);
     try {
       const reviewedAt = formatDateTime(review.reviewed_at);
+
+      // Option A delivery: generate the IOR PDF (same call the download path
+      // uses), upload it to the private 'ior-reports' bucket, and mint a signed
+      // download URL threaded into the email as a prominent download button.
+      // This whole block is best-effort: on ANY failure — bucket/columns not yet
+      // migrated, storage error, PDF-gen throw — we catch and fall through to the
+      // CURRENT link-only email rather than blocking the send.
+      let pdfUrl: string | undefined;
+      let pdfPath: string | undefined;
+      try {
+        const style = (review.pdf_style as IorPdfStyle) ?? "executive";
+        const bytes = await generateIorPdf({ ...input, narrative }, style);
+        const path = `${project.id}/${review.id}/${crypto.randomUUID()}-${pdfFilename}`;
+        const { error: uploadError } = await supabase.storage
+          .from("ior-reports")
+          .upload(path, new Blob([new Uint8Array(bytes)], { type: "application/pdf" }), {
+            contentType: "application/pdf",
+            upsert: false,
+          });
+        if (uploadError) throw uploadError;
+        const { data: signed, error: signError } = await supabase.storage
+          .from("ior-reports")
+          .createSignedUrl(path, 60 * 60 * 24 * 7); // 7 days
+        if (signError) throw signError;
+        pdfUrl = signed?.signedUrl;
+        pdfPath = pdfUrl ? path : undefined;
+      } catch (pdfError) {
+        // Soft fallback — keep the send alive with the existing link-only email.
+        console.warn(
+          "[EmailReviewDialog] IOR PDF delivery unavailable; sending link-only:",
+          pdfError,
+        );
+        pdfUrl = undefined;
+        pdfPath = undefined;
+      }
+
       await Promise.all(
         recipients.map(async (recipient, index) => {
           const result = await sendTransactionalEmail({
@@ -223,6 +268,7 @@ function EmailReviewDialog({
               narrative,
               portalUrl: projectUrl(project.id),
               note,
+              ...(pdfUrl ? { pdfUrl, pdfFilename } : {}),
             },
           });
 
@@ -235,7 +281,11 @@ function EmailReviewDialog({
       toast.success("IOR report email queued", {
         description: `${recipients.length} recipient${recipients.length === 1 ? "" : "s"} will receive it from Overwatch.`,
       });
-      onSent(recipients);
+      // Best-effort stamp of which PDF was sent + when (non-blocking).
+      onSent(recipients, {
+        last_sent_at: new Date().toISOString(),
+        ...(pdfPath ? { pdf_path: pdfPath } : {}),
+      });
     } catch (error) {
       toast.error("IOR report email did not queue", {
         description: error instanceof Error ? error.message : "The email service rejected it.",
@@ -266,6 +316,13 @@ function EmailReviewDialog({
               </span>
             </div>
           </div>
+          <div className="flex items-center gap-2 rounded-md border border-hairline bg-muted/40 px-3 py-2 text-xs">
+            <FileText className="h-4 w-4 flex-none text-muted-foreground" />
+            <span className="truncate font-medium text-foreground">{pdfFilename}</span>
+            <span className="ml-auto flex-none rounded-full border border-clay/40 px-2 py-0.5 font-mono text-[8px] font-bold uppercase tracking-[0.12em] text-clay">
+              Included
+            </span>
+          </div>
           <div className="space-y-1.5">
             <Label>
               Team recipients <span className="text-muted-foreground">(comma-separated)</span>
@@ -288,7 +345,7 @@ function EmailReviewDialog({
         </div>
         <DialogFooter className="gap-3 border-t border-hairline pt-4 sm:items-center sm:justify-between">
           <span className="text-[11px] text-muted-foreground">
-            Sent from OverWatch with a link to the full report.
+            Sent from OverWatch with the full IOR report PDF included.
           </span>
           <div className="flex items-center justify-end gap-2">
             <Button variant="ghost" onClick={onClose} disabled={sending}>

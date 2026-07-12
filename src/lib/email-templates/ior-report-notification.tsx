@@ -25,6 +25,10 @@ interface Props {
   narrative?: string;
   portalUrl?: string;
   note?: string;
+  /** Signed download URL for the full IOR report PDF (Option A delivery). */
+  pdfUrl?: string;
+  /** File name shown next to the PDF download button. */
+  pdfFilename?: string;
 }
 
 const IorReportNotificationEmail = ({
@@ -41,6 +45,8 @@ const IorReportNotificationEmail = ({
   narrative,
   portalUrl,
   note,
+  pdfUrl,
+  pdfFilename,
 }: Props) => (
   <Html lang="en" dir="ltr">
     <Head />
@@ -79,6 +85,16 @@ const IorReportNotificationEmail = ({
           </Section>
         ) : null}
 
+        {pdfUrl ? (
+          <Section style={downloadRow}>
+            <Text style={downloadLead}>The full IOR report PDF is included below.</Text>
+            <Button href={pdfUrl} style={downloadButton}>
+              Download the IOR report (PDF)
+            </Button>
+            {pdfFilename ? <Text style={downloadCaption}>{pdfFilename}</Text> : null}
+          </Section>
+        ) : null}
+
         {portalUrl ? (
           <Button href={portalUrl} style={button}>
             Open project in Overwatch
@@ -86,8 +102,9 @@ const IorReportNotificationEmail = ({
         ) : null}
 
         <Text style={footer}>
-          This message was sent through Overwatch. Keep the report cycle, PDF, and follow-up work
-          inside the project record.
+          This message was sent through Overwatch.{" "}
+          {pdfUrl ? "The full IOR report PDF is included above as a secure download link. " : ""}
+          Keep the report cycle and follow-up work inside the project record.
         </Text>
       </Container>
     </Body>
@@ -113,8 +130,7 @@ const Row = ({
 
 export const template = {
   component: IorReportNotificationEmail,
-  subject: (data: Record<string, any>) =>
-    `IOR Report - ${data?.projectName ?? "Overwatch"}`.trim(),
+  subject: (data: Record<string, any>) => `IOR Report - ${data?.projectName ?? "Overwatch"}`.trim(),
   displayName: "IOR report notification",
   previewData: {
     projectName: "Harbor Residence",
@@ -131,6 +147,8 @@ export const template = {
       "Project remains on budget despite a schedule slip. Owner decision required this week to protect remaining margin.",
     portalUrl: "https://overwatch.alpcontractorcircle.com/projects/example",
     note: "Please review before the project meeting.",
+    pdfUrl: "https://overwatch.alpcontractorcircle.com/download/ior-report-example.pdf",
+    pdfFilename: "IOR_Harbor_Residence_2026-06-25.pdf",
   },
 } satisfies TemplateEntry;
 
@@ -219,6 +237,33 @@ const button = {
   fontWeight: 700,
   padding: "12px 18px",
   marginTop: "12px",
+};
+const downloadRow = {
+  backgroundColor: "#ffffff",
+  border: "1px solid #e5ddd3",
+  borderRadius: "8px",
+  padding: "16px 18px",
+  margin: "18px 0",
+};
+const downloadLead = {
+  fontSize: "13px",
+  lineHeight: "1.5",
+  color: "#342c26",
+  margin: "0 0 12px 0",
+  fontWeight: 700,
+};
+const downloadButton = {
+  backgroundColor: "#d97757",
+  color: "#231a15",
+  borderRadius: "6px",
+  fontSize: "14px",
+  fontWeight: 700,
+  padding: "13px 20px",
+};
+const downloadCaption = {
+  fontSize: "11px",
+  color: "#7d7168",
+  margin: "10px 0 0 0",
 };
 const footer = {
   fontSize: "12px",
