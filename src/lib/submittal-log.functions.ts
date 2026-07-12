@@ -430,3 +430,17 @@ export const saveTransmittal = createServerFn({ method: "POST" })
     }
     return normalizeTransmittal(row as Record<string, unknown>);
   });
+
+// Remove a transmittal from the register. The archived PDF in storage is cleared
+// by the caller (client-side, same as the CO-doc pattern) before this runs.
+// Team RLS (transmittals_delete → can_manage_project) gates who may delete.
+export const deleteTransmittal = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { error } = await dynamicTable(context.supabase, "transmittals")
+      .delete()
+      .eq("id", data.id);
+    if (error && !isMissingLogTable(error)) throw new Error(error.message);
+    return { id: data.id };
+  });
