@@ -227,31 +227,38 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="eyebrow inline-flex items-center rounded-md border border-hairline px-2 py-0.5">
+            Document library
+          </span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onFilePicked(file);
+              e.target.value = "";
+            }}
+          />
+          <Button className="ml-auto gap-1.5" onClick={() => fileInputRef.current?.click()}>
+            <Upload className="h-4 w-4" /> Upload document
+          </Button>
+        </div>
         <div>
-          <h2 className="text-lg font-semibold text-foreground">File room</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Every document for this job in one place — the prime contract, specifications, drawings,
-            QC/QA, supplier invoices, and receipts. Uploads are private to your team.
+          <h1 className="font-serif text-[30px] font-normal leading-[1.14] text-foreground">
+            Every document for the job, in one place.
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            The prime contract, specifications, drawings, QC/QA, supplier invoices, receipts, and
+            compliance — uploaded, categorized, and private to your team.
           </p>
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) onFilePicked(file);
-            e.target.value = "";
-          }}
-        />
-        <Button className="gap-1.5" onClick={() => fileInputRef.current?.click()}>
-          <Upload className="h-4 w-4" /> Upload document
-        </Button>
       </div>
 
       {/* Category filter chips */}
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         <FilterChip
           label="All"
           count={docs.length}
@@ -276,7 +283,7 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
       {docsQuery.isLoading ? (
         <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p>
       ) : docs.length === 0 ? (
-        <div className="rounded-lg border border-hairline bg-card py-10">
+        <div className="rounded-xl border border-hairline bg-card py-10">
           <EmptyState
             icon={Upload}
             title="No documents yet"
@@ -288,24 +295,24 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
           No documents in {categoryLabel(filter)} yet.
         </p>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-hairline bg-card">
+        <div className="overflow-hidden rounded-xl border border-hairline bg-card">
           <ul className="divide-y divide-hairline">
             {visible.map((doc) => (
               <li
                 key={doc.id}
-                className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface/60"
+                className="flex items-center gap-3.5 px-5 py-3.5 transition-colors hover:bg-muted/40"
               >
                 <DocIcon doc={doc} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate font-medium text-foreground">
+                    <span className="truncate text-sm font-semibold text-foreground">
                       {doc.title || doc.file_name}
                     </span>
-                    <span className="shrink-0 rounded-sm bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    <span className="shrink-0 rounded-sm border border-hairline px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[.12em] text-muted-foreground">
                       {categoryLabel(doc.category)}
                     </span>
                   </div>
-                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                  <div className="mt-1 truncate text-xs text-muted-foreground">
                     {doc.file_name}
                     {doc.size_bytes ? ` · ${formatBytes(doc.size_bytes)}` : ""}
                     {doc.created_at ? ` · ${formatBillingDate(doc.created_at.slice(0, 10))}` : ""}
@@ -316,11 +323,11 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
                     </div>
                   ) : null}
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 items-center gap-1.5">
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                    className="h-8 w-8 rounded-lg border border-hairline text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                     title="Download"
                     onClick={() => download(doc)}
                   >
@@ -329,7 +336,7 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                    className="h-8 w-8 rounded-lg border border-hairline text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                     title="Edit"
                     onClick={() => openEdit(doc)}
                   >
@@ -338,7 +345,7 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-8 w-8 text-muted-foreground hover:text-danger"
+                    className="h-8 w-8 rounded-lg border border-hairline text-danger hover:border-danger/40 hover:bg-danger/10 hover:text-danger"
                     title="Remove"
                     onClick={() => remove(doc)}
                   >
@@ -355,9 +362,32 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
       <Dialog open={pendingFile !== null} onOpenChange={(o) => !o && setPendingFile(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Upload document</DialogTitle>
-            <DialogDescription className="truncate">{pendingFile?.name}</DialogDescription>
+            <p className="eyebrow">Add to the file room</p>
+            <DialogTitle className="font-serif text-[22px] font-normal">
+              Upload document
+            </DialogTitle>
+            <DialogDescription className="sr-only">
+              Add a document to this project&apos;s private file room.
+            </DialogDescription>
           </DialogHeader>
+          {pendingFile ? (
+            <div className="rounded-xl border-2 border-dashed border-hairline bg-background p-5 text-center">
+              <Upload className="mx-auto h-6 w-6 text-muted-foreground" />
+              <div className="mt-2 truncate text-sm font-semibold text-foreground">
+                {pendingFile.name}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {formatBytes(pendingFile.size)} · ready to upload ·{" "}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-b border-foreground text-foreground transition-colors hover:border-clay hover:text-clay"
+                >
+                  choose a different file
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="space-y-3">
             <label className="block space-y-1">
               <span className="text-xs font-medium text-muted-foreground">Category</span>
@@ -407,7 +437,8 @@ export function ProjectFileRoom({ projectId }: { projectId: string }) {
       <Dialog open={editing !== null} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit document</DialogTitle>
+            <p className="eyebrow">Update details</p>
+            <DialogTitle className="font-serif text-[22px] font-normal">Edit document</DialogTitle>
             <DialogDescription className="truncate">{editing?.file_name}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -483,14 +514,14 @@ function FilterChip({
       type="button"
       onClick={onClick}
       className={cn(
-        "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+        "inline-flex items-center rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors",
         active
-          ? "border-accent bg-accent/10 text-accent"
-          : "border-hairline bg-card text-muted-foreground hover:bg-surface",
+          ? "border-accent/50 bg-accent/10 text-clay"
+          : "border-hairline bg-surface text-muted-foreground hover:bg-muted",
       )}
     >
       {label}
-      {count > 0 ? <span className="ml-1.5 opacity-70">{count}</span> : null}
+      <span className="ml-1.5 opacity-70">{count}</span>
     </button>
   );
 }
