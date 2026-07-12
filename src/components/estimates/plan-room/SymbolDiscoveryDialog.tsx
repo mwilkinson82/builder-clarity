@@ -48,7 +48,8 @@ export function SymbolDiscoveryDialog({
     <Dialog open={open} onOpenChange={(next) => (!next ? close() : undefined)}>
       <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <div className="eyebrow">Symbol discovery</div>
+          <DialogTitle className="flex items-center gap-2 font-serif text-2xl font-normal">
             <ScanSearch className="h-4 w-4" />
             Symbols found{result ? ` on ${result.sheetLabel}` : ""}
           </DialogTitle>

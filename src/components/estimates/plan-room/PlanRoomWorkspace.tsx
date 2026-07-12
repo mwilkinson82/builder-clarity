@@ -3888,7 +3888,10 @@ export function PlanRoomWorkspace({
         <Dialog open onOpenChange={(open) => !open && setBuildGroups(null)}>
           <DialogContent className="max-w-2xl" data-testid="build-from-takeoffs-dialog">
             <DialogHeader>
-              <DialogTitle>Build estimate rows from takeoffs</DialogTitle>
+              <div className="eyebrow">Takeoff</div>
+              <DialogTitle className="font-serif text-2xl font-normal">
+                Build estimate rows from takeoffs
+              </DialogTitle>
               <DialogDescription>
                 Unlinked takeoffs grouped into the rows they would create (waste applied, mixed
                 units kept separate). Uncheck any group to leave it as-is.
@@ -3967,7 +3970,10 @@ export function PlanRoomWorkspace({
         <Dialog open onOpenChange={(open) => !open && setMatchProposals(null)}>
           <DialogContent className="max-w-2xl" data-testid="takeoff-match-dialog">
             <DialogHeader>
-              <DialogTitle>Match takeoffs to estimate rows</DialogTitle>
+              <div className="eyebrow">Takeoff</div>
+              <DialogTitle className="font-serif text-2xl font-normal">
+                Match takeoffs to estimate rows
+              </DialogTitle>
               <DialogDescription>
                 Suggested matches on cost code or description with compatible units. Uncheck any row
                 to skip it — nothing links until you apply.
@@ -4032,7 +4038,10 @@ export function PlanRoomWorkspace({
         <Dialog open onOpenChange={(open) => !open && setDetectProposals(null)}>
           <DialogContent className="max-w-2xl" data-testid="detect-names-dialog">
             <DialogHeader>
-              <DialogTitle>Detected sheet names</DialogTitle>
+              <div className="eyebrow">Plan Room</div>
+              <DialogTitle className="font-serif text-2xl font-normal">
+                Detected sheet names
+              </DialogTitle>
               <DialogDescription>
                 Read from each sheet's title block. Uncheck any row you want to keep as-is — nothing
                 renames until you apply.
@@ -4127,7 +4136,10 @@ export function PlanRoomWorkspace({
         <Dialog open onOpenChange={(open) => !open && setVerifyOutcome(null)}>
           <DialogContent data-testid="verify-scale-discrepancy-dialog">
             <DialogHeader>
-              <DialogTitle>The scale is off</DialogTitle>
+              <div className="eyebrow">Scale check</div>
+              <DialogTitle className="font-serif text-2xl font-normal">
+                The scale is off
+              </DialogTitle>
               <DialogDescription>
                 Measured {formatQty(verifyOutcome.measuredFeet, "ft")} where you expected{" "}
                 {formatQty(verifyOutcome.expectedFeet, "ft")} — off by{" "}

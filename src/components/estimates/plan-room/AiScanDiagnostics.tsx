@@ -451,7 +451,8 @@ export function AiScanDiagnosticsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <div className="eyebrow">AI scan</div>
+          <DialogTitle className="flex items-center gap-2 font-serif text-2xl font-normal">
             <Microscope className="h-4 w-4" />
             Scan diagnostics
           </DialogTitle>

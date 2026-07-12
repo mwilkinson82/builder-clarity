@@ -74,7 +74,8 @@ export function SyncConflictDialog({
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
       <DialogContent data-testid="sync-conflict-dialog">
         <DialogHeader>
-          <DialogTitle>
+          <div className="eyebrow">Takeoff</div>
+          <DialogTitle className="font-serif text-2xl font-normal">
             {isUnit ? "This takeoff measures a different unit" : "Replace the hand-typed quantity?"}
           </DialogTitle>
           <DialogDescription>
