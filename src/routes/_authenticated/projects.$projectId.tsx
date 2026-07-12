@@ -136,6 +136,8 @@ import {
   deleteClaimEvent,
   addClaimDocument,
   deleteClaimDocument,
+  addChangeOrderDocument,
+  deleteChangeOrderDocument,
   linkClaimExposure,
   linkClaimChangeOrder,
   allocateChangeOrder,
@@ -179,6 +181,7 @@ import {
   type InspectionRow,
   type ClaimRow,
   type ClaimDocType,
+  type CoDocType,
   type SovImportRow,
   type BucketRow,
   listCostActualsForBudget,
@@ -442,6 +445,8 @@ function ProjectPage() {
   const deleteClaimEventFn = useServerFn(deleteClaimEvent);
   const addClaimDocumentFn = useServerFn(addClaimDocument);
   const deleteClaimDocumentFn = useServerFn(deleteClaimDocument);
+  const addChangeOrderDocumentFn = useServerFn(addChangeOrderDocument);
+  const deleteChangeOrderDocumentFn = useServerFn(deleteChangeOrderDocument);
   const linkClaimExposureFn = useServerFn(linkClaimExposure);
   const linkClaimChangeOrderFn = useServerFn(linkClaimChangeOrder);
   const updateBucketFn = useServerFn(updateBucket);
@@ -1059,6 +1064,60 @@ function ProjectPage() {
       });
     }
   };
+  // Change-order documents: bytes go straight to the private 'co-docs' bucket
+  // (path <projectId>/<changeOrderId>/<file>, team storage RLS), then a row
+  // records the path + name. View via a short-lived signed URL; remove drops both.
+  const [uploadingCoDocId, setUploadingCoDocId] = useState<string | null>(null);
+  const uploadCoDocument = async (
+    changeOrderId: string,
+    file: File,
+    docType: CoDocType,
+    note: string,
+  ) => {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+    const path = `${projectId}/${changeOrderId}/${crypto.randomUUID()}-${safeName}`;
+    setUploadingCoDocId(changeOrderId);
+    try {
+      const { error } = await supabase.storage
+        .from("co-docs")
+        .upload(path, file, { contentType: file.type || "application/pdf", upsert: false });
+      if (error) {
+        toast.error("Upload failed", { description: error.message });
+        return;
+      }
+      await addChangeOrderDocumentFn({
+        data: { changeOrderId, projectId, path, name: file.name, doc_type: docType, note },
+      });
+      invalidate();
+      toast.success("Document attached");
+    } catch (err) {
+      toast.error("Could not save the document", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    } finally {
+      setUploadingCoDocId(null);
+    }
+  };
+  const viewCoDocument = async (path: string) => {
+    const { data, error } = await supabase.storage.from("co-docs").createSignedUrl(path, 600);
+    if (error || !data?.signedUrl) {
+      toast.error("Could not open the document");
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+  const removeCoDocument = async (id: string, path: string) => {
+    if (path) await supabase.storage.from("co-docs").remove([path]);
+    try {
+      await deleteChangeOrderDocumentFn({ data: { id } });
+      invalidate();
+      toast.success("Document removed");
+    } catch (err) {
+      toast.error("Could not remove the document", {
+        description: err instanceof Error ? err.message : "Try again.",
+      });
+    }
+  };
   // SOV cell commits patch the cached bucket list immediately (group headers,
   // summary cards, and the footer recompute from it), then the settled
   // invalidate pulls the server truth including the IOR-facing rollup. The
@@ -1404,6 +1463,7 @@ function ProjectPage() {
     claims = [],
     claimEvents = [],
     claimDocuments = [],
+    changeOrderDocuments = [],
     rollup,
     guidance,
     warnings,
@@ -3302,6 +3362,11 @@ function ProjectPage() {
                 onDelete={(id) => coDelete.mutate({ id })}
                 onCreateRisk={handleCreateRiskFromChangeOrder}
                 creatingRiskId={creatingCoRiskId}
+                documents={changeOrderDocuments}
+                onUploadDocument={uploadCoDocument}
+                onViewDocument={viewCoDocument}
+                onDeleteDocument={removeCoDocument}
+                uploadingDocId={uploadingCoDocId}
               />
             </TabsContent>
 

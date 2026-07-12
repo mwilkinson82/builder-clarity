@@ -28,18 +28,31 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Download, FileText, Plus, Pencil, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
+import {
+  Download,
+  FileText,
+  Paperclip,
+  Plus,
+  Pencil,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { downloadTextFile } from "@/lib/download-file";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
 import type {
+  ChangeOrderDocumentRow,
   ChangeOrderRow,
   ClientChangeOrderStatus,
+  CoDocType,
+  COPricingMethod,
   COStatus,
   COType,
   ExposureRow,
   ProjectRow,
 } from "@/lib/projects.functions";
+import { ChangeOrderDocumentsDialog } from "@/components/outcome/ChangeOrderDocumentsDialog";
 import type { Rollup } from "@/lib/ior";
 import type { ChangeOrderAllocationRow } from "@/lib/billing.functions";
 
@@ -69,6 +82,32 @@ const CO_TYPE_SHORT: Record<COType, string> = {
   sub_issued: "Sub issued",
   other: "Other",
 };
+
+/** Plain-English pricing-method labels (full labels for the edit dialog). */
+const PRICING_METHOD_LABELS: Record<COPricingMethod, string> = {
+  lump_sum: "Lump sum",
+  time_and_materials: "Time & materials",
+  unit_price: "Unit price",
+  allowance: "Allowance",
+  other: "Other",
+};
+
+/** Short pricing-method chip labels for the log/cards. */
+const PRICING_METHOD_SHORT: Record<COPricingMethod, string> = {
+  lump_sum: "Lump sum",
+  time_and_materials: "T&M",
+  unit_price: "Unit price",
+  allowance: "Allowance",
+  other: "Other",
+};
+
+const PRICING_METHOD_ORDER: COPricingMethod[] = [
+  "lump_sum",
+  "time_and_materials",
+  "unit_price",
+  "allowance",
+  "other",
+];
 
 const CLIENT_STATUS_DISPLAY: Record<ClientChangeOrderStatus, { label: string; className: string }> =
   {
@@ -131,6 +170,31 @@ function ReasonChip({ type }: { type: COType }) {
   );
 }
 
+/** How the CO is priced — a quiet mono chip beside the reason. */
+function PricingChip({ method }: { method: COPricingMethod }) {
+  return (
+    <span
+      className="whitespace-nowrap rounded border border-hairline bg-surface px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-muted-foreground"
+      title={`Priced as ${PRICING_METHOD_LABELS[method].toLowerCase()}`}
+    >
+      {PRICING_METHOD_SHORT[method]}
+    </span>
+  );
+}
+
+/** "+N days" schedule-impact chip; renders nothing when there's no time impact. */
+function ScheduleChip({ days }: { days: number }) {
+  if (!days) return null;
+  return (
+    <span
+      className="whitespace-nowrap rounded bg-warning/15 px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-warning"
+      title={`Adds ${days} calendar ${days === 1 ? "day" : "days"} to the schedule`}
+    >
+      +{days} {days === 1 ? "day" : "days"}
+    </span>
+  );
+}
+
 type Draft = {
   number: string;
   description: string;
@@ -141,6 +205,10 @@ type Draft = {
   owner: string;
   notes: string;
   co_type: COType;
+  pricing_method: COPricingMethod;
+  schedule_impact_days: number;
+  requested_by: string;
+  date_initiated: string | null;
 };
 
 const empty: Draft = {
@@ -153,6 +221,10 @@ const empty: Draft = {
   owner: "",
   notes: "",
   co_type: "owner_change",
+  pricing_method: "lump_sum",
+  schedule_impact_days: 0,
+  requested_by: "",
+  date_initiated: null,
 };
 
 export function ChangeOrdersTable({
@@ -170,6 +242,11 @@ export function ChangeOrdersTable({
   onSendToClient,
   sendingClientId,
   onQuickStatus,
+  documents,
+  onUploadDocument,
+  onViewDocument,
+  onDeleteDocument,
+  uploadingDocId,
 }: {
   changeOrders: ChangeOrderRow[];
   onCreate: (d: Draft) => void;
@@ -188,10 +265,20 @@ export function ChangeOrdersTable({
   onSendToClient?: (co: ChangeOrderRow) => void;
   sendingClientId?: string | null;
   onQuickStatus?: (co: ChangeOrderRow, status: "Approved" | "Denied") => void;
+  // Optional CO-document plumbing (backup/quote/correspondence). All optional so
+  // existing call sites keep compiling; the Paperclip action only shows when the
+  // upload handler is wired.
+  documents?: ChangeOrderDocumentRow[];
+  onUploadDocument?: (changeOrderId: string, file: File, docType: CoDocType, note: string) => void;
+  onViewDocument?: (path: string) => void;
+  onDeleteDocument?: (id: string, path: string) => void;
+  uploadingDocId?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(empty);
+  // Which CO's documents dialog is open (null = closed).
+  const [docCo, setDocCo] = useState<ChangeOrderRow | null>(null);
 
   const openNew = () => {
     setEditingId(null);
@@ -210,6 +297,10 @@ export function ChangeOrdersTable({
       owner: c.owner,
       notes: c.notes,
       co_type: c.co_type,
+      pricing_method: c.pricing_method,
+      schedule_impact_days: c.schedule_impact_days,
+      requested_by: c.requested_by,
+      date_initiated: c.date_initiated,
     });
 
     setOpen(true);
@@ -290,6 +381,9 @@ export function ChangeOrdersTable({
     return parts;
   };
 
+  const docsFor = (id: string) => (documents ?? []).filter((d) => d.change_order_id === id);
+  const docCount = (id: string) => docsFor(id).length;
+
   return (
     <div className="space-y-4">
       {/* 1 · Verdict headline */}
@@ -339,9 +433,11 @@ export function ChangeOrdersTable({
                 : undefined;
               return (
                 <div key={c.id} className="rounded-xl border border-hairline bg-card p-4">
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex flex-wrap items-center gap-2.5">
                     <span className="font-mono text-[10px] text-muted-foreground">{c.number}</span>
                     <ReasonChip type={c.co_type} />
+                    <PricingChip method={c.pricing_method} />
+                    <ScheduleChip days={c.schedule_impact_days} />
                     <span className="whitespace-nowrap text-[10px] text-muted-foreground">
                       {c.probability}% likely
                     </span>
@@ -556,7 +652,11 @@ export function ChangeOrdersTable({
                     )}
                   </TableCell>
                   <TableCell>
-                    <ReasonChip type={c.co_type} />
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <ReasonChip type={c.co_type} />
+                      <PricingChip method={c.pricing_method} />
+                      <ScheduleChip days={c.schedule_impact_days} />
+                    </div>
                   </TableCell>
                   <TableCell className="text-right font-serif tabular">
                     {fmtUSD(c.contract_amount)}
@@ -618,6 +718,23 @@ export function ChangeOrdersTable({
                           aria-label={`Send ${c.number || c.description} to risk tally`}
                         >
                           <ShieldAlert className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {onUploadDocument && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="relative h-7 w-7"
+                          onClick={() => setDocCo(c)}
+                          title="Backup / supporting documents"
+                          aria-label={`Documents for ${c.number || c.description}`}
+                        >
+                          <Paperclip className="h-3.5 w-3.5" />
+                          {docCount(c.id) > 0 && (
+                            <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-clay px-0.5 font-mono text-[8px] font-bold leading-none text-white">
+                              {docCount(c.id)}
+                            </span>
+                          )}
                         </Button>
                       )}
                       <Button
@@ -769,6 +886,46 @@ export function ChangeOrdersTable({
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
+                <Label>How it&apos;s priced</Label>
+                <Select
+                  value={draft.pricing_method}
+                  onValueChange={(v) =>
+                    setDraft({ ...draft, pricing_method: v as COPricingMethod })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PRICING_METHOD_ORDER.map((k) => (
+                      <SelectItem key={k} value={k}>
+                        {PRICING_METHOD_LABELS[k]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Days added to schedule</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={draft.schedule_impact_days}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      schedule_impact_days: Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                    })
+                  }
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Calendar days this change adds. Leave 0 if none.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
                 <Label>Contract amount (USD)</Label>
                 <MoneyInput
                   value={draft.contract_amount}
@@ -790,6 +947,24 @@ export function ChangeOrdersTable({
                 onChange={(e) => setDraft({ ...draft, owner: e.target.value })}
               />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Requested by</Label>
+                <Input
+                  value={draft.requested_by}
+                  onChange={(e) => setDraft({ ...draft, requested_by: e.target.value })}
+                  placeholder="e.g. Owner, architect, PM"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Date initiated</Label>
+                <Input
+                  type="date"
+                  value={draft.date_initiated ?? ""}
+                  onChange={(e) => setDraft({ ...draft, date_initiated: e.target.value || null })}
+                />
+              </div>
+            </div>
             <div className="space-y-1.5">
               <Label>Notes</Label>
               <Textarea
@@ -807,6 +982,18 @@ export function ChangeOrdersTable({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {onUploadDocument && (
+        <ChangeOrderDocumentsDialog
+          changeOrder={docCo}
+          documents={docCo ? docsFor(docCo.id) : []}
+          onClose={() => setDocCo(null)}
+          onUpload={onUploadDocument}
+          onView={onViewDocument}
+          onDelete={onDeleteDocument}
+          uploading={uploadingDocId != null && docCo != null && uploadingDocId === docCo.id}
+        />
+      )}
     </div>
   );
 }
