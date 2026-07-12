@@ -158,6 +158,7 @@ import {
   recordBudgetOverride,
   submitReview,
   updateReview,
+  deleteReview,
   importCostBuckets,
   saveSovMappingProfile,
   createBillingApplication,
@@ -456,6 +457,7 @@ function ProjectPage() {
   const recordBudgetOverrideFn = useServerFn(recordBudgetOverride);
   const submitReviewFn = useServerFn(submitReview);
   const updateReviewFn = useServerFn(updateReview);
+  const deleteReviewFn = useServerFn(deleteReview);
   const importBucketsFn = useServerFn(importCostBuckets);
   const saveSovProfileFn = useServerFn(saveSovMappingProfile);
   const createBillingFn = useServerFn(createBillingApplication);
@@ -1167,6 +1169,7 @@ function ProjectPage() {
   // BUDGETCONSOLIDATE1: the single Budget table opens a line editor drawer.
   const reviewSubmit = useServerMutation<Record<string, unknown>>(submitReviewFn as never);
   const reviewUpdate = useServerMutation<Record<string, unknown>>(updateReviewFn as never);
+  const reviewDelete = useServerMutation<{ id: string }>(deleteReviewFn);
   const bucketImport = useServerMutation<Record<string, unknown>>(importBucketsFn as never);
   const sovProfileSave = useMutation({
     mutationFn: (input: SovMappingProfileDraft) =>
@@ -3333,6 +3336,12 @@ function ProjectPage() {
                   project={project}
                   buildPdfInput={buildPdfInputForReview}
                   onUpdate={(id, patch) => reviewUpdate.mutate({ id, patch })}
+                  onDelete={(review) => {
+                    // Best-effort clear the archived PDF, then delete the record.
+                    if (review.pdf_path)
+                      void supabase.storage.from("ior-reports").remove([review.pdf_path]);
+                    reviewDelete.mutate({ id: review.id });
+                  }}
                   pending={reviewUpdate.isPending}
                 />
               </div>

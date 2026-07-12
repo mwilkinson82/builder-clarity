@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import {
   deleteSubmittalLogEntry,
+  deleteTransmittal,
   getProjectLetterhead,
   listSubmittalLog,
   listTransmittals,
@@ -41,6 +42,7 @@ import {
   type SubmittalLogEntryRow,
   type SubmittalLogKind,
   type SubmittalLogStatus,
+  type TransmittalRow,
 } from "@/lib/submittal-log.functions";
 import { generateTransmittalPdf, type TransmittalAttachment } from "@/lib/transmittal-pdf";
 import { daysOutstanding, isOverdue, isReturned, pipelineCounts } from "@/lib/submittal-domain";
@@ -246,6 +248,7 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
   const letterheadFn = useServerFn(getProjectLetterhead);
   const listTxFn = useServerFn(listTransmittals);
   const saveTxFn = useServerFn(saveTransmittal);
+  const deleteTxFn = useServerFn(deleteTransmittal);
 
   const [kind, setKind] = useState<SubmittalLogKind>("submittal");
   const [viewMode, setViewMode] = useState<"list" | "board">("list");
@@ -449,6 +452,29 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
   // Every transmittal ever generated for this project (both kinds) — the log
   // shows the complete send history regardless of which log is toggled above.
   const txRecords = txQuery.data ?? [];
+
+  // Remove a transmittal from the register: clear its archived PDF (best-effort),
+  // then delete the row. Confirmed because it's a durable audit record.
+  const removeTransmittal = async (t: TransmittalRow) => {
+    if (
+      !window.confirm(
+        `Delete transmittal ${t.number ? `#${t.number}` : ""}? This removes the register record${
+          t.storage_path ? " and its archived PDF" : ""
+        }.`,
+      )
+    )
+      return;
+    try {
+      if (t.storage_path) await supabase.storage.from("project-docs").remove([t.storage_path]);
+      await deleteTxFn({ data: { id: t.id } });
+      qc.invalidateQueries({ queryKey: ["transmittals", projectId] });
+      toast.success("Transmittal removed");
+    } catch (e) {
+      toast.error("Could not remove the transmittal", {
+        description: e instanceof Error ? e.message : "Try again.",
+      });
+    }
+  };
 
   return (
     <section className="space-y-5">
@@ -778,18 +804,28 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
                     <td className="px-2 py-2 tabular-nums text-muted-foreground">
                       {t.sent_at || "—"}
                     </td>
-                    <td className="px-2 py-2 text-right">
-                      {t.storage_path ? (
+                    <td className="px-2 py-2">
+                      <div className="flex items-center justify-end gap-3">
+                        {t.storage_path ? (
+                          <button
+                            type="button"
+                            onClick={() => viewLogFile(t.storage_path)}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-clay hover:underline"
+                          >
+                            <FileDown className="h-3 w-3" /> Download
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground">—</span>
+                        )}
                         <button
                           type="button"
-                          onClick={() => viewLogFile(t.storage_path)}
-                          className="inline-flex items-center gap-1 text-xs font-medium text-clay hover:underline"
+                          onClick={() => removeTransmittal(t)}
+                          className="text-muted-foreground hover:text-danger"
+                          aria-label={`Delete transmittal ${t.number || ""}`}
                         >
-                          <FileDown className="h-3 w-3" /> Download
+                          <Trash2 className="h-3.5 w-3.5" />
                         </button>
-                      ) : (
-                        <span className="text-[11px] text-muted-foreground">—</span>
-                      )}
+                      </div>
                     </td>
                   </tr>
                 ))}

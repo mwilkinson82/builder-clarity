@@ -10,7 +10,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Download, Pencil, Mail, FileText, Loader2 } from "lucide-react";
+import { Download, Pencil, Mail, FileText, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { sendTransactionalEmail } from "@/lib/email/send";
@@ -28,6 +28,7 @@ export function ReviewsTab({
   project,
   buildPdfInput,
   onUpdate,
+  onDelete,
   pending,
 }: {
   reviews: ReviewRow[];
@@ -45,6 +46,8 @@ export function ReviewsTab({
       last_sent_at?: string;
     },
   ) => void;
+  /** Delete a saved report (archived PDF cleanup happens in the parent). */
+  onDelete: (review: ReviewRow) => void;
   pending?: boolean;
 }) {
   const [editing, setEditing] = useState<ReviewRow | null>(null);
@@ -121,6 +124,24 @@ export function ReviewsTab({
                     className="gap-1.5"
                   >
                     <Mail className="h-3.5 w-3.5" /> Email
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Delete the saved IOR report from ${formatDate(
+                            r.reviewed_at,
+                          )}? This removes the frozen record and its PDF.`,
+                        )
+                      )
+                        onDelete(r);
+                    }}
+                    className="gap-1.5 text-muted-foreground hover:text-danger"
+                    aria-label="Delete report"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Delete
                   </Button>
                 </div>
               </div>
