@@ -1849,24 +1849,20 @@ await expectContains(
 await expectContains(
   "src/routes/_authenticated/cost-library.tsx",
   [
+    // v2 reskin: import moved into the dialog, the toggle/table chrome changed;
+    // these durable anchors still prove copy-system-row + bulk-import behavior.
     /Import My Costs/,
-    /Download Import Format/,
-    /Overwatch Library/,
+    /CostImportDialog/,
     /My Cost Library/,
-    /All Costs/,
+    /activeView/,
+    /Price book/,
     /Material/,
     /Labor/,
     /Installed/,
-    /Crew \/ Production/,
-    /Material \$\/Unit/,
-    /Labor \$\/Unit/,
-    /not per worker/,
-    /CostRateDisplay/,
-    /CostMoneyInput/,
-    /table-fixed/,
-    /colSpan=\{5\}/,
-    /Production \/ Hour/,
-    /Build your estimating price book/,
+    /Division/,
+    /csi_division/,
+    /copyMutation/,
+    /source === "system"/,
     /Add to My Cost Library/,
     /parseCostLibraryRows/,
     /parseCsv/,
@@ -1916,10 +1912,13 @@ await expectContains(
     /Outlet/,
     /useLocation/,
     /\^\\\/estimates\\\/\[\^\/\]\+/,
-    /Back to portfolio/,
-    /Master Sheets/,
+    // b6b reskin: the hand-rolled header (Back-to-portfolio arrow + "Master
+    // Sheets" nav button + "Estimate Folders" explainer card) was replaced by the
+    // shared PortfolioTopBar, a segmented cross-link, and folder-filter pills.
+    /PortfolioTopBar/,
+    /Master sheets/,
     /filters master sheets out server-side/,
-    /Estimate Folders/,
+    /folderFilter/,
     /ESTIMATE_FOLDERS/,
     /folderCounts/,
     /deleteEstimate/,
@@ -1935,7 +1934,9 @@ await expectContains(
     /listMasterSheets/,
     /kind: "master_sheet"/,
     /New Master Sheet/,
-    /Project Estimates/,
+    // b6b reskin: the "Project Estimates" nav button became the shared
+    // PortfolioTopBar + segmented control linking back to /estimates.
+    /PortfolioTopBar/,
     /Start with blank rows/,
     /createBlankLineItems/,
     /Create Master Sheet/,
@@ -1977,7 +1978,7 @@ await expectContains(
     /materialTotal/,
     /laborTotal/,
     /direct/,
-    /min-w-\[1720px\] table-fixed/,
+    /min-w-\[1450px\] table-fixed/, // v2 grid width
     /data-estimate-grid-cell/,
     /handleGridKeyDown/,
     /ArrowDown/,
