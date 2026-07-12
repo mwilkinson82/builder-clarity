@@ -62,7 +62,9 @@ const AlertDialogTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Title
     ref={ref}
-    className={cn("text-lg font-semibold", className)}
+    // v2 modal standard: serif title (matches DialogHeaderV2). Confirms keep the
+    // lighter standard — serif title + muted description, no eyebrow.
+    className={cn("font-serif text-2xl font-normal", className)}
     {...props}
   />
 ));
