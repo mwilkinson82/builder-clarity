@@ -61,6 +61,7 @@ import { ProjectFileRoom } from "@/components/project/ProjectFileRoom";
 import { SubmittalLog } from "@/components/project/SubmittalLog";
 import { SubcontractorsWorkspace } from "@/components/project/SubcontractorsWorkspace";
 import { listProjectSubcontracts } from "@/lib/subcontracts.functions";
+import { sendChangeOrderToClient } from "@/lib/client-portal.functions";
 import { paymentShareForBucket, summarizeSubCostByBucket } from "@/lib/subcontract-budget";
 import {
   applySelfPerformToBuckets,
@@ -417,6 +418,7 @@ function ProjectPage() {
   const updateFinFn = useServerFn(updateProjectFinancials);
   const createCoFn = useServerFn(createChangeOrder);
   const updateCoFn = useServerFn(updateChangeOrder);
+  const sendCoFn = useServerFn(sendChangeOrderToClient);
   const deleteCoFn = useServerFn(deleteChangeOrder);
   const linkCoExposureFn = useServerFn(linkChangeOrderExposure);
   const allocateChangeOrderFn = useServerFn(allocateChangeOrder);
@@ -587,6 +589,26 @@ function ProjectPage() {
   const coCreate = useServerMutation<Record<string, unknown>>(createCoFn as never);
   const coUpdate = useServerMutation<Record<string, unknown>>(updateCoFn as never);
   const coDelete = useServerMutation<{ id: string }>(deleteCoFn);
+  // Send / nudge a change order to the client (stamps client_sent_at). One send
+  // is in flight at a time; the row shows "Sending…" via coSendToClient.variables.
+  const coSendToClient = useMutation({
+    mutationFn: (input: { changeOrderId: string }) =>
+      (sendCoFn as (i: { data: { changeOrderId: string } }) => Promise<{ nudged: boolean }>)({
+        data: input,
+      }),
+    onSuccess: (result) => {
+      invalidate();
+      toast.success(result?.nudged ? "Client nudged" : "Shared with the client", {
+        description: result?.nudged
+          ? "Refreshed the shared date on this change order."
+          : "The client can review and respond in their portal.",
+      });
+    },
+    onError: (err) =>
+      toast.error("Couldn't share the change order", {
+        description: err instanceof Error ? err.message : "Try again.",
+      }),
+  });
   const changeOrderAllocate = useMutation({
     mutationFn: (input: ChangeOrderAllocationInput) =>
       allocateChangeOrderFn({ data: { projectId, ...input } }),
@@ -3268,6 +3290,12 @@ function ProjectPage() {
                 allocations={changeOrderAllocationsQuery.data ?? []}
                 exposures={exposures}
                 onOpenClientPortal={() => setProjectTab("client-portal")}
+                onSendToClient={(co) => coSendToClient.mutate({ changeOrderId: co.id })}
+                sendingClientId={
+                  coSendToClient.isPending
+                    ? (coSendToClient.variables?.changeOrderId ?? null)
+                    : null
+                }
                 onQuickStatus={(co, status) => coUpdate.mutate({ id: co.id, status })}
                 onCreate={(d) => coCreate.mutate({ projectId, ...d })}
                 onUpdate={(id, patch) => coUpdate.mutate({ id, ...patch })}

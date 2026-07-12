@@ -28,7 +28,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FileText, Plus, Pencil, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
+import { Download, FileText, Plus, Pencil, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
+import { downloadTextFile } from "@/lib/download-file";
 import { MoneyInput } from "@/components/ui/money-input";
 import { fmtUSD } from "@/lib/format";
 import type {
@@ -82,6 +83,46 @@ const marginPctLabel = (contract: number, cost: number): string | null =>
 
 const truncate = (s: string, n = 24) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
+// CSV export of the change-order log. Raw dollar amounts (no $ formatting) so
+// the file drops straight into a spreadsheet; every field is RFC-4180 escaped.
+const csvCell = (value: string | number): string => {
+  const s = String(value ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+function buildCoLogCsv(rows: ChangeOrderRow[]): string {
+  const header = [
+    "CO #",
+    "Description",
+    "Reason",
+    "Status",
+    "Client status",
+    "Contract",
+    "Cost",
+    "Margin",
+    "Probability %",
+    "Owner",
+  ];
+  const body = rows.map((c) => {
+    const contract = c.contract_amount ?? 0;
+    const cost = c.cost_amount ?? 0;
+    return [
+      c.number,
+      c.description,
+      CO_TYPE_SHORT[c.co_type] ?? "Other",
+      c.status,
+      CLIENT_STATUS_DISPLAY[c.client_status]?.label ?? c.client_status,
+      contract,
+      cost,
+      contract - cost,
+      c.status === "Pending" ? (c.probability ?? 0) : "",
+      c.owner ?? "",
+    ]
+      .map(csvCell)
+      .join(",");
+  });
+  return [header.map(csvCell).join(","), ...body].join("\n");
+}
+
 function ReasonChip({ type }: { type: COType }) {
   return (
     <span className="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 font-mono text-[8.5px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
@@ -126,6 +167,8 @@ export function ChangeOrdersTable({
   allocations,
   exposures,
   onOpenClientPortal,
+  onSendToClient,
+  sendingClientId,
   onQuickStatus,
 }: {
   changeOrders: ChangeOrderRow[];
@@ -141,6 +184,9 @@ export function ChangeOrdersTable({
   allocations?: Array<Pick<ChangeOrderAllocationRow, "change_order_id" | "cost_code">>;
   exposures?: ExposureRow[];
   onOpenClientPortal?: () => void;
+  // Send a CO to the client / nudge one already sent (stamps client_sent_at).
+  onSendToClient?: (co: ChangeOrderRow) => void;
+  sendingClientId?: string | null;
   onQuickStatus?: (co: ChangeOrderRow, status: "Approved" | "Denied") => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -342,8 +388,16 @@ export function ChangeOrdersTable({
                     )}
                   </div>
                   <div className="mt-3.5 flex gap-2">
-                    <Button size="sm" onClick={onOpenClientPortal}>
-                      {c.client_status === "sent" ? "Nudge client" : "Send to client"}
+                    <Button
+                      size="sm"
+                      disabled={sendingClientId === c.id}
+                      onClick={() => (onSendToClient ? onSendToClient(c) : onOpenClientPortal?.())}
+                    >
+                      {sendingClientId === c.id
+                        ? "Sending…"
+                        : c.client_sent_at
+                          ? "Nudge client"
+                          : "Send to client"}
                     </Button>
                     <Button
                       variant="outline"
@@ -439,7 +493,23 @@ export function ChangeOrdersTable({
         </div>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {changeOrders.length > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() =>
+              downloadTextFile(
+                `change-orders-${project?.job_number || "log"}.csv`,
+                buildCoLogCsv(changeOrders),
+                "text/csv;charset=utf-8",
+              )
+            }
+          >
+            <Download className="h-3.5 w-3.5" /> Export CO log
+          </Button>
+        )}
         <Button size="sm" className="gap-1.5" onClick={openNew}>
           <Plus className="h-3.5 w-3.5" /> Add change order
         </Button>
