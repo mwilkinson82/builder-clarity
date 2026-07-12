@@ -19,14 +19,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -855,13 +849,11 @@ function CostLibraryPage() {
 
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add Custom Cost</DialogTitle>
-            <DialogDescription>
-              Save one editable cost to My Cost Library. It will appear in master sheet and estimate
-              line-item search.
-            </DialogDescription>
-          </DialogHeader>
+          <DialogHeaderV2
+            eyebrow="Cost library"
+            title="Add Custom Cost"
+            description="Save one editable cost to My Cost Library. It will appear in master sheet and estimate line-item search."
+          />
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="CSI Division">
               <Input
@@ -1391,15 +1383,11 @@ function CostImportDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[86vh] max-w-5xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Import My Costs</DialogTitle>
-          <DialogDescription>
-            Bring in your own price list from pasted rows, CSV, or Excel. Download the column guide
-            for the exact format; imported rows save to My Cost Library. Labor $/Unit is the unit
-            price used in estimates. Crew Size and Production / Hour are assumptions behind that
-            price.
-          </DialogDescription>
-        </DialogHeader>
+        <DialogHeaderV2
+          eyebrow="Cost library"
+          title="Import My Costs"
+          description="Bring in your own price list from pasted rows, CSV, or Excel. Download the column guide for the exact format; imported rows save to My Cost Library. Labor $/Unit is the unit price used in estimates. Crew Size and Production / Hour are assumptions behind that price."
+        />
 
         {rows.length === 0 ? (
           <Tabs defaultValue="paste" className="space-y-4">

@@ -374,9 +374,7 @@ export function ExposuresTable({
           <DialogHeader className="border-b border-hairline bg-surface px-5 py-5 pr-12 sm:px-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  {editingId ? "Existing risk" : "New risk"}
-                </p>
+                <p className="eyebrow">{editingId ? "Existing risk" : "New risk"}</p>
                 <DialogTitle className="mt-1 font-serif text-3xl leading-tight">
                   {editingId ? "Edit risk allocation" : "Add risk allocation"}
                 </DialogTitle>

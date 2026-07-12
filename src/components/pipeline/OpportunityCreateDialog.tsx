@@ -3,15 +3,8 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import type { CreateOpportunityInput, PipelineMember } from "@/lib/pipeline.functions";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -89,12 +82,11 @@ export function OpportunityCreateDialog({
         )}
       </DialogTrigger>
       <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>New opportunity</DialogTitle>
-          <DialogDescription>
-            Capture the relationship, bid details, and first follow-up before this becomes a job.
-          </DialogDescription>
-        </DialogHeader>
+        <DialogHeaderV2
+          eyebrow="Pipeline"
+          title="New opportunity"
+          description="Capture the relationship, bid details, and first follow-up before this becomes a job."
+        />
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Opportunity name" className="sm:col-span-2">
             <Input value={draft.name} onChange={(event) => update("name", event.target.value)} />

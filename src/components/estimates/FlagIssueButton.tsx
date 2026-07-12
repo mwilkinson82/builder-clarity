@@ -4,14 +4,8 @@ import { useServerFn } from "@tanstack/react-start";
 import { Flag } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { submitBetaFeedback } from "@/lib/beta-feedback.functions";
@@ -87,13 +81,11 @@ export function FlagIssueButton({
       {open && (
         <Dialog open onOpenChange={(next) => !next && setOpen(false)}>
           <DialogContent data-testid="flag-issue-dialog">
-            <DialogHeader>
-              <DialogTitle>Flag an issue</DialogTitle>
-              <DialogDescription>
-                Tell us what went wrong or what got in your way. The screen and sheet you are on are
-                attached automatically.
-              </DialogDescription>
-            </DialogHeader>
+            <DialogHeaderV2
+              eyebrow="Feedback"
+              title="Flag an issue"
+              description="Tell us what went wrong or what got in your way. The screen and sheet you are on are attached automatically."
+            />
             <div className="space-y-1.5">
               <Label htmlFor="flag-issue-message">What happened?</Label>
               <Textarea

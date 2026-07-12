@@ -5,14 +5,8 @@ import { useMemo, useState } from "react";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -540,9 +534,7 @@ function EstimatesPage() {
 
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New Estimate</DialogTitle>
-          </DialogHeader>
+          <DialogHeaderV2 eyebrow="Estimating" title="New Estimate" />
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
               Use this for a real bid or project estimate. For repeatable company pricing, build a
@@ -591,14 +583,16 @@ function EstimatesPage() {
 
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Estimate?</DialogTitle>
-            <DialogDescription>
-              This permanently removes{" "}
-              {deleteTarget?.name ? `"${deleteTarget.name}"` : "this estimate"} and its line items
-              from Overwatch. This does not move it to Archived.
-            </DialogDescription>
-          </DialogHeader>
+          <DialogHeaderV2
+            title="Delete Estimate?"
+            description={
+              <>
+                This permanently removes{" "}
+                {deleteTarget?.name ? `"${deleteTarget.name}"` : "this estimate"} and its line items
+                from Overwatch. This does not move it to Archived.
+              </>
+            }
+          />
           <DialogFooter>
             <Button
               variant="outline"
