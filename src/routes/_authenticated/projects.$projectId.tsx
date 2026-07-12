@@ -194,7 +194,6 @@ import { toast } from "sonner";
 import {
   Activity,
   CalendarClock,
-  BriefcaseBusiness,
   ClipboardCheck,
   ClipboardList,
   Download,
@@ -296,37 +295,10 @@ export const Route = createFileRoute("/_authenticated/projects/$projectId")({
 const PROJECT_NAV_RAIL_CLASS =
   "flex h-auto w-full items-stretch justify-start gap-4 overflow-x-auto rounded-[15px] border border-hairline bg-background p-3 shadow-nav lg:flex-col lg:gap-5 lg:overflow-visible";
 
-// Active styling rides Radix's `data-[state=active]` rather than a JS flag: the
-// shadcn TabsTrigger base sets `data-[state=active]:bg-background/text-foreground`,
-// so a plain `bg-secondary` loses the cascade and the active tab paints paper.
-// Same variant → tailwind-merge keeps ours (it wins as the later class). The CRM
-// item is an <a> with no data-state, so it always reads inactive.
-// v2 active = quiet paper2 fill + ink text (+ clay dot from the indicator
-// span), NOT a clay fill — the clay stays a small accent.
-function projectNavItemClass() {
-  return cn(
-    "group relative flex min-w-[168px] items-start gap-2.5 overflow-hidden rounded-lg border px-3 py-2 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full lg:min-w-0",
-    "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
-    "data-[state=active]:border-transparent data-[state=active]:bg-secondary data-[state=active]:text-foreground data-[state=active]:hover:bg-secondary data-[state=active]:hover:text-foreground",
-  );
-}
-
-function projectNavIconClass({ active }: { active?: boolean }) {
-  return cn(
-    "mt-0.5 h-4 w-4 shrink-0 transition",
-    active ? "text-clay" : "text-muted-foreground group-hover:text-clay",
-  );
-}
-
-// Detail sub-line under each label. Alarming counts (e.g. live risk exposures,
-// a slipped schedule) go `text-danger` — these are the rail's status hints.
-function projectNavDetailClass({ active, alert }: { active?: boolean; alert?: boolean }) {
-  return cn(
-    "mt-0.5 block truncate font-mono text-[11px] leading-tight",
-    alert ? "text-danger" : "text-muted-foreground",
-    active && !alert ? "text-foreground/70" : "",
-  );
-}
+// Rail item styling is inline in the accordion (see the nav render): the active
+// group's box lists its tabs (active = quiet paper2 fill + a clay dot), while
+// inactive groups collapse to a single status-hint row. No icons — the mock's
+// rail is text + right-aligned value, matching the wider v2 type-led system.
 
 function exposureCategoryFromChangeOrder(coType: ChangeOrderRow["co_type"]): ExposureCategory {
   switch (coType) {
@@ -2262,6 +2234,35 @@ function ProjectPage() {
     group.values.includes(activeProjectTab),
   );
   const activeNavItem = navItemByValue.get(activeProjectTab);
+  // ACCORDION: a collapsed group shows one status hint on the right. If any item
+  // in the group is alarming (live risk, slipped schedule) that item's detail
+  // wins in danger tone; otherwise a per-group summary — schedule status for
+  // Field, live count for Risk, a plain item count for Parties/Docs, the
+  // dashboard label for Money. All read off existing nav-item data — no new query.
+  const navGroupHint = (
+    group: ProjectNavGroup,
+  ): { text: string; tone: "good" | "crit" | "muted" } => {
+    const items = group.values
+      .map((v) => navItemByValue.get(v))
+      .filter((i): i is ProjectNavItem => Boolean(i));
+    // Any alarming item (behind schedule, live risk) wins in crit + bold.
+    const alerting = items.find((i) => i.alert);
+    if (alerting) return { text: alerting.detail, tone: "crit" };
+    switch (group.key) {
+      case "field":
+        // Schedule-health rule: on-plan / ahead reads good (green); a behind
+        // schedule would have alerted above.
+        return { text: navItemByValue.get("schedule")?.detail ?? "", tone: "good" };
+      case "risk":
+        // No live exposures (else it would have alerted) — a calm count.
+        return { text: navItemByValue.get("risk-tally")?.detail ?? "", tone: "muted" };
+      case "parties":
+      case "docs":
+        return { text: String(group.values.length), tone: "muted" };
+      default:
+        return { text: navItemByValue.get(group.values[0])?.detail ?? "", tone: "muted" };
+    }
+  };
   const companyLogoUrl =
     project.organization_logo_url && project.organization_logo_url !== companyLogoFailedUrl
       ? project.organization_logo_url
@@ -2381,62 +2382,103 @@ function ProjectPage() {
                   </div>
                 </div>
               </div>
-              {/* Cross-module jump back to the CRM / relationships surface. */}
-              <a
-                href="/?tab=crm"
+              {/* ACCORDION rail (mock): the active group's box is expanded with
+                  its items; every other group collapses to a single status-hint
+                  row. Clicking a collapsed group jumps to its first tab, which
+                  expands it. Deep links (?tab=…) and every tab value are
+                  unchanged — this is display/nav behavior only. */}
+              {/* CRM cross-link — a single collapsed row ("CRM ▸"). */}
+              <button
+                type="button"
+                onClick={() => navigate({ to: "/", search: { tab: "crm" } })}
                 aria-label="CRM: Relationships"
                 title="CRM: Relationships"
-                className={cn(projectNavItemClass(), "shrink-0 self-start lg:shrink lg:self-auto")}
+                className="flex w-auto shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground lg:w-full lg:shrink"
               >
-                <BriefcaseBusiness className={projectNavIconClass({})} />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium leading-tight">CRM</span>
-                  <span className={projectNavDetailClass({})}>Relationships</span>
-                </span>
-              </a>
-              {PROJECT_NAV_GROUPS.map((group) => (
-                <div key={group.key} className="flex shrink-0 flex-col gap-1.5 lg:w-full lg:shrink">
-                  <p className="eyebrow px-1 text-[10px] leading-none">{group.label}</p>
-                  <div className="flex gap-1.5 lg:flex-col">
-                    {group.values.map((value) => {
-                      const item = navItemByValue.get(value);
-                      if (!item) return null;
-                      const Icon = item.icon;
-                      const isActive = activeProjectTab === item.value;
-                      return (
-                        <TabsTrigger
-                          key={item.value}
-                          value={item.value}
-                          aria-label={`${item.label}: ${item.detail}`}
-                          title={`${item.label}: ${item.detail}`}
-                          className={projectNavItemClass()}
-                        >
-                          {isActive && (
-                            <span
-                              aria-hidden="true"
-                              className="absolute right-2.5 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-clay"
-                            />
+                <span className="font-medium">CRM</span>
+                <span className="text-[11.5px] text-muted-foreground">▸</span>
+              </button>
+              {PROJECT_NAV_GROUPS.map((group) => {
+                const isActiveGroup = group.key === activeNavGroup?.key;
+                if (isActiveGroup) {
+                  return (
+                    <div
+                      key={group.key}
+                      className="w-[240px] shrink-0 rounded-xl border border-hairline bg-surface p-1.5 lg:w-full lg:shrink"
+                    >
+                      <div className="flex items-center justify-between px-2 pb-1.5 pt-1 text-[13.5px] font-semibold">
+                        {group.label}
+                        <span className="text-[11px] text-muted-foreground">▾</span>
+                      </div>
+                      {group.values.map((value) => {
+                        const item = navItemByValue.get(value);
+                        if (!item) return null;
+                        const isActive = activeProjectTab === item.value;
+                        return (
+                          <TabsTrigger
+                            key={item.value}
+                            value={item.value}
+                            aria-label={`${item.label}: ${item.detail}`}
+                            title={`${item.label}: ${item.detail}`}
+                            className={cn(
+                              "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13.5px] transition",
+                              "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                              "data-[state=active]:bg-secondary data-[state=active]:font-semibold data-[state=active]:text-foreground data-[state=active]:hover:bg-secondary",
+                            )}
+                          >
+                            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                            {isActive ? (
+                              <span
+                                aria-hidden="true"
+                                className="h-1.5 w-1.5 shrink-0 rounded-full bg-clay"
+                              />
+                            ) : (
+                              <span
+                                className={cn(
+                                  "max-w-[52%] shrink-0 truncate text-[11.5px]",
+                                  item.alert ? "text-danger" : "text-muted-foreground",
+                                )}
+                              >
+                                {item.detail}
+                              </span>
+                            )}
+                          </TabsTrigger>
+                        );
+                      })}
+                    </div>
+                  );
+                }
+                const hint = navGroupHint(group);
+                return (
+                  <button
+                    key={group.key}
+                    type="button"
+                    onClick={() => setProjectTab(group.values[0])}
+                    aria-label={`${group.label}: ${hint.text}`}
+                    title={`${group.label}: ${hint.text}`}
+                    className="flex w-auto shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-secondary/60 hover:text-foreground lg:w-full lg:shrink"
+                  >
+                    <span className="font-medium">{group.label}</span>
+                    <span className="flex min-w-0 shrink items-center gap-1.5">
+                      {hint.text && (
+                        <span
+                          className={cn(
+                            "truncate text-[11.5px]",
+                            hint.tone === "crit"
+                              ? "font-semibold text-danger"
+                              : hint.tone === "good"
+                                ? "font-semibold text-success"
+                                : "text-muted-foreground",
                           )}
-                          <Icon className={projectNavIconClass({ active: isActive })} />
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-medium leading-tight">
-                              {item.label}
-                            </span>
-                            <span
-                              className={projectNavDetailClass({
-                                active: isActive,
-                                alert: item.alert,
-                              })}
-                            >
-                              {item.detail}
-                            </span>
-                          </span>
-                        </TabsTrigger>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
+                        >
+                          {hint.text}
+                        </span>
+                      )}
+                      <span className="shrink-0 text-[11.5px] text-muted-foreground">▸</span>
+                    </span>
+                  </button>
+                );
+              })}
               {/* v2: rail foot — the way back out and sign-out live here on
                   desktop (mobile keeps them in the slim top bar). */}
               <div className="mt-auto hidden w-full items-center justify-between gap-2 border-t border-hairline pt-2.5 lg:flex">
