@@ -77,6 +77,27 @@ export interface SubmittalLogEntryRow {
   sort_order: number;
 }
 
+// A durable record of one generated Letter of Transmittal. Mirrors the
+// public.transmittals table columns (kind splits RFI cover letters from
+// submittal ones; entry_ids records which log rows rode along; storage_path
+// points at the generated PDF in 'project-docs' for re-download).
+export interface TransmittalRow {
+  id: string;
+  project_id: string;
+  kind: SubmittalLogKind;
+  number: string;
+  to_party: string;
+  attn: string;
+  re: string;
+  sent_by: string;
+  sent_at: string | null;
+  entry_ids: string[];
+  storage_path: string;
+  file_name: string;
+  notes: string;
+  created_at: string;
+}
+
 export interface ProjectLetterhead {
   company_name: string;
   legal_name: string;
@@ -300,4 +321,112 @@ export const getProjectLetterhead = createServerFn({ method: "GET" })
       office_phone: str(o.office_phone),
       license_number: str(o.license_number),
     };
+  });
+
+// ── Transmittal register ─────────────────────────────────────────────────────
+// A durable record of every generated Letter of Transmittal. Reads degrade to
+// an empty list and saves no-op (sentinel { persisted: false }) before the
+// migration lands — persistence is best-effort ADDITIVE and never blocks the
+// existing generate-and-download path.
+const normalizeTransmittal = (row: Record<string, unknown>): TransmittalRow => ({
+  id: str(row.id),
+  project_id: str(row.project_id),
+  kind: (str(row.kind, "submittal") as SubmittalLogKind) || "submittal",
+  number: str(row.number),
+  to_party: str(row.to_party),
+  attn: str(row.attn),
+  re: str(row.re),
+  sent_by: str(row.sent_by),
+  sent_at: (row.sent_at as string | null) ?? null,
+  entry_ids: Array.isArray(row.entry_ids) ? (row.entry_ids as unknown[]).map((v) => str(v)) : [],
+  storage_path: str(row.storage_path),
+  file_name: str(row.file_name),
+  notes: str(row.notes),
+  created_at: str(row.created_at),
+});
+
+export const listTransmittals = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: { projectId: string }) =>
+    z.object({ projectId: z.string().uuid() }).parse(input),
+  )
+  .handler(async ({ data, context }): Promise<TransmittalRow[]> => {
+    const { data: rows, error } = await dynamicTable(context.supabase, "transmittals")
+      .select("*")
+      .eq("project_id", data.projectId)
+      .order("created_at", { ascending: false });
+    if (error) {
+      // Table not there yet → the register just hasn't been enabled; show none.
+      if (isMissingLogTable(error)) return [];
+      throw new Error(error.message);
+    }
+    return ((rows ?? []) as Record<string, unknown>[]).map(normalizeTransmittal);
+  });
+
+const transmittalInput = z.object({
+  projectId: z.string().uuid(),
+  kind: z.enum(["rfi", "submittal"]),
+  // Empty → the server assigns the authoritative next number for the project.
+  number: z.string().max(60).default(""),
+  to_party: z.string().max(200).default(""),
+  attn: z.string().max(200).default(""),
+  re: z.string().max(300).default(""),
+  sent_by: z.string().max(200).default(""),
+  sent_at: z.string().nullable().optional(),
+  entry_ids: z.array(z.string().uuid()).default([]),
+  storage_path: z.string().max(500).default(""),
+  file_name: z.string().max(300).default(""),
+  notes: z.string().max(2000).default(""),
+});
+
+// { persisted: false } signals the table isn't there yet — the caller already
+// has the downloaded PDF, so this is a soft skip, never an error.
+export type SaveTransmittalResult = TransmittalRow | { persisted: false };
+
+export const saveTransmittal = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: z.input<typeof transmittalInput>) => transmittalInput.parse(input))
+  .handler(async ({ data, context }): Promise<SaveTransmittalResult> => {
+    const table = () => dynamicTable(context.supabase, "transmittals");
+    // Authoritative per-project number when the caller didn't supply one: the
+    // max existing numeric transmittal number + 1 (fallback '1'). Simple and
+    // race-tolerant — a rare concurrent collision is acceptable (best-effort).
+    let number = data.number.trim();
+    if (!number) {
+      const { data: existing, error: readErr } = await table()
+        .select("number")
+        .eq("project_id", data.projectId);
+      if (readErr) {
+        if (isMissingLogTable(readErr)) return { persisted: false };
+        throw new Error(readErr.message);
+      }
+      let max = 0;
+      for (const r of (existing ?? []) as Record<string, unknown>[]) {
+        const n = parseInt(str(r.number).replace(/\D+/g, ""), 10);
+        if (Number.isFinite(n) && n > max) max = n;
+      }
+      number = String(max + 1);
+    }
+    const { data: row, error } = await table()
+      .insert({
+        project_id: data.projectId,
+        kind: data.kind,
+        number,
+        to_party: data.to_party,
+        attn: data.attn,
+        re: data.re,
+        sent_by: data.sent_by,
+        sent_at: dateOrNull(data.sent_at),
+        entry_ids: data.entry_ids,
+        storage_path: data.storage_path,
+        file_name: data.file_name,
+        notes: data.notes,
+      })
+      .select("*")
+      .single();
+    if (error || !row) {
+      if (isMissingLogTable(error)) return { persisted: false };
+      throw new Error(error?.message ?? "Could not save the transmittal");
+    }
+    return normalizeTransmittal(row as Record<string, unknown>);
   });

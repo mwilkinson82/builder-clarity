@@ -34,8 +34,10 @@ import {
   deleteSubmittalLogEntry,
   getProjectLetterhead,
   listSubmittalLog,
+  listTransmittals,
   patchSubmittalLogEntry,
   saveSubmittalLogEntry,
+  saveTransmittal,
   type SubmittalLogEntryRow,
   type SubmittalLogKind,
   type SubmittalLogStatus,
@@ -242,6 +244,8 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
   const patchFn = useServerFn(patchSubmittalLogEntry);
   const deleteFn = useServerFn(deleteSubmittalLogEntry);
   const letterheadFn = useServerFn(getProjectLetterhead);
+  const listTxFn = useServerFn(listTransmittals);
+  const saveTxFn = useServerFn(saveTransmittal);
 
   const [kind, setKind] = useState<SubmittalLogKind>("submittal");
   const [viewMode, setViewMode] = useState<"list" | "board">("list");
@@ -252,6 +256,12 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
   const entriesQuery = useQuery({
     queryKey: ["submittal-log", projectId],
     queryFn: () => listFn({ data: { projectId } }),
+  });
+  // The durable transmittal register — every cover letter generated for this
+  // project. Degrades to [] before the migration lands (see listTransmittals).
+  const txQuery = useQuery({
+    queryKey: ["transmittals", projectId],
+    queryFn: () => listTxFn({ data: { projectId } }),
   });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["submittal-log", projectId] });
   const save = useMutation({
@@ -341,7 +351,7 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
           contentType: file.contentType,
         });
       }
-      const { skipped } = await generateTransmittalPdf({
+      const result = await generateTransmittalPdf({
         letterhead,
         projectName,
         jobNumber,
@@ -355,13 +365,56 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
         generatedAt: new Date(),
         attachments,
       });
-      const notIncluded = [...failed, ...skipped];
+      const notIncluded = [...failed, ...result.skipped];
       if (notIncluded.length > 0) {
         toast("Transmittal downloaded — some attachments weren't included", {
           description: `${notIncluded.join(", ")} couldn't be added to the PDF. Send ${
             notIncluded.length === 1 ? "it" : "them"
           } separately.`,
         });
+      }
+
+      // ── Best-effort persistence (ADDITIVE) ──────────────────────────────────
+      // The user already has the download (generateTransmittalPdf triggered it
+      // above). Recording it must NEVER block or undo that, so ALL of this runs
+      // in its own try/catch: upload the PDF bytes to 'project-docs', then log a
+      // durable transmittal record. Any failure — storage down, table missing,
+      // network — just skips persistence with a soft toast.
+      try {
+        const safeName = result.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-");
+        const path = `${projectId}/transmittals/${crypto.randomUUID()}-${safeName}`;
+        const { error: upErr } = await supabase.storage
+          .from("project-docs")
+          .upload(path, result.bytes, {
+            contentType: "application/pdf",
+            upsert: false,
+          });
+        const saved = await saveTxFn({
+          data: {
+            projectId,
+            kind,
+            number: txNo,
+            to_party: txTo,
+            attn: txAttn,
+            re: txRe,
+            sent_by: txBy,
+            sent_at: todayStr(),
+            entry_ids: entries.map((e) => e.id),
+            storage_path: upErr ? "" : path,
+            file_name: result.fileName,
+            notes: "",
+          },
+        });
+        if ("persisted" in saved && saved.persisted === false) {
+          toast("Transmittal downloaded; log entry not saved", {
+            description: "The transmittal log isn't enabled on this workspace yet.",
+          });
+        } else {
+          qc.invalidateQueries({ queryKey: ["transmittals", projectId] });
+        }
+      } catch {
+        // Persistence is best-effort — the download already succeeded.
+        toast("Transmittal downloaded; log entry not saved");
       }
     } catch (e) {
       toast.error("Could not build the transmittal", {
@@ -393,6 +446,9 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
   const columns = COLUMNS[kind];
   const statusOptions = STATUS_OPTIONS[kind];
   const pickable = txOpen && viewMode === "list";
+  // Every transmittal ever generated for this project (both kinds) — the log
+  // shows the complete send history regardless of which log is toggled above.
+  const txRecords = txQuery.data ?? [];
 
   return (
     <section className="space-y-5">
@@ -685,6 +741,63 @@ export function SubmittalLog({ projectId, projectName, jobNumber }: Props) {
           </span>
         ))}
       </div>
+
+      {/* Transmittal log — the durable record of every cover letter generated
+          for this project (submittals and RFIs alike). Best-effort: absent until
+          the transmittals table lands, then it just fills in. Quietly renders
+          nothing when there's nothing to show. */}
+      {txRecords.length > 0 ? (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span className="font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-clay">
+              Transmittal log
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              Every cover letter sent from this project.
+            </span>
+          </div>
+          <div className="overflow-x-auto rounded-lg border border-hairline bg-card shadow-card">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead>
+                <tr className="border-b border-hairline bg-surface text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+                  <th className="px-2 py-2 text-left">No.</th>
+                  <th className="px-2 py-2 text-left">To</th>
+                  <th className="px-2 py-2 text-left">Re</th>
+                  <th className="px-2 py-2 text-left">Items</th>
+                  <th className="px-2 py-2 text-left">Sent</th>
+                  <th className="w-28 px-2 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {txRecords.map((t) => (
+                  <tr key={t.id} className="border-b border-hairline/60 last:border-0">
+                    <td className="px-2 py-2 font-mono text-xs">{t.number || "—"}</td>
+                    <td className="px-2 py-2">{t.to_party || "—"}</td>
+                    <td className="px-2 py-2 text-muted-foreground">{t.re || "—"}</td>
+                    <td className="px-2 py-2 tabular-nums">{t.entry_ids.length}</td>
+                    <td className="px-2 py-2 tabular-nums text-muted-foreground">
+                      {t.sent_at || "—"}
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      {t.storage_path ? (
+                        <button
+                          type="button"
+                          onClick={() => viewLogFile(t.storage_path)}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-clay hover:underline"
+                        >
+                          <FileDown className="h-3 w-3" /> Download
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       <AddEntryDialog
         open={addOpen}
