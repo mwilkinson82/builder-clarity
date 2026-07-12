@@ -1,89 +1,88 @@
-import { Activity, CalendarClock, Gauge, Percent, Trophy } from "lucide-react";
-import type { ReactNode } from "react";
 import { fmtPct, fmtUSD } from "@/lib/format";
-import type { PipelineOpportunityRow } from "@/lib/pipeline.functions";
-import { ACTIVE_STAGES } from "./pipeline-ui";
+import {
+  ACTIVE_STAGES,
+  ACTIVE_STAGE_SHORT_LABELS,
+  type PipelineMetricsSummary,
+} from "./pipeline-ui";
 
-type PipelineMetricsProps = {
-  opportunities: PipelineOpportunityRow[];
+type PipelineGlanceCardProps = {
+  metrics: PipelineMetricsSummary;
 };
 
-export function PipelineMetrics({ opportunities }: PipelineMetricsProps) {
-  const active = opportunities.filter(
-    (opportunity) => ACTIVE_STAGES.includes(opportunity.stage) && !opportunity.archived,
-  );
-  const weightedPipeline = active.reduce(
-    (total, opportunity) =>
-      total + opportunity.estimated_contract * (opportunity.probability / 100),
-    0,
-  );
-  const avgGp =
-    active.length === 0
-      ? 0
-      : active.reduce((total, opportunity) => total + opportunity.estimated_gp_pct, 0) /
-        active.length;
-  const dueThisWeek = active.filter((opportunity) => {
-    const days = opportunity.days_until_bid_due;
-    return days !== null && days >= 0 && days <= 7;
-  }).length;
-  const ninetyDaysAgo = Date.now() - 90 * 86400000;
-  const recentDecisions = opportunities.filter((opportunity) => {
-    if (!["won", "lost"].includes(opportunity.stage)) return false;
-    const value = opportunity.decision_date ?? opportunity.converted_at ?? opportunity.updated_at;
-    const date = new Date(value).getTime();
-    return Number.isFinite(date) && date >= ninetyDaysAgo;
-  });
-  const wins = recentDecisions.filter((opportunity) => opportunity.stage === "won").length;
-  const winRate = recentDecisions.length === 0 ? 0 : (wins / recentDecisions.length) * 100;
+const MONO_LABEL =
+  "font-mono text-[8.5px] font-bold uppercase tracking-[0.12em] text-muted-foreground";
 
+// "Pipeline at a glance" — the right column of the CRM header grid. This
+// consolidates the old PipelineMetrics stat cards: every metric they showed
+// (active count, weighted pursuits, avg GP, bids due 7d, win rate 90d) lives
+// here, recomposed as a clay-tinted hero + per-stage tiles + hairline stat rows,
+// plus total pursuit value.
+export function PipelineGlanceCard({ metrics }: PipelineGlanceCardProps) {
   return (
-    <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
-      <MetricCard
-        icon={<Activity className="h-3.5 w-3.5" />}
-        label="Active opportunities"
-        value={String(active.length)}
+    <section className="rounded-xl border border-hairline bg-surface p-5 shadow-card">
+      <div className="eyebrow">Pipeline at a glance</div>
+
+      <div className="mt-3 rounded-xl border border-clay/25 bg-clay/[0.08] p-5">
+        <div className="flex items-baseline justify-between gap-3">
+          <div>
+            <div className="font-serif text-[44px] leading-none text-clay">
+              {metrics.activeCount}
+            </div>
+            <div className="mt-1.5 text-sm font-semibold text-foreground">Active opportunities</div>
+          </div>
+          <div className="text-right">
+            <div className={MONO_LABEL}>Weighted</div>
+            <div className="mt-1 font-serif text-[26px] leading-none text-foreground">
+              {fmtUSD(metrics.weighted)}
+            </div>
+          </div>
+        </div>
+        <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+          In an open stage — Lead, Qualifying, Estimating, Bid submitted, or Negotiating. Won, lost,
+          and no-bid drop out.
+        </p>
+      </div>
+
+      <div className="mt-3.5 flex gap-1.5">
+        {ACTIVE_STAGES.map((stage) => (
+          <StageTile
+            key={stage}
+            label={ACTIVE_STAGE_SHORT_LABELS[stage]}
+            count={metrics.stageCounts[stage] ?? 0}
+          />
+        ))}
+      </div>
+
+      <StatRow
+        label="Total pursuit value"
+        value={fmtUSD(metrics.totalPursuit)}
+        tone="text-foreground"
       />
-      <MetricCard
-        icon={<Gauge className="h-3.5 w-3.5" />}
-        label="Weighted pursuits"
-        value={fmtUSD(weightedPipeline)}
+      <StatRow label="Win rate · 90d" value={fmtPct(metrics.winRate)} tone="text-success" />
+      <StatRow label="Avg GP" value={fmtPct(metrics.avgGp)} tone="text-foreground" />
+      <StatRow
+        label="Bids due · 7d"
+        value={String(metrics.dueThisWeek)}
+        tone={metrics.dueThisWeek > 0 ? "text-warning" : "text-success"}
       />
-      <MetricCard icon={<Percent className="h-3.5 w-3.5" />} label="Avg GP" value={fmtPct(avgGp)} />
-      <MetricCard
-        icon={<CalendarClock className="h-3.5 w-3.5" />}
-        label="Bids due 7d"
-        value={String(dueThisWeek)}
-        tone={dueThisWeek > 0 ? "warning" : "success"}
-      />
-      <MetricCard
-        icon={<Trophy className="h-3.5 w-3.5" />}
-        label="Win rate 90d"
-        value={fmtPct(winRate)}
-      />
+    </section>
+  );
+}
+
+function StageTile({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="flex-1 rounded-lg border border-hairline bg-surface px-1 py-2 text-center">
+      <div className="font-serif text-lg leading-none text-foreground">{count}</div>
+      <div className={`mt-1.5 ${MONO_LABEL}`}>{label}</div>
     </div>
   );
 }
 
-function MetricCard({
-  icon,
-  label,
-  value,
-  tone = "neutral",
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  tone?: "neutral" | "warning" | "success";
-}) {
-  const toneClass =
-    tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : "text-foreground";
+function StatRow({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
-    <div className="rounded-lg border border-hairline bg-card p-4 shadow-card">
-      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-        {icon}
-        {label}
-      </div>
-      <div className={`mt-2 text-2xl font-semibold tabular-nums ${toneClass}`}>{value}</div>
+    <div className="flex items-baseline justify-between gap-3 border-t border-hairline py-3">
+      <span className="text-[13px] text-muted-foreground">{label}</span>
+      <span className={`font-serif text-lg leading-none tabular-nums ${tone}`}>{value}</span>
     </div>
   );
 }

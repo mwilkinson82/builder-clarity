@@ -280,7 +280,10 @@ await expectContains(
     /href=\{projectHref\}/,
     /Project worklist/,
     /max-w-\[1760px\]/,
-    /companyInitials\(headerCompanyName\)/,
+    // Company identity in the header is now owned by the shared PortfolioTopBar
+    // (b6 CRM reskin); the old hand-rolled companyInitials(headerCompanyName)
+    // header block was replaced by <PortfolioTopBar active="crm" />.
+    /PortfolioTopBar/,
   ],
   "portfolio route supports member project creation, responsive ledger navigation, company-scoped identity, and command-center first viewport",
 );

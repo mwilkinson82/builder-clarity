@@ -1,14 +1,13 @@
-// Portfolio / Home screen — redesign option 6a (Turn 6, interactive).
+// Portfolio / Home screen — Reskin B6.
 //
-// PHASE 1: a faithful, client-side reproduction of the approved 6a mock with the
-// design's placeholder data. The two behaviors 6a demonstrates are real here:
-//   • the Owner ⇄ PM view toggle (client state; wire to real role in Phase 2)
-//   • clickable posture tiles that filter the field worklist in place
-// PHASE 2 (separate PR) replaces placeholders with live CRM + project aggregates.
-//
-// The design canvas renders as a fixed 1240px "device card"; here it's adapted
-// to a real full-page route (centered shell, no dramatic float shadow). On-dark
-// hex tints are kept verbatim — the one place the house system allows literal hex.
+// The dark hero gives way to a light "briefing card" (border-top clay), followed
+// by a NEW narrative "position this morning" band that reads the company's live
+// gross-profit posture in one sentence + four proportion bars. Everything else —
+// the Owner⇄PM toggle, the CRM pipeline, the won→delivery handoff, the posture
+// tiles that filter the field worklist, the pursuits rail and company card — is
+// preserved and restyled onto the ALP house tokens (via the portfolio-home.css
+// alias layer). No figure is fabricated: the band is pure display off the same
+// aggregates that feed the posture tiles and hero stats.
 import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -30,7 +29,7 @@ import { closeProject } from "@/lib/projects.functions";
 import { type HeroStat, type WorklistJob } from "./portfolio-home-data";
 import { homeInitials, useHomeAccess, useHomeIdentity, type HomeIdentity } from "./home-identity";
 import { useHomeMetrics } from "./use-home-metrics";
-import { type HomeMetrics } from "./portfolio-home-metrics";
+import { compactUSD, type HomeMetrics } from "./portfolio-home-metrics";
 import { AvatarMenu } from "./home-avatar-menu";
 import "./portfolio-home.css";
 
@@ -49,8 +48,9 @@ function toneClass(prefix: "ow-tone" | "ow-bg", tone: WorklistJob["tone"]) {
 }
 
 // CRM / projects live as tabs on the portfolio route; the cutover keeps these
-// `?tab=` URLs working, so the home links here need no re-wiring when 6a lands on /.
+// `?tab=` URLs working, so the home links here need no re-wiring when B6 lands on /.
 const crmHref = (oppId?: string) => `/?tab=crm${oppId ? `&opportunity=${oppId}` : ""}`;
+const CRM_HREF = "/?tab=crm";
 const PROJECTS_HREF = "/?tab=projects";
 
 /** The owning company's logo (initials fallback), shown left of a job's name. */
@@ -112,29 +112,175 @@ function CloseJobButton({ projectId, name }: { projectId: string; name: string }
   );
 }
 
-function HeroStats({ stats }: { stats: HeroStat[] }) {
+// The light briefing card that opens both views: tenant logo + dateline eyebrow,
+// serif greeting, the "needs you" alert, two path buttons, and a 2×2 stat grid.
+function BriefingCard({
+  identity,
+  greeting,
+  alert,
+  stats,
+  primary,
+  secondary,
+}: {
+  identity: HomeIdentity;
+  greeting: string;
+  alert: { kicker: string; body: string };
+  stats: HeroStat[];
+  primary: { label: string; href: string };
+  secondary: { label: string; href: string };
+}) {
   return (
-    <div className="ow-hero__stats">
-      {stats.map((stat) => (
-        <div className="ow-hero__stat" key={stat.label}>
-          <div className={`ow-hero__stat-label${stat.valueTone === "crit" ? " is-crit" : ""}`}>
-            {stat.label}
-          </div>
-          <div className="ow-hero__stat-row">
-            <span className={`ow-hero__stat-value${stat.valueTone === "crit" ? " is-crit" : ""}`}>
-              {stat.value}
+    <section className="ow-brief">
+      <div className="ow-wrap ow-brief__card">
+        <div className="ow-brief__main">
+          <div className="ow-brief__id">
+            <span className="ow-brief__logo" title={identity.companyName}>
+              {identity.companyLogo ? (
+                <img src={identity.companyLogo} alt="" />
+              ) : (
+                identity.companyInitials
+              )}
             </span>
-            {stat.ticker ? (
-              <span
-                className={`ow-hero__stat-ticker${stat.tickerTone === "crit" ? " is-crit" : ""}`}
-              >
-                {stat.ticker}
-              </span>
-            ) : null}
+            <div>
+              <div className="ow-brief__eyebrow">
+                {identity.companyName} · {identity.dateline}
+              </div>
+              <h1 className="ow-brief__greet">{greeting}</h1>
+            </div>
+          </div>
+          <div className="ow-brief__alert">
+            <span className="ow-brief__alert-kicker">
+              <span />
+              {alert.kicker}
+            </span>
+            <span className="ow-brief__alert-div" />
+            <span className="ow-brief__alert-body">{boldParts(alert.body)}</span>
+          </div>
+          <div className="ow-brief__cta">
+            <a href={primary.href} className="ow-btn ow-btn--dark">
+              {primary.label}
+            </a>
+            <a href={secondary.href} className="ow-btn ow-btn--outline">
+              {secondary.label}
+            </a>
           </div>
         </div>
-      ))}
+        <div className="ow-brief__stats">
+          {stats.map((stat) => {
+            const crit = stat.valueTone === "crit";
+            return (
+              <div className="ow-brief__stat" key={stat.label}>
+                <div className={`ow-brief__stat-label${crit ? " is-crit" : ""}`}>{stat.label}</div>
+                <div className={`ow-brief__stat-value${crit ? " is-crit" : ""}`}>{stat.value}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// One proportion-bar row of the narrative band.
+function PositionBar({
+  label,
+  fill,
+  width,
+  value,
+}: {
+  label: string;
+  fill: "good" | "crit" | "warn" | "clay";
+  width: number;
+  value: string;
+}) {
+  return (
+    <div className="ow-posbar">
+      <span className="ow-posbar__label">{label}</span>
+      <span className="ow-posbar__track">
+        <span
+          className={`ow-posbar__fill ow-bg-${fill}${fill === "clay" ? " is-clay" : ""}`}
+          style={{ width: `${width}%` }}
+        />
+      </span>
+      <span className={`ow-posbar__val ow-tone-${fill}`}>{value}</span>
     </div>
+  );
+}
+
+// The NEW "position this morning" band — company-wide GP posture in one sentence
+// plus four proportion bars, all read straight off metrics.position (no re-derive).
+function NarrativeBand({
+  identity,
+  position,
+}: {
+  identity: HomeIdentity;
+  position: HomeMetrics["position"];
+}) {
+  const { indicatedGP, gpAtRiskExposed, gpAtRiskPct, openHoldsTotal, weighted } = position;
+  // Bar widths are shares of indicated GP, clamped so a sliver still paints and no
+  // bar overruns its track. Weighted pursuit keeps a small floor so it never vanishes.
+  const riskPct = Math.min(100, Math.max(0, gpAtRiskPct));
+  const heldPct = indicatedGP > 0 ? Math.min(100, (openHoldsTotal / indicatedGP) * 100) : 0;
+  const weightedPct =
+    indicatedGP > 0 ? Math.max(8, Math.min(100, (weighted / indicatedGP) * 100)) : 8;
+  const hasRisk = gpAtRiskExposed > 0;
+
+  return (
+    <section className="ow-position">
+      <div className="ow-wrap ow-position__wrap">
+        <div className="ow-position__main">
+          <div className="ow-eyebrow">The position this morning</div>
+          <h2 className="ow-position__lead">
+            The company is indicating <em className="ow-tone-good">{compactUSD(indicatedGP)}</em> of
+            gross profit —{" "}
+            {hasRisk ? (
+              <em className="ow-tone-crit">
+                {compactUSD(gpAtRiskExposed)} forecasting below signed
+              </em>
+            ) : (
+              <em className="ow-tone-good">every job holding at or above signed</em>
+            )}
+            .
+          </h2>
+          <div className="ow-position__bars">
+            <PositionBar
+              label="Indicated GP"
+              fill="good"
+              width={100}
+              value={compactUSD(indicatedGP)}
+            />
+            <PositionBar
+              label="Forecasting below signed"
+              fill="crit"
+              width={riskPct}
+              value={compactUSD(gpAtRiskExposed)}
+            />
+            <PositionBar
+              label="Held against live risk"
+              fill="warn"
+              width={heldPct}
+              value={compactUSD(openHoldsTotal)}
+            />
+            <PositionBar
+              label="Weighted pursuit"
+              fill="clay"
+              width={weightedPct}
+              value={compactUSD(weighted)}
+            />
+          </div>
+        </div>
+        <div className="ow-position__mark" aria-hidden="true">
+          <span className="ow-position__mark-square">
+            {identity.companyLogo ? (
+              <img src={identity.companyLogo} alt="" />
+            ) : (
+              identity.companyInitials
+            )}
+          </span>
+          <span className="ow-position__mark-label">{identity.companyName}</span>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -167,31 +313,26 @@ export function PortfolioHome() {
       <div className="ow-shell">
         {/* ---------- customer-forward header (white-label) ---------- */}
         <header className="ow-header">
-          <div className="ow-brand">
-            <span className="ow-logo">
+          <Link
+            to="/team"
+            className="ow-switcher"
+            title={`${identity.companyName} — switch workspace`}
+          >
+            <span className="ow-switcher__logo">
               {identity.companyLogo ? (
-                <img
-                  src={identity.companyLogo}
-                  alt=""
-                  style={{ width: "100%", height: "100%", borderRadius: 10, objectFit: "cover" }}
-                />
+                <img src={identity.companyLogo} alt="" />
               ) : (
                 identity.companyInitials
               )}
             </span>
-            <Link
-              to="/team"
-              className="ow-brandname"
-              style={{ color: "inherit", textDecoration: "none", display: "inline-flex", gap: 7 }}
-            >
-              {identity.companyName} <span style={{ color: "var(--muted)", fontSize: 12 }}>▾</span>
-            </Link>
-          </div>
+            <span className="ow-switcher__name">{identity.companyName}</span>
+            <span className="ow-switcher__caret">▾</span>
+          </Link>
           <nav className="ow-nav">
             <a className="is-active" href="/" aria-current="page">
               Portfolio
             </a>
-            {access.canSeeOwnerView ? <a href="/?tab=crm">CRM</a> : null}
+            {access.canSeeOwnerView ? <a href={CRM_HREF}>CRM</a> : null}
             <Link to="/estimates">Estimates</Link>
             <Link to="/billing">Billing</Link>
             <Link to="/reports">Reports</Link>
@@ -215,30 +356,27 @@ export function PortfolioHome() {
             Portfolio level
           </span>
           {access.canSeeOwnerView ? (
-            <>
-              <span className="ow-levelbar__hint">Try the switch →</span>
-              <span className="ow-viewas">
-                <span className="ow-viewas__label">View as</span>
-                <span className="ow-toggle" role="group" aria-label="View as">
-                  <button
-                    type="button"
-                    className={`ow-seg${view === "owner" ? " is-active" : ""}`}
-                    aria-pressed={view === "owner"}
-                    onClick={() => setView("owner")}
-                  >
-                    ◔ Owner
-                  </button>
-                  <button
-                    type="button"
-                    className={`ow-seg${view === "pm" ? " is-active" : ""}`}
-                    aria-pressed={view === "pm"}
-                    onClick={() => setView("pm")}
-                  >
-                    ◱ PM
-                  </button>
-                </span>
+            <span className="ow-viewas">
+              <span className="ow-viewas__label">View as</span>
+              <span className="ow-toggle" role="group" aria-label="View as">
+                <button
+                  type="button"
+                  className={`ow-seg${view === "owner" ? " is-active" : ""}`}
+                  aria-pressed={view === "owner"}
+                  onClick={() => setView("owner")}
+                >
+                  ◔ Owner
+                </button>
+                <button
+                  type="button"
+                  className={`ow-seg${view === "pm" ? " is-active" : ""}`}
+                  aria-pressed={view === "pm"}
+                  onClick={() => setView("pm")}
+                >
+                  ◱ PM
+                </button>
               </span>
-            </>
+            </span>
           ) : null}
         </div>
 
@@ -282,103 +420,109 @@ function OwnerView({
     overdue: "overdue",
   };
 
+  // "N of M at risk" — read straight off the posture tiles so it never disagrees
+  // with the At-risk / Active tiles beside it.
+  const atRiskValue = metrics.posture.find((t) => t.key === "at-risk")?.value ?? "0";
+  const activeValue = metrics.posture.find((t) => t.key === "active")?.value ?? "0";
+  const atRiskSummary = `${atRiskValue} of ${activeValue} at risk`;
+
   return (
     <>
-      {/* dark hero */}
-      <section className="ow-hero">
-        <div className="ow-hero__date">{identity.dateline}</div>
-        <h1 className="ow-hero__greet">
-          {identity.greeting}, {identity.userFirstName}.
-        </h1>
-        <div className="ow-hero__alert">
-          <span className="ow-hero__alert-kicker">
-            <span />
-            {metrics.ownerAlert.kicker}
-          </span>
-          <span className="ow-hero__alert-div" />
-          <span className="ow-hero__alert-body">{boldParts(metrics.ownerAlert.body)}</span>
-        </div>
-        <HeroStats stats={metrics.ownerStats} />
-        <div className="ow-hero__cta">
-          <a href={PROJECTS_HREF} className="ow-btn ow-btn--light">
-            Open {identity.companyName} projects →
-          </a>
-          <a href="/?tab=crm" className="ow-btn ow-btn--ghost-dark">
-            Open {identity.companyName} CRM →
-          </a>
-        </div>
-      </section>
+      <BriefingCard
+        identity={identity}
+        greeting={`${identity.greeting}, ${identity.userFirstName}.`}
+        alert={metrics.ownerAlert}
+        stats={metrics.ownerStats}
+        primary={{ label: `Open ${identity.companyName} projects →`, href: PROJECTS_HREF }}
+        secondary={{ label: `Open ${identity.companyName} CRM →`, href: CRM_HREF }}
+      />
 
-      {/* new business — CRM pipeline */}
-      <section className="ow-section">
-        <div className="ow-section__head">
-          <div>
-            <div className="ow-eyebrow">New business · CRM → Estimating → Contract</div>
-            <div className="ow-lead">Pipeline &amp; pursuits</div>
-          </div>
-          <a href="/?tab=crm" className="ow-btn ow-btn--dark">
-            Open {identity.companyName} CRM board →
-          </a>
-        </div>
-        <div className="ow-pipeline">
-          {metrics.pipeline.map((stage) => (
-            // Estimating opens the Estimates module (its bid); every other stage
-            // opens that opportunity on the CRM board.
-            <a
-              key={stage.key}
-              href={stage.estimatesLink ? "/estimates" : crmHref(stage.oppId)}
-              className={`ow-stage${stage.dim ? " is-dim" : ""}${
-                stage.highlight === "clay"
-                  ? " is-clay"
-                  : stage.highlight === "good"
-                    ? " is-good"
-                    : ""
-              }`}
-            >
-              <div className="ow-stage__top">
-                <span className="ow-stage__label">{stage.label}</span>
-                {stage.estimatesLink ? <span className="ow-stage__link">Estimates ↗</span> : null}
+      <NarrativeBand identity={identity} position={metrics.position} />
+
+      {/* Track 1 · Winning work — CRM pipeline + won→delivery handoff */}
+      <section className="ow-track">
+        <div className="ow-wrap">
+          <div className="ow-track__head">
+            <div>
+              <div className="ow-eyebrow">Track 1 · Winning work</div>
+              <div className="ow-track__title">
+                Pipeline &amp; pursuits{" "}
+                <span className="ow-track__title-sub">— CRM → Estimating → Contract</span>
               </div>
-              <div className="ow-stage__count">{stage.count}</div>
-              {stage.name ? (
-                <>
-                  <div className="ow-stage__name">{stage.name}</div>
-                  <div className="ow-stage__meta">{stage.meta}</div>
-                </>
-              ) : (
-                <div className="ow-stage__empty">{stage.meta}</div>
-              )}
+            </div>
+            <a href={CRM_HREF} className="ow-btn ow-btn--dark">
+              Open {identity.companyName} CRM board →
             </a>
-          ))}
-        </div>
-        <div className="ow-note">
-          Estimating is a pipeline stage — the bid is built in <b>OverWatch Estimates</b>, then
-          negotiated before a contract is signed.
+          </div>
+          <div className="ow-pipeline">
+            {metrics.pipeline.map((stage) => (
+              // Estimating opens the Estimates module (its bid); every other stage
+              // opens that opportunity on the CRM board.
+              <a
+                key={stage.key}
+                href={stage.estimatesLink ? "/estimates" : crmHref(stage.oppId)}
+                className={`ow-stage${stage.dim ? " is-dim" : ""}${
+                  stage.highlight === "clay"
+                    ? " is-clay"
+                    : stage.highlight === "good"
+                      ? " is-good"
+                      : ""
+                }`}
+              >
+                <div className="ow-stage__top">
+                  <span className="ow-stage__label">{stage.label}</span>
+                  {stage.estimatesLink ? <span className="ow-stage__link">Estimates ↗</span> : null}
+                </div>
+                <div className="ow-stage__count">{stage.count}</div>
+                {stage.name ? (
+                  <>
+                    <div className="ow-stage__name">{stage.name}</div>
+                    <div className="ow-stage__meta">{stage.meta}</div>
+                  </>
+                ) : (
+                  <div className="ow-stage__empty">{stage.meta}</div>
+                )}
+              </a>
+            ))}
+          </div>
+
+          {/* handoff banner, now inline in Track 1 (only when a pursuit has crossed over) */}
+          {metrics.handoffName ? (
+            <div className="ow-handoff">
+              <span className="ow-handoff__arrow">↓</span>
+              <div className="ow-handoff__text">
+                <b>Won pursuits convert to managed projects.</b>{" "}
+                <span>
+                  {metrics.handoffName} just crossed over — it now lives in the delivery track
+                  below.
+                </span>
+              </div>
+              <a href={CRM_HREF} className="ow-btn ow-btn--outline">
+                See conversions →
+              </a>
+            </div>
+          ) : null}
+
+          <div className="ow-note">
+            Estimating is a pipeline stage — the bid is built in <b>OverWatch Estimates</b>, then
+            negotiated before a contract is signed.
+          </div>
         </div>
       </section>
 
-      {/* handoff: won → managed project (only when a pursuit has actually crossed over) */}
-      {metrics.handoffName ? (
-        <div className="ow-handoff">
-          <span className="ow-handoff__arrow">↓</span>
-          <div style={{ flex: 1 }}>
-            <div className="ow-handoff__title">Won pursuits convert to managed projects.</div>
-            <div className="ow-handoff__sub">
-              {metrics.handoffName} just crossed over — it now lives in the delivery track below.
+      {/* Track 2 · Building it — posture tiles + field worklist + pursuits/company rail */}
+      <section className="ow-track ow-track--last">
+        <div className="ow-wrap">
+          <div className="ow-track__head">
+            <div>
+              <div className="ow-eyebrow">Track 2 · Building it</div>
+              <div className="ow-track__title">
+                Company-wide posture{" "}
+                <span className="ow-track__title-sub">— click a tile to filter the worklist</span>
+              </div>
             </div>
+            <span className="ow-track__summary">{atRiskSummary}</span>
           </div>
-          <a href="/?tab=crm" className="ow-btn ow-btn--dark">
-            See pursuit conversions →
-          </a>
-        </div>
-      ) : null}
-
-      {/* delivery: posture tiles + worklist + rail */}
-      <div className="ow-delivery">
-        <div className="ow-delivery__main">
-          <div className="ow-eyebrow">Active projects · Field &amp; IOR delivery</div>
-          <div className="ow-lead">Company-wide posture</div>
-          <div className="ow-delivery__hint">Click a tile to filter the worklist.</div>
 
           <div className="ow-tiles">
             {metrics.posture.map((tile) => {
@@ -417,38 +561,185 @@ function OwnerView({
             })}
           </div>
 
-          <div className="ow-worklist-head">
-            <span className="ow-worklist-head__title">What needs you on the field</span>
-            <span className="ow-rule" />
-            <span className="ow-worklist-head__count">{shownLabel}</span>
-            {filter !== "all" ? (
-              <button type="button" className="ow-clear" onClick={() => setFilter("all")}>
-                Clear ×
-              </button>
-            ) : null}
-          </div>
+          <div className="ow-delivery">
+            <div>
+              <div className="ow-worklist-head">
+                <span className="ow-worklist-head__title">What needs you on the field</span>
+                <span className="ow-rule" />
+                <span className="ow-worklist-head__count">{shownLabel}</span>
+                {filter !== "all" ? (
+                  <button type="button" className="ow-clear" onClick={() => setFilter("all")}>
+                    Clear ×
+                  </button>
+                ) : null}
+              </div>
 
-          <div className="ow-worklist">
-            {filteredJobs.length === 0 ? (
-              <div className="ow-worklist__empty">Nothing in this filter right now.</div>
-            ) : (
-              filteredJobs.map((job) => (
-                <div className="ow-jobrow" key={job.id}>
-                  <span className={`ow-jobrow__dot ${toneClass("ow-bg", job.tone)}`} />
-                  <div className={`ow-jobrow__tag ${toneClass("ow-tone", job.tone)}`}>
-                    {job.tag}
-                  </div>
-                  <JobLogo url={job.logoUrl} name={job.orgName} />
-                  <div className="ow-jobrow__body">
-                    <div className="ow-jobrow__name">{job.name}</div>
-                    <div className="ow-jobrow__desc">{job.desc}</div>
-                  </div>
-                  {job.value ? (
-                    <div className={`ow-jobrow__val ${toneClass("ow-tone", job.tone)}`}>
-                      {job.value}
+              <div className="ow-worklist">
+                {filteredJobs.length === 0 ? (
+                  <div className="ow-worklist__empty">Nothing in this filter right now.</div>
+                ) : (
+                  filteredJobs.map((job) => (
+                    <div className="ow-jobrow" key={job.id}>
+                      <span className={`ow-jobrow__dot ${toneClass("ow-bg", job.tone)}`} />
+                      <div className={`ow-jobrow__tag ${toneClass("ow-tone", job.tone)}`}>
+                        {job.tag}
+                      </div>
+                      <JobLogo url={job.logoUrl} name={job.orgName} />
+                      <div className="ow-jobrow__body">
+                        <div className="ow-jobrow__name">{job.name}</div>
+                        <div className="ow-jobrow__desc">{job.desc}</div>
+                      </div>
+                      {job.value ? (
+                        <div className={`ow-jobrow__val ${toneClass("ow-tone", job.tone)}`}>
+                          {job.value}
+                        </div>
+                      ) : null}
+                      <CloseJobButton projectId={job.id} name={job.name} />
+                      <Link
+                        to="/projects/$projectId"
+                        params={{ projectId: job.id }}
+                        className="ow-jobrow__open"
+                      >
+                        Open →
+                      </Link>
                     </div>
-                  ) : null}
-                  <CloseJobButton projectId={job.id} name={job.name} />
+                  ))
+                )}
+
+                {/* closed jobs collapse, merged into the worklist footer row */}
+                {metrics.closedJobs.length > 0 ? (
+                  <details className="ow-closed">
+                    <summary className="ow-closed__summary">
+                      Show all {metrics.worklist.length} · Closed jobs ({metrics.closedJobs.length})
+                    </summary>
+                    {metrics.closedJobs.map((job) => (
+                      <div className="ow-jobrow" key={job.id}>
+                        <span className="ow-jobrow__dot ow-bg-muted" />
+                        <div className="ow-jobrow__tag ow-tone-muted">{job.tag}</div>
+                        <JobLogo url={job.logoUrl} name={job.orgName} />
+                        <div className="ow-jobrow__body">
+                          <div className="ow-jobrow__name">{job.name}</div>
+                          <div className="ow-jobrow__desc">{job.desc}</div>
+                        </div>
+                        <Link
+                          to="/projects/$projectId"
+                          params={{ projectId: job.id }}
+                          className="ow-jobrow__open"
+                        >
+                          Open →
+                        </Link>
+                      </div>
+                    ))}
+                  </details>
+                ) : null}
+              </div>
+            </div>
+
+            {/* rail: pursuits needing a move + company card */}
+            <aside className="ow-aside">
+              <div className="ow-card">
+                <div className="ow-eyebrow">Pursuits needing a move</div>
+                {metrics.pursuits.length === 0 ? (
+                  <div className="ow-pursuit__context" style={{ padding: "8px 0" }}>
+                    No pursuits waiting on a move.
+                  </div>
+                ) : null}
+                {metrics.pursuits.map((pursuit, i) => (
+                  <a
+                    className="ow-pursuit"
+                    key={`${pursuit.title}-${i}`}
+                    href={crmHref(pursuit.oppId)}
+                  >
+                    <span className="ow-pursuit__row">
+                      <span className="ow-pursuit__title">{pursuit.title}</span>
+                      <span
+                        className={`ow-pursuit__due${pursuit.dueTone === "crit" ? " is-crit" : ""}`}
+                      >
+                        {pursuit.due}
+                      </span>
+                    </span>
+                    <span className="ow-pursuit__context">{pursuit.context}</span>
+                  </a>
+                ))}
+              </div>
+
+              <div className="ow-card">
+                <div className="ow-company__head">
+                  <span className="ow-company__logo">
+                    {identity.companyLogo ? (
+                      <img src={identity.companyLogo} alt="" />
+                    ) : (
+                      identity.companyInitials
+                    )}
+                  </span>
+                  <div>
+                    <div className="ow-company__eyebrow">Company</div>
+                    <div className="ow-company__name">{identity.companyName}</div>
+                  </div>
+                </div>
+                <Link to="/billing" className="ow-company__row">
+                  <span>Billing &amp; payouts</span>
+                  <span className="ow-company__row-meta">→</span>
+                </Link>
+                <Link to="/team" className="ow-company__row">
+                  <span>Clients &amp; team</span>
+                  <span className="ow-company__row-meta">→</span>
+                </Link>
+                <Link to="/team" className="ow-company__row">
+                  <span>Plan &amp; storage</span>
+                  <span className="ow-company__row-meta">62%</span>
+                </Link>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function PmView({ identity, metrics }: { identity: HomeIdentity; metrics: HomeMetrics }) {
+  const greeting = `${identity.greeting === "Good morning" ? "Morning" : identity.greeting}, ${identity.userFirstName}.`;
+  return (
+    <>
+      <BriefingCard
+        identity={identity}
+        greeting={greeting}
+        alert={metrics.pmAlert}
+        stats={metrics.pmStats}
+        primary={{ label: "Start today's logs →", href: PROJECTS_HREF }}
+        secondary={{ label: "My to-dos →", href: PROJECTS_HREF }}
+      />
+
+      <section className="ow-track ow-track--last">
+        <div className="ow-wrap">
+          <div className="ow-worklist-head">
+            <span className="ow-worklist-head__title">Your jobs — sorted by what needs you</span>
+            <span className="ow-rule" />
+          </div>
+          <div className="ow-worklist">
+            {metrics.pmJobs.length === 0 ? (
+              <div className="ow-worklist__empty">No jobs yet.</div>
+            ) : null}
+            {metrics.pmJobs.map((job, i) => (
+              <div className="ow-jobrow" key={job.id}>
+                <span className={`ow-jobrow__dot ${toneClass("ow-bg", job.tone)}`} />
+                <div className={`ow-jobrow__tag ${toneClass("ow-tone", job.tone)}`}>{job.tag}</div>
+                <JobLogo url={job.logoUrl} name={job.orgName} />
+                <div className="ow-jobrow__body">
+                  <div className="ow-jobrow__name">{job.name}</div>
+                  <div className="ow-jobrow__desc">{job.desc}</div>
+                </div>
+                {i < 3 ? (
+                  <Link
+                    to="/projects/$projectId"
+                    params={{ projectId: job.id }}
+                    className="ow-btn ow-btn--dark"
+                    style={{ fontSize: 12, padding: "9px 15px" }}
+                  >
+                    Open job →
+                  </Link>
+                ) : (
                   <Link
                     to="/projects/$projectId"
                     params={{ projectId: job.id }}
@@ -456,163 +747,10 @@ function OwnerView({
                   >
                     Open →
                   </Link>
-                </div>
-              ))
-            )}
-          </div>
-
-          {metrics.closedJobs.length > 0 ? (
-            <details className="ow-closed">
-              <summary className="ow-closed__summary">
-                Closed jobs ({metrics.closedJobs.length})
-              </summary>
-              <div className="ow-worklist" style={{ marginTop: 12 }}>
-                {metrics.closedJobs.map((job) => (
-                  <div className="ow-jobrow" key={job.id}>
-                    <span className="ow-jobrow__dot ow-bg-muted" />
-                    <div className="ow-jobrow__tag ow-tone-muted">{job.tag}</div>
-                    <JobLogo url={job.logoUrl} name={job.orgName} />
-                    <div className="ow-jobrow__body">
-                      <div className="ow-jobrow__name">{job.name}</div>
-                      <div className="ow-jobrow__desc">{job.desc}</div>
-                    </div>
-                    <Link
-                      to="/projects/$projectId"
-                      params={{ projectId: job.id }}
-                      className="ow-jobrow__open"
-                    >
-                      Open →
-                    </Link>
-                  </div>
-                ))}
-              </div>
-            </details>
-          ) : null}
-        </div>
-
-        {/* rail: pursuits needing a move + company card */}
-        <aside className="ow-rail">
-          <div className="ow-rail__title">Pursuits needing a move</div>
-          {metrics.pursuits.length === 0 ? (
-            <div className="ow-pursuit__context" style={{ padding: "8px 0" }}>
-              No pursuits waiting on a move.
-            </div>
-          ) : null}
-          {metrics.pursuits.map((pursuit, i) => (
-            <a className="ow-pursuit" key={`${pursuit.title}-${i}`} href={crmHref(pursuit.oppId)}>
-              <span className="ow-pursuit__row">
-                <span className="ow-pursuit__title">{pursuit.title}</span>
-                <span className={`ow-pursuit__due${pursuit.dueTone === "crit" ? " is-crit" : ""}`}>
-                  {pursuit.due}
-                </span>
-              </span>
-              <span className="ow-pursuit__context">{pursuit.context}</span>
-            </a>
-          ))}
-
-          <div className="ow-company">
-            <div className="ow-company__head">
-              <span className="ow-company__logo">
-                {identity.companyLogo ? (
-                  <img
-                    src={identity.companyLogo}
-                    alt=""
-                    style={{ width: "100%", height: "100%", borderRadius: 7, objectFit: "cover" }}
-                  />
-                ) : (
-                  identity.companyInitials
                 )}
-              </span>
-              <div>
-                <div className="ow-company__eyebrow">Company</div>
-                <div className="ow-company__name">{identity.companyName}</div>
               </div>
-            </div>
-            <Link to="/billing" className="ow-company__row">
-              <span>Billing &amp; payouts</span>
-              <span className="ow-company__row-meta">→</span>
-            </Link>
-            <Link to="/team" className="ow-company__row">
-              <span>Clients &amp; team</span>
-              <span className="ow-company__row-meta">→</span>
-            </Link>
-            <Link to="/team" className="ow-company__row">
-              <span>Plan &amp; storage</span>
-              <span className="ow-company__row-meta is-mono">62%</span>
-            </Link>
+            ))}
           </div>
-        </aside>
-      </div>
-    </>
-  );
-}
-
-function PmView({ identity, metrics }: { identity: HomeIdentity; metrics: HomeMetrics }) {
-  return (
-    <>
-      <section className="ow-hero">
-        <div className="ow-hero__date">{identity.dateline}</div>
-        <h1 className="ow-hero__greet">
-          {identity.greeting === "Good morning" ? "Morning" : identity.greeting},{" "}
-          {identity.userFirstName}.
-        </h1>
-        <div className="ow-hero__alert">
-          <span className="ow-hero__alert-kicker">
-            <span />
-            {metrics.pmAlert.kicker}
-          </span>
-          <span className="ow-hero__alert-div" />
-          <span className="ow-hero__alert-body">{boldParts(metrics.pmAlert.body)}</span>
-        </div>
-        <HeroStats stats={metrics.pmStats} />
-        <div className="ow-hero__cta">
-          <a href={PROJECTS_HREF} className="ow-btn ow-btn--light">
-            Start today's logs →
-          </a>
-          <a href={PROJECTS_HREF} className="ow-btn ow-btn--ghost-dark">
-            My to-dos →
-          </a>
-        </div>
-      </section>
-
-      <section className="ow-section">
-        <div className="ow-worklist-head">
-          <span className="ow-worklist-head__title">Your jobs — sorted by what needs you</span>
-          <span className="ow-rule" />
-        </div>
-        <div className="ow-worklist">
-          {metrics.pmJobs.length === 0 ? (
-            <div className="ow-worklist__empty">No jobs yet.</div>
-          ) : null}
-          {metrics.pmJobs.map((job, i) => (
-            <div className="ow-jobrow" key={job.id}>
-              <span className={`ow-jobrow__dot ${toneClass("ow-bg", job.tone)}`} />
-              <div className={`ow-jobrow__tag ${toneClass("ow-tone", job.tone)}`}>{job.tag}</div>
-              <JobLogo url={job.logoUrl} name={job.orgName} />
-              <div className="ow-jobrow__body">
-                <div className="ow-jobrow__name">{job.name}</div>
-                <div className="ow-jobrow__desc">{job.desc}</div>
-              </div>
-              {i < 3 ? (
-                <Link
-                  to="/projects/$projectId"
-                  params={{ projectId: job.id }}
-                  className="ow-btn ow-btn--dark"
-                  style={{ fontSize: 12, padding: "9px 15px" }}
-                >
-                  Open job →
-                </Link>
-              ) : (
-                <Link
-                  to="/projects/$projectId"
-                  params={{ projectId: job.id }}
-                  className="ow-jobrow__open"
-                >
-                  Open →
-                </Link>
-              )}
-            </div>
-          ))}
         </div>
       </section>
     </>

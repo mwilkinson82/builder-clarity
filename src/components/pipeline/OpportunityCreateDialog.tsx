@@ -30,6 +30,9 @@ type OpportunityCreateDialogProps = {
   accounts: string[];
   isCreating: boolean;
   onCreate: (input: CreateOpportunityInput) => Promise<void>;
+  // Optional custom trigger (e.g. the CRM page-header "+ New opportunity" CTA).
+  // Falls back to the default ink button when omitted.
+  trigger?: ReactNode;
 };
 
 const emptyDraft: CreateOpportunityInput = {
@@ -55,6 +58,7 @@ export function OpportunityCreateDialog({
   accounts,
   isCreating,
   onCreate,
+  trigger,
 }: OpportunityCreateDialogProps) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<CreateOpportunityInput>(emptyDraft);
@@ -77,10 +81,12 @@ export function OpportunityCreateDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button type="button" className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          New Opportunity
-        </Button>
+        {trigger ?? (
+          <Button type="button" className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            New Opportunity
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="max-w-2xl">
         <DialogHeader>

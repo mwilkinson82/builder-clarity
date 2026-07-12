@@ -30,11 +30,24 @@ export type HomeMetrics = {
   pmAlert: { kicker: string; body: string };
   pmStats: HeroStat[];
   pmJobs: WorklistJob[];
+  /** Raw company-wide aggregates the "position this morning" narrative band reads
+   *  off directly (pure display — the band never re-derives or fabricates). Every
+   *  figure here is already used to build the posture tiles/hero stats above, so
+   *  the band and the tiles always agree. */
+  position: {
+    indicatedGP: number;
+    gpAtRiskExposed: number;
+    gpAtRiskPct: number;
+    openHoldsTotal: number;
+    weighted: number;
+  };
   isEmpty: boolean;
 };
 
 // ---- formatting -------------------------------------------------------------
-function compactUSD(n: number): string {
+// Exported so the narrative band formats money the SAME way the posture tiles and
+// hero stats do — one figure, one rendering, across the whole home.
+export function compactUSD(n: number): string {
   const value = Number.isFinite(n) ? n : 0;
   const abs = Math.abs(value);
   if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
@@ -379,6 +392,7 @@ export function buildHomeMetrics(
     pmAlert: { kicker: "Needs you · today", body: pmBody },
     pmStats,
     pmJobs,
+    position: { indicatedGP, gpAtRiskExposed, gpAtRiskPct, openHoldsTotal, weighted },
     isEmpty: projects.length === 0 && opportunities.length === 0,
   };
 }
