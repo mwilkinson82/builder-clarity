@@ -347,6 +347,7 @@ export function ActivityDetailDialog({
     <Dialog open onOpenChange={(open) => !open && !saving && onClose()}>
       <DialogContent className="flex max-h-[92vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:w-[min(calc(100vw-2rem),80rem)] sm:max-w-[80rem] sm:rounded-2xl">
         <DialogHeader className="border-b border-hairline bg-surface px-4 py-4 pr-12 text-left sm:px-6">
+          <div className="eyebrow">Activity</div>
           <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
             <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
               {activity.activity_id || "No ID"}

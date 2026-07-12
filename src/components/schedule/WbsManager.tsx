@@ -1,13 +1,7 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -511,13 +505,12 @@ export function WbsManagerDialog({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !isSaving && onOpenChange(nextOpen)}>
       <DialogContent className="flex max-h-[88vh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] flex-col gap-0 overflow-hidden p-0 sm:w-[min(calc(100vw-2rem),72rem)] sm:max-w-[72rem]">
-        <DialogHeader className="border-b border-hairline px-4 py-4 pr-12 sm:px-6">
-          <DialogTitle className="font-serif text-2xl">WBS / area manager</DialogTitle>
-          <DialogDescription>
-            Build parent WBS sections, child areas, and the order each level appears in the CPM
-            grid.
-          </DialogDescription>
-        </DialogHeader>
+        <DialogHeaderV2
+          className="border-b border-hairline px-4 py-4 pr-12 sm:px-6"
+          eyebrow="Areas"
+          title="WBS / area manager"
+          description="Build parent WBS sections, child areas, and the order each level appears in the CPM grid."
+        />
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(240px,0.55fr)]">

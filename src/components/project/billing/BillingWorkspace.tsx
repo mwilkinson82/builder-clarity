@@ -10,15 +10,8 @@ import { Plus, ReceiptText } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -796,12 +789,11 @@ export function BillingWorkspace({
             applications panel header (v2). Rendered here so it stays mounted. */}
         <Dialog open={payAppOpen} onOpenChange={setPayAppOpen}>
           <DialogContent className="sm:max-w-3xl">
-            <DialogHeader>
-              <DialogTitle className="font-serif text-2xl">New pay application</DialogTitle>
-              <DialogDescription>
-                Start the billing cycle, then enter SOV progress in Applications.
-              </DialogDescription>
-            </DialogHeader>
+            <DialogHeaderV2
+              eyebrow="Billing"
+              title="New pay application"
+              description="Start the billing cycle, then enter SOV progress in Applications."
+            />
             <div className="grid gap-4 py-2">
               <div className="rounded-md border border-accent/25 bg-accent/5 px-3 py-2 text-sm text-muted-foreground">
                 Create the application shell here. After it is saved, open Applications to enter
@@ -1299,13 +1291,11 @@ export function BillingWorkspace({
                     }}
                   >
                     <DialogContent className="sm:max-w-3xl">
-                      <DialogHeader>
-                        <DialogTitle className="font-serif text-2xl">Create invoice</DialogTitle>
-                        <DialogDescription>
-                          Build the client-facing invoice from an application or a direct billing
-                          item.
-                        </DialogDescription>
-                      </DialogHeader>
+                      <DialogHeaderV2
+                        eyebrow="Billing"
+                        title="Create invoice"
+                        description="Build the client-facing invoice from an application or a direct billing item."
+                      />
                       <div className="grid gap-4 py-2">
                         <div className="grid gap-3 md:grid-cols-3">
                           <div className="space-y-1.5">

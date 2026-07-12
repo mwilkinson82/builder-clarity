@@ -203,7 +203,8 @@ export function ScheduleImportWizard({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[90vh] max-w-5xl gap-0 overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 font-serif text-2xl">
+          <div className="eyebrow">Import</div>
+          <DialogTitle className="flex items-center gap-2 font-serif text-2xl font-normal">
             <FileSpreadsheet className="h-5 w-5" />
             {mode === "sov" ? "Build schedule from the SOV" : "Import schedule"}
           </DialogTitle>

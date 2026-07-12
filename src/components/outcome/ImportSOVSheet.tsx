@@ -316,7 +316,10 @@ export function ImportSOVSheet({
       </SheetTrigger>
       <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto">
         <SheetHeader>
-          <SheetTitle className="font-serif text-2xl">Budget Intake Assistant</SheetTitle>
+          <div className="eyebrow">Budget</div>
+          <SheetTitle className="font-serif text-2xl font-normal">
+            Budget Intake Assistant
+          </SheetTitle>
           <SheetDescription>
             Drop in your cost spreadsheet as-is — SOV, estimate, or pay app. Overwatch maps it,
             stages the budget, flags the weird parts, and asks for confirmation before anything

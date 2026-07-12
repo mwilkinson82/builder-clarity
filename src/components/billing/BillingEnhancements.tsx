@@ -6,15 +6,8 @@ import { VendorPicker } from "@/components/billing/VendorPicker";
 import { findOrCreateVendor, listVendors, saveVendor } from "@/lib/vendors.functions";
 import { listSubcontractors } from "@/lib/subcontractors.functions";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { DialogHeaderV2 } from "@/components/ui/dialog-header-v2";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -1417,22 +1410,23 @@ export function ProjectCostTrackingPanel({
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-3xl">
-              <DialogHeader>
-                <DialogTitle className="font-serif text-2xl">
-                  {editingCostId
+              <DialogHeaderV2
+                eyebrow="Cost"
+                title={
+                  editingCostId
                     ? editingCost?.status === "draft"
                       ? "Edit draft cost"
                       : "Edit cost"
-                    : "Add cost actual"}
-                </DialogTitle>
-                <DialogDescription>
-                  {editingCostId
+                    : "Add cost actual"
+                }
+                description={
+                  editingCostId
                     ? editingCost?.status === "draft"
                       ? "This invoice is still a draft — nothing has hit job cost, so every field is editable. Approve or mark it paid below."
                       : "This cost already counts in the job — changes here update the job-cost totals the moment you save."
-                    : "Record cost backup against the same cost codes used by the SOV and WIP."}
-                </DialogDescription>
-              </DialogHeader>
+                    : "Record cost backup against the same cost codes used by the SOV and WIP."
+                }
+              />
               <div className="grid gap-4 py-2">
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="space-y-1.5">
@@ -1623,13 +1617,11 @@ export function ProjectCostTrackingPanel({
             }}
           >
             <DialogContent className="sm:max-w-lg">
-              <DialogHeader>
-                <DialogTitle className="font-serif text-2xl">Add a new vendor</DialogTitle>
-                <DialogDescription>
-                  Build this vendor out in your directory — next time they're one pick away. Only
-                  the name is required.
-                </DialogDescription>
-              </DialogHeader>
+              <DialogHeaderV2
+                eyebrow="Vendor"
+                title="Add a new vendor"
+                description="Build this vendor out in your directory — next time they're one pick away. Only the name is required."
+              />
               {vendorDraft ? (
                 <div className="grid gap-3 py-2">
                   <div className="grid gap-3 sm:grid-cols-2">
@@ -2065,14 +2057,15 @@ export function ProjectCostTrackingPanel({
       {/* Mark-paid: capture HOW it was paid (field request 2026-07-10) */}
       <Dialog open={payingCost !== null} onOpenChange={(open) => !open && setPayingCost(null)}>
         <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="font-serif text-2xl">Mark cost paid</DialogTitle>
-            <DialogDescription>
-              {payingCost
+          <DialogHeaderV2
+            eyebrow="Payment"
+            title="Mark cost paid"
+            description={
+              payingCost
                 ? `${fmtUSD(payingCost.amount)}${payingCost.vendor ? ` to ${payingCost.vendor}` : ""} — record how it was paid.`
-                : ""}
-            </DialogDescription>
-          </DialogHeader>
+                : ""
+            }
+          />
           <div className="grid gap-3 py-2 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label>Date paid</Label>
