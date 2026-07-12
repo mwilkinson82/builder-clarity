@@ -676,9 +676,17 @@ await expectContains(
     /"schedule", "daily-reports", "daily-wip", "inspections"/,
     /"subcontractors", "client-portal", "ior-report"/,
     /const companyName = project\.organization_name \|\| "Overwatch company"/,
-    /const headerStats = \[/,
-    /"Original Contract"[\s\S]*"Forecasted Final"/,
-    /bg-surface-elevated\/95 shadow-\[0_10px_30px_rgb/,
+    // v2 shell: mobile slim top bar; on desktop the rail head carries company +
+    // project switcher and the rail foot carries Portfolio/Sign out.
+    /border-hairline bg-wash px-4 py-2 lg:hidden/,
+    /aria-label="Switch project"/,
+    /← Portfolio/,
+    // Close/Archive/Delete live behind the "···" overflow; one controlled state
+    // drives the three confirm dialogs (they must all remain reachable).
+    /aria-label="More project actions"/,
+    /setConfirmAction\("close"\)/,
+    /setConfirmAction\("archive"\)/,
+    /setConfirmAction\("delete"\)/,
     // Grouped vertical rail (labels are the default; no icon-only collapse).
     /lg:grid-cols-\[248px_minmax\(0,1fr\)\]/,
     // v2 floating rail: rounded paper card with the one soft wide glow.
@@ -2857,7 +2865,7 @@ await expectContains(
   "src/routes/_authenticated/projects.$projectId.tsx",
   [
     /buildBudgetFromEstimateFn/,
-    /Build budget from estimate/,
+    /Build from estimate/, // v2 relabel (mock)
     /Build the budget from the estimate\?/,
   ],
   "SOV/Costs tab offers the estimate→budget carry behind a confirm",

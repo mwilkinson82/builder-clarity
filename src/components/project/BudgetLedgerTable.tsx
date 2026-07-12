@@ -4,8 +4,11 @@
 // Contingency (C-Holds) come from the live exposure allocations — the IOR risk
 // register, not a typed number. Each shorthand column carries a hover
 // explanation because a PM or biller won't know our internal terms.
-import { Info, PencilLine, Plus } from "lucide-react";
+import type { ReactNode } from "react";
 
+import { Info, Lock, PencilLine, Plus } from "lucide-react";
+
+import { BudgetMovers } from "@/components/project/BudgetMovers";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -19,7 +22,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { fmtUSD } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { computeBudgetLedger } from "@/lib/budget-ledger";
+import { computeBudgetLedger, type BudgetLedgerRow } from "@/lib/budget-ledger";
 import type {
   BucketRow,
   ChangeOrderAllocationListRow,
@@ -52,19 +55,120 @@ function UnpricedChip() {
 
 // Line margin reads itself: dollars with a percent-of-contract underneath,
 // green for profit, red for a loss. null (unpriced) renders as a quiet dash —
-// the contract column's chip carries the "why".
-function MarginCell({ margin, marginPct }: { margin: number | null; marginPct: number | null }) {
+// the contract column's chip carries the "why". `serif` = the totals-row
+// treatment from the mock: serif numerals at 15px.
+function MarginCell({
+  margin,
+  marginPct,
+  serif,
+}: {
+  margin: number | null;
+  marginPct: number | null;
+  serif?: boolean;
+}) {
   if (margin === null) return <span className="text-muted-foreground">—</span>;
   const negative = margin < 0;
   return (
-    <div className={cn("tabular font-medium", negative ? "text-danger" : "text-success")}>
+    <div
+      className={cn(
+        "tabular font-medium",
+        serif && "font-serif text-[15px] font-normal",
+        negative ? "text-danger" : "text-success",
+      )}
+    >
       {negative ? "−" : ""}
       {fmtUSD(Math.abs(margin))}
       {marginPct !== null ? (
-        <div className="text-[10px] font-normal text-muted-foreground">
+        <div className="font-sans text-[10px] font-normal text-muted-foreground">
           {marginPct.toFixed(1)}% of contract
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// One figure in the dark stat bar: dim mono label over a serif value.
+function StatFigure({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex-none">
+      <div className="font-mono text-[9.5px] font-bold uppercase tracking-[0.14em] text-dark-panel-foreground/60">
+        {label}
+      </div>
+      <div className="tabular mt-1.5 whitespace-nowrap font-serif text-[22px] leading-none">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// The dark verdict bar above the ledger (Budget.html mock): working budget,
+// projected cost, the position between them, and margin on contract — plus the
+// risk holds and lock state on the right. Values come straight off the ledger
+// totals so the bar can never disagree with the table it sits above. Rendered
+// by the Budget route (or by BudgetLedgerTable itself via `showStatBar`).
+// The green/red/amber literals are the documented on-dark tints for text on
+// --dark-panel (the semantic tokens are tuned for light ground and go muddy
+// on ink) — see docs/THEMING.md.
+export function BudgetStatBar({
+  totals,
+  lockedAt,
+}: {
+  totals: BudgetLedgerRow;
+  lockedAt?: string | null;
+}) {
+  const position = totals.overUnder;
+  return (
+    <div className="flex flex-wrap items-end gap-x-8 gap-y-3 rounded-xl bg-dark-panel px-5 py-4 text-dark-panel-foreground">
+      <StatFigure label="Working budget">{fmtUSD(totals.budget)}</StatFigure>
+      <StatFigure label="Projected cost">{fmtUSD(totals.eac)}</StatFigure>
+      <StatFigure label="Position">
+        {position === 0 ? (
+          <span className="text-dark-panel-foreground/60">On budget</span>
+        ) : position > 0 ? (
+          <span className="text-[#7FB08A]">+{fmtUSD(position)} under</span>
+        ) : (
+          <span className="text-[#E08A76]">{fmtUSD(Math.abs(position))} over</span>
+        )}
+      </StatFigure>
+      <StatFigure label="Margin on contract">
+        {totals.margin !== null ? (
+          <>
+            {fmtUSD(totals.margin)}
+            {totals.marginPct !== null ? (
+              <span className="ml-1.5 font-sans text-xs text-dark-panel-foreground/60">
+                {totals.marginPct.toFixed(1)}%
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span className="text-dark-panel-foreground/60">—</span>
+        )}
+      </StatFigure>
+      <div className="ml-auto text-right text-xs leading-relaxed text-dark-panel-foreground/60">
+        <div>
+          At risk{" "}
+          <span className="font-medium text-dark-panel-foreground">{fmtUSD(totals.atRisk)}</span> ·
+          Contingency{" "}
+          <span className="font-medium text-dark-panel-foreground">
+            {fmtUSD(totals.contingency)}
+          </span>
+        </div>
+        <div>
+          {lockedAt ? (
+            <span className="inline-flex items-center gap-1">
+              <Lock className="h-3 w-3" aria-hidden />
+              Locked{" "}
+              {new Date(lockedAt).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </span>
+          ) : (
+            <span className="text-[#C09A56]">Not locked</span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -100,6 +204,8 @@ export function BudgetLedgerTable({
   onOpenLine,
   onAddLine,
   editedBucketIds,
+  showStatBar,
+  lockedAt,
 }: {
   buckets: BucketRow[];
   exposures: ExposureRow[];
@@ -127,6 +233,11 @@ export function BudgetLedgerTable({
   // Cost-bucket ids that carry a manual override, marked so a hand-touched line
   // is never invisible.
   editedBucketIds?: ReadonlySet<string>;
+  // Render the dark BudgetStatBar above the table (the route passes this on
+  // the Budget tab; other usages keep the bare ledger).
+  showStatBar?: boolean;
+  // projects.budget_locked_at — shown in the stat bar's lock-state line.
+  lockedAt?: string | null;
 }) {
   const ledger = computeBudgetLedger(
     buckets,
@@ -165,6 +276,8 @@ export function BudgetLedgerTable({
 
   return (
     <div className="space-y-3">
+      {showStatBar ? <BudgetStatBar totals={ledger.totals} lockedAt={lockedAt} /> : null}
+      <BudgetMovers rows={ledger.rows} />
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -194,11 +307,14 @@ export function BudgetLedgerTable({
         <div className="overflow-x-clip rounded-lg border border-hairline bg-card">
           <Table wrapperClassName="max-h-[70vh]">
             <TableHeader className="sticky top-0 z-10">
-              <TableRow className="border-b border-hairline bg-surface text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                <TableHead className="w-[90px]">Cost code</TableHead>
+              {/* Mock header treatment: mono 9.5px bold uppercase, .1em tracking.
+                  Headers abbreviate (Conting., Projected, Over / under) — the
+                  HelpHead tooltips keep carrying the full plain-English meaning. */}
+              <TableRow className="border-b border-hairline bg-surface font-mono text-[9.5px] uppercase tracking-[0.1em] text-muted-foreground [&_th]:font-bold">
+                <TableHead className="w-[90px]">Code</TableHead>
                 <TableHead>Description</TableHead>
                 <HelpHead
-                  label="Contract value"
+                  label="Contract"
                   help="What the owner pays for this line — the SOV price plus approved change-order value. This is NOT your budget; the gap between them is your margin."
                   className="text-right"
                 />
@@ -214,22 +330,22 @@ export function BudgetLedgerTable({
                   className="text-right"
                 />
                 <HelpHead
-                  label="At Risk"
+                  label="At risk"
                   help="Your E-Holds (exposure holds) allocated to this cost code — live from the IOR risk register."
                   className="text-right"
                 />
                 <HelpHead
-                  label="Contingency"
+                  label="Conting."
                   help="Your C-Holds (contingency holds) allocated to this cost code — live from the IOR risk register."
                   className="text-right"
                 />
                 <HelpHead
-                  label="Projected cost"
+                  label="Projected"
                   help="Actuals + Open — everything you've spent plus everything committed. The projected final cost of this line."
                   className="text-right"
                 />
                 <HelpHead
-                  label="Over / under budget"
+                  label="Over / under"
                   help="Budget minus Projected cost. Green means you're under budget; red means over."
                   className="text-right"
                 />
@@ -347,15 +463,17 @@ export function BudgetLedgerTable({
               })}
             </TableBody>
             <TableFooter>
+              {/* Totals wear the mock's serif numerals (15px); the label is
+                  "All cost codes" — plainer than a bare "Total". */}
               <TableRow className="bg-surface font-semibold">
                 <TableCell />
-                <TableCell>{ledger.totals.description}</TableCell>
-                <TableCell className="text-right tabular">
+                <TableCell>All cost codes</TableCell>
+                <TableCell className="text-right tabular font-serif text-[15px] font-normal">
                   {ledger.totals.contractValue !== 0 ? (
                     <>
                       {fmtUSD(ledger.totals.contractValue)}
                       {ledger.totals.changeOrderContract !== 0 ? (
-                        <div className="text-[10px] font-normal text-muted-foreground">
+                        <div className="font-sans text-[10px] text-muted-foreground">
                           incl. {fmtUSD(ledger.totals.changeOrderContract)} CO
                         </div>
                       ) : null}
@@ -364,30 +482,38 @@ export function BudgetLedgerTable({
                     <span className="text-muted-foreground">—</span>
                   )}
                 </TableCell>
-                <TableCell className="text-right tabular">
+                <TableCell className="text-right tabular font-serif text-[15px] font-normal">
                   {fmtUSD(ledger.totals.budget)}
                   {ledger.totals.changeOrderBudget !== 0 ? (
-                    <div className="text-[10px] font-normal text-muted-foreground">
+                    <div className="font-sans text-[10px] text-muted-foreground">
                       incl. {fmtUSD(ledger.totals.changeOrderBudget)} CO
                     </div>
                   ) : null}
                 </TableCell>
-                <TableCell className="text-right tabular">
+                <TableCell className="text-right tabular font-serif text-[15px] font-normal">
                   {fmtUSD(ledger.totals.actuals)}
                 </TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(ledger.totals.open)}</TableCell>
-                <TableCell className="text-right tabular text-warning">
+                <TableCell className="text-right tabular font-serif text-[15px] font-normal">
+                  {fmtUSD(ledger.totals.open)}
+                </TableCell>
+                <TableCell className="text-right tabular font-serif text-[15px] font-normal text-warning">
                   {fmtUSD(ledger.totals.atRisk)}
                 </TableCell>
-                <TableCell className="text-right tabular text-accent">
+                <TableCell className="text-right tabular font-serif text-[15px] font-normal text-accent">
                   {fmtUSD(ledger.totals.contingency)}
                 </TableCell>
-                <TableCell className="text-right tabular">{fmtUSD(ledger.totals.eac)}</TableCell>
+                <TableCell className="text-right tabular font-serif text-[15px] font-normal">
+                  {fmtUSD(ledger.totals.eac)}
+                </TableCell>
                 <TableCell className="text-right">
                   <OverUnder value={ledger.totals.overUnder} />
                 </TableCell>
                 <TableCell className="text-right">
-                  <MarginCell margin={ledger.totals.margin} marginPct={ledger.totals.marginPct} />
+                  <MarginCell
+                    margin={ledger.totals.margin}
+                    marginPct={ledger.totals.marginPct}
+                    serif
+                  />
                 </TableCell>
               </TableRow>
             </TableFooter>

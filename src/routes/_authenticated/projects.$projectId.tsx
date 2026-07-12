@@ -12,6 +12,12 @@ import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AppFooter } from "@/components/layout/AppFooter";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -207,6 +213,7 @@ import {
   ReceiptText,
   ShieldAlert,
   Gavel,
+  Plus,
   Trash2,
   Users,
 } from "lucide-react";
@@ -407,6 +414,9 @@ function ProjectPage() {
   const [editingBucketId, setEditingBucketId] = useState<string | null>(null);
   const [addingLine, setAddingLine] = useState(false);
   const [companyLogoFailedUrl, setCompanyLogoFailedUrl] = useState("");
+  // v2 shell: Close/Archive/Delete live in the "···" overflow menu; each opens
+  // its confirm dialog through this single controlled state.
+  const [confirmAction, setConfirmAction] = useState<"close" | "archive" | "delete" | null>(null);
   const setProjectTab = (value: string) => {
     if (PROJECT_TAB_VALUES.includes(value as ProjectTabValue)) {
       setActiveProjectTab(value as ProjectTabValue);
@@ -2265,281 +2275,59 @@ function ProjectPage() {
         .map((part) => part[0]?.toUpperCase())
         .join("") || "OW"
     : "OW";
-  const headerStats = [
-    { label: "Job #", value: jobNumber },
-    { label: "Client", value: project.client || "—" },
-    { label: "Project Manager", value: project.project_manager || "—" },
-    { label: "Original Contract", value: fmtUSD(project.original_contract), tabular: true },
-    { label: "Forecasted Final", value: fmtUSD(rollup.forecastedFinalContract), tabular: true },
-  ];
+  // v2: the old header's stat strip (Job #, Client, PM, contracts) now renders
+  // inside ProjectDashboard's bottom row, bound to the same fields — with the
+  // contract stat relabeled "Contract incl. approved COs" per the data-integrity
+  // rule (no ambiguous money labels).
 
   return (
     <div className="flex min-h-screen flex-col overflow-x-hidden bg-wash text-foreground">
-      <header className="relative border-b border-hairline bg-surface-elevated/95 shadow-[0_10px_30px_rgb(31_28_23_/_0.05)]">
-        <div className="absolute inset-0 grid-bg opacity-25" />
-        <div className="relative mx-auto flex max-w-[1760px] flex-col gap-2 px-4 py-2.5 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-2 border-b border-hairline/70 pb-2.5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:gap-3">
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
-                  <Link
-                    to="/"
-                    className="inline-flex h-8 items-center rounded-md px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition hover:text-foreground"
-                  >
-                    ← Portfolio
-                  </Link>
-                  <div className="hidden h-4 w-px bg-hairline sm:block" />
-                  <div className="flex min-w-0 items-center gap-2 rounded-md border border-hairline bg-card/70 px-2.5 py-1.5 shadow-sm">
-                    {companyLogoUrl ? (
-                      <img
-                        src={companyLogoUrl}
-                        alt={`${companyName} logo`}
-                        className="h-6 w-6 shrink-0 rounded-sm object-contain"
-                        onError={() => setCompanyLogoFailedUrl(companyLogoUrl)}
-                      />
-                    ) : (
-                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-surface text-[10px] font-semibold text-muted-foreground">
-                        {companyInitials}
-                      </div>
-                    )}
-                    <span className="max-w-[180px] truncate text-xs font-semibold text-foreground">
-                      {companyName}
-                    </span>
-                  </div>
-                </div>
-                <Button variant="ghost" size="sm" onClick={signOut} className="gap-1.5 lg:hidden">
-                  <LogOut className="h-3.5 w-3.5" /> Sign out
-                </Button>
-              </div>
-              <Select
-                value={projectId}
-                onValueChange={(v) =>
-                  navigate({ to: "/projects/$projectId", params: { projectId: v } })
-                }
-              >
-                <SelectTrigger className="h-8 w-full min-w-[220px] max-w-[360px] text-sm sm:w-[300px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {portfolio.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={signOut}
-              className="hidden w-fit gap-1.5 self-start lg:inline-flex lg:self-auto"
-            >
-              <LogOut className="h-3.5 w-3.5" /> Sign out
-            </Button>
+      {/* v2 shell: on mobile a slim top bar carries back-link, company, project
+          switcher, and sign-out; on lg+ all of that lives in the floating rail. */}
+      <header className="flex items-center gap-2 border-b border-hairline bg-wash px-4 py-2 lg:hidden">
+        <Link
+          to="/"
+          aria-label="Back to portfolio"
+          className="inline-flex h-8 shrink-0 items-center rounded-md px-1 text-sm text-muted-foreground transition hover:text-foreground"
+        >
+          ←
+        </Link>
+        {companyLogoUrl ? (
+          <img
+            src={companyLogoUrl}
+            alt={`${companyName} logo`}
+            className="h-6 w-6 shrink-0 rounded-sm object-contain"
+            onError={() => setCompanyLogoFailedUrl(companyLogoUrl)}
+          />
+        ) : (
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-secondary text-[10px] font-semibold text-muted-foreground">
+            {companyInitials}
           </div>
-
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-            <div className="min-w-0 space-y-2">
-              <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                <span className="rounded-sm border border-accent/25 bg-accent/10 px-2 py-1 text-accent">
-                  IOR
-                </span>
-                <span>{project.phase} Phase</span>
-                <span>{project.percent_complete}% complete</span>
-                {lastReviewDays !== null && (
-                  <span className={lastReviewDays > 30 ? "text-danger" : ""}>
-                    Last reviewed {lastReviewDays}d ago
-                  </span>
-                )}
-                {project.source_opportunity_id && (
-                  <a
-                    href={`/?tab=crm&opportunity=${project.source_opportunity_id}`}
-                    className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-sm border border-accent/30 bg-accent/10 px-2 py-1 text-[10px] font-semibold text-accent transition hover:border-accent/50 hover:bg-accent/15"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    Source: CRM
-                  </a>
-                )}
-              </div>
-              <h1 className="truncate font-serif text-2xl leading-none text-foreground lg:text-3xl">
-                {project.name}
-              </h1>
-              <p className="max-w-3xl text-xs leading-5 text-muted-foreground sm:text-sm xl:truncate">
-                An IOR operating record, not a budget report. Start from the SOV, work the schedule,
-                then price the exposure.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 lg:max-w-[620px] lg:justify-end">
-              <ProjectTruthReview
-                project={project}
-                exposures={exposures}
-                changeOrders={changeOrders}
-                buckets={buckets}
-                decisions={decisions}
-                rollup={rollup}
-                onSubmit={handleSubmitReview}
-                pending={reviewSubmit.isPending}
-              />
-              <DownloadReportMenu onDownload={downloadCurrentReport} />
-              <EditFinancialsDialog
-                project={project}
-                rollup={rollup}
-                guidance={guidance}
-                onSave={(patch) => finUpdate.mutate({ projectId, patch })}
-                pending={finUpdate.isPending}
-              />
-              {project.closed_at ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  disabled={reopenMutation.isPending}
-                  onClick={() => reopenMutation.mutate()}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  {reopenMutation.isPending ? "Reopening…" : "Reopen job"}
-                </Button>
-              ) : (
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1.5">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Close project
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Close “{project.name}” out?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Marks the job complete. It moves to Closed jobs on the home and drops out of
-                        the active portfolio and its numbers. Nothing is deleted — you can reopen it
-                        anytime.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        disabled={closeMutation.isPending}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          closeMutation.mutate();
-                        }}
-                      >
-                        {closeMutation.isPending ? "Closing…" : "Close project"}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              )}
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1.5">
-                    <Archive className="h-3.5 w-3.5" /> Archive
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Archive this project?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      “{project.name}” will be hidden from the portfolio. Its data — SOV, exposures,
-                      change orders, billing, and reports — stays in the database and can be
-                      restored later. No records are deleted.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      disabled={archiveMutation.isPending}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        archiveMutation.mutate();
-                      }}
-                    >
-                      {archiveMutation.isPending ? "Archiving…" : "Archive project"}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5 text-danger hover:text-danger"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" /> Delete
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  {isDemoProject ? (
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Hide the training project?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This hides the Harbor Residence training project for your whole company. It
-                        won’t come back on its own; an admin can restore it later if you want it
-                        again.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                  ) : (
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete this project permanently?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This permanently deletes “{project.name}” and every related record —
-                        SOV/cost buckets, exposures, change orders, decisions, schedule, daily
-                        reports, billing applications, invoices, and payments. This cannot be
-                        undone. Prefer <strong>Archive</strong> if you might need it back.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                  )}
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      disabled={deleteMutation.isPending}
-                      className="bg-danger text-destructive-foreground hover:bg-danger/90"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        deleteMutation.mutate();
-                      }}
-                    >
-                      {deleteMutation.isPending
-                        ? isDemoProject
-                          ? "Hiding…"
-                          : "Deleting…"
-                        : isDemoProject
-                          ? "Hide training project"
-                          : "Delete forever"}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-          </div>
-
-          <dl className="grid grid-cols-2 overflow-hidden rounded-md border border-hairline bg-card/65 shadow-sm lg:grid-cols-5">
-            {headerStats.map((stat, index) => (
-              <div
-                key={stat.label}
-                className={cn(
-                  "min-w-0 border-b border-hairline px-3 py-2 odd:border-r last:border-b-0 lg:border-b-0 lg:border-r lg:last:border-r-0",
-                  index === headerStats.length - 1 ? "col-span-2 lg:col-span-1" : "",
-                )}
-              >
-                <dt className="truncate text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  {stat.label}
-                </dt>
-                <dd
-                  className={cn(
-                    "mt-1 break-words text-sm font-semibold leading-tight text-foreground lg:truncate",
-                    stat.tabular ? "tabular" : "",
-                  )}
-                >
-                  {stat.value}
-                </dd>
-              </div>
+        )}
+        <Select
+          value={projectId}
+          onValueChange={(v) => navigate({ to: "/projects/$projectId", params: { projectId: v } })}
+        >
+          <SelectTrigger className="h-8 min-w-0 flex-1 text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {portfolio.map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.name}
+              </SelectItem>
             ))}
-          </dl>
-        </div>
+          </SelectContent>
+        </Select>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={signOut}
+          aria-label="Sign out"
+          className="shrink-0 gap-1.5"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+        </Button>
       </header>
 
       <main className="mx-auto w-full min-w-0 max-w-[1640px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
@@ -2550,6 +2338,49 @@ function ProjectPage() {
         >
           <aside className="min-w-0 lg:sticky lg:top-6">
             <TabsList className={PROJECT_NAV_RAIL_CLASS}>
+              {/* v2: the rail leads with tenant identity — company mark + the
+                  project switcher (same Select, slimmed to a text control). */}
+              <div className="mb-1 hidden w-full border-b border-hairline pb-3 lg:block">
+                <div className="flex items-center gap-2.5 px-1.5">
+                  {companyLogoUrl ? (
+                    <img
+                      src={companyLogoUrl}
+                      alt={`${companyName} logo`}
+                      className="h-7 w-7 shrink-0 rounded-lg object-contain"
+                      onError={() => setCompanyLogoFailedUrl(companyLogoUrl)}
+                    />
+                  ) : (
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary font-serif text-[13px] text-primary-foreground">
+                      {companyInitials}
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13.5px] font-semibold leading-tight">
+                      {companyName}
+                    </div>
+                    <Select
+                      value={projectId}
+                      onValueChange={(v) =>
+                        navigate({ to: "/projects/$projectId", params: { projectId: v } })
+                      }
+                    >
+                      <SelectTrigger
+                        aria-label="Switch project"
+                        className="h-auto w-full justify-start gap-1 border-0 bg-transparent p-0 text-[11.5px] text-muted-foreground shadow-none focus:ring-0 [&>svg]:h-3 [&>svg]:w-3"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {portfolio.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
               {/* Cross-module jump back to the CRM / relationships surface. */}
               <a
                 href="/?tab=crm"
@@ -2606,30 +2437,219 @@ function ProjectPage() {
                   </div>
                 </div>
               ))}
+              {/* v2: rail foot — the way back out and sign-out live here on
+                  desktop (mobile keeps them in the slim top bar). */}
+              <div className="mt-auto hidden w-full items-center justify-between gap-2 border-t border-hairline pt-2.5 lg:flex">
+                <Link
+                  to="/"
+                  className="rounded px-1.5 text-xs text-muted-foreground transition hover:text-foreground"
+                >
+                  ← Portfolio
+                </Link>
+                <button
+                  type="button"
+                  onClick={signOut}
+                  className="rounded px-1.5 text-xs text-muted-foreground transition hover:text-foreground"
+                >
+                  Sign out
+                </button>
+              </div>
             </TabsList>
           </aside>
 
           <div className="min-w-0">
+            {/* v2 context strip: where-am-I + IOR badges left, the project's
+                standing actions right. Replaces the old full-width header —
+                every action and badge from it lives on, nothing dropped. */}
             {activeNavGroup && activeNavItem && (
-              <div className="mb-6 flex items-end justify-between gap-4 border-b border-hairline pb-4">
-                <div className="min-w-0">
-                  <p className="eyebrow">
-                    {activeNavGroup.label} · {activeNavItem.label}
-                  </p>
-                  <h1 className="mt-1 truncate font-serif text-3xl leading-tight text-foreground">
-                    {activeNavItem.label}
-                  </h1>
-                </div>
-                <span
-                  className={cn(
-                    "shrink-0 whitespace-nowrap font-mono text-xs",
-                    activeNavItem.alert ? "text-danger" : "text-muted-foreground",
-                  )}
-                >
-                  {activeNavItem.detail}
+              <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-hairline pb-3">
+                <p className="eyebrow leading-none">
+                  {activeNavGroup.label} · {activeNavItem.label}
+                </p>
+                <span className="rounded-md border border-hairline px-1.5 py-0.5 font-mono text-[9.5px] font-bold uppercase tracking-[0.12em] text-clay">
+                  IOR
                 </span>
+                <span className="text-xs text-muted-foreground">
+                  {project.phase} Phase · {project.percent_complete}% complete
+                </span>
+                {lastReviewDays !== null && (
+                  <span
+                    className={cn(
+                      "text-xs",
+                      lastReviewDays > 30 ? "text-danger" : "text-muted-foreground",
+                    )}
+                  >
+                    Reviewed {lastReviewDays}d ago
+                  </span>
+                )}
+                {project.source_opportunity_id && (
+                  <a
+                    href={`/?tab=crm&opportunity=${project.source_opportunity_id}`}
+                    className="inline-flex w-fit shrink-0 items-center gap-1 text-xs font-semibold text-clay transition hover:text-foreground"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Source: CRM
+                  </a>
+                )}
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  <ProjectTruthReview
+                    project={project}
+                    exposures={exposures}
+                    changeOrders={changeOrders}
+                    buckets={buckets}
+                    decisions={decisions}
+                    rollup={rollup}
+                    onSubmit={handleSubmitReview}
+                    pending={reviewSubmit.isPending}
+                  />
+                  <DownloadReportMenu onDownload={downloadCurrentReport} />
+                  <EditFinancialsDialog
+                    project={project}
+                    rollup={rollup}
+                    guidance={guidance}
+                    onSave={(patch) => finUpdate.mutate({ projectId, patch })}
+                    pending={finUpdate.isPending}
+                  />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" aria-label="More project actions">
+                        ···
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {project.closed_at ? (
+                        <DropdownMenuItem
+                          disabled={reopenMutation.isPending}
+                          onSelect={() => reopenMutation.mutate()}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          {reopenMutation.isPending ? "Reopening…" : "Reopen job"}
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuItem onSelect={() => setConfirmAction("close")}>
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Close project
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem onSelect={() => setConfirmAction("archive")}>
+                        <Archive className="h-3.5 w-3.5" /> Archive
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-danger focus:text-danger"
+                        onSelect={() => setConfirmAction("delete")}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </div>
             )}
+            <AlertDialog
+              open={confirmAction === "close"}
+              onOpenChange={(o) => {
+                if (!o) setConfirmAction(null);
+              }}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Close “{project.name}” out?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Marks the job complete. It moves to Closed jobs on the home and drops out of the
+                    active portfolio and its numbers. Nothing is deleted — you can reopen it
+                    anytime.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={closeMutation.isPending}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      closeMutation.mutate();
+                    }}
+                  >
+                    {closeMutation.isPending ? "Closing…" : "Close project"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <AlertDialog
+              open={confirmAction === "archive"}
+              onOpenChange={(o) => {
+                if (!o) setConfirmAction(null);
+              }}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Archive this project?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    “{project.name}” will be hidden from the portfolio. Its data — SOV, exposures,
+                    change orders, billing, and reports — stays in the database and can be restored
+                    later. No records are deleted.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={archiveMutation.isPending}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      archiveMutation.mutate();
+                    }}
+                  >
+                    {archiveMutation.isPending ? "Archiving…" : "Archive project"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <AlertDialog
+              open={confirmAction === "delete"}
+              onOpenChange={(o) => {
+                if (!o) setConfirmAction(null);
+              }}
+            >
+              <AlertDialogContent>
+                {isDemoProject ? (
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Hide the training project?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This hides the Harbor Residence training project for your whole company. It
+                      won’t come back on its own; an admin can restore it later if you want it
+                      again.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                ) : (
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this project permanently?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This permanently deletes “{project.name}” and every related record — SOV/cost
+                      buckets, exposures, change orders, decisions, schedule, daily reports, billing
+                      applications, invoices, and payments. This cannot be undone. Prefer{" "}
+                      <strong>Archive</strong> if you might need it back.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                )}
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={deleteMutation.isPending}
+                    className="bg-danger text-destructive-foreground hover:bg-danger/90"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      deleteMutation.mutate();
+                    }}
+                  >
+                    {deleteMutation.isPending
+                      ? isDemoProject
+                        ? "Hiding…"
+                        : "Deleting…"
+                      : isDemoProject
+                        ? "Hide training project"
+                        : "Delete forever"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             <TabsContent value="dashboard" className="mt-0">
               <ProjectDashboard
                 project={project}
@@ -2640,6 +2660,9 @@ function ProjectPage() {
                 lastReviewForecast={lastReviewForecast}
                 scheduleMovementSinceLastUpdate={scheduleMovementSinceLastUpdate}
                 onOpenExposure={openDashboardExposure}
+                onReviewChangeOrders={() => setProjectTab("change-orders")}
+                onAddReserve={() => setProjectTab("risk-tally")}
+                onOpenSchedule={() => setProjectTab("schedule")}
               />
             </TabsContent>
 
@@ -2763,13 +2786,72 @@ function ProjectPage() {
             </TabsContent>
 
             <TabsContent value="sov" className="mt-0 space-y-6">
-              <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                  <WorkspaceHeader
-                    title="Budget"
-                    subtitle="Your budget by cost code — from the estimate — with actual cost and forecast-to-complete. This is the number you manage against; you bill from the SOV in Billing."
-                    compact
-                  />
+              {/* v2: one title row — serif "Budget" + count sub, all three intake
+                  actions on the right (was: import in the card, build in a
+                  divider row, add-line inside the table). */}
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <WorkspaceHeader
+                  title="Budget"
+                  subtitle={`${buckets.length} cost code${buckets.length === 1 ? "" : "s"} · you bill from the SOV in Billing`}
+                  compact
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        disabled={budgetFromEstimate.isPending}
+                      >
+                        <FileSpreadsheet className="h-3.5 w-3.5" />
+                        Build from estimate
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Build the budget from the estimate?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This carries the estimate's line costs (material + labor) onto your cost
+                          codes as the <span className="font-medium text-foreground">budget</span> —
+                          what you drive the job on. Matching cost codes are overwritten; new ones
+                          are added. Actuals and forecast-to-complete are not touched.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      {/* BUDGETVSCONTRACT2: the contract value (what the owner pays) is a
+                          separate number. Let the user choose how it gets set. */}
+                      <div className="space-y-2 rounded-md border border-hairline bg-surface p-3 text-sm">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                          Contract value (what the client pays)
+                        </div>
+                        <p className="text-muted-foreground">
+                          Budget is your cost; the contract is what the owner pays. How should each
+                          line's contract value be set?
+                        </p>
+                      </div>
+                      <AlertDialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
+                        <AlertDialogAction
+                          className="w-full"
+                          onClick={() => budgetFromEstimate.mutate("auto")}
+                        >
+                          Auto-price from the estimate
+                          <span className="ml-1 text-xs opacity-80">
+                            (proposes each line's contract from your markup — editable)
+                          </span>
+                        </AlertDialogAction>
+                        <AlertDialogAction
+                          className="w-full bg-surface text-foreground hover:bg-surface/80"
+                          onClick={() => budgetFromEstimate.mutate("unpriced")}
+                        >
+                          I'll enter contract values myself
+                          <span className="ml-1 text-xs opacity-70">
+                            (lines come in as "needs contract value")
+                          </span>
+                        </AlertDialogAction>
+                        <AlertDialogCancel className="mt-0 w-full">Cancel</AlertDialogCancel>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                   <ImportSOVSheet
                     existingBuckets={buckets}
                     mappingProfiles={sovMappingProfiles ?? []}
@@ -2824,106 +2906,24 @@ function ProjectPage() {
                     }
                     pending={bucketImport.isPending}
                   />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => {
+                      setEditingBucketId(null);
+                      setAddingLine(true);
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add line
+                  </Button>
                 </div>
-                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-hairline pt-4">
-                  <span className="text-xs text-muted-foreground">
-                    Budget comes from the estimate — carry it in, or enter cost lines below by hand.
-                  </span>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="gap-1.5"
-                        disabled={budgetFromEstimate.isPending}
-                      >
-                        <FileSpreadsheet className="h-3.5 w-3.5" />
-                        Build budget from estimate
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Build the budget from the estimate?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          This carries the estimate's line costs (material + labor) onto your cost
-                          codes as the <span className="font-medium text-foreground">budget</span> —
-                          what you drive the job on. Matching cost codes are overwritten; new ones
-                          are added. Actuals and forecast-to-complete are not touched.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      {/* BUDGETVSCONTRACT2: the contract value (what the owner pays) is a
-                          separate number. Let the user choose how it gets set. */}
-                      <div className="space-y-2 rounded-md border border-hairline bg-surface p-3 text-sm">
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                          Contract value (what the client pays)
-                        </div>
-                        <p className="text-muted-foreground">
-                          Budget is your cost; the contract is what the owner pays. How should each
-                          line's contract value be set?
-                        </p>
-                      </div>
-                      <AlertDialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
-                        <AlertDialogAction
-                          className="w-full"
-                          onClick={() => budgetFromEstimate.mutate("auto")}
-                        >
-                          Auto-price from the estimate
-                          <span className="ml-1 text-xs opacity-80">
-                            (proposes each line's contract from your markup — editable)
-                          </span>
-                        </AlertDialogAction>
-                        <AlertDialogAction
-                          className="w-full bg-surface text-foreground hover:bg-surface/80"
-                          onClick={() => budgetFromEstimate.mutate("unpriced")}
-                        >
-                          I'll enter contract values myself
-                          <span className="ml-1 text-xs opacity-70">
-                            (lines come in as "needs contract value")
-                          </span>
-                        </AlertDialogAction>
-                        <AlertDialogCancel className="mt-0 w-full">Cancel</AlertDialogCancel>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
-                <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-4">
-                  <SovMetric label="Cost buckets loaded" value={String(buckets.length)} />
-                  <SovMetric
-                    label="Original cost budget"
-                    value={fmtUSD(project.original_cost_budget)}
-                  />
-                  <SovMetric
-                    label="Actual to date"
-                    value={fmtUSD(rollup.actualToDate + subCostTotals.paid)}
-                  />
-                  <SovMetric
-                    label="Forecast to complete"
-                    value={fmtUSD(rollup.ftc + subCostTotals.openAdj)}
-                  />
-                  <SovMetric
-                    label="CO cost exposure"
-                    value={fmtUSD(rollup.weightedPendingCOCost)}
-                  />
-                  <SovMetric
-                    label="Forecasted final cost"
-                    // rollup.forecastedFinalCost now folds in the subcontractor
-                    // layer server-side, so do NOT add subCostTotals here again
-                    // (that would double-count). Actual/Forecast cards above still
-                    // add it, because those rollup fields stay raw.
-                    value={fmtUSD(rollup.forecastedFinalCost)}
-                  />
-                  {subCostTotals.committed > 0 ? (
-                    <SovMetric
-                      label="Committed cost (subs)"
-                      value={fmtUSD(subCostTotals.committed)}
-                    />
-                  ) : null}
-                  {subCostTotals.paid > 0 ? (
-                    <SovMetric label="Paid to date (subs)" value={fmtUSD(subCostTotals.paid)} />
-                  ) : null}
-                </div>
-                <SovImportHistory imports={sovImports ?? []} />
               </div>
+              {/* v2: the old metric-tile grid folds away — Working budget /
+                  Projected cost / Position / Margin live in the ledger's dark
+                  stat bar; buckets count is in the subtitle; CO exposure + sub
+                  totals move to the meta strip below the ledger; actual/FTC are
+                  the ledger's own column totals. Nothing is dropped. */}
               {/* BUDGETLOCK1: the budget is a locked baseline — the only thing
                   that moves it is an approved change order's budgeted cost. */}
               {project.budget_locked_at ? (
@@ -2984,8 +2984,46 @@ function ProjectPage() {
                     setAddingLine(true);
                   }}
                   editedBucketIds={overriddenBucketIds}
+                  showStatBar
+                  lockedAt={project.budget_locked_at}
                 />
               </div>
+              {/* v2 meta strip: the quiet ledger facts — sub commitments, the
+                  CO cost that is NOT in the locked budget, and the import
+                  provenance (full audit card one click away). */}
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground">
+                {subCostTotals.committed > 0 || subCostTotals.paid > 0 ? (
+                  <span>
+                    Subs: committed{" "}
+                    <b className="font-semibold text-foreground">
+                      {fmtUSD(subCostTotals.committed)}
+                    </b>{" "}
+                    · paid{" "}
+                    <b className="font-semibold text-foreground">{fmtUSD(subCostTotals.paid)}</b>
+                  </span>
+                ) : null}
+                <span>
+                  Pending CO cost (not in budget):{" "}
+                  <b className="font-semibold text-foreground">
+                    {fmtUSD(rollup.weightedPendingCOCost)}
+                  </b>
+                </span>
+              </div>
+              <details className="rounded-md border border-hairline bg-surface px-4 py-2.5">
+                <summary className="cursor-pointer text-xs text-muted-foreground transition hover:text-foreground">
+                  {sovImports && sovImports.length > 0
+                    ? `Import: ${sovImports[0].source_name ?? "budget import"} · ${new Date(
+                        sovImports[0].created_at,
+                      ).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      })} — Import details →`
+                    : "No budget imports yet — import history appears here."}
+                </summary>
+                <div className="pt-3">
+                  <SovImportHistory imports={sovImports ?? []} />
+                </div>
+              </details>
               <BudgetLineDrawer
                 open={addingLine || editingBucketId !== null}
                 onOpenChange={(next) => {
@@ -3166,6 +3204,12 @@ function ProjectPage() {
               />
               <ChangeOrdersTable
                 changeOrders={changeOrders}
+                project={project}
+                rollup={rollup}
+                allocations={changeOrderAllocationsQuery.data ?? []}
+                exposures={exposures}
+                onOpenClientPortal={() => setProjectTab("client-portal")}
+                onQuickStatus={(co, status) => coUpdate.mutate({ id: co.id, status })}
                 onCreate={(d) => coCreate.mutate({ projectId, ...d })}
                 onUpdate={(id, patch) => coUpdate.mutate({ id, ...patch })}
                 onDelete={(id) => coDelete.mutate({ id })}
