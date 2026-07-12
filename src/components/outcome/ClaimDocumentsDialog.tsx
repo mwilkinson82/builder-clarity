@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ExternalLink, Trash2, Upload } from "lucide-react";
+import { ExternalLink, FileText, Trash2, Upload } from "lucide-react";
 import type { ClaimDocType, ClaimDocumentRow, ClaimRow } from "@/lib/projects.functions";
 
 const DOC_TYPE_LABELS: Record<ClaimDocType, string> = {
@@ -48,6 +48,7 @@ export function ClaimDocumentsDialog({
 }) {
   const [docType, setDocType] = useState<ClaimDocType>("supporting");
   const [note, setNote] = useState("");
+  const [dragActive, setDragActive] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const pickAndUpload = (file: File | undefined) => {
@@ -68,7 +69,8 @@ export function ClaimDocumentsDialog({
     >
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>
+          <div className="eyebrow">Claim package</div>
+          <DialogTitle className="font-serif text-2xl font-normal">
             Documents{claim ? ` — ${claim.claim_number || claim.title}` : ""}
           </DialogTitle>
           <DialogDescription>
@@ -88,7 +90,8 @@ export function ClaimDocumentsDialog({
               key={doc.id}
               className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-card px-3 py-2"
             >
-              <div className="min-w-0">
+              <FileText className="h-4 w-4 flex-none text-clay" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="truncate text-sm font-medium">{doc.file_name}</span>
                   <span className="rounded-full border border-hairline bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -130,7 +133,23 @@ export function ClaimDocumentsDialog({
         </div>
 
         {onUpload && (
-          <div className="mt-2 space-y-3 rounded-lg border border-hairline bg-surface/50 p-3">
+          <div
+            className={`mt-2 space-y-3 rounded-xl border-2 border-dashed p-3.5 ${
+              dragActive ? "border-clay/60 bg-clay/5" : "border-hairline bg-surface/50"
+            }`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={(e) => {
+              // Thin wrapper: a dropped file feeds the same handler as the
+              // hidden file input's onChange.
+              e.preventDefault();
+              setDragActive(false);
+              if (!uploading) pickAndUpload(e.dataTransfer.files?.[0]);
+            }}
+          >
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Attach a document
             </p>
@@ -167,7 +186,10 @@ export function ClaimDocumentsDialog({
               className="hidden"
               onChange={(e) => pickAndUpload(e.target.files?.[0])}
             />
-            <div className="flex justify-end">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="text-xs text-muted-foreground">
+                PDF, PNG, JPG or WebP · drag a file here or
+              </span>
               <Button
                 size="sm"
                 className="gap-1.5"

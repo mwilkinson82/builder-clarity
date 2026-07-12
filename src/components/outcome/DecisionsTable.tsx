@@ -19,12 +19,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  AlertTriangle,
   Bell,
   CalendarClock,
   CheckCircle2,
-  CircleDot,
-  Clock3,
   Link2,
   Mail,
   Pencil,
@@ -32,7 +29,6 @@ import {
   Search,
   Trash2,
   UserRound,
-  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
@@ -43,11 +39,13 @@ import type {
   ExposureRow,
 } from "@/lib/projects.functions";
 
+// v2 pill palette: open reads as the plain ink-bordered pill; the rest carry
+// their semantic tone (clay / good / crit) as tinted border + wash.
 const statusStyles: Record<DecisionStatus, string> = {
-  open: "border-hairline bg-secondary text-foreground",
-  in_progress: "border-accent/30 bg-accent/15 text-accent",
-  resolved: "border-success/30 bg-success/15 text-success",
-  overdue: "border-danger/30 bg-danger/15 text-danger",
+  open: "border-hairline bg-surface text-foreground",
+  in_progress: "border-accent/30 bg-accent/5 text-accent",
+  resolved: "border-success/30 bg-success/5 text-success",
+  overdue: "border-danger/30 bg-danger/5 text-danger",
 };
 
 const statusLabels: Record<DecisionStatus, string> = {
@@ -374,35 +372,46 @@ export function DecisionsTable({
     if (window.confirm(`Delete "${decision.decision}"?`)) onDelete(decision.id);
   };
 
+  // v2 verdict: state the posture in one serif sentence, omitting zero clauses.
+  const verdict = (() => {
+    const { openCount, overdueCount, riskLinkedCount } = metrics;
+    if (openCount === 0 && overdueCount === 0 && riskLinkedCount === 0) {
+      return "Nothing owed — log a to-do when an action needs an owner.";
+    }
+    const clauses = [
+      overdueCount > 0 ? `${overdueCount} overdue` : null,
+      riskLinkedCount > 0 ? `${riskLinkedCount} tied to a live risk` : null,
+    ].filter((clause): clause is string => Boolean(clause));
+    const lead = `${openCount} open to-do${openCount === 1 ? "" : "s"}`;
+    return clauses.length === 0 ? `${lead}.` : `${lead} — ${clauses.join(", and ")}.`;
+  })();
+
   return (
     <div className="w-full min-w-0 max-w-full space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="eyebrow rounded-md border border-hairline px-2 py-0.5">Owned actions</span>
+        <Button onClick={openNew} className="ml-auto shrink-0 gap-1.5">
+          <Plus className="h-4 w-4" />
+          Add to-do
+        </Button>
+      </div>
+
+      <div>
+        <h2 className="max-w-[36ch] font-serif text-[28px] font-normal leading-[1.16] text-foreground">
+          {verdict}
+        </h2>
+        <p className="mt-2 max-w-[70ch] text-sm leading-6 text-muted-foreground">
+          Owned actions with a due date and an optional reminder. Link one to a Risk Tally item and
+          it rides along until the exposure closes.
+        </p>
+      </div>
+
       <div className="w-full min-w-0 max-w-full overflow-hidden rounded-lg border border-hairline bg-card p-4 shadow-card md:p-5">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricTile icon={CircleDot} label="Open" value={metrics.openCount} />
-            <MetricTile
-              icon={AlertTriangle}
-              label="Overdue"
-              value={metrics.overdueCount}
-              tone="danger"
-            />
-            <MetricTile
-              icon={Clock3}
-              label="Due soon"
-              value={metrics.dueSoonCount}
-              tone="warning"
-            />
-            <MetricTile
-              icon={Link2}
-              label="Risk-linked"
-              value={metrics.riskLinkedCount}
-              tone="accent"
-            />
-          </div>
-          <Button onClick={openNew} className="w-full shrink-0 gap-1.5 sm:w-auto">
-            <Plus className="h-4 w-4" />
-            Add to-do
-          </Button>
+        <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricTile label="Open" value={metrics.openCount} />
+          <MetricTile label="Overdue" value={metrics.overdueCount} tone="danger" />
+          <MetricTile label="Due soon" value={metrics.dueSoonCount} tone="warning" />
+          <MetricTile label="Risk-linked" value={metrics.riskLinkedCount} tone="accent" />
         </div>
 
         <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(260px,0.8fr)_minmax(0,1.2fr)_240px]">
@@ -569,12 +578,14 @@ export function DecisionsTable({
       </div>
 
       <div className="hidden overflow-hidden rounded-lg border border-hairline bg-card shadow-card md:block">
-        <div className="grid grid-cols-[minmax(260px,1fr)_minmax(150px,0.62fr)_116px_136px_84px] items-center gap-4 border-b border-hairline bg-surface px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground 2xl:grid-cols-[minmax(360px,1.8fr)_minmax(200px,1fr)_minmax(150px,0.75fr)_116px_minmax(150px,0.75fr)_140px_84px]">
+        {/* v2: all seven columns from xl (was 2xl) — mins loosened so the grid
+            fits the ~944px content column beside the nav rail at 1280px. */}
+        <div className="grid grid-cols-[minmax(260px,1fr)_minmax(150px,0.62fr)_116px_136px_84px] items-center gap-4 border-b border-hairline bg-surface px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground xl:grid-cols-[minmax(180px,1.7fr)_minmax(100px,0.95fr)_minmax(120px,1fr)_minmax(116px,0.7fr)_minmax(90px,0.9fr)_minmax(124px,0.75fr)_76px]">
           <div>To-do</div>
-          <div className="hidden min-w-0 2xl:block">Risk link</div>
+          <div className="hidden min-w-0 xl:block">Risk link</div>
           <div className="min-w-0">Owner</div>
           <div>Due</div>
-          <div className="hidden min-w-0 2xl:block">Reminder</div>
+          <div className="hidden min-w-0 xl:block">Reminder</div>
           <div>Status</div>
           <div className="text-right">Actions</div>
         </div>
@@ -584,7 +595,7 @@ export function DecisionsTable({
             <div
               key={decision.id}
               data-todo-row="true"
-              className="grid grid-cols-[minmax(260px,1fr)_minmax(150px,0.62fr)_116px_136px_84px] items-start gap-4 px-4 py-4 transition hover:bg-surface/60 2xl:grid-cols-[minmax(360px,1.8fr)_minmax(200px,1fr)_minmax(150px,0.75fr)_116px_minmax(150px,0.75fr)_140px_84px]"
+              className="grid grid-cols-[minmax(260px,1fr)_minmax(150px,0.62fr)_116px_136px_84px] items-start gap-4 px-4 py-4 transition hover:bg-surface/60 xl:grid-cols-[minmax(180px,1.7fr)_minmax(100px,0.95fr)_minmax(120px,1fr)_minmax(116px,0.7fr)_minmax(90px,0.9fr)_minmax(124px,0.75fr)_76px]"
             >
               <div className="min-w-0" data-todo-cell="summary">
                 <div className="font-medium leading-snug text-foreground">{decision.decision}</div>
@@ -593,7 +604,7 @@ export function DecisionsTable({
                     {decision.impact}
                   </div>
                 )}
-                <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground 2xl:hidden">
+                <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground xl:hidden">
                   {decision.linked_exposure_id && (
                     <span className="inline-flex max-w-full min-w-0 items-center gap-1 rounded border border-accent/20 bg-accent/10 px-2 py-0.5 text-accent">
                       <Link2 className="h-3 w-3 shrink-0" />
@@ -611,7 +622,7 @@ export function DecisionsTable({
                 </div>
               </div>
 
-              <div className="hidden min-w-0 2xl:block" data-todo-cell="risk">
+              <div className="hidden min-w-0 xl:block" data-todo-cell="risk">
                 {decision.linked_exposure_id ? (
                   <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-accent/20 bg-accent/10 px-2 py-1 text-xs font-medium text-accent">
                     <Link2 className="h-3.5 w-3.5 shrink-0" />
@@ -646,19 +657,28 @@ export function DecisionsTable({
               <div
                 data-todo-cell="due"
                 className={cn(
-                  "inline-flex w-fit max-w-full items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-1 text-xs font-medium",
+                  "inline-flex w-fit max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-md border px-2 py-1 text-xs font-medium",
                   isPastDue(decision)
-                    ? "border-danger/30 bg-danger/10 text-danger"
+                    ? "border-danger/30 bg-danger/5 text-danger"
                     : isDueSoon(decision)
-                      ? "border-warning/40 bg-warning/10 text-foreground"
+                      ? "border-warning/40 bg-warning/5 text-warning"
                       : "border-hairline bg-surface text-muted-foreground",
                 )}
               >
                 <CalendarClock className="h-3.5 w-3.5 shrink-0" />
-                {fmtDate(decision.due_date)}
+                <span className="whitespace-nowrap">{fmtDate(decision.due_date)}</span>
+                {isPastDue(decision) ? (
+                  <span className="whitespace-nowrap font-mono text-[10px] font-bold">
+                    · overdue
+                  </span>
+                ) : isDueSoon(decision) ? (
+                  <span className="whitespace-nowrap font-mono text-[10px] font-bold">
+                    · due soon
+                  </span>
+                ) : null}
               </div>
 
-              <div className="hidden min-w-0 2xl:block" data-todo-cell="reminder">
+              <div className="hidden min-w-0 xl:block" data-todo-cell="reminder">
                 {decision.reminder_enabled ? (
                   <div className="min-w-0 text-sm">
                     <div className="flex min-w-0 items-center gap-1.5 font-medium">
@@ -747,6 +767,7 @@ export function DecisionsTable({
         <DialogContent className="max-h-[92vh] w-[calc(100vw-2rem)] max-w-[1120px] overflow-y-auto p-0">
           <div className="min-w-0 space-y-6 p-6 md:p-8">
             <DialogHeader className="pr-10">
+              <div className="eyebrow">Owned action</div>
               <DialogTitle className="font-serif text-3xl leading-tight">
                 {editingId ? "Edit to-do" : "Add to-do"}
               </DialogTitle>
@@ -966,13 +987,18 @@ export function DecisionsTable({
             </div>
           </div>
 
-          <DialogFooter className="border-t border-hairline bg-surface px-6 py-4 md:px-8">
-            <Button variant="ghost" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={save} disabled={!draft.decision.trim()}>
-              {editingId ? "Save to-do" : "Add to-do"}
-            </Button>
+          <DialogFooter className="gap-3 border-t border-hairline bg-surface px-6 py-4 sm:items-center sm:justify-between md:px-8">
+            <span className="text-xs leading-5 text-muted-foreground">
+              Linking a risk keeps this to-do on the Risk Tally item until it&rsquo;s resolved.
+            </span>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
+              <Button variant="ghost" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={save} disabled={!draft.decision.trim()}>
+                {editingId ? "Save to-do" : "Add to-do"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -980,34 +1006,41 @@ export function DecisionsTable({
   );
 }
 
+// v2 tile: no icon — a muted mono-style label over a serif numeral, with the
+// tone carried by a tinted border + wash (Open stays plain ink on surface).
 function MetricTile({
-  icon: Icon,
   label,
   value,
   tone = "default",
 }: {
-  icon: LucideIcon;
   label: string;
   value: number;
   tone?: "default" | "accent" | "warning" | "danger";
 }) {
   return (
-    <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          {label}
-        </span>
-        <Icon
-          className={cn(
-            "h-3.5 w-3.5",
-            tone === "accent" && "text-accent",
-            tone === "warning" && "text-warning",
-            tone === "danger" && "text-danger",
-            tone === "default" && "text-muted-foreground",
-          )}
-        />
+    <div
+      className={cn(
+        "rounded-md border px-3 py-2",
+        tone === "default" && "border-hairline bg-surface",
+        tone === "accent" && "border-accent/30 bg-accent/5",
+        tone === "warning" && "border-warning/30 bg-warning/5",
+        tone === "danger" && "border-danger/30 bg-danger/5",
+      )}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
       </div>
-      <div className="mt-1 text-2xl font-semibold tabular text-foreground">{value}</div>
+      <div
+        className={cn(
+          "mt-1 font-serif text-2xl tabular",
+          tone === "default" && "text-foreground",
+          tone === "accent" && "text-accent",
+          tone === "warning" && "text-warning",
+          tone === "danger" && "text-danger",
+        )}
+      >
+        {value}
+      </div>
     </div>
   );
 }

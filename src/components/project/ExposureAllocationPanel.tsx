@@ -88,8 +88,8 @@ function ExposureRowCard({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-foreground">{exposure.title || "Untitled risk"}</span>
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {exposure.hold_class} · {holdColumn(exposure.hold_class)}
+            <span className="inline-flex items-center whitespace-nowrap rounded-full border border-accent/40 bg-accent/5 px-2 py-0.5 font-mono text-[8px] font-bold uppercase tracking-[0.06em] text-clay">
+              {exposure.hold_class} · {holdColumn(exposure.hold_class).toLowerCase()}
             </span>
             {summary.fullyAllocated ? (
               <StatusChip tone="complete" icon={Check}>
@@ -108,9 +108,15 @@ function ExposureRowCard({
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular text-muted-foreground">
-          <span>Value {fmtUSD(exposure.dollar_exposure)}</span>
-          <span>Allocated {fmtUSD(summary.allocated)}</span>
-          <span className="font-semibold text-foreground">General {fmtUSD(summary.remaining)}</span>
+          <span>
+            Value <span className="font-serif">{fmtUSD(exposure.dollar_exposure)}</span>
+          </span>
+          <span>
+            Allocated <span className="font-serif">{fmtUSD(summary.allocated)}</span>
+          </span>
+          <span className="font-semibold text-foreground">
+            General <span className="font-serif">{fmtUSD(summary.remaining)}</span>
+          </span>
         </div>
       </div>
 
@@ -153,7 +159,7 @@ function ExposureRowCard({
         ) : (
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
             <div className="min-w-0 flex-1 space-y-1">
-              <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              <Label className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                 Allocate to cost code
               </Label>
               <Select value={bucketId} onValueChange={startAllocation}>
@@ -170,7 +176,7 @@ function ExposureRowCard({
               </Select>
             </div>
             <div className="space-y-1 sm:w-40">
-              <Label className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              <Label className="font-mono text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
                 Amount
               </Label>
               <MoneyInput value={amount} onValueChange={setAmount} align="right" className="h-9" />
@@ -229,7 +235,7 @@ export function ExposureAllocationPanel({
     <div className="space-y-3">
       <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
         <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          <div className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
             Risk holds: allocate to cost codes
           </div>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
@@ -239,7 +245,8 @@ export function ExposureAllocationPanel({
           </p>
         </div>
         <div className="text-sm tabular text-muted-foreground">
-          Holds {fmtUSD(totals.value)} · Allocated {fmtUSD(totals.allocated)}
+          Holds <span className="font-serif text-foreground">{fmtUSD(totals.value)}</span> ·
+          Allocated <span className="font-serif text-foreground">{fmtUSD(totals.allocated)}</span>
         </div>
       </div>
       {activeExposures.map((exposure) => (

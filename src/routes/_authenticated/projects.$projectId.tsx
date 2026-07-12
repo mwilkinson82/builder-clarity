@@ -2756,10 +2756,7 @@ function ProjectPage() {
             </TabsContent>
 
             <TabsContent value="claims" className="mt-0 space-y-6">
-              <WorkspaceHeader
-                title="Claims"
-                subtitle="Delay claims, extension-of-time and delay-damages claims — tracked through the dispute-resolution process from preparation to resolution."
-              />
+              {/* v2: ClaimsWorkspace carries its own chip + verdict header. */}
               <ClaimsWorkspace
                 claims={claims}
                 events={claimEvents}
@@ -2780,10 +2777,7 @@ function ProjectPage() {
             </TabsContent>
 
             <TabsContent value="todos" className="mt-0 space-y-6">
-              <WorkspaceHeader
-                title="To-Dos"
-                subtitle="Owned actions created from risk plans, schedule issues, change orders, and IOR review follow-through."
-              />
+              {/* v2: DecisionsTable carries its own chip + verdict header. */}
               <DecisionsTable
                 decisions={decisions}
                 exposures={exposures}

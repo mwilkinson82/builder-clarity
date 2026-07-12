@@ -98,7 +98,8 @@ export function ClaimCycleLogDialog({
     >
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>
+          <div className="eyebrow">Claim history</div>
+          <DialogTitle className="font-serif text-2xl font-normal">
             Cycle log{claim ? ` — ${claim.claim_number || claim.title}` : ""}
           </DialogTitle>
           <DialogDescription>
@@ -107,7 +108,7 @@ export function ClaimCycleLogDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <div>
           {ordered.length === 0 && (
             <p className="rounded-md border border-dashed border-hairline bg-surface px-3 py-6 text-center text-sm text-muted-foreground">
               No cycle events yet. Log the first one below.
@@ -116,9 +117,14 @@ export function ClaimCycleLogDialog({
           {ordered.map((event) => (
             <div
               key={event.id}
-              className="flex items-start justify-between gap-3 rounded-md border border-hairline bg-card px-3 py-2"
+              className="group flex items-start gap-3 border-t border-hairline py-3 first:border-t-0"
             >
-              <div className="min-w-0">
+              {/* Timeline: clay dot + hairline rail down to the next event. */}
+              <div className="flex self-stretch flex-col items-center pt-[5px]" aria-hidden="true">
+                <span className="h-[9px] w-[9px] flex-none rounded-full bg-clay" />
+                <span className="mt-1.5 w-px flex-1 bg-hairline group-last:hidden" />
+              </div>
+              <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">{EVENT_TYPE_LABELS[event.event_type]}</span>
                   <span className="text-xs text-muted-foreground">
