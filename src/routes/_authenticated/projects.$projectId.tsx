@@ -1169,7 +1169,7 @@ function ProjectPage() {
   // BUDGETCONSOLIDATE1: the single Budget table opens a line editor drawer.
   const reviewSubmit = useServerMutation<Record<string, unknown>>(submitReviewFn as never);
   const reviewUpdate = useServerMutation<Record<string, unknown>>(updateReviewFn as never);
-  const reviewDelete = useServerMutation<{ id: string }>(deleteReviewFn);
+  const reviewDelete = useServerMutation<{ id: string; projectId: string }>(deleteReviewFn);
   const bucketImport = useServerMutation<Record<string, unknown>>(importBucketsFn as never);
   const sovProfileSave = useMutation({
     mutationFn: (input: SovMappingProfileDraft) =>
@@ -3340,7 +3340,7 @@ function ProjectPage() {
                     // Best-effort clear the archived PDF, then delete the record.
                     if (review.pdf_path)
                       void supabase.storage.from("ior-reports").remove([review.pdf_path]);
-                    reviewDelete.mutate({ id: review.id });
+                    reviewDelete.mutate({ id: review.id, projectId });
                   }}
                   pending={reviewUpdate.isPending}
                 />

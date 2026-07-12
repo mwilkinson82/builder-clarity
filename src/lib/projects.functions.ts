@@ -4658,13 +4658,39 @@ export const updateReview = createServerFn({ method: "POST" })
 
 // Delete a saved IOR report. The archived PDF in the ior-reports bucket is cleared
 // client-side (best-effort) before this runs. RLS (reviews_owner_via_project) gates
-// deletion to the project owner.
+// deletion to the project owner. After deleting, re-sync the project's
+// last_reviewed_at / last_review_summary to the most recent REMAINING review (or
+// clear them when none remain) — otherwise deleting the latest report leaves
+// "Last reviewed" showing a stale date. The re-sync is best-effort: the delete has
+// already succeeded, so a project-update hiccup must not report the delete as failed.
 export const deleteReview = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: { id: string }) => z.object({ id: z.string().uuid() }).parse(input))
+  .inputValidator((input: { id: string; projectId: string }) =>
+    z.object({ id: z.string().uuid(), projectId: z.string().uuid() }).parse(input),
+  )
   .handler(async ({ data, context }) => {
     const { error } = await context.supabase.from("reviews").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
+    try {
+      const { data: remaining } = await context.supabase
+        .from("reviews")
+        .select("reviewed_at, summary_notes")
+        .eq("project_id", data.projectId)
+        .order("reviewed_at", { ascending: false })
+        .limit(1);
+      const latest = (remaining ?? [])[0] as
+        { reviewed_at: string; summary_notes: string | null } | undefined;
+      const { error: pErr } = await context.supabase
+        .from("projects")
+        .update({
+          last_reviewed_at: latest ? latest.reviewed_at : null,
+          last_review_summary: latest ? (latest.summary_notes ?? "") : "",
+        })
+        .eq("id", data.projectId);
+      if (pErr) console.warn("[deleteReview] could not re-sync last_reviewed_at:", pErr.message);
+    } catch (syncErr) {
+      console.warn("[deleteReview] last_reviewed_at re-sync threw:", syncErr);
+    }
     return { ok: true };
   });
 
