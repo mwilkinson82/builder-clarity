@@ -725,15 +725,17 @@ await expectContains(
     /BillingStageRail/,
     /value=\{billingStage\}/,
     /stages=\{billingStages\}/,
-    /title: "Overview"/,
+    // v2 notebook reskin (project-billing): stages relabeled to the mock's
+    // four numbered steps (values unchanged) + secondary "More views" chips.
+    /title: "Billing position"/,
     /title: "Costs"/,
-    /title: "Pay Applications"/,
-    /title: "WIP"/,
+    /title: "Pay applications"/,
+    /title: "WIP \/ over-under"/,
     /Invoices & Payments/,
     /Pending COs/,
     /Pending change orders: not billable yet/,
     /ChangeOrderAllocationPanel/,
-    /A\/R Ledger/,
+    /A\/R ledger/,
     /renderEnhancedBillingPanel/,
     /BillingLineItemsPanel/,
     /ProjectCostTrackingPanel/,
@@ -1196,7 +1198,14 @@ await expectContains(
 );
 await expectContains(
   "src/components/outcome/ClaimsWorkspace.tsx",
-  [/onSendToRisk/, /onPromoteToChangeOrder/, /Send to risk/, /Promote to CO/, /In risk tally/, /In change orders/], // v2 relabels (mock)
+  [
+    /onSendToRisk/,
+    /onPromoteToChangeOrder/,
+    /Send to risk/,
+    /Promote to CO/,
+    /In risk tally/,
+    /In change orders/,
+  ], // v2 relabels (mock)
   "claims workspace offers send-to-risk + promote-to-change-order with linked state",
 );
 await expectContains(
@@ -2790,7 +2799,9 @@ await expectContains(
   "src/components/project/billing/BillingWorkspace.tsx",
   [
     /import \{ BudgetLedgerTable \}/,
-    /value: "budget", title: "Budget vs Cost"/,
+    // v2 notebook reskin: "budget" is now numbered stage 1 (value unchanged);
+    // the "Budget vs Cost" ledger title became the stage title "Budget".
+    /value: "budget",[\s\S]*?title: "Budget",/,
     /<BudgetLedgerTable[\s\S]*?exposures=\{exposures\}[\s\S]*?allocations=\{exposureAllocations\}/,
   ],
   "billing workspace folds in the budget-vs-cost ledger tab",

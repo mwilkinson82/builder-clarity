@@ -22,7 +22,30 @@ export function WorkspaceHeader({
   );
 }
 
-export function SovMetric({ label, value }: { label: string; value: string }) {
+// The default (light) tile is shared with the project route — never change its
+// rendering. `variant="dark"` is an additive skin for the v2 dark stat strip
+// (bg-dark-panel), so a caller can opt in without touching the shared default.
+export function SovMetric({
+  label,
+  value,
+  variant = "default",
+}: {
+  label: string;
+  value: string;
+  variant?: "default" | "dark";
+}) {
+  if (variant === "dark") {
+    return (
+      <div className="flex min-h-[58px] flex-col justify-between rounded-md bg-dark-panel-foreground/[0.04] px-3 py-2">
+        <div className="text-[9.5px] font-semibold uppercase leading-snug tracking-[0.14em] text-dark-panel-foreground/60">
+          {label}
+        </div>
+        <div className="pt-2 font-serif text-[17px] leading-none text-dark-panel-foreground">
+          {value}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex min-h-[72px] flex-col justify-between rounded-md border border-hairline bg-surface px-3 py-2">
       <div className="text-[10px] font-semibold uppercase leading-snug tracking-[0.14em] text-muted-foreground">
