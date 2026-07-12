@@ -374,10 +374,11 @@ export function ProjectTruthReview({
 
       <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-serif text-2xl">Create IOR Report</DialogTitle>
+          <div className="eyebrow">Weekly IOR review</div>
+          <DialogTitle className="font-serif text-2xl font-normal">Create IOR Report</DialogTitle>
         </DialogHeader>
 
-        <div className="mb-2 flex items-center gap-1">
+        <div className="mb-2 mt-1 flex items-center gap-1">
           {STEPS.map((s, i) => (
             <div
               key={s.key}
@@ -385,12 +386,12 @@ export function ProjectTruthReview({
             />
           ))}
         </div>
-        <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+        <div className="flex items-center justify-between font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
           <span>
             Step {step + 1} of {STEPS.length} · {current.title}
           </span>
-          <span className="tabular text-muted-foreground">
-            Indicated GP: {fmtUSD(liveRoll.indicatedGP)} · GP at risk: {fmtUSD(liveRoll.gpAtRisk)}
+          <span className="tabular">
+            Indicated GP {fmtUSD(liveRoll.indicatedGP)} · GP at risk {fmtUSD(liveRoll.gpAtRisk)}
           </span>
         </div>
 
@@ -545,9 +546,9 @@ export function ProjectTruthReview({
                 </p>
               )}
               {allTreatedItems.map((it) => (
-                <div key={it.key} className="rounded-md border border-hairline bg-surface p-3">
+                <div key={it.key} className="rounded-lg border border-hairline bg-surface p-3.5">
                   <div className="flex items-baseline justify-between gap-2">
-                    <div className="text-sm font-medium">{it.title}</div>
+                    <div className="text-sm font-semibold">{it.title}</div>
                     {it.isNew && (
                       <span className="rounded-sm bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium uppercase text-accent">
                         new
@@ -769,7 +770,7 @@ function TreatmentPicker({
 }) {
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+      <div className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
         Treatment path
       </div>
       <div className="mt-1.5 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -783,9 +784,11 @@ function TreatmentPicker({
               key={k}
               type="button"
               onClick={() => onChange(k)}
-              className={`rounded-md border px-2.5 py-2 text-left text-xs transition-colors ${active ? "border-accent bg-accent/10" : "border-hairline bg-card hover:border-accent/50"}`}
+              className={`rounded-lg border px-3 py-2.5 text-left text-xs transition-colors ${active ? "border-accent bg-accent/10" : "border-hairline bg-card hover:border-accent/50"}`}
             >
-              <div className="flex items-center gap-1.5 font-medium text-foreground">
+              <div
+                className={`flex items-center gap-1.5 font-semibold ${active ? "text-clay" : "text-foreground"}`}
+              >
                 <Icon className="h-3.5 w-3.5" /> {meta.label}
               </div>
               <div className="mt-0.5 leading-snug text-muted-foreground">{meta.meaning}</div>

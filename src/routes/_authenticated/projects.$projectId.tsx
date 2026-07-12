@@ -3157,33 +3157,46 @@ function ProjectPage() {
             </TabsContent>
 
             <TabsContent value="ior-report" className="mt-0 space-y-6">
-              <div className="rounded-lg border border-hairline bg-card p-6 shadow-card">
-                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                  <WorkspaceHeader
-                    title="IOR Reports"
-                    subtitle="Create the current PDF and manage saved report cycles."
-                    compact
+              {/* v2 verdict hero: mono chip → serif statement → tiles (mock
+                  order; "Indicated GP %" folds into the Indicated GP sub). */}
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <span className="rounded-md border border-hairline px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-[0.12em] text-clay">
+                  Report cycles
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <ProjectTruthReview
+                    project={project}
+                    exposures={exposures}
+                    changeOrders={changeOrders}
+                    buckets={buckets}
+                    decisions={decisions}
+                    rollup={rollup}
+                    onSubmit={handleSubmitReview}
+                    pending={reviewSubmit.isPending}
                   />
-                  <div className="flex flex-wrap gap-2">
-                    <ProjectTruthReview
-                      project={project}
-                      exposures={exposures}
-                      changeOrders={changeOrders}
-                      buckets={buckets}
-                      decisions={decisions}
-                      rollup={rollup}
-                      onSubmit={handleSubmitReview}
-                      pending={reviewSubmit.isPending}
-                    />
-                    <DownloadReportMenu onDownload={downloadCurrentReport} />
-                  </div>
+                  <DownloadReportMenu onDownload={downloadCurrentReport} />
                 </div>
-                <div className="mt-5 grid gap-3 md:grid-cols-4">
-                  <SovMetric label="Indicated GP" value={fmtUSD(rollup.indicatedGP)} />
-                  <SovMetric label="Indicated GP %" value={fmtPct(rollup.indicatedGPpct)} />
-                  <SovMetric label="GP at risk" value={fmtUSD(rollup.gpAtRisk)} />
-                  <SovMetric label="Saved reports" value={String(reviews.length)} />
-                </div>
+              </div>
+              <div>
+                <h2 className="max-w-[26ch] font-serif text-3xl font-normal leading-tight">
+                  Lock the narrative each cycle — and keep the record.
+                </h2>
+                <p className="mt-2 max-w-[64ch] text-sm text-muted-foreground">
+                  Each saved report freezes the forecast, the risk posture, and your narrative for
+                  that review — the running record the job gets judged against.
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-4">
+                <SovMetric label="Saved reports" value={String(reviews.length)} />
+                <SovMetric
+                  label="Indicated GP"
+                  value={`${fmtUSD(rollup.indicatedGP)} · ${fmtPct(rollup.indicatedGPpct)}`}
+                />
+                <SovMetric label="GP at risk" value={fmtUSD(rollup.gpAtRisk)} />
+                <SovMetric
+                  label="Last reviewed"
+                  value={lastReviewDays !== null ? `${lastReviewDays}d ago` : "—"}
+                />
               </div>
               <div className="rounded-lg border border-hairline bg-card p-5 shadow-card">
                 <WorkspaceHeader

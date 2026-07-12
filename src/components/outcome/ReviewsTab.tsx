@@ -60,11 +60,11 @@ export function ReviewsTab({
 
   if (reviews.length === 0) {
     return (
-      <div className="rounded-lg border border-hairline bg-card p-10 text-center">
+      <div className="rounded-xl border border-hairline bg-card p-10 text-center">
         <FileText className="mx-auto h-8 w-8 text-muted-foreground" />
-        <p className="mt-4 text-sm text-muted-foreground">
-          No saved IOR reports yet. Create the first report to lock the narrative and export the
-          PDF.
+        <p className="mt-4 font-serif text-lg text-foreground">No saved IOR reports yet.</p>
+        <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+          Create the first report to lock the narrative and export the PDF.
         </p>
       </div>
     );
@@ -72,31 +72,32 @@ export function ReviewsTab({
 
   return (
     <>
-      <div className="overflow-hidden rounded-lg border border-hairline bg-card">
+      <div className="overflow-hidden rounded-xl border border-hairline bg-card">
         <ul className="divide-y divide-hairline">
           {reviews.map((r) => (
             <li key={r.id} className="px-5 py-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <div className="text-sm font-medium text-foreground">
-                    {new Date(r.reviewed_at).toLocaleString("en-US", {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })}
+                  <div className="text-sm font-semibold text-foreground">
+                    {formatDate(r.reviewed_at)} · {formatTime(r.reviewed_at)}
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    {r.reviewer || "—"}
-                    {r.status === "draft" && (
-                      <span className="ml-2 rounded-sm bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-warning">
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {r.reviewer || "—"} ·{" "}
+                    {r.status === "draft" ? (
+                      <span className="rounded-sm bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-warning">
                         draft
+                      </span>
+                    ) : (
+                      <span className="inline-block rounded-full border border-success/40 bg-success/5 px-2 py-0.5 font-mono text-[8px] font-bold uppercase tracking-[0.06em] text-success">
+                        Published
                       </span>
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex flex-none items-center gap-1.5">
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="outline"
                     onClick={() => setEditing(r)}
                     className="gap-1.5"
                   >
@@ -104,7 +105,7 @@ export function ReviewsTab({
                   </Button>
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="outline"
                     onClick={() => downloadReview(r)}
                     className="gap-1.5"
                   >
@@ -112,7 +113,7 @@ export function ReviewsTab({
                   </Button>
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="outline"
                     onClick={() => setEmailing(r)}
                     className="gap-1.5"
                   >
@@ -121,7 +122,7 @@ export function ReviewsTab({
                 </div>
               </div>
               {(r.forecast_completion_date_before || r.forecast_completion_date_after) && (
-                <div className="mt-1 text-xs text-muted-foreground">
+                <div className="mt-1.5 text-xs text-muted-foreground">
                   Forecast completion:{" "}
                   {r.forecast_completion_date_before
                     ? new Date(r.forecast_completion_date_before).toLocaleDateString()
@@ -133,9 +134,9 @@ export function ReviewsTab({
                 </div>
               )}
               {(r.body_markdown || r.summary_notes) && (
-                <pre className="mt-2 max-h-32 overflow-hidden whitespace-pre-wrap font-sans text-sm text-foreground/85">
+                <p className="mt-3 line-clamp-4 max-w-[82ch] whitespace-pre-wrap border-l-2 border-hairline pl-3.5 text-[13px] leading-relaxed text-muted-foreground">
                   {r.body_markdown || r.summary_notes}
-                </pre>
+                </p>
               )}
             </li>
           ))}
@@ -248,15 +249,21 @@ function EmailReviewDialog({
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle className="font-serif text-2xl">Email IOR report</DialogTitle>
+          <div className="eyebrow">Send through OverWatch</div>
+          <DialogTitle className="font-serif text-2xl font-normal">Email IOR report</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 py-2">
-          <div className="rounded-md border border-hairline bg-muted/35 p-3 text-sm">
-            <div className="font-medium text-foreground">{project.name}</div>
+          <div className="rounded-lg border border-hairline bg-background p-3.5 text-sm">
+            <div className="font-semibold text-foreground">{project.name}</div>
             <div className="mt-1 text-xs text-muted-foreground">
-              {formatDateTime(review.reviewed_at)} | Indicated GP{" "}
-              <span className="tabular">{fmtUSD(input.rollup.indicatedGP)}</span> | GP at risk{" "}
-              <span className="tabular">{fmtUSD(input.rollup.gpAtRisk)}</span>
+              {formatDateTime(review.reviewed_at)} · Indicated GP{" "}
+              <span className="tabular font-semibold text-foreground">
+                {fmtUSD(input.rollup.indicatedGP)}
+              </span>{" "}
+              · GP at risk{" "}
+              <span className="tabular font-semibold text-foreground">
+                {fmtUSD(input.rollup.gpAtRisk)}
+              </span>
             </div>
           </div>
           <div className="space-y-1.5">
@@ -279,14 +286,23 @@ function EmailReviewDialog({
             />
           </div>
         </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={sending}>
-            Cancel
-          </Button>
-          <Button onClick={send} disabled={sending}>
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-            {sending ? "Queueing..." : "Send through Overwatch"}
-          </Button>
+        <DialogFooter className="gap-3 border-t border-hairline pt-4 sm:items-center sm:justify-between">
+          <span className="text-[11px] text-muted-foreground">
+            Sent from OverWatch with a link to the full report.
+          </span>
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={sending}>
+              Cancel
+            </Button>
+            <Button onClick={send} disabled={sending}>
+              {sending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Mail className="h-4 w-4" />
+              )}
+              {sending ? "Queueing..." : "Send through OverWatch"}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -310,6 +326,14 @@ function formatDate(value?: string | null) {
     month: "short",
     day: "numeric",
     year: "numeric",
+  });
+}
+
+function formatTime(value?: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
   });
 }
 

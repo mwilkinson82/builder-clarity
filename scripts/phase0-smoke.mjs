@@ -1407,7 +1407,7 @@ await expectContains(
     /EmailReviewDialog/,
     /sendTransactionalEmail/,
     /ior-report-notification/,
-    /Send through Overwatch/,
+    /Send through OverWatch/, // v2 brand casing
   ],
   "IOR report emails queue through Overwatch instead of external mail clients",
 );
@@ -1757,7 +1757,7 @@ await expectContains(
 await expectContains(
   "src/components/outcome/ClientPortalWorkspace.tsx",
   [
-    /Client access ledger/,
+    /Client seat/, // v2: access ledger reorganized into the seat permission matrix
     /can_view_change_orders/,
     /can_view_daily_reports/,
     /can_view_billing/,
@@ -2924,7 +2924,7 @@ await expectContains(
 await expectContains(
   "src/components/project/SubcontractCard.tsx",
   [
-    /Record payment/,
+    /Record pay app/, // v2: new-pay-app form relocated into a modal
     /Retainage held/,
     /New commitment/,
     /onUpdatePayment/,
