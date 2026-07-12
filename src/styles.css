@@ -5,10 +5,11 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  /* House system: body & UI in Helvetica Neue; Instrument Serif carries
-     display; JetBrains Mono for eyebrows/labels/numbers. */
-  --font-sans: "Helvetica Neue", Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
+  /* House system — Brand Kit v2 (authenticated app): body & UI in Archivo;
+     Source Serif 4 carries display and all serif numerals; JetBrains Mono for
+     eyebrows/labels/data. */
+  --font-sans: "Archivo", "Helvetica Neue", Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Source Serif 4", ui-serif, Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
 
   --radius-sm: calc(var(--radius) - 4px);
@@ -49,6 +50,7 @@
   --color-dark-panel: var(--dark-panel);
   --color-dark-panel-foreground: var(--dark-panel-foreground);
 
+  --color-wash: var(--wash);
   --color-hairline: var(--hairline);
   --color-border: var(--border);
   --color-input: var(--input);
@@ -57,95 +59,104 @@
 
   --shadow-card: 0 1px 2px oklch(0.2 0.03 60 / 0.04), 0 4px 16px oklch(0.2 0.03 60 / 0.04);
   --shadow-elevated: 0 1px 2px oklch(0.2 0.03 60 / 0.05), 0 12px 40px oklch(0.2 0.03 60 / 0.07);
+  /* v2 floating chrome (project sidebar rail) — the one soft wide glow the
+     system allows; everything else stays hairlines. */
+  --shadow-nav: 0 0 60px 27px rgb(171 171 171 / 0.18);
 }
 
 :root {
-  --radius: 0.5rem;
+  /* v2 radius scale: cards 14px (rounded-xl), inner elements 8–10px (md/lg),
+     pills 999px. */
+  --radius: 0.625rem;
 
-  /* ALP house skin — PRODUCT/APP ground tier (AOS-DESIGN-SYSTEM.md §2, the
-     Anthropic two-tier model). Apps use the lighter warm-white ground with
-     white panels above it; marketing sites use the deeper cream tier. Only the
-     four ground values differ between tiers — ink/signal/clay/semantic are shared. */
-  --background: #faf7f0; /* --paper: app ground (warm white) */
+  /* ALP house skin — Brand Kit v2 (OverWatch reskin, July 2026). The
+     authenticated app wears the v2 amendment: warm ivory grounds, warm-slate
+     ink, ONE coral accent, muted earthy semantics. Marketing surfaces keep the
+     original ALP House kit — do not port these values there. */
+  --background: #faf9f5; /* --paper: app ground (warm ivory) */
+  --wash: #fdfdfc; /* page frame + footer ground (sits just off-white, under paper panels) */
   --surface: #ffffff; /* --surface: panels/cards sit white above the ground */
   --surface-elevated: #ffffff; /* white is the top of the elevation stack */
-  --foreground: #1c1a17; /* --ink: primary text */
+  --foreground: #1f1e1b; /* --ink: warm slate */
 
   --card: #ffffff;
-  --card-foreground: #1c1a17;
+  --card-foreground: #1f1e1b;
   --popover: #ffffff;
-  --popover-foreground: #1c1a17;
+  --popover-foreground: #1f1e1b;
 
-  /* Default button = dark (house .btn-dark). The one orange CTA per view opts
-     into variant="signal" instead — keeps the orange rationed. */
-  --primary: #1c1a17; /* --ink */
-  --primary-foreground: #f8f4ed;
+  /* Default button = dark (house .btn-dark). The one coral CTA per view opts
+     into variant="signal" instead — keeps the accent rationed. */
+  --primary: #1f1e1b; /* --ink */
+  --primary-foreground: #fbf6ec;
 
-  --secondary: #f2eee5; /* --paper2: inset fills, chips */
-  --secondary-foreground: #1c1a17;
+  --secondary: #f0eee6; /* --paper2: inset fills, chips */
+  --secondary-foreground: #1f1e1b;
 
-  --muted: #f2eee5; /* --paper2 */
-  --muted-foreground: #6b655d; /* --muted: secondary text, labels */
+  --muted: #f0eee6; /* --paper2 */
+  --muted-foreground: #76736b; /* --muted: secondary text, labels */
 
-  /* Active / selected / highlight states. Warm terracotta (--clay) rather than
-     a second brand accent, so the signal orange stays reserved for true CTAs. */
-  --accent: #d97757; /* --clay */
+  /* Active / selected / highlight states. The deeper clay rather than a second
+     brand accent, so the coral signal stays reserved for true CTAs. */
+  --accent: #c36e4f; /* --clay */
   --accent-foreground: #ffffff;
 
-  --destructive: #b5432e; /* --crit */
-  --destructive-foreground: #f8f4ed;
+  --destructive: #a8402f; /* --crit */
+  --destructive-foreground: #fbf6ec;
 
-  /* Semantic state colors — separate from the brand accent. */
-  --success: #2fa98c; /* --good: on-goal / success / live */
-  --warning: #c69a3c; /* --warn: caution */
-  --danger: #b5432e; /* --crit: off-goal / failure / danger */
+  /* Semantic state colors — separate from the brand accent. v2 mutes them
+     toward the ivory palette (schedule-health rule: ahead → good, drift →
+     warn, behind → crit). */
+  --success: #4c8055; /* --good: on-goal / success / live */
+  --warning: #96702e; /* --warn: caution / drift */
+  --danger: #a8402f; /* --crit: off-goal / failure / danger */
 
-  --hairline: #e7e1d6; /* --edge */
-  --border: #e7e1d6;
-  --input: #e7e1d6;
-  --ring: rgb(247 106 22 / 0.45); /* --signal: focus emphasis */
+  --hairline: #e4e1d6; /* --edge */
+  --border: #e4e1d6;
+  --input: #e4e1d6;
+  --ring: rgb(217 119 87 / 0.5); /* --signal: focus emphasis */
 
   /* House brand tokens */
-  --signal: #f76a16; /* THE accent — CTAs & true emphasis ONLY */
-  --signal-foreground: #ffffff;
-  --clay: #d97757; /* eyebrows & small warm accents (Overwatch mark terracotta) */
-  --dark-panel: #171310; /* --dark: stat tiles, media frames, pop-up graphic */
-  --dark-panel-foreground: #f8f4ed;
+  --signal: #d97757; /* THE accent (coral) — CTAs & true emphasis ONLY */
+  --signal-foreground: #231a15; /* ink-on-coral (v2 hero CTA; beats white for contrast) */
+  --clay: #c36e4f; /* eyebrows & small warm accents */
+  --dark-panel: #1f1e1b; /* --dark: stat tiles, result panels, media frames */
+  --dark-panel-foreground: #fbf6ec;
 }
 
 /* Dark is used deliberately as focal contrast, not as a default app mode. These
    values keep the house skin coherent wherever a .dark scope is applied. */
 .dark {
-  --background: #171310; /* --dark ground */
-  --surface: #1e1a16;
-  --surface-elevated: #241f1a;
-  --foreground: #f5f0e8;
-  --card: #1e1a16;
-  --card-foreground: #f5f0e8;
-  --popover: #1e1a16;
-  --popover-foreground: #f5f0e8;
-  --primary: #f5f0e8;
-  --primary-foreground: #171310;
-  --secondary: #241f1a;
-  --secondary-foreground: #f5f0e8;
-  --muted: #241f1a;
-  --muted-foreground: #a8a096;
-  --accent: #d97757; /* --clay holds on dark too */
+  --background: #1f1e1b; /* --dark ground (v2 warm slate) */
+  --wash: #1b1a17;
+  --surface: #26241f;
+  --surface-elevated: #2c2a24;
+  --foreground: #fbf6ec;
+  --card: #26241f;
+  --card-foreground: #fbf6ec;
+  --popover: #26241f;
+  --popover-foreground: #fbf6ec;
+  --primary: #fbf6ec;
+  --primary-foreground: #1f1e1b;
+  --secondary: #2c2a24;
+  --secondary-foreground: #fbf6ec;
+  --muted: #2c2a24;
+  --muted-foreground: #b7ae9e;
+  --accent: #c36e4f; /* --clay holds on dark too */
   --accent-foreground: #ffffff;
-  --destructive: #ef8a7a; /* lighter red for contrast on dark (§2 usage rule) */
-  --destructive-foreground: #171310;
-  --success: #2fa98c; /* --good */
-  --warning: #c69a3c; /* --warn */
-  --danger: #ef8a7a;
+  --destructive: #e08a76; /* lighter red for contrast on dark (§2 usage rule) */
+  --destructive-foreground: #1f1e1b;
+  --success: #7fb08a; /* --good, lifted for dark grounds (mock dark-tile green) */
+  --warning: #c09a56; /* --warn, lifted */
+  --danger: #e08a76;
   --hairline: rgb(255 255 255 / 12%);
   --border: rgb(255 255 255 / 12%);
   --input: rgb(255 255 255 / 15%);
-  --ring: rgb(247 106 22 / 0.55); /* --signal focus */
-  --signal: #f76a16;
-  --signal-foreground: #ffffff;
-  --clay: #d97757;
-  --dark-panel: #0b0906; /* deeper tile ground on an already-dark surface */
-  --dark-panel-foreground: #f5f0e8;
+  --ring: rgb(217 119 87 / 0.55); /* --signal focus */
+  --signal: #d97757;
+  --signal-foreground: #231a15;
+  --clay: #c36e4f;
+  --dark-panel: #14130f; /* deeper tile ground on an already-dark surface */
+  --dark-panel-foreground: #fbf6ec;
 }
 
 @layer base {
@@ -174,12 +185,13 @@
     letter-spacing: -0.01em;
   }
 
-  /* House signature: a mono eyebrow sits above almost every section title. */
+  /* House signature: a mono eyebrow sits above almost every section title.
+     v2 scale: ~8.5–10px, .12em tracking. */
   .eyebrow {
     font-family: var(--font-mono);
     font-weight: 700;
-    font-size: 12px;
-    letter-spacing: 0.22em;
+    font-size: 10px;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--color-clay);
   }

@@ -83,9 +83,10 @@ The essentials:
   `src/styles.css` (Tailwind v4, CSS-first — no `tailwind.config.js`). Reach for
   `bg-signal` / `variant="signal"` / `.eyebrow` / `--clay` / `--dark-panel` /
   `text-muted-foreground`, not `#hex` or `bg-[#...]`.
-- **One skin, no second accent.** No "Overwatch blue." Warm clay (`#D97757`) for
-  active/selected states; the orange (`--signal #F76A16`) is rationed to the one
-  true CTA per view (`<Button variant="signal">`). Default button is ink.
+- **One skin, no second accent.** No "Overwatch blue." Warm clay (`--clay
+  #C36E4F`) for active/selected states; the coral (`--signal #D97757`) is
+  rationed to the one true CTA per view (`<Button variant="signal">`). Default
+  button is ink. (Brand Kit v2 — July 2026 reskin: Source Serif 4 + Archivo.)
 - **Type carries the page, hairlines not boxes.** Mono eyebrow → serif headline
   → muted sub. Structure with `border`/`hairline` + whitespace.
 - **`src/styles.css` is the theme layer (Shared territory)** — never edit it in a
