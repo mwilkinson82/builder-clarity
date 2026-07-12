@@ -56,8 +56,8 @@ export function CockpitFloatingPanelHeader({
   return (
     // Pinned to the top of the scrolling panel (Command Center Tools/Drawings):
     // the hide/reset/drag controls stay reachable no matter how far the body
-    // scrolls. bg-card is opaque so scrolled content passes cleanly underneath.
-    <div className="sticky top-0 z-20 mb-2 flex items-center justify-between gap-3 rounded-md border border-hairline bg-card px-3 py-2 shadow-sm">
+    // scrolls. bg-muted is opaque so scrolled content passes cleanly underneath.
+    <div className="sticky top-0 z-20 mb-2 flex items-center justify-between gap-3 rounded-md border border-hairline bg-muted px-3 py-2 shadow-sm">
       <div
         className="flex min-w-0 flex-1 cursor-move touch-none items-center gap-2"
         title="Drag this panel anywhere in Command Center"
@@ -69,9 +69,7 @@ export function CockpitFloatingPanelHeader({
       >
         <Move className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
-          <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            {title}
-          </p>
+          <p className="eyebrow truncate">{title}</p>
           <p className="truncate text-[10px] text-muted-foreground">{layoutLabel}</p>
         </div>
       </div>
@@ -464,7 +462,7 @@ export function SheetSidebar({
                           <div key={groupKey} data-testid="sheet-discipline-group">
                             <button
                               type="button"
-                              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground hover:bg-surface"
+                              className="eyebrow flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-surface"
                               onClick={() => toggleGroup(groupKey)}
                               data-testid="sheet-discipline-header"
                             >
@@ -637,7 +635,7 @@ export function PlanMiniMap({
         data-testid="plan-minimap-drag-handle"
         title="Drag to move sheet map"
       >
-        <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+        <div className="eyebrow flex min-w-0 items-center gap-1.5">
           <MapIcon className="h-3 w-3" />
           Sheet Map
         </div>
@@ -703,7 +701,7 @@ export function PlanMiniMap({
       >
         <svg
           viewBox={`0 0 ${viewSize.width} ${viewSize.height}`}
-          className="block aspect-[4/3] w-full bg-[#fffefa]"
+          className="block aspect-[4/3] w-full bg-surface"
           preserveAspectRatio="xMidYMid meet"
         >
           <rect
@@ -711,8 +709,7 @@ export function PlanMiniMap({
             y="0"
             width={viewSize.width}
             height={viewSize.height}
-            fill="#fffefa"
-            stroke="#ded6c8"
+            className="fill-surface stroke-hairline"
             strokeWidth="8"
           />
           {measurements.slice(0, 60).map((measurement) => (

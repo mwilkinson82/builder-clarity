@@ -2472,9 +2472,7 @@ export function PlanRoomWorkspace({
         </Link>
       </Button>
       <div className="mr-1 min-w-[110px] max-w-[145px]">
-        <p className="truncate text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          {companyName}
-        </p>
+        <p className="eyebrow truncate">{companyName}</p>
         <p className="truncate font-serif text-sm leading-tight text-foreground">
           {currentSheetTitle}
         </p>
@@ -2626,9 +2624,7 @@ export function PlanRoomWorkspace({
                   </Link>
                 </Button>
                 <div className="min-w-0">
-                  <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                    {companyName}
-                  </p>
+                  <p className="eyebrow">{companyName}</p>
                   <h1 className="mt-1 font-serif text-3xl text-foreground">Plan Room</h1>
                   <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
                     {estimate.name}. Measure the plans once, link the takeoff to an estimate row,
@@ -2691,9 +2687,9 @@ export function PlanRoomWorkspace({
         data-testid="plan-room-main"
       >
         {!backendReady && (
-          <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 xl:col-span-3">
+          <section className="rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm text-warning xl:col-span-3">
             <p className="font-medium">Plan Room backend is still coming online</p>
-            <p className="mt-1 text-amber-900">
+            <p className="mt-1 text-warning">
               {schemaMessage ||
                 "Lovable needs to apply the Plan Room migration and refresh the Supabase schema cache before uploads and takeoff saves are available."}
             </p>
@@ -2705,7 +2701,7 @@ export function PlanRoomWorkspace({
             "min-w-0 space-y-4",
             isCockpitMode &&
               (cockpitPanels.drawings
-                ? "absolute z-40 overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
+                ? "absolute z-40 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                 : "hidden"),
           )}
           style={
@@ -3148,7 +3144,7 @@ export function PlanRoomWorkspace({
             "min-w-0 space-y-4",
             isCockpitMode &&
               (cockpitPanels.tools
-                ? "absolute z-40 overflow-y-auto rounded-lg border border-hairline bg-background/95 p-2 shadow-2xl backdrop-blur"
+                ? "absolute z-40 overflow-y-auto rounded-[15px] border border-hairline bg-card p-2 shadow-nav backdrop-blur"
                 : "hidden"),
           )}
           style={isCockpitMode && cockpitPanels.tools ? cockpitPanelStyle("tools") : undefined}
@@ -3516,9 +3512,7 @@ export function PlanRoomWorkspace({
             </div>
             {sheetColorsInUse.length > 0 && (
               <div className="mt-3" data-testid="takeoff-color-visibility">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                  Colors on this sheet
-                </p>
+                <p className="eyebrow">Colors on this sheet</p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   {sheetColorsInUse.map((color) => {
                     const hidden = hiddenTakeoffColors.includes(color);
@@ -3593,7 +3587,7 @@ export function PlanRoomWorkspace({
                   {selectedMeasurement.created_by_ai && (
                     <Badge
                       variant="outline"
-                      className="gap-1 border-amber-300 bg-amber-50 text-amber-900"
+                      className="gap-1 border-warning/30 bg-warning/10 text-warning"
                       title="Counted with AI Assist — every point was reviewed and accepted by hand."
                       data-testid="takeoff-inspector-ai-chip"
                     >

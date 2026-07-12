@@ -114,7 +114,11 @@ export function TakeoffTools({
           type="button"
           size="sm"
           variant={aiAssistOpen ? "default" : "outline"}
-          className={cn("gap-1.5", compact && "h-8 px-2 text-xs")}
+          className={cn(
+            "gap-1.5",
+            !aiAssistOpen && "border-clay bg-clay/[0.06] text-clay",
+            compact && "h-8 px-2 text-xs",
+          )}
           title="AI Assist — count one symbol, let AI find the rest"
           data-testid="takeoff-tool-ai-assist"
           disabled={!backendReady}

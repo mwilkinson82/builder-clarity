@@ -85,9 +85,7 @@ export function SyncConflictDialog({
         </DialogHeader>
         <div className="space-y-2 text-sm" data-testid="sync-conflict-details">
           <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Estimate row
-            </p>
+            <p className="eyebrow">Estimate row</p>
             <p className="mt-1 font-medium">{conflict.lineDescription || "Estimate row"}</p>
             <p className="text-xs text-muted-foreground">
               Now: {formatQty(conflict.currentQuantity, conflict.lineUnit)}
@@ -95,9 +93,7 @@ export function SyncConflictDialog({
             </p>
           </div>
           <div className="rounded-md border border-hairline bg-surface px-3 py-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              From the takeoff
-            </p>
+            <p className="eyebrow">From the takeoff</p>
             <p className="mt-1 font-medium">
               {formatQty(conflict.incomingQuantity, conflict.takeoffUnit || conflict.lineUnit)}{" "}
               <span className="text-xs font-normal text-muted-foreground">
@@ -399,9 +395,7 @@ export function TakeoffWorksheet({
               className="mt-2 flex flex-wrap items-center gap-1.5"
               data-testid="takeoff-worksheet-color-filter"
             >
-              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Colors
-              </span>
+              <span className="eyebrow">Colors</span>
               {worksheetColors.map((color) => {
                 const hidden = hiddenCardColors.includes(color);
                 return (
@@ -503,7 +497,7 @@ export function TakeoffWorksheet({
                         {measurement.created_by_ai && (
                           <Badge
                             variant="outline"
-                            className="shrink-0 gap-1 border-amber-300 bg-amber-50 text-[10px] text-amber-900"
+                            className="shrink-0 gap-1 border-warning/30 bg-warning/10 text-[10px] text-warning"
                             title="Counted with AI Assist — every point was reviewed and accepted by hand."
                             data-testid="takeoff-ai-chip"
                           >

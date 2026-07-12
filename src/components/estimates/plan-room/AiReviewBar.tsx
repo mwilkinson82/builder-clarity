@@ -79,13 +79,13 @@ export function AiReviewBar({ ai }: { ai: AiAssistController }) {
       data-testid="ai-review-bar"
     >
       <div className="flex items-center gap-1.5 text-sm font-medium">
-        <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+        <Sparkles className="h-3.5 w-3.5 text-warning" />
         {total} found · Reviewing {currentNumber} of {total} · {ai.acceptedCount} accepted
       </div>
       {lowConfidence && (
         <Badge
           variant="outline"
-          className="border-amber-300 bg-amber-50 text-amber-900"
+          className="border-warning/30 bg-warning/10 text-warning"
           data-testid="ai-review-low-confidence"
         >
           Low confidence — look closely
