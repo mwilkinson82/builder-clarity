@@ -302,8 +302,11 @@ export function BillingInvoiceRowEditor({
 
   return (
     <div className="rounded-md border border-hairline bg-surface p-4">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-        <div className="grid min-w-0 flex-1 gap-3 lg:grid-cols-[minmax(180px,1fr)_minmax(160px,0.8fr)_minmax(300px,1.1fr)]">
+      {/* Fields on top, the action bar as its own full-width row below — the
+          two never compete for horizontal space, so the dates never get
+          crushed against the buttons at the project shell's panel width. */}
+      <div className="flex flex-col gap-4">
+        <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(180px,1fr)_minmax(160px,0.8fr)_minmax(260px,0.9fr)]">
           <div className="space-y-1.5">
             <Label>Invoice</Label>
             <EditableText
@@ -353,7 +356,7 @@ export function BillingInvoiceRowEditor({
             </div>
           </div>
         </div>
-        <div className="flex flex-wrap gap-1 xl:max-w-[500px] xl:justify-end">
+        <div className="flex flex-wrap gap-2 border-t border-hairline pt-3">
           <Button
             type="button"
             size="sm"
@@ -602,7 +605,7 @@ export function BillingInvoiceRowEditor({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
         <div className="space-y-1.5">
           <Label>Total due</Label>
           <MoneyInput
